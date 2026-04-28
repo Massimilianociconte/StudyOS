@@ -1,14 +1,23 @@
-const CACHE_NAME = "studyos-shell-v3";
+const CACHE_NAME = "studyos-shell-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./icons/studyos.svg"
+  "./icons/studyos.svg",
+  "./icons/studyos-192.png",
+  "./icons/studyos-512.png",
+  "./icons/apple-touch-icon-180.png"
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(
+        APP_SHELL.map((url) =>
+          cache.add(url).catch(() => undefined)
+        )
+      )
+    )
   );
   self.skipWaiting();
 });

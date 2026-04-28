@@ -62,7 +62,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const todayLabel = format(new Date(), "EEEE d MMMM", { locale: it });
 
   return (
-    <main className="app-bg min-h-screen pb-24 md:pb-0">
+    <main className="app-bg min-h-screen pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-0">
       <div className="mx-auto grid min-h-screen w-full max-w-[1720px] grid-cols-1 md:grid-cols-[280px_1fr]">
         <aside className="sticky top-0 hidden h-screen p-4 md:block">
           <div className="soft-panel flex h-full flex-col p-4">
@@ -120,7 +120,7 @@ export function AppShell({ children }: PropsWithChildren) {
           </div>
         </aside>
 
-        <section className="min-w-0 px-3 py-3 sm:px-5 md:py-5">
+        <section className="min-w-0 px-3 py-3 sm:px-5 md:py-5" style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}>
           <header className="sticky top-0 z-30 mb-6 rounded-[30px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_72%,transparent)] p-2 backdrop-blur-2xl md:top-4 md:mb-8">
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-[180px] flex-1">
@@ -179,13 +179,15 @@ export function AppShell({ children }: PropsWithChildren) {
         type="button"
         onClick={() => setQuickAddOpen(true)}
         aria-label="Aggiungi rapidamente"
-        className="fixed bottom-24 right-5 z-40 grid h-16 w-16 place-items-center rounded-super bg-[var(--accent)] text-[#10131d] shadow-soft md:hidden"
+        style={{ bottom: "calc(6.5rem + env(safe-area-inset-bottom))" }}
+        className="fixed right-5 z-40 grid h-16 w-16 place-items-center rounded-super bg-[var(--accent)] text-[#10131d] shadow-soft md:hidden"
       >
         <Icon name="Plus" className="h-7 w-7" />
       </button>
 
       <nav
-        className="fixed bottom-3 left-3 right-3 z-40 grid grid-cols-5 gap-1 rounded-[30px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_78%,transparent)] p-2 backdrop-blur-2xl md:hidden"
+        style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        className="fixed left-3 right-3 z-40 grid grid-cols-5 gap-1 rounded-[30px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_78%,transparent)] p-2 backdrop-blur-2xl md:hidden"
         aria-label="Navigazione mobile"
       >
         {mobileItems.map((item) => {

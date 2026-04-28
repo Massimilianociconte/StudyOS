@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "build": "npm run icons && tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "lint": "tsc -b --noEmit"
+    "lint": "tsc -b --noEmit",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
@@ -26,6 +27,7 @@
     "@vitejs/plugin-react": "latest",
     "autoprefixer": "latest",
     "postcss": "latest",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.17",
     "typescript": "latest",
     "vite": "latest"

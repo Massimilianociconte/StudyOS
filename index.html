@@ -2,14 +2,35 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=yes" />
     <meta
       name="description"
       content="StudyOS, piattaforma local-first per studio universitario, calendario, task, materiali e obiettivi."
     />
-    <meta name="theme-color" content="#10131d" />
+    <meta name="theme-color" content="#10131d" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#10131d" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/studyos.svg" type="image/svg+xml" />
+    <link rel="icon" href="./icons/favicon-64.png" type="image/png" sizes="64x64" />
+
+    <!-- iOS PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="StudyOS" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon-180.png" />
+    <link rel="apple-touch-icon" sizes="120x120" href="./icons/apple-touch-icon-120.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="./icons/apple-touch-icon-152.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="./icons/apple-touch-icon-167.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon-180.png" />
+
+    <!-- Android / Chrome -->
+    <meta name="application-name" content="StudyOS" />
+    <link rel="mask-icon" href="./icons/studyos.svg" color="#7CF7C8" />
+
     <title>StudyOS</title>
   </head>
   <body>

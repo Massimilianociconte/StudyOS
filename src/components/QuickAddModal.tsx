@@ -82,7 +82,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
           aria-modal="true"
         >
           <motion.div
-            className="soft-panel w-full max-w-xl p-4 sm:p-5"
+            className="soft-panel scrollbar-soft max-h-[85vh] w-full max-w-xl overflow-y-auto p-4 sm:p-5"
             initial={{ y: 30, scale: 0.98 }}
             animate={{ y: 0, scale: 1 }}
             exit={{ y: 30, scale: 0.98 }}

@@ -95,9 +95,9 @@ export function CalendarView() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="scrollbar-soft mb-4 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 md:flex-wrap md:overflow-visible">
         {modes.map((item) => (
-          <button key={item.id} type="button" onClick={() => setMode(item.id)}>
+          <button key={item.id} type="button" onClick={() => setMode(item.id)} className="shrink-0">
             <Pill active={mode === item.id}>{item.label}</Pill>
           </button>
         ))}
@@ -233,9 +233,9 @@ function MonthGrid({
         <h3 className="text-3xl font-black">{format(days[15], "MMMM yyyy", { locale: it })}</h3>
         <Pill>drag and drop</Pill>
       </div>
-      <div className="grid grid-cols-7 gap-2">
+      <div className="grid grid-cols-7 gap-1 sm:gap-2">
         {["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"].map((day) => (
-          <div key={day} className="px-2 text-xs font-black uppercase text-[var(--faint)]">
+          <div key={day} className="px-1 text-[10px] font-black uppercase text-[var(--faint)] sm:px-2 sm:text-xs">
             {day}
           </div>
         ))}
@@ -246,7 +246,7 @@ function MonthGrid({
               key={day.toISOString()}
               onDragOver={(event) => event.preventDefault()}
               onDrop={() => onDropDay(day)}
-              className="quiet-panel min-h-[118px] p-2"
+              className="quiet-panel min-h-[72px] p-1.5 sm:min-h-[118px] sm:p-2"
             >
               <div className="mb-2 flex items-center justify-between">
                 <span className={`text-sm font-black ${isSameDay(day, new Date()) ? "text-[var(--accent)]" : ""}`}>
@@ -294,7 +294,7 @@ function WeekGrid({
               key={day.toISOString()}
               onDragOver={(event) => event.preventDefault()}
               onDrop={() => onDropDay(day)}
-              className="quiet-panel min-h-[420px] p-3"
+              className="quiet-panel min-h-[200px] p-3 lg:min-h-[420px]"
             >
               <div className="mb-3">
                 <p className="text-xs font-black uppercase text-[var(--faint)]">{format(day, "EEE", { locale: it })}</p>
