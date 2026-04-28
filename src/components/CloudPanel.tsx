@@ -1,43 +1,51 @@
 import { useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
 import { Button, Field, Panel, Pill, inputClass } from "./ui";
+import { isCloudConfigured, signIn, signOut, signUp } from "../lib/supabase";
 import {
-  getSession,
-  isCloudConfigured,
-  onAuthChange,
-  pullSnapshot,
-  pushSnapshot,
-  signIn,
-  signOut,
-  signUp
-} from "../lib/supabase";
-import { snapshotFromState, useStudyStore } from "../store/useStudyStore";
+  forcePullNow,
+  forcePushNow,
+  subscribeCloudSync,
+  type CloudSyncState
+} from "../lib/cloudSync";
 
-const CLIENT_ID_KEY = "studyos-client-id";
+const formatRelative = (iso: string | null) => {
+  if (!iso) return "mai";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const sec = Math.round(diffMs / 1000);
+  if (sec < 5) return "ora";
+  if (sec < 60) return `${sec}s fa`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min fa`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h fa`;
+  return new Date(iso).toLocaleString();
+};
 
-const getClientId = () => {
-  let id = localStorage.getItem(CLIENT_ID_KEY);
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem(CLIENT_ID_KEY, id);
-  }
-  return id;
+const statusLabel = (sync: CloudSyncState) => {
+  if (!sync.session) return sync.status === "off" ? "non configurato" : "offline";
+  if (sync.status === "syncing") return "sync in corso";
+  if (sync.status === "error") return "errore";
+  if (sync.pendingChanges) return "in attesa";
+  return "auto-sync attivo";
 };
 
 export function CloudPanel() {
-  const replaceAllData = useStudyStore((s) => s.replaceAllData);
-  const [session, setSession] = useState<Session | null>(null);
+  const [sync, setSync] = useState<CloudSyncState>(() => ({
+    status: isCloudConfigured() ? "idle" : "off",
+    session: null,
+    lastSync: null,
+    pendingChanges: false
+  }));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [lastSync, setLastSync] = useState<string | null>(null);
+  const [info, setInfo] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const configured = isCloudConfigured();
 
   useEffect(() => {
     if (!configured) return;
-    getSession().then(setSession);
-    return onAuthChange(setSession);
+    return subscribeCloudSync(setSync);
   }, [configured]);
 
   if (!configured) {
@@ -52,122 +60,126 @@ export function CloudPanel() {
   }
 
   const handleSignIn = async () => {
+    if (!email.trim() || !password) {
+      setInfo("Inserisci email e password.");
+      return;
+    }
     setBusy(true);
-    setMessage("");
+    setInfo("");
     try {
       await signIn(email.trim(), password);
-      setMessage("Login effettuato.");
       setPassword("");
+      setInfo("Accesso effettuato. Sync automatica attiva.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Login fallito.");
+      const msg = error instanceof Error ? error.message : "Login fallito.";
+      setInfo(/email not confirmed/i.test(msg) ? "Email non confermata. Controlla la casella e clicca il link di conferma." : msg);
     } finally {
       setBusy(false);
     }
   };
 
   const handleSignUp = async () => {
+    if (!email.trim() || password.length < 8) {
+      setInfo("Email valida e password di almeno 8 caratteri.");
+      return;
+    }
     setBusy(true);
-    setMessage("");
+    setInfo("");
     try {
       const data = await signUp(email.trim(), password);
-      setMessage(
-        data.session
-          ? "Account creato e login effettuato."
-          : "Account creato. Conferma l'email se richiesto, poi accedi."
-      );
       setPassword("");
+      setInfo(
+        data.session
+          ? "Account creato e accesso effettuato. Sync attiva."
+          : "Account creato. Conferma l'email cliccando il link che hai ricevuto, poi torna qui per accedere."
+      );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Registrazione fallita.");
+      setInfo(error instanceof Error ? error.message : "Registrazione fallita.");
     } finally {
       setBusy(false);
     }
   };
 
   const handleSignOut = async () => {
+    if (!window.confirm("Disconnettersi? I dati locali restano sul dispositivo, ma non saranno più sincronizzati.")) return;
     setBusy(true);
-    setMessage("");
+    setInfo("");
     try {
       await signOut();
-      setMessage("Logout effettuato.");
+      setInfo("Disconnesso.");
     } finally {
       setBusy(false);
     }
   };
 
-  const handlePush = async () => {
+  const handleForcePull = async () => {
+    if (!window.confirm("Forzare il download dal cloud sostituisce i dati locali con l'ultimo snapshot remoto. Continuare?")) return;
     setBusy(true);
-    setMessage("");
-    try {
-      const snapshot = snapshotFromState(useStudyStore.getState());
-      const row = await pushSnapshot(snapshot, getClientId());
-      setLastSync(row.updated_at);
-      setMessage(`Dati salvati su cloud (v${row.version}).`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Push fallito.");
-    } finally {
-      setBusy(false);
-    }
+    setInfo("");
+    await forcePullNow();
+    setBusy(false);
   };
 
-  const handlePull = async () => {
+  const handleForcePush = async () => {
     setBusy(true);
-    setMessage("");
-    try {
-      const row = await pullSnapshot();
-      if (!row) {
-        setMessage("Nessuno snapshot remoto trovato. Fai prima un push.");
-        return;
-      }
-      if (
-        !window.confirm(
-          "Caricare lo snapshot dal cloud sostituisce i dati locali. Continuare?"
-        )
-      ) {
-        return;
-      }
-      await replaceAllData(row.payload);
-      setLastSync(row.updated_at);
-      setMessage(`Dati caricati dal cloud (v${row.version}).`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Pull fallito.");
-    } finally {
-      setBusy(false);
-    }
+    setInfo("");
+    await forcePushNow();
+    setBusy(false);
   };
+
+  const session = sync.session;
 
   return (
     <Panel>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h3 className="text-2xl font-black">Cloud sync</h3>
           <p className="text-sm text-[var(--muted)]">
-            Account Supabase con email e password. Snapshot completo salvato lato server con RLS.
+            Account Supabase con email + password. Ogni modifica viene salvata nel cloud automaticamente.
           </p>
         </div>
-        <Pill active={!!session}>{session ? "online" : "offline"}</Pill>
+        <Pill active={sync.status === "idle" && !!session}>{statusLabel(sync)}</Pill>
       </div>
 
       {session ? (
         <div className="grid gap-3">
           <div className="quiet-panel p-4">
-            <p className="text-sm font-bold text-[var(--muted)]">Connesso come</p>
+            <p className="text-xs font-black uppercase text-[var(--faint)]">Connesso come</p>
             <p className="font-black">{session.user.email}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button icon="Upload" variant="primary" onClick={handlePush} disabled={busy}>
-              Salva su cloud
-            </Button>
-            <Button icon="Download" variant="soft" onClick={handlePull} disabled={busy}>
-              Carica da cloud
-            </Button>
-            <Button icon="LogOut" variant="danger" onClick={handleSignOut} disabled={busy}>
-              Logout
-            </Button>
-          </div>
-          {lastSync ? (
-            <p className="text-xs font-bold text-[var(--muted)]">
-              Ultima sync: {new Date(lastSync).toLocaleString()}
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Email confermata: {session.user.email_confirmed_at ? "si" : "no"} · Ultima sync: {formatRelative(sync.lastSync)}
             </p>
+          </div>
+
+          {sync.error ? (
+            <p className="rounded-[18px] border border-red-400/40 bg-red-500/10 p-3 text-sm font-bold text-red-200">
+              {sync.error}
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Button icon="LogOut" variant="danger" onClick={handleSignOut} disabled={busy}>
+              Disconnetti
+            </Button>
+            <Button icon="Settings" variant="ghost" onClick={() => setShowAdvanced((value) => !value)}>
+              {showAdvanced ? "Nascondi avanzate" : "Avanzate"}
+            </Button>
+          </div>
+
+          {showAdvanced ? (
+            <div className="quiet-panel grid gap-2 p-4">
+              <p className="text-xs font-bold text-[var(--muted)]">
+                Override manuali. Usali solo per recupero o test: la sync automatica copre tutti i casi normali.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button icon="Upload" variant="soft" onClick={handleForcePush} disabled={busy}>
+                  Forza push
+                </Button>
+                <Button icon="Download" variant="soft" onClick={handleForcePull} disabled={busy}>
+                  Forza pull
+                </Button>
+              </div>
+            </div>
           ) : null}
         </div>
       ) : (
@@ -181,7 +193,7 @@ export function CloudPanel() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </Field>
-          <Field label="Password">
+          <Field label="Password (min 8)">
             <input
               className={inputClass}
               type="password"
@@ -201,9 +213,9 @@ export function CloudPanel() {
         </div>
       )}
 
-      {message ? (
+      {info ? (
         <p className="mt-4 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
-          {message}
+          {info}
         </p>
       ) : null}
     </Panel>

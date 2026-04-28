@@ -1,4 +1,9 @@
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  createClient,
+  type RealtimeChannel,
+  type Session,
+  type SupabaseClient
+} from "@supabase/supabase-js";
 import type { StudySnapshot } from "../types";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -96,4 +101,45 @@ export const pullSnapshot = async (): Promise<CloudSnapshotRow | null> => {
   if (error) throw error;
   if (!data) return null;
   return data as CloudSnapshotRow;
+};
+
+export interface RemoteSnapshotPayload {
+  client_id: string | null;
+  updated_at: string;
+  version: number;
+}
+
+export const subscribeRemoteSnapshot = (
+  userId: string,
+  onChange: (row: RemoteSnapshotPayload) => void
+): RealtimeChannel | null => {
+  if (!supabase) return null;
+  const channel = supabase
+    .channel(`studyos-snapshot:${userId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "studyos_items",
+        filter: `user_id=eq.${userId}`
+      },
+      (payload) => {
+        const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
+        if (!row) return;
+        if (row.entity_type !== SNAPSHOT_TYPE || row.entity_id !== SNAPSHOT_ID) return;
+        onChange({
+          client_id: (row.client_id as string | null) ?? null,
+          updated_at: row.updated_at as string,
+          version: (row.version as number) ?? 0
+        });
+      }
+    )
+    .subscribe();
+  return channel;
+};
+
+export const unsubscribeChannel = (channel: RealtimeChannel | null) => {
+  if (!supabase || !channel) return;
+  supabase.removeChannel(channel);
 };

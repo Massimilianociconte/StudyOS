@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useStudyStore } from "./store/useStudyStore";
 import { AppShell } from "./components/AppShell";
 import { LockScreen } from "./components/LockScreen";
+import { initCloudSync } from "./lib/cloudSync";
 import type { AppView } from "./types";
 
 const DashboardView = lazy(() => import("./views/DashboardView").then((module) => ({ default: module.DashboardView })));
@@ -34,7 +35,9 @@ export default function App() {
   const { init, loading, locked, activeView, settings, error } = useStudyStore();
 
   useEffect(() => {
-    init();
+    init().then(() => {
+      void initCloudSync();
+    });
   }, [init]);
 
   useEffect(() => {
