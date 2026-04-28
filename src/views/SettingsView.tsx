@@ -4,6 +4,7 @@ import { createBackupEnvelope, downloadJson, readBackupEnvelope, snapshotFromBac
 import { useStudyStore, snapshotFromState } from "../store/useStudyStore";
 import { Button, Field, Panel, Pill, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { CloudPanel } from "../components/CloudPanel";
 
 const palettes: { id: PaletteName; label: string; colors: string[] }[] = [
   { id: "aurora", label: "Aurora Dark", colors: ["#7CF7C8", "#8B7CFF", "#FF7A8A"] },
@@ -286,6 +287,8 @@ export function SettingsView() {
           </Button>
           {message ? <p className="mt-4 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{message}</p> : null}
         </Panel>
+
+        <CloudPanel />
       </div>
     </div>
   );

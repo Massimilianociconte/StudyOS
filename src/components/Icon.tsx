@@ -20,6 +20,8 @@ import {
   LayoutDashboard,
   LineChart,
   Lock,
+  LogIn,
+  LogOut,
   Moon,
   MoreHorizontal,
   Palette,
@@ -37,6 +39,7 @@ import {
   Timer,
   Trash2,
   Upload,
+  UserPlus,
   Zap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -63,6 +66,8 @@ const icons = {
   LayoutDashboard,
   LineChart,
   Lock,
+  LogIn,
+  LogOut,
   Moon,
   MoreHorizontal,
   Palette,
@@ -80,6 +85,7 @@ const icons = {
   Timer,
   Trash2,
   Upload,
+  UserPlus,
   Zap
 } satisfies Record<string, LucideIcon>;
 

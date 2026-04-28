@@ -10,6 +10,7 @@
     "lint": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.105.1",
     "date-fns": "latest",
     "dexie": "latest",
     "framer-motion": "latest",
