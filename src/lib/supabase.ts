@@ -25,11 +25,32 @@ export const isCloudConfigured = () => supabase !== null;
 const SNAPSHOT_TYPE = "snapshot";
 const SNAPSHOT_ID = "main";
 
+const getEmailRedirectTo = () => {
+  if (typeof window === "undefined") return undefined;
+  return `${window.location.origin}${window.location.pathname}`;
+};
+
 export const signUp = async (email: string, password: string) => {
   if (!supabase) throw new Error("Supabase non configurato.");
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const emailRedirectTo = getEmailRedirectTo();
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: emailRedirectTo ? { emailRedirectTo } : undefined
+  });
   if (error) throw error;
   return data;
+};
+
+export const resendConfirmation = async (email: string) => {
+  if (!supabase) throw new Error("Supabase non configurato.");
+  const emailRedirectTo = getEmailRedirectTo();
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email,
+    options: emailRedirectTo ? { emailRedirectTo } : undefined
+  });
+  if (error) throw error;
 };
 
 export const signIn = async (email: string, password: string) => {

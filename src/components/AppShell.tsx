@@ -7,6 +7,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
 import { Button, IconButton, inputClass } from "./ui";
 import { QuickAddModal } from "./QuickAddModal";
+import { CloudStatusBadge } from "./CloudStatusBadge";
 
 const navItems: { view: AppView; label: string; icon: string }[] = [
   { view: "dashboard", label: "Dashboard", icon: "LayoutDashboard" },
@@ -114,6 +115,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   Blocca
                 </Button>
               ) : null}
+              <CloudStatusBadge onClick={() => setActiveView("settings")} />
             </div>
           </div>
         </aside>
