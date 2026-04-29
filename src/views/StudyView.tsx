@@ -70,29 +70,33 @@ export function StudyView() {
       <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
         <div className="grid gap-4 lg:grid-cols-2">
           <Panel className="lg:col-span-2">
-            <div className="grid items-center gap-6 md:grid-cols-[280px_1fr]">
-              <div className="mx-auto w-full max-w-[260px]">
+            <div className="grid items-center gap-5 md:grid-cols-[260px_1fr] md:gap-6">
+              <div className="mx-auto w-full max-w-[200px] sm:max-w-[240px] md:max-w-[260px]">
                 <ProgressRing
                   value={timer.mode === "pomodoro" ? (timer.remainingSeconds / (25 * 60)) * 100 : timer.mode === "deep-focus" ? (timer.remainingSeconds / (90 * 60)) * 100 : (timer.remainingSeconds / (45 * 60)) * 100}
                   label={timer.label}
                   color="var(--accent)"
                 />
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 text-center md:text-left">
                 <p className="text-xs font-black uppercase text-[var(--faint)]">Timer integrato</p>
-                <div className="mt-2 text-7xl font-black tabular-nums">
+                <div className="mt-2 text-5xl font-black tabular-nums sm:text-6xl md:text-7xl">
                   {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button variant="soft" onClick={() => startTimer("pomodoro")}>
+
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <Button variant={timer.mode === "pomodoro" ? "primary" : "soft"} onClick={() => startTimer("pomodoro")}>
                     Pomodoro
                   </Button>
-                  <Button variant="soft" onClick={() => startTimer("classic")}>
+                  <Button variant={timer.mode === "classic" ? "primary" : "soft"} onClick={() => startTimer("classic")}>
                     Classico
                   </Button>
-                  <Button variant="soft" onClick={() => startTimer("deep-focus")}>
-                    Deep focus
+                  <Button variant={timer.mode === "deep-focus" ? "primary" : "soft"} onClick={() => startTimer("deep-focus")}>
+                    Deep
                   </Button>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
                   <Button
                     variant={timer.running ? "danger" : "primary"}
                     icon={timer.running ? "Timer" : "Zap"}
@@ -104,6 +108,7 @@ export function StudyView() {
                     Completa
                   </Button>
                 </div>
+
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   <Field label="Sessione">
                     <input className={inputClass} value={sessionTitle} onChange={(event) => setSessionTitle(event.target.value)} />
@@ -178,7 +183,7 @@ export function StudyView() {
         <aside className="grid content-start gap-4">
           <Panel>
             <h3 className="mb-4 text-2xl font-black">Settimana</h3>
-            <div className="text-6xl font-black">{Math.round((weeklyMinutes / 60) * 10) / 10}h</div>
+            <div className="text-5xl font-black sm:text-6xl">{Math.round((weeklyMinutes / 60) * 10) / 10}h</div>
             <p className="mt-1 text-sm font-bold text-[var(--muted)]">studio completato</p>
             <div className="mt-5">
               <ProgressBar value={Math.min(100, (weeklyMinutes / (18 * 60)) * 100)} />

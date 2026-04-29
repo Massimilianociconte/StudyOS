@@ -1,13 +1,13 @@
-import { useMemo, useState, type PropsWithChildren } from "react";
+import { useState, type PropsWithChildren } from "react";
 import { format } from "date-fns";
 import { it } from "date-fns/locale";
-import { AnimatePresence, motion } from "framer-motion";
 import type { AppView } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
-import { Button, IconButton, inputClass } from "./ui";
+import { Button, IconButton } from "./ui";
 import { QuickAddModal } from "./QuickAddModal";
 import { CloudStatusBadge } from "./CloudStatusBadge";
+import { GlobalSearch } from "./GlobalSearch";
 
 const navItems: { view: AppView; label: string; icon: string }[] = [
   { view: "dashboard", label: "Dashboard", icon: "LayoutDashboard" },
@@ -28,36 +28,7 @@ const mobileItems = navItems.filter((item) =>
 
 export function AppShell({ children }: PropsWithChildren) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const {
-    activeView,
-    setActiveView,
-    subjects,
-    exams,
-    events,
-    tasks,
-    attachments,
-    settings,
-    lockVault
-  } = useStudyStore();
-
-  const searchResults = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return [];
-    return [
-      ...tasks.map((item) => ({ type: "Task", title: item.title, view: "tasks" as AppView })),
-      ...events.map((item) => ({ type: "Evento", title: item.title, view: "calendar" as AppView })),
-      ...subjects.map((item) => ({ type: "Materia", title: item.name, view: "subjects" as AppView })),
-      ...exams.map((item) => ({
-        type: "Esame",
-        title: subjects.find((subject) => subject.id === item.subjectId)?.name ?? "Esame",
-        view: "exams" as AppView
-      })),
-      ...attachments.map((item) => ({ type: "Materiale", title: item.name, view: "materials" as AppView }))
-    ]
-      .filter((item) => item.title.toLowerCase().includes(normalized))
-      .slice(0, 6);
-  }, [attachments, events, exams, query, subjects, tasks]);
+  const { activeView, setActiveView, settings, lockVault } = useStudyStore();
 
   const todayLabel = format(new Date(), "EEEE d MMMM", { locale: it });
 
@@ -124,41 +95,7 @@ export function AppShell({ children }: PropsWithChildren) {
           <header className="sticky top-0 z-30 mb-6 rounded-[30px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_72%,transparent)] p-2 backdrop-blur-2xl md:top-4 md:mb-8">
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-[180px] flex-1">
-                <div className="relative">
-                  <Icon name="Search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
-                  <input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    className={`${inputClass} pl-10`}
-                    placeholder="Cerca task, eventi, materie, file..."
-                    aria-label="Ricerca globale"
-                  />
-                  <AnimatePresence>
-                    {searchResults.length > 0 ? (
-                      <motion.div
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 8 }}
-                        className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 overflow-hidden rounded-[24px] border border-[var(--border)] bg-[var(--bg-2)] p-2 shadow-soft"
-                      >
-                        {searchResults.map((result) => (
-                          <button
-                            key={`${result.type}-${result.title}`}
-                            type="button"
-                            onClick={() => {
-                              setActiveView(result.view);
-                              setQuery("");
-                            }}
-                            className="flex w-full items-center justify-between rounded-[18px] px-3 py-2 text-left hover:bg-[var(--surface)]"
-                          >
-                            <span className="min-w-0 truncate text-sm font-extrabold">{result.title}</span>
-                            <span className="text-xs font-bold text-[var(--muted)]">{result.type}</span>
-                          </button>
-                        ))}
-                      </motion.div>
-                    ) : null}
-                  </AnimatePresence>
-                </div>
+                <GlobalSearch onJump={(view) => setActiveView(view)} />
               </div>
               <div className="hidden text-right sm:block">
                 <p className="text-xs font-black uppercase text-[var(--faint)]">Oggi</p>
