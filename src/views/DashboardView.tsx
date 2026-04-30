@@ -276,7 +276,7 @@ export function DashboardView() {
                 <h3 className="text-xl font-black">
                   {settings.security.mode === "vault" ? "Workspace cifrato" : "Local-first"}
                 </h3>
-                <p className="safe-text text-sm text-[var(--muted)]">IndexedDB locale, backup manuali e nessuna API esterna.</p>
+                <p className="safe-text text-sm text-[var(--muted)]">IndexedDB locale, backup manuali e cloud sync opzionale.</p>
               </div>
             </div>
           </Panel>

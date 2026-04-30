@@ -12,7 +12,8 @@ export const createBackupEnvelope = async (
     palette: settings.palette,
     density: settings.density,
     cardShape: settings.cardShape,
-    dateFormat: settings.dateFormat
+    dateFormat: settings.dateFormat,
+    profile: settings.profile
   };
 
   if (!passphrase) {

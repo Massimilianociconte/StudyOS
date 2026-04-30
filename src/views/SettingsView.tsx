@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AppView, PaletteName, ThemeMode } from "../types";
 import { createBackupEnvelope, downloadJson, readBackupEnvelope, snapshotFromBackup } from "../lib/backup";
 import { useStudyStore, snapshotFromState } from "../store/useStudyStore";
+import { readImageFile } from "../lib/files";
 import { Button, Field, Panel, Pill, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CloudPanel } from "../components/CloudPanel";
@@ -111,6 +112,55 @@ export function SettingsView() {
       />
 
       <div className="grid gap-4 xl:grid-cols-2">
+        <Panel>
+          <h3 className="mb-4 text-2xl font-black">Profilo</h3>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-super bg-[var(--surface-soft)]">
+              {settings.profile?.avatarDataUrl ? (
+                <img src={settings.profile.avatarDataUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <Icon name="User" className="h-9 w-9 text-[var(--accent)]" />
+              )}
+            </div>
+            <div className="grid min-w-0 flex-1 gap-3">
+              <Field label="Nome visualizzato">
+                <input
+                  className={inputClass}
+                  value={settings.profile?.displayName ?? ""}
+                  onChange={(event) => updateSettings({ profile: { displayName: event.target.value } })}
+                  placeholder="Il tuo nome"
+                />
+              </Field>
+              <div className="flex flex-wrap gap-2">
+                <label className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)]">
+                  <Icon name="Upload" className="h-4 w-4" />
+                  Foto profilo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={async (event) => {
+                      try {
+                        const avatarDataUrl = await readImageFile(event.target.files?.[0]);
+                        if (avatarDataUrl) await updateSettings({ profile: { avatarDataUrl } });
+                      } catch (error) {
+                        setMessage(error instanceof Error ? error.message : "Immagine non valida.");
+                      } finally {
+                        event.target.value = "";
+                      }
+                    }}
+                  />
+                </label>
+                {settings.profile?.avatarDataUrl ? (
+                  <Button variant="danger" icon="Trash2" onClick={() => updateSettings({ profile: { avatarDataUrl: "" } })}>
+                    Rimuovi foto
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </Panel>
+
         <Panel>
           <h3 className="mb-4 text-2xl font-black">Aspetto</h3>
           <div className="grid gap-4">

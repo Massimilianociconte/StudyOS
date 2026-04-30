@@ -28,7 +28,7 @@ const mobileItems = navItems.filter((item) =>
 
 export function AppShell({ children }: PropsWithChildren) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const { activeView, setActiveView, settings, lockVault } = useStudyStore();
+  const { activeView, setActiveView, settings, updateSettings, lockVault } = useStudyStore();
 
   const todayLabel = format(new Date(), "EEEE d MMMM", { locale: it });
 
@@ -47,7 +47,9 @@ export function AppShell({ children }: PropsWithChildren) {
               </span>
               <span>
                 <span className="block text-2xl font-black">StudyOS</span>
-                <span className="block text-xs font-bold text-[var(--muted)]">local-first workspace</span>
+                <span className="block text-xs font-bold text-[var(--muted)]">
+                  {settings.profile?.displayName?.trim() || "local-first workspace"}
+                </span>
               </span>
             </button>
 
@@ -80,7 +82,7 @@ export function AppShell({ children }: PropsWithChildren) {
               <p className="text-sm font-extrabold">
                 {settings.security.mode === "vault" ? "Vault cifrato attivo" : "Dati locali nel browser"}
               </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">Nessun dato personale lascia il dispositivo.</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Locale di default, cloud sync solo se configuri e accedi.</p>
               {settings.security.mode === "vault" ? (
                 <Button icon="Lock" variant="soft" className="mt-3 w-full" onClick={lockVault}>
                   Blocca
@@ -101,7 +103,24 @@ export function AppShell({ children }: PropsWithChildren) {
                 <p className="text-xs font-black uppercase text-[var(--faint)]">Oggi</p>
                 <p className="text-sm font-extrabold capitalize">{todayLabel}</p>
               </div>
-              <IconButton icon={settings.themeMode === "light" ? "Sun" : "Moon"} label="Tema attivo" />
+              <IconButton
+                icon={settings.themeMode === "light" ? "Sun" : "Moon"}
+                label={settings.themeMode === "light" ? "Passa al tema scuro" : "Passa al tema chiaro"}
+                onClick={() => updateSettings({ themeMode: settings.themeMode === "light" ? "dark" : "light" })}
+              />
+              <button
+                type="button"
+                aria-label="Apri profilo"
+                title="Apri profilo"
+                onClick={() => setActiveView("settings")}
+                className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
+              >
+                {settings.profile?.avatarDataUrl ? (
+                  <img src={settings.profile.avatarDataUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <Icon name="User" className="h-4.5 w-4.5" />
+                )}
+              </button>
               <Button icon="Plus" variant="primary" onClick={() => setQuickAddOpen(true)}>
                 Quick add
               </Button>
@@ -134,12 +153,14 @@ export function AppShell({ children }: PropsWithChildren) {
               key={item.view}
               type="button"
               onClick={() => setActiveView(item.view)}
-              className={`grid min-h-14 place-items-center rounded-[22px] text-[11px] font-black ${
+              className={`grid min-h-14 min-w-0 place-items-center rounded-[22px] text-[11px] font-black ${
                 active ? "bg-[var(--accent)] text-[#10131d]" : "text-[var(--muted)]"
               }`}
             >
               <Icon name={item.icon} className="h-5 w-5" />
-              <span>{item.view === "dashboard" ? "Home" : item.label.split(" ")[0]}</span>
+              <span className="one-line-safe px-0.5 text-center">
+                {item.view === "dashboard" ? "Home" : item.view === "settings" ? "Altro" : item.label.split(" ")[0]}
+              </span>
             </button>
           );
         })}

@@ -20,6 +20,10 @@ export const defaultSettings = (): UserSettings => ({
     "materials",
     "suggestion"
   ],
+  profile: {
+    displayName: "",
+    avatarDataUrl: ""
+  },
   security: {
     mode: "standard",
     backupEncryptionDefault: true

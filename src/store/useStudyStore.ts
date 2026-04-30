@@ -21,6 +21,7 @@ import { createId, nowIso } from "../lib/id";
 import { clearDataTables, db, readSnapshotFromDb, writeSnapshotToDb } from "../lib/db";
 import { decryptString, encryptString, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { stripLegacyMockData } from "../lib/migrations";
+import { fileToDataUrl } from "../lib/files";
 
 let sessionPassphrase: string | undefined;
 
@@ -61,12 +62,15 @@ interface StudyState {
   addTask: (task: Partial<Task> & Pick<Task, "title">) => Promise<void>;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
   toggleTask: (id: string) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
   addEvent: (event: Partial<CalendarEvent> & Pick<CalendarEvent, "title" | "start" | "end">) => Promise<void>;
   updateEvent: (id: string, patch: Partial<CalendarEvent>) => Promise<void>;
+  deleteEvent: (id: string) => Promise<void>;
   addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<void>;
   updateSubject: (id: string, patch: Partial<Subject>) => Promise<void>;
   addExam: (exam: Partial<Exam> & Pick<Exam, "subjectId" | "date">) => Promise<void>;
   updateExam: (id: string, patch: Partial<Exam>) => Promise<void>;
+  deleteExam: (id: string) => Promise<void>;
   addSession: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
   updateSession: (id: string, patch: Partial<StudySession>) => Promise<void>;
   completeTopicReview: (id: string) => Promise<void>;
@@ -126,14 +130,6 @@ const applySnapshot = (snapshot: StudySnapshot) => ({
   reminders: snapshot.reminders,
   widgets: snapshot.widgets
 });
-
-const fileToDataUrl = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
 
 const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => ({
   id: createId("task"),
@@ -303,7 +299,13 @@ export const useStudyStore = create<StudyState>((set, get) => ({
   setActiveView: (view) => set({ activeView: view }),
 
   updateSettings: async (patch) => {
-    const settings = { ...get().settings, ...patch, updatedAt: nowIso() };
+    const settings = {
+      ...get().settings,
+      ...patch,
+      profile: patch.profile ? { ...get().settings.profile, ...patch.profile } : get().settings.profile,
+      security: patch.security ? { ...get().settings.security, ...patch.security } : get().settings.security,
+      updatedAt: nowIso()
+    };
     set({ settings });
     await persistState(get());
   },
@@ -327,6 +329,26 @@ export const useStudyStore = create<StudyState>((set, get) => ({
           ? { ...task, status: task.status === "done" ? "todo" : "done", updatedAt: nowIso() }
           : task
       )
+    }));
+    await persistState(get());
+  },
+
+  deleteTask: async (id) => {
+    const detachLinkedEntity = <T extends { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string }>(item: T) =>
+      item.linkedEntityType === "task" && item.linkedEntityId === id
+        ? { ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: nowIso() }
+        : item;
+
+    set((state) => ({
+      tasks: state.tasks.filter((task) => task.id !== id),
+      goals: state.goals.map((goal) =>
+        goal.linkedTaskIds.includes(id)
+          ? { ...goal, linkedTaskIds: goal.linkedTaskIds.filter((taskId) => taskId !== id), updatedAt: nowIso() }
+          : goal
+      ),
+      attachments: state.attachments.map(detachLinkedEntity),
+      notes: state.notes.map(detachLinkedEntity),
+      reminders: state.reminders.map(detachLinkedEntity)
     }));
     await persistState(get());
   },
@@ -362,6 +384,21 @@ export const useStudyStore = create<StudyState>((set, get) => ({
   updateEvent: async (id, patch) => {
     set((state) => ({
       events: state.events.map((event) => (event.id === id ? { ...event, ...patch, updatedAt: nowIso() } : event))
+    }));
+    await persistState(get());
+  },
+
+  deleteEvent: async (id) => {
+    const detachLinkedEntity = <T extends { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string }>(item: T) =>
+      item.linkedEntityType === "calendarEvent" && item.linkedEntityId === id
+        ? { ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: nowIso() }
+        : item;
+
+    set((state) => ({
+      events: state.events.filter((event) => event.id !== id),
+      attachments: state.attachments.map(detachLinkedEntity),
+      notes: state.notes.map(detachLinkedEntity),
+      reminders: state.reminders.map(detachLinkedEntity)
     }));
     await persistState(get());
   },
@@ -412,7 +449,8 @@ export const useStudyStore = create<StudyState>((set, get) => ({
       targetGrade: exam.targetGrade ?? 28,
       status: exam.status ?? "planning",
       simulations: exam.simulations ?? 0,
-      frequentQuestions: exam.frequentQuestions ?? []
+      frequentQuestions: exam.frequentQuestions ?? [],
+      cover: exam.cover
     };
     set((state) => ({ exams: [created, ...state.exams] }));
     await persistState(get());
@@ -421,6 +459,21 @@ export const useStudyStore = create<StudyState>((set, get) => ({
   updateExam: async (id, patch) => {
     set((state) => ({
       exams: state.exams.map((exam) => (exam.id === id ? { ...exam, ...patch, updatedAt: nowIso() } : exam))
+    }));
+    await persistState(get());
+  },
+
+  deleteExam: async (id) => {
+    const detachLinkedEntity = <T extends { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string }>(item: T) =>
+      item.linkedEntityType === "exam" && item.linkedEntityId === id
+        ? { ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: nowIso() }
+        : item;
+
+    set((state) => ({
+      exams: state.exams.filter((exam) => exam.id !== id),
+      attachments: state.attachments.map(detachLinkedEntity),
+      notes: state.notes.map(detachLinkedEntity),
+      reminders: state.reminders.map(detachLinkedEntity)
     }));
     await persistState(get());
   },
@@ -591,7 +644,17 @@ export const useStudyStore = create<StudyState>((set, get) => ({
   },
 
   resetAllData: async () => {
-    const settings = { ...defaultSettings(), themeMode: get().settings.themeMode, palette: get().settings.palette };
+    const current = get().settings;
+    const settings = {
+      ...defaultSettings(),
+      themeMode: current.themeMode,
+      palette: current.palette,
+      density: current.density,
+      cardShape: current.cardShape,
+      initialView: current.initialView,
+      dateFormat: current.dateFormat,
+      profile: current.profile
+    };
     const snapshot = createEmptySnapshot();
     await db.vault.clear();
     await db.settings.put(settings);

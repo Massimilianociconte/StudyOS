@@ -31,7 +31,7 @@ export function TasksView() {
   const [title, setTitle] = useState("");
   const [subjectId, setSubjectId] = useState("");
   const [priority, setPriority] = useState<Task["priority"]>("medium");
-  const { tasks, subjects, addTask, updateTask, toggleTask } = useStudyStore();
+  const { tasks, subjects, addTask, updateTask, toggleTask, deleteTask } = useStudyStore();
 
   const sortedTasks = useMemo(() => {
     const list = [...tasks].filter((task) => task.status !== "archived");
@@ -71,13 +71,13 @@ export function TasksView() {
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <Panel>
           {mode === "kanban" ? (
-            <Kanban tasks={tasks} subjects={subjects} updateTask={updateTask} toggleTask={toggleTask} />
+            <Kanban tasks={tasks} subjects={subjects} updateTask={updateTask} toggleTask={toggleTask} deleteTask={deleteTask} />
           ) : mode === "matrix" ? (
-            <Matrix tasks={tasks} subjects={subjects} toggleTask={toggleTask} />
+            <Matrix tasks={tasks} subjects={subjects} toggleTask={toggleTask} deleteTask={deleteTask} />
           ) : mode === "subject" ? (
-            <BySubject tasks={tasks} subjects={subjects} toggleTask={toggleTask} />
+            <BySubject tasks={tasks} subjects={subjects} toggleTask={toggleTask} deleteTask={deleteTask} />
           ) : (
-            <TaskList tasks={sortedTasks} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} focus={mode === "focus"} />
+            <TaskList tasks={sortedTasks} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} focus={mode === "focus"} />
           )}
         </Panel>
 
@@ -140,15 +140,21 @@ function TaskCard({
   task,
   subjects,
   toggleTask,
-  updateTask
+  updateTask,
+  deleteTask
 }: {
   task: Task;
   subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
   toggleTask: (id: string) => Promise<void>;
   updateTask?: (id: string, patch: Partial<Task>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
 }) {
   const color = subjectColor(subjects, task.subjectId);
   const overdue = task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && task.status !== "done" : false;
+  const confirmDelete = () => {
+    const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
+    if (window.confirm(`Eliminare la task "${label}"?`)) void deleteTask(task.id);
+  };
 
   return (
     <article className="quiet-panel min-w-0 overflow-hidden p-4">
@@ -193,20 +199,25 @@ function TaskCard({
             ) : null}
           </div>
         </div>
-        {updateTask ? (
-          <select
-            className="w-full rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2 text-xs font-black sm:w-auto"
-            value={task.status}
-            onChange={(event) => updateTask(task.id, { status: event.target.value as Task["status"] })}
-            aria-label="Cambia stato task"
-          >
-            {statuses.map((status) => (
-              <option key={status.id} value={status.id}>
-                {status.label}
-              </option>
-            ))}
-          </select>
-        ) : null}
+        <div className="flex w-full shrink-0 gap-2 sm:w-auto sm:flex-col">
+          {updateTask ? (
+            <select
+              className="min-w-0 flex-1 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2 text-xs font-black sm:w-auto"
+              value={task.status}
+              onChange={(event) => updateTask(task.id, { status: event.target.value as Task["status"] })}
+              aria-label="Cambia stato task"
+            >
+              {statuses.map((status) => (
+                <option key={status.id} value={status.id}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <Button variant="danger" icon="Trash2" className="min-h-10 px-3" onClick={confirmDelete}>
+            Elimina
+          </Button>
+        </div>
       </div>
     </article>
   );
@@ -217,12 +228,14 @@ function TaskList({
   subjects,
   toggleTask,
   updateTask,
+  deleteTask,
   focus
 }: {
   tasks: Task[];
   subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
   toggleTask: (id: string) => Promise<void>;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
   focus?: boolean;
 }) {
   return (
@@ -233,8 +246,13 @@ function TaskList({
       </div>
       <div className="grid gap-3">
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} />
+          <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} />
         ))}
+        {tasks.length === 0 ? (
+          <div className="quiet-panel p-8 text-center text-sm font-bold text-[var(--muted)]">
+            Nessuna task in questa vista.
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -244,12 +262,14 @@ function Kanban({
   tasks,
   subjects,
   updateTask,
-  toggleTask
+  toggleTask,
+  deleteTask
 }: {
   tasks: Task[];
   subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
   toggleTask: (id: string) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
 }) {
   return (
     <div className="grid gap-3 xl:grid-cols-5">
@@ -260,7 +280,7 @@ function Kanban({
             {tasks
               .filter((task) => task.status === status.id)
               .map((task) => (
-                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} />
+                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} />
               ))}
           </div>
         </div>
@@ -272,11 +292,13 @@ function Kanban({
 function Matrix({
   tasks,
   subjects,
-  toggleTask
+  toggleTask,
+  deleteTask
 }: {
   tasks: Task[];
   subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
   toggleTask: (id: string) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
 }) {
   const quadrants = [
     { title: "Fai ora", test: (task: Task) => task.importance >= 4 && ["urgent", "high"].includes(task.priority) },
@@ -293,7 +315,7 @@ function Matrix({
             {tasks
               .filter((task) => task.status !== "done" && quadrant.test(task))
               .map((task) => (
-                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} />
+                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} deleteTask={deleteTask} />
               ))}
           </div>
         </div>
@@ -305,11 +327,13 @@ function Matrix({
 function BySubject({
   tasks,
   subjects,
-  toggleTask
+  toggleTask,
+  deleteTask
 }: {
   tasks: Task[];
   subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
   toggleTask: (id: string) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
 }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -323,7 +347,7 @@ function BySubject({
             {tasks
               .filter((task) => task.subjectId === subject.id)
               .map((task) => (
-                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} />
+                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} deleteTask={deleteTask} />
               ))}
           </div>
         </div>

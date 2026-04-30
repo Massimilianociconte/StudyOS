@@ -37,6 +37,10 @@ export interface UserSettings {
   initialView: AppView;
   dateFormat: "dd/MM/yyyy" | "yyyy-MM-dd";
   dashboardLayout: string[];
+  profile?: {
+    displayName?: string;
+    avatarDataUrl?: string;
+  };
   security: {
     mode: "standard" | "vault";
     backupEncryptionDefault: boolean;
@@ -82,6 +86,7 @@ export interface Exam extends BaseEntity {
   status: "planning" | "studying" | "reviewing" | "ready" | "done";
   simulations: number;
   frequentQuestions: string[];
+  cover?: string;
 }
 
 export type EventCategory =
@@ -276,5 +281,5 @@ export interface BackupEnvelope {
   encrypted: boolean;
   data?: StudySnapshot;
   crypto?: VaultRecord;
-  settings: Pick<UserSettings, "themeMode" | "palette" | "density" | "cardShape" | "dateFormat">;
+  settings: Pick<UserSettings, "themeMode" | "palette" | "density" | "cardShape" | "dateFormat" | "profile">;
 }

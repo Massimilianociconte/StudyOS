@@ -5,6 +5,7 @@ import {
   BarChart3,
   BookOpen,
   CalendarDays,
+  ChevronLeft,
   Check,
   ChevronRight,
   CircleDot,
@@ -16,6 +17,7 @@ import {
   GraduationCap,
   Grid2X2,
   Home,
+  Image,
   Import,
   LayoutDashboard,
   LineChart,
@@ -39,7 +41,9 @@ import {
   Timer,
   Trash2,
   Upload,
+  User,
   UserPlus,
+  X,
   Zap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -51,6 +55,7 @@ const icons = {
   BarChart3,
   BookOpen,
   CalendarDays,
+  ChevronLeft,
   Check,
   ChevronRight,
   CircleDot,
@@ -62,6 +67,7 @@ const icons = {
   GraduationCap,
   Grid2X2,
   Home,
+  Image,
   Import,
   LayoutDashboard,
   LineChart,
@@ -85,7 +91,9 @@ const icons = {
   Timer,
   Trash2,
   Upload,
+  User,
   UserPlus,
+  X,
   Zap
 } satisfies Record<string, LucideIcon>;
 
