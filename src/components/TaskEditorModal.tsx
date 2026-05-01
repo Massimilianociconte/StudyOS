@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, Pill, inputClass } from "./ui";
+import { useNow } from "../hooks/useNow";
+import { formatElapsedSeconds, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -45,6 +47,9 @@ export function TaskEditorModal({
     importance: String(task.importance)
   });
   const [error, setError] = useState("");
+  const timerRunning = isTaskTimerRunning(task);
+  const now = useNow(1000, timerRunning);
+  const elapsedSeconds = taskElapsedSeconds(task, now);
 
   const save = async () => {
     setError("");
@@ -85,8 +90,7 @@ export function TaskEditorModal({
       tags: parseTags(draft.tags),
       notes: draft.notes.trim(),
       difficulty: Math.max(1, Math.min(5, difficulty)) as Task["difficulty"],
-      importance: Math.max(1, Math.min(5, importance)) as Task["importance"],
-      completedAt: draft.status === "done" ? task.completedAt ?? new Date().toISOString() : undefined
+      importance: Math.max(1, Math.min(5, importance)) as Task["importance"]
     });
     onClose();
   };
@@ -183,6 +187,7 @@ export function TaskEditorModal({
           <div className="quiet-panel flex flex-wrap gap-2 p-3">
             <Pill>{draft.status}</Pill>
             <Pill>{draft.estimatedMinutes || 0} min stimati</Pill>
+            {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
             {draft.actualMinutes ? <Pill>{draft.actualMinutes} min effettivi</Pill> : null}
             {task.completedAt ? <Pill>completata</Pill> : null}
           </div>

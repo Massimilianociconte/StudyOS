@@ -53,7 +53,7 @@ export function CloudStatusBadge({ onClick }: { onClick?: () => void }) {
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-black/20">
         <Icon name={session ? "Sparkles" : "Shield"} className="h-4 w-4" />
       </span>
-      <span className="min-w-0">
+      <span className="min-w-0 flex-1">
         <span className="block text-xs font-black uppercase opacity-80">{label}</span>
         <span className="block truncate text-xs font-bold opacity-90">{subtitle}</span>
       </span>

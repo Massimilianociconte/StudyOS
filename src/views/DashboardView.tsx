@@ -40,11 +40,13 @@ export function DashboardView() {
   const doneRate = completionRate(tasks);
   const activeSubjects = subjects.filter((subject) => ["active", "review", "exam-ready"].includes(subject.status));
   const nextTask = urgent[0];
+  const displayName = settings.profile?.displayName?.trim();
+  const welcomeName = displayName ? displayName.split(/[ @]/).filter(Boolean)[0] : "";
 
   return (
     <div>
       <SectionTitle
-        title="Dashboard"
+        title={welcomeName ? `Bentornato, ${welcomeName}` : "Dashboard"}
         subtitle="Il centro operativo della giornata: studio, scadenze, materiali e prossima azione."
         action={
           <Button icon="Timer" variant="soft" onClick={() => setActiveView("study")}>

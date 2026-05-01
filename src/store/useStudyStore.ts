@@ -22,6 +22,7 @@ import { clearDataTables, db, readSnapshotFromDb, writeSnapshotToDb } from "../l
 import { decryptString, encryptString, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { stripLegacyMockData } from "../lib/migrations";
 import { fileToDataUrl } from "../lib/files";
+import { normalizeTaskPatch, taskStatusTransitionPatch } from "../lib/taskTimer";
 
 let sessionPassphrase: string | undefined;
 
@@ -149,6 +150,9 @@ const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => ({
   estimatedMinutes: task.estimatedMinutes ?? 45,
   actualMinutes: task.actualMinutes,
   completedAt: task.completedAt,
+  timerStartedAt: task.timerStartedAt,
+  timerAccumulatedSeconds: task.timerAccumulatedSeconds,
+  timerLastReminderAt: task.timerLastReminderAt,
   energy: task.energy ?? "medium",
   difficulty: task.difficulty ?? 2,
   importance: task.importance ?? 3,
@@ -319,7 +323,9 @@ export const useStudyStore = create<StudyState>((set, get) => ({
 
   updateTask: async (id, patch) => {
     set((state) => ({
-      tasks: state.tasks.map((task) => (task.id === id ? { ...task, ...patch, updatedAt: nowIso() } : task))
+      tasks: state.tasks.map((task) =>
+        task.id === id ? { ...task, ...normalizeTaskPatch(task, patch), updatedAt: nowIso() } : task
+      )
     }));
     await persistState(get());
   },
@@ -328,12 +334,7 @@ export const useStudyStore = create<StudyState>((set, get) => ({
     set((state) => ({
       tasks: state.tasks.map((task) =>
         task.id === id
-          ? {
-              ...task,
-              status: task.status === "done" ? "todo" : "done",
-              completedAt: task.status === "done" ? undefined : task.completedAt ?? nowIso(),
-              updatedAt: nowIso()
-            }
+          ? { ...task, ...taskStatusTransitionPatch(task, task.status === "done" ? "todo" : "done"), updatedAt: nowIso() }
           : task
       )
     }));

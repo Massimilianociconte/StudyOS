@@ -6,6 +6,8 @@ import { shortDate, subjectColor, subjectName, urgentTasks } from "../lib/select
 import { Button, Field, IconButton, Panel, Pill, ProgressBar, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
+import { useNow } from "../hooks/useNow";
+import { formatElapsedSeconds, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 
 type TaskMode = "list" | "kanban" | "matrix" | "priority" | "subject" | "deadline" | "focus";
 
@@ -186,15 +188,15 @@ function TaskCard({
 }) {
   const color = subjectColor(subjects, task.subjectId);
   const overdue = task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && task.status !== "done" : false;
+  const timerRunning = isTaskTimerRunning(task);
+  const now = useNow(1000, timerRunning);
+  const elapsedSeconds = taskElapsedSeconds(task, now);
   const confirmDelete = () => {
     const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
     if (window.confirm(`Eliminare la task "${label}"?`)) void deleteTask(task.id);
   };
   const changeStatus = (status: Task["status"]) => {
-    void updateTask?.(task.id, {
-      status,
-      completedAt: status === "done" ? task.completedAt ?? new Date().toISOString() : undefined
-    });
+    void updateTask?.(task.id, { status });
   };
 
   return (
@@ -228,7 +230,8 @@ function TaskCard({
               </span>
               {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
               <Pill>{task.estimatedMinutes} min</Pill>
-              {task.actualMinutes !== undefined ? <Pill>{task.actualMinutes} min reali</Pill> : null}
+              {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
+              {task.actualMinutes !== undefined && !timerRunning ? <Pill>{task.actualMinutes} min reali</Pill> : null}
               <Pill>energia {task.energy}</Pill>
             </div>
             {task.subtasks.length > 0 ? (
@@ -326,10 +329,7 @@ function Kanban({
   const moveTask = async (taskId: string, status: Task["status"]) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status === status) return;
-    await updateTask(taskId, {
-      status,
-      completedAt: status === "done" ? task.completedAt ?? new Date().toISOString() : undefined
-    });
+    await updateTask(taskId, { status });
   };
 
   return (
@@ -414,6 +414,9 @@ function KanbanTaskCard({
   const color = subjectColor(subjects, task.subjectId);
   const overdue = task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && task.status !== "done" : false;
   const done = task.status === "done";
+  const timerRunning = isTaskTimerRunning(task);
+  const now = useNow(1000, timerRunning);
+  const elapsedSeconds = taskElapsedSeconds(task, now);
   const confirmDelete = () => {
     const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
     if (window.confirm(`Eliminare la task "${label}"?`)) void onDelete(task.id);
@@ -461,6 +464,7 @@ function KanbanTaskCard({
         <Pill active={task.priority === "urgent"}>{task.priority}</Pill>
         {overdue ? <Pill className="border-red-400/30 text-red-200">in ritardo</Pill> : null}
         {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
+        {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-xs font-black text-[var(--muted)]">
@@ -469,8 +473,8 @@ function KanbanTaskCard({
           <span className="text-[var(--text)]">{task.estimatedMinutes} min</span>
         </div>
         <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
-          <span className="block text-[var(--faint)]">Effettiva</span>
-          <span className="text-[var(--text)]">{task.actualMinutes ?? "-"} min</span>
+          <span className="block text-[var(--faint)]">{timerRunning ? "Cronometro" : "Effettiva"}</span>
+          <span className="text-[var(--text)]">{timerRunning ? formatElapsedSeconds(elapsedSeconds) : `${task.actualMinutes ?? "-"} min`}</span>
         </div>
         <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
           <span className="block text-[var(--faint)]">Energia</span>

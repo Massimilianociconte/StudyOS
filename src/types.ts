@@ -135,6 +135,9 @@ export interface Task extends BaseEntity {
   estimatedMinutes: number;
   actualMinutes?: number;
   completedAt?: string;
+  timerStartedAt?: string;
+  timerAccumulatedSeconds?: number;
+  timerLastReminderAt?: string;
   energy: "low" | "medium" | "high";
   difficulty: 1 | 2 | 3 | 4 | 5;
   importance: 1 | 2 | 3 | 4 | 5;

@@ -3,8 +3,10 @@ import { addHours } from "date-fns";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, IconButton, Pill, inputClass } from "./ui";
+import { Icon } from "./Icon";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
+type TaskCreateMode = "normal" | "timer";
 
 const modes: { id: Mode; label: string }[] = [
   { id: "task", label: "Task" },
@@ -20,16 +22,17 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
   const [subjectId, setSubjectId] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 16));
   const [url, setUrl] = useState("");
+  const [taskCreateMode, setTaskCreateMode] = useState<TaskCreateMode>("normal");
   const [busy, setBusy] = useState(false);
   const { subjects, addTask, addEvent, addSession, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
   const submitLabel = useMemo(() => {
-    if (mode === "task") return "Crea task";
+    if (mode === "task") return taskCreateMode === "timer" ? "Crea e avvia" : "Crea task";
     if (mode === "event") return "Crea evento";
     if (mode === "session") return "Pianifica";
     if (mode === "subject") return "Crea materia";
     return "Salva materiale";
-  }, [mode]);
+  }, [mode, taskCreateMode]);
 
   const reset = () => {
     setTitle("");
@@ -43,7 +46,18 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
     try {
       const start = new Date(date).toISOString();
       if (mode === "task") {
-        await addTask({ title: title.trim(), subjectId: subjectId || undefined, dueDate: start, priority: "medium" });
+        const now = new Date().toISOString();
+        await addTask({
+          title: title.trim(),
+          subjectId: subjectId || undefined,
+          dueDate: start,
+          priority: "medium",
+          status: taskCreateMode === "timer" ? "doing" : "todo",
+          actualMinutes: taskCreateMode === "timer" ? 0 : undefined,
+          timerStartedAt: taskCreateMode === "timer" ? now : undefined,
+          timerAccumulatedSeconds: taskCreateMode === "timer" ? 0 : undefined,
+          timerLastReminderAt: taskCreateMode === "timer" ? now : undefined
+        });
       }
       if (mode === "event") {
         await addEvent({
@@ -104,6 +118,36 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
             </div>
 
             <div className="grid gap-3">
+              {mode === "task" ? (
+                <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Tipo di task">
+                  {([
+                    { id: "normal", label: "Task normale", icon: "Check" },
+                    { id: "timer", label: "Con cronometro", icon: "Timer" }
+                  ] as const).map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setTaskCreateMode(item.id)}
+                      className={`motion-safe flex min-h-14 items-center gap-3 rounded-[22px] border p-3 text-left ${
+                        taskCreateMode === item.id
+                          ? "border-transparent bg-[var(--accent)] text-[#10131d]"
+                          : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--text)] hover:bg-[var(--surface)]"
+                      }`}
+                    >
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-black/10">
+                        <Icon name={item.icon} className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="one-line-safe block text-sm font-black">{item.label}</span>
+                        <span className="one-line-safe block text-xs font-bold opacity-70">
+                          {item.id === "timer" ? "parte subito" : "da completare"}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
               <Field label={mode === "material" ? "Nome o titolo" : "Titolo"}>
                 <input
                   className={inputClass}

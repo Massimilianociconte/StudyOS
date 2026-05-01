@@ -23,6 +23,7 @@ import { Button, Field, Panel, Pill, ProgressBar, SectionTitle, inputClass } fro
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { eventMinutes, shortDate, subjectColor, subjectName, timeLabel, upcomingEvents } from "../lib/selectors";
+import { formatElapsedSeconds, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 
 type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
 
@@ -1146,6 +1147,8 @@ function CalendarHoverPreview({
     preview.kind === "event"
       ? preview.event.color || subjectColor(subjects, preview.event.subjectId)
       : subjectColor(subjects, preview.task.subjectId);
+  const taskTimerRunning = preview.kind === "task" && isTaskTimerRunning(preview.task);
+  const taskElapsed = preview.kind === "task" ? taskElapsedSeconds(preview.task) : 0;
 
   return (
     <aside
@@ -1191,13 +1194,16 @@ function CalendarHoverPreview({
             </div>
             <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
               <p className="text-[10px] font-black uppercase text-[var(--faint)]">Effettiva</p>
-              <p className="text-sm font-black">{preview.task.actualMinutes ?? "-"} min</p>
+              <p className="text-sm font-black">
+                {taskTimerRunning ? formatElapsedSeconds(taskElapsed) : `${preview.task.actualMinutes ?? "-"} min`}
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Pill>{preview.task.status}</Pill>
             <Pill active={preview.task.priority === "urgent"}>{preview.task.priority}</Pill>
             <Pill>energia {preview.task.energy}</Pill>
+            {taskTimerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer attivo</Pill> : null}
           </div>
           {preview.task.description || preview.task.notes ? (
             <p className="three-line-safe text-sm text-[var(--muted)]">{preview.task.description || preview.task.notes}</p>

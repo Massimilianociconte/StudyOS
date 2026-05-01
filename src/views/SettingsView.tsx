@@ -39,6 +39,7 @@ export function SettingsView() {
   const [vaultHint, setVaultHint] = useState("");
   const [importPassphrase, setImportPassphrase] = useState("");
   const [message, setMessage] = useState("");
+  const displayName = settings.profile?.displayName?.trim();
 
   const exportBackup = async (scope: "full" | "tasks" | "calendar" | "subjects" = "full") => {
     setMessage("");
@@ -113,7 +114,12 @@ export function SettingsView() {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel>
-          <h3 className="mb-4 text-2xl font-black">Profilo</h3>
+          <div className="mb-4">
+            <h3 className="text-2xl font-black">Profilo</h3>
+            <p className="safe-text mt-1 text-sm font-bold text-[var(--muted)]">
+              {displayName ? `Bentornato, ${displayName}.` : "Imposta il tuo nome per personalizzare StudyOS."}
+            </p>
+          </div>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-super bg-[var(--surface-soft)]">
               {settings.profile?.avatarDataUrl ? (

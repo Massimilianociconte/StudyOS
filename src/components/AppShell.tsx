@@ -8,6 +8,7 @@ import { Button, IconButton } from "./ui";
 import { QuickAddModal } from "./QuickAddModal";
 import { CloudStatusBadge } from "./CloudStatusBadge";
 import { GlobalSearch } from "./GlobalSearch";
+import { TaskTimerReminder } from "./TaskTimerReminder";
 
 const navItems: { view: AppView; label: string; icon: string }[] = [
   { view: "dashboard", label: "Dashboard", icon: "LayoutDashboard" },
@@ -31,6 +32,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const { activeView, setActiveView, settings, updateSettings, lockVault } = useStudyStore();
 
   const todayLabel = format(new Date(), "EEEE d MMMM", { locale: it });
+  const displayName = settings.profile?.displayName?.trim();
 
   return (
     <main className="app-bg min-h-screen pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-0">
@@ -40,15 +42,15 @@ export function AppShell({ children }: PropsWithChildren) {
             <button
               type="button"
               onClick={() => setActiveView("dashboard")}
-              className="mb-6 flex items-center gap-3 rounded-[26px] p-2 text-left"
+              className="mb-6 flex w-full min-w-0 items-center gap-3 rounded-[26px] p-2 text-left"
             >
-              <span className="grid h-14 w-14 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
+              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
                 <Icon name="Sparkles" className="h-6 w-6" />
               </span>
-              <span>
-                <span className="block text-2xl font-black">StudyOS</span>
-                <span className="block text-xs font-bold text-[var(--muted)]">
-                  {settings.profile?.displayName?.trim() || "local-first workspace"}
+              <span className="min-w-0 flex-1">
+                <span className="one-line-safe block text-2xl font-black">StudyOS</span>
+                <span className="one-line-safe block text-xs font-bold text-[var(--muted)]" title={displayName || "local-first workspace"}>
+                  {displayName || "local-first workspace"}
                 </span>
               </span>
             </button>
@@ -166,6 +168,7 @@ export function AppShell({ children }: PropsWithChildren) {
         })}
       </nav>
 
+      <TaskTimerReminder />
       <QuickAddModal open={quickAddOpen} onClose={() => setQuickAddOpen(false)} />
     </main>
   );
