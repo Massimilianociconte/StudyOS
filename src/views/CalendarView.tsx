@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   addDays,
   addHours,
@@ -21,6 +21,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import type { CalendarEvent, EventCategory, Exam, Task } from "../types";
 import { Button, Field, Panel, Pill, ProgressBar, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { TaskEditorModal } from "../components/TaskEditorModal";
 import { eventMinutes, shortDate, subjectColor, subjectName, timeLabel, upcomingEvents } from "../lib/selectors";
 
 type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
@@ -66,6 +67,19 @@ const nextHourForDay = (day: Date) => {
   return next;
 };
 
+type PreviewPoint = { x: number; y: number };
+type CalendarPreviewState =
+  | { kind: "event"; event: CalendarEvent; x: number; y: number }
+  | { kind: "task"; task: Task; x: number; y: number };
+
+const supportsHoverPreview = () =>
+  typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
+const pointerPoint = (event: ReactMouseEvent<HTMLElement>): PreviewPoint => ({
+  x: event.clientX,
+  y: event.clientY
+});
+
 export function CalendarView() {
   const [mode, setMode] = useState<CalendarMode>("week");
   const [cursor, setCursor] = useState(new Date());
@@ -74,7 +88,9 @@ export function CalendarView() {
   const [subjectId, setSubjectId] = useState("");
   const [newStart, setNewStart] = useState(() => toDatetimeLocal(setHours(new Date(), 9)));
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const [createKind, setCreateKind] = useState<"event" | "task">("event");
   const [dayDraft, setDayDraft] = useState({
     title: "",
@@ -82,12 +98,13 @@ export function CalendarView() {
     startsAt: toDatetimeLocal(nextHourForDay(new Date())),
     priority: "medium" as Task["priority"]
   });
-  const { events, subjects, exams, tasks, updateEvent, addEvent, deleteEvent, addTask, toggleTask, deleteTask } = useStudyStore();
+  const { events, subjects, exams, tasks, updateEvent, addEvent, deleteEvent, addTask, updateTask, toggleTask, deleteTask } = useStudyStore();
   const calendarTasks = useMemo(
     () => tasks.filter((task) => task.dueDate && task.status !== "archived"),
     [tasks]
   );
   const editingEvent = editingEventId ? events.find((event) => event.id === editingEventId) ?? null : null;
+  const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
 
   const monthDays = useMemo(() => {
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 });
@@ -118,6 +135,20 @@ export function CalendarView() {
       startsAt: toDatetimeLocal(nextHourForDay(day)),
       priority: "medium"
     });
+  };
+
+  const showEventPreview = (event: CalendarEvent, point: PreviewPoint) => {
+    if (!supportsHoverPreview()) return;
+    setPreview({ kind: "event", event, x: point.x, y: point.y });
+  };
+
+  const showTaskPreview = (task: Task, point: PreviewPoint) => {
+    if (!supportsHoverPreview()) return;
+    setPreview({ kind: "task", task, x: point.x, y: point.y });
+  };
+
+  const movePreview = (point: PreviewPoint) => {
+    setPreview((current) => (current ? { ...current, x: point.x, y: point.y } : current));
   };
 
   const moveEventToDay = async (eventId: string, day: Date) => {
@@ -210,6 +241,11 @@ export function CalendarView() {
               onToggleTask={toggleTask}
               onDeleteTask={deleteTask}
               onEditEvent={setEditingEventId}
+              onEditTask={setEditingTaskId}
+              onPreviewEvent={showEventPreview}
+              onPreviewTask={showTaskPreview}
+              onPreviewMove={movePreview}
+              onPreviewHide={() => setPreview(null)}
               onCreateDay={openDayCreator}
             />
           ) : null}
@@ -229,6 +265,11 @@ export function CalendarView() {
               onToggleTask={toggleTask}
               onDeleteTask={deleteTask}
               onEditEvent={setEditingEventId}
+              onEditTask={setEditingTaskId}
+              onPreviewEvent={showEventPreview}
+              onPreviewTask={showTaskPreview}
+              onPreviewMove={movePreview}
+              onPreviewHide={() => setPreview(null)}
               onCreateDay={openDayCreator}
             />
           ) : null}
@@ -244,6 +285,11 @@ export function CalendarView() {
               onToggleTask={toggleTask}
               onDeleteTask={deleteTask}
               onEditEvent={setEditingEventId}
+              onEditTask={setEditingTaskId}
+              onPreviewEvent={showEventPreview}
+              onPreviewTask={showTaskPreview}
+              onPreviewMove={movePreview}
+              onPreviewHide={() => setPreview(null)}
               onCreateAt={(day) => openDayCreator(day)}
             />
           ) : null}
@@ -257,6 +303,11 @@ export function CalendarView() {
               onToggleTask={toggleTask}
               onDeleteTask={deleteTask}
               onEditEvent={setEditingEventId}
+              onEditTask={setEditingTaskId}
+              onPreviewEvent={showEventPreview}
+              onPreviewTask={showTaskPreview}
+              onPreviewMove={movePreview}
+              onPreviewHide={() => setPreview(null)}
             />
           ) : null}
           {mode === "exam" ? <ExamSession exams={exams} subjects={subjects} /> : null}
@@ -296,7 +347,16 @@ export function CalendarView() {
 
           <Panel>
             <h3 className="mb-4 text-2xl font-black">Prossimi blocchi</h3>
-            <Agenda events={upcomingEvents(events, 5)} exams={exams} subjects={subjects} compact onEditEvent={setEditingEventId} />
+            <Agenda
+              events={upcomingEvents(events, 5)}
+              exams={exams}
+              subjects={subjects}
+              compact
+              onEditEvent={setEditingEventId}
+              onPreviewEvent={showEventPreview}
+              onPreviewMove={movePreview}
+              onPreviewHide={() => setPreview(null)}
+            />
           </Panel>
         </aside>
       </div>
@@ -331,6 +391,24 @@ export function CalendarView() {
           onSubmit={createFromDay}
         />
       ) : null}
+
+      {editingTask ? (
+        <TaskEditorModal
+          task={editingTask}
+          subjects={subjects}
+          onClose={() => setEditingTaskId(null)}
+          onSave={updateTask}
+          onDelete={async (task) => {
+            const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
+            if (!window.confirm(`Eliminare la task "${label}"?`)) return;
+            await deleteTask(task.id);
+            setEditingTaskId(null);
+            setPreview(null);
+          }}
+        />
+      ) : null}
+
+      {preview ? <CalendarHoverPreview preview={preview} subjects={subjects} /> : null}
     </div>
   );
 }
@@ -345,12 +423,18 @@ function EventChip({
   event,
   subjects,
   onDragStart,
-  onEdit
+  onEdit,
+  onPreview,
+  onPreviewMove,
+  onPreviewHide
 }: {
   event: CalendarEvent;
   subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
   onDragStart?: (id: string) => void;
   onEdit?: (id: string) => void;
+  onPreview?: (event: CalendarEvent, point: PreviewPoint) => void;
+  onPreviewMove?: (point: PreviewPoint) => void;
+  onPreviewHide?: () => void;
 }) {
   return (
     <button
@@ -361,6 +445,14 @@ function EventChip({
         onEdit?.(event.id);
       }}
       onDragStart={() => onDragStart?.(event.id)}
+      onMouseEnter={(mouseEvent) => onPreview?.(event, pointerPoint(mouseEvent))}
+      onMouseMove={(mouseEvent) => onPreviewMove?.(pointerPoint(mouseEvent))}
+      onMouseLeave={onPreviewHide}
+      onFocus={(focusEvent) => {
+        const rect = focusEvent.currentTarget.getBoundingClientRect();
+        onPreview?.(event, { x: rect.left + rect.width / 2, y: rect.bottom });
+      }}
+      onBlur={onPreviewHide}
       className="motion-safe w-full rounded-[14px] border border-white/10 p-1.5 text-left text-[11px] sm:rounded-[18px] sm:p-2 sm:text-xs hover:translate-y-[-1px]"
       style={{
         background: `linear-gradient(135deg, ${event.color || subjectColor(subjects, event.subjectId)}33, transparent)`
@@ -387,13 +479,21 @@ function TaskChip({
   task,
   subjects,
   onToggle,
+  onEdit,
   onDelete,
+  onPreview,
+  onPreviewMove,
+  onPreviewHide,
   compact
 }: {
   task: Task;
   subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
   onToggle?: (id: string) => void;
+  onEdit?: (id: string) => void;
   onDelete?: (id: string) => void;
+  onPreview?: (task: Task, point: PreviewPoint) => void;
+  onPreviewMove?: (point: PreviewPoint) => void;
+  onPreviewHide?: () => void;
   compact?: boolean;
 }) {
   const accent = priorityAccent(task.priority);
@@ -401,6 +501,26 @@ function TaskChip({
   const done = task.status === "done";
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={(event) => {
+        event.stopPropagation();
+        onEdit?.(task.id);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        onEdit?.(task.id);
+      }}
+      onMouseEnter={(mouseEvent) => onPreview?.(task, pointerPoint(mouseEvent))}
+      onMouseMove={(mouseEvent) => onPreviewMove?.(pointerPoint(mouseEvent))}
+      onMouseLeave={onPreviewHide}
+      onFocus={(focusEvent) => {
+        const rect = focusEvent.currentTarget.getBoundingClientRect();
+        onPreview?.(task, { x: rect.left + rect.width / 2, y: rect.bottom });
+      }}
+      onBlur={onPreviewHide}
       className={`motion-safe flex w-full items-center gap-1.5 rounded-[14px] border border-dashed p-1.5 text-left text-[11px] sm:rounded-[18px] sm:p-2 sm:text-xs hover:translate-y-[-1px] ${
         done ? "opacity-55" : ""
       }`}
@@ -482,6 +602,11 @@ function MonthGrid({
   onToggleTask,
   onDeleteTask,
   onEditEvent,
+  onEditTask,
+  onPreviewEvent,
+  onPreviewTask,
+  onPreviewMove,
+  onPreviewHide,
   onCreateDay
 }: {
   days: Date[];
@@ -494,6 +619,11 @@ function MonthGrid({
   onToggleTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
   onEditEvent: (id: string) => void;
+  onEditTask: (id: string) => void;
+  onPreviewEvent: (event: CalendarEvent, point: PreviewPoint) => void;
+  onPreviewTask: (task: Task, point: PreviewPoint) => void;
+  onPreviewMove: (point: PreviewPoint) => void;
+  onPreviewHide: () => void;
   onCreateDay: (day: Date) => void;
 }) {
   return (
@@ -550,11 +680,31 @@ function MonthGrid({
               <div className="space-y-1">
                 {merged.slice(0, 3).map((item) =>
                   item.kind === "event" ? (
-                    <EventChip key={`e-${item.event.id}`} event={item.event} subjects={subjects} onDragStart={onDragStart} onEdit={onEditEvent} />
+                    <EventChip
+                      key={`e-${item.event.id}`}
+                      event={item.event}
+                      subjects={subjects}
+                      onDragStart={onDragStart}
+                      onEdit={onEditEvent}
+                      onPreview={onPreviewEvent}
+                      onPreviewMove={onPreviewMove}
+                      onPreviewHide={onPreviewHide}
+                    />
                   ) : item.kind === "exam" ? (
                     <ExamChip key={`x-${item.exam.id}`} exam={item.exam} subjects={subjects} compact />
                   ) : (
-                    <TaskChip key={`t-${item.task.id}`} task={item.task} subjects={subjects} onToggle={onToggleTask} onDelete={onDeleteTask} compact />
+                    <TaskChip
+                      key={`t-${item.task.id}`}
+                      task={item.task}
+                      subjects={subjects}
+                      onToggle={onToggleTask}
+                      onEdit={onEditTask}
+                      onDelete={onDeleteTask}
+                      onPreview={onPreviewTask}
+                      onPreviewMove={onPreviewMove}
+                      onPreviewHide={onPreviewHide}
+                      compact
+                    />
                   )
                 )}
                 {merged.length > 3 ? (
@@ -580,6 +730,11 @@ function WeekGrid({
   onToggleTask,
   onDeleteTask,
   onEditEvent,
+  onEditTask,
+  onPreviewEvent,
+  onPreviewTask,
+  onPreviewMove,
+  onPreviewHide,
   onCreateDay
 }: {
   days: Date[];
@@ -592,6 +747,11 @@ function WeekGrid({
   onToggleTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
   onEditEvent: (id: string) => void;
+  onEditTask: (id: string) => void;
+  onPreviewEvent: (event: CalendarEvent, point: PreviewPoint) => void;
+  onPreviewTask: (task: Task, point: PreviewPoint) => void;
+  onPreviewMove: (point: PreviewPoint) => void;
+  onPreviewHide: () => void;
   onCreateDay: (day: Date) => void;
 }) {
   return (
@@ -640,13 +800,32 @@ function WeekGrid({
               </div>
               <div className="space-y-2">
                 {dayEvents.map((event) => (
-                  <EventChip key={event.id} event={event} subjects={subjects} onDragStart={onDragStart} onEdit={onEditEvent} />
+                  <EventChip
+                    key={event.id}
+                    event={event}
+                    subjects={subjects}
+                    onDragStart={onDragStart}
+                    onEdit={onEditEvent}
+                    onPreview={onPreviewEvent}
+                    onPreviewMove={onPreviewMove}
+                    onPreviewHide={onPreviewHide}
+                  />
                 ))}
                 {dayExams.map((exam) => (
                   <ExamChip key={exam.id} exam={exam} subjects={subjects} />
                 ))}
                 {dayTasks.map((task) => (
-                  <TaskChip key={task.id} task={task} subjects={subjects} onToggle={onToggleTask} onDelete={onDeleteTask} />
+                  <TaskChip
+                    key={task.id}
+                    task={task}
+                    subjects={subjects}
+                    onToggle={onToggleTask}
+                    onEdit={onEditTask}
+                    onDelete={onDeleteTask}
+                    onPreview={onPreviewTask}
+                    onPreviewMove={onPreviewMove}
+                    onPreviewHide={onPreviewHide}
+                  />
                 ))}
                 {dayEvents.length + dayTasks.length + dayExams.length === 0 ? (
                   <p className="text-xs font-bold text-[var(--faint)]">Nulla in agenda</p>
@@ -670,6 +849,11 @@ function DayTimeline({
   onToggleTask,
   onDeleteTask,
   onEditEvent,
+  onEditTask,
+  onPreviewEvent,
+  onPreviewTask,
+  onPreviewMove,
+  onPreviewHide,
   onCreateAt
 }: {
   day: Date;
@@ -681,6 +865,11 @@ function DayTimeline({
   onToggleTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
   onEditEvent: (id: string) => void;
+  onEditTask: (id: string) => void;
+  onPreviewEvent: (event: CalendarEvent, point: PreviewPoint) => void;
+  onPreviewTask: (task: Task, point: PreviewPoint) => void;
+  onPreviewMove: (point: PreviewPoint) => void;
+  onPreviewHide: () => void;
   onCreateAt: (day: Date) => void;
 }) {
   const dayEvents = events.filter((event) => isSameDay(parseISO(event.start), day));
@@ -731,10 +920,28 @@ function DayTimeline({
               >
                 <div className="grid gap-2 sm:grid-cols-2">
                   {rowEvents.map((event) => (
-                    <EventChip key={event.id} event={event} subjects={subjects} onEdit={onEditEvent} />
+                    <EventChip
+                      key={event.id}
+                      event={event}
+                      subjects={subjects}
+                      onEdit={onEditEvent}
+                      onPreview={onPreviewEvent}
+                      onPreviewMove={onPreviewMove}
+                      onPreviewHide={onPreviewHide}
+                    />
                   ))}
                   {rowTasks.map((task) => (
-                    <TaskChip key={task.id} task={task} subjects={subjects} onToggle={onToggleTask} onDelete={onDeleteTask} />
+                    <TaskChip
+                      key={task.id}
+                      task={task}
+                      subjects={subjects}
+                      onToggle={onToggleTask}
+                      onEdit={onEditTask}
+                      onDelete={onDeleteTask}
+                      onPreview={onPreviewTask}
+                      onPreviewMove={onPreviewMove}
+                      onPreviewHide={onPreviewHide}
+                    />
                   ))}
                 </div>
               </div>
@@ -748,7 +955,17 @@ function DayTimeline({
               {dayTasks
                 .filter((task) => task.dueDate && (parseISO(task.dueDate).getHours() < (focus ? 8 : 7) || parseISO(task.dueDate).getHours() >= (focus ? 18 : 22)))
                 .map((task) => (
-                  <TaskChip key={task.id} task={task} subjects={subjects} onToggle={onToggleTask} onDelete={onDeleteTask} />
+                  <TaskChip
+                    key={task.id}
+                    task={task}
+                    subjects={subjects}
+                    onToggle={onToggleTask}
+                    onEdit={onEditTask}
+                    onDelete={onDeleteTask}
+                    onPreview={onPreviewTask}
+                    onPreviewMove={onPreviewMove}
+                    onPreviewHide={onPreviewHide}
+                  />
                 ))}
             </div>
           </div>
@@ -766,7 +983,12 @@ function Agenda({
   compact,
   onToggleTask,
   onDeleteTask,
-  onEditEvent
+  onEditEvent,
+  onEditTask,
+  onPreviewEvent,
+  onPreviewTask,
+  onPreviewMove,
+  onPreviewHide
 }: {
   events: CalendarEvent[];
   tasks?: Task[];
@@ -776,6 +998,11 @@ function Agenda({
   onToggleTask?: (id: string) => void;
   onDeleteTask?: (id: string) => void;
   onEditEvent?: (id: string) => void;
+  onEditTask?: (id: string) => void;
+  onPreviewEvent?: (event: CalendarEvent, point: PreviewPoint) => void;
+  onPreviewTask?: (task: Task, point: PreviewPoint) => void;
+  onPreviewMove?: (point: PreviewPoint) => void;
+  onPreviewHide?: () => void;
 }) {
   type AgendaItem =
     | { kind: "event"; when: string; event: CalendarEvent }
@@ -803,6 +1030,14 @@ function Agenda({
             key={`e-${item.event.id}`}
             type="button"
             onClick={() => onEditEvent?.(item.event.id)}
+            onMouseEnter={(mouseEvent) => onPreviewEvent?.(item.event, pointerPoint(mouseEvent))}
+            onMouseMove={(mouseEvent) => onPreviewMove?.(pointerPoint(mouseEvent))}
+            onMouseLeave={onPreviewHide}
+            onFocus={(focusEvent) => {
+              const rect = focusEvent.currentTarget.getBoundingClientRect();
+              onPreviewEvent?.(item.event, { x: rect.left + rect.width / 2, y: rect.bottom });
+            }}
+            onBlur={onPreviewHide}
             className="quiet-panel flex w-full gap-3 p-3 text-left"
           >
             <span className="mt-1 h-10 w-2 shrink-0 rounded-full" style={{ background: item.event.color }} />
@@ -826,11 +1061,30 @@ function Agenda({
         ) : (
           <div
             key={`t-${item.task.id}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onEditTask?.(item.task.id)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onEditTask?.(item.task.id);
+            }}
+            onMouseEnter={(mouseEvent) => onPreviewTask?.(item.task, pointerPoint(mouseEvent))}
+            onMouseMove={(mouseEvent) => onPreviewMove?.(pointerPoint(mouseEvent))}
+            onMouseLeave={onPreviewHide}
+            onFocus={(focusEvent) => {
+              const rect = focusEvent.currentTarget.getBoundingClientRect();
+              onPreviewTask?.(item.task, { x: rect.left + rect.width / 2, y: rect.bottom });
+            }}
+            onBlur={onPreviewHide}
             className={`quiet-panel flex w-full gap-3 p-3 text-left ${item.task.status === "done" ? "opacity-60" : ""}`}
           >
             <button
               type="button"
-              onClick={() => onToggleTask?.(item.task.id)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleTask?.(item.task.id);
+              }}
               aria-label={item.task.status === "done" ? `Riapri task ${item.task.title}` : `Completa task ${item.task.title}`}
               className="mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full border"
               style={{
@@ -854,7 +1108,8 @@ function Agenda({
                 type="button"
                 aria-label={`Elimina task ${item.task.title}`}
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-red-200 hover:bg-red-500/14"
-                onClick={() => {
+                onClick={(event) => {
+                  event.stopPropagation();
                   const label = item.task.title.length > 80 ? `${item.task.title.slice(0, 77)}...` : item.task.title;
                   if (window.confirm(`Eliminare la task "${label}"?`)) onDeleteTask(item.task.id);
                 }}
@@ -866,6 +1121,93 @@ function Agenda({
         )
       )}
     </div>
+  );
+}
+
+function CalendarHoverPreview({
+  preview,
+  subjects
+}: {
+  preview: CalendarPreviewState;
+  subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
+}) {
+  const width = 340;
+  const height = preview.kind === "event" ? 220 : 260;
+  const left =
+    typeof window === "undefined"
+      ? preview.x + 14
+      : Math.min(Math.max(12, preview.x + 16), Math.max(12, window.innerWidth - width - 12));
+  const top =
+    typeof window === "undefined"
+      ? preview.y + 14
+      : Math.min(Math.max(12, preview.y + 16), Math.max(12, window.innerHeight - height - 12));
+
+  const accent =
+    preview.kind === "event"
+      ? preview.event.color || subjectColor(subjects, preview.event.subjectId)
+      : subjectColor(subjects, preview.task.subjectId);
+
+  return (
+    <aside
+      aria-hidden="true"
+      className="pointer-events-none fixed z-[60] w-[min(340px,calc(100vw-24px))] rounded-[28px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_86%,transparent)] p-4 text-left shadow-soft backdrop-blur-2xl"
+      style={{ left, top }}
+    >
+      <div className="mb-3 flex items-start gap-3">
+        <span className="mt-1 h-10 w-2 shrink-0 rounded-full" style={{ background: accent }} />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-black uppercase text-[var(--faint)]">
+            {preview.kind === "event" ? preview.event.category : "Task"}
+          </p>
+          <h4 className="two-line-safe text-lg font-black">
+            {preview.kind === "event" ? preview.event.title : preview.task.title}
+          </h4>
+        </div>
+      </div>
+
+      {preview.kind === "event" ? (
+        <div className="grid gap-3">
+          <p className="safe-text text-sm font-bold text-[var(--muted)]">
+            {shortDate(preview.event.start)} · {timeLabel(preview.event.start)} - {timeLabel(preview.event.end)} · {eventMinutes(preview.event)} min
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Pill>{preview.event.status}</Pill>
+            <Pill active={preview.event.priority === "urgent"}>{preview.event.priority}</Pill>
+            <Pill>{subjectName(subjects, preview.event.subjectId)}</Pill>
+          </div>
+          {preview.event.description || preview.event.notes ? (
+            <p className="three-line-safe text-sm text-[var(--muted)]">{preview.event.description || preview.event.notes}</p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          <p className="safe-text text-sm font-bold text-[var(--muted)]">
+            {preview.task.dueDate ? `${shortDate(preview.task.dueDate)} · ${timeLabel(preview.task.dueDate)}` : "Nessuna data"} · {subjectName(subjects, preview.task.subjectId)}
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
+              <p className="text-[10px] font-black uppercase text-[var(--faint)]">Stimata</p>
+              <p className="text-sm font-black">{preview.task.estimatedMinutes} min</p>
+            </div>
+            <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
+              <p className="text-[10px] font-black uppercase text-[var(--faint)]">Effettiva</p>
+              <p className="text-sm font-black">{preview.task.actualMinutes ?? "-"} min</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Pill>{preview.task.status}</Pill>
+            <Pill active={preview.task.priority === "urgent"}>{preview.task.priority}</Pill>
+            <Pill>energia {preview.task.energy}</Pill>
+          </div>
+          {preview.task.description || preview.task.notes ? (
+            <p className="three-line-safe text-sm text-[var(--muted)]">{preview.task.description || preview.task.notes}</p>
+          ) : null}
+          {preview.task.tags.length ? (
+            <p className="one-line-safe text-xs font-bold text-[var(--faint)]">#{preview.task.tags.join(" #")}</p>
+          ) : null}
+        </div>
+      )}
+    </aside>
   );
 }
 

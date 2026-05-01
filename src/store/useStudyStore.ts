@@ -147,6 +147,8 @@ const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => ({
   attachmentIds: task.attachmentIds ?? [],
   notes: task.notes ?? "",
   estimatedMinutes: task.estimatedMinutes ?? 45,
+  actualMinutes: task.actualMinutes,
+  completedAt: task.completedAt,
   energy: task.energy ?? "medium",
   difficulty: task.difficulty ?? 2,
   importance: task.importance ?? 3,
@@ -326,7 +328,12 @@ export const useStudyStore = create<StudyState>((set, get) => ({
     set((state) => ({
       tasks: state.tasks.map((task) =>
         task.id === id
-          ? { ...task, status: task.status === "done" ? "todo" : "done", updatedAt: nowIso() }
+          ? {
+              ...task,
+              status: task.status === "done" ? "todo" : "done",
+              completedAt: task.status === "done" ? undefined : task.completedAt ?? nowIso(),
+              updatedAt: nowIso()
+            }
           : task
       )
     }));

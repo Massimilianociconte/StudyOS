@@ -133,6 +133,8 @@ export interface Task extends BaseEntity {
   attachmentIds: ID[];
   notes: string;
   estimatedMinutes: number;
+  actualMinutes?: number;
+  completedAt?: string;
   energy: "low" | "medium" | "high";
   difficulty: 1 | 2 | 3 | 4 | 5;
   importance: 1 | 2 | 3 | 4 | 5;
