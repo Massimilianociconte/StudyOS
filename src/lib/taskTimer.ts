@@ -47,6 +47,13 @@ export const taskReminderDue = (task: Task, now: Date = new Date()) => {
   return now.getTime() - lastReminder >= taskReminderIntervalMinutes(task) * 60_000;
 };
 
+export const isTaskCompletedLate = (task: Task) => {
+  const dueDate = safeDateMs(task.dueDate);
+  const completedAt = safeDateMs(task.completedAt);
+  if (!dueDate || !completedAt) return false;
+  return completedAt > dueDate;
+};
+
 export const taskStatusTransitionPatch = (
   task: Task,
   status: Task["status"],
@@ -80,7 +87,7 @@ export const taskStatusTransitionPatch = (
   }
 
   if (status === "done") {
-    patch.completedAt = nowIso;
+    patch.completedAt = task.completedAt ?? nowIso;
     patch.timerLastReminderAt = undefined;
     if (hasTrackedTime) {
       patch.timerAccumulatedSeconds = elapsedSeconds;

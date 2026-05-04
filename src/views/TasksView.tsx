@@ -7,7 +7,7 @@ import { Button, Field, IconButton, Panel, Pill, ProgressBar, SectionTitle, inpu
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { useNow } from "../hooks/useNow";
-import { formatElapsedSeconds, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 
 type TaskMode = "list" | "kanban" | "matrix" | "priority" | "subject" | "deadline" | "focus";
 
@@ -188,6 +188,7 @@ function TaskCard({
 }) {
   const color = subjectColor(subjects, task.subjectId);
   const overdue = task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && task.status !== "done" : false;
+  const completedLate = isTaskCompletedLate(task);
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
@@ -229,6 +230,9 @@ function TaskCard({
                 {subjectName(subjects, task.subjectId)}
               </span>
               {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
+              <Pill>inserita {shortDate(task.createdAt)}</Pill>
+              {task.completedAt ? <Pill>completata {shortDate(task.completedAt)}</Pill> : null}
+              {completedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
               <Pill>{task.estimatedMinutes} min</Pill>
               {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
               {task.actualMinutes !== undefined && !timerRunning ? <Pill>{task.actualMinutes} min reali</Pill> : null}
@@ -414,6 +418,7 @@ function KanbanTaskCard({
   const color = subjectColor(subjects, task.subjectId);
   const overdue = task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && task.status !== "done" : false;
   const done = task.status === "done";
+  const completedLate = isTaskCompletedLate(task);
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
@@ -463,7 +468,10 @@ function KanbanTaskCard({
       <div className="mb-3 flex flex-wrap gap-2">
         <Pill active={task.priority === "urgent"}>{task.priority}</Pill>
         {overdue ? <Pill className="border-red-400/30 text-red-200">in ritardo</Pill> : null}
+        {completedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
         {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
+        <Pill>ins. {shortDate(task.createdAt)}</Pill>
+        {task.completedAt ? <Pill>done {shortDate(task.completedAt)}</Pill> : null}
         {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
       </div>
 

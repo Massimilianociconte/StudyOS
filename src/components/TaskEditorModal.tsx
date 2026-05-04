@@ -3,7 +3,8 @@ import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, Pill, inputClass } from "./ui";
 import { useNow } from "../hooks/useNow";
-import { formatElapsedSeconds, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { shortDate } from "../lib/selectors";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -50,6 +51,7 @@ export function TaskEditorModal({
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
+  const completedLate = isTaskCompletedLate(task);
 
   const save = async () => {
     setError("");
@@ -186,10 +188,12 @@ export function TaskEditorModal({
 
           <div className="quiet-panel flex flex-wrap gap-2 p-3">
             <Pill>{draft.status}</Pill>
+            <Pill>inserita {shortDate(task.createdAt)}</Pill>
             <Pill>{draft.estimatedMinutes || 0} min stimati</Pill>
             {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
             {draft.actualMinutes ? <Pill>{draft.actualMinutes} min effettivi</Pill> : null}
-            {task.completedAt ? <Pill>completata</Pill> : null}
+            {task.completedAt ? <Pill>completata {shortDate(task.completedAt)}</Pill> : null}
+            {completedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
           </div>
 
           {error ? <p className="rounded-[18px] border border-red-400/30 bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</p> : null}

@@ -132,32 +132,35 @@ const applySnapshot = (snapshot: StudySnapshot) => ({
   widgets: snapshot.widgets
 });
 
-const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => ({
-  id: createId("task"),
-  createdAt: nowIso(),
-  updatedAt: nowIso(),
-  archived: false,
-  tags: task.tags ?? [],
-  title: task.title,
-  description: task.description ?? "",
-  priority: task.priority ?? "medium",
-  dueDate: task.dueDate,
-  subjectId: task.subjectId,
-  status: task.status ?? "todo",
-  subtasks: task.subtasks ?? [],
-  attachmentIds: task.attachmentIds ?? [],
-  notes: task.notes ?? "",
-  estimatedMinutes: task.estimatedMinutes ?? 45,
-  actualMinutes: task.actualMinutes,
-  completedAt: task.completedAt,
-  timerStartedAt: task.timerStartedAt,
-  timerAccumulatedSeconds: task.timerAccumulatedSeconds,
-  timerLastReminderAt: task.timerLastReminderAt,
-  energy: task.energy ?? "medium",
-  difficulty: task.difficulty ?? 2,
-  importance: task.importance ?? 3,
-  cover: task.cover
-});
+const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => {
+  const createdAt = nowIso();
+  return {
+    id: createId("task"),
+    createdAt,
+    updatedAt: createdAt,
+    archived: false,
+    tags: task.tags ?? [],
+    title: task.title,
+    description: task.description ?? "",
+    priority: task.priority ?? "medium",
+    dueDate: task.dueDate,
+    subjectId: task.subjectId,
+    status: task.status ?? "todo",
+    subtasks: task.subtasks ?? [],
+    attachmentIds: task.attachmentIds ?? [],
+    notes: task.notes ?? "",
+    estimatedMinutes: task.estimatedMinutes ?? 45,
+    actualMinutes: task.actualMinutes,
+    completedAt: task.completedAt ?? (task.status === "done" ? createdAt : undefined),
+    timerStartedAt: task.timerStartedAt,
+    timerAccumulatedSeconds: task.timerAccumulatedSeconds,
+    timerLastReminderAt: task.timerLastReminderAt,
+    energy: task.energy ?? "medium",
+    difficulty: task.difficulty ?? 2,
+    importance: task.importance ?? 3,
+    cover: task.cover
+  };
+};
 
 const persistState = async (state: StudyState) => {
   const snapshot = snapshotFromState(state);

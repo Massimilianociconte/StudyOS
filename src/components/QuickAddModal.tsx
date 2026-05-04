@@ -6,7 +6,7 @@ import { Button, Field, IconButton, Pill, inputClass } from "./ui";
 import { Icon } from "./Icon";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
-type TaskCreateMode = "normal" | "timer";
+type TaskCreateMode = "normal" | "timer" | "completed";
 
 const modes: { id: Mode; label: string }[] = [
   { id: "task", label: "Task" },
@@ -23,11 +23,17 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 16));
   const [url, setUrl] = useState("");
   const [taskCreateMode, setTaskCreateMode] = useState<TaskCreateMode>("normal");
+  const [estimatedMinutes, setEstimatedMinutes] = useState("45");
+  const [actualMinutes, setActualMinutes] = useState("");
   const [busy, setBusy] = useState(false);
   const { subjects, addTask, addEvent, addSession, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
   const submitLabel = useMemo(() => {
-    if (mode === "task") return taskCreateMode === "timer" ? "Crea e avvia" : "Crea task";
+    if (mode === "task") {
+      if (taskCreateMode === "timer") return "Crea e avvia";
+      if (taskCreateMode === "completed") return "Registra completata";
+      return "Crea task";
+    }
     if (mode === "event") return "Crea evento";
     if (mode === "session") return "Pianifica";
     if (mode === "subject") return "Crea materia";
@@ -38,6 +44,9 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
     setTitle("");
     setSubjectId("");
     setUrl("");
+    setEstimatedMinutes("45");
+    setActualMinutes("");
+    setTaskCreateMode("normal");
   };
 
   const submit = async () => {
@@ -47,15 +56,20 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
       const start = new Date(date).toISOString();
       if (mode === "task") {
         const now = new Date().toISOString();
+        const parsedEstimatedMinutes = Math.max(0, Number(estimatedMinutes) || 0);
+        const parsedActualMinutes = actualMinutes.trim() ? Math.max(0, Number(actualMinutes) || 0) : undefined;
         await addTask({
           title: title.trim(),
           subjectId: subjectId || undefined,
           dueDate: start,
           priority: "medium",
-          status: taskCreateMode === "timer" ? "doing" : "todo",
-          actualMinutes: taskCreateMode === "timer" ? 0 : undefined,
+          status: taskCreateMode === "timer" ? "doing" : taskCreateMode === "completed" ? "done" : "todo",
+          estimatedMinutes: parsedEstimatedMinutes,
+          actualMinutes: taskCreateMode === "timer" ? 0 : parsedActualMinutes,
+          completedAt: taskCreateMode === "completed" ? start : undefined,
+          timerAccumulatedSeconds:
+            taskCreateMode === "timer" ? 0 : parsedActualMinutes !== undefined ? Math.round(parsedActualMinutes * 60) : undefined,
           timerStartedAt: taskCreateMode === "timer" ? now : undefined,
-          timerAccumulatedSeconds: taskCreateMode === "timer" ? 0 : undefined,
           timerLastReminderAt: taskCreateMode === "timer" ? now : undefined
         });
       }
@@ -122,7 +136,8 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                 <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Tipo di task">
                   {([
                     { id: "normal", label: "Task normale", icon: "Check" },
-                    { id: "timer", label: "Con cronometro", icon: "Timer" }
+                    { id: "timer", label: "Con cronometro", icon: "Timer" },
+                    { id: "completed", label: "Gia completata", icon: "Archive" }
                   ] as const).map((item) => (
                     <button
                       key={item.id}
@@ -140,7 +155,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       <span className="min-w-0">
                         <span className="one-line-safe block text-sm font-black">{item.label}</span>
                         <span className="one-line-safe block text-xs font-bold opacity-70">
-                          {item.id === "timer" ? "parte subito" : "da completare"}
+                          {item.id === "timer" ? "parte subito" : item.id === "completed" ? "storico manuale" : "da completare"}
                         </span>
                       </span>
                     </button>
@@ -175,6 +190,32 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       type="datetime-local"
                       value={date}
                       onChange={(event) => setDate(event.target.value)}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+
+              {mode === "task" ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Durata stimata">
+                    <input
+                      className={inputClass}
+                      type="number"
+                      min={0}
+                      step={5}
+                      value={estimatedMinutes}
+                      onChange={(event) => setEstimatedMinutes(event.target.value)}
+                    />
+                  </Field>
+                  <Field label="Durata effettiva">
+                    <input
+                      className={inputClass}
+                      type="number"
+                      min={0}
+                      step={5}
+                      value={actualMinutes}
+                      onChange={(event) => setActualMinutes(event.target.value)}
+                      placeholder={taskCreateMode === "completed" ? "es. 75" : "opzionale"}
                     />
                   </Field>
                 </div>

@@ -23,7 +23,7 @@ import { Button, Field, Panel, Pill, ProgressBar, SectionTitle, inputClass } fro
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { eventMinutes, shortDate, subjectColor, subjectName, timeLabel, upcomingEvents } from "../lib/selectors";
-import { formatElapsedSeconds, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 
 type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
 
@@ -1149,6 +1149,7 @@ function CalendarHoverPreview({
       : subjectColor(subjects, preview.task.subjectId);
   const taskTimerRunning = preview.kind === "task" && isTaskTimerRunning(preview.task);
   const taskElapsed = preview.kind === "task" ? taskElapsedSeconds(preview.task) : 0;
+  const taskCompletedLate = preview.kind === "task" && isTaskCompletedLate(preview.task);
 
   return (
     <aside
@@ -1187,6 +1188,10 @@ function CalendarHoverPreview({
           <p className="safe-text text-sm font-bold text-[var(--muted)]">
             {preview.task.dueDate ? `${shortDate(preview.task.dueDate)} · ${timeLabel(preview.task.dueDate)}` : "Nessuna data"} · {subjectName(subjects, preview.task.subjectId)}
           </p>
+          <p className="safe-text text-xs font-bold text-[var(--faint)]">
+            Inserita {shortDate(preview.task.createdAt)}
+            {preview.task.completedAt ? ` · completata ${shortDate(preview.task.completedAt)}` : ""}
+          </p>
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
               <p className="text-[10px] font-black uppercase text-[var(--faint)]">Stimata</p>
@@ -1204,6 +1209,7 @@ function CalendarHoverPreview({
             <Pill active={preview.task.priority === "urgent"}>{preview.task.priority}</Pill>
             <Pill>energia {preview.task.energy}</Pill>
             {taskTimerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer attivo</Pill> : null}
+            {taskCompletedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
           </div>
           {preview.task.description || preview.task.notes ? (
             <p className="three-line-safe text-sm text-[var(--muted)]">{preview.task.description || preview.task.notes}</p>
