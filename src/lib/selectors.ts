@@ -20,13 +20,24 @@ export const subjectName = (subjects: Subject[], id?: string) =>
 export const subjectColor = (subjects: Subject[], id?: string, fallback = "var(--accent)") =>
   subjects.find((subject) => subject.id === id)?.color ?? fallback;
 
-export const shortDate = (date: string | Date) =>
-  format(typeof date === "string" ? parseISO(date) : date, "d MMM", { locale: it });
+const asDate = (date: string | Date) => (typeof date === "string" ? parseISO(date) : date);
 
-export const timeLabel = (date: string | Date) =>
-  format(typeof date === "string" ? parseISO(date) : date, "HH:mm", { locale: it });
+const localDay = (date: string | Date) => startOfDay(asDate(date));
 
-export const daysUntil = (date: string) => differenceInCalendarDays(parseISO(date), startOfDay(new Date()));
+export const shortDate = (date: string | Date) => format(asDate(date), "d MMM", { locale: it });
+
+export const timeLabel = (date: string | Date) => format(asDate(date), "HH:mm", { locale: it });
+
+export const daysUntil = (date: string | Date, from: string | Date = new Date()) =>
+  differenceInCalendarDays(localDay(date), localDay(from));
+
+export const studyDaysUntil = (date: string | Date, from: string | Date = new Date()) =>
+  Math.max(0, daysUntil(date, from));
+
+export const studyDaysLabel = (date: string | Date, from: string | Date = new Date()) => {
+  const days = studyDaysUntil(date, from);
+  return `${days} ${days === 1 ? "giorno utile" : "giorni utili"}`;
+};
 
 export const eventMinutes = (event: CalendarEvent) => Math.max(15, differenceInMinutes(parseISO(event.end), parseISO(event.start)));
 

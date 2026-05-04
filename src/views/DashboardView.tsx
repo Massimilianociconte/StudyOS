@@ -3,8 +3,9 @@ import { it } from "date-fns/locale";
 import { useStudyStore } from "../store/useStudyStore";
 import {
   completionRate,
-  daysUntil,
   shortDate,
+  studyDaysLabel,
+  studyDaysUntil,
   studyMinutesThisWeek,
   studyStreak,
   subjectColor,
@@ -180,8 +181,8 @@ export function DashboardView() {
                     <div className="mb-4 h-2 rounded-full" style={{ background: color }} />
                     <h4 className="two-line-safe text-lg font-black">{subjectName(subjects, exam.subjectId)}</h4>
                     <p className="text-sm font-bold text-[var(--muted)]">{shortDate(exam.date)}</p>
-                    <div className="mt-4 text-4xl font-black">{daysUntil(exam.date)}</div>
-                    <p className="text-xs font-bold text-[var(--muted)]">giorni rimasti</p>
+                    <div className="mt-4 text-4xl font-black">{studyDaysUntil(exam.date)}</div>
+                    <p className="text-xs font-bold text-[var(--muted)]">giorni utili</p>
                     <div className="mt-4">
                       <ProgressBar value={exam.preparation} color={color} />
                     </div>
@@ -229,6 +230,7 @@ export function DashboardView() {
                     <p className="two-line-safe text-sm font-black">{event.title}</p>
                     <p className="text-xs font-bold text-[var(--muted)]">
                       {shortDate(event.start)} · {timeLabel(event.start)}
+                      {event.category === "deadline" || event.category === "exam" ? ` · ${studyDaysLabel(event.start)}` : ""}
                     </p>
                   </div>
                 </div>

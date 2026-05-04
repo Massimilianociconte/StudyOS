@@ -22,7 +22,7 @@ import type { CalendarEvent, EventCategory, Exam, Task } from "../types";
 import { Button, Field, Panel, Pill, ProgressBar, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
-import { eventMinutes, shortDate, subjectColor, subjectName, timeLabel, upcomingEvents } from "../lib/selectors";
+import { eventMinutes, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel, upcomingEvents } from "../lib/selectors";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 
 type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
@@ -461,7 +461,7 @@ function EventChip({
     >
       <span className="two-line-safe block font-black">{event.title}</span>
       <span className="one-line-safe block font-bold text-[var(--muted)]">
-        {timeLabel(event.start)} · {eventMinutes(event)} min
+        {timeLabel(event.start)} · {event.category === "deadline" || event.category === "exam" ? studyDaysLabel(event.start) : `${eventMinutes(event)} min`}
       </span>
     </button>
   );
@@ -1046,6 +1046,7 @@ function Agenda({
               <p className="two-line-safe font-black">{item.event.title}</p>
               <p className="one-line-safe text-sm font-bold text-[var(--muted)]">
                 {shortDate(item.event.start)} · {timeLabel(item.event.start)} · {subjectName(subjects, item.event.subjectId)}
+                {item.event.category === "deadline" || item.event.category === "exam" ? ` · ${studyDaysLabel(item.event.start)}` : ""}
               </p>
             </div>
           </button>
@@ -1055,7 +1056,7 @@ function Agenda({
             <div className="min-w-0 flex-1">
               <p className="two-line-safe font-black">Esame · {subjectName(subjects, item.exam.subjectId)}</p>
               <p className="one-line-safe text-sm font-bold text-[var(--muted)]">
-                {shortDate(item.exam.date)} · preparazione {item.exam.preparation}%
+                {shortDate(item.exam.date)} · {studyDaysLabel(item.exam.date)} · preparazione {item.exam.preparation}%
               </p>
             </div>
           </div>
@@ -1178,6 +1179,7 @@ function CalendarHoverPreview({
             <Pill>{preview.event.status}</Pill>
             <Pill active={preview.event.priority === "urgent"}>{preview.event.priority}</Pill>
             <Pill>{subjectName(subjects, preview.event.subjectId)}</Pill>
+            {preview.event.category === "deadline" || preview.event.category === "exam" ? <Pill>{studyDaysLabel(preview.event.start)}</Pill> : null}
           </div>
           {preview.event.description || preview.event.notes ? (
             <p className="three-line-safe text-sm text-[var(--muted)]">{preview.event.description || preview.event.notes}</p>
@@ -1471,7 +1473,7 @@ function ExamSession({
             <div key={exam.id} className="quiet-panel p-4">
               <div className="mb-5 h-3 rounded-full" style={{ background: color }} />
               <h4 className="two-line-safe text-xl font-black">{subjectName(subjects, exam.subjectId)}</h4>
-              <p className="text-sm font-bold text-[var(--muted)]">{shortDate(exam.date)}</p>
+              <p className="text-sm font-bold text-[var(--muted)]">{shortDate(exam.date)} · {studyDaysLabel(exam.date)}</p>
               <div className="mt-5">
                 <ProgressBar value={exam.preparation} color={color} />
               </div>

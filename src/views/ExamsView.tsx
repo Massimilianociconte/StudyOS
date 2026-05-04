@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Exam } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
+import { shortDate, studyDaysUntil, subjectColor, subjectName } from "../lib/selectors";
 import { readImageFile } from "../lib/files";
 import { Button, Field, Panel, Pill, ProgressBar, ProgressRing, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
@@ -144,7 +144,7 @@ export function ExamsView() {
         <div className="grid gap-4 lg:grid-cols-2">
           {sorted.map((exam) => {
             const color = subjectColor(subjects, exam.subjectId);
-            const remaining = daysUntil(exam.date);
+            const remaining = studyDaysUntil(exam.date);
             const relatedTasks = tasks.filter((task) => task.subjectId === exam.subjectId && task.status !== "done");
             const relatedSessions = sessions.filter((session) => session.subjectId === exam.subjectId);
             const relatedTopics = topics.filter((topic) => topic.subjectId === exam.subjectId);
@@ -174,7 +174,7 @@ export function ExamsView() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                      <Metric label="giorni" value={Math.max(0, remaining)} />
+                      <Metric label="giorni utili" value={remaining} />
                       <Metric label="task" value={relatedTasks.length} />
                       <Metric label="ore pian." value={plannedHours} />
                       <Metric label="ripassi" value={relatedTopics.length} />
