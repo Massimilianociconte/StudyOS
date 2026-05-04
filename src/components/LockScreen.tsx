@@ -48,7 +48,7 @@ export function LockScreen() {
               autoFocus
             />
           </Field>
-          {error ? <p className="mt-2 text-sm font-bold text-red-200">{error}</p> : null}
+          {error ? <p className="mt-2 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
           <Button className="mt-4 w-full" variant="primary" icon="Lock" disabled={busy || !passphrase} onClick={unlock}>
             Sblocca workspace
           </Button>

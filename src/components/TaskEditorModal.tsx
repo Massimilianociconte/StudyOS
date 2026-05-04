@@ -193,10 +193,10 @@ export function TaskEditorModal({
             {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
             {draft.actualMinutes ? <Pill>{draft.actualMinutes} min effettivi</Pill> : null}
             {task.completedAt ? <Pill>completata {shortDate(task.completedAt)}</Pill> : null}
-            {completedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
+            {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}
           </div>
 
-          {error ? <p className="rounded-[18px] border border-red-400/30 bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</p> : null}
+          {error ? <p className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
 
           <div className="mt-2 flex flex-wrap justify-end gap-2">
             <Button variant="danger" icon="Trash2" onClick={() => onDelete(task)}>

@@ -327,7 +327,7 @@ export function ExamsView() {
                 </div>
               ) : null}
 
-              {message ? <p className="rounded-[18px] border border-amber-400/30 bg-amber-500/10 p-3 text-sm font-bold text-amber-100">{message}</p> : null}
+              {message ? <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">{message}</p> : null}
 
               <div className="mt-2 flex flex-wrap justify-end gap-2">
                 {editingExam ? (

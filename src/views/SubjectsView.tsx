@@ -135,7 +135,7 @@ export function SubjectsView() {
                         <button
                           type="button"
                           aria-label={`Elimina ${attachment.name}`}
-                          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-red-200 hover:bg-red-500/14"
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
                           onClick={() => removeAttachment(attachment)}
                         >
                           <Icon name="Trash2" className="h-3.5 w-3.5" />
@@ -234,7 +234,7 @@ export function SubjectsView() {
         </aside>
       </div>
 
-      {message ? <p className="mt-4 rounded-[18px] border border-amber-400/30 bg-amber-500/10 p-3 text-sm font-bold text-amber-100">{message}</p> : null}
+      {message ? <p className="mt-4 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">{message}</p> : null}
 
       {editingAttachment ? (
         <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true">

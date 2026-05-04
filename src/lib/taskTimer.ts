@@ -6,6 +6,14 @@ const safeDateMs = (value?: string) => {
   return Number.isFinite(time) ? time : undefined;
 };
 
+const localDayMs = (value?: string) => {
+  const time = safeDateMs(value);
+  if (time === undefined) return undefined;
+  const date = new Date(time);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+};
+
 export const isTaskTimerRunning = (task: Task) => task.status === "doing" && Boolean(task.timerStartedAt);
 
 export const taskHasTrackedTime = (task: Task) =>
@@ -48,10 +56,10 @@ export const taskReminderDue = (task: Task, now: Date = new Date()) => {
 };
 
 export const isTaskCompletedLate = (task: Task) => {
-  const dueDate = safeDateMs(task.dueDate);
-  const completedAt = safeDateMs(task.completedAt);
-  if (!dueDate || !completedAt) return false;
-  return completedAt > dueDate;
+  const dueDay = localDayMs(task.dueDate);
+  const completedDay = localDayMs(task.completedAt);
+  if (dueDay === undefined || completedDay === undefined) return false;
+  return completedDay > dueDay;
 };
 
 export const taskStatusTransitionPatch = (

@@ -220,7 +220,7 @@ function TaskCard({
                 {task.title}
               </h3>
               <Pill active={task.priority === "urgent"}>{task.priority}</Pill>
-              {overdue ? <Pill className="border-red-400/30 text-red-200">in ritardo</Pill> : null}
+              {overdue ? <Pill className="border-[var(--danger-border)] text-[var(--danger-text)] bg-[var(--danger-bg)]">in ritardo</Pill> : null}
             </div>
             <p className="three-line-safe mt-1 text-sm text-[var(--muted)]">
               {task.description || subjectName(subjects, task.subjectId)}
@@ -232,7 +232,7 @@ function TaskCard({
               {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
               <Pill>inserita {shortDate(task.createdAt)}</Pill>
               {task.completedAt ? <Pill>completata {shortDate(task.completedAt)}</Pill> : null}
-              {completedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
+              {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}
               <Pill>{task.estimatedMinutes} min</Pill>
               {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
               {task.actualMinutes !== undefined && !timerRunning ? <Pill>{task.actualMinutes} min reali</Pill> : null}
@@ -467,8 +467,8 @@ function KanbanTaskCard({
 
       <div className="mb-3 flex flex-wrap gap-2">
         <Pill active={task.priority === "urgent"}>{task.priority}</Pill>
-        {overdue ? <Pill className="border-red-400/30 text-red-200">in ritardo</Pill> : null}
-        {completedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
+        {overdue ? <Pill className="border-[var(--danger-border)] text-[var(--danger-text)] bg-[var(--danger-bg)]">in ritardo</Pill> : null}
+        {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}
         {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
         <Pill>ins. {shortDate(task.createdAt)}</Pill>
         {task.completedAt ? <Pill>done {shortDate(task.completedAt)}</Pill> : null}
@@ -510,7 +510,7 @@ function KanbanTaskCard({
         <IconButton
           icon="Trash2"
           label={`Elimina task ${task.title}`}
-          className="h-10 w-10 bg-red-500/14 text-red-100 hover:bg-red-500/22"
+          className="h-10 w-10 bg-[var(--danger-bg)] text-[var(--danger-text)] hover:bg-[var(--danger-bg-hover)]"
           draggable={false}
           onClick={confirmDelete}
         />

@@ -203,10 +203,10 @@ export function CloudPanel() {
   const session = sync.session;
   const tone =
     info?.kind === "ok"
-      ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
+      ? "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-text)]"
       : info?.kind === "err"
-      ? "border-red-400/40 bg-red-500/10 text-red-200"
-      : "border-amber-400/40 bg-amber-500/10 text-amber-100";
+      ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]"
+      : "border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning-text)]";
 
   return (
     <Panel>
@@ -231,7 +231,7 @@ export function CloudPanel() {
           </div>
 
           {sync.error ? (
-            <p className="rounded-[18px] border border-red-400/40 bg-red-500/10 p-3 text-sm font-bold text-red-200">
+            <p className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
               {sync.error}
             </p>
           ) : null}
@@ -263,7 +263,7 @@ export function CloudPanel() {
         </div>
       ) : (
         <div className="grid gap-3">
-          <div className="rounded-[18px] border border-amber-400/30 bg-amber-500/5 p-3 text-xs font-bold text-amber-100">
+          <div className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-xs font-bold text-[var(--warning-text)]">
             Senza login i dati sono salvati solo in questo browser. Per sincronizzarli su altri dispositivi servono account + login confermato.
           </div>
 
@@ -299,7 +299,7 @@ export function CloudPanel() {
           </div>
 
           {pendingEmail && mode === "signin" ? (
-            <div className="rounded-[18px] border border-amber-400/40 bg-amber-500/10 p-3 text-sm font-bold text-amber-100">
+            <div className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
               <p>
                 Conferma in sospeso per <span className="font-black">{pendingEmail}</span>. Apri il link nell'email, poi torna qui e accedi.
               </p>

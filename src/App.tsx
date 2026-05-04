@@ -63,7 +63,7 @@ export default function App() {
   return (
     <AppShell>
       {error ? (
-        <div className="soft-panel border border-red-400/30 p-6 text-red-200">{error}</div>
+        <div className="soft-panel border border-[var(--danger-border)] p-6 text-[var(--danger-text)]">{error}</div>
       ) : (
         <motion.div
           key={activeView}

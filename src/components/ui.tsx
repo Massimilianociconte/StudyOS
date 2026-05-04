@@ -16,7 +16,7 @@ export function Button({
     primary: "bg-[var(--accent)] text-[#10131d] shadow-lift hover:scale-[1.02]",
     ghost: "bg-transparent text-[var(--text)] hover:bg-[var(--surface)]",
     soft: "bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]",
-    danger: "bg-red-500/14 text-red-100 hover:bg-red-500/22"
+    danger: "bg-[var(--danger-bg)] text-[var(--danger-text)] hover:bg-[var(--danger-bg-hover)]"
   };
 
   return (

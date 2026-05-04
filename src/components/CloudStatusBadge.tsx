@@ -22,11 +22,11 @@ export function CloudStatusBadge({ onClick }: { onClick?: () => void }) {
   const session = sync.session;
   const tone = session
     ? sync.status === "error"
-      ? "border-red-400/50 text-red-100 bg-red-500/10"
+      ? "border-[var(--danger-border)] text-[var(--danger-text)] bg-[var(--danger-bg)]"
       : sync.status === "syncing" || sync.pendingChanges
-      ? "border-amber-400/40 text-amber-100 bg-amber-500/10"
-      : "border-emerald-400/40 text-emerald-100 bg-emerald-500/10"
-    : "border-amber-400/40 text-amber-100 bg-amber-500/10";
+      ? "border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]"
+      : "border-[var(--success-border)] text-[var(--success-text)] bg-[var(--success-bg)]"
+    : "border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]";
 
   const label = !session
     ? "Solo locale"

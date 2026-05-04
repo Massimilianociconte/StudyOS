@@ -555,7 +555,7 @@ function TaskChip({
         <button
           type="button"
           aria-label={`Elimina task ${task.title}`}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-red-200 hover:bg-red-500/14"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
           onClick={(event) => {
             event.stopPropagation();
             const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
@@ -1108,7 +1108,7 @@ function Agenda({
               <button
                 type="button"
                 aria-label={`Elimina task ${item.task.title}`}
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-red-200 hover:bg-red-500/14"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
                 onClick={(event) => {
                   event.stopPropagation();
                   const label = item.task.title.length > 80 ? `${item.task.title.slice(0, 77)}...` : item.task.title;
@@ -1209,7 +1209,7 @@ function CalendarHoverPreview({
             <Pill active={preview.task.priority === "urgent"}>{preview.task.priority}</Pill>
             <Pill>energia {preview.task.energy}</Pill>
             {taskTimerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer attivo</Pill> : null}
-            {taskCompletedLate ? <Pill className="border-amber-400/40 text-amber-100">completata in ritardo</Pill> : null}
+            {taskCompletedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}
           </div>
           {preview.task.description || preview.task.notes ? (
             <p className="three-line-safe text-sm text-[var(--muted)]">{preview.task.description || preview.task.notes}</p>
@@ -1348,7 +1348,7 @@ function EventEditorModal({
               />
             </Field>
           </div>
-          {error ? <p className="rounded-[18px] border border-red-400/30 bg-red-500/10 p-3 text-sm font-bold text-red-200">{error}</p> : null}
+          {error ? <p className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
           <div className="mt-2 flex flex-wrap justify-end gap-2">
             <Button variant="danger" icon="Trash2" onClick={onDelete}>
               Elimina
