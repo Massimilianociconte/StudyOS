@@ -130,6 +130,20 @@ export function AppShell({ children }: PropsWithChildren) {
           </header>
 
           <div className="mx-auto max-w-[1380px]">{children}</div>
+
+          <footer className="mx-auto mt-12 max-w-[1380px] border-t border-[var(--border)] py-6 text-center text-xs font-bold text-[var(--muted)]">
+            <p>
+              StudyOS &bull;{" "}
+              <a
+                href="https://webnovis.com"
+                target="_blank"
+                rel="nofollow noopener noreferrer"
+                className="font-extrabold text-[var(--text)] underline decoration-[var(--accent)] underline-offset-2 transition-colors hover:opacity-80"
+              >
+                WebNovis
+              </a>
+            </p>
+          </footer>
         </section>
       </div>
 
