@@ -101,3 +101,18 @@ test("hash stabile: banner cookie e token immagine esclusi", () => {
   const b = "Titolo\n![x](https://a/img.gif?itok=BBB)\nTesto\nQuesto sito utilizza cookie diversi";
   assert.equal(stripBoilerplate(a), stripBoilerplate(b));
 });
+
+test("email offuscate da Cloudflare: decodificate e stabili (niente falsi 'pagina cambiata')", async () => {
+  const { decodeCloudflareEmails, parsePersonPage } = await import("../src/lib/university/parsers.ts");
+  const obfuscated = (hex) =>
+    `Rossi Mario\n===========\nProfessore Associato\nE-mail di ateneo\n[\\[email protected\\]](https://www.unimi.it/cdn-cgi/l/email-protection#${hex})\nRicevimento\nSu appuntamento, [\\[email protected\\]](https://www.unimi.it/cdn-cgi/l/email-protection)\nLuogo di ricevimento\nstudio`;
+  // Stessa email con due chiavi XOR diverse, come avviene tra due richieste.
+  const a = obfuscated("582b2c3d3e393637763a313e3e37182d3631353176312c");
+  const b = obfuscated("473433222126292869252e2121280732292e2a2e692e33");
+  assert.equal(stripBoilerplateHash(decodeCloudflareEmails(a)), stripBoilerplateHash(decodeCloudflareEmails(b)));
+  const person = parsePersonPage(a);
+  assert.equal(person.email, "stefano.biffo@unimi.it");
+  assert.equal(person.officeHours, "Su appuntamento, stefano.biffo@unimi.it");
+});
+
+const stripBoilerplateHash = (text) => text.replace(/\s+/g, " ");

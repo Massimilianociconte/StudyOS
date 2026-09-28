@@ -180,7 +180,11 @@ const flush = async () => {
   const diff = diffCollections(state.collections, baseline);
   const settingsChanged = state.settings !== baselineSettings;
   const needsVaultWrite = vaultMode && (diff.count > 0 || vaultDirty);
-  if (!diff.count && !settingsChanged && !needsVaultWrite) return;
+  if (!diff.count && !settingsChanged && !needsVaultWrite) {
+    // Stato già allineato al disco (es. dopo un rollback): un vecchio errore non è più attuale.
+    host.onError(undefined);
+    return;
+  }
 
   const outbox = buildOutbox(diff);
   const remoteKeysInFlush = new Map(remoteRefs);
@@ -225,9 +229,14 @@ const flush = async () => {
  * Richiede un flush. Chiamate ravvicinate (stesso tick) condividono lo stesso flush;
  * i flush sono serializzati. La promise si risolve a dati scritti su IndexedDB.
  */
+// Col vault ogni flush ricifra l'intero snapshot: le modifiche ravvicinate (es. digitazione)
+// vengono raccolte in un'unica scrittura.
+const VAULT_COALESCE_MS = 250;
+
 export const requestPersist = (): Promise<void> => {
   if (pending) return pending;
   const run = chain.then(async () => {
+    if (vaultMode) await new Promise((resolve) => setTimeout(resolve, VAULT_COALESCE_MS));
     pending = null;
     await flush();
   });
@@ -247,9 +256,14 @@ export const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
 export const whenPersisted = () => chain.then(() => undefined);
 
 export const clearAllLocalData = async () => {
-  await db.transaction("rw", [db.vault, db.syncOutbox, ...dataTables], async () => {
+  await db.transaction("rw", [db.vault, db.syncOutbox, db.meta, ...dataTables], async () => {
     await Promise.all(dataTables.map((table) => table.clear()));
     await db.vault.clear();
     await db.syncOutbox.clear();
+    // Senza dati locali i cursori cloud non valgono più: al prossimo accesso (anche dopo un
+    // logout) la sync riparte da zero e riscarica tutto invece di restare vuota.
+    await db.meta
+      .filter((row) => row.key.startsWith("cloud:cursor:") || row.key.startsWith("cloud:migrated:"))
+      .delete();
   });
 };

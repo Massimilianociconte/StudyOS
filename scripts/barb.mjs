@@ -64,7 +64,13 @@ const printSummary = (report) => {
   console.log(`  pagine: ${report.pages.length} (${report.pages.filter((p) => p.fromCache).length} da cache) · errori: ${errors}`);
   if (report.scope === "check-updates") {
     console.log(`  pagine cambiate/nuove: ${report.updates.length}`);
-    for (const update of report.updates) console.log(`   - [${update.status}] ${update.url}`);
+    for (const update of report.updates) {
+      console.log(`   - [${update.status}] ${update.url}`);
+      if (update.diff) {
+        for (const line of update.diff.removed.slice(0, 2)) console.log(`       − ${line}`);
+        for (const line of update.diff.added.slice(0, 2)) console.log(`       + ${line}`);
+      }
+    }
   } else {
     console.log(`  modifiche vs overlay attuale: ${report.changes.length}`);
     const bySection = report.changes.reduce((acc, change) => ({ ...acc, [change.section]: (acc[change.section] ?? 0) + 1 }), {});

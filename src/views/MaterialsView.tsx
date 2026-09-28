@@ -4,6 +4,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { shortDate, subjectName } from "../lib/selectors";
 import { Button, Field, Panel, Pill, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { normalizeExternalUrl, safeDataUrl, safeHref } from "../lib/safeUrl";
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return "link";
@@ -48,7 +49,13 @@ export function MaterialsView() {
 
   const addLink = async () => {
     if (!url.trim()) return;
-    await addExternalAttachment(url.trim(), name.trim() || url.trim());
+    const safe = normalizeExternalUrl(url);
+    if (!safe) {
+      setUploadError("Link non valido: usa un indirizzo http(s) completo.");
+      return;
+    }
+    setUploadError("");
+    await addExternalAttachment(safe, name.trim() || safe);
     setUrl("");
     setName("");
   };
@@ -65,10 +72,16 @@ export function MaterialsView() {
 
   const saveEditor = async () => {
     if (!editingAttachment || !draft.name.trim()) return;
+    const externalUrl = editingAttachment.externalUrl ? normalizeExternalUrl(draft.externalUrl) : editingAttachment.externalUrl;
+    if (editingAttachment.externalUrl && !externalUrl) {
+      setUploadError("Link non valido: usa un indirizzo http(s) completo.");
+      return;
+    }
+    setUploadError("");
     await updateAttachment(editingAttachment.id, {
       name: draft.name.trim(),
       description: draft.description.trim(),
-      externalUrl: editingAttachment.externalUrl ? draft.externalUrl.trim() : editingAttachment.externalUrl,
+      externalUrl: externalUrl ?? undefined,
       tags: draft.tags
         .split(",")
         .map((tag) => tag.trim())
@@ -100,7 +113,7 @@ export function MaterialsView() {
               <article key={attachment.id} className="quiet-panel min-w-0 overflow-hidden p-3" data-testid="attachment-card">
                 <div className="mb-3 grid h-36 place-items-center overflow-hidden rounded-[24px] bg-[var(--surface-soft)]">
                   {attachment.dataUrl?.startsWith("data:image") ? (
-                    <img src={attachment.dataUrl} alt="" className="h-full w-full object-cover" />
+                    <img src={safeDataUrl(attachment.dataUrl)} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <Icon name={attachment.externalUrl ? "LineChart" : "FileText"} className="h-10 w-10 text-[var(--accent)]" />
                   )}
@@ -117,18 +130,18 @@ export function MaterialsView() {
                   <p className="two-line-safe mt-3 text-sm text-[var(--muted)]">{attachment.description}</p>
                 ) : null}
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  {attachment.externalUrl ? (
+                  {attachment.externalUrl && safeHref(attachment.externalUrl) ? (
                     <a
-                      href={attachment.externalUrl}
+                      href={safeHref(attachment.externalUrl)}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex min-h-10 items-center justify-center rounded-full bg-[var(--accent)] px-3 text-sm font-black text-[#10131d]"
                     >
                       Apri
                     </a>
-                  ) : attachment.dataUrl ? (
+                  ) : safeDataUrl(attachment.dataUrl) ? (
                     <a
-                      href={attachment.dataUrl}
+                      href={safeDataUrl(attachment.dataUrl)}
                       download={attachment.name}
                       className="inline-flex min-h-10 items-center justify-center rounded-full bg-[var(--surface-strong)] px-3 text-sm font-black"
                     >
@@ -246,6 +259,8 @@ export function MaterialsView() {
                   placeholder="esame, pdf, appunti"
                 />
               </Field>
+
+              {uploadError ? <p className="text-sm font-bold text-[var(--warning-text)]" role="alert">{uploadError}</p> : null}
 
               <div className="mt-2 flex flex-wrap justify-end gap-2">
                 <Button variant="danger" icon="Trash2" onClick={() => deleteWithConfirm(editingAttachment)}>

@@ -7,6 +7,9 @@ su Supabase.
 1. Apri il progetto giusto nel Dashboard Supabase → **SQL Editor** → **New query**.
    Incolla l'intero [schema.sql](schema.sql) e premi **Run**. Puoi rieseguirlo
    dopo un aggiornamento: conserva le righe esistenti di `studyos_items`.
+   **Rieseguilo dopo la revisione del 28/09/2026**: la funzione di confronto non
+   usa più blocchi EXCEPTION (una subtransaction per chiamata), l'RPC rifiuta
+   payload con `id` diverso dall'entità e due indici ridondanti vengono rimossi.
 2. In una nuova query incolla [verify.sql](verify.sql). Tutti i campi `*_ready`
    devono essere `true` e `own_item_policies` deve valere `4`.
 3. In **Authentication → URL Configuration** imposta **Site URL** e **Redirect

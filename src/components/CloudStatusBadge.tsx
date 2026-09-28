@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
-import { isCloudConfigured } from "../lib/supabase";
-import { getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSync";
+import { cloudConfigured, getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSyncState";
 
 export function CloudStatusBadge({ onClick }: { onClick?: () => void }) {
-  const configured = isCloudConfigured();
+  const configured = cloudConfigured;
   const [sync, setSync] = useState<CloudSyncState>(() => getCloudSyncState());
 
   useEffect(() => {

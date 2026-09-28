@@ -8,11 +8,12 @@
 // senza --apply produce solo report + candidato (.cache/ai/university/<provider>.candidate.json).
 
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { ensureFirecrawl, scrapeMany, FIRECRAWL_BASE } from "./firecrawlLocal.mjs";
 import { findCourse, findYearCodes, fetchLessons, lessonsToRules } from "./easyAcademy.mjs";
 import {
+  CACHE_ROOT,
   ROOT,
   candidatePath,
   getProvider,
@@ -52,6 +53,33 @@ const provenance = (url, sourceType, fetchedAt, contentHash, confidence = 0.95, 
   contentHash,
   ...(note ? { provenanceNote: note } : {}),
 });
+
+// Snapshot testuali indirizzati per hash: permettono a check-updates di mostrare COSA è cambiato
+// in una pagina ufficiale rispetto alla versione da cui deriva l'overlay applicato.
+const snapshotFile = (providerKey, hash) => join(CACHE_ROOT, providerKey, "snapshots", `${hash}.md`);
+
+function saveSnapshot(providerKey, markdown) {
+  const text = stripBoilerplate(markdown ?? "");
+  const hash = sha(text);
+  const path = snapshotFile(providerKey, hash);
+  if (!existsSync(path)) {
+    mkdirSync(join(CACHE_ROOT, providerKey, "snapshots"), { recursive: true });
+    writeFileSync(path, text);
+  }
+  return hash;
+}
+
+/** Diff a righe (insiemi): sufficiente per capire cosa è cambiato in una pagina istituzionale. */
+export function lineDiff(before, after, limit = 6) {
+  const clip = (line) => line.replace(/\s+/g, " ").trim().slice(0, 160);
+  const oldLines = before.split("\n").map(clip).filter(Boolean);
+  const newLines = after.split("\n").map(clip).filter(Boolean);
+  const oldSet = new Set(oldLines);
+  const newSet = new Set(newLines);
+  const added = newLines.filter((line) => !oldSet.has(line));
+  const removed = oldLines.filter((line) => !newSet.has(line));
+  return { added: added.slice(0, limit), removed: removed.slice(0, limit), addedCount: added.length, removedCount: removed.length };
+}
 
 const teacherIdFromUrl = (url) => {
   const slug = url?.match(/\/ugov\/(?:person|rubrica)\/([^/?#]+)/)?.[1];
@@ -180,7 +208,17 @@ function renderMarkdown(report) {
   lines.push(`- Applicato: ${report.applied ? "sì" : "no"}${report.applyBlockedReason ? ` (${report.applyBlockedReason})` : ""}`);
   if (report.updates?.length) {
     lines.push("", "## Pagine cambiate", "");
-    for (const update of report.updates) lines.push(`- [${update.status}] ${update.url} → scope \`${update.scope}\``);
+    for (const update of report.updates) {
+      lines.push(`- [${update.status}] ${update.url} → scope \`${update.scope}\``);
+      if (update.diff) {
+        for (const line of update.diff.removed) lines.push(`  - − ${line.replace(/\|/g, "\\|")}`);
+        for (const line of update.diff.added) lines.push(`  - + ${line.replace(/\|/g, "\\|")}`);
+        const hidden = update.diff.addedCount + update.diff.removedCount - update.diff.added.length - update.diff.removed.length;
+        if (hidden > 0) lines.push(`  - … altre ${hidden} righe`);
+      } else if (update.status === "cambiata") {
+        lines.push("  - (versione precedente non disponibile in cache: nessun dettaglio)");
+      }
+    }
   }
   if (report.changes.length) {
     lines.push("", "## Modifiche", "", "| Sezione | Id | Campo | Prima | Dopo |", "| --- | --- | --- | --- | --- |");
@@ -223,6 +261,8 @@ export async function runSync(options = {}) {
   const current = readSynced(provider) ?? emptySyncedData(provider.key);
   const candidate = structuredClone(current);
   candidate.provider = provider.key;
+  // Overlay da cui parte il candidato: un apply successivo a un'altra applicazione lo rifiuta.
+  candidate.baseGeneratedAt = current.generatedAt ?? null;
 
   const report = {
     id: runId,
@@ -263,6 +303,7 @@ export async function runSync(options = {}) {
         contentHash: pageHash(doc.markdown),
         fetchedAt: doc.fetchedAt ?? nowIso(),
       };
+      saveSnapshot(provider.key, doc.markdown);
     }
   };
 
@@ -277,6 +318,8 @@ export async function runSync(options = {}) {
     const docs = (await scrapeMany(official, {
       concurrency,
       cacheTtlMs,
+      // check-updates deve essere rapido: un errore viene segnalato, non ritentato a lungo.
+      retries: checkOnly ? 1 : 3,
       onRetry: ({ url, attempt, delay }) => log(`  ↻ retry ${attempt} ${url} tra ${delay}ms`),
       onProgress: ({ done, total, result }) =>
         log(`  ${result.ok ? (result.fromCache ? "◦" : "✓") : "✗"} [${done}/${total}] ${result.url}${result.ok ? "" : ` — ${result.error}`}`),
@@ -314,7 +357,14 @@ export async function runSync(options = {}) {
     for (const doc of docs) {
       const previous = current.sources?.[doc.url]?.contentHash ?? null;
       const status = !doc.ok ? "errore" : !previous ? "nuova" : previous === pageHash(doc.markdown) ? "invariata" : "cambiata";
-      if (status !== "invariata") report.updates.push({ url: doc.url, status, scope: known.get(doc.url) });
+      if (status === "invariata") continue;
+      const update = { url: doc.url, status, scope: known.get(doc.url) };
+      if (status === "cambiata" && existsSync(snapshotFile(provider.key, previous))) {
+        update.diff = lineDiff(readFileSync(snapshotFile(provider.key, previous), "utf8"), stripBoilerplate(doc.markdown));
+      } else if (status === "errore") {
+        update.error = doc.error;
+      }
+      report.updates.push(update);
     }
     const scopes = [...new Set(report.updates.filter((u) => u.status !== "errore").map((u) => u.scope))];
     report.notes.push(
@@ -701,11 +751,23 @@ export async function applyCandidate({ provider: providerKey = "barb", file, for
   if (envelopeErrors.length) return { applied: false, errors: envelopeErrors, path };
   const acquisitionErrors = candidateAcquisitionErrors(candidate);
   if (acquisitionErrors.length && !force) return { applied: false, errors: acquisitionErrors, path };
+  const current = readSynced(provider) ?? emptySyncedData(provider.key);
+  if (candidate.baseGeneratedAt !== undefined && candidate.baseGeneratedAt !== current.generatedAt && !force) {
+    return {
+      applied: false,
+      errors: [{
+        level: "error",
+        scope: "candidate",
+        field: "baseGeneratedAt",
+        message: "L'overlay è stato aggiornato dopo la creazione di questo candidato: rigenera con barb:sync (o --force dopo revisione).",
+      }],
+      path,
+    };
+  }
   const seed = await loadSeed(provider);
   const issues = validateDataset(mergeUniversityDataset(seed, candidate));
   const errors = issues.filter((issue) => issue.level === "error");
   if (errors.length && !force) return { applied: false, errors, path };
-  const current = readSynced(provider) ?? emptySyncedData(provider.key);
   const changes = diffSynced(current, candidate);
   const acquisition = candidate.acquisition;
   candidate.lastRun = {

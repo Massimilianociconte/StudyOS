@@ -10,6 +10,7 @@ export function LockScreen() {
   const { settings, unlockVault } = useStudyStore();
 
   const unlock = async () => {
+    if (busy || !passphrase) return;
     setBusy(true);
     setError("");
     try {

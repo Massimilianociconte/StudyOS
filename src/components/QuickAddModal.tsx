@@ -5,6 +5,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, IconButton, Pill, inputClass } from "./ui";
 import { Icon } from "./Icon";
 import { fromDatetimeLocal, nextHalfHour, toDatetimeLocal } from "../lib/dates";
+import { normalizeExternalUrl } from "../lib/safeUrl";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
 type TaskCreateMode = "normal" | "timer" | "completed";
@@ -118,7 +119,9 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
         await addSubject({ name: title.trim(), color: "var(--accent)" });
       }
       if (mode === "material" && url.trim()) {
-        await addExternalAttachment(url.trim(), title.trim() || "Link rapido");
+        const safe = normalizeExternalUrl(url);
+        if (!safe) throw new Error("Link non valido: usa un indirizzo http(s) completo.");
+        await addExternalAttachment(safe, title.trim() || "Link rapido");
       }
       reset();
       onClose();

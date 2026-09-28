@@ -18,11 +18,11 @@ create table if not exists public.studyos_items (
   unique (user_id, entity_type, entity_id)
 );
 
-create index if not exists studyos_items_user_updated_idx
-  on public.studyos_items (user_id, updated_at desc);
-
-create index if not exists studyos_items_user_type_idx
-  on public.studyos_items (user_id, entity_type);
+-- Indici ridondanti delle versioni precedenti: coperti dall'indice del cursore (letto anche
+-- all'indietro) e dal vincolo unique (user_id, entity_type, entity_id). Rimossi per ridurre
+-- il costo di ogni scrittura.
+drop index if exists public.studyos_items_user_updated_idx;
+drop index if exists public.studyos_items_user_type_idx;
 
 -- Pull incrementale del sync per-entità: where user_id = ? and updated_at >= ? order by updated_at, id
 create index if not exists studyos_items_user_cursor_idx
@@ -31,6 +31,7 @@ create index if not exists studyos_items_user_cursor_idx
 create or replace function public.set_studyos_updated_at()
 returns trigger
 language plpgsql
+set search_path = pg_catalog
 as $$
 begin
   new.updated_at = now();
@@ -86,23 +87,24 @@ create or replace function public.studyos_item_stamp(
   p_fallback timestamptz
 )
 returns timestamptz
-language plpgsql
+language sql
 stable
+set search_path = pg_catalog
 as $$
-declare
-  v_stamp text;
-begin
-  v_stamp := case when p_deleted
-    then coalesce(p_payload->>'deletedAt', p_payload->>'updatedAt')
-    else p_payload->>'updatedAt'
-  end;
-  if v_stamp is null then return p_fallback; end if;
-  begin
-    return v_stamp::timestamptz;
-  exception when invalid_datetime_format or datetime_field_overflow then
-    return p_fallback;
-  end;
-end;
+  -- Nessun blocco EXCEPTION: ogni chiamata ne aprirebbe una subtransaction (fino a 4 per riga,
+  -- 800 per batch), con overflow della cache subxid e rallentamenti per tutto il database.
+  -- Il formato ISO viene validato con una regex prima del cast.
+  select case
+    when stamp ~ '^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d{1,6})?(Z|[+-]([01]\d|2[0-3]):?[0-5]\d)$'
+      then stamp::timestamptz
+    else p_fallback
+  end
+  from (
+    select case when p_deleted
+      then coalesce(p_payload->>'deletedAt', p_payload->>'updatedAt')
+      else p_payload->>'updatedAt'
+    end as stamp
+  ) as source
 $$;
 
 revoke all on function public.studyos_item_stamp(jsonb, boolean, timestamptz) from public;
@@ -143,7 +145,8 @@ begin
     v_payload := v_row->'payload';
     v_deleted := coalesce((v_row->>'deleted')::boolean, false);
     if nullif(v_type, '') is null or nullif(v_id, '') is null
-       or jsonb_typeof(v_payload) <> 'object' then
+       or jsonb_typeof(v_payload) <> 'object'
+       or (v_payload->>'id') is distinct from v_id then
       raise exception 'Entità di sincronizzazione non valida';
     end if;
 

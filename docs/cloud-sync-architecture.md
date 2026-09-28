@@ -34,6 +34,24 @@ backup possono essere cifrati, ma la sync Supabase invia il payload JSON in
 chiaro (`encrypted: false`). Le policy RLS controllano l'accesso; non c'è
 ancora cifratura end-to-end del cloud. La UI lo segnala esplicitamente.
 
-La funzione SQL è stata provata in un PostgreSQL temporaneo con scrittura nuova,
-scrittura obsoleta e retry. Per verificare l'intero percorso servono un progetto
-Supabase configurato con lo schema e due sessioni browser/autenticazioni reali.
+Garanzie aggiuntive (revisione del 28 settembre 2026):
+
+- con il vault bloccato o durante il caricamento lo stato in memoria è vuoto: la
+  sync si sospende (niente pull applicati, cursore fermo, nessuna voce dell'outbox
+  trasformata in eliminazione) e riparte allo sblocco;
+- una voce "put" senza entità in memoria non diventa mai un tombstone;
+- il primo collegamento di un nuovo dispositivo non ricarica le entità appena
+  scaricate (prima veniva re-inviato l'intero dataset, allegati compresi);
+- il ripristino di un backup assegna `updatedAt` = adesso alle entità cambiate,
+  altrimenti il server (LWW) le rifiuterebbe e il pull annullerebbe il ripristino;
+- richieste Supabase con timeout di 30 s; errori di rete mostrati in italiano;
+- il logout funziona anche offline (la sessione viene rimossa dal dispositivo);
+- supabase-js e il motore di sync sono caricati dopo l'avvio (bundle iniziale ~50 KB gz più leggero).
+
+Verifica end-to-end eseguita con stack Supabase locale (CLI, Postgres 17 + Auth +
+Realtime) e due origini browser come due dispositivi: upload iniziale di dati
+creati prima del login, merge bidirezionale, realtime, eliminazioni, modifica
+durante un'interruzione del server + reload + recupero automatico, vault
+bloccato durante modifiche remote, ripristino backup, logout offline. Lo schema
+è stato provato anche sull'immagine Postgres ufficiale Supabase: LWW, retry
+idempotente, id incoerente rifiutato, RLS tra utenti, `anon` senza accesso.

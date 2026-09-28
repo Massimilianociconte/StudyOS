@@ -14,3 +14,13 @@
   coda e mostra un errore. File incorporati nuovi: massimo 600 KiB.
 - La UI BARB legge il dataset incluso nella build: dopo `barb:apply` occorre
   ricompilare e distribuire l'app per vedere l'aggiornamento in browser.
+- La sync cloud non deve mai leggere lo stato con vault bloccato o app in
+  caricamento: `cloudSync.ts` interrompe la passata (`SyncSuspendedError`)
+  senza toccare outbox e cursori. Una voce put senza entità non è un tombstone.
+- unimi.it offusca a volte le email via Cloudflare (`/cdn-cgi/l/email-protection`):
+  `parsers.ts` le decodifica prima di hash e parsing, altrimenti ogni check
+  segnala pagine "cambiate" inesistenti.
+- In build la CSP (vite.config.ts) consente script solo same-origin e connessioni
+  solo verso il progetto Supabase configurato: nuove origini esterne vanno aggiunte lì.
+- `normalizeExternalUrl`/`safeHref` (src/lib/safeUrl.ts) sono obbligatori per ogni
+  link proveniente da dati utente, backup o sync (blocca `javascript:`).

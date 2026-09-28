@@ -156,7 +156,9 @@ export function CalendarView() {
     const event = events.find((item) => item.id === eventId);
     if (!event) return;
     const start = parseISO(event.start);
-    const minutes = differenceInMinutes(parseISO(event.end), start);
+    if (Number.isNaN(start.getTime())) return;
+    const duration = differenceInMinutes(parseISO(event.end), start);
+    const minutes = Number.isFinite(duration) && duration > 0 ? duration : 60;
     const nextStart = setHours(startOfDay(day), start.getHours());
     nextStart.setMinutes(start.getMinutes());
     await updateEvent(event.id, { start: nextStart.toISOString(), end: addMinutesSafe(nextStart, minutes).toISOString() });
@@ -165,6 +167,7 @@ export function CalendarView() {
   const createEvent = async () => {
     if (!newTitle.trim()) return;
     const start = new Date(newStart);
+    if (Number.isNaN(start.getTime())) return;
     await addEvent({
       title: newTitle.trim(),
       start: start.toISOString(),
@@ -178,6 +181,7 @@ export function CalendarView() {
   const createFromDay = async () => {
     if (!selectedDay || !dayDraft.title.trim()) return;
     const start = new Date(dayDraft.startsAt);
+    if (Number.isNaN(start.getTime())) return;
     if (createKind === "task") {
       await addTask({
         title: dayDraft.title.trim(),

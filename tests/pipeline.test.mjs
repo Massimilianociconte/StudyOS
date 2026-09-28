@@ -128,3 +128,10 @@ test("seed base valido", () => {
   const issues = validateDataset(BARB_SEED).filter((i) => i.level === "error");
   assert.deepEqual(issues, []);
 });
+
+test("check-updates: diff a righe tra snapshot e pagina attuale", async () => {
+  const { lineDiff } = await import("../scripts/university/pipeline.mjs");
+  const diff = lineDiff("Ricevimento\ngiovedì\nconcordare via mail", "Ricevimento\nmartedì 14-16\nconcordare via mail");
+  assert.deepEqual(diff.removed, ["giovedì"]);
+  assert.deepEqual(diff.added, ["martedì 14-16"]);
+});

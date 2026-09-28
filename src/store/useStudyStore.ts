@@ -174,6 +174,25 @@ const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => {
   };
 };
 
+/**
+ * Ripristino completo: le entità uguali a quelle attuali restano invariate (nessuna scrittura),
+ * le altre ricevono updatedAt = adesso. Senza questo, con la sync attiva il server (LWW)
+ * rifiuterebbe le versioni del backup, più vecchie, e il pull le riporterebbe allo stato cloud.
+ */
+const restoredCollections = (incoming: CollectionsState, current: CollectionsState): CollectionsState => {
+  const now = nowIso();
+  const result = {} as Record<CollectionKey, SyncableEntity[]>;
+  for (const key of COLLECTIONS) {
+    const existing = new Map((current[key] as unknown as SyncableEntity[]).map((item) => [item.id, item]));
+    result[key] = (incoming[key] as unknown as SyncableEntity[]).map((item) => {
+      const local = existing.get(item.id);
+      if (local && JSON.stringify(local) === JSON.stringify(item)) return local;
+      return { ...item, updatedAt: now };
+    });
+  }
+  return result as unknown as CollectionsState;
+};
+
 const errorText = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
 
 /** Persiste senza propagare l'errore ai chiamanti UI: l'errore resta visibile in `persistError`. */
@@ -714,7 +733,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     replaceAllData: async (snapshot) => {
       const previous = pickCollections(get());
-      const incoming = applySnapshot(snapshot);
+      const incoming = restoredCollections(applySnapshot(snapshot), previous);
       set(incoming);
       try {
         await requestPersist();
@@ -738,7 +757,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
         for (const item of items) {
           const existing = byId.get(item.id);
           if (!existing) {
-            byId.set(item.id, item);
+            // Un elemento ripristinato è una nuova modifica: altrimenti un tombstone cloud più
+            // recente lo eliminerebbe di nuovo alla prossima sync.
+            byId.set(item.id, { ...item, updatedAt: nowIso() });
             added += 1;
           } else if (timestampOf(item.updatedAt) > timestampOf(existing.updatedAt)) {
             byId.set(item.id, item);
@@ -758,7 +779,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     applyRemoteChanges: async (changes) => {
-      if (!changes.length || get().locked) return;
+      if (!changes.length) return;
+      // Mai ignorare in silenzio: il chiamante avanzerebbe il cursore cloud perdendo le modifiche.
+      if (get().locked || get().loading) throw new Error("Workspace bloccato: modifiche cloud non applicate.");
       const grouped = new Map<CollectionKey, RemoteChange[]>();
       for (const change of changes) {
         const list = grouped.get(change.collection) ?? [];

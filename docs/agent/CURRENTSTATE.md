@@ -24,3 +24,15 @@ dispositivi richiede un backend Supabase configurato e credenziali di test.
 Le due variabili pubbliche `VITE_SUPABASE_URL` e
 `VITE_SUPABASE_PUBLISHABLE_KEY` sono state impostate nelle variabili GitHub
 Actions del repository; la `.env` locale è esclusa dal controllo versione.
+
+Revisione completa (28 settembre 2026, sera): corretti bug di sync (tombstone
+con vault bloccato durante una sync, cursore avanzato senza applicare modifiche,
+re-upload completo al primo login, ripristino backup annullato dalla sync,
+logout offline impossibile), XSS `javascript:` nei materiali, falsi positivi
+di check-updates (email Cloudflare), date non valide nel calendario. Aggiunti
+CSP in build, ErrorBoundary delle viste con ricarica automatica dopo un deploy,
+timeout delle richieste Supabase, caricamento differito di supabase-js.
+Verifiche: `npm test`, `npm run lint`, `npm run build`, `npm run barb:validate`,
+test SQL su immagine Supabase Postgres 17 e test end-to-end con stack Supabase
+locale e due origini browser. Lo schema aggiornato va rieseguito nel progetto
+Supabase (vedi supabase/README.md).

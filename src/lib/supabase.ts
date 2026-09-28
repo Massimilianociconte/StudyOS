@@ -1,5 +1,6 @@
 import {
   createClient,
+  isAuthApiError,
   type RealtimeChannel,
   type Session,
   type SupabaseClient
@@ -10,14 +11,31 @@ import type { RemoteRow } from "./syncMerge";
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
 
+const AUTH_STORAGE_KEY = "studyos-auth";
+
+// Senza timeout una rete che non risponde (captive portal, segnale debole) lascerebbe la
+// sync "in corso" per minuti: nessun retry parte finché la richiesta non termina.
+const REQUEST_TIMEOUT_MS = 30_000;
+
+const fetchWithTimeout: typeof fetch = (input, init = {}) => {
+  if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") return fetch(input, init);
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal =
+    init.signal && typeof (AbortSignal as unknown as { any?: unknown }).any === "function"
+      ? AbortSignal.any([init.signal, timeout])
+      : init.signal ?? timeout;
+  return fetch(input, { ...init, signal });
+};
+
 export const supabase: SupabaseClient | null =
   url && key
     ? createClient(url, key, {
         auth: {
           persistSession: true,
           autoRefreshToken: true,
-          storageKey: "studyos-auth"
-        }
+          storageKey: AUTH_STORAGE_KEY
+        },
+        global: { fetch: fetchWithTimeout }
       })
     : null;
 
@@ -67,9 +85,24 @@ export const signIn = async (email: string, password: string) => {
   return data;
 };
 
-export const signOut = async () => {
-  if (!supabase) return;
-  await supabase.auth.signOut();
+/**
+ * Ritorna `{ localOnly: true }` quando il server non era raggiungibile: supabase-js in quel caso
+ * NON rimuove la sessione (nemmeno con scope "local", che contatta comunque il server), quindi
+ * la si elimina dallo storage del dispositivo e il chiamante ricarica l'app.
+ */
+export const signOut = async (): Promise<{ localOnly: boolean }> => {
+  if (!supabase) return { localOnly: false };
+  const { error } = await supabase.auth.signOut();
+  if (!error) return { localOnly: false };
+  if (isAuthApiError(error)) throw error;
+  for (const suffix of ["", "-code-verifier", "-user"]) {
+    try {
+      localStorage.removeItem(`${AUTH_STORAGE_KEY}${suffix}`);
+    } catch {
+      // storage non disponibile
+    }
+  }
+  return { localOnly: true };
 };
 
 export const getSession = async (): Promise<Session | null> => {

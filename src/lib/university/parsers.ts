@@ -47,11 +47,39 @@ export const canonicalUnimiUrl = (raw: string | null | undefined): string | null
   }
 };
 
+// Cloudflare su unimi.it offusca a volte le email con una chiave XOR casuale per richiesta:
+// `[\[email protected\]](https://www.unimi.it/cdn-cgi/l/email-protection#<hex>)`.
+// Senza decodifica ogni scrape produce un hash diverso (falsi "pagina cambiata") e testo spazzatura.
+const CF_EMAIL_LINK = /\[(?:\\\[|\\\]|[^\]])*\]\((?:https?:\/\/[^)\s]*)?\/cdn-cgi\/l\/email-protection(?:#([0-9a-f]+))?\)/gi;
+
+const decodeCloudflareHex = (hex: string): string | null => {
+  if (hex.length < 4 || hex.length % 2 !== 0) return null;
+  const key = parseInt(hex.slice(0, 2), 16);
+  let out = "";
+  for (let index = 2; index < hex.length; index += 2) out += String.fromCharCode(parseInt(hex.slice(index, index + 2), 16) ^ key);
+  return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(out) ? out.toLowerCase() : null;
+};
+
+/** Decodifica le email protette; i segnaposto senza codice usano l'unica email @unimi.it della pagina. */
+export const decodeCloudflareEmails = (markdown: string) => {
+  const decoded = new Set<string>();
+  const first = markdown.replace(CF_EMAIL_LINK, (match, hex: string | undefined) => {
+    const email = hex ? decodeCloudflareHex(hex) : null;
+    if (!email) return match;
+    decoded.add(email);
+    return `[${email}](mailto:${email})`;
+  });
+  for (const match of first.matchAll(/mailto:([^)\s]+@unimi\.it)/gi)) decoded.add(match[1].toLowerCase());
+  const institutional = [...decoded].filter((email) => email.endsWith("@unimi.it"));
+  const fallback = institutional.length === 1 ? institutional[0] : null;
+  return first.replace(CF_EMAIL_LINK, () => (fallback ? `[${fallback}](mailto:${fallback})` : "(email protetta)"));
+};
+
 const COOKIE_MARKERS = [/^Questo sito utilizza cookie/i, /^Impostazione dei cookie/i, /^\*\s+\[Privacy policy\]/i];
 
 /** Markdown senza banner cookie/menu: base stabile per hash e confronti differenziali. */
 export const stripBoilerplate = (markdown: string) => {
-  const lines = markdown.split("\n");
+  const lines = decodeCloudflareEmails(markdown).split("\n");
   const end = lines.findIndex((line) => COOKIE_MARKERS.some((re) => re.test(line.trim())));
   return (end >= 0 ? lines.slice(0, end) : lines)
     .filter((line) => !/^\[Salta al contenuto principale\]/.test(line.trim()))

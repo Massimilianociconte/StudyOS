@@ -10,6 +10,7 @@
 // realtime solo come segnale, pausa automatica con vault bloccato.
 
 import type { RealtimeChannel, Session } from "@supabase/supabase-js";
+import { getCloudSyncState, setCloudSyncState } from "./cloudSyncState";
 import { useStudyStore } from "../store/useStudyStore";
 import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey } from "./collections";
 import { db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
@@ -28,17 +29,8 @@ import {
   type PushRow
 } from "./supabase";
 
-export type CloudSyncStatus = "off" | "idle" | "syncing" | "error" | "offline";
-
-export interface CloudSyncState {
-  status: CloudSyncStatus;
-  session: Session | null;
-  lastSync: string | null;
-  error?: string;
-  pendingChanges: boolean;
-  pendingCount: number;
-  realtime: boolean;
-}
+export type { CloudSyncState, CloudSyncStatus } from "./cloudSyncState";
+export { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 
 const PAGE_SIZE = 200;
 const PUSH_MAX_BYTES = 900_000;
@@ -60,34 +52,17 @@ const metaKeys = {
 // mentre altre schede/dispositivi (id diversi) le ricevono normalmente.
 const clientId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `client-${Date.now()}`;
 
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : "Sync fallita.");
+const errorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "Sync fallita.";
+  if (/failed to fetch|networkerror|load failed|network request failed|timed? ?out|timeout|aborted|err_connection/i.test(message)) {
+    return "Server cloud non raggiungibile: le modifiche restano salvate su questo dispositivo, nuovo tentativo automatico.";
+  }
+  return message;
+};
 const isOnline = () => typeof navigator === "undefined" || navigator.onLine !== false;
 
-let state: CloudSyncState = {
-  status: isCloudConfigured() ? "idle" : "off",
-  session: null,
-  lastSync: null,
-  pendingChanges: false,
-  pendingCount: 0,
-  realtime: false
-};
-
-const listeners = new Set<(s: CloudSyncState) => void>();
-
-const setState = (patch: Partial<CloudSyncState>) => {
-  state = { ...state, ...patch };
-  listeners.forEach((listener) => listener(state));
-};
-
-export const getCloudSyncState = () => state;
-
-export const subscribeCloudSync = (listener: (s: CloudSyncState) => void) => {
-  listeners.add(listener);
-  listener(state);
-  return () => {
-    listeners.delete(listener);
-  };
-};
+const setState = setCloudSyncState;
+const currentSession = () => getCloudSyncState().session;
 
 let realtimeChannel: RealtimeChannel | null = null;
 let initialized = false;
@@ -110,6 +85,23 @@ const storeReady = () => {
   return !store.loading && !store.locked;
 };
 
+class SyncSuspendedError extends Error {
+  constructor() {
+    super("Sincronizzazione sospesa: workspace bloccato o in caricamento.");
+    this.name = "SyncSuspendedError";
+  }
+}
+
+/**
+ * Con il vault bloccato (o durante il caricamento) lo stato in memoria è vuoto: leggere lo
+ * stato in quel momento trasformerebbe ogni voce dell'outbox in un'eliminazione cloud.
+ * La sync si interrompe senza avanzare cursori né toccare l'outbox.
+ */
+const assertStoreReady = () => {
+  if (!storeReady()) throw new SyncSuspendedError();
+};
+
+
 const schedule = (delay: number) => {
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
@@ -128,10 +120,15 @@ const scheduleRetry = () => {
   }, delay);
 };
 
-/** Accoda tutte le entità locali (prima sync di un account, "Forza push"). */
-const enqueueAllLocal = async () => {
+/**
+ * Accoda le entità locali (prima sync di un account, "Forza push").
+ * `skip`: chiavi già presenti nel cloud. Le versioni locali più recenti di queste sono già
+ * state riaccodate da planMerge; tutte le altre sono identiche o più vecchie e non vanno
+ * ricaricate (prima un nuovo dispositivo re-inviava l'intero dataset, allegati compresi).
+ */
+const enqueueAllLocal = async (skip: Set<string> = new Set()) => {
   const collections = pickCollections(useStudyStore.getState());
-  const existing = new Set(await db.syncOutbox.toCollection().primaryKeys());
+  const existing = new Set([...(await db.syncOutbox.toCollection().primaryKeys()), ...skip]);
   const base = Date.now() * 1000;
   let counter = 0;
   const rows: SyncOutboxRow[] = [];
@@ -174,6 +171,7 @@ const requeueEntities = async (items: Array<{ collection: CollectionKey; id: str
 
 const mergeRows = async (rows: RemoteRow[], force: boolean) => {
   if (!rows.length) return 0;
+  assertStoreReady();
   const outbox = await db.syncOutbox.toArray();
   const pending = new Map<string, PendingOutbox>(outbox.map((row) => [row.key, { deleted: row.deleted, deletedAt: row.deletedAt }]));
   const plan = planMerge(rows, pickCollections(useStudyStore.getState()), pending, { force });
@@ -216,27 +214,47 @@ const pull = async (userId: string, force = false) => {
 };
 
 const push = async (userId: string) => {
+  assertStoreReady();
   const queued = await db.syncOutbox.orderBy("queuedAt").toArray();
   if (!queued.length) return 0;
+  assertStoreReady();
   const index = indexCollections(pickCollections(useStudyStore.getState()));
-  const now = new Date().toISOString();
+  const encoder = new TextEncoder();
 
-  const prepared = queued.map((row) => {
+  const orphans: SyncOutboxRow[] = [];
+  const prepared = queued.flatMap((row) => {
     const entity = index[row.collection]?.get(row.entityId);
-    const deleted = row.deleted || !entity;
-    const payload = deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? now } : entity;
-    const push: PushRow = { entity_type: row.entityType, entity_id: row.entityId, payload, deleted };
-    return { row, push, size: new TextEncoder().encode(JSON.stringify(push)).length };
+    // Una voce "put" senza entità in memoria non diventa MAI un'eliminazione cloud: le
+    // eliminazioni reali arrivano dall'outbox con deleted=true. La voce orfana viene scartata.
+    if (!row.deleted && !entity) {
+      orphans.push(row);
+      return [];
+    }
+    const payload = row.deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? new Date(row.queuedAt / 1000).toISOString() } : entity;
+    const push: PushRow = { entity_type: row.entityType, entity_id: row.entityId, payload, deleted: row.deleted };
+    return [{ row, push, size: encoder.encode(JSON.stringify(push)).length }];
   });
+
+  if (orphans.length) {
+    await db.transaction("rw", db.syncOutbox, async () => {
+      for (const row of orphans) {
+        const current = await db.syncOutbox.get(row.key);
+        if (current && current.queuedAt === row.queuedAt && !current.deleted) await db.syncOutbox.delete(row.key);
+      }
+    });
+  }
 
   let sent = 0;
   const failed: string[] = [];
+  const oversizedKeys: string[] = [];
   for (const batch of chunkBySize(prepared, (item) => item.size, PUSH_MAX_BYTES, PUSH_MAX_ROWS)) {
     const oversized = batch.find((item) => item.size > PUSH_MAX_BYTES);
     if (oversized) {
-      failed.push(`${oversized.row.entityType}:${oversized.row.entityId} supera il limite cloud di ${PUSH_MAX_BYTES} byte`);
+      // Non blocca il resto della coda: resta in outbox e viene segnalato come avviso.
+      oversizedKeys.push(oversized.row.key);
       continue;
     }
+    assertStoreReady();
     try {
       const results = await pushEntityRows(userId, clientId, batch.map((item) => item.push));
       const accepted = new Set(results.filter((result) => result.accepted).map((result) => `${result.entity_type}:${result.entity_id}`));
@@ -257,9 +275,15 @@ const push = async (userId: string) => {
         if (pending?.queuedAt === item.row.queuedAt) failed.push(`Conflitto cloud irrisolto per ${item.row.key}`);
       }
     } catch (error) {
+      if (error instanceof SyncSuspendedError) throw error;
       failed.push(errorMessage(error));
     }
   }
+  setState({
+    warning: oversizedKeys.length
+      ? `${oversizedKeys.length} elementi troppo grandi per il cloud (limite ${Math.round(PUSH_MAX_BYTES / 1024)} KB): restano solo su questo dispositivo. Sostituisci gli allegati grandi con un link.`
+      : undefined
+  });
   if (failed.length) throw new Error(failed.join(" · "));
   return sent;
 };
@@ -281,9 +305,12 @@ const firstSync = async (userId: string) => {
     await mergeRows(rows, false);
   }
   const maxSeen = rows.reduce<string | null>((max, row) => (!max || row.updated_at > max ? row.updated_at : max), null);
-  if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
-  await enqueueAllLocal();
+  // Senza stato locale disponibile non si può accodare nulla: il flag "migrated" non va scritto.
+  assertStoreReady();
+  await enqueueAllLocal(new Set(rows.map((row) => `${row.entity_type}:${row.entity_id}`)));
   await push(userId);
+  assertStoreReady();
+  if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
   await setMeta(metaKeys.migrated(userId), new Date().toISOString());
 };
 
@@ -317,7 +344,7 @@ const bindUser = async (userId: string) => {
 };
 
 const syncOnce = async () => {
-  const session = state.session;
+  const session = currentSession();
   if (!session) return;
   if (!isOnline()) {
     setState({ status: "offline" });
@@ -345,6 +372,11 @@ const syncOnce = async () => {
     retryAttempt = 0;
     setState({ status: "idle", lastSync, error: undefined });
   } catch (error) {
+    if (error instanceof SyncSuspendedError || !storeReady()) {
+      // Riprende da sola allo sblocco del vault (subscription in initCloudSync).
+      setState({ status: "idle" });
+      return;
+    }
     setState({ status: isOnline() ? "error" : "offline", error: errorMessage(error) });
     scheduleRetry();
   } finally {
@@ -362,7 +394,7 @@ export const requestSync = (): Promise<void> => {
     do {
       rerun = false;
       await syncOnce();
-    } while (rerun && state.session);
+    } while (rerun && currentSession());
   })().finally(() => {
     running = null;
   });
@@ -398,7 +430,7 @@ const handleSession = async (session: Session | null) => {
     });
     return;
   }
-  const sameUser = state.session?.user.id === session.user.id;
+  const sameUser = currentSession()?.user.id === session.user.id;
   setState({ session, error: undefined });
   if (sameUser && realtimeChannel) return; // semplice refresh del token
   const lastSync = (await getMeta<string>(metaKeys.lastSync(session.user.id))) ?? null;
@@ -414,14 +446,14 @@ export const initCloudSync = async () => {
   cleanups.push(
     subscribeLocalChanges(() => {
       void refreshPendingCount();
-      if (state.session) schedule(LOCAL_DEBOUNCE_MS);
+      if (currentSession()) schedule(LOCAL_DEBOUNCE_MS);
     })
   );
 
   // Dopo lo sblocco del vault la sync riparte (con vault bloccato è sospesa).
   cleanups.push(
     useStudyStore.subscribe((curr, prev) => {
-      if (prev.locked && !curr.locked && state.session) schedule(REMOTE_DEBOUNCE_MS);
+      if (prev.locked && !curr.locked && currentSession()) schedule(REMOTE_DEBOUNCE_MS);
     })
   );
 
@@ -432,13 +464,13 @@ export const initCloudSync = async () => {
     };
     const onOffline = () => setState({ status: "offline" });
     const onVisible = () => {
-      if (document.visibilityState === "visible" && state.session) schedule(REMOTE_DEBOUNCE_MS);
+      if (document.visibilityState === "visible" && currentSession()) schedule(REMOTE_DEBOUNCE_MS);
     };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onVisible);
     const interval = window.setInterval(() => {
-      if (state.session && document.visibilityState === "visible") void requestSync();
+      if (currentSession() && document.visibilityState === "visible") void requestSync();
     }, PERIODIC_MS);
     cleanups.push(() => {
       window.removeEventListener("online", onOnline);
@@ -472,20 +504,20 @@ export const forcePushNow = async () => {
 
 /** Riscarica tutto dal cloud: la versione remota vince su ogni entità presente nel cloud. */
 export const forcePullNow = async () => {
-  if (!state.session) return;
+  if (!currentSession()) return;
   forceNextPull = true;
   retryAttempt = 0;
   await requestSync();
 };
 
-export const isSignedIn = () => Boolean(state.session);
+export const isSignedIn = () => Boolean(currentSession());
 
 /**
  * Dopo un reset solo locale con account collegato: dimentica cursore e flag del dispositivo
  * così la prossima sync riscarica tutti i dati dal cloud (reset della cache locale).
  */
 export const resetCloudDeviceState = async () => {
-  const userId = state.session?.user.id;
+  const userId = currentSession()?.user.id;
   if (!userId) return;
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));

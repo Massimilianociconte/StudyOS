@@ -1,24 +1,59 @@
 import { lazy, Suspense, useEffect } from "react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { motion } from "framer-motion";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "./store/useStudyStore";
 import { AppShell } from "./components/AppShell";
 import { LockScreen } from "./components/LockScreen";
-import { initCloudSync } from "./lib/cloudSync";
+import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
+import { whenPersisted } from "./lib/persistence";
+import { cloudConfigured } from "./lib/cloudSyncState";
 import type { AppView } from "./types";
 
-const DashboardView = lazy(() => import("./views/DashboardView").then((module) => ({ default: module.DashboardView })));
-const CalendarView = lazy(() => import("./views/CalendarView").then((module) => ({ default: module.CalendarView })));
-const TasksView = lazy(() => import("./views/TasksView").then((module) => ({ default: module.TasksView })));
-const StudyView = lazy(() => import("./views/StudyView").then((module) => ({ default: module.StudyView })));
-const SubjectsView = lazy(() => import("./views/SubjectsView").then((module) => ({ default: module.SubjectsView })));
-const ExamsView = lazy(() => import("./views/ExamsView").then((module) => ({ default: module.ExamsView })));
-const MaterialsView = lazy(() => import("./views/MaterialsView").then((module) => ({ default: module.MaterialsView })));
-const GoalsView = lazy(() => import("./views/GoalsView").then((module) => ({ default: module.GoalsView })));
-const StatsView = lazy(() => import("./views/StatsView").then((module) => ({ default: module.StatsView })));
-const SettingsView = lazy(() => import("./views/SettingsView").then((module) => ({ default: module.SettingsView })));
-const BarbView = lazy(() => import("./views/BarbView").then((module) => ({ default: module.BarbView })));
+const CHUNK_RELOAD_KEY = "studyos-chunk-reload";
+
+/**
+ * Dopo un nuovo deploy una scheda aperta con la build precedente non trova più i vecchi chunk
+ * delle viste: si salva e si ricarica una sola volta invece di mostrare una pagina rotta.
+ */
+const lazyView = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
+  lazy(async () => {
+    try {
+      const module = await loader();
+      try {
+        sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+      } catch {
+        // storage non disponibile
+      }
+      return { default: module[name] as ComponentType };
+    } catch (error) {
+      let alreadyReloaded = true;
+      try {
+        alreadyReloaded = sessionStorage.getItem(CHUNK_RELOAD_KEY) === "1";
+        if (!alreadyReloaded) sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
+      } catch {
+        // senza storage non si rischia un loop di ricariche
+      }
+      if (!alreadyReloaded) {
+        await whenPersisted().catch(() => undefined);
+        window.location.reload();
+        return new Promise<{ default: ComponentType }>(() => undefined);
+      }
+      throw error;
+    }
+  });
+
+const DashboardView = lazyView(() => import("./views/DashboardView"), "DashboardView");
+const CalendarView = lazyView(() => import("./views/CalendarView"), "CalendarView");
+const TasksView = lazyView(() => import("./views/TasksView"), "TasksView");
+const StudyView = lazyView(() => import("./views/StudyView"), "StudyView");
+const SubjectsView = lazyView(() => import("./views/SubjectsView"), "SubjectsView");
+const ExamsView = lazyView(() => import("./views/ExamsView"), "ExamsView");
+const MaterialsView = lazyView(() => import("./views/MaterialsView"), "MaterialsView");
+const GoalsView = lazyView(() => import("./views/GoalsView"), "GoalsView");
+const StatsView = lazyView(() => import("./views/StatsView"), "StatsView");
+const SettingsView = lazyView(() => import("./views/SettingsView"), "SettingsView");
+const BarbView = lazyView(() => import("./views/BarbView"), "BarbView");
 
 const views: Record<AppView, ReactNode> = {
   dashboard: <DashboardView />,
@@ -51,7 +86,8 @@ export default function App() {
 
   useEffect(() => {
     init().then(() => {
-      void initCloudSync();
+      // Motore di sync + supabase-js caricati in differita: fuori dal bundle iniziale.
+      if (cloudConfigured) void import("./lib/cloudSync").then((module) => module.initCloudSync());
     });
   }, [init]);
 
@@ -86,9 +122,11 @@ export default function App() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.24, ease: "easeOut" }}
         >
-          <Suspense fallback={<div className="soft-panel min-h-[240px] p-8 text-lg font-black">Caricamento vista...</div>}>
-            {views[activeView]}
-          </Suspense>
+          <ViewErrorBoundary key={activeView}>
+            <Suspense fallback={<div className="soft-panel min-h-[240px] p-8 text-lg font-black">Caricamento vista...</div>}>
+              {views[activeView]}
+            </Suspense>
+          </ViewErrorBoundary>
         </motion.div>
       )}
     </AppShell>

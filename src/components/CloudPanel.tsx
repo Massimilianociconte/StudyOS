@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Field, Panel, Pill, inputClass } from "./ui";
+import { whenPersisted } from "../lib/persistence";
 import {
   isCloudConfigured,
   resendConfirmation,
@@ -176,8 +177,16 @@ export function CloudPanel() {
     setBusy(true);
     setInfo(null);
     try {
-      await signOut();
+      const result = await signOut();
+      if (result.localOnly) {
+        setInfo({ kind: "pending", text: "Server non raggiungibile: sessione chiusa su questo dispositivo. Ricarico..." });
+        await whenPersisted().catch(() => undefined);
+        window.location.reload();
+        return;
+      }
       setInfo({ kind: "ok", text: "Disconnesso." });
+    } catch (error) {
+      setInfo({ kind: "err", text: error instanceof Error ? error.message : "Disconnessione non riuscita." });
     } finally {
       setBusy(false);
     }
@@ -253,6 +262,12 @@ export function CloudPanel() {
               Modifiche in coda: {sync.pendingCount} · Aggiornamenti live: {sync.realtime ? "attivi" : "non attivi (controllo periodico)"}
             </p>
           </div>
+
+          {sync.warning ? (
+            <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
+              {sync.warning}
+            </p>
+          ) : null}
 
           {sync.error ? (
             <p className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
