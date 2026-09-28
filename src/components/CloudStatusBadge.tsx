@@ -1,16 +1,11 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { isCloudConfigured } from "../lib/supabase";
-import { subscribeCloudSync, type CloudSyncState } from "../lib/cloudSync";
+import { getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSync";
 
 export function CloudStatusBadge({ onClick }: { onClick?: () => void }) {
   const configured = isCloudConfigured();
-  const [sync, setSync] = useState<CloudSyncState>(() => ({
-    status: configured ? "idle" : "off",
-    session: null,
-    lastSync: null,
-    pendingChanges: false
-  }));
+  const [sync, setSync] = useState<CloudSyncState>(() => getCloudSyncState());
 
   useEffect(() => {
     if (!configured) return;
@@ -23,7 +18,7 @@ export function CloudStatusBadge({ onClick }: { onClick?: () => void }) {
   const tone = session
     ? sync.status === "error"
       ? "border-[var(--danger-border)] text-[var(--danger-text)] bg-[var(--danger-bg)]"
-      : sync.status === "syncing" || sync.pendingChanges
+      : sync.status === "syncing" || sync.status === "offline" || sync.pendingChanges
       ? "border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]"
       : "border-[var(--success-border)] text-[var(--success-text)] bg-[var(--success-bg)]"
     : "border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]";
@@ -32,16 +27,20 @@ export function CloudStatusBadge({ onClick }: { onClick?: () => void }) {
     ? "Solo locale"
     : sync.status === "syncing"
     ? "Sync..."
+    : sync.status === "offline"
+    ? "Offline"
     : sync.status === "error"
     ? "Errore sync"
     : sync.pendingChanges
-    ? "In attesa"
+    ? `${sync.pendingCount} in coda`
     : "Cloud attivo";
 
   const subtitle = !session
     ? "Accedi per sincronizzare"
     : sync.status === "error"
     ? sync.error ?? "Riprovo a breve"
+    : sync.status === "offline"
+    ? "Modifiche salvate, invio al ritorno online"
     : session.user.email ?? "";
 
   return (

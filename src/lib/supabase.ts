@@ -5,6 +5,7 @@ import {
   type SupabaseClient
 } from "@supabase/supabase-js";
 import type { StudySnapshot } from "../types";
+import type { RemoteRow } from "./syncMerge";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
@@ -22,8 +23,14 @@ export const supabase: SupabaseClient | null =
 
 export const isCloudConfigured = () => supabase !== null;
 
-const SNAPSHOT_TYPE = "snapshot";
-const SNAPSHOT_ID = "main";
+const TABLE = "studyos_items";
+const LEGACY_SNAPSHOT_TYPE = "snapshot";
+const LEGACY_SNAPSHOT_ID = "main";
+
+const requireClient = () => {
+  if (!supabase) throw new Error("Supabase non configurato.");
+  return supabase;
+};
 
 const getEmailRedirectTo = () => {
   if (typeof window === "undefined") return undefined;
@@ -31,9 +38,9 @@ const getEmailRedirectTo = () => {
 };
 
 export const signUp = async (email: string, password: string) => {
-  if (!supabase) throw new Error("Supabase non configurato.");
+  const client = requireClient();
   const emailRedirectTo = getEmailRedirectTo();
-  const { data, error } = await supabase.auth.signUp({
+  const { data, error } = await client.auth.signUp({
     email,
     password,
     options: emailRedirectTo ? { emailRedirectTo } : undefined
@@ -43,9 +50,9 @@ export const signUp = async (email: string, password: string) => {
 };
 
 export const resendConfirmation = async (email: string) => {
-  if (!supabase) throw new Error("Supabase non configurato.");
+  const client = requireClient();
   const emailRedirectTo = getEmailRedirectTo();
-  const { error } = await supabase.auth.resend({
+  const { error } = await client.auth.resend({
     type: "signup",
     email,
     options: emailRedirectTo ? { emailRedirectTo } : undefined
@@ -54,8 +61,8 @@ export const resendConfirmation = async (email: string) => {
 };
 
 export const signIn = async (email: string, password: string) => {
-  if (!supabase) throw new Error("Supabase non configurato.");
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const client = requireClient();
+  const { data, error } = await client.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
 };
@@ -77,90 +84,119 @@ export const onAuthChange = (cb: (session: Session | null) => void) => {
   return () => data.subscription.unsubscribe();
 };
 
-export interface CloudSnapshotRow {
+// ——— Sync per-entità (una riga per entità in studyos_items) ———
+
+export interface PushRow {
+  entity_type: string;
+  entity_id: string;
+  payload: unknown;
+  deleted: boolean;
+}
+
+export interface PushResult {
+  entity_type: string;
+  entity_id: string;
+  accepted: boolean;
+}
+
+/** Scrittura atomica condizionale: una versione locale vecchia non sovrascrive una remota recente. */
+export const pushEntityRows = async (userId: string, clientId: string, rows: PushRow[]): Promise<PushResult[]> => {
+  const client = requireClient();
+  if (!rows.length) return [];
+  const { data, error } = await client.rpc("push_studyos_rows", {
+    p_user_id: userId,
+    p_client_id: clientId,
+    p_rows: rows
+  });
+  if (error) throw Object.assign(new Error(error.message), { code: error.code, details: error.details });
+  if (!Array.isArray(data) || data.length !== rows.length || data.some((row, index) =>
+    typeof row.accepted !== "boolean" || row.entity_type !== rows[index].entity_type || row.entity_id !== rows[index].entity_id
+  )) {
+    throw new Error("Risposta di sincronizzazione cloud incompleta: modifiche conservate in coda.");
+  }
+  return data as PushResult[];
+};
+
+/** Legge una versione precisa, inclusi gli aggiornamenti già scritti dalla scheda corrente. */
+export const pullEntityRow = async (userId: string, entityType: string, entityId: string): Promise<RemoteRow | null> => {
+  const client = requireClient();
+  const { data, error } = await client.from(TABLE)
+    .select("entity_type, entity_id, payload, deleted, updated_at, client_id")
+    .eq("user_id", userId)
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as RemoteRow | null) ?? null;
+};
+
+/**
+ * Righe modificate dopo `since` (updated_at lato server), in ordine crescente.
+ * Le righe scritte da questo client (stessa sessione di pagina) sono escluse: sono già locali.
+ */
+export const pullEntityRows = async (
+  userId: string,
+  since: string | null,
+  offset: number,
+  limit: number,
+  excludeClientId?: string
+): Promise<RemoteRow[]> => {
+  const client = requireClient();
+  let query = client
+    .from(TABLE)
+    .select("entity_type, entity_id, payload, deleted, updated_at, client_id")
+    .eq("user_id", userId)
+    .neq("entity_type", LEGACY_SNAPSHOT_TYPE)
+    .order("updated_at", { ascending: true })
+    .order("id", { ascending: true })
+    .range(offset, offset + limit - 1);
+  if (since) query = query.gte("updated_at", since);
+  if (excludeClientId) query = query.or(`client_id.is.null,client_id.neq.${excludeClientId}`);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as RemoteRow[];
+};
+
+export interface LegacySnapshotRow {
   payload: StudySnapshot;
   updated_at: string;
-  version: number;
 }
 
-export const pushSnapshot = async (snapshot: StudySnapshot, clientId: string): Promise<CloudSnapshotRow> => {
-  if (!supabase) throw new Error("Supabase non configurato.");
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError) throw userError;
-  if (!userData.user) throw new Error("Sessione non trovata.");
-
-  const { data, error } = await supabase
-    .from("studyos_items")
-    .upsert(
-      {
-        user_id: userData.user.id,
-        entity_type: SNAPSHOT_TYPE,
-        entity_id: SNAPSHOT_ID,
-        payload: snapshot as unknown as Record<string, unknown>,
-        encrypted: false,
-        deleted: false,
-        client_id: clientId
-      },
-      { onConflict: "user_id,entity_type,entity_id" }
-    )
-    .select("payload, updated_at, version")
-    .single();
-
-  if (error) throw error;
-  return data as CloudSnapshotRow;
-};
-
-export const pullSnapshot = async (): Promise<CloudSnapshotRow | null> => {
-  if (!supabase) throw new Error("Supabase non configurato.");
-  const { data, error } = await supabase
-    .from("studyos_items")
-    .select("payload, updated_at, version")
-    .eq("entity_type", SNAPSHOT_TYPE)
-    .eq("entity_id", SNAPSHOT_ID)
+/** Snapshot unico del vecchio motore di sync (letto solo per la migrazione). */
+export const pullLegacySnapshot = async (userId: string): Promise<LegacySnapshotRow | null> => {
+  const client = requireClient();
+  const { data, error } = await client
+    .from(TABLE)
+    .select("payload, updated_at")
+    .eq("user_id", userId)
+    .eq("entity_type", LEGACY_SNAPSHOT_TYPE)
+    .eq("entity_id", LEGACY_SNAPSHOT_ID)
     .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-  return data as CloudSnapshotRow;
+  if (error) throw new Error(error.message);
+  return (data as LegacySnapshotRow | null) ?? null;
 };
 
-export interface RemoteSnapshotPayload {
-  client_id: string | null;
-  updated_at: string;
-  version: number;
-}
-
-export const subscribeRemoteSnapshot = (
+export const subscribeRemoteChanges = (
   userId: string,
-  onChange: (row: RemoteSnapshotPayload) => void
+  onChange: (clientId: string | null) => void,
+  onStatus?: (status: string) => void
 ): RealtimeChannel | null => {
   if (!supabase) return null;
-  const channel = supabase
-    .channel(`studyos-snapshot:${userId}`)
+  return supabase
+    .channel(`studyos-items:${userId}`)
     .on(
       "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "studyos_items",
-        filter: `user_id=eq.${userId}`
-      },
+      { event: "*", schema: "public", table: TABLE, filter: `user_id=eq.${userId}` },
       (payload) => {
         const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
-        if (!row) return;
-        if (row.entity_type !== SNAPSHOT_TYPE || row.entity_id !== SNAPSHOT_ID) return;
-        onChange({
-          client_id: (row.client_id as string | null) ?? null,
-          updated_at: row.updated_at as string,
-          version: (row.version as number) ?? 0
-        });
+        if (!row || row.entity_type === LEGACY_SNAPSHOT_TYPE) return;
+        onChange((row.client_id as string | null) ?? null);
       }
     )
-    .subscribe();
-  return channel;
+    .subscribe((status) => onStatus?.(status));
 };
 
 export const unsubscribeChannel = (channel: RealtimeChannel | null) => {
   if (!supabase || !channel) return;
-  supabase.removeChannel(channel);
+  void supabase.removeChannel(channel);
 };

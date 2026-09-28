@@ -20,6 +20,7 @@ const formatBytes = (bytes: number) => {
 export function MaterialsView() {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
+  const [uploadError, setUploadError] = useState("");
   const [editingAttachment, setEditingAttachment] = useState<Attachment | null>(null);
   const [draft, setDraft] = useState({ name: "", description: "", externalUrl: "", tags: "" });
   const {
@@ -167,11 +168,17 @@ export function MaterialsView() {
                 onChange={async (event) => {
                   const file = event.target.files?.[0];
                   if (!file) return;
-                  await addAttachment(file);
                   event.target.value = "";
+                  setUploadError("");
+                  try {
+                    await addAttachment(file);
+                  } catch (error) {
+                    setUploadError(error instanceof Error ? error.message : "File non importato.");
+                  }
                 }}
               />
             </Field>
+            {uploadError ? <p className="mt-3 text-sm font-bold text-[var(--warning-text)]" role="alert">{uploadError}</p> : null}
           </Panel>
 
           <Panel>

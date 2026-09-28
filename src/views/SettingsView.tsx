@@ -1,7 +1,16 @@
 import { useState } from "react";
 import type { AppView, PaletteName, ThemeMode } from "../types";
-import { createBackupEnvelope, downloadJson, readBackupEnvelope, snapshotFromBackup } from "../lib/backup";
+import {
+  backupSummary,
+  createBackupEnvelope,
+  downloadJson,
+  inferBackupScope,
+  readBackupEnvelope,
+  snapshotFromBackup
+} from "../lib/backup";
 import { useStudyStore, snapshotFromState } from "../store/useStudyStore";
+import { whenPersisted } from "../lib/persistence";
+import { getCloudSyncState, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
 import { readImageFile } from "../lib/files";
 import { Button, Field, Panel, Pill, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
@@ -26,6 +35,7 @@ export function SettingsView() {
     disableVault,
     lockVault,
     replaceAllData,
+    mergeData,
     resetAllData,
     subjects,
     exams,
@@ -48,9 +58,11 @@ export function SettingsView() {
       return;
     }
 
-    const state = useStudyStore.getState();
-    const snapshot = snapshotFromState(state);
-    const scoped = {
+    try {
+      await whenPersisted();
+      const state = useStudyStore.getState();
+      const snapshot = snapshotFromState(state);
+      const scoped = {
       ...snapshot,
       subjects: scope === "full" || scope === "subjects" ? snapshot.subjects : [],
       exams: scope === "full" ? snapshot.exams : [],
@@ -64,10 +76,13 @@ export function SettingsView() {
       tags: scope === "full" ? snapshot.tags : [],
       reminders: scope === "full" ? snapshot.reminders : [],
       widgets: scope === "full" ? snapshot.widgets : []
-    };
-    const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined);
-    downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
-    setMessage("Backup esportato.");
+      };
+      const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined, scope);
+      downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
+      setMessage("Backup esportato.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Esportazione non riuscita.");
+    }
   };
 
   const importBackup = async (file?: File) => {
@@ -76,10 +91,60 @@ export function SettingsView() {
     try {
       const backup = await readBackupEnvelope(file);
       const snapshot = await snapshotFromBackup(backup, backup.encrypted ? importPassphrase : undefined);
-      await replaceAllData(snapshot);
-      setMessage("Backup importato correttamente.");
+      const scope = inferBackupScope(backup, snapshot);
+      const summary = backupSummary(snapshot);
+      if (scope === "full") {
+        const ok = window.confirm(
+          `Backup completo del ${backup.exportedAt.slice(0, 10)} (${summary.text}).\n\nSostituire TUTTI i dati attuali con il contenuto del backup?${
+            isSignedIn() ? "\nLe modifiche verranno sincronizzate anche sul cloud." : ""
+          }`
+        );
+        if (!ok) return;
+        await replaceAllData(snapshot);
+        setMessage(`Backup importato: ${summary.text}.`);
+      } else {
+        const result = await mergeData(snapshot);
+        setMessage(`Backup parziale (${scope}) unito ai dati esistenti: ${result.added} nuovi, ${result.updated} aggiornati.`);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Import non riuscito.");
+    }
+  };
+
+  const resetData = async () => {
+    if (!window.confirm("Resettare tutti i dati locali e ripartire da un workspace vuoto?")) return;
+    setMessage("");
+    try {
+      if (isSignedIn()) {
+        const alsoCloud = window.confirm(
+          "Sei collegato al cloud.\n\nOK = elimina i dati anche dal cloud e da tutti i dispositivi sincronizzati.\nAnnulla = svuota solo questo dispositivo e riscarica i dati dal cloud."
+        );
+        await resetAllData({ propagate: alsoCloud });
+        if (alsoCloud) await requestSync();
+        else await resetCloudDeviceState();
+        const sync = getCloudSyncState();
+        setMessage(alsoCloud
+          ? sync.pendingChanges || sync.status === "error" || sync.status === "offline"
+            ? "Dati locali eliminati. Le cancellazioni cloud restano in coda e ripartiranno quando la sync sarà disponibile."
+            : "Dati locali eliminati e cancellazioni cloud sincronizzate."
+          : sync.status === "error" || sync.status === "offline"
+            ? "Dispositivo svuotato. Il download dal cloud ripartirà quando la sync sarà disponibile."
+            : "Dispositivo svuotato e dati cloud riscaricati.");
+        return;
+      }
+      await resetAllData({ propagate: false });
+      setMessage("Workspace locale resettato.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Reset non riuscito.");
+    }
+  };
+
+  const lockNow = async () => {
+    setMessage("");
+    try {
+      await lockVault();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Impossibile bloccare: salvataggio non riuscito.");
     }
   };
 
@@ -89,10 +154,14 @@ export function SettingsView() {
       setMessage("Per il vault usa almeno 10 caratteri.");
       return;
     }
-    await enableVault(vaultPassphrase, vaultHint || undefined);
-    setVaultPassphrase("");
-    setVaultHint("");
-    setMessage("Vault cifrato attivato. Da ora i dati vengono salvati come snapshot cifrato.");
+    try {
+      await enableVault(vaultPassphrase, vaultHint || undefined);
+      setVaultPassphrase("");
+      setVaultHint("");
+      setMessage("Vault cifrato attivato. Da ora i dati vengono salvati come snapshot cifrato.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Attivazione vault non riuscita.");
+    }
   };
 
   const deactivateVault = async () => {
@@ -267,7 +336,7 @@ export function SettingsView() {
                 </Button>
               ) : (
                 <>
-                  <Button icon="Lock" variant="soft" onClick={lockVault}>
+                  <Button icon="Lock" variant="soft" onClick={() => void lockNow()}>
                     Blocca ora
                   </Button>
                   <Button icon="Shield" variant="danger" onClick={deactivateVault}>
@@ -321,7 +390,11 @@ export function SettingsView() {
                 className={`${inputClass} file:mr-3 file:rounded-full file:border-0 file:bg-[var(--accent)] file:px-3 file:py-1.5 file:text-sm file:font-black file:text-[#10131d]`}
                 type="file"
                 accept="application/json,.json"
-                onChange={(event) => importBackup(event.target.files?.[0])}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void importBackup(file);
+                }}
               />
             </Field>
           </div>
@@ -336,9 +409,7 @@ export function SettingsView() {
             <DataStat label="eventi" value={events.length} />
             <DataStat label="allegati" value={attachments.length} />
           </div>
-          <Button className="mt-5" icon="Trash2" variant="danger" onClick={() => {
-            if (window.confirm("Resettare tutti i dati locali e ripartire da un workspace vuoto?")) resetAllData();
-          }}>
+          <Button className="mt-5" icon="Trash2" variant="danger" onClick={() => void resetData()}>
             Reset dati locali
           </Button>
           {message ? <p className="mt-4 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{message}</p> : null}

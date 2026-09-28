@@ -10,6 +10,8 @@ import {
 import {
   forcePullNow,
   forcePushNow,
+  getCloudSyncState,
+  requestSync,
   subscribeCloudSync,
   type CloudSyncState
 } from "../lib/cloudSync";
@@ -30,22 +32,18 @@ const formatRelative = (iso: string | null) => {
 };
 
 const statusLabel = (sync: CloudSyncState) => {
-  if (!sync.session) return sync.status === "off" ? "non configurato" : "offline";
+  if (!sync.session) return sync.status === "off" ? "non configurato" : "non connesso";
+  if (sync.status === "offline") return "offline";
   if (sync.status === "syncing") return "sync in corso";
   if (sync.status === "error") return "errore";
-  if (sync.pendingChanges) return "in attesa";
+  if (sync.pendingChanges) return `${sync.pendingCount} in coda`;
   return "auto-sync attivo";
 };
 
 type Mode = "signin" | "signup";
 
 export function CloudPanel() {
-  const [sync, setSync] = useState<CloudSyncState>(() => ({
-    status: isCloudConfigured() ? "idle" : "off",
-    session: null,
-    lastSync: null,
-    pendingChanges: false
-  }));
+  const [sync, setSync] = useState<CloudSyncState>(() => getCloudSyncState());
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -186,18 +184,38 @@ export function CloudPanel() {
   };
 
   const handleForcePull = async () => {
-    if (!window.confirm("Forzare il download dal cloud sostituisce i dati locali con l'ultimo snapshot remoto. Continuare?")) return;
+    if (
+      !window.confirm(
+        "Forzare il download dal cloud: per ogni elemento presente nel cloud la versione remota sostituisce quella locale. Gli elementi solo locali restano. Continuare?"
+      )
+    )
+      return;
     setBusy(true);
     setInfo(null);
-    await forcePullNow();
-    setBusy(false);
+    try {
+      await forcePullNow();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleForcePush = async () => {
     setBusy(true);
     setInfo(null);
-    await forcePushNow();
-    setBusy(false);
+    try {
+      await forcePushNow();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    setBusy(true);
+    try {
+      await requestSync();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const session = sync.session;
@@ -214,7 +232,10 @@ export function CloudPanel() {
         <div className="min-w-0">
           <h3 className="text-2xl font-black">Cloud sync</h3>
           <p className="text-sm text-[var(--muted)]">
-            Account Supabase con email + password. Ogni modifica viene salvata nel cloud automaticamente quando sei connesso.
+            Account Supabase con email + password. Ogni modifica viene salvata subito sul dispositivo e inviata al cloud appena sei online (anche dopo periodi offline).
+          </p>
+          <p className="mt-2 text-xs font-bold text-[var(--warning-text)]">
+            Il vault cifra solo i dati locali: la sync attuale invia JSON non cifrato a Supabase.
           </p>
         </div>
         <Pill active={sync.status === "idle" && !!session}>{statusLabel(sync)}</Pill>
@@ -228,6 +249,9 @@ export function CloudPanel() {
             <p className="mt-1 text-xs text-[var(--muted)]">
               Email confermata: {session.user.email_confirmed_at ? "si" : "no"} · Ultima sync: {formatRelative(sync.lastSync)}
             </p>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Modifiche in coda: {sync.pendingCount} · Aggiornamenti live: {sync.realtime ? "attivi" : "non attivi (controllo periodico)"}
+            </p>
           </div>
 
           {sync.error ? (
@@ -237,6 +261,9 @@ export function CloudPanel() {
           ) : null}
 
           <div className="flex flex-wrap gap-2">
+            <Button icon="Sparkles" variant="soft" onClick={handleSyncNow} disabled={busy || sync.status === "syncing"}>
+              Sincronizza ora
+            </Button>
             <Button icon="LogOut" variant="danger" onClick={handleSignOut} disabled={busy}>
               Disconnetti
             </Button>

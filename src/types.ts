@@ -61,6 +61,7 @@ export type AppView =
   | "materials"
   | "goals"
   | "stats"
+  | "barb"
   | "settings";
 
 export interface Subject extends BaseEntity {
@@ -282,6 +283,8 @@ export interface StudySnapshot {
 export interface BackupEnvelope {
   format: "studyos.backup";
   version: 1;
+  /** Assente nei backup precedenti: vedi inferBackupScope. */
+  scope?: "full" | "tasks" | "calendar" | "subjects";
   exportedAt: string;
   encrypted: boolean;
   data?: StudySnapshot;

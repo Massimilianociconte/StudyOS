@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from "react";
 import type { ReactNode } from "react";
 import { motion } from "framer-motion";
+import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "./store/useStudyStore";
 import { AppShell } from "./components/AppShell";
 import { LockScreen } from "./components/LockScreen";
@@ -17,6 +18,7 @@ const MaterialsView = lazy(() => import("./views/MaterialsView").then((module) =
 const GoalsView = lazy(() => import("./views/GoalsView").then((module) => ({ default: module.GoalsView })));
 const StatsView = lazy(() => import("./views/StatsView").then((module) => ({ default: module.StatsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then((module) => ({ default: module.SettingsView })));
+const BarbView = lazy(() => import("./views/BarbView").then((module) => ({ default: module.BarbView })));
 
 const views: Record<AppView, ReactNode> = {
   dashboard: <DashboardView />,
@@ -28,11 +30,24 @@ const views: Record<AppView, ReactNode> = {
   materials: <MaterialsView />,
   goals: <GoalsView />,
   stats: <StatsView />,
+  barb: <BarbView />,
   settings: <SettingsView />
 };
 
 export default function App() {
-  const { init, loading, locked, activeView, settings, error } = useStudyStore();
+  // Selettori mirati: l'App non si ri-renderizza a ogni modifica di task/eventi.
+  const { init, loading, locked, activeView, themeMode, palette, density, error } = useStudyStore(
+    useShallow((state) => ({
+      init: state.init,
+      loading: state.loading,
+      locked: state.locked,
+      activeView: state.activeView,
+      themeMode: state.settings.themeMode,
+      palette: state.settings.palette,
+      density: state.settings.density,
+      error: state.error
+    }))
+  );
 
   useEffect(() => {
     init().then(() => {
@@ -41,10 +56,10 @@ export default function App() {
   }, [init]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.themeMode;
-    document.documentElement.dataset.palette = settings.palette;
-    document.documentElement.dataset.density = settings.density;
-  }, [settings.themeMode, settings.palette, settings.density]);
+    document.documentElement.dataset.theme = themeMode;
+    document.documentElement.dataset.palette = palette;
+    document.documentElement.dataset.density = density;
+  }, [themeMode, palette, density]);
 
   if (loading) {
     return (

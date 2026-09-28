@@ -5,3 +5,6 @@ dist/
 .codex-qa/
 .env.local
 .env.*.local
+.env
+.cache/
+.ai-harness/

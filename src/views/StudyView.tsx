@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { formatDistanceToNow, isBefore, parseISO } from "date-fns";
+import { useState } from "react";
+import { formatDistanceToNow, isBefore, isSameDay, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { useStudyStore } from "../store/useStudyStore";
 import { shortDate, studyMinutesThisWeek, subjectColor, subjectName } from "../lib/selectors";
 import { Button, Field, Panel, Pill, ProgressBar, ProgressRing, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { useNow } from "../hooks/useNow";
+import { timerElapsedSeconds, timerRemainingSeconds, type TimerMode } from "../lib/studyTimer";
 
 export function StudyView() {
   const {
@@ -12,47 +14,53 @@ export function StudyView() {
     topics,
     subjects,
     timer,
-    setTimer,
+    startStudyTimer,
+    toggleStudyTimer,
+    resetStudyTimer,
     addSession,
     completeTopicReview,
     updateSession
   } = useStudyStore();
   const [subjectId, setSubjectId] = useState(subjects[0]?.id ?? "");
   const [sessionTitle, setSessionTitle] = useState("Deep focus");
+  const [notice, setNotice] = useState("");
+  // Il timer è basato su timestamp: qui serve solo ridisegnare ogni secondo.
+  const now = useNow(1000, timer.running);
 
-  useEffect(() => {
-    if (!timer.running) return;
-    const interval = window.setInterval(() => {
-      const next = Math.max(0, useStudyStore.getState().timer.remainingSeconds - 1);
-      useStudyStore.getState().setTimer({ remainingSeconds: next, running: next > 0 });
-    }, 1000);
-    return () => window.clearInterval(interval);
-  }, [timer.running]);
-
-  const minutes = Math.floor(timer.remainingSeconds / 60);
-  const seconds = timer.remainingSeconds % 60;
-  const dueReviews = topics.filter((topic) => isBefore(parseISO(topic.nextReviewDate), new Date()) || topic.nextReviewDate.slice(0, 10) === new Date().toISOString().slice(0, 10));
+  const remainingSeconds = timerRemainingSeconds(timer, now.getTime());
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds % 60;
+  const today = new Date();
+  const dueReviews = topics.filter((topic) => {
+    const next = parseISO(topic.nextReviewDate);
+    return isBefore(next, today) || isSameDay(next, today);
+  });
   const weeklyMinutes = studyMinutesThisWeek(sessions);
 
-  const startTimer = (mode: typeof timer.mode) => {
-    const durations = { classic: 45 * 60, pomodoro: 25 * 60, "deep-focus": 90 * 60 };
-    setTimer({ mode, remainingSeconds: durations[mode], running: true, label: mode === "deep-focus" ? "Deep focus" : mode });
+  const startTimer = (mode: TimerMode) => {
+    setNotice("");
+    startStudyTimer(mode);
   };
 
   const finishSession = async () => {
-    const elapsed = timer.mode === "pomodoro" ? 25 * 60 - timer.remainingSeconds : timer.mode === "deep-focus" ? 90 * 60 - timer.remainingSeconds : 45 * 60 - timer.remainingSeconds;
+    const elapsed = timerElapsedSeconds(timer, Date.now());
+    if (elapsed < 60) {
+      setNotice("Sessione troppo breve per essere registrata (meno di 1 minuto).");
+      return;
+    }
     const actualMinutes = Math.max(1, Math.round(elapsed / 60));
     await addSession({
-      title: sessionTitle,
+      title: sessionTitle.trim() || "Sessione di studio",
       subjectId: subjectId || undefined,
       actualMinutes,
-      plannedMinutes: actualMinutes,
+      plannedMinutes: Math.round(timer.durationSeconds / 60),
       status: "completed",
       start: new Date(Date.now() - elapsed * 1000).toISOString(),
       end: new Date().toISOString(),
       focusLevel: 4
     });
-    setTimer({ running: false, remainingSeconds: 25 * 60, mode: "pomodoro" });
+    resetStudyTimer("pomodoro");
+    setNotice(`Sessione registrata: ${actualMinutes} min.`);
   };
 
   return (
@@ -73,7 +81,7 @@ export function StudyView() {
             <div className="grid items-center gap-5 md:grid-cols-[260px_1fr] md:gap-6">
               <div className="mx-auto w-full max-w-[200px] sm:max-w-[240px] md:max-w-[260px]">
                 <ProgressRing
-                  value={timer.mode === "pomodoro" ? (timer.remainingSeconds / (25 * 60)) * 100 : timer.mode === "deep-focus" ? (timer.remainingSeconds / (90 * 60)) * 100 : (timer.remainingSeconds / (45 * 60)) * 100}
+                  value={timer.durationSeconds > 0 ? (remainingSeconds / timer.durationSeconds) * 100 : 0}
                   label={timer.label}
                   color="var(--accent)"
                 />
@@ -100,7 +108,7 @@ export function StudyView() {
                   <Button
                     variant={timer.running ? "danger" : "primary"}
                     icon={timer.running ? "Timer" : "Zap"}
-                    onClick={() => setTimer({ running: !timer.running })}
+                    onClick={toggleStudyTimer}
                   >
                     {timer.running ? "Pausa" : "Avvia"}
                   </Button>
@@ -108,6 +116,7 @@ export function StudyView() {
                     Completa
                   </Button>
                 </div>
+                {notice ? <p className="mt-2 text-sm font-bold text-[var(--muted)]">{notice}</p> : null}
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   <Field label="Sessione">

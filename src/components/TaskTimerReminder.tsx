@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../store/useStudyStore";
 import { formatElapsedSeconds, taskElapsedSeconds, taskReminderDue, taskReminderIntervalMinutes } from "../lib/taskTimer";
 import { useNow } from "../hooks/useNow";
@@ -6,7 +7,9 @@ import { Button, Pill } from "./ui";
 import { Icon } from "./Icon";
 
 export function TaskTimerReminder() {
-  const { tasks, updateTask, setActiveView } = useStudyStore();
+  const { tasks, updateTask, setActiveView } = useStudyStore(
+    useShallow((state) => ({ tasks: state.tasks, updateTask: state.updateTask, setActiveView: state.setActiveView }))
+  );
   const hasRunningTask = tasks.some((task) => task.status === "doing" && task.timerStartedAt);
   const now = useNow(1000, hasRunningTask);
 

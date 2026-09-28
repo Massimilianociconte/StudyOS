@@ -1,6 +1,7 @@
 import { useState, type PropsWithChildren } from "react";
 import { format } from "date-fns";
 import { it } from "date-fns/locale";
+import { useShallow } from "zustand/react/shallow";
 import type { AppView } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
@@ -9,6 +10,7 @@ import { QuickAddModal } from "./QuickAddModal";
 import { CloudStatusBadge } from "./CloudStatusBadge";
 import { GlobalSearch } from "./GlobalSearch";
 import { TaskTimerReminder } from "./TaskTimerReminder";
+import { StudyTimerWatcher } from "./StudyTimerWatcher";
 
 const navItems: { view: AppView; label: string; icon: string }[] = [
   { view: "dashboard", label: "Dashboard", icon: "LayoutDashboard" },
@@ -16,6 +18,7 @@ const navItems: { view: AppView; label: string; icon: string }[] = [
   { view: "tasks", label: "Task", icon: "Check" },
   { view: "study", label: "Studio", icon: "Timer" },
   { view: "subjects", label: "Materie", icon: "BookOpen" },
+  { view: "barb", label: "BARB · UNIMI", icon: "GraduationCap" },
   { view: "exams", label: "Esami", icon: "GraduationCap" },
   { view: "materials", label: "Materiali", icon: "Paperclip" },
   { view: "goals", label: "Obiettivi", icon: "Target" },
@@ -29,7 +32,17 @@ const mobileItems = navItems.filter((item) =>
 
 export function AppShell({ children }: PropsWithChildren) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const { activeView, setActiveView, settings, updateSettings, lockVault } = useStudyStore();
+  const { activeView, setActiveView, settings, updateSettings, lockVault, persistError, retryPersist } = useStudyStore(
+    useShallow((state) => ({
+      activeView: state.activeView,
+      setActiveView: state.setActiveView,
+      settings: state.settings,
+      updateSettings: state.updateSettings,
+      lockVault: state.lockVault,
+      persistError: state.persistError,
+      retryPersist: state.retryPersist
+    }))
+  );
 
   const todayLabel = format(new Date(), "EEEE d MMMM", { locale: it });
   const displayName = settings.profile?.displayName?.trim();
@@ -86,7 +99,7 @@ export function AppShell({ children }: PropsWithChildren) {
               </p>
               <p className="mt-1 text-xs text-[var(--muted)]">Locale di default, cloud sync solo se configuri e accedi.</p>
               {settings.security.mode === "vault" ? (
-                <Button icon="Lock" variant="soft" className="mt-3 w-full" onClick={lockVault}>
+                <Button icon="Lock" variant="soft" className="mt-3 w-full" onClick={() => void lockVault().catch(() => undefined)}>
                   Blocca
                 </Button>
               ) : null}
@@ -128,6 +141,19 @@ export function AppShell({ children }: PropsWithChildren) {
               </Button>
             </div>
           </header>
+
+          {persistError ? (
+            <div
+              role="alert"
+              className="mx-auto mb-4 flex max-w-[1380px] flex-wrap items-center gap-3 rounded-[22px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]"
+            >
+              <Icon name="Shield" className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1">{persistError} Le modifiche restano in memoria finché il salvataggio non riesce.</span>
+              <Button variant="soft" onClick={() => void retryPersist()}>
+                Riprova
+              </Button>
+            </div>
+          ) : null}
 
           <div className="mx-auto max-w-[1380px]">{children}</div>
 
@@ -183,6 +209,7 @@ export function AppShell({ children }: PropsWithChildren) {
       </nav>
 
       <TaskTimerReminder />
+      <StudyTimerWatcher />
       <QuickAddModal open={quickAddOpen} onClose={() => setQuickAddOpen(false)} />
     </main>
   );

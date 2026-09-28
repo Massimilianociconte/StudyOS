@@ -155,8 +155,13 @@ export function SubjectsView() {
                           onChange={async (event) => {
                             const file = event.target.files?.[0];
                             if (!file) return;
-                            await addAttachment(file, { type: "subject", id: subject.id });
                             event.target.value = "";
+                            setMessage("");
+                            try {
+                              await addAttachment(file, { type: "subject", id: subject.id });
+                            } catch (error) {
+                              setMessage(error instanceof Error ? error.message : "Allegato non importato.");
+                            }
                           }}
                         />
                       </label>

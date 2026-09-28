@@ -16,6 +16,49 @@ import type {
   UserSettings,
   VaultRecord
 } from "../types";
+import type { BarbCourse, BarbTeacher, UniversitySyncLog } from "./university/types";
+import { COLLECTIONS, type CollectionKey, type SyncableEntity } from "./collections";
+
+export interface BarbCourseRow extends BarbCourse {
+  _key: string;
+}
+
+export interface BarbTeacherRow extends BarbTeacher {
+  _key: string;
+}
+
+/** Coda locale delle modifiche da inviare al cloud (solo chiavi: il payload si legge dallo stato). */
+export interface SyncOutboxRow {
+  key: string; // `${entityType}:${entityId}`
+  collection: CollectionKey;
+  entityType: string;
+  entityId: string;
+  deleted: boolean;
+  deletedAt?: string;
+  queuedAt: number;
+}
+
+export interface MetaRow {
+  key: string;
+  value: unknown;
+}
+
+const V1_STORES = {
+  settings: "id",
+  vault: "id, updatedAt",
+  subjects: "id, updatedAt, archived, status, semester",
+  exams: "id, date, subjectId, status",
+  events: "id, start, end, category, subjectId, status, priority",
+  tasks: "id, dueDate, subjectId, status, priority, importance",
+  sessions: "id, start, subjectId, status, template",
+  topics: "id, subjectId, nextReviewDate, difficulty",
+  attachments: "id, addedAt, linkedEntityType, linkedEntityId, mimeType",
+  goals: "id, deadline, category, status",
+  notes: "id, linkedEntityType, linkedEntityId",
+  tags: "id, label",
+  reminders: "id, remindAt, done, linkedEntityType",
+  widgets: "id, type, order, visible"
+};
 
 class StudyOSDatabase extends Dexie {
   settings!: Table<UserSettings, string>;
@@ -32,45 +75,39 @@ class StudyOSDatabase extends Dexie {
   tags!: Table<Tag, string>;
   reminders!: Table<Reminder, string>;
   widgets!: Table<DashboardWidget, string>;
+  barbCourses!: Table<BarbCourseRow, string>;
+  barbTeachers!: Table<BarbTeacherRow, string>;
+  barbSyncLogs!: Table<UniversitySyncLog, string>;
+  syncOutbox!: Table<SyncOutboxRow, string>;
+  meta!: Table<MetaRow, string>;
 
   constructor() {
     super("studyos-local-db");
 
-    this.version(1).stores({
-      settings: "id",
-      vault: "id, updatedAt",
-      subjects: "id, updatedAt, archived, status, semester",
-      exams: "id, date, subjectId, status",
-      events: "id, start, end, category, subjectId, status, priority",
-      tasks: "id, dueDate, subjectId, status, priority, importance",
-      sessions: "id, start, subjectId, status, template",
-      topics: "id, subjectId, nextReviewDate, difficulty",
-      attachments: "id, addedAt, linkedEntityType, linkedEntityId, mimeType",
-      goals: "id, deadline, category, status",
-      notes: "id, linkedEntityType, linkedEntityId",
-      tags: "id, label",
-      reminders: "id, remindAt, done, linkedEntityType",
-      widgets: "id, type, order, visible"
+    this.version(1).stores(V1_STORES);
+
+    // v2: University Data Layer (BARB prima implementazione). Non tocca le tabelle v1.
+    this.version(2).stores({
+      ...V1_STORES,
+      barbCourses: "_key, semester, character, year",
+      barbTeachers: "_key",
+      barbSyncLogs: "id, startedAt, scope"
+    });
+
+    // v3: cloud sync per-entità (outbox + meta cursori/flag). Tabelle precedenti invariate.
+    this.version(3).stores({
+      syncOutbox: "key, queuedAt, collection",
+      meta: "key"
     });
   }
 }
 
 export const db = new StudyOSDatabase();
 
-export const dataTables = [
-  db.subjects,
-  db.exams,
-  db.events,
-  db.tasks,
-  db.sessions,
-  db.topics,
-  db.attachments,
-  db.goals,
-  db.notes,
-  db.tags,
-  db.reminders,
-  db.widgets
-] as const;
+export const collectionTable = (key: CollectionKey) =>
+  db[key] as unknown as Table<SyncableEntity, string>;
+
+export const dataTables = COLLECTIONS.map((key) => collectionTable(key));
 
 export const clearDataTables = async () => {
   await db.transaction("rw", dataTables, async () => {
@@ -78,39 +115,31 @@ export const clearDataTables = async () => {
   });
 };
 
-export const readSnapshotFromDb = async (): Promise<StudySnapshot> => ({
-  version: 1,
-  exportedAt: new Date().toISOString(),
-  subjects: await db.subjects.toArray(),
-  exams: await db.exams.toArray(),
-  events: await db.events.toArray(),
-  tasks: await db.tasks.toArray(),
-  sessions: await db.sessions.toArray(),
-  topics: await db.topics.toArray(),
-  attachments: await db.attachments.toArray(),
-  goals: await db.goals.toArray(),
-  notes: await db.notes.toArray(),
-  tags: await db.tags.toArray(),
-  reminders: await db.reminders.toArray(),
-  widgets: await db.widgets.orderBy("order").toArray()
-});
+export const readSnapshotFromDb = async (): Promise<StudySnapshot> => {
+  const entries = await db.transaction("r", dataTables, () =>
+    Promise.all(COLLECTIONS.map(async (key) => [key, await collectionTable(key).toArray()] as const))
+  );
+  const snapshot = Object.fromEntries(entries) as unknown as StudySnapshot;
+  snapshot.widgets = [...snapshot.widgets].sort((a, b) => a.order - b.order);
+  return { ...snapshot, version: 1, exportedAt: new Date().toISOString() };
+};
 
 export const writeSnapshotToDb = async (snapshot: StudySnapshot) => {
   await db.transaction("rw", dataTables, async () => {
     await Promise.all(dataTables.map((table) => table.clear()));
-    await Promise.all([
-      db.subjects.bulkPut(snapshot.subjects),
-      db.exams.bulkPut(snapshot.exams),
-      db.events.bulkPut(snapshot.events),
-      db.tasks.bulkPut(snapshot.tasks),
-      db.sessions.bulkPut(snapshot.sessions),
-      db.topics.bulkPut(snapshot.topics),
-      db.attachments.bulkPut(snapshot.attachments),
-      db.goals.bulkPut(snapshot.goals),
-      db.notes.bulkPut(snapshot.notes),
-      db.tags.bulkPut(snapshot.tags),
-      db.reminders.bulkPut(snapshot.reminders),
-      db.widgets.bulkPut(snapshot.widgets)
-    ]);
+    await Promise.all(
+      COLLECTIONS.map((key) => collectionTable(key).bulkPut((snapshot[key] ?? []) as unknown as SyncableEntity[]))
+    );
   });
+};
+
+export const getMeta = async <T,>(key: string): Promise<T | undefined> =>
+  (await db.meta.get(key))?.value as T | undefined;
+
+export const setMeta = async (key: string, value: unknown) => {
+  await db.meta.put({ key, value });
+};
+
+export const deleteMeta = async (key: string) => {
+  await db.meta.delete(key);
 };

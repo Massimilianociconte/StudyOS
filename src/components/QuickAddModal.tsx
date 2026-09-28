@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { addHours } from "date-fns";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, IconButton, Pill, inputClass } from "./ui";
 import { Icon } from "./Icon";
+import { fromDatetimeLocal, nextHalfHour, toDatetimeLocal } from "../lib/dates";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
 type TaskCreateMode = "normal" | "timer" | "completed";
@@ -20,13 +21,32 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
   const [mode, setMode] = useState<Mode>("task");
   const [title, setTitle] = useState("");
   const [subjectId, setSubjectId] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 16));
+  // Prima: new Date().toISOString() -> ora UTC mostrata come locale (eventi creati 1-2h prima).
+  const [date, setDate] = useState(() => toDatetimeLocal(nextHalfHour()));
   const [url, setUrl] = useState("");
   const [taskCreateMode, setTaskCreateMode] = useState<TaskCreateMode>("normal");
   const [estimatedMinutes, setEstimatedMinutes] = useState("45");
   const [actualMinutes, setActualMinutes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const { subjects, addTask, addEvent, addSession, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
+
+  // Il modale resta montato: a ogni apertura la data proposta torna "adesso".
+  useEffect(() => {
+    if (open) {
+      setDate(toDatetimeLocal(nextHalfHour()));
+      setError("");
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   const submitLabel = useMemo(() => {
     if (mode === "task") {
@@ -51,9 +71,18 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
 
   const submit = async () => {
     if (!title.trim() && mode !== "material") return;
+    if (mode === "material" && !url.trim()) {
+      setError("Inserisci un link o scegli un file.");
+      return;
+    }
+    const start = fromDatetimeLocal(date) ?? (mode === "subject" || mode === "material" ? new Date().toISOString() : null);
+    if (!start) {
+      setError("Data e ora non valide.");
+      return;
+    }
     setBusy(true);
+    setError("");
     try {
-      const start = new Date(date).toISOString();
       if (mode === "task") {
         const now = new Date().toISOString();
         const parsedEstimatedMinutes = Math.max(0, Number(estimatedMinutes) || 0);
@@ -93,6 +122,8 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
       }
       reset();
       onClose();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Salvataggio non riuscito.");
     } finally {
       setBusy(false);
     }
@@ -237,21 +268,39 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       type="file"
                       onChange={async (event) => {
                         const file = event.target.files?.[0];
+                        event.target.value = "";
                         if (!file) return;
                         setBusy(true);
-                        await addAttachment(file);
-                        setBusy(false);
-                        reset();
-                        onClose();
+                        setError("");
+                        try {
+                          await addAttachment(file);
+                          reset();
+                          onClose();
+                        } catch (fileError) {
+                          setError(fileError instanceof Error ? fileError.message : "File non importato.");
+                        } finally {
+                          setBusy(false);
+                        }
                       }}
                     />
                   </Field>
                 </div>
               ) : null}
 
+              {error ? (
+                <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
+                  {error}
+                </p>
+              ) : null}
+
               <div className="mt-2 flex justify-end gap-2">
                 <Button onClick={onClose}>Annulla</Button>
-                <Button variant="primary" icon="Plus" onClick={submit} disabled={busy || (!title.trim() && mode !== "material")}>
+                <Button
+                  variant="primary"
+                  icon="Plus"
+                  onClick={submit}
+                  disabled={busy || (!title.trim() && mode !== "material") || (mode === "material" && !url.trim())}
+                >
                   {submitLabel}
                 </Button>
               </div>

@@ -1,0 +1,2 @@
+# Fixture Markdown acquisita da fonti esterne: conserva i line break originali.
+tests/fixtures/unimi/*.md whitespace=-blank-at-eol
