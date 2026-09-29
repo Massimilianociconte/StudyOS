@@ -7,6 +7,7 @@ import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatHours
 import { Button, Drawer, Field, IconButton, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TopicManager } from "../components/TopicManager";
+import { isNullableString, useUiState } from "../lib/uiState";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
 
@@ -29,9 +30,9 @@ const subjectStats = (subject: Subject, state: Pick<StoreState, "tasks" | "sessi
 };
 
 export function SubjectsView() {
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
-  const [showCompleted, setShowCompleted] = useState(false);
+  const [openId, setOpenId] = useUiState<string | null>("subjects.open", null, { scope: "tab", validate: isNullableString });
+  const [showArchived, setShowArchived] = useUiState("subjects.showArchived", false);
+  const [showCompleted, setShowCompleted] = useUiState("subjects.showCompleted", false);
   const { subjects, tasks, sessions, exams, attachments, addSubject, updateSubject } = useStudyStore();
   const state = { tasks, sessions, exams, attachments };
 

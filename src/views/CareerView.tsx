@@ -19,6 +19,7 @@ import {
 import { Button, Field, Panel, ProgressBar, SectionTitle, Segmented, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
+import { oneOf, useUiState } from "../lib/uiState";
 
 const points = (value: number) => `${value.toFixed(2).replace(".", ",").replace(/,00$/, "")}`;
 
@@ -176,7 +177,7 @@ function GraduationPanel({
   onProgram: (id: DegreeProgramId) => void;
   onScenario: (patch: { sbThesisGrade?: number; barbThesisPoints?: number; abroad?: boolean }) => void;
 }) {
-  const [basis, setBasis] = useState<"registered" | "targets">("registered");
+  const [basis, setBasis] = useUiState<"registered" | "targets">("career.basis", "registered", { validate: oneOf("registered", "targets") });
   const info = DEGREE_PROGRAMS[program];
   const useTargets = basis === "targets" && targetsWeighted !== null;
   const average = useTargets ? targetsWeighted : weighted;

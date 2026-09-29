@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
   addDays,
   addMinutes,
@@ -38,6 +38,7 @@ import {
   formatMinutes
 } from "../lib/labels";
 import { useNow } from "../hooks/useNow";
+import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 
 type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
 type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
@@ -100,10 +101,19 @@ interface Handlers {
 const eventColor = (event: CalendarEvent, subjects: Subjects) => event.color || subjectColor(subjects, event.subjectId);
 
 export function CalendarView() {
-  const [mode, setMode] = useState<CalendarMode>("week");
-  const [cursor, setCursor] = useState(new Date());
-  const [editingEventId, setEditingEventId] = useState<string | null>(null);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [mode, setMode] = useUiState<CalendarMode>("calendar.mode", "week", { validate: oneOf(...modes.map((item) => item.id)) });
+  // Data visualizzata e dettaglio aperto restano dopo un refresh della scheda.
+  const [cursorIso, setCursorIso] = useUiState("calendar.cursor", () => new Date().toISOString(), {
+    scope: "tab",
+    validate: (value) => typeof value === "string" && !Number.isNaN(Date.parse(value))
+  });
+  const cursor = useMemo(() => new Date(cursorIso), [cursorIso]);
+  const setCursor = useCallback(
+    (next: Date | ((current: Date) => Date)) => setCursorIso((iso) => (typeof next === "function" ? next(new Date(iso)) : next).toISOString()),
+    [setCursorIso]
+  );
+  const [editingEventId, setEditingEventId] = useUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
+  const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
   const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task" } | null>(null);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const { events, subjects, exams, tasks, updateEvent, addEvent, deleteEvent, addTask, updateTask, toggleTask, deleteTask } = useStudyStore();

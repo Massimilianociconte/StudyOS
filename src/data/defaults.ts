@@ -1,13 +1,16 @@
 import type { Preferences, StudySnapshot, UserSettings } from "../types";
 import { nowIso } from "../lib/id";
 
+/** 2: "Vista iniziale" può essere "ultima sezione aperta" (nuovo predefinito). */
+export const SETTINGS_SCHEMA_VERSION = 2;
+
 export const defaultSettings = (): UserSettings => ({
   id: "settings",
   themeMode: "dark",
   palette: "aurora",
   density: "comfortable",
   cardShape: "soft",
-  initialView: "dashboard",
+  initialView: "last",
   dateFormat: "dd/MM/yyyy",
   dashboardLayout: [
     "today",
@@ -28,6 +31,7 @@ export const defaultSettings = (): UserSettings => ({
     mode: "standard",
     backupEncryptionDefault: true
   },
+  schemaVersion: SETTINGS_SCHEMA_VERSION,
   updatedAt: nowIso()
 });
 

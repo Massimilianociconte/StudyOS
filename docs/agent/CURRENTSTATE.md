@@ -69,3 +69,10 @@ calcolate dai voti registrati, CFU e proiezione del voto di laurea per Scienze b
 i CFU totali e la visibilità della sezione BARB. Verifiche: 65 test, lint, build, prova nel
 browser a 375, 1024×768, 1180×820 e 1280×800.
 
+
+Stato dell'interfaccia (29 settembre 2026): refresh e hard refresh riaprono la stessa sezione
+con schede, filtri, elemento aperto, data del calendario e scroll (`src/lib/uiState.ts`).
+"Vista iniziale" ha la nuova opzione predefinita "Ultima sezione aperta" per le schede nuove;
+le impostazioni locali passano a `schemaVersion` 2 e chi aveva la dashboard predefinita
+viene portato a "ultima sezione". Verifiche: 69 test, lint, build, prova nel browser di
+refresh, scheda nuova, schede parallele, BARB con corso aperto e telefono a 375 px.

@@ -6,6 +6,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL } from "../lib/labels";
 import { Button, Drawer, Field, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { isNullableString, useUiState } from "../lib/uiState";
 
 const CATEGORY_ICON: Record<Goal["category"], string> = {
   study: "BookOpen",
@@ -31,8 +32,8 @@ const deadlineLabel = (deadline?: string) => {
 };
 
 export function GoalsView() {
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [showClosed, setShowClosed] = useState(false);
+  const [openId, setOpenId] = useUiState<string | null>("goals.open", null, { scope: "tab", validate: isNullableString });
+  const [showClosed, setShowClosed] = useUiState("goals.showClosed", false);
   const { goals, addGoal, updateGoal } = useStudyStore();
   const active = goals.filter((goal) => goal.status === "active" || goal.status === "paused");
   const closed = goals.filter((goal) => goal.status === "done" || goal.status === "archived");

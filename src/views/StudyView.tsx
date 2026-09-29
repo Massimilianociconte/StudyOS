@@ -10,6 +10,7 @@ import { Button, Drawer, Field, IconButton, Panel, ProgressBar, ProgressRing, Se
 import { Icon } from "../components/Icon";
 import { TopicManager, reviewDueLabel } from "../components/TopicManager";
 import { useNow } from "../hooks/useNow";
+import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { TIMER_DURATIONS, TIMER_LABELS, timerElapsedSeconds, timerRemainingSeconds, type TimerMode } from "../lib/studyTimer";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
@@ -18,11 +19,13 @@ export function StudyView() {
   const store = useStudyStore();
   const { sessions, topics, subjects, timer, toggleStudyTimer, resetStudyTimer, addSession, deleteSession, reviewTopic } = store;
   const weeklyTarget = selectPreferences(store).weeklyTargetMinutes;
-  const [topicsOpen, setTopicsOpen] = useState(false);
-  const [logOpen, setLogOpen] = useState(false);
-  const [subjectId, setSubjectId] = useState(() => selectableSubjects(subjects)[0]?.id ?? "");
-  const [sessionTitle, setSessionTitle] = useState("");
-  const [template, setTemplate] = useState<StudySession["template"]>("new-topic");
+  const [topicsOpen, setTopicsOpen] = useUiState("study.topicsOpen", false, { scope: "tab" });
+  const [logOpen, setLogOpen] = useUiState("study.logOpen", false, { scope: "tab" });
+  // Materia, titolo e tipo accompagnano il timer (che sopravvive già al refresh): restano anche loro.
+  const [savedSubjectId, setSubjectId] = useUiState("study.subject", () => selectableSubjects(subjects)[0]?.id ?? "");
+  const subjectId = !savedSubjectId || subjects.some((subject) => subject.id === savedSubjectId) ? savedSubjectId : "";
+  const [sessionTitle, setSessionTitle] = useUiState("study.title", "", { scope: "tab" });
+  const [template, setTemplate] = useUiState<StudySession["template"]>("study.template", "new-topic", { validate: oneOf(...TEMPLATES) });
   const [notice, setNotice] = useState("");
   // Il timer è basato su timestamp: qui serve solo ridisegnare ogni secondo.
   const now = useNow(1000, timer.running);
@@ -293,8 +296,8 @@ function ReviewPanel({
   onRate: (id: string, rating: ReviewRating) => void;
   onManage: () => void;
 }) {
-  const [focusId, setFocusId] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState(false);
+  const [focusId, setFocusId] = useUiState<string | null>("study.reviewFocus", null, { scope: "tab", validate: isNullableString });
+  const [revealed, setRevealed] = useUiState("study.reviewRevealed", false, { scope: "tab" });
   const current = due.find((topic) => topic.id === focusId) ?? due[0];
   const rest = due.filter((topic) => topic.id !== current?.id);
 

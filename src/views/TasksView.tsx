@@ -10,6 +10,7 @@ import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 
 type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
 type SortMode = "deadline" | "priority" | "recent";
@@ -50,9 +51,9 @@ const DUE_BUCKETS: { id: string; title: string; test: (task: Task) => boolean }[
 const byDue = (a: Task, b: Task) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999");
 
 export function TasksView() {
-  const [mode, setMode] = useState<TaskMode>("list");
-  const [sort, setSort] = useState<SortMode>("deadline");
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [mode, setMode] = useUiState<TaskMode>("tasks.mode", "list", { validate: oneOf("list", "kanban", "matrix", "subject", "focus") });
+  const [sort, setSort] = useUiState<SortMode>("tasks.sort", "deadline", { validate: oneOf("deadline", "priority", "recent") });
+  const [editingTaskId, setEditingTaskId] = useUiState<string | null>("tasks.editing", null, { scope: "tab", validate: isNullableString });
   const { tasks, subjects, addTask, updateTask, toggleTask, deleteTask } = useStudyStore();
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
 
@@ -328,7 +329,7 @@ function RowList({ tasks, actions, compact, empty }: { tasks: Task[]; actions: R
 }
 
 function GroupedList({ tasks, sort, actions }: { tasks: Task[]; sort: SortMode; actions: RowActions }) {
-  const [showDone, setShowDone] = useState(false);
+  const [showDone, setShowDone] = useUiState("tasks.showDone", false);
   const open = tasks.filter(isOpen);
   const done = tasks
     .filter((task) => task.status === "done")

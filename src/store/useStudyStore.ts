@@ -17,7 +17,8 @@ import type {
   Task,
   UserSettings
 } from "../types";
-import { DEFAULT_PREFERENCES, PREFERENCES_ID, createEmptySnapshot, defaultSettings } from "../data/defaults";
+import { DEFAULT_PREFERENCES, PREFERENCES_ID, SETTINGS_SCHEMA_VERSION, createEmptySnapshot, defaultSettings } from "../data/defaults";
+import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState";
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
@@ -199,6 +200,50 @@ export const snapshotFromState = (state: CollectionsState): StudySnapshot => ({
   ...pickCollections(state)
 });
 
+// Record (non array) per avere un errore di compilazione se si aggiunge una vista senza elencarla.
+const APP_VIEWS: Record<AppView, true> = {
+  dashboard: true,
+  calendar: true,
+  tasks: true,
+  study: true,
+  subjects: true,
+  exams: true,
+  career: true,
+  materials: true,
+  goals: true,
+  stats: true,
+  barb: true,
+  settings: true
+};
+
+const isAppView = (value: unknown): value is AppView => typeof value === "string" && Object.hasOwn(APP_VIEWS, value);
+
+/**
+ * Sezione con cui aprire l'app: dopo un refresh (anche forzato) quella in cui era la scheda;
+ * in una scheda nuova la "Vista iniziale" delle impostazioni ("last" = ultima usata qui).
+ */
+const startView = (settings: UserSettings): AppView => {
+  const tabView = readTabUiState("view");
+  if (isAppView(tabView)) return tabView;
+  if (settings.initialView === "last") {
+    const lastView = readDeviceUiState("view");
+    return isAppView(lastView) ? lastView : "dashboard";
+  }
+  return isAppView(settings.initialView) ? settings.initialView : "dashboard";
+};
+
+/** Migrazioni una tantum delle impostazioni locali (lo schemaVersion salvato decide). */
+const upgradeSettings = (saved: UserSettings): UserSettings => {
+  const settings = { ...defaultSettings(), ...saved };
+  if ((saved.schemaVersion ?? 1) < 2) {
+    // Prima "Vista iniziale" era solo fissa, con "dashboard" predefinita: chi non l'aveva cambiata
+    // riapre ora l'ultima sezione usata. Una scelta diversa dalla dashboard resta com'era.
+    if (settings.initialView === "dashboard") settings.initialView = "last";
+  }
+  settings.schemaVersion = SETTINGS_SCHEMA_VERSION;
+  return settings;
+};
+
 const applySnapshot = (snapshot: Partial<StudySnapshot>): CollectionsState => normalizeCollections(snapshot);
 
 const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => {
@@ -306,7 +351,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
       set({ loading: true, error: undefined });
       try {
         const savedSettings = await db.settings.get("settings");
-        const settings = savedSettings ? { ...defaultSettings(), ...savedSettings } : defaultSettings();
+        const settings = savedSettings ? upgradeSettings(savedSettings) : defaultSettings();
+        if (!savedSettings || savedSettings.schemaVersion !== settings.schemaVersion) {
+          // Impostazioni mancanti NON implicano workspace vuoto: i dati esistenti restano.
+          await db.settings.put(settings);
+        }
         const vault = await db.vault.get("main");
 
         if (settings.security.mode === "vault" && vault) {
@@ -315,7 +364,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
           resetBaseline(applySnapshot(createEmptySnapshot()), settings);
           set({
             settings,
-            activeView: settings.initialView,
+            activeView: startView(settings),
             locked: true,
             loading: false,
             ...applySnapshot(createEmptySnapshot())
@@ -326,17 +375,13 @@ export const useStudyStore = create<StudyState>((set, get) => {
         // Nota: la vecchia "pulizia mock legacy" cancellava a ogni avvio materie/task/tag
         // dell'utente con nomi comuni (es. "Economia", tag "urgente") e tutti i widget. Rimossa.
         const snapshot = applySnapshot(await readSnapshotFromDb());
-        if (!savedSettings) {
-          // Impostazioni mancanti NON implicano workspace vuoto: i dati esistenti restano.
-          await db.settings.put(settings);
-        }
 
         setVaultSession(false, null);
         setPersistenceSuspended(false);
         resetBaseline(snapshot, settings);
         set({
           settings,
-          activeView: settings.initialView,
+          activeView: startView(settings),
           locked: false,
           loading: false,
           ...snapshot
@@ -372,7 +417,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       setVaultSession(true, key);
       resetBaseline(snapshot, settings);
       setPersistenceSuspended(false);
-      set({ locked: false, ...snapshot, activeView: settings.initialView, error: undefined });
+      set({ locked: false, ...snapshot, activeView: startView(settings), error: undefined });
       const migrated = migrateLegacyProfile(snapshot, settings);
       if (migrated) {
         set(migrated);
@@ -1043,6 +1088,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
       setVaultSession(false, null);
       setPersistenceSuspended(false);
       resetBaseline(empty, settings);
+      // Filtri ed elementi aperti puntavano ai dati appena cancellati.
+      clearUiState();
       set({ settings, locked: false, ...empty });
     },
 

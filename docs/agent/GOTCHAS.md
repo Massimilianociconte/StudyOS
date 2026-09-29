@@ -63,3 +63,9 @@
   punti, lodi senza punti. Lode di laurea e arrotondamenti non si calcolano. Se il corso
   cambia le regole, aggiornare la tabella, la data della fonte e `tests/graduation.test.mjs`.
 
+- Stato UI (`src/lib/uiState.ts`, chiave `studyos-ui`): solo navigazione, mai contenuti.
+  Ambito "tab" in sessionStorage (refresh della stessa scheda: date, ricerche, elemento
+  aperto, scroll); ambito "device" anche in localStorage (modalità, ordinamenti, filtri,
+  ultima sezione). Ogni valore salvato passa da un validatore (`oneOf`, `isNullableString`)
+  e gli id di entità sparite vanno ignorati nella vista. Una nuova vista va aggiunta anche
+  ad `APP_VIEWS` nello store. Il reset dei dati locali svuota lo stato UI.

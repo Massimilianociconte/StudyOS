@@ -34,7 +34,10 @@ export interface UserSettings {
   palette: PaletteName;
   density: "comfortable" | "compact";
   cardShape: "soft" | "super";
-  initialView: AppView;
+  /** "last" = riapre l'ultima sezione usata su questo dispositivo. */
+  initialView: AppView | "last";
+  /** Versione delle impostazioni locali (migrazioni una tantum). */
+  schemaVersion?: number;
   dateFormat: "dd/MM/yyyy" | "yyyy-MM-dd";
   dashboardLayout: string[];
   profile?: {

@@ -13,6 +13,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { Button, Drawer, EmptyState, Panel, Pill, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { weekdayLabel } from "../lib/university/normalize";
+import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import type { BarbCourse, BarbSemesterInfo, BarbTeacher } from "../lib/university/types";
 
 type Tab = "corsi" | "calendario" | "docenti" | "aule" | "fonti";
@@ -112,7 +113,7 @@ function LinkButton({ href, icon, children }: { href: string; icon: string; chil
 }
 
 export function BarbView() {
-  const [tab, setTab] = useState<Tab>("corsi");
+  const [tab, setTab] = useUiState<Tab>("barb.tab", "corsi", { validate: oneOf("corsi", "calendario", "docenti", "aule", "fonti") });
   const { ready, courses, teachers, semesters, syncLogs, init } = useBarbStore(
     useShallow((state) => ({
       ready: state.ready,
@@ -216,10 +217,10 @@ function useSubjectNames() {
 }
 
 function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachersById: Map<string, BarbTeacher> }) {
-  const [query, setQuery] = useState("");
-  const [semester, setSemester] = useState<SemesterFilter>("tutti");
-  const [hideNotOffered, setHideNotOffered] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [query, setQuery] = useUiState("barb.courseQuery", "", { scope: "tab" });
+  const [semester, setSemester] = useUiState<SemesterFilter>("barb.semester", "tutti", { validate: oneOf("tutti", "primo", "secondo", "altro") });
+  const [hideNotOffered, setHideNotOffered] = useUiState("barb.hideNotOffered", false);
+  const [openId, setOpenId] = useUiState<string | null>("barb.openCourse", null, { scope: "tab", validate: isNullableString });
   const inSubjects = useSubjectNames();
 
   const notOffered = courses.filter((course) => course.offered === false);
@@ -485,11 +486,17 @@ function CourseDrawer({
   onNext?: () => void;
   position?: string;
 }) {
-  const [detailTab, setDetailTab] = useState<DetailTab>("panoramica");
-
-  useEffect(() => {
-    setDetailTab("panoramica");
-  }, [course?.id]);
+  const [detailTab, setDetailTab] = useUiState<DetailTab>("barb.detailTab", "panoramica", {
+    scope: "tab",
+    validate: oneOf("panoramica", "programma", "esame")
+  });
+  // Passando a un altro corso si riparte dalla panoramica; al primo caricamento (anche dopo un
+  // refresh, quando i corsi arrivano in differita) la scheda salvata resta.
+  const [detailFor, setDetailFor] = useState(course?.id);
+  if (course && course.id !== detailFor) {
+    if (detailFor !== undefined) setDetailTab("panoramica");
+    setDetailFor(course.id);
+  }
 
   const teachers = course
     ? course.teacherIds.map((id) => teachersById.get(id)).filter((teacher): teacher is BarbTeacher => Boolean(teacher))
@@ -694,7 +701,7 @@ function ScheduleList({ course }: { course: BarbCourse }) {
 }
 
 function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: BarbCourse[] }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useUiState("barb.teacherQuery", "", { scope: "tab" });
   const courseName = useMemo(() => new Map(courses.map((course) => [course.id, course.name])), [courses]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -957,7 +964,7 @@ function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.get
 
 /** Vista settimanale/per-corso: senza regole ricorrenti mostra stato ufficiale + rimandi. */
 function WeeklySchedule({ courses, semesters }: { courses: BarbCourse[]; semesters: BarbSemesterInfo[] }) {
-  const [mode, setMode] = useState<"settimana" | "per-corso">("settimana");
+  const [mode, setMode] = useUiState<"settimana" | "per-corso">("barb.scheduleMode", "settimana", { validate: oneOf("settimana", "per-corso") });
   const withSchedule = courses.filter((course) => course.schedule.length > 0);
   return (
     <Panel>

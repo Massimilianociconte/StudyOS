@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AppView, PaletteName, ThemeMode } from "../types";
+import type { PaletteName, ThemeMode, UserSettings } from "../types";
 import {
   backupSummary,
   createBackupEnvelope,
@@ -332,7 +332,8 @@ export function SettingsView() {
                 </select>
               </Field>
               <Field label="Vista iniziale">
-                <select className={inputClass} value={settings.initialView} onChange={(event) => updateSettings({ initialView: event.target.value as AppView })}>
+                <select className={inputClass} value={settings.initialView} onChange={(event) => updateSettings({ initialView: event.target.value as UserSettings["initialView"] })}>
+                  <option value="last">Ultima sezione aperta</option>
                   <option value="dashboard">Dashboard</option>
                   <option value="calendar">Calendario</option>
                   <option value="tasks">Task</option>

@@ -6,6 +6,7 @@ import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, attachmentKind, hostOf, ty
 import { Button, Field, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { normalizeExternalUrl, safeDataUrl, safeHref } from "../lib/safeUrl";
+import { oneOf, useUiState } from "../lib/uiState";
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return "";
@@ -22,13 +23,15 @@ const formatBytes = (bytes: number) => {
 type KindFilter = "all" | AttachmentKind;
 
 export function MaterialsView() {
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<KindFilter>("all");
-  const [subjectFilter, setSubjectFilter] = useState("");
+  const [query, setQuery] = useUiState("materials.query", "", { scope: "tab" });
+  const [kind, setKind] = useUiState<KindFilter>("materials.kind", "all", { validate: oneOf("all", "pdf", "image", "video", "doc", "link", "file") });
+  const [savedSubjectFilter, setSubjectFilter] = useUiState("materials.subject", "");
   const [uploadError, setUploadError] = useState("");
   const [editingAttachment, setEditingAttachment] = useState<Attachment | null>(null);
   const [draft, setDraft] = useState({ name: "", description: "", externalUrl: "", tags: "", subjectId: "" });
   const { attachments, subjects, tasks, events, sessions, exams, addAttachment, addExternalAttachment, updateAttachment, deleteAttachment } = useStudyStore();
+  // Un filtro salvato su una materia poi eliminata non deve nascondere tutto.
+  const subjectFilter = subjects.some((subject) => subject.id === savedSubjectFilter) ? savedSubjectFilter : "";
 
   const linkedName = (type?: string, id?: string) => {
     if (!type || !id) return null;
