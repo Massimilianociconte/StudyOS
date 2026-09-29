@@ -159,6 +159,11 @@ textarea {
   font-size: max(16px, 1rem);
 }
 
+/* inline-block sulla baseline lascia ~6px vuoti sotto le textarea: spaziatura irregolare tra i campi. */
+textarea {
+  vertical-align: top;
+}
+
 button,
 [role="button"],
 a {

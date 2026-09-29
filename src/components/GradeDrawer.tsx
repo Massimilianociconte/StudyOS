@@ -34,8 +34,13 @@ export function GradeDrawer({
   onSaved: (message: string) => void;
 }) {
   const { addExam, updateExam, deleteExam, addSubject, updateSubject } = useStudyStore();
+  const passedSubjects = new Set(
+    exams.filter((item) => item.status === "done" && (item.passFail || isValidGrade(item.grade)) && item.id !== exam?.id).map((item) => item.subjectId)
+  );
+  const available = subjects.filter((subject) => !subject.archived && subject.status !== "archived" && !passedSubjects.has(subject.id));
+  // Senza materie selezionabili si parte direttamente dal nuovo insegnamento.
   const initial = () => ({
-    subjectId: exam?.subjectId ?? "",
+    subjectId: exam?.subjectId ?? (available.length ? "" : "__new"),
     newName: "",
     newCfu: "6",
     date: toDateInput(exam?.date),
@@ -57,10 +62,6 @@ export function GradeDrawer({
   }
 
   const editing = Boolean(exam);
-  const passedSubjects = new Set(
-    exams.filter((item) => item.status === "done" && (item.passFail || isValidGrade(item.grade)) && item.id !== exam?.id).map((item) => item.subjectId)
-  );
-  const available = subjects.filter((subject) => !subject.archived && subject.status !== "archived" && !passedSubjects.has(subject.id));
   const creating = draft.subjectId === "__new";
   const subjectName = subjects.find((subject) => subject.id === draft.subjectId)?.name ?? "";
 

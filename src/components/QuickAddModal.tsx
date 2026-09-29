@@ -3,7 +3,7 @@ import { selectableSubjects } from "../lib/selectors";
 import { addHours } from "date-fns";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Field, IconButton, Pill, inputClass } from "./ui";
+import { Button, Field, IconButton, Pill, fileInputClass, inputClass } from "./ui";
 import { Icon } from "./Icon";
 import { fromDatetimeLocal, nextHalfHour, toDatetimeLocal } from "../lib/dates";
 import { normalizeExternalUrl } from "../lib/safeUrl";
@@ -278,7 +278,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                   </Field>
                   <Field label="File locale">
                     <input
-                      className={`${inputClass} file:mr-3 file:rounded-full file:border-0 file:bg-[var(--accent)] file:px-3 file:py-1.5 file:text-sm file:font-black file:text-[#10131d]`}
+                      className={fileInputClass}
                       type="file"
                       onChange={async (event) => {
                         const file = event.target.files?.[0];

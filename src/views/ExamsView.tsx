@@ -7,7 +7,7 @@ import { selectableSubjects, studyDaysUntil, subjectColor, subjectName } from ".
 import { EXAM_STATUS_LABEL, formatMinutes } from "../lib/labels";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
 import { readImageFile } from "../lib/files";
-import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Tag, fileInputClass, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
 
@@ -161,7 +161,7 @@ export function ExamsView() {
         subtitle="Esami in arrivo con countdown, preparazione e programma. Voti e medie sono nel Libretto."
         action={
           <div className="flex flex-wrap gap-2">
-            <Button icon="Award" variant="soft" onClick={() => setGradeOpen(true)} disabled={!subjects.length}>
+            <Button icon="Award" variant="soft" onClick={() => setGradeOpen(true)}>
               Registra voto
             </Button>
             <Button icon="Plus" variant="primary" onClick={openCreate}>
@@ -375,7 +375,7 @@ export function ExamsView() {
 
               <Field label="Copertina opzionale">
                 <input
-                  className={`${inputClass} file:mr-3 file:rounded-full file:border-0 file:bg-[var(--accent)] file:px-3 file:py-1.5 file:text-sm file:font-black file:text-[#10131d]`}
+                  className={fileInputClass}
                   type="file"
                   accept="image/*"
                   onChange={async (event) => {

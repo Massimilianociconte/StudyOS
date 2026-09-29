@@ -50,7 +50,7 @@ export function CareerView() {
         title="Libretto e laurea"
         subtitle={`Media ponderata calcolata in automatico dagli esami registrati e proiezione del voto di laurea per ${DEGREE_PROGRAMS[program].name}.`}
         action={
-          <Button icon="Award" variant="primary" onClick={() => openEditor(null)} disabled={!subjects.length}>
+          <Button icon="Award" variant="primary" onClick={() => openEditor(null)}>
             Registra voto
           </Button>
         }
@@ -75,9 +75,9 @@ export function CareerView() {
       ) : null}
 
       {!subjects.length ? (
-        <Panel>
+        <Panel className="mb-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm font-bold text-[var(--muted)]">Per registrare un voto serve almeno una materia (o crea l'insegnamento dal modulo del voto).</p>
+            <p className="text-sm font-bold text-[var(--muted)]">Nessuna materia ancora: aggiungile da Materie oppure crea l'insegnamento quando registri il voto.</p>
             <Button icon="BookOpen" variant="soft" onClick={() => setActiveView("subjects")}>
               Vai a Materie
             </Button>

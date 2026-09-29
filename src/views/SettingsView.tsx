@@ -13,7 +13,7 @@ import { whenPersisted } from "../lib/persistence";
 import { getCloudSyncState, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
 import { resizeImageFile } from "../lib/files";
 import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
-import { Button, Field, Panel, Pill, SectionTitle, inputClass } from "../components/ui";
+import { Button, Field, Panel, Pill, SectionTitle, fileInputClass, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CloudPanel } from "../components/CloudPanel";
 
@@ -433,7 +433,7 @@ export function SettingsView() {
             </Field>
             <Field label="Importa backup .json">
               <input
-                className={`${inputClass} file:mr-3 file:rounded-full file:border-0 file:bg-[var(--accent)] file:px-3 file:py-1.5 file:text-sm file:font-black file:text-[#10131d]`}
+                className={fileInputClass}
                 type="file"
                 accept="application/json,.json"
                 onChange={(event) => {
