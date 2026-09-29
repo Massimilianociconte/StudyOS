@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { selectableSubjects } from "../lib/selectors";
 import { addHours } from "date-fns";
 import { AnimatePresence, motion } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
@@ -13,7 +14,7 @@ type TaskCreateMode = "normal" | "timer" | "completed";
 const modes: { id: Mode; label: string }[] = [
   { id: "task", label: "Task" },
   { id: "event", label: "Evento" },
-  { id: "session", label: "Sessione" },
+  { id: "session", label: "Blocco studio" },
   { id: "subject", label: "Materia" },
   { id: "material", label: "Materiale" }
 ];
@@ -30,7 +31,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
   const [actualMinutes, setActualMinutes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const { subjects, addTask, addEvent, addSession, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
+  const { subjects, addTask, addEvent, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
   // Il modale resta montato: a ogni apertura la data proposta torna "adesso".
   useEffect(() => {
@@ -56,7 +57,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
       return "Crea task";
     }
     if (mode === "event") return "Crea evento";
-    if (mode === "session") return "Pianifica";
+    if (mode === "session") return "Pianifica nel calendario";
     if (mode === "subject") return "Crea materia";
     return "Salva materiale";
   }, [mode, taskCreateMode]);
@@ -109,14 +110,24 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
           subjectId: subjectId || undefined,
           start,
           end: addHours(new Date(start), 1).toISOString(),
-          category: "study"
+          category: "other",
+          color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined
         });
       }
       if (mode === "session") {
-        await addSession({ title: title.trim(), subjectId: subjectId || undefined, start, plannedMinutes: 50 });
+        // Prima creava una sessione "pianificata" che nessuna vista mostrava: ora è un blocco di
+        // studio nel calendario (le sessioni svolte si registrano dal timer o a mano in Studio).
+        await addEvent({
+          title: title.trim(),
+          subjectId: subjectId || undefined,
+          start,
+          end: new Date(new Date(start).getTime() + 50 * 60_000).toISOString(),
+          category: "study",
+          color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined
+        });
       }
       if (mode === "subject") {
-        await addSubject({ name: title.trim(), color: "var(--accent)" });
+        await addSubject({ name: title.trim(), color: "#7CF7C8" });
       }
       if (mode === "material" && url.trim()) {
         const safe = normalizeExternalUrl(url);
@@ -144,7 +155,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
           aria-modal="true"
         >
           <motion.div
-            className="soft-panel scrollbar-soft max-h-[85vh] w-full max-w-xl overflow-y-auto p-4 sm:p-5"
+            className="soft-panel scrollbar-soft max-h-[85dvh] w-full max-w-xl overflow-y-auto p-4 sm:p-5"
             initial={{ y: 30, scale: 0.98 }}
             animate={{ y: 0, scale: 1 }}
             exit={{ y: 30, scale: 0.98 }}
@@ -165,13 +176,13 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
               ))}
             </div>
 
-            <div className="grid gap-3">
+            <div className="grid grid-cols-1 gap-3">
               {mode === "task" ? (
-                <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Tipo di task">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label="Tipo di task">
                   {([
                     { id: "normal", label: "Task normale", icon: "Check" },
                     { id: "timer", label: "Con cronometro", icon: "Timer" },
-                    { id: "completed", label: "Gia completata", icon: "Archive" }
+                    { id: "completed", label: "Già completata", icon: "Archive" }
                   ] as const).map((item) => (
                     <button
                       key={item.id}
@@ -183,7 +194,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                           : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--text)] hover:bg-[var(--surface)]"
                       }`}
                     >
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-black/10">
+                      <span className="grid grid-cols-1 h-9 w-9 shrink-0 place-items-center rounded-full bg-black/10">
                         <Icon name={item.icon} className="h-4 w-4" />
                       </span>
                       <span className="min-w-0">
@@ -207,11 +218,11 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
               </Field>
 
               {mode !== "subject" && mode !== "material" ? (
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label="Materia">
                     <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
                       <option value="">Nessuna</option>
-                      {subjects.map((subject) => (
+                      {selectableSubjects(subjects, subjectId).map((subject) => (
                         <option value={subject.id} key={subject.id}>
                           {subject.name}
                         </option>
@@ -230,7 +241,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
               ) : null}
 
               {mode === "task" ? (
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label="Durata stimata">
                     <input
                       className={inputClass}
@@ -256,7 +267,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
               ) : null}
 
               {mode === "material" ? (
-                <div className="grid gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <Field label="Link esterno">
                     <input
                       className={inputClass}

@@ -49,6 +49,7 @@ const TasksView = lazyView(() => import("./views/TasksView"), "TasksView");
 const StudyView = lazyView(() => import("./views/StudyView"), "StudyView");
 const SubjectsView = lazyView(() => import("./views/SubjectsView"), "SubjectsView");
 const ExamsView = lazyView(() => import("./views/ExamsView"), "ExamsView");
+const CareerView = lazyView(() => import("./views/CareerView"), "CareerView");
 const MaterialsView = lazyView(() => import("./views/MaterialsView"), "MaterialsView");
 const GoalsView = lazyView(() => import("./views/GoalsView"), "GoalsView");
 const StatsView = lazyView(() => import("./views/StatsView"), "StatsView");
@@ -62,6 +63,7 @@ const views: Record<AppView, ReactNode> = {
   study: <StudyView />,
   subjects: <SubjectsView />,
   exams: <ExamsView />,
+  career: <CareerView />,
   materials: <MaterialsView />,
   goals: <GoalsView />,
   stats: <StatsView />,

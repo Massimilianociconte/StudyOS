@@ -88,13 +88,31 @@ export const inferBackupScope = (backup: BackupEnvelope, snapshot: StudySnapshot
   return "full";
 };
 
+const COLLECTION_LABEL: Record<(typeof COLLECTIONS)[number], string> = {
+  subjects: "materie",
+  exams: "esami",
+  events: "eventi",
+  tasks: "task",
+  sessions: "sessioni",
+  topics: "argomenti",
+  attachments: "materiali",
+  goals: "obiettivi",
+  notes: "note",
+  tags: "tag",
+  reminders: "promemoria",
+  widgets: "widget",
+  preferences: "preferenze"
+};
+
 export const backupSummary = (snapshot: StudySnapshot) => {
-  const parts = COLLECTIONS.filter((key) => snapshot[key].length > 0).map((key) => `${snapshot[key].length} ${key}`);
+  const parts = COLLECTIONS.filter((key) => snapshot[key].length > 0).map((key) => `${snapshot[key].length} ${COLLECTION_LABEL[key]}`);
   return { total: countEntities(snapshot), text: parts.join(", ") || "nessun elemento" };
 };
 
-export const downloadJson = (fileName: string, payload: unknown) => {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+export const downloadJson = (fileName: string, payload: unknown) =>
+  downloadBlob(fileName, new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+
+export const downloadBlob = (fileName: string, blob: Blob) => {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

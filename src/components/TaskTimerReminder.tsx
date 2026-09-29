@@ -30,7 +30,7 @@ export function TaskTimerReminder() {
       aria-live="polite"
     >
       <div className="mb-3 flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
+        <span className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
           <Icon name="Timer" className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">

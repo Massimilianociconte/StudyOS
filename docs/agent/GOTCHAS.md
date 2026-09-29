@@ -24,3 +24,42 @@
   solo verso il progetto Supabase configurato: nuove origini esterne vanno aggiunte lì.
 - `normalizeExternalUrl`/`safeHref` (src/lib/safeUrl.ts) sono obbligatori per ogni
   link proveniente da dati utente, backup o sync (blocca `javascript:`).
+- Le etichette dei valori enum (priorità, stati, categorie, tipi di allegato) vivono
+  solo in `src/lib/labels.ts`: la UI non mostra mai i codici interni (`high`, `todo`).
+- Griglie Tailwind: ogni `grid` senza colonne esplicite ha `grid-cols-1`
+  (`minmax(0,1fr)`), altrimenti il testo `nowrap`/troncato allarga la traccia
+  implicita e la pagina sfora in orizzontale su mobile.
+- Gli eventi ripetuti (`recurrence`, `recurrenceUntil`) restano un solo record: le
+  occorrenze si calcolano con `expandEvents` (src/lib/recurrence.ts) e non si
+  salvano. Spostare o modificare un'occorrenza agisce sull'intera serie.
+- Testo in colore accento: usare `var(--accent-ink)` (scurito nel tema chiaro),
+  non `var(--accent)`, che su fondo chiaro non è leggibile.
+- Dettagli e modifiche aprono `Drawer` (src/components/ui.tsx): pannello a destra su
+  desktop, foglio dal basso su mobile, Esc/click fuori per chiudere, focus trap.
+- Su mobile la barra in basso mostra 4 sezioni + "Altro" (foglio con tutte le altre):
+  una nuova vista va aggiunta a `navItems` in AppShell.
+- Layout per larghezza (AppShell): <640 px barra in basso + pulsante "+", 640–1279 px
+  barra laterale compatta a icone (92 px), ≥1280 px barra laterale completa. Lo spazio
+  utile è la larghezza meno la barra: a 768 px restano ~640 px, a 1024 ~880, a 1280 ~960.
+  Scegliere i breakpoint delle viste su questi valori (due colonne affiancate da `lg`).
+- Tailwind usa `hoverOnlyWhenSupported`: un'azione nascosta fino al passaggio del mouse va
+  scritta con `can-hover:opacity-0 can-hover:group-hover:opacity-100`, mai `opacity-0` +
+  `hover:`, altrimenti su tablet touch resta invisibile. Altezze: `dvh`, non `vh`.
+- Preferenze personali (nome, foto, ore settimanali, CFU del corso, BARB visibile): entità
+  sincronizzata `preferences` con id `main`, letta con `selectPreferences` (oggetto stabile).
+  Non rimettere dati personali in `settings`, che restano del dispositivo.
+- Aggiungendo una collezione sincronizzata: registrarla in `collections.ts`, nuova versione
+  Dexie in `db.ts`, backup parziali in SettingsView e incrementare `SYNC_SCHEMA`.
+- I menu di scelta della materia usano `selectableSubjects` (niente materie archiviate o già
+  superate, tranne quella selezionata). Le materie create dal libretto hanno stato "completed".
+- Libretto: voto 18–30 con lode (vale 30 nella media) o idoneità (solo CFU). La media
+  ponderata usa i CFU della materia; base di laurea = media × 110 / 30.
+- Import .ics: `sourceUid` sull'evento evita i duplicati a ogni nuovo import; una regola
+  settimanale su più giorni (BYDAY=MO,WE) diventa una serie per giorno.
+- Proiezione del voto di laurea (`src/lib/graduation.ts`): solo Scienze biologiche (L-13) e
+  BARB (LM-6) di UNIMI, con le regole delle fonti ufficiali elencate in `DEGREE_PROGRAMS`.
+  Base = media ponderata × 110 / 30 per entrambi. Scienze biologiche: prova finale 18-19 → 2
+  … 30/30L → 8 punti, lodi 2/3/4 → 0,2/0,4/1, Erasmus ≥70% "fino a" 1 punto. BARB: tesi 1–9
+  punti, lodi senza punti. Lode di laurea e arrotondamenti non si calcolano. Se il corso
+  cambia le regole, aggiornare la tabella, la data della fonte e `tests/graduation.test.mjs`.
+

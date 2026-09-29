@@ -247,11 +247,13 @@ export function CloudPanel() {
             Il vault cifra solo i dati locali: la sync attuale invia JSON non cifrato a Supabase.
           </p>
         </div>
-        <Pill active={sync.status === "idle" && !!session}>{statusLabel(sync)}</Pill>
+        <Pill active={sync.status === "idle" && !!session} className="shrink-0">
+          {statusLabel(sync)}
+        </Pill>
       </div>
 
       {session ? (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <div className="quiet-panel p-4">
             <p className="text-xs font-black uppercase text-[var(--faint)]">Connesso come</p>
             <p className="font-black">{session.user.email}</p>
@@ -304,7 +306,7 @@ export function CloudPanel() {
           ) : null}
         </div>
       ) : (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <div className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-xs font-bold text-[var(--warning-text)]">
             Senza login i dati sono salvati solo in questo browser. Per sincronizzarli su altri dispositivi servono account + login confermato.
           </div>

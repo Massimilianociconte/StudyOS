@@ -9,3 +9,9 @@
   `https://massimilianociconte.github.io/StudyOS/` per la conferma email.
 - La cifratura end-to-end del cloud non è implementata: richiede un formato
   condiviso e una strategia di migrazione dei payload esistenti.
+- BARB, punto per l'esperienza all'estero: le linee guida del Collegio Didattico
+  (avviso del 23/04/2026) lo contano entro i 9 punti della tesi, il manifesto 2026/27
+  (Caratteristiche della prova finale) come punto per la carriera in aggiunta. La
+  proiezione usa le linee guida e mostra anche il totale secondo il manifesto: chiedere
+  conferma alla segreteria didattica e allineare `graduation.ts`.
+

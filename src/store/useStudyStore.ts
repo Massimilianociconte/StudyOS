@@ -7,6 +7,7 @@ import type {
   Exam,
   Goal,
   Note,
+  Preferences,
   Reminder,
   StudySession,
   StudySnapshot,
@@ -16,7 +17,8 @@ import type {
   Task,
   UserSettings
 } from "../types";
-import { createEmptySnapshot, defaultSettings } from "../data/defaults";
+import { DEFAULT_PREFERENCES, PREFERENCES_ID, createEmptySnapshot, defaultSettings } from "../data/defaults";
+import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
@@ -84,6 +86,7 @@ interface StudyState {
   tags: Tag[];
   reminders: Reminder[];
   widgets: DashboardWidget[];
+  preferences: Preferences[];
   timer: TimerState;
   error?: string;
   /** Ultimo errore di salvataggio su IndexedDB (undefined = tutto salvato). */
@@ -101,15 +104,26 @@ interface StudyState {
   deleteTask: (id: string) => Promise<void>;
   addEvent: (event: Partial<CalendarEvent> & Pick<CalendarEvent, "title" | "start" | "end">) => Promise<void>;
   updateEvent: (id: string, patch: Partial<CalendarEvent>) => Promise<void>;
+  /** Import in blocco (es. da .ics): gli eventi con lo stesso `sourceUid` vengono aggiornati. */
+  importEvents: (events: Array<Partial<CalendarEvent> & Pick<CalendarEvent, "title" | "start" | "end">>) => Promise<{ added: number; updated: number }>;
   deleteEvent: (id: string) => Promise<void>;
-  addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<void>;
+  /** Crea una materia e ne restituisce l'id. */
+  addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<string>;
   updateSubject: (id: string, patch: Partial<Subject>) => Promise<void>;
   addExam: (exam: Partial<Exam> & Pick<Exam, "subjectId" | "date">) => Promise<void>;
   updateExam: (id: string, patch: Partial<Exam>) => Promise<void>;
   deleteExam: (id: string) => Promise<void>;
   addSession: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
   updateSession: (id: string, patch: Partial<StudySession>) => Promise<void>;
-  completeTopicReview: (id: string) => Promise<void>;
+  deleteSession: (id: string) => Promise<void>;
+  /** Crea argomenti da ripassare; restituisce quanti sono stati aggiunti (i duplicati per materia vengono saltati). */
+  addTopics: (topics: Array<Partial<StudyTopic> & Pick<StudyTopic, "title" | "subjectId">>) => Promise<number>;
+  updateTopic: (id: string, patch: Partial<StudyTopic>) => Promise<void>;
+  deleteTopic: (id: string) => Promise<void>;
+  /** Registra un ripasso con la valutazione dello studente e pianifica il successivo. */
+  reviewTopic: (id: string, rating: ReviewRating) => Promise<void>;
+  /** Aggiorna le preferenze personali sincronizzate (entità unica "main"). */
+  updatePreferences: (patch: PreferencesPatch) => Promise<void>;
   addAttachment: (file: File, link?: { type?: Attachment["linkedEntityType"]; id?: string }) => Promise<void>;
   addExternalAttachment: (url: string, name: string, description?: string) => Promise<void>;
   updateAttachment: (id: string, patch: Partial<Attachment>) => Promise<void>;
@@ -135,6 +149,49 @@ interface StudyState {
 }
 
 type StoreState = StudyState;
+
+export type PreferencesPatch = Partial<
+  Pick<
+    Preferences,
+    "displayName" | "avatarDataUrl" | "weeklyTargetMinutes" | "degreeCfu" | "showBarb" | "degreeProgram" | "sbThesisGrade" | "barbThesisPoints" | "abroad"
+  >
+>;
+
+// Un'entità salvata da una versione precedente può non avere i campi nuovi: si completano con i
+// predefiniti. La cache per riferimento mantiene l'oggetto stabile (selettori Zustand).
+const completedPreferences = new WeakMap<Preferences, Preferences>();
+
+/** Preferenze dell'account o valori predefiniti (oggetto stabile: sicuro nei selettori). */
+export const selectPreferences = (state: Pick<CollectionsState, "preferences">): Preferences => {
+  const stored = state.preferences.find((item) => item.id === PREFERENCES_ID);
+  if (!stored) return DEFAULT_PREFERENCES;
+  let complete = completedPreferences.get(stored);
+  if (!complete) {
+    complete = { ...DEFAULT_PREFERENCES, ...stored };
+    completedPreferences.set(stored, complete);
+  }
+  return complete;
+};
+
+/**
+ * Il vecchio profilo (nome e foto) viveva nelle impostazioni del dispositivo: restava lo stesso
+ * anche cambiando account e non si sincronizzava. Alla prima apertura diventa un'entità
+ * `preferences` sincronizzata; il campo locale viene svuotato.
+ */
+const migrateLegacyProfile = (collections: CollectionsState, settings: UserSettings) => {
+  const legacy = settings.profile;
+  if (collections.preferences.length || (!legacy?.displayName?.trim() && !legacy?.avatarDataUrl)) return null;
+  const now = nowIso();
+  const preferences: Preferences = {
+    ...DEFAULT_PREFERENCES,
+    tags: [],
+    createdAt: now,
+    updatedAt: now,
+    displayName: legacy.displayName?.trim() ?? "",
+    avatarDataUrl: legacy.avatarDataUrl ?? ""
+  };
+  return { preferences: [preferences], settings: { ...settings, profile: { displayName: "", avatarDataUrl: "" }, updatedAt: now } };
+};
 
 export const snapshotFromState = (state: CollectionsState): StudySnapshot => ({
   version: 1,
@@ -284,6 +341,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
           loading: false,
           ...snapshot
         });
+        const migrated = migrateLegacyProfile(snapshot, settings);
+        if (migrated) {
+          set(migrated);
+          await commit();
+        }
       } catch (error) {
         set({ loading: false, error: errorText(error, "Errore di avvio.") });
       }
@@ -311,6 +373,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
       resetBaseline(snapshot, settings);
       setPersistenceSuspended(false);
       set({ locked: false, ...snapshot, activeView: settings.initialView, error: undefined });
+      const migrated = migrateLegacyProfile(snapshot, settings);
+      if (migrated) {
+        set(migrated);
+        await commit();
+      }
     },
 
     lockVault: async () => {
@@ -470,6 +537,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
         start: event.start,
         end: event.end,
         recurrence: event.recurrence ?? "none",
+        recurrenceUntil: event.recurrenceUntil,
         status: event.status ?? "planned",
         checklist: event.checklist ?? [],
         attachmentIds: event.attachmentIds ?? [],
@@ -480,6 +548,62 @@ export const useStudyStore = create<StudyState>((set, get) => {
       };
       set((state) => ({ events: [created, ...state.events] }));
       await commit();
+    },
+
+    importEvents: async (incoming) => {
+      const now = nowIso();
+      const bySource = new Map(get().events.filter((event) => event.sourceUid).map((event) => [event.sourceUid as string, event]));
+      const updates = new Map<string, CalendarEvent>();
+      const created: CalendarEvent[] = [];
+      const seen = new Set<string>();
+      for (const item of incoming) {
+        if (item.sourceUid) {
+          if (seen.has(item.sourceUid)) continue; // UID ripetuto nello stesso file
+          seen.add(item.sourceUid);
+        }
+        const existing = item.sourceUid ? bySource.get(item.sourceUid) : undefined;
+        if (existing) {
+          updates.set(existing.id, {
+            ...existing,
+            title: item.title,
+            description: item.description ?? existing.description,
+            start: item.start,
+            end: item.end,
+            recurrence: item.recurrence ?? existing.recurrence,
+            recurrenceUntil: item.recurrenceUntil,
+            archived: false,
+            updatedAt: now
+          });
+          continue;
+        }
+        created.push({
+          id: createId("event"),
+          createdAt: now,
+          updatedAt: now,
+          archived: false,
+          tags: item.tags ?? [],
+          title: item.title,
+          description: item.description ?? "",
+          category: item.category ?? "lesson",
+          subjectId: item.subjectId,
+          color: item.color ?? "#7CF7C8",
+          priority: item.priority ?? "medium",
+          start: item.start,
+          end: item.end,
+          recurrence: item.recurrence ?? "none",
+          recurrenceUntil: item.recurrenceUntil,
+          status: "planned",
+          checklist: [],
+          attachmentIds: [],
+          notes: "",
+          links: [],
+          sourceUid: item.sourceUid
+        });
+      }
+      if (!created.length && !updates.size) return { added: 0, updated: 0 };
+      set((state) => ({ events: [...created, ...state.events.map((event) => updates.get(event.id) ?? event)] }));
+      await commit();
+      return { added: created.length, updated: updates.size };
     },
 
     updateEvent: async (id, patch) => {
@@ -521,6 +645,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       };
       set((state) => ({ subjects: [created, ...state.subjects] }));
       await commit();
+      return created.id;
     },
 
     updateSubject: async (id, patch) => {
@@ -547,7 +672,10 @@ export const useStudyStore = create<StudyState>((set, get) => {
         status: exam.status ?? "planning",
         simulations: exam.simulations ?? 0,
         frequentQuestions: exam.frequentQuestions ?? [],
-        cover: exam.cover
+        cover: exam.cover,
+        grade: exam.grade,
+        honors: exam.honors,
+        passFail: exam.passFail
       };
       set((state) => ({ exams: [created, ...state.exams] }));
       await commit();
@@ -605,22 +733,95 @@ export const useStudyStore = create<StudyState>((set, get) => {
       await commit();
     },
 
-    completeTopicReview: async (id) => {
-      const intervals = [1, 3, 7, 14, 30];
+    deleteSession: async (id) => {
+      const detach = detachLinked("studySession", id);
       set((state) => ({
-        topics: state.topics.map((topic) => {
-          if (topic.id !== id) return topic;
-          const nextInterval = intervals[Math.min(topic.completedReviews + 1, intervals.length - 1)];
-          const nextReviewDate = new Date();
-          nextReviewDate.setDate(nextReviewDate.getDate() + nextInterval);
-          return {
-            ...topic,
-            completedReviews: topic.completedReviews + 1,
-            nextReviewDate: nextReviewDate.toISOString(),
-            updatedAt: nowIso()
-          };
-        })
+        sessions: state.sessions.filter((session) => session.id !== id),
+        goals: state.goals.map((goal) =>
+          goal.linkedSessionIds.includes(id)
+            ? { ...goal, linkedSessionIds: goal.linkedSessionIds.filter((sessionId) => sessionId !== id), updatedAt: nowIso() }
+            : goal
+        ),
+        attachments: state.attachments.map(detach),
+        notes: state.notes.map(detach),
+        reminders: state.reminders.map(detach)
       }));
+      await commit();
+    },
+
+    addTopics: async (items) => {
+      const existing = new Set(get().topics.map((topic) => `${topic.subjectId}:${topic.title.trim().toLowerCase()}`));
+      const now = nowIso();
+      const created: StudyTopic[] = [];
+      for (const item of items) {
+        const title = item.title.trim();
+        const key = `${item.subjectId}:${title.toLowerCase()}`;
+        if (!title || existing.has(key)) continue;
+        existing.add(key);
+        created.push({
+          id: createId("topic"),
+          createdAt: now,
+          updatedAt: now,
+          archived: false,
+          tags: item.tags ?? [],
+          subjectId: item.subjectId,
+          title,
+          firstStudiedAt: item.firstStudiedAt ?? now,
+          comprehension: item.comprehension ?? 3,
+          memorization: item.memorization ?? 3,
+          difficulty: item.difficulty ?? 3,
+          // Un argomento nuovo è da ripassare subito: entra nella coda di oggi.
+          nextReviewDate: item.nextReviewDate ?? now,
+          completedReviews: item.completedReviews ?? 0,
+          notes: item.notes ?? "",
+          attachmentIds: item.attachmentIds ?? [],
+          questions: item.questions ?? [],
+          intervalDays: item.intervalDays,
+          ease: item.ease
+        });
+      }
+      if (!created.length) return 0;
+      set((state) => ({ topics: [...created, ...state.topics] }));
+      await commit();
+      return created.length;
+    },
+
+    updateTopic: async (id, patch) => {
+      set((state) => ({
+        topics: state.topics.map((topic) => (topic.id === id ? { ...topic, ...patch, updatedAt: nowIso() } : topic))
+      }));
+      await commit();
+    },
+
+    deleteTopic: async (id) => {
+      const detach = detachLinked("studyTopic", id);
+      set((state) => ({
+        topics: state.topics.filter((topic) => topic.id !== id),
+        attachments: state.attachments.map(detach),
+        notes: state.notes.map(detach),
+        reminders: state.reminders.map(detach)
+      }));
+      await commit();
+    },
+
+    reviewTopic: async (id, rating) => {
+      set((state) => ({
+        topics: state.topics.map((topic) =>
+          topic.id === id ? { ...topic, ...scheduleReview(topic, rating), updatedAt: nowIso() } : topic
+        )
+      }));
+      await commit();
+    },
+
+    updatePreferences: async (patch) => {
+      const now = nowIso();
+      set((state) => {
+        const current = state.preferences.find((item) => item.id === PREFERENCES_ID);
+        const next: Preferences = current
+          ? { ...current, ...patch, updatedAt: now }
+          : { ...DEFAULT_PREFERENCES, tags: [], createdAt: now, updatedAt: now, ...patch };
+        return { preferences: [next, ...state.preferences.filter((item) => item.id !== PREFERENCES_ID)] };
+      });
       await commit();
     },
 
@@ -817,8 +1018,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
         density: current.density,
         cardShape: current.cardShape,
         initialView: current.initialView,
-        dateFormat: current.dateFormat,
-        profile: current.profile
+        dateFormat: current.dateFormat
       };
       const empty = applySnapshot(createEmptySnapshot());
 

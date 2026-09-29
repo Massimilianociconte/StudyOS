@@ -1,148 +1,146 @@
-import { useMemo, useState } from "react";
-import { isBefore, parseISO, startOfDay } from "date-fns";
+import { useMemo, useState, type FormEvent } from "react";
+import { format, isBefore, parseISO, startOfDay } from "date-fns";
+import { it } from "date-fns/locale";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { shortDate, subjectColor, subjectName, urgentTasks } from "../lib/selectors";
-import { Button, Field, IconButton, Panel, Pill, ProgressBar, SectionTitle, inputClass } from "../components/ui";
+import { daysUntil, selectableSubjects, subjectColor, subjectName, urgentTasks } from "../lib/selectors";
+import { PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, formatMinutes } from "../lib/labels";
+import { IconButton, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 
-type TaskMode = "list" | "kanban" | "matrix" | "priority" | "subject" | "deadline" | "focus";
-
-const modes: { id: TaskMode; label: string }[] = [
-  { id: "list", label: "Lista" },
-  { id: "kanban", label: "Kanban" },
-  { id: "matrix", label: "Eisenhower" },
-  { id: "priority", label: "Priorita" },
-  { id: "subject", label: "Materia" },
-  { id: "deadline", label: "Scadenza" },
-  { id: "focus", label: "Focus oggi" }
-];
+type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
+type SortMode = "deadline" | "priority" | "recent";
+type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
 
 const statuses: { id: Task["status"]; label: string }[] = [
   { id: "todo", label: "Da fare" },
   { id: "doing", label: "In corso" },
-  { id: "blocked", label: "Bloccato" },
-  { id: "done", label: "Completato" },
-  { id: "postponed", label: "Rimandato" }
+  { id: "blocked", label: "Bloccata" },
+  { id: "done", label: "Completata" },
+  { id: "postponed", label: "Rimandata" }
 ];
+
+const isOpen = (task: Task) => task.status !== "done" && task.status !== "archived";
+
+const isOverdue = (task: Task) => (task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && isOpen(task) : false);
+
+const dueLabel = (date: string) => {
+  const days = daysUntil(date);
+  if (days === 0) return "Oggi";
+  if (days === 1) return "Domani";
+  if (days === -1) return "Ieri";
+  if (days < -1) return `${-days} giorni fa`;
+  if (days < 7) return format(parseISO(date), "EEEE d", { locale: it });
+  return format(parseISO(date), "d MMM", { locale: it });
+};
+
+/** Gruppi temporali della lista: ciò che scade prima sta in alto. */
+const DUE_BUCKETS: { id: string; title: string; test: (task: Task) => boolean }[] = [
+  { id: "overdue", title: "In ritardo", test: (task) => isOverdue(task) },
+  { id: "today", title: "Oggi", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) === 0 },
+  { id: "tomorrow", title: "Domani", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) === 1 },
+  { id: "week", title: "Prossimi 7 giorni", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) > 1 && daysUntil(task.dueDate!) <= 7 },
+  { id: "later", title: "Più avanti", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) > 7 },
+  { id: "nodate", title: "Senza scadenza", test: (task) => !task.dueDate }
+];
+
+const byDue = (a: Task, b: Task) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999");
 
 export function TasksView() {
   const [mode, setMode] = useState<TaskMode>("list");
-  const [title, setTitle] = useState("");
-  const [subjectId, setSubjectId] = useState("");
-  const [priority, setPriority] = useState<Task["priority"]>("medium");
+  const [sort, setSort] = useState<SortMode>("deadline");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const { tasks, subjects, addTask, updateTask, toggleTask, deleteTask } = useStudyStore();
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
 
-  const sortedTasks = useMemo(() => {
-    const list = [...tasks].filter((task) => task.status !== "archived");
-    if (mode === "priority" || mode === "focus") return urgentTasks(list, mode === "focus" ? 6 : list.length);
-    if (mode === "deadline") {
-      return list.sort((a, b) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999"));
-    }
-    return list;
-  }, [mode, tasks]);
+  const visible = useMemo(() => tasks.filter((task) => task.status !== "archived"), [tasks]);
+  const open = visible.filter(isOpen);
 
-  const createTask = async () => {
-    if (!title.trim()) return;
-    await addTask({ title: title.trim(), subjectId: subjectId || undefined, priority, importance: priority === "urgent" ? 5 : 3 });
-    setTitle("");
+  const confirmDelete = async (task: Task) => {
+    const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
+    if (!window.confirm(`Eliminare la task "${label}"?`)) return false;
+    await deleteTask(task.id);
+    return true;
   };
+
+  const rowActions: RowActions = {
+    subjects,
+    onToggle: (id) => void toggleTask(id),
+    onStatus: (id, status) => void updateTask(id, { status }),
+    onEdit: setEditingTaskId,
+    onDelete: (task) => void confirmDelete(task)
+  };
+
+  const stats = [
+    { label: "Aperte", value: String(open.length), tone: "var(--accent)" },
+    { label: "In ritardo", value: String(open.filter(isOverdue).length), tone: "var(--accent-3)" },
+    { label: "Urgenti", value: String(open.filter((task) => task.priority === "urgent").length), tone: "var(--warning)" },
+    { label: "Lavoro stimato", value: formatMinutes(open.reduce((sum, task) => sum + (task.estimatedMinutes || 0), 0)), tone: "var(--accent-2)" }
+  ];
 
   return (
     <div>
-      <SectionTitle
-        title="Task list"
-        subtitle="Una task list concreta: priorita, energia, sottotask, viste operative e piano di oggi."
-        action={
-          <Button icon="Zap" variant="primary" onClick={() => setMode("focus")}>
-            Piano di oggi
-          </Button>
-        }
-      />
+      <SectionTitle title="Task" subtitle="Scadenze, priorità e sottotask in un colpo d'occhio. Clicca una task per modificarla." />
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {modes.map((item) => (
-          <button key={item.id} type="button" onClick={() => setMode(item.id)}>
-            <Pill active={mode === item.id}>{item.label}</Pill>
-          </button>
+      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {stats.map((stat) => (
+          <div key={stat.label} className="quiet-panel flex items-center gap-3 p-3.5">
+            <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: stat.tone }} />
+            <div className="min-w-0">
+              <p className="truncate text-xl font-black leading-tight">{stat.value}</p>
+              <p className="truncate text-xs font-bold text-[var(--muted)]">{stat.label}</p>
+            </div>
+          </div>
         ))}
       </div>
 
-      <div className={`grid gap-4 ${mode === "kanban" ? "xl:grid-cols-1" : "xl:grid-cols-[1fr_360px]"}`}>
-        <Panel>
-          {mode === "kanban" ? (
-            <Kanban
-              tasks={tasks}
-              subjects={subjects}
-              updateTask={updateTask}
-              toggleTask={toggleTask}
-              deleteTask={deleteTask}
-              onEdit={setEditingTaskId}
-            />
-          ) : mode === "matrix" ? (
-            <Matrix tasks={tasks} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} onEdit={setEditingTaskId} />
-          ) : mode === "subject" ? (
-            <BySubject tasks={tasks} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} onEdit={setEditingTaskId} />
-          ) : (
-            <TaskList
-              tasks={sortedTasks}
-              subjects={subjects}
-              toggleTask={toggleTask}
-              updateTask={updateTask}
-              deleteTask={deleteTask}
-              onEdit={setEditingTaskId}
-              focus={mode === "focus"}
-            />
-          )}
-        </Panel>
+      <QuickTaskBar subjects={subjects} onAdd={addTask} />
 
-        <aside className={`grid content-start gap-4 ${mode === "kanban" ? "md:grid-cols-2" : ""}`}>
-          <Panel>
-            <h3 className="mb-4 text-2xl font-black">Nuova task</h3>
-            <div className="grid gap-3">
-              <Field label="Titolo">
-                <input className={inputClass} value={title} onChange={(event) => setTitle(event.target.value)} />
-              </Field>
-              <Field label="Materia">
-                <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
-                  <option value="">Nessuna</option>
-                  {subjects.map((subject) => (
-                    <option value={subject.id} key={subject.id}>
-                      {subject.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Priorita">
-                <select className={inputClass} value={priority} onChange={(event) => setPriority(event.target.value as Task["priority"])}>
-                  <option value="low">Bassa</option>
-                  <option value="medium">Media</option>
-                  <option value="high">Alta</option>
-                  <option value="urgent">Urgente</option>
-                </select>
-              </Field>
-              <Button icon="Plus" variant="primary" onClick={createTask}>
-                Aggiungi task
-              </Button>
-            </div>
-          </Panel>
-
-          <Panel>
-            <h3 className="mb-4 text-2xl font-black">Carico</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <Metric value={tasks.filter((task) => task.status !== "done").length} label="aperte" />
-              <Metric value={tasks.filter((task) => task.priority === "urgent").length} label="urgenti" />
-              <Metric value={tasks.filter((task) => task.status === "blocked").length} label="bloccate" />
-              <Metric value={tasks.reduce((sum, task) => sum + (task.status === "done" ? 0 : task.estimatedMinutes), 0)} label="minuti" />
-            </div>
-          </Panel>
-        </aside>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <Segmented
+          label="Vista task"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { id: "list", label: "Lista", icon: "List" },
+            { id: "kanban", label: "Kanban", icon: "LayoutGrid" },
+            { id: "matrix", label: "Eisenhower", icon: "Grid2X2" },
+            { id: "subject", label: "Per materia", icon: "BookOpen" },
+            { id: "focus", label: "Focus oggi", icon: "Zap" }
+          ]}
+        />
+        {mode === "list" ? (
+          <label className="flex items-center gap-2 text-xs font-black text-[var(--muted)]">
+            Ordina
+            <select
+              className="min-h-9 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--text)]"
+              value={sort}
+              onChange={(event) => setSort(event.target.value as SortMode)}
+            >
+              <option value="deadline">per scadenza</option>
+              <option value="priority">per priorità</option>
+              <option value="recent">più recenti</option>
+            </select>
+          </label>
+        ) : null}
       </div>
+
+      {mode === "list" ? <GroupedList tasks={visible} sort={sort} actions={rowActions} /> : null}
+      {mode === "focus" ? (
+        <Panel>
+          <div className="mb-3 flex items-baseline justify-between gap-2">
+            <h3 className="text-xl font-black">Piano di oggi</h3>
+            <span className="text-xs font-bold text-[var(--muted)]">le 6 task con scadenza e priorità più pressanti</span>
+          </div>
+          <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />
+        </Panel>
+      ) : null}
+      {mode === "kanban" ? <Kanban tasks={visible} actions={rowActions} updateTask={updateTask} /> : null}
+      {mode === "matrix" ? <Matrix tasks={open} actions={rowActions} /> : null}
+      {mode === "subject" ? <BySubject tasks={visible} actions={rowActions} /> : null}
 
       {editingTask ? (
         <TaskEditorModal
@@ -151,10 +149,7 @@ export function TasksView() {
           onClose={() => setEditingTaskId(null)}
           onSave={updateTask}
           onDelete={async (task) => {
-            const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
-            if (!window.confirm(`Eliminare la task "${label}"?`)) return;
-            await deleteTask(task.id);
-            setEditingTaskId(null);
+            if (await confirmDelete(task)) setEditingTaskId(null);
           }}
         />
       ) : null}
@@ -162,170 +157,242 @@ export function TasksView() {
   );
 }
 
-function Metric({ value, label }: { value: number; label: string }) {
+function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnType<typeof useStudyStore.getState>["addTask"] }) {
+  const [title, setTitle] = useState("");
+  const [subjectId, setSubjectId] = useState("");
+  const [priority, setPriority] = useState<Task["priority"]>("medium");
+  const [dueDate, setDueDate] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!title.trim()) return;
+    const due = dueDate ? new Date(`${dueDate}T18:00`) : undefined;
+    await onAdd({
+      title: title.trim(),
+      subjectId: subjectId || undefined,
+      priority,
+      importance: priority === "urgent" ? 5 : 3,
+      dueDate: due && !Number.isNaN(due.getTime()) ? due.toISOString() : undefined
+    });
+    setTitle("");
+  };
+
+  const selectClass = "min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)]";
+
   return (
-    <div className="quiet-panel p-4">
-      <div className="text-3xl font-black">{value}</div>
-      <div className="text-xs font-bold text-[var(--muted)]">{label}</div>
-    </div>
+    // Una riga sola solo da xl: su tablet il titolo ha una riga intera e i filtri stanno sotto.
+    <form onSubmit={submit} className="soft-panel mb-4 grid grid-cols-1 gap-2 p-2.5 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] xl:items-center">
+      <label className="relative block min-w-0">
+        <span className="sr-only">Nuova task</span>
+        <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
+        <input className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Aggiungi una task e premi Invio" />
+      </label>
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] xl:contents">
+        <select className={`${selectClass} min-w-0 xl:max-w-[200px]`} value={subjectId} onChange={(event) => setSubjectId(event.target.value)} aria-label="Materia">
+          <option value="">Nessuna materia</option>
+          {selectableSubjects(subjects, subjectId).map((subject) => (
+            <option value={subject.id} key={subject.id}>
+              {subject.name}
+            </option>
+          ))}
+        </select>
+        <select className={`${selectClass} min-w-0`} value={priority} onChange={(event) => setPriority(event.target.value as Task["priority"])} aria-label="Priorità">
+          {(Object.keys(PRIORITY_LABEL) as Task["priority"][]).map((key) => (
+            <option key={key} value={key}>
+              {PRIORITY_LABEL[key]}
+            </option>
+          ))}
+        </select>
+        <input className={`${selectClass} min-w-0`} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} aria-label="Scadenza" />
+        <button
+          type="submit"
+          disabled={!title.trim()}
+          className="motion-safe col-span-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50 sm:col-span-1"
+        >
+          <Icon name="Plus" className="h-4 w-4" /> Aggiungi
+        </button>
+      </div>
+    </form>
   );
 }
 
-function TaskCard({
-  task,
-  subjects,
-  toggleTask,
-  updateTask,
-  deleteTask,
-  onEdit
-}: {
-  task: Task;
-  subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
-  toggleTask: (id: string) => Promise<void>;
-  updateTask?: (id: string, patch: Partial<Task>) => Promise<void>;
-  deleteTask: (id: string) => Promise<void>;
+interface RowActions {
+  subjects: Subjects;
+  onToggle: (id: string) => void;
+  onStatus: (id: string, status: Task["status"]) => void;
   onEdit: (id: string) => void;
-}) {
-  const color = subjectColor(subjects, task.subjectId);
-  const overdue = task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && task.status !== "done" : false;
+  onDelete: (task: Task) => void;
+}
+
+function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; compact?: boolean }) {
+  const done = task.status === "done";
+  const overdue = isOverdue(task);
   const completedLate = isTaskCompletedLate(task);
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
-  const confirmDelete = () => {
-    const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
-    if (window.confirm(`Eliminare la task "${label}"?`)) void deleteTask(task.id);
-  };
-  const changeStatus = (status: Task["status"]) => {
-    void updateTask?.(task.id, { status });
-  };
+  const subtasksDone = task.subtasks.filter((subtask) => subtask.done).length;
 
   return (
-    <article className="quiet-panel min-w-0 overflow-hidden p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <button
-            type="button"
-            aria-label={task.status === "done" ? "Segna da fare" : "Completa task"}
-            onClick={() => toggleTask(task.id)}
-            className={`grid h-10 w-10 shrink-0 place-items-center rounded-super border ${
-              task.status === "done" ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)]"
-            }`}
-          >
-            {task.status === "done" ? <Icon name="Check" className="h-5 w-5" /> : null}
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className={`two-line-safe text-lg font-black ${task.status === "done" ? "text-[var(--faint)] line-through" : ""}`}>
-                {task.title}
-              </h3>
-              <Pill active={task.priority === "urgent"}>{task.priority}</Pill>
-              {overdue ? <Pill className="border-[var(--danger-border)] text-[var(--danger-text)] bg-[var(--danger-bg)]">in ritardo</Pill> : null}
-            </div>
-            <p className="three-line-safe mt-1 text-sm text-[var(--muted)]">
-              {task.description || subjectName(subjects, task.subjectId)}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-full px-3 py-1 text-xs font-black text-[#10131d]" style={{ background: color }}>
-                {subjectName(subjects, task.subjectId)}
-              </span>
-              {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
-              <Pill>inserita {shortDate(task.createdAt)}</Pill>
-              {task.completedAt ? <Pill>completata {shortDate(task.completedAt)}</Pill> : null}
-              {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}
-              <Pill>{task.estimatedMinutes} min</Pill>
-              {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
-              {task.actualMinutes !== undefined && !timerRunning ? <Pill>{task.actualMinutes} min reali</Pill> : null}
-              <Pill>energia {task.energy}</Pill>
-            </div>
-            {task.subtasks.length > 0 ? (
-              <div className="mt-3">
-                <ProgressBar
-                  value={(task.subtasks.filter((subtask) => subtask.done).length / task.subtasks.length) * 100}
-                  color={color}
-                />
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex w-full shrink-0 gap-2 sm:w-auto sm:flex-col">
-          {updateTask ? (
-            <select
-              className="min-w-0 flex-1 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2 text-xs font-black sm:w-auto"
-              value={task.status}
-              onChange={(event) => changeStatus(event.target.value as Task["status"])}
-              aria-label="Cambia stato task"
-            >
-              {statuses.map((status) => (
-                <option key={status.id} value={status.id}>
-                  {status.label}
-                </option>
-              ))}
-            </select>
+    <li className={`group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)] ${done ? "opacity-60" : ""}`}>
+      <button
+        type="button"
+        aria-label={done ? `Segna "${task.title}" da fare` : `Completa "${task.title}"`}
+        onClick={() => actions.onToggle(task.id)}
+        className={`motion-safe grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 ${
+          done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
+        }`}
+        style={!done && task.subjectId ? { borderColor: subjectColor(actions.subjects, task.subjectId) } : undefined}
+      >
+        {done ? <Icon name="Check" className="h-3.5 w-3.5" /> : null}
+      </button>
+
+      <button type="button" onClick={() => actions.onEdit(task.id)} className="min-w-0 flex-1 text-left">
+        <span className={`one-line-safe block text-sm font-extrabold ${done ? "line-through" : ""}`} title={task.title}>
+          {task.title}
+        </span>
+        <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs font-bold text-[var(--muted)]">
+          {task.dueDate ? (
+            <span className={`inline-flex items-center gap-1 ${overdue ? "text-[var(--danger-text)]" : ""}`}>
+              <Icon name="CalendarDays" className="h-3 w-3" />
+              {dueLabel(task.dueDate)}
+            </span>
           ) : null}
-          <Button variant="soft" icon="PenLine" className="min-h-10 px-3" onClick={() => onEdit(task.id)}>
-            Modifica
-          </Button>
-          <Button variant="danger" icon="Trash2" className="min-h-10 px-3" onClick={confirmDelete}>
-            Elimina
-          </Button>
-        </div>
-      </div>
-    </article>
+          {task.subjectId ? (
+            <span className="inline-flex min-w-0 max-w-[220px] items-center gap-1.5">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: subjectColor(actions.subjects, task.subjectId) }} />
+              <span className="truncate">{subjectName(actions.subjects, task.subjectId)}</span>
+            </span>
+          ) : null}
+          {task.estimatedMinutes ? <span>{formatMinutes(task.estimatedMinutes)}</span> : null}
+          {task.subtasks.length ? (
+            <span className="inline-flex items-center gap-1">
+              <Icon name="Check" className="h-3 w-3" />
+              {subtasksDone}/{task.subtasks.length}
+            </span>
+          ) : null}
+          {timerRunning ? <span className="text-[var(--accent-ink)]">⏱ {formatElapsedSeconds(elapsedSeconds)}</span> : null}
+          {completedLate ? <span className="text-[var(--warning-text)]">completata in ritardo</span> : null}
+          {!compact && (task.status === "doing" || task.status === "blocked" || task.status === "postponed") ? (
+            <span className="text-[var(--text)]">{TASK_STATUS_LABEL[task.status]}</span>
+          ) : null}
+        </span>
+      </button>
+
+      {!done ? (
+        <span className="hidden shrink-0 items-center gap-1.5 text-xs font-black text-[var(--muted)] sm:inline-flex">
+          <span className="h-2 w-2 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
+          {PRIORITY_LABEL[task.priority]}
+        </span>
+      ) : null}
+
+      {!compact ? (
+        <select
+          className="hidden min-h-8 shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2.5 text-xs font-black md:block"
+          value={task.status}
+          onChange={(event) => actions.onStatus(task.id, event.target.value as Task["status"])}
+          aria-label={`Stato di "${task.title}"`}
+        >
+          {statuses.map((status) => (
+            <option key={status.id} value={status.id}>
+              {status.label}
+            </option>
+          ))}
+        </select>
+      ) : null}
+
+      <span className="hidden shrink-0 items-center gap-1 transition-opacity can-hover:opacity-0 can-hover:group-focus-within:opacity-100 can-hover:group-hover:opacity-100 md:flex">
+        <IconButton icon="PenLine" label={`Modifica "${task.title}"`} className="h-8 w-8 bg-transparent" onClick={() => actions.onEdit(task.id)} />
+        <IconButton
+          icon="Trash2"
+          label={`Elimina "${task.title}"`}
+          className="h-8 w-8 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+          onClick={() => actions.onDelete(task)}
+        />
+      </span>
+    </li>
   );
 }
 
-function TaskList({
-  tasks,
-  subjects,
-  toggleTask,
-  updateTask,
-  deleteTask,
-  onEdit,
-  focus
-}: {
-  tasks: Task[];
-  subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
-  toggleTask: (id: string) => Promise<void>;
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
-  deleteTask: (id: string) => Promise<void>;
-  onEdit: (id: string) => void;
-  focus?: boolean;
-}) {
+function RowList({ tasks, actions, compact, empty }: { tasks: Task[]; actions: RowActions; compact?: boolean; empty?: string }) {
+  if (!tasks.length) {
+    return empty ? <p className="rounded-[18px] border border-dashed border-[var(--border)] p-4 text-center text-sm font-bold text-[var(--faint)]">{empty}</p> : null;
+  }
   return (
-    <div>
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-3xl font-black">{focus ? "Piano di oggi" : "Tutte le task"}</h3>
-        <Pill>{tasks.length} task</Pill>
-      </div>
-      <div className="grid gap-3">
-        {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} onEdit={onEdit} />
-        ))}
-        {tasks.length === 0 ? (
-          <div className="quiet-panel p-8 text-center text-sm font-bold text-[var(--muted)]">
-            Nessuna task in questa vista.
-          </div>
-        ) : null}
-      </div>
-    </div>
+    <ul className="grid grid-cols-1 gap-0.5">
+      {tasks.map((task) => (
+        <TaskRow key={task.id} task={task} actions={actions} compact={compact} />
+      ))}
+    </ul>
+  );
+}
+
+function GroupedList({ tasks, sort, actions }: { tasks: Task[]; sort: SortMode; actions: RowActions }) {
+  const [showDone, setShowDone] = useState(false);
+  const open = tasks.filter(isOpen);
+  const done = tasks
+    .filter((task) => task.status === "done")
+    .sort((a, b) => (b.completedAt ?? b.updatedAt).localeCompare(a.completedAt ?? a.updatedAt));
+
+  const groups =
+    sort === "deadline"
+      ? DUE_BUCKETS.map((bucket) => ({ ...bucket, items: open.filter(bucket.test).sort(byDue) })).filter((group) => group.items.length)
+      : [
+          {
+            id: sort,
+            title: sort === "priority" ? "Per priorità" : "Più recenti",
+            items: sort === "priority" ? urgentTasks(open, open.length) : [...open].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          }
+        ];
+
+  return (
+    <Panel>
+      {open.length === 0 ? (
+        <p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Nessuna task aperta. Aggiungine una qui sopra.</p>
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          {groups.map((group) => (
+            <section key={group.id} aria-label={group.title}>
+              <h3
+                className={`mb-1 flex items-center gap-2 px-2.5 text-xs font-black uppercase ${
+                  group.id === "overdue" ? "text-[var(--danger-text)]" : "text-[var(--faint)]"
+                }`}
+              >
+                {group.title}
+                <span className="rounded-full bg-[var(--surface-strong)] px-1.5 text-[11px] text-[var(--muted)]">{group.items.length}</span>
+              </h3>
+              <RowList tasks={group.items} actions={actions} />
+            </section>
+          ))}
+        </div>
+      )}
+      {done.length ? (
+        <div className="mt-4 border-t border-[var(--border)] pt-3">
+          <button
+            type="button"
+            onClick={() => setShowDone((value) => !value)}
+            aria-expanded={showDone}
+            className="flex w-full items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-left text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
+          >
+            <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${showDone ? "rotate-90" : ""}`} />
+            Completate
+            <span className="rounded-full bg-[var(--surface-strong)] px-1.5 text-[11px] text-[var(--muted)]">{done.length}</span>
+          </button>
+          {showDone ? <RowList tasks={done} actions={actions} /> : null}
+        </div>
+      ) : null}
+    </Panel>
   );
 }
 
 function Kanban({
   tasks,
-  subjects,
-  updateTask,
-  toggleTask,
-  deleteTask,
-  onEdit
+  actions,
+  updateTask
 }: {
   tasks: Task[];
-  subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
+  actions: RowActions;
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
-  toggleTask: (id: string) => Promise<void>;
-  deleteTask: (id: string) => Promise<void>;
-  onEdit: (id: string) => void;
 }) {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [overStatus, setOverStatus] = useState<Task["status"] | null>(null);
@@ -337,60 +404,57 @@ function Kanban({
   };
 
   return (
-    <div className="scrollbar-soft -mx-1 overflow-x-auto px-1 pb-2">
-      <div className="grid min-w-[1120px] grid-cols-5 gap-4 2xl:min-w-0">
-      {statuses.map((status) => (
-        <section
-          key={status.id}
-          onDragOver={(event) => {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
-            setOverStatus(status.id);
-          }}
-          onDragLeave={() => setOverStatus((value) => (value === status.id ? null : value))}
-          onDrop={async (event) => {
-            event.preventDefault();
-            const transferredTaskId = event.dataTransfer.getData("text/plain");
-            const taskId = transferredTaskId || draggedTaskId;
-            if (taskId) await moveTask(taskId, status.id);
-            setDraggedTaskId(null);
-            setOverStatus(null);
-          }}
-          className={`quiet-panel min-h-[560px] p-3 transition-colors ${
-            overStatus === status.id ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--surface)_70%,var(--accent)_12%)]" : ""
-          }`}
-        >
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <h3 className="text-xl font-black">{status.label}</h3>
-            <Pill>{tasks.filter((task) => task.status === status.id).length}</Pill>
-          </div>
-          <div className="space-y-3">
-            {tasks
-              .filter((task) => task.status === status.id)
-              .map((task) => (
-                <KanbanTaskCard
-                  key={task.id}
-                  task={task}
-                  subjects={subjects}
-                  dragging={draggedTaskId === task.id}
-                  onDragStart={(id) => setDraggedTaskId(id)}
-                  onDragEnd={() => {
-                    setDraggedTaskId(null);
-                    setOverStatus(null);
-                  }}
-                  onToggle={toggleTask}
-                  onEdit={onEdit}
-                  onDelete={deleteTask}
-                />
-              ))}
-            {tasks.filter((task) => task.status === status.id).length === 0 ? (
-              <div className="rounded-[22px] border border-dashed border-[var(--border)] p-4 text-center text-xs font-bold text-[var(--faint)]">
-                Trascina qui una task
+    // Colonne da 230 px con scorrimento orizzontale a scatto: su tablet si sfoglia col dito.
+    <div className="scrollbar-soft -mx-1 snap-x snap-proximity overflow-x-auto px-1 pb-2">
+      <div className="grid auto-cols-[minmax(230px,1fr)] grid-flow-col gap-3">
+        {statuses.map((status) => {
+          const items = tasks.filter((task) => task.status === status.id).sort(byDue);
+          return (
+            <section
+              key={status.id}
+              aria-label={status.label}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                setOverStatus(status.id);
+              }}
+              onDragLeave={() => setOverStatus((value) => (value === status.id ? null : value))}
+              onDrop={async (event) => {
+                event.preventDefault();
+                const taskId = event.dataTransfer.getData("text/plain") || draggedTaskId;
+                if (taskId) await moveTask(taskId, status.id);
+                setDraggedTaskId(null);
+                setOverStatus(null);
+              }}
+              className={`quiet-panel flex min-h-[420px] snap-start flex-col p-2.5 transition-colors ${
+                overStatus === status.id ? "border-[var(--accent)] bg-[color-mix(in_srgb,var(--surface)_70%,var(--accent)_12%)]" : ""
+              }`}
+            >
+              <div className="mb-2.5 flex items-center justify-between gap-2 px-1.5 pt-1">
+                <h3 className="text-sm font-black uppercase text-[var(--muted)]">{status.label}</h3>
+                <span className="rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black">{items.length}</span>
               </div>
-            ) : null}
-          </div>
-        </section>
-      ))}
+              <div className="grid grid-cols-1 content-start gap-2">
+                {items.map((task) => (
+                  <KanbanTaskCard
+                    key={task.id}
+                    task={task}
+                    actions={actions}
+                    dragging={draggedTaskId === task.id}
+                    onDragStart={(id) => setDraggedTaskId(id)}
+                    onDragEnd={() => {
+                      setDraggedTaskId(null);
+                      setOverStatus(null);
+                    }}
+                  />
+                ))}
+                {items.length === 0 ? (
+                  <div className="rounded-[18px] border border-dashed border-[var(--border)] p-4 text-center text-xs font-bold text-[var(--faint)]">Trascina qui una task</div>
+                ) : null}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </div>
   );
@@ -398,34 +462,24 @@ function Kanban({
 
 function KanbanTaskCard({
   task,
-  subjects,
+  actions,
   dragging,
   onDragStart,
-  onDragEnd,
-  onToggle,
-  onEdit,
-  onDelete
+  onDragEnd
 }: {
   task: Task;
-  subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
+  actions: RowActions;
   dragging: boolean;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
-  onToggle: (id: string) => Promise<void>;
-  onEdit: (id: string) => void;
-  onDelete: (id: string) => Promise<void>;
 }) {
-  const color = subjectColor(subjects, task.subjectId);
-  const overdue = task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && task.status !== "done" : false;
+  const color = subjectColor(actions.subjects, task.subjectId);
+  const overdue = isOverdue(task);
   const done = task.status === "done";
-  const completedLate = isTaskCompletedLate(task);
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
-  const confirmDelete = () => {
-    const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
-    if (window.confirm(`Eliminare la task "${label}"?`)) void onDelete(task.id);
-  };
+  const subtasksDone = task.subtasks.filter((subtask) => subtask.done).length;
 
   return (
     <article
@@ -437,158 +491,124 @@ function KanbanTaskCard({
         onDragStart(task.id);
       }}
       onDragEnd={onDragEnd}
-      className={`motion-safe quiet-panel group min-w-0 cursor-grab overflow-hidden p-4 active:cursor-grabbing ${
-        dragging ? "scale-[0.98] opacity-50" : "hover:translate-y-[-2px]"
+      className={`motion-safe group min-w-0 cursor-grab rounded-[18px] border border-[var(--border)] bg-[var(--surface)] p-3 active:cursor-grabbing ${
+        dragging ? "scale-[0.98] opacity-50" : "hover:-translate-y-0.5"
       }`}
-      style={{ boxShadow: `inset 0 3px 0 ${color}` }}
+      style={{ boxShadow: `inset 3px 0 0 ${color}` }}
     >
-      <div className="mb-3 flex items-start gap-3">
+      <div className="flex items-start gap-2">
         <button
           type="button"
-          aria-label={done ? "Riapri task" : "Completa task"}
-          onClick={() => onToggle(task.id)}
-          className={`grid h-10 w-10 shrink-0 place-items-center rounded-super border ${
-            done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)]"
+          aria-label={done ? `Riapri "${task.title}"` : `Completa "${task.title}"`}
+          onClick={() => actions.onToggle(task.id)}
+          className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${
+            done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
           }`}
         >
-          {done ? <Icon name="Check" className="h-5 w-5" /> : <Icon name="MoreHorizontal" className="h-4 w-4 text-[var(--faint)]" />}
+          {done ? <Icon name="Check" className="h-3 w-3" /> : null}
         </button>
-        <div className="min-w-0 flex-1">
-          <h4 className={`two-line-safe text-base font-black leading-tight ${done ? "text-[var(--faint)] line-through" : ""}`}>
-            {task.title}
-          </h4>
-          <p className="one-line-safe mt-1 text-xs font-bold text-[var(--muted)]">{subjectName(subjects, task.subjectId)}</p>
-        </div>
+        <button type="button" draggable={false} onClick={() => actions.onEdit(task.id)} className="min-w-0 flex-1 text-left">
+          <h4 className={`three-line-safe text-sm font-extrabold leading-snug ${done ? "text-[var(--faint)] line-through" : ""}`}>{task.title}</h4>
+        </button>
       </div>
-
-      {task.description ? (
-        <p className="three-line-safe mb-3 text-sm text-[var(--muted)]">{task.description}</p>
-      ) : null}
-
-      <div className="mb-3 flex flex-wrap gap-2">
-        <Pill active={task.priority === "urgent"}>{task.priority}</Pill>
-        {overdue ? <Pill className="border-[var(--danger-border)] text-[var(--danger-text)] bg-[var(--danger-bg)]">in ritardo</Pill> : null}
-        {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}
-        {task.dueDate ? <Pill>{shortDate(task.dueDate)}</Pill> : null}
-        <Pill>ins. {shortDate(task.createdAt)}</Pill>
-        {task.completedAt ? <Pill>done {shortDate(task.completedAt)}</Pill> : null}
-        {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 pl-7 text-[11px] font-bold text-[var(--muted)]">
+        {task.subjectId ? <Tag color={color}>{subjectName(actions.subjects, task.subjectId)}</Tag> : null}
+        {task.dueDate ? <span className={overdue ? "text-[var(--danger-text)]" : ""}>{dueLabel(task.dueDate)}</span> : null}
+        {!done ? (
+          <span className="inline-flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
+            {PRIORITY_LABEL[task.priority]}
+          </span>
+        ) : null}
+        {task.estimatedMinutes ? <span>{formatMinutes(task.estimatedMinutes)}</span> : null}
+        {task.subtasks.length ? (
+          <span>
+            {subtasksDone}/{task.subtasks.length}
+          </span>
+        ) : null}
+        {timerRunning ? <span className="text-[var(--accent-ink)]">⏱ {formatElapsedSeconds(elapsedSeconds)}</span> : null}
       </div>
-
-      <div className="grid grid-cols-2 gap-2 text-xs font-black text-[var(--muted)]">
-        <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
-          <span className="block text-[var(--faint)]">Stimata</span>
-          <span className="text-[var(--text)]">{task.estimatedMinutes} min</span>
-        </div>
-        <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
-          <span className="block text-[var(--faint)]">{timerRunning ? "Cronometro" : "Effettiva"}</span>
-          <span className="text-[var(--text)]">{timerRunning ? formatElapsedSeconds(elapsedSeconds) : `${task.actualMinutes ?? "-"} min`}</span>
-        </div>
-        <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
-          <span className="block text-[var(--faint)]">Energia</span>
-          <span className="text-[var(--text)]">{task.energy}</span>
-        </div>
-        <div className="rounded-[16px] bg-[var(--surface-soft)] p-2">
-          <span className="block text-[var(--faint)]">Imp.</span>
-          <span className="text-[var(--text)]">{task.importance}/5</span>
-        </div>
-      </div>
-
-      {task.subtasks.length > 0 ? (
-        <div className="mt-3">
-          <ProgressBar
-            value={(task.subtasks.filter((subtask) => subtask.done).length / task.subtasks.length) * 100}
-            color={color}
-          />
-        </div>
-      ) : null}
-
-      <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
-        <Button variant="soft" icon="PenLine" className="min-h-10 px-3 text-xs" draggable={false} onClick={() => onEdit(task.id)}>
-          Modifica
-        </Button>
+      <div className="mt-1.5 flex items-center justify-end gap-1 transition-opacity can-hover:opacity-0 can-hover:group-focus-within:opacity-100 can-hover:group-hover:opacity-100">
+        {/* Alternativa al trascinamento, che su molti tablet touch non è disponibile. */}
+        <select
+          className="mr-auto min-h-7 max-w-[120px] rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-[11px] font-black text-[var(--muted)]"
+          value={task.status}
+          onChange={(event) => actions.onStatus(task.id, event.target.value as Task["status"])}
+          aria-label={`Sposta "${task.title}" in un'altra colonna`}
+          draggable={false}
+        >
+          {statuses.map((status) => (
+            <option key={status.id} value={status.id}>
+              {status.label}
+            </option>
+          ))}
+        </select>
+        <IconButton icon="PenLine" label={`Modifica "${task.title}"`} className="h-7 w-7 bg-transparent" draggable={false} onClick={() => actions.onEdit(task.id)} />
         <IconButton
           icon="Trash2"
-          label={`Elimina task ${task.title}`}
-          className="h-10 w-10 bg-[var(--danger-bg)] text-[var(--danger-text)] hover:bg-[var(--danger-bg-hover)]"
+          label={`Elimina "${task.title}"`}
+          className="h-7 w-7 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
           draggable={false}
-          onClick={confirmDelete}
+          onClick={() => actions.onDelete(task)}
         />
       </div>
     </article>
   );
 }
 
-function Matrix({
-  tasks,
-  subjects,
-  toggleTask,
-  updateTask,
-  deleteTask,
-  onEdit
-}: {
-  tasks: Task[];
-  subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
-  toggleTask: (id: string) => Promise<void>;
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
-  deleteTask: (id: string) => Promise<void>;
-  onEdit: (id: string) => void;
-}) {
+function Matrix({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
+  const urgent = (task: Task) => task.priority === "urgent" || task.priority === "high";
   const quadrants = [
-    { title: "Fai ora", test: (task: Task) => task.importance >= 4 && ["urgent", "high"].includes(task.priority) },
-    { title: "Pianifica", test: (task: Task) => task.importance >= 4 && !["urgent", "high"].includes(task.priority) },
-    { title: "Delega o riduci", test: (task: Task) => task.importance < 4 && ["urgent", "high"].includes(task.priority) },
-    { title: "Rimanda", test: (task: Task) => task.importance < 4 && !["urgent", "high"].includes(task.priority) }
+    { title: "Fai ora", hint: "importante e urgente", tone: "var(--accent-3)", test: (task: Task) => task.importance >= 4 && urgent(task) },
+    { title: "Pianifica", hint: "importante, non urgente", tone: "var(--accent)", test: (task: Task) => task.importance >= 4 && !urgent(task) },
+    { title: "Delega o riduci", hint: "urgente, poco importante", tone: "var(--warning)", test: (task: Task) => task.importance < 4 && urgent(task) },
+    { title: "Rimanda", hint: "né urgente né importante", tone: "var(--faint)", test: (task: Task) => task.importance < 4 && !urgent(task) }
   ];
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {quadrants.map((quadrant) => (
-        <div className="quiet-panel min-h-[320px] p-4" key={quadrant.title}>
-          <h3 className="mb-3 text-xl font-black">{quadrant.title}</h3>
-          <div className="space-y-3">
-            {tasks
-              .filter((task) => task.status !== "done" && quadrant.test(task))
-              .map((task) => (
-                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} onEdit={onEdit} />
-              ))}
-          </div>
-        </div>
-      ))}
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      {quadrants.map((quadrant) => {
+        const items = tasks.filter(quadrant.test).sort(byDue);
+        return (
+          <section className="soft-panel min-h-[220px] p-3" key={quadrant.title} aria-label={quadrant.title}>
+            <div className="mb-2 flex items-baseline gap-2 px-2.5">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: quadrant.tone }} />
+              <h3 className="text-base font-black">{quadrant.title}</h3>
+              <span className="text-xs font-bold text-[var(--faint)]">{quadrant.hint}</span>
+              <span className="ml-auto rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black">{items.length}</span>
+            </div>
+            <RowList tasks={items} actions={actions} compact empty="Nessuna task" />
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-function BySubject({
-  tasks,
-  subjects,
-  toggleTask,
-  updateTask,
-  deleteTask,
-  onEdit
-}: {
-  tasks: Task[];
-  subjects: ReturnType<typeof useStudyStore.getState>["subjects"];
-  toggleTask: (id: string) => Promise<void>;
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
-  deleteTask: (id: string) => Promise<void>;
-  onEdit: (id: string) => void;
-}) {
+function BySubject({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
+  const open = tasks.filter(isOpen);
+  const groups = [
+    ...actions.subjects.map((subject) => ({ id: subject.id, name: subject.name, color: subject.color, items: open.filter((task) => task.subjectId === subject.id) })),
+    {
+      id: "none",
+      name: "Senza materia",
+      color: "var(--faint)",
+      items: open.filter((task) => !task.subjectId || !actions.subjects.some((subject) => subject.id === task.subjectId))
+    }
+  ].filter((group) => group.items.length);
+
+  if (!groups.length) return <Panel><p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Nessuna task aperta.</p></Panel>;
+
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {subjects.map((subject) => (
-        <div key={subject.id} className="quiet-panel p-4">
-          <div className="mb-3 flex items-center gap-3">
-            <span className="h-4 w-4 rounded-full" style={{ background: subject.color }} />
-            <h3 className="safe-text text-xl font-black">{subject.name}</h3>
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      {groups.map((group) => (
+        <section key={group.id} className="soft-panel p-3" aria-label={group.name}>
+          <div className="mb-2 flex items-center gap-2 px-2.5">
+            <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: group.color }} />
+            <h3 className="one-line-safe text-base font-black">{group.name}</h3>
+            <span className="ml-auto rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black">{group.items.length}</span>
           </div>
-          <div className="space-y-3">
-            {tasks
-              .filter((task) => task.subjectId === subject.id)
-              .map((task) => (
-                <TaskCard key={task.id} task={task} subjects={subjects} toggleTask={toggleTask} updateTask={updateTask} deleteTask={deleteTask} onEdit={onEdit} />
-              ))}
-          </div>
-        </div>
+          <RowList tasks={group.items.sort(byDue)} actions={actions} compact />
+        </section>
       ))}
     </div>
   );

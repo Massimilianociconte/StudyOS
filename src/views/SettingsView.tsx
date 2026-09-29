@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppView, PaletteName, ThemeMode } from "../types";
 import {
   backupSummary,
@@ -8,10 +8,11 @@ import {
   readBackupEnvelope,
   snapshotFromBackup
 } from "../lib/backup";
-import { useStudyStore, snapshotFromState } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore, snapshotFromState } from "../store/useStudyStore";
 import { whenPersisted } from "../lib/persistence";
 import { getCloudSyncState, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
-import { readImageFile } from "../lib/files";
+import { resizeImageFile } from "../lib/files";
+import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
 import { Button, Field, Panel, Pill, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CloudPanel } from "../components/CloudPanel";
@@ -26,11 +27,15 @@ const palettes: { id: PaletteName; label: string; colors: string[] }[] = [
   { id: "graphite", label: "Minimal Graphite", colors: ["#E5E7EB", "#9CA3AF", "#FCA5A5"] }
 ];
 
+const THEME_LABEL: Record<ThemeMode, string> = { dark: "Scuro", light: "Chiaro", focus: "Focus" };
+
 export function SettingsView() {
   const store = useStudyStore();
+  const preferences = selectPreferences(store);
   const {
     settings,
     updateSettings,
+    updatePreferences,
     enableVault,
     disableVault,
     lockVault,
@@ -75,7 +80,8 @@ export function SettingsView() {
       notes: scope === "full" ? snapshot.notes : [],
       tags: scope === "full" ? snapshot.tags : [],
       reminders: scope === "full" ? snapshot.reminders : [],
-      widgets: scope === "full" ? snapshot.widgets : []
+      widgets: scope === "full" ? snapshot.widgets : [],
+      preferences: scope === "full" ? snapshot.preferences : []
       };
       const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined, scope);
       downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
@@ -178,32 +184,33 @@ export function SettingsView() {
     <div>
       <SectionTitle
         title="Impostazioni"
-        subtitle="Tema, privacy, backup, portabilita e comportamento iniziale della piattaforma."
+        subtitle="Profilo, aspetto, privacy, cloud e backup dei tuoi dati."
       />
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel>
           <div className="mb-4">
-            <h3 className="text-2xl font-black">Profilo</h3>
+            <h3 className="text-2xl font-black">Profilo e obiettivi</h3>
             <p className="safe-text mt-1 text-sm font-bold text-[var(--muted)]">
-              {displayName ? `Bentornato, ${displayName}.` : "Imposta il tuo nome per personalizzare StudyOS."}
+              {displayName ? `Ciao, ${displayName}. ` : ""}Questi dati seguono il tuo account: con il cloud attivo sono uguali su ogni dispositivo.
             </p>
           </div>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-            <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-super bg-[var(--surface-soft)]">
-              {settings.profile?.avatarDataUrl ? (
-                <img src={settings.profile.avatarDataUrl} alt="" className="h-full w-full object-cover" />
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="grid grid-cols-1 h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-super bg-[var(--surface-soft)]">
+              {preferences.avatarDataUrl ? (
+                <img src={preferences.avatarDataUrl} alt="" className="h-full w-full object-cover" />
               ) : (
-                <Icon name="User" className="h-9 w-9 text-[var(--accent)]" />
+                <Icon name="User" className="h-9 w-9 text-[var(--accent-ink)]" />
               )}
             </div>
-            <div className="grid min-w-0 flex-1 gap-3">
+            <div className="grid grid-cols-1 min-w-0 flex-1 gap-3">
               <Field label="Nome visualizzato">
                 <input
                   className={inputClass}
-                  value={settings.profile?.displayName ?? ""}
-                  onChange={(event) => updateSettings({ profile: { displayName: event.target.value } })}
+                  value={preferences.displayName}
+                  onChange={(event) => void updatePreferences({ displayName: event.target.value })}
                   placeholder="Il tuo nome"
+                  autoComplete="given-name"
                 />
               </Field>
               <div className="flex flex-wrap gap-2">
@@ -216,8 +223,8 @@ export function SettingsView() {
                     className="sr-only"
                     onChange={async (event) => {
                       try {
-                        const avatarDataUrl = await readImageFile(event.target.files?.[0]);
-                        if (avatarDataUrl) await updateSettings({ profile: { avatarDataUrl } });
+                        const avatarDataUrl = await resizeImageFile(event.target.files?.[0]);
+                        if (avatarDataUrl) await updatePreferences({ avatarDataUrl });
                       } catch (error) {
                         setMessage(error instanceof Error ? error.message : "Immagine non valida.");
                       } finally {
@@ -226,20 +233,59 @@ export function SettingsView() {
                     }}
                   />
                 </label>
-                {settings.profile?.avatarDataUrl ? (
-                  <Button variant="danger" icon="Trash2" onClick={() => updateSettings({ profile: { avatarDataUrl: "" } })}>
+                {preferences.avatarDataUrl ? (
+                  <Button variant="danger" icon="Trash2" onClick={() => void updatePreferences({ avatarDataUrl: "" })}>
                     Rimuovi foto
                   </Button>
                 ) : null}
               </div>
             </div>
           </div>
+          <Field label="Corso di laurea" className="mt-4">
+            <select
+              className={inputClass}
+              value={isDegreeProgramId(preferences.degreeProgram) ? preferences.degreeProgram : "barb"}
+              onChange={(event) => {
+                const id = event.target.value as DegreeProgramId;
+                // Cambiare corso aggiorna CFU totali e sezione BARB (entrambi restano modificabili).
+                void updatePreferences({ degreeProgram: id, degreeCfu: DEGREE_PROGRAMS[id].totalCfu, showBarb: id === "barb" });
+              }}
+            >
+              {DEGREE_PROGRAM_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {DEGREE_PROGRAMS[id].name} · {DEGREE_PROGRAMS[id].level} (UNIMI)
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Obiettivo di studio (ore a settimana)">
+              <NumberField
+                value={Math.round((preferences.weeklyTargetMinutes / 60) * 2) / 2}
+                min={1}
+                max={80}
+                onCommit={(hours) => void updatePreferences({ weeklyTargetMinutes: Math.round(hours * 60) })}
+              />
+            </Field>
+            <Field label="CFU totali del corso di laurea">
+              <NumberField value={preferences.degreeCfu} min={1} max={400} onCommit={(cfu) => void updatePreferences({ degreeCfu: Math.round(cfu) })} />
+            </Field>
+          </div>
+          <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-[var(--accent)]"
+              checked={preferences.showBarb}
+              onChange={(event) => void updatePreferences({ showBarb: event.target.checked })}
+            />
+            <span className="min-w-0 flex-1">Mostra la sezione del corso BARB · UNIMI</span>
+          </label>
         </Panel>
 
         <Panel>
           <h3 className="mb-4 text-2xl font-black">Aspetto</h3>
-          <div className="grid gap-4">
-            <Field label="Modalita">
+          <div className="grid grid-cols-1 gap-4">
+            <Field label="Modalità">
               <div className="grid grid-cols-3 gap-2">
                 {(["dark", "light", "focus"] as ThemeMode[]).map((mode) => (
                   <button
@@ -250,14 +296,14 @@ export function SettingsView() {
                       settings.themeMode === mode ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)]"
                     }`}
                   >
-                    {mode}
+                    {THEME_LABEL[mode]}
                   </button>
                 ))}
               </div>
             </Field>
 
             <Field label="Palette">
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {palettes.map((palette) => (
                   <button
                     key={palette.id}
@@ -278,8 +324,8 @@ export function SettingsView() {
               </div>
             </Field>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Densita">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Densità">
                 <select className={inputClass} value={settings.density} onChange={(event) => updateSettings({ density: event.target.value as "comfortable" | "compact" })}>
                   <option value="comfortable">Comoda</option>
                   <option value="compact">Compatta</option>
@@ -303,12 +349,12 @@ export function SettingsView() {
               <h3 className="text-2xl font-black">Privacy locale</h3>
               <p className="text-sm text-[var(--muted)]">GitHub Pages ospita solo il codice. I dati sono nel browser.</p>
             </div>
-            <Pill active={settings.security.mode === "vault"}>{settings.security.mode === "vault" ? "vault" : "standard"}</Pill>
+            <Pill active={settings.security.mode === "vault"} className="shrink-0">{settings.security.mode === "vault" ? "Vault cifrato" : "Standard"}</Pill>
           </div>
 
-          <div className="grid gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <div className="quiet-panel flex items-center gap-3 p-4">
-              <span className="grid h-12 w-12 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
+              <span className="grid grid-cols-1 h-12 w-12 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
                 <Icon name={settings.security.mode === "vault" ? "Lock" : "Shield"} className="h-5 w-5" />
               </span>
               <div className="min-w-0">
@@ -350,7 +396,7 @@ export function SettingsView() {
 
         <Panel>
           <h3 className="mb-4 text-2xl font-black">Backup e import</h3>
-          <div className="grid gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <label className="flex items-center gap-3 rounded-[22px] bg-[var(--surface-soft)] p-3 text-sm font-black">
               <input
                 type="checkbox"
@@ -427,5 +473,35 @@ function DataStat({ value, label }: { value: number; label: string }) {
       <div className="text-3xl font-black">{value}</div>
       <p className="text-xs font-bold text-[var(--muted)]">{label}</p>
     </div>
+  );
+}
+
+/** Campo numerico che salva solo a valore valido (su blur o Invio), senza sporcare i dati a ogni tasto. */
+function NumberField({ value, min, max, onCommit }: { value: number; min: number; max: number; onCommit: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value).replace(".", ","));
+  useEffect(() => setDraft(String(value).replace(".", ",")), [value]);
+  const commit = () => {
+    const parsed = Number(draft.replace(",", "."));
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value).replace(".", ","));
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, parsed));
+    setDraft(String(clamped).replace(".", ","));
+    if (clamped !== value) onCommit(clamped);
+  };
+  return (
+    <input
+      className={inputClass}
+      inputMode="decimal"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") (event.target as HTMLInputElement).blur();
+      }}
+      aria-valuemin={min}
+      aria-valuemax={max}
+    />
   );
 }

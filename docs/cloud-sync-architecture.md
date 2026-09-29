@@ -55,3 +55,23 @@ durante un'interruzione del server + reload + recupero automatico, vault
 bloccato durante modifiche remote, ripristino backup, logout offline. Lo schema
 è stato provato anche sull'immagine Postgres ufficiale Supabase: LWW, retry
 idempotente, id incoerente rifiutato, RLS tra utenti, `anon` senza accesso.
+
+Preferenze personali e nuovi tipi di entità (29 settembre 2026):
+
+- nome, foto, obiettivo di ore settimanali, CFU del corso e visibilità della
+  sezione BARB sono un'entità `preferences` (id `main`) sincronizzata come le
+  altre: seguono l'account e non il dispositivo. Il vecchio profilo salvato
+  nelle impostazioni locali viene migrato una volta e poi svuotato, così un
+  cambio account non mostra il nome dell'account precedente;
+- una build precedente scarta i tipi di entità che non conosce ma fa avanzare
+  il cursore. `SYNC_SCHEMA` in `cloudSync.ts` va incrementato ogni volta che si
+  aggiunge un tipo: al primo avvio della nuova build il pull riparte da zero
+  (merge LWW normale) e recupera le righe saltate;
+- nessuna modifica allo schema SQL: `entity_type` è testo libero.
+
+Verifica end-to-end (stack Supabase locale, due origini browser): preferenze,
+voti del libretto, intervalli di ripasso ed eventi importati da .ics arrivano
+all'altro dispositivo; le modifiche remote arrivano in realtime; un evento
+reimportato con lo stesso UID viene aggiornato, non duplicato; con
+`cloud:schema` riportato a 1 il client recupera un'entità mancante.
+

@@ -6,6 +6,19 @@ import type { AppView, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
 import { inputClass } from "./ui";
+import {
+  ATTACHMENT_KIND_LABEL,
+  EVENT_CATEGORY_LABEL,
+  EXAM_STATUS_LABEL,
+  GOAL_CATEGORY_LABEL,
+  GOAL_STATUS_LABEL,
+  PRIORITY_LABEL,
+  SESSION_STATUS_LABEL,
+  TASK_STATUS_LABEL,
+  attachmentKind,
+  formatMinutes,
+  hostOf
+} from "../lib/labels";
 
 type ResultKind = "task" | "event" | "subject" | "exam" | "material" | "session" | "topic" | "goal" | "note";
 
@@ -112,12 +125,12 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           id: task.id,
           kind: "task",
           title: task.title,
-          subtitle: [task.status, due, subject?.name].filter(Boolean).join(" · "),
+          subtitle: [TASK_STATUS_LABEL[task.status] ?? task.status, due, subject?.name].filter(Boolean).join(" · "),
           view: "tasks",
           icon: kindIcon.task,
           score: s,
           accent: subject?.color ?? "var(--accent)",
-          badge: task.priority === "urgent" || task.priority === "high" ? task.priority : undefined
+          badge: task.priority === "urgent" || task.priority === "high" ? PRIORITY_LABEL[task.priority] : undefined
         });
       }
     }
@@ -135,7 +148,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           id: event.id,
           kind: "event",
           title: event.title,
-          subtitle: [event.category, when, subject?.name].filter(Boolean).join(" · "),
+          subtitle: [EVENT_CATEGORY_LABEL[event.category] ?? event.category, when, subject?.name].filter(Boolean).join(" · "),
           view: "calendar",
           icon: kindIcon.event,
           score: s,
@@ -175,7 +188,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           id: exam.id,
           kind: "exam",
           title: subject?.name ?? "Esame",
-          subtitle: `${format(parseISO(exam.date), "d MMM yyyy", { locale: it })} · ${exam.preparation}% prep · ${exam.status}`,
+          subtitle: `${format(parseISO(exam.date), "d MMM yyyy", { locale: it })} · ${exam.preparation}% preparazione · ${EXAM_STATUS_LABEL[exam.status] ?? exam.status}`,
           view: "exams",
           icon: kindIcon.exam,
           score: s,
@@ -195,7 +208,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           id: attachment.id,
           kind: "material",
           title: attachment.name,
-          subtitle: [attachment.mimeType, attachment.externalUrl ? "link" : null].filter(Boolean).join(" · "),
+          subtitle: [ATTACHMENT_KIND_LABEL[attachmentKind(attachment)], hostOf(attachment.externalUrl)].filter(Boolean).join(" · "),
           view: "materials",
           icon: kindIcon.material,
           score: s
@@ -215,9 +228,9 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           kind: "session",
           title: session.title,
           subtitle: [
-            `${session.actualMinutes || session.plannedMinutes} min`,
+            formatMinutes(session.actualMinutes || session.plannedMinutes),
             subject?.name,
-            session.status
+            SESSION_STATUS_LABEL[session.status] ?? session.status
           ]
             .filter(Boolean)
             .join(" · "),
@@ -266,7 +279,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           id: goal.id,
           kind: "goal",
           title: goal.title,
-          subtitle: `${goal.category} · ${goal.progress}% · ${goal.status}`,
+          subtitle: `${GOAL_CATEGORY_LABEL[goal.category] ?? goal.category} · ${goal.progress}% · ${GOAL_STATUS_LABEL[goal.status] ?? goal.status}`,
           view: "goals",
           icon: kindIcon.goal,
           score: s
@@ -377,7 +390,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.16 }}
-            className="scrollbar-soft absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-[min(70vh,520px)] overflow-y-auto rounded-[24px] border border-[var(--border)] bg-[var(--bg-2)] p-2 shadow-soft"
+            className="scrollbar-soft absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-[min(70dvh,520px)] overflow-y-auto rounded-[24px] border border-[var(--border)] bg-[var(--bg-2)] p-2 shadow-soft"
           >
             <div className="flex items-center justify-between px-3 pb-2 pt-1 text-[10px] font-black uppercase tracking-wider text-[var(--faint)]">
               <span>{results.length} risultati</span>
@@ -385,13 +398,13 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
             </div>
 
             {results.length === 0 ? (
-              <div className="grid place-items-center gap-2 px-4 py-6 text-center">
+              <div className="grid grid-cols-1 place-items-center gap-2 px-4 py-6 text-center">
                 <Icon name="Search" className="h-6 w-6 text-[var(--faint)]" />
                 <p className="text-sm font-extrabold">Nessun risultato per "{trimmed}"</p>
                 <p className="text-xs font-bold text-[var(--muted)]">Prova un termine più corto o aggiungi nuovi dati.</p>
               </div>
             ) : (
-              <ul role="listbox" className="grid gap-1">
+              <ul role="listbox" className="grid grid-cols-1 gap-1">
                 {results.map((result, index) => {
                   const active = index === activeIndex;
                   return (
@@ -407,7 +420,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
                         }`}
                       >
                         <span
-                          className="grid h-10 w-10 shrink-0 place-items-center rounded-full"
+                          className="grid grid-cols-1 h-10 w-10 shrink-0 place-items-center rounded-full"
                           style={{
                             background: result.accent ?? "var(--surface-strong)",
                             color: result.accent ? "#10131d" : "var(--text)"

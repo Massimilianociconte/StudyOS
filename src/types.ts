@@ -52,6 +52,7 @@ export interface UserSettings {
 }
 
 export type AppView =
+  | "career"
   | "dashboard"
   | "calendar"
   | "tasks"
@@ -88,6 +89,12 @@ export interface Exam extends BaseEntity {
   simulations: number;
   frequentQuestions: string[];
   cover?: string;
+  /** Voto registrato (18–30) per un esame superato: alimenta il libretto e la media. */
+  grade?: number;
+  /** Lode: nella media vale 30. */
+  honors?: boolean;
+  /** Esame superato senza voto numerico (idoneità, tirocinio): conta solo nei CFU. */
+  passFail?: boolean;
 }
 
 export type EventCategory =
@@ -114,6 +121,8 @@ export interface CalendarEvent extends BaseEntity {
   start: string;
   end: string;
   recurrence?: "none" | "daily" | "weekly" | "monthly";
+  /** Ultimo giorno (YYYY-MM-DD) in cui la serie si ripete; assente = senza fine. */
+  recurrenceUntil?: string;
   status: "planned" | "in-progress" | "done" | "skipped";
   checklist: { id: ID; text: string; done: boolean }[];
   attachmentIds: ID[];
@@ -121,6 +130,8 @@ export interface CalendarEvent extends BaseEntity {
   notes: string;
   links: string[];
   goalId?: ID;
+  /** UID dell'evento nel calendario .ics di origine: un nuovo import aggiorna invece di duplicare. */
+  sourceUid?: string;
 }
 
 export interface Task extends BaseEntity {
@@ -182,6 +193,10 @@ export interface StudyTopic extends BaseEntity {
   notes: string;
   attachmentIds: ID[];
   questions: string[];
+  /** Ripasso a intervalli: giorni dell'ultimo intervallo e facilità (stile SM-2). */
+  intervalDays?: number;
+  ease?: number;
+  lastReviewedAt?: string;
 }
 
 export interface Attachment extends BaseEntity {
@@ -251,6 +266,29 @@ export interface DashboardWidget extends BaseEntity {
   visible: boolean;
 }
 
+/**
+ * Preferenze personali dell'account (una sola entità, id "main"). Sono sincronizzate con il
+ * cloud come le altre entità, quindi seguono l'account e non il dispositivo.
+ */
+export interface Preferences extends BaseEntity {
+  displayName: string;
+  avatarDataUrl?: string;
+  /** Obiettivo di studio settimanale in minuti. */
+  weeklyTargetMinutes: number;
+  /** CFU totali del corso di laurea (per il libretto). */
+  degreeCfu: number;
+  /** Mostra la sezione del corso BARB · UNIMI nella navigazione. */
+  showBarb: boolean;
+  /** Corso di laurea per la proiezione del voto (regole in lib/graduation.ts). */
+  degreeProgram?: "barb" | "scienze-biologiche";
+  /** Scenario della proiezione: voto della prova finale (Scienze biologiche, 18–30). */
+  sbThesisGrade?: number;
+  /** Scenario della proiezione: punti della tesi (BARB, 1–9). */
+  barbThesisPoints?: number;
+  /** Scenario della proiezione: esperienza all'estero riconosciuta dal corso. */
+  abroad?: boolean;
+}
+
 export interface VaultRecord {
   id: "main";
   encrypted: true;
@@ -278,6 +316,7 @@ export interface StudySnapshot {
   tags: Tag[];
   reminders: Reminder[];
   widgets: DashboardWidget[];
+  preferences: Preferences[];
 }
 
 export interface BackupEnvelope {

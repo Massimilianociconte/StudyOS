@@ -13,12 +13,20 @@ import {
 } from "date-fns";
 import { it } from "date-fns/locale";
 import type { CalendarEvent, Exam, StudySession, Subject, Task } from "../types";
+import { expandEvents } from "./recurrence";
 
 export const subjectName = (subjects: Subject[], id?: string) =>
   subjects.find((subject) => subject.id === id)?.name ?? "Senza materia";
 
 export const subjectColor = (subjects: Subject[], id?: string, fallback = "var(--accent)") =>
   subjects.find((subject) => subject.id === id)?.color ?? fallback;
+
+/**
+ * Materie da proporre nei menu di scelta: escluse quelle archiviate o già superate (libretto),
+ * tranne quella eventualmente già selezionata, che deve restare visibile.
+ */
+export const selectableSubjects = (subjects: Subject[], currentId?: string) =>
+  subjects.filter((subject) => (!subject.archived && subject.status !== "archived" && subject.status !== "completed") || subject.id === currentId);
 
 const asDate = (date: string | Date) => (typeof date === "string" ? parseISO(date) : date);
 
@@ -41,15 +49,16 @@ export const studyDaysLabel = (date: string | Date, from: string | Date = new Da
 
 export const eventMinutes = (event: CalendarEvent) => Math.max(15, differenceInMinutes(parseISO(event.end), parseISO(event.start)));
 
+/** Eventi di oggi, incluse le occorrenze delle serie ripetute. */
 export const todayEvents = (events: CalendarEvent[]) =>
-  events
-    .filter((event) => isSameDay(parseISO(event.start), new Date()))
-    .sort((a, b) => parseISO(a.start).getTime() - parseISO(b.start).getTime());
+  expandEvents(events, startOfDay(new Date()), addDays(startOfDay(new Date()), 1)).filter((event) =>
+    isSameDay(parseISO(event.start), new Date())
+  );
 
+/** Prossimi eventi da oggi (occorrenze ripetute comprese, orizzonte 120 giorni). */
 export const upcomingEvents = (events: CalendarEvent[], count = 6) =>
-  events
+  expandEvents(events, startOfDay(new Date()), addDays(startOfDay(new Date()), 120))
     .filter((event) => isAfter(parseISO(event.start), new Date()) || isSameDay(parseISO(event.start), new Date()))
-    .sort((a, b) => parseISO(a.start).getTime() - parseISO(b.start).getTime())
     .slice(0, count);
 
 export const urgentTasks = (tasks: Task[], count = 5) =>
@@ -82,7 +91,11 @@ export const studyMinutesThisWeek = (sessions: StudySession[]) => {
     .reduce((sum, session) => sum + session.actualMinutes, 0);
 };
 
-export const studyStreak = (sessions: StudySession[]) => {
+/**
+ * Giorni consecutivi di studio. La serie resta viva finché l'ultimo giorno studiato è oggi o
+ * ieri: la mattina, prima della prima sessione, lo streak non deve azzerarsi.
+ */
+export const studyStreak = (sessions: StudySession[], now: Date = new Date()) => {
   const days = new Set(
     sessions
       .filter((session) => session.status === "completed" && session.actualMinutes > 0)
@@ -90,7 +103,8 @@ export const studyStreak = (sessions: StudySession[]) => {
   );
 
   let streak = 0;
-  let cursor = startOfDay(new Date());
+  let cursor = startOfDay(now);
+  if (!days.has(format(cursor, "yyyy-MM-dd"))) cursor = addDays(cursor, -1);
   while (days.has(format(cursor, "yyyy-MM-dd"))) {
     streak += 1;
     cursor = addDays(cursor, -1);

@@ -36,3 +36,36 @@ Verifiche: `npm test`, `npm run lint`, `npm run build`, `npm run barb:validate`,
 test SQL su immagine Supabase Postgres 17 e test end-to-end con stack Supabase
 locale e due origini browser. Lo schema aggiornato va rieseguito nel progetto
 Supabase (vedi supabase/README.md).
+
+Revisione UI/UX (29 settembre 2026): studiate tutte le viste con dati demo nel
+browser (desktop 1440×900, mobile 375×812, tema scuro e chiaro). BARB ora usa
+gruppi del piano di studi, card dense e dettaglio corso in un pannello laterale
+(pagina da 4253 a 2375 px). Il calendario ha una griglia oraria vera con eventi
+posizionati per durata, trascinamento con orario, agenda per giorno e ricorrenze.
+Task in righe compatte raggruppate per scadenza (da 3473 a 1561 px); Materie,
+Esami, Materiali, Obiettivi e Studio compattati e con modifica completa
+(prima non si potevano modificare materie e obiettivi). Corretti: streak azzerato
+al mattino, sessioni che cambiavano stato con un click, template sessione finti,
+sezioni irraggiungibili da mobile, etichette inglesi, overflow orizzontale mobile.
+Verifiche: `npm test` (50 test, anche con TZ UTC e America/New_York), lint e build.
+
+Tablet e funzioni per lo studio (29 settembre 2026, notte): navigazione a tre livelli
+(barra in basso su telefono, barra compatta a icone 640–1279 px, barra completa da
+1280 px), breakpoint delle viste ricalibrati sullo spazio utile, azioni visibili anche
+senza mouse, schede scorrevoli con sfumatura, eventi sovrapposti a cascata nelle colonne
+strette del calendario, Kanban con selettore di colonna. Verificato senza overflow a
+375, 600, 700, 768, 810, 1024, 1180, 1280 e 1366 px. Nuove funzioni: libretto con media
+aritmetica e ponderata, CFU e base di laurea; ripasso attivo con valutazione e intervalli
+crescenti, argomenti creabili (anche dal programma d'esame); registrazione manuale ed
+eliminazione delle sessioni; import/export .ics; preferenze personali sincronizzate.
+Rimossi i valori fissi (obiettivo 18 h) e la "sessione pianificata" invisibile del pulsante
+Aggiungi. Verifiche: `npm test` (59 test, anche con TZ UTC, New York, Tokyo), lint, build
+e prova end-to-end della sync con stack Supabase locale e due origini browser.
+
+Libretto e laurea (29 settembre 2026): nuova sezione con media ponderata e aritmetica
+calcolate dai voti registrati, CFU e proiezione del voto di laurea per Scienze biologiche
+(L-13) e Biologia applicata alla ricerca biomedica (LM-6) con le regole ufficiali UNIMI
+(fonti e date nella vista). Il corso di laurea è una preferenza sincronizzata: imposta anche
+i CFU totali e la visibilità della sezione BARB. Verifiche: 65 test, lint, build, prova nel
+browser a 375, 1024×768, 1180×820 e 1280×800.
+

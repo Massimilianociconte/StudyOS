@@ -4,7 +4,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, Pill, inputClass } from "./ui";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
-import { shortDate } from "../lib/selectors";
+import { selectableSubjects, shortDate } from "../lib/selectors";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -75,7 +75,7 @@ export function TaskEditorModal({
       return;
     }
     if (dueDate && Number.isNaN(dueDate.getTime())) {
-      setError("La data selezionata non e valida.");
+      setError("La data selezionata non è valida.");
       return;
     }
 
@@ -99,7 +99,7 @@ export function TaskEditorModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true">
-      <section className="soft-panel scrollbar-soft max-h-[88vh] w-full max-w-3xl overflow-y-auto p-4 sm:p-5">
+      <section className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-3xl overflow-y-auto p-4 sm:p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-black uppercase text-[var(--faint)]">Task editor</p>
@@ -110,7 +110,7 @@ export function TaskEditorModal({
           </Button>
         </div>
 
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <Field label="Titolo">
             <input className={inputClass} value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} autoFocus />
           </Field>
@@ -119,7 +119,7 @@ export function TaskEditorModal({
             <textarea className={`${inputClass} min-h-24 py-3`} value={draft.description} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} />
           </Field>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <Field label="Stato">
               <select className={inputClass} value={draft.status} onChange={(event) => setDraft((value) => ({ ...value, status: event.target.value as Task["status"] }))}>
                 <option value="todo">Da fare</option>
@@ -130,7 +130,7 @@ export function TaskEditorModal({
                 <option value="archived">Archiviato</option>
               </select>
             </Field>
-            <Field label="Priorita">
+            <Field label="Priorità">
               <select className={inputClass} value={draft.priority} onChange={(event) => setDraft((value) => ({ ...value, priority: event.target.value as Task["priority"] }))}>
                 <option value="low">Bassa</option>
                 <option value="medium">Media</option>
@@ -147,7 +147,7 @@ export function TaskEditorModal({
             </Field>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <Field label="Data e ora">
               <input className={inputClass} type="datetime-local" value={draft.dueDate} onChange={(event) => setDraft((value) => ({ ...value, dueDate: event.target.value }))} />
             </Field>
@@ -159,18 +159,18 @@ export function TaskEditorModal({
             </Field>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <Field label="Materia">
               <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
                 <option value="">Nessuna</option>
-                {subjects.map((subject) => (
+                {selectableSubjects(subjects, draft.subjectId).map((subject) => (
                   <option key={subject.id} value={subject.id}>
                     {subject.name}
                   </option>
                 ))}
               </select>
             </Field>
-            <Field label="Difficolta">
+            <Field label="Difficoltà">
               <input className={inputClass} type="number" min={1} max={5} value={draft.difficulty} onChange={(event) => setDraft((value) => ({ ...value, difficulty: event.target.value }))} />
             </Field>
             <Field label="Importanza">
@@ -190,7 +190,7 @@ export function TaskEditorModal({
             <Pill>{draft.status}</Pill>
             <Pill>inserita {shortDate(task.createdAt)}</Pill>
             <Pill>{draft.estimatedMinutes || 0} min stimati</Pill>
-            {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
+            {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent-ink)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
             {draft.actualMinutes ? <Pill>{draft.actualMinutes} min effettivi</Pill> : null}
             {task.completedAt ? <Pill>completata {shortDate(task.completedAt)}</Pill> : null}
             {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}

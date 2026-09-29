@@ -6,6 +6,7 @@ import type {
   Exam,
   Goal,
   Note,
+  Preferences,
   Reminder,
   StudySession,
   StudySnapshot,
@@ -75,6 +76,7 @@ class StudyOSDatabase extends Dexie {
   tags!: Table<Tag, string>;
   reminders!: Table<Reminder, string>;
   widgets!: Table<DashboardWidget, string>;
+  preferences!: Table<Preferences, string>;
   barbCourses!: Table<BarbCourseRow, string>;
   barbTeachers!: Table<BarbTeacherRow, string>;
   barbSyncLogs!: Table<UniversitySyncLog, string>;
@@ -98,6 +100,11 @@ class StudyOSDatabase extends Dexie {
     this.version(3).stores({
       syncOutbox: "key, queuedAt, collection",
       meta: "key"
+    });
+
+    // v4: preferenze personali sincronizzate (nome, obiettivo settimanale, CFU del corso).
+    this.version(4).stores({
+      preferences: "id"
     });
   }
 }

@@ -41,9 +41,15 @@ const REMOTE_DEBOUNCE_MS = 400;
 const PERIODIC_MS = 5 * 60_000;
 const MAX_RETRY_MS = 5 * 60_000;
 
+// Versione dei tipi di entità sincronizzati. Una build precedente scarta i tipi che non conosce
+// ma fa avanzare comunque il cursore: quando la versione sale, il primo pull riparte da zero
+// (merge LWW normale) per recuperare le righe saltate. 2 = preferenze personali.
+const SYNC_SCHEMA = 2;
+
 const metaKeys = {
   cursor: (userId: string) => `cloud:cursor:${userId}`,
   migrated: (userId: string) => `cloud:migrated:${userId}`,
+  schema: (userId: string) => `cloud:schema:${userId}`,
   boundUser: "cloud:boundUser",
   lastSync: (userId: string) => `cloud:lastSync:${userId}`
 };
@@ -359,14 +365,17 @@ const syncOnce = async () => {
     await requestPersist();
     await bindUser(userId);
     const migrated = await getMeta<string>(metaKeys.migrated(userId));
+    const schema = (await getMeta<number>(metaKeys.schema(userId))) ?? 1;
     if (!migrated) {
       await firstSync(userId);
     } else {
       const force = forceNextPull;
       forceNextPull = false;
+      if (schema < SYNC_SCHEMA) await deleteMeta(metaKeys.cursor(userId));
       await pull(userId, force);
       await push(userId);
     }
+    if (schema < SYNC_SCHEMA) await setMeta(metaKeys.schema(userId), SYNC_SCHEMA);
     const lastSync = new Date().toISOString();
     await setMeta(metaKeys.lastSync(userId), lastSync);
     retryAttempt = 0;

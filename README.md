@@ -1,6 +1,6 @@
 # StudyOS
 
-StudyOS e una PWA local-first per organizzazione dello studio universitario: dashboard, calendario, task, sessioni, materie, esami, materiali, obiettivi, statistiche e backup.
+StudyOS è una PWA local-first per organizzare lo studio universitario: dashboard, calendario (con import/export .ics), task, timer e sessioni di studio, ripasso attivo a intervalli, materie, esami, libretto con media ponderata e proiezione del voto di laurea (Scienze biologiche e BARB, UNIMI), materiali, obiettivi, statistiche e backup. L'interfaccia si adatta a telefono, tablet (iPad, Galaxy Tab) e desktop.
 
 ## Avvio locale
 

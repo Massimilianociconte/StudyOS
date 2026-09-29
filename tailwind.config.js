@@ -1,6 +1,10 @@
+import plugin from "tailwindcss/plugin";
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // Su tablet e telefoni (touch) gli stati hover non restano "appiccicati" dopo un tap.
+  future: { hoverOnlyWhenSupported: true },
   theme: {
     extend: {
       fontFamily: {
@@ -25,5 +29,9 @@ export default {
       }
     }
   },
-  plugins: []
+  plugins: [
+    // `can-hover:` = dispositivi con mouse/trackpad. Serve per nascondere azioni secondarie
+    // fino al passaggio del mouse SOLO dove il passaggio esiste: su tablet restano visibili.
+    plugin(({ addVariant }) => addVariant("can-hover", "@media (hover: hover) and (pointer: fine)"))
+  ]
 };

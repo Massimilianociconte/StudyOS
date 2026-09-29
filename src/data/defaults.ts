@@ -1,4 +1,4 @@
-import type { StudySnapshot, UserSettings } from "../types";
+import type { Preferences, StudySnapshot, UserSettings } from "../types";
 import { nowIso } from "../lib/id";
 
 export const defaultSettings = (): UserSettings => ({
@@ -45,5 +45,27 @@ export const createEmptySnapshot = (): StudySnapshot => ({
   notes: [],
   tags: [],
   reminders: [],
-  widgets: []
+  widgets: [],
+  preferences: []
 });
+
+export const PREFERENCES_ID = "main";
+
+/** Valori usati finché l'account non ha salvato preferenze proprie (oggetto stabile per i selettori). */
+export const DEFAULT_PREFERENCES: Preferences = Object.freeze({
+  id: PREFERENCES_ID,
+  createdAt: "1970-01-01T00:00:00.000Z",
+  updatedAt: "1970-01-01T00:00:00.000Z",
+  archived: false,
+  tags: [],
+  displayName: "",
+  avatarDataUrl: "",
+  // Stesso valore che prima era fisso nel codice: chi non lo cambia non vede differenze.
+  weeklyTargetMinutes: 18 * 60,
+  degreeCfu: 120,
+  showBarb: true,
+  degreeProgram: "barb",
+  sbThesisGrade: 27,
+  barbThesisPoints: 7,
+  abroad: false
+}) as Preferences;

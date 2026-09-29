@@ -18,6 +18,8 @@
   --accent: #7cf7c8;
   --accent-2: #8b7cff;
   --accent-3: #ff7a8a;
+  /* Accento usato come colore del testo: leggibile anche su sfondi chiari. */
+  --accent-ink: var(--accent);
   --warning: #ffd166;
   --ok: #a6e3a1;
   --danger-text: #fecaca;
@@ -39,6 +41,7 @@
 
 [data-theme="light"] {
   color-scheme: light;
+  --accent-ink: color-mix(in srgb, var(--accent) 48%, #0b1a14);
   --bg: #f5f1ea;
   --bg-2: #fffaf2;
   --surface: rgba(255, 255, 255, 0.72);
@@ -224,8 +227,7 @@ textarea:focus-visible {
 
 .safe-text {
   min-width: 0;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
   hyphens: auto;
 }
 
@@ -244,8 +246,8 @@ textarea:focus-visible {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 .three-line-safe {
@@ -255,8 +257,8 @@ textarea:focus-visible {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 .scrollbar-soft {
@@ -271,6 +273,14 @@ textarea:focus-visible {
 .scrollbar-soft::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 .motion-safe {
