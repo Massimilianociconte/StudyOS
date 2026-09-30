@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { selectableSubjects } from "../lib/selectors";
 import { addHours } from "date-fns";
 import { AnimatePresence, motion } from "framer-motion";
@@ -11,12 +11,12 @@ import { normalizeExternalUrl } from "../lib/safeUrl";
 type Mode = "task" | "event" | "session" | "subject" | "material";
 type TaskCreateMode = "normal" | "timer" | "completed";
 
-const modes: { id: Mode; label: string }[] = [
-  { id: "task", label: "Task" },
-  { id: "event", label: "Evento" },
-  { id: "session", label: "Blocco studio" },
-  { id: "subject", label: "Materia" },
-  { id: "material", label: "Materiale" }
+const modes: { id: Mode; label: string; title: string }[] = [
+  { id: "task", label: "Task", title: "Task con scadenza, priorità e cronometro" },
+  { id: "event", label: "Evento", title: "Evento nel calendario" },
+  { id: "session", label: "Blocco studio", title: "Blocco di studio nel calendario" },
+  { id: "subject", label: "Materia", title: "Nuova materia" },
+  { id: "material", label: "Materiale", title: "Link o file nei materiali" }
 ];
 
 export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -31,6 +31,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
   const [actualMinutes, setActualMinutes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const titleId = useId();
   const { subjects, addTask, addEvent, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
   // Il modale resta montato: a ogni apertura la data proposta torna "adesso".
@@ -153,6 +154,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
           exit={{ opacity: 0 }}
           role="dialog"
           aria-modal="true"
+          aria-labelledby={titleId}
         >
           <motion.div
             className="soft-panel scrollbar-soft max-h-[85dvh] w-full max-w-xl overflow-y-auto p-4 sm:p-5"
@@ -162,15 +164,15 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
           >
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-2xl font-black">Quick add</h2>
-                <p className="text-sm text-[var(--muted)]">Cattura subito, sistema dopo.</p>
+                <h2 id={titleId} className="text-2xl font-black">Aggiunta rapida</h2>
+                <p className="text-sm text-[var(--muted)]">Crea un elemento senza lasciare la pagina.</p>
               </div>
-              <IconButton icon="MoreHorizontal" label="Chiudi" onClick={onClose} />
+              <IconButton icon="X" label="Chiudi" onClick={onClose} />
             </div>
 
-            <div className="mb-4 flex flex-wrap gap-2">
+            <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Tipo di elemento">
               {modes.map((item) => (
-                <button key={item.id} type="button" onClick={() => setMode(item.id)}>
+                <button key={item.id} type="button" onClick={() => setMode(item.id)} aria-pressed={mode === item.id} title={item.title}>
                   <Pill active={mode === item.id}>{item.label}</Pill>
                 </button>
               ))}
@@ -188,6 +190,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       key={item.id}
                       type="button"
                       onClick={() => setTaskCreateMode(item.id)}
+                      aria-pressed={taskCreateMode === item.id}
                       className={`motion-safe flex min-h-14 items-center gap-3 rounded-[22px] border p-3 text-left ${
                         taskCreateMode === item.id
                           ? "border-transparent bg-[var(--accent)] text-[#10131d]"
@@ -200,7 +203,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       <span className="min-w-0">
                         <span className="one-line-safe block text-sm font-black">{item.label}</span>
                         <span className="one-line-safe block text-xs font-bold opacity-70">
-                          {item.id === "timer" ? "parte subito" : item.id === "completed" ? "storico manuale" : "da completare"}
+                          {item.id === "timer" ? "Parte subito" : item.id === "completed" ? "Storico manuale" : "Da completare"}
                         </span>
                       </span>
                     </button>
@@ -260,7 +263,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       step={5}
                       value={actualMinutes}
                       onChange={(event) => setActualMinutes(event.target.value)}
-                      placeholder={taskCreateMode === "completed" ? "es. 75" : "opzionale"}
+                      placeholder={taskCreateMode === "completed" ? "Es. 75" : "Opzionale"}
                     />
                   </Field>
                 </div>

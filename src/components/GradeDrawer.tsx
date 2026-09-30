@@ -148,7 +148,7 @@ export function GradeDrawer({
                   {subject.name} · {subject.cfu} CFU
                 </option>
               ))}
-              <option value="__new">+ Nuovo insegnamento (es. di un anno precedente)</option>
+              <option value="__new">+ Nuovo insegnamento (Es. di un anno precedente)</option>
             </select>
           </Field>
         )}
@@ -205,10 +205,14 @@ export function GradeDrawer({
         </div>
         {editing && exam ? (
           <p className="text-xs font-bold text-[var(--muted)]">
-            CFU: {subjects.find((subject) => subject.id === exam.subjectId)?.cfu ?? 0} (si modificano dalla scheda della materia).
+            CFU: {subjects.find((subject) => subject.id === exam.subjectId)?.cfu ?? 0} (Si modificano dalla scheda della materia).
           </p>
         ) : null}
-        {error ? <p className="text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-sm font-bold text-[var(--danger-text)]">
+            {error}
+          </p>
+        ) : null}
       </div>
     </Drawer>
   );

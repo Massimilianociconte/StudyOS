@@ -26,8 +26,8 @@ const deadlineLabel = (deadline?: string) => {
   const date = parseISO(deadline);
   if (Number.isNaN(date.getTime())) return null;
   const days = differenceInCalendarDays(date, new Date());
-  if (days < 0) return { text: `scaduto il ${format(date, "d MMM", { locale: it })}`, late: true };
-  if (days === 0) return { text: "scade oggi", late: false };
+  if (days < 0) return { text: `Scaduto il ${format(date, "d MMM", { locale: it })}`, late: true };
+  if (days === 0) return { text: "Scade oggi", late: false };
   return { text: `${days} ${days === 1 ? "giorno" : "giorni"} · ${format(date, "d MMM", { locale: it })}`, late: false };
 };
 
@@ -148,7 +148,7 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
               type="button"
               aria-label="Riduci progresso del 5%"
               onClick={() => onProgress(Math.max(0, goal.progress - 5))}
-              className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)]"
+              className="relative grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)] after:absolute after:-inset-2.5 after:rounded-full after:content-['']"
             >
               −
             </button>
@@ -157,7 +157,7 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
               type="button"
               aria-label="Aumenta progresso del 5%"
               onClick={() => onProgress(Math.min(100, goal.progress + 5))}
-              className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)]"
+              className="relative grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)] after:absolute after:-inset-2.5 after:rounded-full after:content-['']"
             >
               +
             </button>
@@ -256,7 +256,7 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
             <input className={inputClass} type="date" value={draft.deadline} onChange={(event) => setDraft((value) => ({ ...value, deadline: event.target.value }))} />
           </Field>
           <Field label="Metrica">
-            <input className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="es. ore/settimana" />
+            <input className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="Es. ore/settimana" />
           </Field>
         </div>
         <Field label={`Progresso · ${draft.progress}%`}>

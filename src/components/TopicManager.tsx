@@ -147,7 +147,11 @@ function NewTopicForm({
       >
         <Icon name="Plus" className="h-4 w-4" /> Aggiungi
       </button>
-      {message ? <p className="text-xs font-bold text-[var(--warning-text)] sm:col-span-2">{message}</p> : null}
+      {message ? (
+        <p role="alert" className="text-xs font-bold text-[var(--warning-text)] sm:col-span-2">
+          {message}
+        </p>
+      ) : null}
     </form>
   );
 }

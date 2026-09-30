@@ -61,6 +61,8 @@ export function CloudStatusBadge({ onClick, compact = false }: { onClick?: () =>
     <button
       type="button"
       onClick={onClick}
+      title="Stato cloud — apri le impostazioni"
+      aria-label={`${label}: ${subtitle}. Apri le impostazioni.`}
       className={`mt-3 flex w-full items-center gap-3 rounded-[22px] border p-3 text-left ${tone}`}
     >
       <span className="grid grid-cols-1 h-9 w-9 shrink-0 place-items-center rounded-full bg-black/20">

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, Pill, inputClass } from "./ui";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
+import { TASK_STATUS_LABEL } from "../lib/labels";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -52,6 +53,15 @@ export function TaskEditorModal({
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
   const completedLate = isTaskCompletedLate(task);
+  const titleId = useId();
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const save = async () => {
     setError("");
@@ -98,12 +108,20 @@ export function TaskEditorModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <section className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-3xl overflow-y-auto p-4 sm:p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-black uppercase text-[var(--faint)]">Task editor</p>
-            <h3 className="safe-text text-2xl font-black">Modifica task</h3>
+            <p className="text-xs font-black uppercase text-[var(--faint)]">Scheda task</p>
+            <h3 id={titleId} className="safe-text text-2xl font-black">Modifica task</h3>
           </div>
           <Button variant="ghost" icon="X" onClick={onClose}>
             Chiudi
@@ -122,12 +140,11 @@ export function TaskEditorModal({
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <Field label="Stato">
               <select className={inputClass} value={draft.status} onChange={(event) => setDraft((value) => ({ ...value, status: event.target.value as Task["status"] }))}>
-                <option value="todo">Da fare</option>
-                <option value="doing">In corso</option>
-                <option value="blocked">Bloccato</option>
-                <option value="done">Completato</option>
-                <option value="postponed">Rimandato</option>
-                <option value="archived">Archiviato</option>
+                {(Object.keys(TASK_STATUS_LABEL) as Task["status"][]).map((status) => (
+                  <option key={status} value={status}>
+                    {TASK_STATUS_LABEL[status]}
+                  </option>
+                ))}
               </select>
             </Field>
             <Field label="Priorità">
@@ -155,7 +172,7 @@ export function TaskEditorModal({
               <input className={inputClass} type="number" min={0} step={5} value={draft.estimatedMinutes} onChange={(event) => setDraft((value) => ({ ...value, estimatedMinutes: event.target.value }))} />
             </Field>
             <Field label="Durata effettiva">
-              <input className={inputClass} type="number" min={0} step={5} value={draft.actualMinutes} onChange={(event) => setDraft((value) => ({ ...value, actualMinutes: event.target.value }))} placeholder="opzionale" />
+              <input className={inputClass} type="number" min={0} step={5} value={draft.actualMinutes} onChange={(event) => setDraft((value) => ({ ...value, actualMinutes: event.target.value }))} placeholder="Opzionale" />
             </Field>
           </div>
 
@@ -187,16 +204,20 @@ export function TaskEditorModal({
           </Field>
 
           <div className="quiet-panel flex flex-wrap gap-2 p-3">
-            <Pill>{draft.status}</Pill>
-            <Pill>inserita {shortDate(task.createdAt)}</Pill>
+            <Pill>{TASK_STATUS_LABEL[draft.status]}</Pill>
+            <Pill>Inserita {shortDate(task.createdAt)}</Pill>
             <Pill>{draft.estimatedMinutes || 0} min stimati</Pill>
-            {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent-ink)]">timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
+            {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent-ink)]">Timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
             {draft.actualMinutes ? <Pill>{draft.actualMinutes} min effettivi</Pill> : null}
-            {task.completedAt ? <Pill>completata {shortDate(task.completedAt)}</Pill> : null}
-            {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">completata in ritardo</Pill> : null}
+            {task.completedAt ? <Pill>Completata {shortDate(task.completedAt)}</Pill> : null}
+            {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">Completata in ritardo</Pill> : null}
           </div>
 
-          {error ? <p className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+          {error ? (
+            <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
+              {error}
+            </p>
+          ) : null}
 
           <div className="mt-2 flex flex-wrap justify-end gap-2">
             <Button variant="danger" icon="Trash2" onClick={() => onDelete(task)}>

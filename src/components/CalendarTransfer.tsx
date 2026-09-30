@@ -60,7 +60,7 @@ export function CalendarTransfer() {
   const preview = useMemo(() => {
     if (!parsed) return null;
     const sorted = [...parsed.events].sort((a, b) => a.start.localeCompare(b.start));
-    const matched = matchSubjects ? parsed.events.filter((event) => matchSubject(event.title, candidates)).length : 0;
+    const matched = parsed.events.filter((event) => matchSubject(event.title, candidates)).length;
     return {
       first: sorted[0]?.start,
       last: sorted[sorted.length - 1]?.start,
@@ -68,7 +68,7 @@ export function CalendarTransfer() {
       matched,
       sample: sorted.slice(0, 6)
     };
-  }, [parsed, matchSubjects, candidates]);
+  }, [parsed, candidates]);
 
   const confirmImport = async () => {
     if (!parsed) return;
@@ -79,6 +79,8 @@ export function CalendarTransfer() {
         description: event.description,
         start: event.start,
         end: event.end,
+        // Gli eventi VALUE=DATE del file diventano "Tutto il giorno" (prima il flag veniva perso).
+        allDay: event.allDay,
         recurrence: event.recurrence,
         recurrenceUntil: event.recurrenceUntil,
         category: guessCategory(event.title, category),
@@ -121,15 +123,26 @@ export function CalendarTransfer() {
       </Button>
 
       {error || result ? (
-        <p
+        <div
           role="status"
           style={{ bottom: "calc(7rem + env(safe-area-inset-bottom))" }}
-          className={`fixed left-1/2 z-50 w-[min(92vw,460px)] -translate-x-1/2 rounded-[18px] border p-3 text-sm font-bold shadow-soft backdrop-blur-xl sm:!bottom-6 ${
+          className={`fixed left-1/2 z-50 flex w-[min(92vw,460px)] -translate-x-1/2 items-start gap-2 rounded-[18px] border p-3 text-sm font-bold shadow-soft backdrop-blur-xl sm:!bottom-6 ${
             error ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]" : "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-text)]"
           }`}
         >
-          {error || result}
-        </p>
+          <p className="min-w-0 flex-1">{error || result}</p>
+          <button
+            type="button"
+            aria-label="Chiudi avviso"
+            onClick={() => {
+              setError("");
+              setResult("");
+            }}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-black/10"
+          >
+            <Icon name="X" className="h-4 w-4" />
+          </button>
+        </div>
       ) : null}
 
       <Drawer
@@ -158,18 +171,21 @@ export function CalendarTransfer() {
               file gli eventi vengono aggiornati, non duplicati.
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Categoria predefinita">
-                <select className={inputClass} value={category} onChange={(event) => setCategory(event.target.value as EventCategory)}>
-                  {(Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => (
-                    <option key={id} value={id}>
-                      {EVENT_CATEGORY_LABEL[id]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <div>
+                <Field label="Categoria predefinita">
+                  <select className={inputClass} value={category} onChange={(event) => setCategory(event.target.value as EventCategory)}>
+                    {(Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => (
+                      <option key={id} value={id}>
+                        {EVENT_CATEGORY_LABEL[id]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <p className="mt-1 text-xs font-bold text-[var(--muted)]">Usata se il titolo non suggerisce un'altra categoria.</p>
+              </div>
               <label className="flex min-h-11 items-center gap-2 self-end text-sm font-bold">
                 <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={matchSubjects} onChange={(event) => setMatchSubjects(event.target.checked)} />
-                Collega alle materie ({preview.matched} trovate)
+                Collega alle materie ({preview.matched} collegabili)
               </label>
             </div>
             <ul className="grid grid-cols-1 gap-1 rounded-[18px] bg-[var(--surface-soft)] p-2">
@@ -183,7 +199,7 @@ export function CalendarTransfer() {
                 </li>
               ))}
               {parsed.events.length > preview.sample.length ? (
-                <li className="px-1.5 text-xs font-bold text-[var(--faint)]">e altri {parsed.events.length - preview.sample.length}</li>
+                <li className="px-1.5 text-xs font-bold text-[var(--faint)]">E altri {parsed.events.length - preview.sample.length}</li>
               ) : null}
             </ul>
             {parsed.warnings.length ? (

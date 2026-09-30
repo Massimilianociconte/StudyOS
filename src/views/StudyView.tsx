@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { StudySession, StudyTopic, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, studyMinutesThisWeek, studyStreak, subjectColor, subjectName } from "../lib/selectors";
-import { SESSION_TEMPLATE_LABEL, formatHours, formatMinutes } from "../lib/labels";
+import { SESSION_TEMPLATE_LABEL, capitalizeFirst, formatHours, formatMinutes } from "../lib/labels";
 import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, type ReviewRating } from "../lib/review";
 import { Button, Drawer, Field, IconButton, Panel, ProgressBar, ProgressRing, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
@@ -119,12 +119,23 @@ export function StudyView() {
                     Registra sessione
                   </Button>
                   {!idle ? (
-                    <Button variant="ghost" onClick={() => resetStudyTimer(timer.mode)}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        if (elapsedSeconds >= 60 && !window.confirm("Azzera il timer in corso senza registrare la sessione. Continuare?")) return;
+                        setNotice("");
+                        resetStudyTimer(timer.mode);
+                      }}
+                    >
                       Azzera
                     </Button>
                   ) : null}
                 </div>
-                {notice ? <p className="mt-2 text-sm font-bold text-[var(--muted)]">{notice}</p> : null}
+                {notice ? (
+                  <p role="status" className="mt-2 text-sm font-bold text-[var(--muted)]">
+                    {notice}
+                  </p>
+                ) : null}
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <Field label="Materia">
@@ -182,7 +193,7 @@ export function StudyView() {
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <h3 className="text-lg font-black">Sessioni recenti</h3>
-                  <p className="text-xs font-bold text-[var(--muted)]">oggi {formatMinutes(todayMinutes)}</p>
+                  <p className="text-xs font-bold text-[var(--muted)]">Oggi {formatMinutes(todayMinutes)}</p>
                 </div>
                 <Button variant="soft" icon="Plus" onClick={() => setLogOpen(true)}>
                   Registra a mano
@@ -198,7 +209,7 @@ export function StudyView() {
                       <div className="min-w-0 flex-1">
                         <p className="one-line-safe text-sm font-extrabold">{session.title}</p>
                         <p className="one-line-safe text-xs font-bold text-[var(--muted)]">
-                          {format(parseISO(session.start), "EEE d MMM · HH:mm", { locale: it })} · {SESSION_TEMPLATE_LABEL[session.template]}
+                          {capitalizeFirst(format(parseISO(session.start), "EEE d MMM · HH:mm", { locale: it }))} · {SESSION_TEMPLATE_LABEL[session.template]}
                         </p>
                       </div>
                       <span className="shrink-0 text-sm font-black tabular-nums">{formatMinutes(session.actualMinutes || session.plannedMinutes)}</span>
@@ -249,7 +260,7 @@ export function StudyView() {
                       <span className="one-line-safe block text-sm font-black">{topic.title}</span>
                       <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">{subjectName(subjects, topic.subjectId)}</span>
                     </span>
-                    <Tag className="shrink-0">{reviewDueLabel(topic.nextReviewDate)}</Tag>
+                    <Tag className="shrink-0">{capitalizeFirst(reviewDueLabel(topic.nextReviewDate))}</Tag>
                   </li>
                 ))}
               </ul>
@@ -390,7 +401,7 @@ function ReviewPanel({
               </button>
             </li>
           ))}
-          {rest.length > 6 ? <li className="px-2 text-xs font-bold text-[var(--faint)]">e altri {rest.length - 6}</li> : null}
+          {rest.length > 6 ? <li className="px-2 text-xs font-bold text-[var(--faint)]">E altri {rest.length - 6}</li> : null}
         </ul>
       ) : null}
     </Panel>
@@ -480,7 +491,7 @@ function ManualSessionDrawer({
             ))}
           </select>
         </Field>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-3">
           <Field label="Giorno">
             <input className={inputClass} type="date" value={draft.date} max={format(new Date(), "yyyy-MM-dd")} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
           </Field>
@@ -494,7 +505,11 @@ function ManualSessionDrawer({
         <Field label="Titolo (opzionale)">
           <input className={inputClass} value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} placeholder="Es. Ripasso in biblioteca" />
         </Field>
-        {error ? <p className="text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-sm font-bold text-[var(--danger-text)]">
+            {error}
+          </p>
+        ) : null}
       </div>
     </Drawer>
   );

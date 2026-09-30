@@ -81,9 +81,9 @@ export function StatsView() {
         <Panel>
           <div className="mb-3 flex items-baseline justify-between gap-2">
             <h3 className="text-lg font-black">Ore per giorno</h3>
-            <span className="text-xs font-bold text-[var(--muted)]">ultimi 14 giorni · {formatHours(fortnightMinutes)} h totali</span>
+            <span className="text-xs font-bold text-[var(--muted)]">Ultimi 14 giorni · {formatHours(fortnightMinutes)} h totali</span>
           </div>
-          <div className="h-64">
+          <div className="h-64" role="img" aria-label={`Ore di studio degli ultimi 14 giorni, totale ${formatHours(fortnightMinutes)} ore`}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dailyData} margin={{ left: -18, right: 4, top: 4 }}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
@@ -104,7 +104,7 @@ export function StatsView() {
         <Panel>
           <div className="mb-3 flex items-baseline justify-between gap-2">
             <h3 className="text-lg font-black">Preparazione esami</h3>
-            <span className="text-xs font-bold text-[var(--muted)]">in ordine di data</span>
+            <span className="text-xs font-bold text-[var(--muted)]">In ordine di data</span>
           </div>
           {examData.length ? (
             <ul className="grid grid-cols-1 gap-3">
@@ -129,7 +129,7 @@ export function StatsView() {
           <h3 className="mb-3 text-lg font-black">Ore per materia</h3>
           {subjectData.length ? (
             <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[200px_minmax(0,1fr)]">
-              <div className="h-48">
+              <div className="h-48" role="img" aria-label={`Distribuzione delle ore per materia, totale ${formatHours(totalSubjectMinutes)} ore`}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={subjectData} dataKey="minutes" nameKey="name" outerRadius={90} innerRadius={52} paddingAngle={3} stroke="none">

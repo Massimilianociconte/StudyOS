@@ -6,6 +6,7 @@ import { dueTopics } from "../lib/review";
 import {
   completionRate,
   daysUntil,
+  isAllDayEvent,
   shortDate,
   studyDaysLabel,
   studyDaysUntil,
@@ -20,6 +21,7 @@ import {
   urgentTasks
 } from "../lib/selectors";
 import {
+  ALL_DAY_LABEL,
   ATTACHMENT_KIND_ICON,
   ENERGY_LABEL,
   EVENT_CATEGORY_LABEL,
@@ -27,6 +29,7 @@ import {
   PRIORITY_TONE,
   SUBJECT_STATUS_LABEL,
   attachmentKind,
+  capitalizeFirst,
   formatHours,
   formatMinutes
 } from "../lib/labels";
@@ -73,7 +76,7 @@ export function DashboardView() {
     {
       label: "Studio questa settimana",
       value: `${formatHours(weeklyMinutes)} h`,
-      detail: `obiettivo ${formatHours(weeklyTarget)} h`,
+      detail: `Obiettivo ${formatHours(weeklyTarget)} h`,
       progress: (weeklyMinutes / weeklyTarget) * 100,
       icon: "Timer",
       tone: "var(--accent)",
@@ -82,7 +85,7 @@ export function DashboardView() {
     {
       label: "Streak",
       value: `${streak} ${streak === 1 ? "giorno" : "giorni"}`,
-      detail: streak ? "di studio consecutivo" : "studia oggi per iniziare",
+      detail: streak ? "di studio consecutivo" : "Studia oggi per iniziare",
       icon: "Flame",
       tone: "var(--accent-3)",
       view: "study" as const
@@ -99,7 +102,7 @@ export function DashboardView() {
     {
       label: "Prossimo esame",
       value: nextExams[0] ? `${studyDaysUntil(nextExams[0].date)} gg` : "—",
-      detail: nextExams[0] ? subjectName(subjects, nextExams[0].subjectId) : "nessun esame pianificato",
+      detail: nextExams[0] ? subjectName(subjects, nextExams[0].subjectId) : "Nessun esame pianificato",
       icon: "GraduationCap",
       tone: "var(--warning)",
       view: "exams" as const
@@ -110,9 +113,9 @@ export function DashboardView() {
     <div>
       <SectionTitle
         title={welcomeName ? `Bentornato, ${welcomeName}` : "Dashboard"}
-        subtitle={`${format(now, "EEEE d MMMM", { locale: it })} · ${today.length} ${today.length === 1 ? "evento" : "eventi"} e ${todayTasks.length} task in programma oggi`}
+        subtitle={`${capitalizeFirst(format(now, "EEEE d MMMM", { locale: it }))} · ${today.length} ${today.length === 1 ? "evento" : "eventi"} e ${todayTasks.length} task in programma oggi`}
         action={
-          <Button icon="Timer" variant="soft" onClick={() => setActiveView("study")}>
+          <Button icon="Timer" variant="soft" onClick={() => setActiveView("study")} title="Vai al timer di studio">
             Inizia a studiare
           </Button>
         }
@@ -128,13 +131,15 @@ export function DashboardView() {
             key={stat.label}
             type="button"
             onClick={() => setActiveView(stat.view)}
-            className="quiet-panel motion-safe min-w-0 p-3.5 text-left hover:bg-[var(--surface)]"
+            aria-label={`${stat.label}: ${stat.value}. Vai alla sezione.`}
+            className="quiet-panel motion-safe group min-w-0 p-3.5 text-left hover:bg-[var(--surface)]"
           >
             <div className="flex items-center gap-2 text-[11px] font-black uppercase text-[var(--faint)]">
               <span className="grid grid-cols-1 h-5 w-5 place-items-center rounded-full" style={{ background: `color-mix(in srgb, ${stat.tone} 28%, transparent)` }}>
                 <Icon name={stat.icon} className="h-3 w-3 text-[var(--text)]" />
               </span>
               <span className="truncate">{stat.label}</span>
+              <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 shrink-0 transition-transform group-hover:translate-x-0.5" />
             </div>
             <p className="mt-1 truncate text-2xl font-black">
               {stat.value}
@@ -165,12 +170,19 @@ export function DashboardView() {
                           parseISO(event.end) < now ? "opacity-55" : ""
                         }`}
                       >
-                        <span className="w-11 shrink-0 text-xs font-black tabular-nums">{timeLabel(event.start)}</span>
+                        {isAllDayEvent(event) ? (
+                          <span className="w-11 shrink-0 text-center text-xs font-black text-[var(--faint)]" title={ALL_DAY_LABEL} aria-hidden="true">
+                            —
+                          </span>
+                        ) : (
+                          <span className="w-11 shrink-0 text-xs font-black tabular-nums">{timeLabel(event.start)}</span>
+                        )}
                         <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: event.color || subjectColor(subjects, event.subjectId) }} />
                         <span className="min-w-0 flex-1">
                           <span className="one-line-safe block text-sm font-extrabold">{event.title}</span>
                           <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
-                            {timeLabel(event.start)}–{timeLabel(event.end)} · {event.subjectId ? subjectName(subjects, event.subjectId) : EVENT_CATEGORY_LABEL[event.category]}
+                            {isAllDayEvent(event) ? ALL_DAY_LABEL : `${timeLabel(event.start)}–${timeLabel(event.end)}`} ·{" "}
+                            {event.subjectId ? subjectName(subjects, event.subjectId) : EVENT_CATEGORY_LABEL[event.category]}
                           </span>
                         </span>
                       </button>
@@ -182,7 +194,7 @@ export function DashboardView() {
                         type="button"
                         onClick={() => void toggleTask(task.id)}
                         aria-label={task.status === "done" ? `Riapri "${task.title}"` : `Completa "${task.title}"`}
-                        className={`ml-3 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${
+                        className={`relative ml-3 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-3 after:content-[""] ${
                           task.status === "done" ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)]"
                         }`}
                       >
@@ -234,13 +246,13 @@ export function DashboardView() {
                     <Tag color={PRIORITY_TONE[nextTask.priority]}>{PRIORITY_LABEL[nextTask.priority]}</Tag>
                     {nextTask.dueDate ? (
                       <Tag className={daysUntil(nextTask.dueDate) < 0 ? "text-[var(--danger-text)]" : ""}>
-                        {daysUntil(nextTask.dueDate) < 0 ? "in ritardo" : `scade ${shortDate(nextTask.dueDate)}`}
+                        {daysUntil(nextTask.dueDate) < 0 ? "In ritardo" : `Scade ${shortDate(nextTask.dueDate)}`}
                       </Tag>
                     ) : null}
                     {nextTask.subjectId ? <Tag color={subjectColor(subjects, nextTask.subjectId)}>{subjectName(subjects, nextTask.subjectId)}</Tag> : null}
                   </div>
                   <p className="mt-2 text-xs font-bold text-[var(--muted)]">
-                    {formatMinutes(nextTask.estimatedMinutes)} · {ENERGY_LABEL[nextTask.energy]} · importanza {nextTask.importance}/5
+                    {formatMinutes(nextTask.estimatedMinutes)} · {ENERGY_LABEL[nextTask.energy]} · Importanza {nextTask.importance}/5
                   </p>
                   {urgent.length > 1 ? (
                     <ul className="mt-3 grid gap-1 border-t border-[var(--border)] pt-3">
@@ -276,7 +288,7 @@ export function DashboardView() {
                       <div className="min-w-0 flex-1">
                         <p className="two-line-safe text-sm font-black leading-tight">{subjectName(subjects, exam.subjectId)}</p>
                         <p className="text-xs font-bold text-[var(--muted)]">
-                          {format(parseISO(exam.date), "EEE d MMM", { locale: it })} · {exam.preparation}% pronto
+                          {capitalizeFirst(format(parseISO(exam.date), "EEE d MMM", { locale: it }))} · {exam.preparation}% pronto
                         </p>
                         <div className="mt-1.5">
                           <ProgressBar value={exam.preparation} color={color} />
@@ -287,7 +299,12 @@ export function DashboardView() {
                 })}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Nessun esame pianificato.</p>
+              <p className="text-sm text-[var(--muted)]">
+                Nessun esame pianificato.{" "}
+                <button type="button" onClick={() => setActiveView("exams")} className="font-black text-[var(--accent-ink)] hover:underline">
+                  Aggiungi il primo →
+                </button>
+              </p>
             )}
           </Panel>
 
@@ -316,14 +333,19 @@ export function DashboardView() {
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Nessuna materia attiva.</p>
+              <p className="text-sm text-[var(--muted)]">
+                Nessuna materia attiva.{" "}
+                <button type="button" onClick={() => setActiveView("subjects")} className="font-black text-[var(--accent-ink)] hover:underline">
+                  Aggiungi la prima →
+                </button>
+              </p>
             )}
           </Panel>
         </div>
 
         <aside className="grid grid-cols-1 min-w-0 content-start gap-4">
           <Panel>
-            <PanelHeader title="Prossimi giorni" action="Agenda" onAction={() => setActiveView("calendar")} />
+            <PanelHeader title="Prossimi giorni" action="Calendario" onAction={() => setActiveView("calendar")} />
             {nextEvents.length ? (
               <ul className="grid grid-cols-1 gap-2.5">
                 {nextEvents.map((event) => (
@@ -332,7 +354,8 @@ export function DashboardView() {
                     <div className="min-w-0 flex-1">
                       <p className="one-line-safe text-sm font-black">{event.title}</p>
                       <p className="text-xs font-bold text-[var(--muted)]">
-                        {format(parseISO(event.start), "EEE d MMM", { locale: it })} · {timeLabel(event.start)}
+                        {capitalizeFirst(format(parseISO(event.start), "EEE d MMM", { locale: it }))} ·{" "}
+                        {isAllDayEvent(event) ? ALL_DAY_LABEL : timeLabel(event.start)}
                         {event.category === "deadline" || event.category === "exam" ? ` · ${studyDaysLabel(event.start)}` : ""}
                       </p>
                     </div>
@@ -340,12 +363,17 @@ export function DashboardView() {
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Niente in programma.</p>
+              <p className="text-sm text-[var(--muted)]">
+                Niente in programma.{" "}
+                <button type="button" onClick={() => setActiveView("calendar")} className="font-black text-[var(--accent-ink)] hover:underline">
+                  Apri il calendario →
+                </button>
+              </p>
             )}
           </Panel>
 
           <Panel>
-            <PanelHeader title="Obiettivi" action="Tutti" onAction={() => setActiveView("goals")} />
+            <PanelHeader title="Obiettivi" action="Obiettivi" onAction={() => setActiveView("goals")} />
             {goals.filter((goal) => goal.status === "active").length ? (
               <ul className="grid grid-cols-1 gap-3">
                 {goals
@@ -362,7 +390,12 @@ export function DashboardView() {
                   ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Nessun obiettivo attivo.</p>
+              <p className="text-sm text-[var(--muted)]">
+                Nessun obiettivo attivo.{" "}
+                <button type="button" onClick={() => setActiveView("goals")} className="font-black text-[var(--accent-ink)] hover:underline">
+                  Creane uno →
+                </button>
+              </p>
             )}
           </Panel>
 
@@ -384,7 +417,12 @@ export function DashboardView() {
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Aggiungi PDF, immagini o link.</p>
+              <p className="text-sm text-[var(--muted)]">
+                Nessun materiale.{" "}
+                <button type="button" onClick={() => setActiveView("materials")} className="font-black text-[var(--accent-ink)] hover:underline">
+                  Aggiungi PDF, immagini o link →
+                </button>
+              </p>
             )}
           </Panel>
         </aside>

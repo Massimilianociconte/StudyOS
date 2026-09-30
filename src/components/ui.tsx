@@ -84,7 +84,7 @@ export function SectionTitle({
         <h2 className="safe-text text-2xl font-black leading-tight [hyphens:manual] md:text-3xl xl:text-4xl">{title}</h2>
         {subtitle ? <p className="safe-text mt-1 max-w-2xl text-sm font-medium text-[var(--muted)]">{subtitle}</p> : null}
       </div>
-      {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
+      {action ? <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{action}</div> : null}
     </div>
   );
 }
@@ -107,9 +107,17 @@ export function Pill({
   );
 }
 
-export function ProgressBar({ value, color = "var(--accent)" }: { value: number; color?: string }) {
+export function ProgressBar({ value, color = "var(--accent)", label }: { value: number; color?: string; label?: string }) {
+  const clamped = Math.max(0, Math.min(100, value));
   return (
-    <div className="h-2 overflow-hidden rounded-full bg-[var(--surface-strong)]">
+    <div
+      className="h-2 overflow-hidden rounded-full bg-[var(--surface-strong)]"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(clamped)}
+      aria-label={label ?? "Progresso"}
+    >
       <motion.div
         className="h-full rounded-full"
         style={{ background: color }}
@@ -180,12 +188,13 @@ export const inputClass =
 // sinistra: 2px di bordo + 10px di padding + 32px = 44px, come gli altri campi.
 export const fileInputClass = `${inputClass} cursor-pointer py-[5px] pl-[5px] file:mr-3 file:h-8 file:cursor-pointer file:rounded-full file:border-0 file:bg-[var(--accent)] file:px-3 file:text-sm file:font-black file:text-[#10131d]`;
 
-export function EmptyState({ icon, title, body }: { icon: string; title: string; body: string }) {
+export function EmptyState({ icon, title, body, action }: { icon: string; title: string; body: string; action?: ReactNode }) {
   return (
     <div className="quiet-panel grid place-items-center p-8 text-center">
       <Icon name={icon} className="mb-3 h-8 w-8 text-[var(--accent-ink)]" />
       <h3 className="safe-text text-lg font-black">{title}</h3>
       <p className="safe-text mt-1 max-w-sm text-sm text-[var(--muted)]">{body}</p>
+      {action ? <div className="mt-4 flex flex-wrap items-center justify-center gap-2">{action}</div> : null}
     </div>
   );
 }
@@ -200,7 +209,7 @@ export function Segmented<T extends string>({
   className = ""
 }: {
   value: T;
-  options: readonly { id: T; label: string; count?: number; icon?: string }[];
+  options: readonly { id: T; label: string; count?: number; icon?: string; title?: string }[];
   onChange: (value: T) => void;
   label: string;
   size?: "sm" | "md";
@@ -230,7 +239,7 @@ export function Segmented<T extends string>({
 
   useEffect(() => {
     const el = ref.current;
-    const active = el?.querySelector<HTMLElement>('[aria-selected="true"]');
+    const active = el?.querySelector<HTMLElement>('[aria-pressed="true"]');
     if (!el || !active) return;
     const start = active.offsetLeft;
     const end = start + active.offsetWidth;
@@ -249,13 +258,13 @@ export function Segmented<T extends string>({
     const next = options[(index + (event.key === "ArrowRight" ? 1 : -1) + options.length) % options.length];
     event.preventDefault();
     onChange(next.id);
-    requestAnimationFrame(() => ref.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+    requestAnimationFrame(() => ref.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus());
   };
 
   return (
     <div
       ref={ref}
-      role="tablist"
+      role="group"
       aria-label={label}
       onKeyDown={onKeyDown}
       style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
@@ -267,9 +276,9 @@ export function Segmented<T extends string>({
           <button
             key={option.id}
             type="button"
-            role="tab"
-            aria-selected={active}
+            aria-pressed={active}
             tabIndex={active ? 0 : -1}
+            title={option.title}
             onClick={() => onChange(option.id)}
             className={`motion-safe inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full font-extrabold ${
               size === "sm" ? "min-h-8 px-3 text-xs" : "min-h-9 px-3.5 text-sm"

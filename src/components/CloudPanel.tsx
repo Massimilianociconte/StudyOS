@@ -33,12 +33,12 @@ const formatRelative = (iso: string | null) => {
 };
 
 const statusLabel = (sync: CloudSyncState) => {
-  if (!sync.session) return sync.status === "off" ? "non configurato" : "non connesso";
-  if (sync.status === "offline") return "offline";
-  if (sync.status === "syncing") return "sync in corso";
-  if (sync.status === "error") return "errore";
+  if (!sync.session) return sync.status === "off" ? "Non configurato" : "Non connesso";
+  if (sync.status === "offline") return "Offline";
+  if (sync.status === "syncing") return "Sync in corso";
+  if (sync.status === "error") return "Errore";
   if (sync.pendingChanges) return `${sync.pendingCount} in coda`;
-  return "auto-sync attivo";
+  return "Auto-sync attivo";
 };
 
 type Mode = "signin" | "signup";
@@ -258,7 +258,7 @@ export function CloudPanel() {
             <p className="text-xs font-black uppercase text-[var(--faint)]">Connesso come</p>
             <p className="font-black">{session.user.email}</p>
             <p className="mt-1 text-xs text-[var(--muted)]">
-              Email confermata: {session.user.email_confirmed_at ? "si" : "no"} · Ultima sync: {formatRelative(sync.lastSync)}
+              Email confermata: {session.user.email_confirmed_at ? "sì" : "no"} · Ultima sync: {formatRelative(sync.lastSync)}
             </p>
             <p className="mt-1 text-xs text-[var(--muted)]">
               Modifiche in coda: {sync.pendingCount} · Aggiornamenti live: {sync.realtime ? "attivi" : "non attivi (controllo periodico)"}

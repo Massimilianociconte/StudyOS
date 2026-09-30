@@ -4,8 +4,8 @@ import { it } from "date-fns/locale";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { daysUntil, selectableSubjects, subjectColor, subjectName, urgentTasks } from "../lib/selectors";
-import { PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, formatMinutes } from "../lib/labels";
-import { IconButton, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
+import { Button, EmptyState, IconButton, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { useNow } from "../hooks/useNow";
@@ -34,7 +34,7 @@ const dueLabel = (date: string) => {
   if (days === 1) return "Domani";
   if (days === -1) return "Ieri";
   if (days < -1) return `${-days} giorni fa`;
-  if (days < 7) return format(parseISO(date), "EEEE d", { locale: it });
+  if (days < 7) return capitalizeFirst(format(parseISO(date), "EEEE d", { locale: it }));
   return format(parseISO(date), "d MMM", { locale: it });
 };
 
@@ -86,7 +86,7 @@ export function TasksView() {
     <div>
       <SectionTitle title="Task" subtitle="Scadenze, priorità e sottotask in un colpo d'occhio. Clicca una task per modificarla." />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {stats.map((stat) => (
           <div key={stat.label} className="quiet-panel flex items-center gap-3 p-3.5">
             <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: stat.tone }} />
@@ -117,13 +117,13 @@ export function TasksView() {
           <label className="flex items-center gap-2 text-xs font-black text-[var(--muted)]">
             Ordina
             <select
-              className="min-h-9 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--text)]"
+              className="min-h-11 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--text)]"
               value={sort}
               onChange={(event) => setSort(event.target.value as SortMode)}
             >
-              <option value="deadline">per scadenza</option>
-              <option value="priority">per priorità</option>
-              <option value="recent">più recenti</option>
+              <option value="deadline">Per scadenza</option>
+              <option value="priority">Per priorità</option>
+              <option value="recent">Più recenti</option>
             </select>
           </label>
         ) : null}
@@ -134,7 +134,7 @@ export function TasksView() {
         <Panel>
           <div className="mb-3 flex items-baseline justify-between gap-2">
             <h3 className="text-xl font-black">Piano di oggi</h3>
-            <span className="text-xs font-bold text-[var(--muted)]">le 6 task con scadenza e priorità più pressanti</span>
+            <span className="text-xs font-bold text-[var(--muted)]">Le 6 task con scadenza e priorità più pressanti</span>
           </div>
           <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />
         </Panel>
@@ -186,9 +186,15 @@ function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnTy
       <label className="relative block min-w-0">
         <span className="sr-only">Nuova task</span>
         <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Aggiungi una task e premi Invio" />
+        <input
+          id="quick-task-title"
+          className={`${inputClass} pl-10`}
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Aggiungi una task e premi Invio"
+        />
       </label>
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] xl:contents">
+      <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] xl:contents">
         <select className={`${selectClass} min-w-0 xl:max-w-[200px]`} value={subjectId} onChange={(event) => setSubjectId(event.target.value)} aria-label="Materia">
           <option value="">Nessuna materia</option>
           {selectableSubjects(subjects, subjectId).map((subject) => (
@@ -208,7 +214,7 @@ function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnTy
         <button
           type="submit"
           disabled={!title.trim()}
-          className="motion-safe col-span-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50 sm:col-span-1"
+          className="motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50 min-[480px]:col-span-3 sm:col-span-1"
         >
           <Icon name="Plus" className="h-4 w-4" /> Aggiungi
         </button>
@@ -240,7 +246,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
         type="button"
         aria-label={done ? `Segna "${task.title}" da fare` : `Completa "${task.title}"`}
         onClick={() => actions.onToggle(task.id)}
-        className={`motion-safe grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 ${
+        className={`motion-safe relative grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-2.5 after:content-[""] ${
           done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
         }`}
         style={!done && task.subjectId ? { borderColor: subjectColor(actions.subjects, task.subjectId) } : undefined}
@@ -272,8 +278,12 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
               {subtasksDone}/{task.subtasks.length}
             </span>
           ) : null}
-          {timerRunning ? <span className="text-[var(--accent-ink)]">⏱ {formatElapsedSeconds(elapsedSeconds)}</span> : null}
-          {completedLate ? <span className="text-[var(--warning-text)]">completata in ritardo</span> : null}
+          {timerRunning ? (
+            <span className="inline-flex items-center gap-1 text-[var(--accent-ink)]">
+              <Icon name="Timer" className="h-3 w-3" /> {formatElapsedSeconds(elapsedSeconds)}
+            </span>
+          ) : null}
+          {completedLate ? <span className="text-[var(--warning-text)]">Completata in ritardo</span> : null}
           {!compact && (task.status === "doing" || task.status === "blocked" || task.status === "postponed") ? (
             <span className="text-[var(--text)]">{TASK_STATUS_LABEL[task.status]}</span>
           ) : null}
@@ -303,11 +313,11 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
       ) : null}
 
       <span className="hidden shrink-0 items-center gap-1 transition-opacity can-hover:opacity-0 can-hover:group-focus-within:opacity-100 can-hover:group-hover:opacity-100 md:flex">
-        <IconButton icon="PenLine" label={`Modifica "${task.title}"`} className="h-8 w-8 bg-transparent" onClick={() => actions.onEdit(task.id)} />
+        <IconButton icon="PenLine" label={`Modifica "${task.title}"`} className="relative h-8 w-8 bg-transparent after:absolute after:-inset-1.5 after:content-['']" onClick={() => actions.onEdit(task.id)} />
         <IconButton
           icon="Trash2"
           label={`Elimina "${task.title}"`}
-          className="h-8 w-8 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+          className="relative h-8 w-8 bg-transparent text-[var(--danger-text)] after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--danger-bg)]"
           onClick={() => actions.onDelete(task)}
         />
       </span>
@@ -349,7 +359,20 @@ function GroupedList({ tasks, sort, actions }: { tasks: Task[]; sort: SortMode; 
   return (
     <Panel>
       {open.length === 0 ? (
-        <p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Nessuna task aperta. Aggiungine una qui sopra.</p>
+        <EmptyState
+          icon="Check"
+          title="Nessuna task aperta"
+          body="Aggiungine una qui sopra: titolo, materia, priorità e scadenza."
+          action={
+            <Button
+              variant="primary"
+              icon="Plus"
+              onClick={() => document.getElementById("quick-task-title")?.focus()}
+            >
+              Nuova task
+            </Button>
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {groups.map((group) => (
@@ -373,7 +396,7 @@ function GroupedList({ tasks, sort, actions }: { tasks: Task[]; sort: SortMode; 
             type="button"
             onClick={() => setShowDone((value) => !value)}
             aria-expanded={showDone}
-            className="flex w-full items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-left text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
+            className="flex min-h-11 w-full items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-left text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
           >
             <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${showDone ? "rotate-90" : ""}`} />
             Completate
@@ -450,7 +473,7 @@ function Kanban({
                   />
                 ))}
                 {items.length === 0 ? (
-                  <div className="rounded-[18px] border border-dashed border-[var(--border)] p-4 text-center text-xs font-bold text-[var(--faint)]">Trascina qui una task</div>
+                  <div className="rounded-[18px] border border-dashed border-[var(--border)] p-4 text-center text-xs font-bold text-[var(--faint)]">Trascina o sposta qui una task</div>
                 ) : null}
               </div>
             </section>
@@ -502,7 +525,7 @@ function KanbanTaskCard({
           type="button"
           aria-label={done ? `Riapri "${task.title}"` : `Completa "${task.title}"`}
           onClick={() => actions.onToggle(task.id)}
-          className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${
+          className={`relative mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-3 after:content-[""] ${
             done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
           }`}
         >
@@ -527,12 +550,16 @@ function KanbanTaskCard({
             {subtasksDone}/{task.subtasks.length}
           </span>
         ) : null}
-        {timerRunning ? <span className="text-[var(--accent-ink)]">⏱ {formatElapsedSeconds(elapsedSeconds)}</span> : null}
+        {timerRunning ? (
+          <span className="inline-flex items-center gap-1 text-[var(--accent-ink)]">
+            <Icon name="Timer" className="h-3 w-3" /> {formatElapsedSeconds(elapsedSeconds)}
+          </span>
+        ) : null}
       </div>
       <div className="mt-1.5 flex items-center justify-end gap-1 transition-opacity can-hover:opacity-0 can-hover:group-focus-within:opacity-100 can-hover:group-hover:opacity-100">
         {/* Alternativa al trascinamento, che su molti tablet touch non è disponibile. */}
         <select
-          className="mr-auto min-h-7 max-w-[120px] rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-[11px] font-black text-[var(--muted)]"
+          className="mr-auto min-h-11 max-w-[140px] rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-[11px] font-black text-[var(--muted)]"
           value={task.status}
           onChange={(event) => actions.onStatus(task.id, event.target.value as Task["status"])}
           aria-label={`Sposta "${task.title}" in un'altra colonna`}
@@ -544,11 +571,17 @@ function KanbanTaskCard({
             </option>
           ))}
         </select>
-        <IconButton icon="PenLine" label={`Modifica "${task.title}"`} className="h-7 w-7 bg-transparent" draggable={false} onClick={() => actions.onEdit(task.id)} />
+        <IconButton
+          icon="PenLine"
+          label={`Modifica "${task.title}"`}
+          className="relative h-7 w-7 bg-transparent after:absolute after:-inset-2 after:content-['']"
+          draggable={false}
+          onClick={() => actions.onEdit(task.id)}
+        />
         <IconButton
           icon="Trash2"
           label={`Elimina "${task.title}"`}
-          className="h-7 w-7 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+          className="relative h-7 w-7 bg-transparent text-[var(--danger-text)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--danger-bg)]"
           draggable={false}
           onClick={() => actions.onDelete(task)}
         />
@@ -560,10 +593,10 @@ function KanbanTaskCard({
 function Matrix({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
   const urgent = (task: Task) => task.priority === "urgent" || task.priority === "high";
   const quadrants = [
-    { title: "Fai ora", hint: "importante e urgente", tone: "var(--accent-3)", test: (task: Task) => task.importance >= 4 && urgent(task) },
-    { title: "Pianifica", hint: "importante, non urgente", tone: "var(--accent)", test: (task: Task) => task.importance >= 4 && !urgent(task) },
-    { title: "Delega o riduci", hint: "urgente, poco importante", tone: "var(--warning)", test: (task: Task) => task.importance < 4 && urgent(task) },
-    { title: "Rimanda", hint: "né urgente né importante", tone: "var(--faint)", test: (task: Task) => task.importance < 4 && !urgent(task) }
+    { title: "Fai ora", hint: "Importante e urgente", tone: "var(--accent-3)", test: (task: Task) => task.importance >= 4 && urgent(task) },
+    { title: "Pianifica", hint: "Importante, non urgente", tone: "var(--accent)", test: (task: Task) => task.importance >= 4 && !urgent(task) },
+    { title: "Delega o riduci", hint: "Urgente, poco importante", tone: "var(--warning)", test: (task: Task) => task.importance < 4 && urgent(task) },
+    { title: "Rimanda", hint: "Né urgente né importante", tone: "var(--faint)", test: (task: Task) => task.importance < 4 && !urgent(task) }
   ];
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

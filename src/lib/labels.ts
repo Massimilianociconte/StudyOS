@@ -155,6 +155,15 @@ export const formatMinutes = (minutes: number) => {
 
 export const formatNumber = (value: number) => decimal.format(value);
 
+/** Etichetta degli eventi senza orario, che occupano l'intera giornata. */
+export const ALL_DAY_LABEL = "Tutto il giorno";
+
+/**
+ * Prima lettera maiuscola: nomi di giorni/mesi da date-fns a inizio frase, etichette
+ * dinamiche in Tag/Pill. Non tocca il resto della stringa (acronimi e nomi propri salvi).
+ */
+export const capitalizeFirst = (value: string) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : value);
+
 export const hostOf = (url: string | undefined) => {
   if (!url) return "";
   try {

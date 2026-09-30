@@ -14,7 +14,7 @@ import { StudyTimerWatcher } from "./StudyTimerWatcher";
 
 // `short`: etichetta per la barra compatta dei tablet e per la barra in basso su telefono.
 const navItems: { view: AppView; label: string; short: string; icon: string }[] = [
-  { view: "dashboard", label: "Dashboard", short: "Home", icon: "LayoutDashboard" },
+  { view: "dashboard", label: "Dashboard", short: "Dashboard", icon: "LayoutDashboard" },
   { view: "calendar", label: "Calendario", short: "Calendario", icon: "CalendarDays" },
   { view: "tasks", label: "Task", short: "Task", icon: "Check" },
   { view: "study", label: "Studio", short: "Studio", icon: "Timer" },
@@ -25,7 +25,7 @@ const navItems: { view: AppView; label: string; short: string; icon: string }[] 
   { view: "materials", label: "Materiali", short: "Materiali", icon: "Paperclip" },
   { view: "goals", label: "Obiettivi", short: "Obiettivi", icon: "Target" },
   { view: "stats", label: "Statistiche", short: "Statistiche", icon: "BarChart3" },
-  { view: "settings", label: "Impostazioni", short: "Opzioni", icon: "Settings" }
+  { view: "settings", label: "Impostazioni", short: "Impostazioni", icon: "Settings" }
 ];
 
 const MOBILE_PRIMARY: AppView[] = ["dashboard", "calendar", "tasks", "study"];
@@ -79,8 +79,8 @@ export function AppShell({ children }: PropsWithChildren) {
                     type="button"
                     onClick={() => setActiveView(item.view)}
                     aria-current={active ? "page" : undefined}
-                    aria-label={item.label}
-                    title={item.label}
+                    aria-label={item.view === "barb" ? "BARB · UNIMI — Piano del corso" : item.label}
+                    title={item.view === "barb" ? "BARB · UNIMI — Piano del corso" : item.label}
                     className={`motion-safe flex min-h-[52px] w-full shrink-0 flex-col items-center justify-center gap-0.5 rounded-[18px] px-0.5 text-[10px] font-black leading-tight [@media(max-height:860px)]:min-h-[46px] ${
                       active ? "bg-[var(--accent)] text-[#10131d]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
                     }`}
@@ -110,8 +110,8 @@ export function AppShell({ children }: PropsWithChildren) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="one-line-safe block text-2xl font-black">StudyOS</span>
-                <span className="one-line-safe block text-xs font-bold text-[var(--muted)]" title={displayName || "local-first workspace"}>
-                  {displayName || "local-first workspace"}
+                <span className="one-line-safe block text-xs font-bold text-[var(--muted)]" title={displayName || "Local-first workspace"}>
+                  {displayName || "Local-first workspace"}
                 </span>
               </span>
             </button>
@@ -125,6 +125,7 @@ export function AppShell({ children }: PropsWithChildren) {
                     type="button"
                     onClick={() => setActiveView(item.view)}
                     aria-current={active ? "page" : undefined}
+                    title={item.view === "barb" ? "Piano del corso BARB (UNIMI)" : item.label}
                     className={`motion-safe flex min-h-11 w-full items-center gap-3 rounded-[20px] px-3 text-left text-sm font-black [@media(max-height:860px)]:min-h-10 ${
                       active
                         ? "bg-[var(--accent)] text-[#10131d]"
@@ -176,8 +177,8 @@ export function AppShell({ children }: PropsWithChildren) {
               />
               <button
                 type="button"
-                aria-label="Apri profilo"
-                title="Apri profilo"
+                aria-label="Profilo e impostazioni"
+                title="Profilo e impostazioni"
                 onClick={() => setActiveView("settings")}
                 className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
               >
@@ -260,14 +261,13 @@ export function AppShell({ children }: PropsWithChildren) {
           type="button"
           onClick={() => setMoreOpen(true)}
           aria-haspopup="dialog"
+          aria-label="Tutte le sezioni"
           className={`grid min-h-14 min-w-0 place-items-center rounded-[22px] text-[10.5px] font-black tracking-tight ${
             MOBILE_PRIMARY.includes(activeView) ? "text-[var(--muted)]" : "bg-[var(--accent)] text-[#10131d]"
           }`}
         >
           <Icon name="Menu" className="h-5 w-5" />
-          <span className="one-line-safe px-0.5 text-center">
-            {MOBILE_PRIMARY.includes(activeView) ? "Altro" : navItems.find((item) => item.view === activeView)?.short ?? "Altro"}
-          </span>
+          <span className="one-line-safe px-0.5 text-center">Sezioni</span>
         </button>
       </nav>
 

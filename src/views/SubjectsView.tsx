@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { Attachment, Subject } from "../types";
-import { useStudyStore } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { shortDate, studyDaysUntil } from "../lib/selectors";
 import { readImageFile } from "../lib/files";
 import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
-import { Button, Drawer, Field, IconButton, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { Button, Drawer, EmptyState, Field, IconButton, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TopicManager } from "../components/TopicManager";
 import { isNullableString, useUiState } from "../lib/uiState";
@@ -33,7 +33,8 @@ export function SubjectsView() {
   const [openId, setOpenId] = useUiState<string | null>("subjects.open", null, { scope: "tab", validate: isNullableString });
   const [showArchived, setShowArchived] = useUiState("subjects.showArchived", false);
   const [showCompleted, setShowCompleted] = useUiState("subjects.showCompleted", false);
-  const { subjects, tasks, sessions, exams, attachments, addSubject, updateSubject } = useStudyStore();
+  const { subjects, tasks, sessions, exams, attachments, addSubject, updateSubject, setActiveView } = useStudyStore();
+  const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
   const state = { tasks, sessions, exams, attachments };
 
   const isArchived = (subject: Subject) => subject.status === "archived" || subject.archived;
@@ -79,9 +80,23 @@ export function SubjectsView() {
       <NewSubjectBar onAdd={async (name, color) => void (await addSubject({ name, color, status: "active", icon: "BookOpen" }))} />
 
       {active.length === 0 ? (
-        <div className="quiet-panel p-8 text-center text-sm font-bold text-[var(--muted)]">
-          Nessuna materia ancora. Aggiungine una qui sopra, oppure importa i corsi dalla sezione BARB · UNIMI.
-        </div>
+        <EmptyState
+          icon="BookOpen"
+          title="Nessuna materia"
+          body="Aggiungine una qui sopra, oppure importa i corsi dalla sezione BARB · UNIMI."
+          action={
+            <>
+              <Button variant="primary" icon="Plus" onClick={() => document.getElementById("new-subject-name")?.focus()}>
+                Aggiungi materia
+              </Button>
+              {showBarb ? (
+                <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
+                  Vai al corso BARB
+                </Button>
+              ) : null}
+            </>
+          }
+        />
       ) : (
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
           {active.map((subject) => (
@@ -119,7 +134,7 @@ function NewSubjectBar({ onAdd }: { onAdd: (name: string, color: string) => Prom
       <label className="relative block min-w-0 flex-1">
         <span className="sr-only">Nome nuova materia</span>
         <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input className={`${inputClass} pl-10`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nuova materia (es. Biochimica)" />
+        <input id="new-subject-name" className={`${inputClass} pl-10`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nuova materia (Es. Biochimica)" />
       </label>
       <div className="flex items-center gap-1.5 px-1" role="radiogroup" aria-label="Colore">
         {SWATCHES.map((swatch) => (
@@ -219,8 +234,10 @@ function SubjectCard({
 function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose: () => void }) {
   const { tasks, sessions, exams, attachments, subjects, updateSubject, addAttachment, updateAttachment, deleteAttachment, setActiveView } = useStudyStore();
   const [draft, setDraft] = useState({ name: "", teacher: "", cfu: "6", semester: "", targetGrade: "", color: SWATCHES[0], notes: "" });
-  const [message, setMessage] = useState("");
+  const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
   const [editingAttachment, setEditingAttachment] = useState<Attachment | null>(null);
+  const fail = (text: string) => setFeedback({ text, error: true });
+  const ok = (text: string) => setFeedback({ text, error: false });
 
   useEffect(() => {
     if (!subject) return;
@@ -233,7 +250,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
       color: subject.color,
       notes: subject.notes
     });
-    setMessage("");
+    setFeedback(null);
     setEditingAttachment(null);
   }, [subject?.id]);
 
@@ -242,17 +259,17 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
   const save = async () => {
     if (!subject) return;
     if (!draft.name.trim()) {
-      setMessage("Il nome non può essere vuoto.");
+      fail("Il nome non può essere vuoto.");
       return;
     }
     const cfu = Number(draft.cfu);
     const targetGrade = draft.targetGrade.trim() ? Number(draft.targetGrade) : undefined;
     if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) {
-      setMessage("CFU non validi (0–60).");
+      fail("CFU non validi (0–60).");
       return;
     }
     if (targetGrade !== undefined && (!Number.isFinite(targetGrade) || targetGrade < 18 || targetGrade > 31)) {
-      setMessage("Voto obiettivo tra 18 e 30 (31 = 30 e lode).");
+      fail("Voto obiettivo tra 18 e 30 (31 = 30 e lode).");
       return;
     }
     await updateSubject(subject.id, {
@@ -264,7 +281,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
       color: draft.color,
       notes: draft.notes
     });
-    setMessage("Salvato.");
+    ok("Salvato.");
   };
 
   const archived = subject?.status === "archived";
@@ -297,7 +314,11 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
               {archived ? "Ripristina" : "Archivia"}
             </Button>
             <span className="flex-1" />
-            {message ? <span className="text-xs font-bold text-[var(--muted)]">{message}</span> : null}
+            {feedback ? (
+              <span role={feedback.error ? "alert" : "status"} className={`text-xs font-bold ${feedback.error ? "text-[var(--danger-text)]" : "text-[var(--muted)]"}`}>
+                {feedback.text}
+              </span>
+            ) : null}
             <Button variant="primary" icon="Check" onClick={() => void save()}>
               Salva
             </Button>
@@ -332,7 +353,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                 <input className={inputClass} value={draft.teacher} onChange={(event) => setDraft((value) => ({ ...value, teacher: event.target.value }))} />
               </Field>
               <Field label="Semestre">
-                <input className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))} placeholder="es. 1° semestre 2026/2027" />
+                <input className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))} placeholder="Es. 1° semestre 2026/2027" />
               </Field>
               <Field label="CFU">
                 <input className={inputClass} type="number" min={0} max={60} value={draft.cfu} onChange={(event) => setDraft((value) => ({ ...value, cfu: event.target.value }))} />
@@ -345,7 +366,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                   max={31}
                   value={draft.targetGrade}
                   onChange={(event) => setDraft((value) => ({ ...value, targetGrade: event.target.value }))}
-                  placeholder="es. 28"
+                  placeholder="Es. 28"
                 />
               </Field>
             </div>
@@ -379,7 +400,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
           <section>
             <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-xs font-black uppercase text-[var(--faint)]">Materiali · {stats.materials.length}</h4>
-              <div className="flex gap-1.5">
+              <div className="flex flex-wrap justify-end gap-1.5">
                 <label className="motion-safe inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]">
                   <Icon name="Upload" className="h-3.5 w-3.5" /> Allegato
                   <input
@@ -389,11 +410,11 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                       const file = event.target.files?.[0];
                       event.target.value = "";
                       if (!file) return;
-                      setMessage("");
+                      setFeedback(null);
                       try {
                         await addAttachment(file, { type: "subject", id: subject.id });
                       } catch (error) {
-                        setMessage(error instanceof Error ? error.message : "Allegato non importato.");
+                        fail(error instanceof Error ? error.message : "Allegato non importato.");
                       }
                     }}
                   />
@@ -409,7 +430,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                         const cover = await readImageFile(event.target.files?.[0]);
                         if (cover) await updateSubject(subject.id, { cover });
                       } catch (error) {
-                        setMessage(error instanceof Error ? error.message : "Immagine non valida.");
+                        fail(error instanceof Error ? error.message : "Immagine non valida.");
                       } finally {
                         event.target.value = "";
                       }

@@ -101,7 +101,16 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     const end = new Date(event.end);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
     const description = [event.description, event.notes].filter((part) => part?.trim()).join("\n\n");
-    lines.push("BEGIN:VEVENT", `UID:${event.sourceUid ?? `${event.id}@studyos`}`, `DTSTAMP:${stamp}`, when("DTSTART", start), when("DTEND", end));
+    lines.push("BEGIN:VEVENT", `UID:${event.sourceUid ?? `${event.id}@studyos`}`, `DTSTAMP:${stamp}`);
+    if (event.allDay === true) {
+      // Giorno intero in coordinate locali (VALUE=DATE): resta lo stesso giorno in ogni fuso.
+      // La fine è esclusiva: un evento del 3 ottobre ha DTEND il 4 (se i dati sono
+      // incoerenti si ripiega comunque sul giorno dopo l'inizio).
+      const exclusiveEnd = end > start ? end : new Date(start.getTime() + 24 * 60 * 60_000);
+      lines.push(`DTSTART;VALUE=DATE:${dateStamp(start)}`, `DTEND;VALUE=DATE:${dateStamp(exclusiveEnd)}`);
+    } else {
+      lines.push(when("DTSTART", start), when("DTEND", end));
+    }
     lines.push(`SUMMARY:${escapeText(event.title)}`);
     if (description) lines.push(`DESCRIPTION:${escapeText(description)}`);
     const subject = subjectName(event.subjectId);

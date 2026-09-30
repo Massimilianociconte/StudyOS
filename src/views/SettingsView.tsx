@@ -110,7 +110,8 @@ export function SettingsView() {
         setMessage(`Backup importato: ${summary.text}.`);
       } else {
         const result = await mergeData(snapshot);
-        setMessage(`Backup parziale (${scope}) unito ai dati esistenti: ${result.added} nuovi, ${result.updated} aggiornati.`);
+        const scopeLabel = scope === "tasks" ? "task" : scope === "calendar" ? "calendario" : scope === "subjects" ? "materie" : scope;
+        setMessage(`Backup parziale (${scopeLabel}) unito ai dati esistenti: ${result.added} nuovi, ${result.updated} aggiornati.`);
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Import non riuscito.");
@@ -291,6 +292,7 @@ export function SettingsView() {
                   <button
                     key={mode}
                     type="button"
+                    aria-pressed={settings.themeMode === mode}
                     onClick={() => updateSettings({ themeMode: mode })}
                     className={`min-h-12 rounded-[20px] border px-3 text-sm font-black ${
                       settings.themeMode === mode ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)]"
@@ -308,6 +310,7 @@ export function SettingsView() {
                   <button
                     key={palette.id}
                     type="button"
+                    aria-pressed={settings.palette === palette.id}
                     onClick={() => updateSettings({ palette: palette.id })}
                     className={`flex min-h-14 items-center justify-between rounded-[22px] border p-3 text-left ${
                       settings.palette === palette.id ? "border-[var(--accent)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--surface-soft)]"
@@ -450,16 +453,20 @@ export function SettingsView() {
         <Panel>
           <h3 className="mb-4 text-2xl font-black">Dati locali</h3>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <DataStat label="materie" value={subjects.length} />
-            <DataStat label="esami" value={exams.length} />
-            <DataStat label="task" value={tasks.length} />
-            <DataStat label="eventi" value={events.length} />
-            <DataStat label="allegati" value={attachments.length} />
+            <DataStat label="Materie" value={subjects.length} />
+            <DataStat label="Esami" value={exams.length} />
+            <DataStat label="Task" value={tasks.length} />
+            <DataStat label="Eventi" value={events.length} />
+            <DataStat label="Allegati" value={attachments.length} />
           </div>
           <Button className="mt-5" icon="Trash2" variant="danger" onClick={() => void resetData()}>
             Reset dati locali
           </Button>
-          {message ? <p className="mt-4 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{message}</p> : null}
+          {message ? (
+            <p role="status" className="mt-4 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
+              {message}
+            </p>
+          ) : null}
         </Panel>
 
         <CloudPanel />

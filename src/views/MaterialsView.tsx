@@ -202,7 +202,7 @@ export function MaterialsView() {
                       rel="noreferrer"
                       aria-label={`Apri ${attachment.name}`}
                       title="Apri"
-                      className="grid grid-cols-1 h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-[#10131d]"
+                      className="relative grid grid-cols-1 h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-[#10131d] after:absolute after:-inset-1.5 after:rounded-full after:content-['']"
                     >
                       <Icon name="ExternalLink" className="h-4 w-4" />
                     </a>
@@ -212,7 +212,7 @@ export function MaterialsView() {
                       download={attachment.name}
                       aria-label={`Scarica ${attachment.name}`}
                       title="Scarica"
-                      className="grid grid-cols-1 h-8 w-8 place-items-center rounded-full bg-[var(--surface-strong)]"
+                      className="relative grid grid-cols-1 h-8 w-8 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-1.5 after:rounded-full after:content-['']"
                     >
                       <Icon name="Download" className="h-4 w-4" />
                     </a>

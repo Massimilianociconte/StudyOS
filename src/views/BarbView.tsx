@@ -87,7 +87,7 @@ const formatDateTime = (iso: string | null | undefined) => {
 };
 
 function Missing({ label }: { label?: string }) {
-  return <span className="font-bold text-[var(--faint)]">{label ?? "non disponibile"}</span>;
+  return <span className="font-bold text-[var(--faint)]">{label ?? "Non disponibile"}</span>;
 }
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
@@ -325,7 +325,7 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
       <p className="mt-6 flex items-start gap-2 px-1 text-xs text-[var(--muted)]">
         <Icon name="Info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
-          <span className="font-black text-[var(--text)]">non disponibile</span> = campo non pubblicato nella fonte ufficiale (mai inventato). Ogni scheda riporta fonte e data
+          <span className="font-black text-[var(--text)]">Non disponibile</span> = campo non pubblicato nella fonte ufficiale (mai inventato). Ogni scheda riporta fonte e data
           di verifica.
           {notOffered.length ? ` Non erogati nell'A.A. ${BARB_META.academicYear}: ${notOffered.map((course) => course.name).join(", ")}.` : ""}
         </span>
@@ -592,7 +592,7 @@ function CourseDrawer({
                           <p className="font-black">
                             {teacher.displayName}
                             {teacher.id === course.responsibleTeacherId ? (
-                              <span className="ml-2 rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-black text-[var(--muted)]">responsabile</span>
+                              <span className="ml-2 rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-black text-[var(--muted)]">Responsabile</span>
                             ) : null}
                           </p>
                           {teacher.email ? (
@@ -612,7 +612,7 @@ function CourseDrawer({
                   </ul>
                 ) : (
                   <p className="text-sm">
-                    <Missing label={course.offered === false ? "nessun docente (non erogato)" : "non pubblicati sulla scheda"} />
+                    <Missing label={course.offered === false ? "Nessun docente (non erogato)" : "Non pubblicati sulla scheda"} />
                   </p>
                 )}
               </section>
@@ -641,7 +641,7 @@ function CourseDrawer({
               <div className="flex flex-wrap gap-2">
                 {course.officialPageUrl ? <LinkButton href={course.officialPageUrl} icon="ExternalLink">Scheda ufficiale</LinkButton> : null}
                 {course.arielUrl ? <LinkButton href={course.arielUrl} icon="Globe">Ariel</LinkButton> : null}
-                {!course.officialPageUrl && !course.arielUrl ? <Missing label="nessun link ufficiale" /> : null}
+                {!course.officialPageUrl && !course.arielUrl ? <Missing label="Nessun link ufficiale" /> : null}
               </div>
             </>
           ) : null}
@@ -752,7 +752,7 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
                       <span className="truncate underline decoration-[var(--accent)] underline-offset-2">{teacher.email}</span>
                     </a>
                   ) : (
-                    <Missing label="email non pubblicata" />
+                    <Missing label="Email non pubblicata" />
                   )}
                   {teacher.officeHours ? (
                     <p className="flex items-start gap-1.5 text-[var(--muted)]">
@@ -867,7 +867,7 @@ function RoomsTab({ courses }: { courses: BarbCourse[] }) {
           {rooms.map((room) => (
             <div key={`${room.room}-${room.building}`} className="quiet-panel p-3 text-sm">
               <p className="font-black">{room.room}</p>
-              <p className="text-xs text-[var(--muted)]">{room.building ?? "edificio non disponibile"}</p>
+              <p className="text-xs text-[var(--muted)]">{room.building ?? "Edificio non disponibile"}</p>
               <p className="mt-1 text-xs">{room.courses.join(", ")}</p>
             </div>
           ))}
@@ -938,7 +938,7 @@ function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.get
                   {timetable.note ? <span className="block text-[var(--muted)]">{timetable.note}</span> : null}
                 </>
               ) : (
-                <Missing label="non ancora verificato" />
+                <Missing label="Non ancora verificato" />
               )}
             </dd>
           </div>
@@ -1044,7 +1044,7 @@ function WeekGrid({ courses }: { courses: BarbCourse[] }) {
                       {rule.startTime}–{rule.endTime}
                     </p>
                     <p className="two-line-safe">{course.name}</p>
-                    <p className="text-[var(--muted)]">{rule.room ?? "aula n.d."}</p>
+                    <p className="text-[var(--muted)]">{rule.room ?? "Aula n.d."}</p>
                   </div>
                 ))
               )}

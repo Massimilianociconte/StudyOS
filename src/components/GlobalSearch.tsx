@@ -7,6 +7,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
 import { inputClass } from "./ui";
 import {
+  ALL_DAY_LABEL,
   ATTACHMENT_KIND_LABEL,
   EVENT_CATEGORY_LABEL,
   EXAM_STATUS_LABEL,
@@ -143,7 +144,10 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
         { text: event.notes, weight: 0.4 }
       ]);
       if (s > 0) {
-        const when = format(parseISO(event.start), "d MMM HH:mm", { locale: it });
+        const when =
+          event.allDay === true
+            ? `${format(parseISO(event.start), "d MMM", { locale: it })} · ${ALL_DAY_LABEL}`
+            : format(parseISO(event.start), "d MMM HH:mm", { locale: it });
         out.push({
           id: event.id,
           kind: "event",
@@ -377,9 +381,10 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
             inputRef.current?.focus();
           }}
           aria-label="Pulisci ricerca"
+          title="Cancella ricerca"
           className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface)]"
         >
-          <Icon name="MoreHorizontal" className="h-4 w-4" />
+          <Icon name="X" className="h-4 w-4" />
         </button>
       ) : null}
 

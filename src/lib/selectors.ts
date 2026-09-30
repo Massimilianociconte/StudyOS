@@ -49,6 +49,19 @@ export const studyDaysLabel = (date: string | Date, from: string | Date = new Da
 
 export const eventMinutes = (event: CalendarEvent) => Math.max(15, differenceInMinutes(parseISO(event.end), parseISO(event.start)));
 
+/** Evento "Tutto il giorno" (solo flag esplicito: `undefined` = evento con orario). */
+export const isAllDayEvent = (event: Pick<CalendarEvent, "allDay">) => event.allDay === true;
+
+/**
+ * Intervallo ISO di un evento "Tutto il giorno" nel giorno locale `day`: dalla mezzanotte
+ * alla mezzanotte successiva. La fine è esclusiva (come in iCalendar): l'evento appartiene
+ * a un solo giorno e l'ordinamento per `start` lo mette prima degli eventi con orario.
+ */
+export const allDayRange = (day: Date) => {
+  const start = startOfDay(day);
+  return { start: start.toISOString(), end: addDays(start, 1).toISOString() };
+};
+
 /** Eventi di oggi, incluse le occorrenze delle serie ripetute. */
 export const todayEvents = (events: CalendarEvent[]) =>
   expandEvents(events, startOfDay(new Date()), addDays(startOfDay(new Date()), 1)).filter((event) =>

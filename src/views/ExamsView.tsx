@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { Exam } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, studyDaysUntil, subjectColor, subjectName } from "../lib/selectors";
-import { EXAM_STATUS_LABEL, formatMinutes } from "../lib/labels";
+import { EXAM_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
 import { readImageFile } from "../lib/files";
 import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Tag, fileInputClass, inputClass } from "../components/ui";
@@ -181,7 +181,7 @@ export function ExamsView() {
           <Icon name="Award" className="h-4 w-4 text-[var(--accent-ink)]" /> Libretto
         </span>
         <span className="text-sm font-bold text-[var(--muted)]">
-          media ponderata <strong className="text-[var(--text)]">{formatAverage(stats.weighted)}</strong>
+          Media ponderata <strong className="text-[var(--text)]">{formatAverage(stats.weighted)}</strong>
         </span>
         <span className="text-sm font-bold text-[var(--muted)]">
           <strong className="text-[var(--text)]">{stats.cfuEarned}</strong> CFU
@@ -219,9 +219,9 @@ export function ExamsView() {
               <h3 className="mb-2 px-1 text-xs font-black uppercase text-[var(--warning-text)]">Esito da registrare · {toRecord.length}</h3>
               <ul className="soft-panel grid grid-cols-1 gap-0.5 p-2">
                 {toRecord.map((exam) => (
-                  <li key={exam.id} className="flex min-w-0 items-center gap-3 rounded-[16px] px-2.5 py-2">
+                  <li key={exam.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-[16px] px-2.5 py-2">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: subjectColor(subjects, exam.subjectId) }} />
-                    <button type="button" onClick={() => openEdit(exam)} className="min-w-0 flex-1 text-left">
+                    <button type="button" onClick={() => openEdit(exam)} className="min-w-0 flex-1 basis-40 text-left">
                       <span className="one-line-safe block text-sm font-extrabold">{subjectName(subjects, exam.subjectId)}</span>
                       <span className="block text-xs font-bold text-[var(--muted)]">{format(parseISO(exam.date), "d MMMM yyyy", { locale: it })} · data passata</span>
                     </button>
@@ -281,7 +281,18 @@ export function ExamsView() {
       />
 
       {formOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label={editingExam ? "Modifica esame" : "Nuovo esame"}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setFormOpen(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setFormOpen(false);
+          }}
+        >
           <section className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 sm:p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -467,7 +478,7 @@ function ExamCard({
         <button type="button" onClick={onEdit} className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-lg font-black leading-tight">{name}</h3>
           <p className="text-xs font-bold text-[var(--muted)]">
-            {format(parseISO(exam.date), "EEEE d MMMM · HH:mm", { locale: it })}
+            {capitalizeFirst(format(parseISO(exam.date), "EEEE d MMMM · HH:mm", { locale: it }))}
             {exam.cover ? ` · ${remaining} ${remaining === 1 ? "giorno" : "giorni"}` : ""}
           </p>
         </button>
@@ -476,14 +487,14 @@ function ExamCard({
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Tag>{EXAM_STATUS_LABEL[exam.status]}</Tag>
-        <Tag>obiettivo {exam.targetGrade}</Tag>
+        <Tag>Obiettivo {exam.targetGrade}</Tag>
         {risk ? (
           <span
             className={`inline-flex min-h-6 items-center rounded-full px-2 text-[11px] font-black ${
               risk === "alto" ? "bg-[var(--danger-bg)] text-[var(--danger-text)]" : "bg-[var(--warning-bg)] text-[var(--warning-text)]"
             }`}
           >
-            rischio {risk}
+            Rischio {risk}
           </span>
         ) : null}
       </div>
@@ -492,11 +503,11 @@ function ExamCard({
         <div className="mb-1 flex items-center justify-between gap-2 text-xs font-black">
           <span className="text-[var(--faint)] uppercase">Preparazione</span>
           <span className="flex items-center gap-1">
-            <button type="button" aria-label="Riduci preparazione del 5%" onClick={() => onPrep(-5)} className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)]">
+            <button type="button" aria-label="Riduci preparazione del 5%" onClick={() => onPrep(-5)} className="relative grid h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
               −
             </button>
             <span className="w-10 text-center tabular-nums">{exam.preparation}%</span>
-            <button type="button" aria-label="Aumenta preparazione del 5%" onClick={() => onPrep(5)} className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)]">
+            <button type="button" aria-label="Aumenta preparazione del 5%" onClick={() => onPrep(5)} className="relative grid h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
               +
             </button>
           </span>

@@ -123,6 +123,12 @@ export interface CalendarEvent extends BaseEntity {
   priority: "low" | "medium" | "high" | "urgent";
   start: string;
   end: string;
+  /**
+   * Evento "Tutto il giorno": occupa l'intera giornata (start = mezzanotte locale del giorno,
+   * end = mezzanotte successiva). Opzionale: gli eventi salvati prima dell'introduzione
+   * (valore assente) restano eventi con orario.
+   */
+  allDay?: boolean;
   recurrence?: "none" | "daily" | "weekly" | "monthly";
   /** Ultimo giorno (YYYY-MM-DD) in cui la serie si ripete; assente = senza fine. */
   recurrenceUntil?: string;

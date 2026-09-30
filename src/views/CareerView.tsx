@@ -58,15 +58,15 @@ export function CareerView() {
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label="Media ponderata" value={formatAverage(stats.weighted)} detail={stats.graded ? `${stats.graded} ${stats.graded === 1 ? "voto" : "voti"} pesati sui CFU` : "nessun voto ancora"} />
-        <Tile label="Media aritmetica" value={formatAverage(stats.arithmetic)} detail={stats.passed ? `${stats.passed} ${stats.passed === 1 ? "esame superato" : "esami superati"}` : "registra il primo voto"} />
+        <Tile label="Media ponderata" value={formatAverage(stats.weighted)} detail={stats.graded ? `${stats.graded} ${stats.graded === 1 ? "voto" : "voti"} pesati sui CFU` : "Nessun voto ancora"} />
+        <Tile label="Media aritmetica" value={formatAverage(stats.arithmetic)} detail={stats.passed ? `${stats.passed} ${stats.passed === 1 ? "esame superato" : "esami superati"}` : "Registra il primo voto"} />
         <Tile
           label="CFU acquisiti"
           value={`${stats.cfuEarned}`}
-          detail={`su ${preferences.degreeCfu} del corso`}
+          detail={`Su ${preferences.degreeCfu} del corso`}
           progress={(stats.cfuEarned / Math.max(1, preferences.degreeCfu)) * 100}
         />
-        <Tile label="Voto di base" value={formatAverage(stats.base110)} detail="media × 110 / 30" />
+        <Tile label="Voto di base" value={formatAverage(stats.base110)} detail="Media × 110 / 30" />
       </div>
 
       {notice ? (
@@ -277,10 +277,10 @@ function GraduationPanel({
           <dl className="mt-3 grid grid-cols-1 gap-1 text-sm">
             <Row label={`Voto di base (media ${formatAverage(average)} × 110 / 30)`} value={points(projection.base)} strong />
             {projection.parts.map((part) => (
-              <Row key={part.label} label={part.label} value={part.upTo ? `fino a +${points(part.upTo)}` : `+${points(part.points)}`} />
+              <Row key={part.label} label={part.label} value={part.upTo ? `Fino a +${points(part.upTo)}` : `+${points(part.points)}`} />
             ))}
             <Row label="Totale" value={projection.totalMax > projection.total ? `${points(projection.total)} – ${points(projection.totalMax)}` : points(projection.total)} strong />
-            {projection.manifestoTotal !== undefined ? <Row label="Totale secondo il manifesto 2026/27 (+1 per l'estero)" value={points(projection.manifestoTotal)} /> : null}
+            {projection.manifestoTotal !== undefined ? <Row label="Totale secondo il Manifesto 2026/27 (+1 per l'estero)" value={points(projection.manifestoTotal)} /> : null}
           </dl>
 
           {needed !== null ? (
