@@ -1,4 +1,7 @@
 import { create } from "zustand";
+import type { BarbExamSession } from "../lib/university/examTypes";
+import { BARB_EXAM_COURSES, BARB_EXAM_SESSIONS } from "../lib/university/examSessions";
+import { barbReminderEventId, prepareBarbExamImport, preserveBarbReminderDates } from "../lib/barbExamImport";
 import type {
   AppView,
   Attachment,
@@ -107,6 +110,8 @@ interface StudyState {
   updateEvent: (id: string, patch: Partial<CalendarEvent>) => Promise<void>;
   /** Import in blocco (es. da .ics): gli eventi con lo stesso `sourceUid` vengono aggiornati. */
   importEvents: (events: Array<Partial<CalendarEvent> & Pick<CalendarEvent, "title" | "start" | "end">>) => Promise<{ added: number; updated: number }>;
+  /** Importazione selettiva degli appelli pubblici: stesso UID = nessun nuovo evento. */
+  importBarbExamSessions: (sessions: BarbExamSession[]) => Promise<{ added: number; skipped: number }>;
   deleteEvent: (id: string) => Promise<void>;
   /** Crea una materia e ne restituisce l'id. */
   addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<string>;
@@ -590,10 +595,35 @@ export const useStudyStore = create<StudyState>((set, get) => {
         cover: event.cover,
         notes: event.notes ?? "",
         links: event.links ?? [],
+        sourceUid: event.sourceUid,
         goalId: event.goalId
       };
       set((state) => ({ events: [created, ...state.events] }));
       await commit();
+    },
+
+    importBarbExamSessions: async (incoming) => {
+      if (get().locked || get().loading) throw new Error("Attendi il caricamento o sblocca il calendario personale.");
+      // Solo record del dataset verificato: il chiamante sceglie gli id, non i contenuti ufficiali.
+      const officialById = new Map(BARB_EXAM_SESSIONS.map((session) => [session.id, session]));
+      const selected = incoming.flatMap((item) => {
+        const official = officialById.get(item.id);
+        return official ? [official] : [];
+      });
+      const current = get();
+      const batch = prepareBarbExamImport(selected, BARB_EXAM_COURSES, current.subjects, current.events);
+      if (!batch.events.length) return { added: 0, skipped: incoming.length };
+      const now = nowIso();
+      const created: CalendarEvent[] = batch.events.map((event) => ({
+        ...event, id: barbReminderEventId(event.sourceUid!), createdAt: now, updatedAt: now,
+        archived: false, tags: ["BARB", "appello-importato"], status: "planned",
+        checklist: [], attachmentIds: []
+      }));
+      // set è sincrono prima del primo await: anche doppi click/import concorrenti vedono gli UID.
+      set((state) => ({ events: [...created, ...state.events] }));
+      await commit();
+      if (get().persistError) throw new Error(`Gli appelli sono nel calendario ma il salvataggio va ritentato: ${get().persistError}`);
+      return { added: created.length, skipped: incoming.length - created.length };
     },
 
     importEvents: async (incoming) => {
@@ -602,7 +632,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const updates = new Map<string, CalendarEvent>();
       const created: CalendarEvent[] = [];
       const seen = new Set<string>();
-      for (const item of incoming) {
+      for (const raw of incoming) {
+        const item = preserveBarbReminderDates(raw);
         if (item.sourceUid) {
           if (seen.has(item.sourceUid)) continue; // UID ripetuto nello stesso file
           seen.add(item.sourceUid);
@@ -624,11 +655,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
           continue;
         }
         created.push({
-          id: createId("event"),
+          id: item.sourceUid?.startsWith("barb-exam-") ? barbReminderEventId(item.sourceUid) : createId("event"),
           createdAt: now,
           updatedAt: now,
           archived: false,
-          tags: item.tags ?? [],
+          tags: item.tags ?? (item.sourceUid?.startsWith("barb-exam-") ? ["BARB", "appello-importato"] : []),
           title: item.title,
           description: item.description ?? "",
           category: item.category ?? "lesson",
@@ -643,8 +674,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
           status: "planned",
           checklist: [],
           attachmentIds: [],
-          notes: "",
-          links: [],
+          notes: item.notes ?? "",
+          links: item.links ?? [],
           sourceUid: item.sourceUid
         });
       }
@@ -656,7 +687,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     updateEvent: async (id, patch) => {
       set((state) => ({
-        events: state.events.map((event) => (event.id === id ? { ...event, ...patch, updatedAt: nowIso() } : event))
+        events: state.events.map((event) => (event.id === id ? preserveBarbReminderDates({ ...event, ...patch, updatedAt: nowIso() }) : event))
       }));
       await commit();
     },
@@ -680,6 +711,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
         archived: false,
         tags: subject.tags ?? [],
         name: subject.name,
+        universityCourseId: subject.universityCourseId,
+        semesterOverride: subject.semesterOverride,
         teacher: subject.teacher ?? "",
         color: subject.color ?? "#7CF7C8",
         icon: subject.icon ?? "BookOpen",

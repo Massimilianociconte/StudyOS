@@ -6,8 +6,13 @@ import { readImageFile } from "../lib/files";
 import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
 import { Button, Drawer, EmptyState, Field, IconButton, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { CourseIcon } from "../components/CourseIcon";
+import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
+import { BARB_DATASET } from "../data/university/barb.dataset";
+import { resolveBarbCourse } from "../lib/university/examSessions";
+import { subjectSemester, SEMESTER_LABEL, SEMESTER_TONE, SEMESTER_IDS, type SemesterId } from "../lib/semesters";
 import { TopicManager } from "../components/TopicManager";
-import { isNullableString, useUiState } from "../lib/uiState";
+import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
 
@@ -32,6 +37,7 @@ const subjectStats = (subject: Subject, state: Pick<StoreState, "tasks" | "sessi
 export function SubjectsView() {
   const [openId, setOpenId] = useUiState<string | null>("subjects.open", null, { scope: "tab", validate: isNullableString });
   const [showArchived, setShowArchived] = useUiState("subjects.showArchived", false);
+  const [semester, setSemester] = useUiState<SemesterId | "tutti">("subjects.semester", "tutti", { validate: oneOf("tutti", ...SEMESTER_IDS) });
   const [showCompleted, setShowCompleted] = useUiState("subjects.showCompleted", false);
   const { subjects, tasks, sessions, exams, attachments, addSubject, updateSubject, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
@@ -43,6 +49,7 @@ export function SubjectsView() {
   const completed = subjects.filter((subject) => !isArchived(subject) && subject.status === "completed");
   const archived = subjects.filter(isArchived);
   const open = subjects.find((subject) => subject.id === openId) ?? null;
+  const visible = active.filter((subject) => semester === "tutti" || subjectSemester(subject) === semester);
   const totalCfu = active.reduce((sum, subject) => sum + (subject.cfu || 0), 0);
 
   const group = (label: string, items: Subject[], expanded: boolean, toggle: () => void) =>
@@ -79,6 +86,19 @@ export function SubjectsView() {
 
       <NewSubjectBar onAdd={async (name, color) => void (await addSubject({ name, color, status: "active", icon: "BookOpen" }))} />
 
+      {active.length > 0 ? <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-4" aria-label="Materie per semestre">
+        {SEMESTER_IDS.map((id) => {
+          const items = active.filter((subject) => subjectSemester(subject) === id);
+          return <button key={id} type="button" aria-pressed={semester === id} onClick={() => setSemester(semester === id ? "tutti" : id)} className={`quiet-panel min-w-0 p-3 text-left ${semester === id ? "ring-2 ring-[var(--accent)]" : ""}`}>
+            <Tag color={SEMESTER_TONE[id]}>{SEMESTER_LABEL[id]}</Tag>
+            <p className="mt-2 text-sm font-black">{items.length} {items.length === 1 ? "materia" : "materie"} · {items.reduce((sum, subject) => sum + subject.cfu, 0)} CFU</p>
+          </button>;
+        })}
+      </div> : null}
+      {active.length > 0 ? <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Filtra materie per semestre">
+        {[{ id: "tutti" as const, label: "Tutti" }, ...SEMESTER_IDS.map((id) => ({ id, label: id === "annuale" ? "Annuali" : SEMESTER_LABEL[id] }))].map((item) => <button key={item.id} type="button" aria-pressed={semester === item.id} onClick={() => setSemester(item.id)} className={`min-h-9 rounded-full px-3 text-xs font-black ${semester === item.id ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)]"}`}>{item.label}</button>)}
+      </div> : null}
+
       {active.length === 0 ? (
         <EmptyState
           icon="BookOpen"
@@ -97,9 +117,9 @@ export function SubjectsView() {
             </>
           }
         />
-      ) : (
+      ) : visible.length === 0 ? <EmptyState icon="CalendarDays" title="Nessuna materia in questo periodo" body="Scegli un altro semestre oppure torna a tutte le materie." action={<Button variant="soft" onClick={() => setSemester("tutti")}>Tutte le materie</Button>} /> : (
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
-          {active.map((subject) => (
+          {visible.map((subject) => (
             <SubjectCard
               key={subject.id}
               subject={subject}
@@ -172,11 +192,13 @@ function SubjectCard({
   onOpen: () => void;
   onStatus: (status: Subject["status"]) => void;
 }) {
+  const course = resolveBarbCourse(subject, BARB_DATASET.courses);
+  const semester = subjectSemester(subject);
   return (
     <article className="quiet-panel motion-safe group flex min-w-0 flex-col p-3.5 hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--border))]">
       <div className="flex items-start gap-3">
         <span className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-super" style={{ background: subject.color }}>
-          {subject.cover ? <img src={subject.cover} alt="" className="h-full w-full object-cover" /> : <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />}
+          {subject.cover ? <img src={subject.cover} alt="" className="h-full w-full object-cover" /> : course ? <CourseIcon course={course} className="h-9 w-9 text-[#172333]" /> : <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />}
         </span>
         <button type="button" onClick={onOpen} aria-haspopup="dialog" className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-base font-black leading-snug">{subject.name}</h3>
@@ -185,6 +207,7 @@ function SubjectCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold text-[var(--muted)]">
+        <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag>
         <span>{subject.cfu} CFU</span>
         <span>{stats.openTasks.length} task aperte</span>
         <span>{formatHours(stats.studyMinutes)} h studio</span>
@@ -196,6 +219,7 @@ function SubjectCard({
         ) : null}
       </div>
 
+      {course ? <BarbExamAvailability course={course} /> : null}
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between text-[11px] font-black">
           <span className="text-[var(--faint)] uppercase">{stats.exam ? "Preparazione esame" : "Avanzamento task"}</span>
@@ -245,7 +269,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
       name: subject.name,
       teacher: subject.teacher,
       cfu: String(subject.cfu ?? 6),
-      semester: subject.semester,
+      semester: subject.semesterOverride ?? "ufficiale",
       targetGrade: subject.targetGrade ? String(subject.targetGrade) : "",
       color: subject.color,
       notes: subject.notes
@@ -254,6 +278,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
     setEditingAttachment(null);
   }, [subject?.id]);
 
+  const course = subject ? resolveBarbCourse(subject, BARB_DATASET.courses) : null;
   const stats = subject ? subjectStats(subject, { tasks, sessions, exams, attachments }) : null;
 
   const save = async () => {
@@ -275,8 +300,10 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
     await updateSubject(subject.id, {
       name: draft.name.trim(),
       teacher: draft.teacher.trim(),
+      universityCourseId: course?.id ?? subject.universityCourseId,
       cfu,
-      semester: draft.semester.trim(),
+      semester: draft.semester === "ufficiale" ? (course?.semester ?? subject.semester) : draft.semester,
+      semesterOverride: draft.semester === "ufficiale" ? undefined : draft.semester as SemesterId,
       targetGrade,
       color: draft.color,
       notes: draft.notes
@@ -294,7 +321,8 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
       eyebrow={
         subject ? (
           <>
-            <span className="h-3 w-3 rounded-full" style={{ background: subject.color }} />
+            {course ? <span className="grid h-10 w-10 place-items-center rounded-xl" style={{ background: subject.color }}><CourseIcon course={course} className="h-8 w-8 text-[#172333]" /></span> : <span className="h-3 w-3 rounded-full" style={{ background: subject.color }} />}
+            <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag>
             <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
             <Tag>{subject.cfu} CFU</Tag>
           </>
@@ -343,6 +371,8 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
             </div>
           </dl>
 
+          {course ? <BarbExamSessions course={course} /> : null}
+
           <section className="grid grid-cols-1 gap-3">
             <h4 className="text-xs font-black uppercase text-[var(--faint)]">Dati della materia</h4>
             <Field label="Nome">
@@ -353,7 +383,11 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                 <input className={inputClass} value={draft.teacher} onChange={(event) => setDraft((value) => ({ ...value, teacher: event.target.value }))} />
               </Field>
               <Field label="Semestre">
-                <input className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))} placeholder="Es. 1° semestre 2026/2027" />
+                <select className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))}>
+                  <option value="ufficiale">{course ? `Dal piano ufficiale: ${SEMESTER_LABEL[course.semester]}` : `Periodo attuale: ${SEMESTER_LABEL[subjectSemester(subject)]}`}</option>
+                  {SEMESTER_IDS.map((id) => <option key={id} value={id}>{SEMESTER_LABEL[id]}</option>)}
+                </select>
+                {course ? <p className="mt-1 text-xs text-[var(--faint)]">Puoi scegliere un periodo personale per il tuo piano.</p> : null}
               </Field>
               <Field label="CFU">
                 <input className={inputClass} type="number" min={0} max={60} value={draft.cfu} onChange={(event) => setDraft((value) => ({ ...value, cfu: event.target.value }))} />

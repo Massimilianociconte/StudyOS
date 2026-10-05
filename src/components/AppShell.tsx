@@ -15,7 +15,7 @@ import { StudyTimerWatcher } from "./StudyTimerWatcher";
 // `short`: etichetta per la barra compatta dei tablet e per la barra in basso su telefono.
 const navItems: { view: AppView; label: string; short: string; icon: string }[] = [
   { view: "dashboard", label: "Dashboard", short: "Dashboard", icon: "LayoutDashboard" },
-  { view: "calendar", label: "Calendario", short: "Calendario", icon: "CalendarDays" },
+  { view: "calendar", label: "Calendario personale", short: "Personale", icon: "CalendarDays" },
   { view: "tasks", label: "Task", short: "Task", icon: "Check" },
   { view: "study", label: "Studio", short: "Studio", icon: "Timer" },
   { view: "subjects", label: "Materie", short: "Materie", icon: "BookOpen" },
@@ -58,7 +58,7 @@ export function AppShell({ children }: PropsWithChildren) {
     // Layout per larghezza: telefono (<640) barra in basso; tablet e finestre medie (640–1279)
     // barra laterale compatta a icone; desktop (≥1280) barra laterale completa.
     <main className="app-bg min-h-dvh pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-0">
-      <div className="mx-auto grid min-h-dvh w-full max-w-[1720px] grid-cols-1 sm:grid-cols-[92px_minmax(0,1fr)] xl:grid-cols-[272px_minmax(0,1fr)]">
+      <div className="mx-auto grid min-h-dvh w-full max-w-[1720px] grid-cols-1 sm:grid-cols-[92px_minmax(0,1fr)] xl:grid-cols-[288px_minmax(0,1fr)]">
         <aside className="sticky top-0 hidden h-dvh py-3 pl-3 sm:block xl:p-4">
           <div className="soft-panel flex h-full flex-col items-center px-1.5 py-3 xl:hidden">
             <button

@@ -18,7 +18,9 @@
     "barb:check-updates": "node scripts/barb.mjs check-updates",
     "barb:apply": "node scripts/barb.mjs apply",
     "barb:status": "node scripts/barb.mjs status",
-    "barb:validate": "node scripts/barb.mjs validate",
+    "barb:validate": "node scripts/barb.mjs validate && node --import ./scripts/lib/register-ts.mjs scripts/university/exams.mjs --validate",
+    "barb:sync:exams": "node --import ./scripts/lib/register-ts.mjs scripts/university/exams.mjs",
+    "barb:validate:exams": "node --import ./scripts/lib/register-ts.mjs scripts/university/exams.mjs --validate",
     "firecrawl:up": "node scripts/barb.mjs firecrawl-up",
     "firecrawl:health": "node scripts/barb.mjs firecrawl-health"
   },

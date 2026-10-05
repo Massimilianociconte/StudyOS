@@ -22,6 +22,9 @@ import { useStudyStore } from "../store/useStudyStore";
 import type { CalendarEvent, EventCategory, Exam, Task } from "../types";
 import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { BarbExamImport } from "../components/BarbExamImport";
+import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
+import { safeHref } from "../lib/safeUrl";
 import { CalendarTransfer } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { allDayRange, daysUntil, eventMinutes, isAllDayEvent, selectableSubjects, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel } from "../lib/selectors";
@@ -40,7 +43,10 @@ import {
   formatMinutes
 } from "../lib/labels";
 import { useNow } from "../hooks/useNow";
-import { isNullableString, oneOf, useUiState } from "../lib/uiState";
+import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
+import { CourseIcon } from "../components/CourseIcon";
+import { BARB_DATASET } from "../data/university/barb.dataset";
+import { resolveBarbCourse } from "../lib/university/examSessions";
 
 type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
 type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
@@ -101,6 +107,7 @@ interface Handlers {
 }
 
 const eventColor = (event: CalendarEvent, subjects: Subjects) => event.color || subjectColor(subjects, event.subjectId);
+const allDayEventLabel = (event: CalendarEvent) => event.tags?.includes("appello-importato") ? "Data appello" : ALL_DAY_LABEL;
 
 export function CalendarView() {
   const [mode, setMode] = useUiState<CalendarMode>("calendar.mode", "week", { validate: oneOf(...modes.map((item) => item.id)) });
@@ -118,6 +125,7 @@ export function CalendarView() {
   const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
   const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task" } | null>(null);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
+  const [barbImportOpen, setBarbImportOpen] = useState(false);
   const { events, subjects, exams, tasks, updateEvent, addEvent, deleteEvent, addTask, updateTask, toggleTask, deleteTask, setActiveView } = useStudyStore();
   const calendarTasks = useMemo(() => tasks.filter((task) => task.dueDate && task.status !== "archived"), [tasks]);
   const editingEvent = editingEventId ? events.find((event) => event.id === editingEventId) ?? null : null;
@@ -198,17 +206,26 @@ export function CalendarView() {
   return (
     <div>
       <SectionTitle
-        title="Calendario"
-        subtitle="Lezioni, blocchi di studio, scadenze ed esami. Trascina un evento per spostarlo, clicca uno spazio vuoto per crearne uno."
+        title="Calendario personale"
+        subtitle="I tuoi eventi, scadenze ed esami. Gli appelli BARB compaiono qui quando scegli di importarli."
         action={
           <div className="flex flex-wrap items-center justify-end gap-2">
             <CalendarTransfer />
+            <Button icon="CalendarPlus" variant="soft" onClick={() => setBarbImportOpen(true)}>
+              Importa appelli BARB
+            </Button>
             <Button icon="Plus" variant="primary" onClick={() => setCreator({ at: defaultStartFor(new Date()), kind: "event" })}>
               Nuovo
             </Button>
           </div>
         }
       />
+
+      <div className="quiet-panel mb-4 flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+        <span className="font-bold text-[var(--muted)]">Calendario dello studente · appelli selezionati e impegni personali</span>
+        <Button variant="ghost" icon="Landmark" onClick={() => { writeUiState("exams.tab", "barb", "device"); setActiveView("exams"); }}>Calendario Esami BARB</Button>
+      </div>
+      {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Segmented label="Vista calendario" value={mode} onChange={setMode} options={modes} />
@@ -780,7 +797,7 @@ function AllDayChip({ item, handlers }: { item: EventOccurrence; handlers: Handl
         item.status === "done" ? "opacity-60" : ""
       }`}
       style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))` }}
-      title={`${ALL_DAY_LABEL} · ${item.title}`}
+      title={`${allDayEventLabel(item)} · ${item.title}`}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
       <span className="min-w-0 truncate">
@@ -890,7 +907,7 @@ function EventRow({ item, handlers }: { item: EventOccurrence; handlers: Handler
       className={`flex w-full min-w-0 items-center gap-3 rounded-[14px] px-2.5 py-2 text-left hover:bg-[var(--surface-soft)] ${item.status === "done" ? "opacity-60" : ""}`}
     >
       {allDay ? (
-        <span className="w-12 shrink-0 text-center text-xs font-black text-[var(--faint)]" title={ALL_DAY_LABEL} aria-hidden="true">
+        <span className="w-12 shrink-0 text-center text-xs font-black text-[var(--faint)]" title={allDayEventLabel(item)} aria-hidden="true">
           —
         </span>
       ) : (
@@ -907,7 +924,7 @@ function EventRow({ item, handlers }: { item: EventOccurrence; handlers: Handler
           {item.title}
         </span>
         <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
-          {allDay ? ALL_DAY_LABEL : `${timeLabel(item.start)}–${timeLabel(item.end)}`}
+          {allDay ? allDayEventLabel(item) : `${timeLabel(item.start)}–${timeLabel(item.end)}`}
           {item.subjectId ? ` · ${subjectName(handlers.subjects, item.subjectId)}` : ""}
         </span>
       </span>
@@ -1031,7 +1048,7 @@ function MonthGrid({
                       allDay ? "font-black hover:brightness-110" : "font-bold hover:bg-[var(--surface-strong)]"
                     }`}
                     style={allDay ? { background: `color-mix(in srgb, ${color} 26%, var(--bg-2))` } : undefined}
-                    title={allDay ? `${ALL_DAY_LABEL} · ${item.title}` : `${timeLabel(item.start)} · ${item.title}`}
+                    title={allDay ? `${allDayEventLabel(item)} · ${item.title}` : `${timeLabel(item.start)} · ${item.title}`}
                   >
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
                     {allDay ? null : <span className="shrink-0 tabular-nums text-[var(--muted)]">{timeLabel(item.start)}</span>}
@@ -1181,7 +1198,7 @@ function CalendarHoverPreview({ preview, subjects }: { preview: CalendarPreviewS
         <div className="grid grid-cols-1 gap-2 text-sm">
           <p className="font-bold text-[var(--muted)]">
             {capitalizeFirst(format(parseISO(preview.event.start), "EEEE d MMM", { locale: it }))} ·{" "}
-            {isAllDayEvent(preview.event) ? ALL_DAY_LABEL : `${timeLabel(preview.event.start)}–${timeLabel(preview.event.end)} · ${formatMinutes(eventMinutes(preview.event))}`}
+            {isAllDayEvent(preview.event) ? allDayEventLabel(preview.event) : `${timeLabel(preview.event.start)}–${timeLabel(preview.event.end)} · ${formatMinutes(eventMinutes(preview.event))}`}
           </p>
           <div className="flex flex-wrap gap-1.5">
             <Tag color={accent}>{subjectName(subjects, preview.event.subjectId)}</Tag>
@@ -1361,6 +1378,15 @@ function EventEditorModal({
       onClose={onClose}
     >
       <div className="grid grid-cols-1 gap-3">
+        {event.tags?.includes("appello-importato") ? (
+          <Panel className="p-3">
+            <h4 className="font-black">Appello scelto dal Calendario Esami BARB</h4>
+            <p className="mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{event.description}</p>
+            <p className="mt-2 whitespace-pre-line text-xs text-[var(--muted)]">{event.notes}</p>
+            {event.links.map((url) => <a key={url} href={safeHref(url)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-bold text-[var(--accent-ink)] underline">Fonte ufficiale UniMi</a>)}
+            <p className="mt-2 text-xs text-[var(--muted)]">Le modifiche valgono per il tuo promemoria personale. La data ufficiale resta consultabile nel calendario generale.</p>
+          </Panel>
+        ) : null}
         <Field label="Titolo">
           <input className={inputClass} value={draft.title} onChange={(e) => setDraft((v) => ({ ...v, title: e.target.value }))} />
         </Field>
@@ -1714,19 +1740,21 @@ function SemesterMap({ events, subjects }: { events: CalendarEvent[]; subjects: 
   return (
     <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))]">
       {subjects.map((subject) => {
+        const course = resolveBarbCourse(subject, BARB_DATASET.courses);
         const count = events.filter((event) => event.subjectId === subject.id).length;
         const weekly = events.filter((event) => event.subjectId === subject.id && event.recurrence === "weekly").length;
         return (
           <div key={subject.id} className="quiet-panel flex items-center gap-3 p-3.5">
             <span className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center rounded-super" style={{ background: subject.color }}>
-              <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />
+              {course ? <CourseIcon course={course} className="h-5 w-5 text-[#10131d]" /> : <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />}
             </span>
             <div className="min-w-0">
               <h4 className="two-line-safe font-black leading-tight">{subject.name}</h4>
               <p className="text-xs font-bold text-[var(--muted)]">
-                {subject.semester} · {count} {count === 1 ? "evento" : "eventi"}
+                {count} {count === 1 ? "evento" : "eventi"}
                 {weekly ? ` · ${weekly} settimanali` : ""}
               </p>
+              <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag>
             </div>
           </div>
         );

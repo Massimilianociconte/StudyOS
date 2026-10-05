@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { format, isBefore, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Exam } from "../types";
-import { useStudyStore } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, studyDaysUntil, subjectColor, subjectName } from "../lib/selectors";
 import { EXAM_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
@@ -10,6 +10,10 @@ import { readImageFile } from "../lib/files";
 import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Tag, fileInputClass, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
+import { BarbExamCalendar } from "../components/BarbExamCalendar";
+import { BarbExamImport } from "../components/BarbExamImport";
+import { Segmented } from "../components/ui";
+import { oneOf, useUiState } from "../lib/uiState";
 
 const GRADES = Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MIN_GRADE + index);
 
@@ -68,11 +72,21 @@ const lines = (value: string) =>
     .filter(Boolean);
 
 export function ExamsView() {
+  const preferences = useStudyStore(selectPreferences);
+  const [tab, setTab] = useUiState<"barb" | "personal">("exams.tab", preferences.showBarb || preferences.degreeProgram === "barb" ? "barb" : "personal", { validate: oneOf("barb", "personal") });
+  return <div className="min-w-0">
+    <Segmented value={tab} onChange={setTab} label="Ambito degli esami" options={[{ id: "barb", label: "Calendario Esami BARB", icon: "CalendarDays" }, { id: "personal", label: "La mia preparazione", icon: "GraduationCap" }]} className="mb-5" />
+    {tab === "barb" ? <BarbExamCalendar /> : <PersonalExamsView />}
+  </div>;
+}
+
+function PersonalExamsView() {
   const { exams, subjects, tasks, sessions, topics, addExam, updateExam, deleteExam, addTopics, setActiveView } = useStudyStore();
   const [draft, setDraft] = useState<ExamDraft>(() => emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
   const [editingExam, setEditingExam] = useState<Exam | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [gradeOpen, setGradeOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState("");
   const sorted = useMemo(() => [...exams].sort((a, b) => a.date.localeCompare(b.date)), [exams]);
@@ -157,10 +171,11 @@ export function ExamsView() {
   return (
     <div>
       <SectionTitle
-        title="Esami"
-        subtitle="Esami in arrivo con countdown, preparazione e programma. Voti e medie sono nel Libretto."
+        title="La mia preparazione"
+        subtitle="Esami personali con countdown, preparazione e programma. Voti e medie sono nel Libretto."
         action={
           <div className="flex flex-wrap gap-2">
+            <Button icon="Download" variant="soft" onClick={() => setImportOpen(true)}>Importa appelli BARB</Button>
             <Button icon="Award" variant="soft" onClick={() => setGradeOpen(true)}>
               Registra voto
             </Button>
@@ -269,6 +284,7 @@ export function ExamsView() {
         </>
       )}
 
+      {importOpen && <BarbExamImport onClose={() => setImportOpen(false)} />}
       <GradeDrawer
         open={gradeOpen}
         subjects={subjects}

@@ -35,6 +35,10 @@ import {
 } from "../lib/labels";
 import { Icon } from "../components/Icon";
 import { Button, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
+import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
+import { CourseIcon } from "../components/CourseIcon";
+import { BARB_DATASET } from "../data/university/barb.dataset";
+import { resolveBarbCourse } from "../lib/university/examSessions";
 
 
 function PanelHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
@@ -320,13 +324,14 @@ export function DashboardView() {
                       className="flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]"
                     >
                       <span className="grid grid-cols-1 h-9 w-9 shrink-0 place-items-center rounded-super" style={{ background: subject.color }}>
-                        <Icon name={subject.icon} className="h-4 w-4 text-[#10131d]" />
+                        {resolveBarbCourse(subject, BARB_DATASET.courses) ? <CourseIcon course={resolveBarbCourse(subject, BARB_DATASET.courses)!} className="h-4 w-4 text-[#10131d]" /> : <Icon name={subject.icon} className="h-4 w-4 text-[#10131d]" />}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="one-line-safe block text-sm font-black">{subject.name}</span>
                         <span className="text-xs font-bold text-[var(--muted)]">
                           {SUBJECT_STATUS_LABEL[subject.status]} · {subject.cfu} CFU
                         </span>
+                        <span className="mt-1 block"><Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag></span>
                       </span>
                     </button>
                   </li>
@@ -483,4 +488,3 @@ function GettingStarted({ showBarb, hasName, onGo }: { showBarb: boolean; hasNam
     </section>
   );
 }
-

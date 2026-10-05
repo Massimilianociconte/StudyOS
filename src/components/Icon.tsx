@@ -74,6 +74,7 @@ import {
   Zap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { CourseIcon } from "./CourseIcon";
 
 const icons = {
   Activity,
@@ -154,6 +155,7 @@ const icons = {
 export type IconName = keyof typeof icons;
 
 export function Icon({ name, className }: { name: string; className?: string }) {
+  if (name.startsWith("barb:")) return <CourseIcon course={{ id: name.slice(5), name: "" }} className={className} />;
   const Component = icons[name as IconName] ?? CircleDot;
   return <Component className={className} aria-hidden="true" strokeWidth={2.15} />;
 }

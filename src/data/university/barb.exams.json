@@ -1,0 +1,1328 @@
+{
+  "checkedAt": "2026-10-05T14:47:58.104Z",
+  "sessions": [
+    {
+      "id": "barb-exam-unimi-20737390",
+      "courseId": "barb-26-27-accertamento-di-lingua-inglese-livello-b2-3-cfu",
+      "date": "2026-10-07",
+      "type": "Test",
+      "time": null,
+      "location": "Online",
+      "notes": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.\nSu piu' giorni",
+      "registrationOpens": "2026-10-02",
+      "registrationCloses": "2026-10-06",
+      "officialId": "20737390",
+      "commission": "Direttore dello SLAM",
+      "sourceCourseCode": "B26-38",
+      "component": "TEST ACCERTAMENTO LINGUA INGLESE",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20737390",
+          "sourceCourseCode": "B26-38",
+          "sourceCourseName": "ACCERTAMENTO LINGUA INGLESE",
+          "degreeCode": "FBG",
+          "registrationOpens": "2026-10-02",
+          "registrationCloses": "2026-10-06",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Oct 7, 2026 12:00:00 AM",
+            "chiusura": "Oct 6, 2026 12:00:00 AM",
+            "dataStr": "07/10/2026",
+            "aperturaStr": "02/10/2026",
+            "chiusuraStr": "06/10/2026",
+            "luogo": "Online",
+            "prova": "Test",
+            "provaEng": "Test",
+            "docente": {
+              "nome": "",
+              "cognome": "Direttore dello SLAM"
+            },
+            "avviso": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.",
+            "piuGiorni": "Su piu' giorni",
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20737390",
+            "tipoTurni": "S",
+            "idTipoAppello": 5,
+            "tipoAppello": "Accertamento competenze linguistiche (solo per appelli SLAM)",
+            "tipoAppelloEng": "Language assessment (SLAM only)",
+            "nomeAppello": "TEST ACCERTAMENTO LINGUA INGLESE",
+            "tipoSlam": "S",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20737390",
+          "sourceCourseCode": "B26-38",
+          "sourceCourseName": "ACCERTAMENTO LINGUA INGLESE",
+          "degreeCode": "F92",
+          "registrationOpens": "2026-10-02",
+          "registrationCloses": "2026-10-06",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Oct 7, 2026 12:00:00 AM",
+            "chiusura": "Oct 6, 2026 12:00:00 AM",
+            "dataStr": "07/10/2026",
+            "aperturaStr": "02/10/2026",
+            "chiusuraStr": "06/10/2026",
+            "luogo": "Online",
+            "prova": "Test",
+            "provaEng": "Test",
+            "docente": {
+              "nome": "",
+              "cognome": "Direttore dello SLAM"
+            },
+            "avviso": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.",
+            "piuGiorni": "Su piu' giorni",
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20737390",
+            "tipoTurni": "S",
+            "idTipoAppello": 5,
+            "tipoAppello": "Accertamento competenze linguistiche (solo per appelli SLAM)",
+            "tipoAppelloEng": "Language assessment (SLAM only)",
+            "nomeAppello": "TEST ACCERTAMENTO LINGUA INGLESE",
+            "tipoSlam": "S",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20737390"
+    },
+    {
+      "id": "barb-exam-unimi-20737424",
+      "courseId": "barb-26-27-accertamento-di-lingua-inglese-livello-b2-3-cfu",
+      "date": "2026-10-14",
+      "type": "Test",
+      "time": null,
+      "location": "Online",
+      "notes": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.\nSu piu' giorni",
+      "registrationOpens": "2026-10-02",
+      "registrationCloses": "2026-10-09",
+      "officialId": "20737424",
+      "commission": "Direttore dello SLAM",
+      "sourceCourseCode": "B26-38",
+      "component": "TEST ACCERTAMENTO LINGUA INGLESE",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20737424",
+          "sourceCourseCode": "B26-38",
+          "sourceCourseName": "ACCERTAMENTO LINGUA INGLESE",
+          "degreeCode": "FBG",
+          "registrationOpens": "2026-10-02",
+          "registrationCloses": "2026-10-09",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Oct 14, 2026 12:00:00 AM",
+            "chiusura": "Oct 9, 2026 12:00:00 AM",
+            "dataStr": "14/10/2026",
+            "aperturaStr": "02/10/2026",
+            "chiusuraStr": "09/10/2026",
+            "luogo": "Online",
+            "prova": "Test",
+            "provaEng": "Test",
+            "docente": {
+              "nome": "",
+              "cognome": "Direttore dello SLAM"
+            },
+            "avviso": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.",
+            "piuGiorni": "Su piu' giorni",
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20737424",
+            "tipoTurni": "S",
+            "idTipoAppello": 5,
+            "tipoAppello": "Accertamento competenze linguistiche (solo per appelli SLAM)",
+            "tipoAppelloEng": "Language assessment (SLAM only)",
+            "nomeAppello": "TEST ACCERTAMENTO LINGUA INGLESE",
+            "tipoSlam": "S",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20737424",
+          "sourceCourseCode": "B26-38",
+          "sourceCourseName": "ACCERTAMENTO LINGUA INGLESE",
+          "degreeCode": "F92",
+          "registrationOpens": "2026-10-02",
+          "registrationCloses": "2026-10-09",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Oct 14, 2026 12:00:00 AM",
+            "chiusura": "Oct 9, 2026 12:00:00 AM",
+            "dataStr": "14/10/2026",
+            "aperturaStr": "02/10/2026",
+            "chiusuraStr": "09/10/2026",
+            "luogo": "Online",
+            "prova": "Test",
+            "provaEng": "Test",
+            "docente": {
+              "nome": "",
+              "cognome": "Direttore dello SLAM"
+            },
+            "avviso": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.",
+            "piuGiorni": "Su piu' giorni",
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20737424",
+            "tipoTurni": "S",
+            "idTipoAppello": 5,
+            "tipoAppello": "Accertamento competenze linguistiche (solo per appelli SLAM)",
+            "tipoAppelloEng": "Language assessment (SLAM only)",
+            "nomeAppello": "TEST ACCERTAMENTO LINGUA INGLESE",
+            "tipoSlam": "S",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20737424"
+    },
+    {
+      "id": "barb-exam-unimi-20737444",
+      "courseId": "barb-26-27-accertamento-di-lingua-inglese-livello-b2-3-cfu",
+      "date": "2026-10-21",
+      "type": "Test",
+      "time": null,
+      "location": "Online",
+      "notes": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.\nSu piu' giorni",
+      "registrationOpens": "2026-10-02",
+      "registrationCloses": "2026-10-16",
+      "officialId": "20737444",
+      "commission": "Direttore dello SLAM",
+      "sourceCourseCode": "B26-38",
+      "component": "TEST ACCERTAMENTO LINGUA INGLESE",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20737444",
+          "sourceCourseCode": "B26-38",
+          "sourceCourseName": "ACCERTAMENTO LINGUA INGLESE",
+          "degreeCode": "FBG",
+          "registrationOpens": "2026-10-02",
+          "registrationCloses": "2026-10-16",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Oct 21, 2026 12:00:00 AM",
+            "chiusura": "Oct 16, 2026 12:00:00 AM",
+            "dataStr": "21/10/2026",
+            "aperturaStr": "02/10/2026",
+            "chiusuraStr": "16/10/2026",
+            "luogo": "Online",
+            "prova": "Test",
+            "provaEng": "Test",
+            "docente": {
+              "nome": "",
+              "cognome": "Direttore dello SLAM"
+            },
+            "avviso": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.",
+            "piuGiorni": "Su piu' giorni",
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20737444",
+            "tipoTurni": "S",
+            "idTipoAppello": 5,
+            "tipoAppello": "Accertamento competenze linguistiche (solo per appelli SLAM)",
+            "tipoAppelloEng": "Language assessment (SLAM only)",
+            "nomeAppello": "TEST ACCERTAMENTO LINGUA INGLESE",
+            "tipoSlam": "S",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20737444",
+          "sourceCourseCode": "B26-38",
+          "sourceCourseName": "ACCERTAMENTO LINGUA INGLESE",
+          "degreeCode": "F92",
+          "registrationOpens": "2026-10-02",
+          "registrationCloses": "2026-10-16",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Oct 21, 2026 12:00:00 AM",
+            "chiusura": "Oct 16, 2026 12:00:00 AM",
+            "dataStr": "21/10/2026",
+            "aperturaStr": "02/10/2026",
+            "chiusuraStr": "16/10/2026",
+            "luogo": "Online",
+            "prova": "Test",
+            "provaEng": "Test",
+            "docente": {
+              "nome": "",
+              "cognome": "Direttore dello SLAM"
+            },
+            "avviso": "PLACEMENT TEST riservato alle matricole a.a. 2026/27\r\nATTENZIONE: è possibile iscriversi ad UNA SOLA data.",
+            "piuGiorni": "Su piu' giorni",
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20737444",
+            "tipoTurni": "S",
+            "idTipoAppello": 5,
+            "tipoAppello": "Accertamento competenze linguistiche (solo per appelli SLAM)",
+            "tipoAppelloEng": "Language assessment (SLAM only)",
+            "nomeAppello": "TEST ACCERTAMENTO LINGUA INGLESE",
+            "tipoSlam": "S",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20737444"
+    },
+    {
+      "id": "barb-exam-unimi-20477449",
+      "courseId": "barb-26-27-cellule-staminali-e-medicina-rigenerativa",
+      "date": "2027-01-11",
+      "type": "Scritto + Orale",
+      "time": "10:00",
+      "location": null,
+      "notes": "Pubblicato anche per il precedente ordinamento come «BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI». Ridenominazione verificata: https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "registrationOpens": "2027-01-05",
+      "registrationCloses": "2027-01-07",
+      "officialId": "20477449",
+      "commission": "MESSINA GRAZIELLA",
+      "sourceCourseCode": "FBG-22",
+      "component": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20477449",
+          "sourceCourseCode": "FBG-22",
+          "sourceCourseName": "CELLULE STAMINALI E MEDICINA RIGENERATIVA",
+          "degreeCode": "FBG",
+          "registrationOpens": "2027-01-05",
+          "registrationCloses": "2027-01-07",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Jan 11, 2027 12:00:00 AM",
+            "chiusura": "Jan 7, 2027 12:00:00 AM",
+            "dataStr": "11/01/2027",
+            "aperturaStr": "05/01/2027",
+            "chiusuraStr": "07/01/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477449",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20477450",
+          "sourceCourseCode": "F92-13",
+          "sourceCourseName": "BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-01-05",
+          "registrationCloses": "2027-01-07",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Jan 11, 2027 12:00:00 AM",
+            "chiusura": "Jan 7, 2027 12:00:00 AM",
+            "dataStr": "11/01/2027",
+            "aperturaStr": "05/01/2027",
+            "chiusuraStr": "07/01/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477450",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20477449"
+    },
+    {
+      "id": "barb-exam-unimi-19610968",
+      "courseId": "f92-patenting-and-technology-transfer",
+      "date": "2027-01-19",
+      "type": "Orale",
+      "time": "09:00",
+      "location": "B3",
+      "notes": null,
+      "registrationOpens": "2026-12-28",
+      "registrationCloses": "2027-01-10",
+      "officialId": "19610968",
+      "commission": "LONG GIORGIO",
+      "sourceCourseCode": "F1B-10",
+      "component": "ORALE PATENTING AND TECHNOLOGY TRANSFER PRESIDENTE LONG GIORGIO",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "19610968",
+          "sourceCourseCode": "F1B-10",
+          "sourceCourseName": "PATENTING AND TECHNOLOGY TRANSFER",
+          "degreeCode": "F92",
+          "registrationOpens": "2026-12-28",
+          "registrationCloses": "2027-01-10",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Jan 19, 2027 12:00:00 AM",
+            "chiusura": "Jan 10, 2027 12:00:00 AM",
+            "dataStr": "19/01/2027",
+            "aperturaStr": "28/12/2026",
+            "chiusuraStr": "10/01/2027",
+            "ora": "09:00",
+            "luogo": "B3",
+            "prova": "Orale",
+            "provaEng": "Oral",
+            "docente": {
+              "nome": "GIORGIO",
+              "cognome": "LONG"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "19610968",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "ORALE PATENTING AND TECHNOLOGY TRANSFER PRESIDENTE LONG GIORGIO",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "19610968"
+    },
+    {
+      "id": "barb-exam-unimi-20477459",
+      "courseId": "barb-26-27-cellule-staminali-e-medicina-rigenerativa",
+      "date": "2027-02-08",
+      "type": "Scritto + Orale",
+      "time": "10:00",
+      "location": null,
+      "notes": "Pubblicato anche per il precedente ordinamento come «BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI». Ridenominazione verificata: https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "registrationOpens": "2027-02-02",
+      "registrationCloses": "2027-02-04",
+      "officialId": "20477459",
+      "commission": "MESSINA GRAZIELLA",
+      "sourceCourseCode": "FBG-22",
+      "component": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20477459",
+          "sourceCourseCode": "FBG-22",
+          "sourceCourseName": "CELLULE STAMINALI E MEDICINA RIGENERATIVA",
+          "degreeCode": "FBG",
+          "registrationOpens": "2027-02-02",
+          "registrationCloses": "2027-02-04",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Feb 8, 2027 12:00:00 AM",
+            "chiusura": "Feb 4, 2027 12:00:00 AM",
+            "dataStr": "08/02/2027",
+            "aperturaStr": "02/02/2027",
+            "chiusuraStr": "04/02/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477459",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20477460",
+          "sourceCourseCode": "F92-13",
+          "sourceCourseName": "BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-02-02",
+          "registrationCloses": "2027-02-04",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Feb 8, 2027 12:00:00 AM",
+            "chiusura": "Feb 4, 2027 12:00:00 AM",
+            "dataStr": "08/02/2027",
+            "aperturaStr": "02/02/2027",
+            "chiusuraStr": "04/02/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477460",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20477459"
+    },
+    {
+      "id": "barb-exam-unimi-19610977",
+      "courseId": "f92-patenting-and-technology-transfer",
+      "date": "2027-02-09",
+      "type": "Orale",
+      "time": "09:00",
+      "location": "B3",
+      "notes": null,
+      "registrationOpens": "2027-01-15",
+      "registrationCloses": "2027-02-03",
+      "officialId": "19610977",
+      "commission": "LONG GIORGIO",
+      "sourceCourseCode": "F1B-10",
+      "component": "ORALE PATENTING AND TECHNOLOGY TRANSFER PRESIDENTE LONG GIORGIO",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "19610977",
+          "sourceCourseCode": "F1B-10",
+          "sourceCourseName": "PATENTING AND TECHNOLOGY TRANSFER",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-01-15",
+          "registrationCloses": "2027-02-03",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Feb 9, 2027 12:00:00 AM",
+            "chiusura": "Feb 3, 2027 12:00:00 AM",
+            "dataStr": "09/02/2027",
+            "aperturaStr": "15/01/2027",
+            "chiusuraStr": "03/02/2027",
+            "ora": "09:00",
+            "luogo": "B3",
+            "prova": "Orale",
+            "provaEng": "Oral",
+            "docente": {
+              "nome": "GIORGIO",
+              "cognome": "LONG"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "19610977",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "ORALE PATENTING AND TECHNOLOGY TRANSFER PRESIDENTE LONG GIORGIO",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "19610977"
+    },
+    {
+      "id": "barb-exam-unimi-20477465",
+      "courseId": "barb-26-27-cellule-staminali-e-medicina-rigenerativa",
+      "date": "2027-02-23",
+      "type": "Scritto + Orale",
+      "time": "10:00",
+      "location": null,
+      "notes": "Pubblicato anche per il precedente ordinamento come «BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI». Ridenominazione verificata: https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "registrationOpens": "2027-02-17",
+      "registrationCloses": "2027-02-19",
+      "officialId": "20477465",
+      "commission": "MESSINA GRAZIELLA",
+      "sourceCourseCode": "FBG-22",
+      "component": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20477465",
+          "sourceCourseCode": "FBG-22",
+          "sourceCourseName": "CELLULE STAMINALI E MEDICINA RIGENERATIVA",
+          "degreeCode": "FBG",
+          "registrationOpens": "2027-02-17",
+          "registrationCloses": "2027-02-19",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Feb 23, 2027 12:00:00 AM",
+            "chiusura": "Feb 19, 2027 12:00:00 AM",
+            "dataStr": "23/02/2027",
+            "aperturaStr": "17/02/2027",
+            "chiusuraStr": "19/02/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477465",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20477466",
+          "sourceCourseCode": "F92-13",
+          "sourceCourseName": "BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-02-17",
+          "registrationCloses": "2027-02-19",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Feb 23, 2027 12:00:00 AM",
+            "chiusura": "Feb 19, 2027 12:00:00 AM",
+            "dataStr": "23/02/2027",
+            "aperturaStr": "17/02/2027",
+            "chiusuraStr": "19/02/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477466",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20477465"
+    },
+    {
+      "id": "barb-exam-unimi-20477471",
+      "courseId": "barb-26-27-cellule-staminali-e-medicina-rigenerativa",
+      "date": "2027-06-22",
+      "type": "Scritto + Orale",
+      "time": "10:00",
+      "location": null,
+      "notes": "Pubblicato anche per il precedente ordinamento come «BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI». Ridenominazione verificata: https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "registrationOpens": "2027-06-16",
+      "registrationCloses": "2027-06-18",
+      "officialId": "20477471",
+      "commission": "MESSINA GRAZIELLA",
+      "sourceCourseCode": "FBG-22",
+      "component": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20477471",
+          "sourceCourseCode": "FBG-22",
+          "sourceCourseName": "CELLULE STAMINALI E MEDICINA RIGENERATIVA",
+          "degreeCode": "FBG",
+          "registrationOpens": "2027-06-16",
+          "registrationCloses": "2027-06-18",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Jun 22, 2027 12:00:00 AM",
+            "chiusura": "Jun 18, 2027 12:00:00 AM",
+            "dataStr": "22/06/2027",
+            "aperturaStr": "16/06/2027",
+            "chiusuraStr": "18/06/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477471",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20477472",
+          "sourceCourseCode": "F92-13",
+          "sourceCourseName": "BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-06-16",
+          "registrationCloses": "2027-06-18",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Jun 22, 2027 12:00:00 AM",
+            "chiusura": "Jun 18, 2027 12:00:00 AM",
+            "dataStr": "22/06/2027",
+            "aperturaStr": "16/06/2027",
+            "chiusuraStr": "18/06/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477472",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20477471"
+    },
+    {
+      "id": "barb-exam-unimi-20477475",
+      "courseId": "barb-26-27-cellule-staminali-e-medicina-rigenerativa",
+      "date": "2027-07-05",
+      "type": "Scritto + Orale",
+      "time": "10:00",
+      "location": null,
+      "notes": "Pubblicato anche per il precedente ordinamento come «BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI». Ridenominazione verificata: https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "registrationOpens": "2027-06-29",
+      "registrationCloses": "2027-07-01",
+      "officialId": "20477475",
+      "commission": "MESSINA GRAZIELLA",
+      "sourceCourseCode": "FBG-22",
+      "component": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20477475",
+          "sourceCourseCode": "FBG-22",
+          "sourceCourseName": "CELLULE STAMINALI E MEDICINA RIGENERATIVA",
+          "degreeCode": "FBG",
+          "registrationOpens": "2027-06-29",
+          "registrationCloses": "2027-07-01",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Jul 5, 2027 12:00:00 AM",
+            "chiusura": "Jul 1, 2027 12:00:00 AM",
+            "dataStr": "05/07/2027",
+            "aperturaStr": "29/06/2027",
+            "chiusuraStr": "01/07/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477475",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20477476",
+          "sourceCourseCode": "F92-13",
+          "sourceCourseName": "BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-06-29",
+          "registrationCloses": "2027-07-01",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Jul 5, 2027 12:00:00 AM",
+            "chiusura": "Jul 1, 2027 12:00:00 AM",
+            "dataStr": "05/07/2027",
+            "aperturaStr": "29/06/2027",
+            "chiusuraStr": "01/07/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477476",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20477475"
+    },
+    {
+      "id": "barb-exam-unimi-20477516",
+      "courseId": "barb-26-27-cellule-staminali-e-medicina-rigenerativa",
+      "date": "2027-07-20",
+      "type": "Scritto + Orale",
+      "time": "10:00",
+      "location": null,
+      "notes": "Pubblicato anche per il precedente ordinamento come «BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI». Ridenominazione verificata: https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "registrationOpens": "2027-07-14",
+      "registrationCloses": "2027-07-16",
+      "officialId": "20477516",
+      "commission": "MESSINA GRAZIELLA",
+      "sourceCourseCode": "FBG-22",
+      "component": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20477516",
+          "sourceCourseCode": "FBG-22",
+          "sourceCourseName": "CELLULE STAMINALI E MEDICINA RIGENERATIVA",
+          "degreeCode": "FBG",
+          "registrationOpens": "2027-07-14",
+          "registrationCloses": "2027-07-16",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Jul 20, 2027 12:00:00 AM",
+            "chiusura": "Jul 16, 2027 12:00:00 AM",
+            "dataStr": "20/07/2027",
+            "aperturaStr": "14/07/2027",
+            "chiusuraStr": "16/07/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477516",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20477517",
+          "sourceCourseCode": "F92-13",
+          "sourceCourseName": "BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-07-14",
+          "registrationCloses": "2027-07-16",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Jul 20, 2027 12:00:00 AM",
+            "chiusura": "Jul 16, 2027 12:00:00 AM",
+            "dataStr": "20/07/2027",
+            "aperturaStr": "14/07/2027",
+            "chiusuraStr": "16/07/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477517",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20477516"
+    },
+    {
+      "id": "barb-exam-unimi-20477524",
+      "courseId": "barb-26-27-cellule-staminali-e-medicina-rigenerativa",
+      "date": "2027-09-13",
+      "type": "Scritto + Orale",
+      "time": "10:00",
+      "location": null,
+      "notes": "Pubblicato anche per il precedente ordinamento come «BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI». Ridenominazione verificata: https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "registrationOpens": "2027-09-07",
+      "registrationCloses": "2027-09-09",
+      "officialId": "20477524",
+      "commission": "MESSINA GRAZIELLA",
+      "sourceCourseCode": "FBG-22",
+      "component": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+      "sourceReferences": [
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+          "officialId": "20477524",
+          "sourceCourseCode": "FBG-22",
+          "sourceCourseName": "CELLULE STAMINALI E MEDICINA RIGENERATIVA",
+          "degreeCode": "FBG",
+          "registrationOpens": "2027-09-07",
+          "registrationCloses": "2027-09-09",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6 R)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE (CLASSE LM-6 R)",
+            "data": "Sep 13, 2027 12:00:00 AM",
+            "chiusura": "Sep 9, 2027 12:00:00 AM",
+            "dataStr": "13/09/2027",
+            "aperturaStr": "07/09/2027",
+            "chiusuraStr": "09/09/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477524",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        },
+        {
+          "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/F92",
+          "officialId": "20477525",
+          "sourceCourseCode": "F92-13",
+          "sourceCourseName": "BIOLOGIA DEL DIFFERENZIAMENTO E TERAPIE CELLULARI",
+          "degreeCode": "F92",
+          "registrationOpens": "2027-09-07",
+          "registrationCloses": "2027-09-09",
+          "sourceRecord": {
+            "descrCor": "BIOLOGIA APPLICATA ALLA RICERCA BIOMEDICA (CLASSE LM-6)",
+            "descrCorEng": "BIOLOGY APPLIED TO RESEARCH IN BIOMEDICINE  (CLASS LM-6)",
+            "data": "Sep 13, 2027 12:00:00 AM",
+            "chiusura": "Sep 9, 2027 12:00:00 AM",
+            "dataStr": "13/09/2027",
+            "aperturaStr": "07/09/2027",
+            "chiusuraStr": "09/09/2027",
+            "ora": "10:00",
+            "prova": "Scritto + Orale",
+            "provaEng": "Written + Oral",
+            "docente": {
+              "nome": "GRAZIELLA",
+              "cognome": "MESSINA"
+            },
+            "rangeDa": "A",
+            "rangeA": "Z",
+            "idAppello": "20477525",
+            "idTipoAppello": 2,
+            "tipoAppello": "Appello",
+            "tipoAppelloEng": "Exam date",
+            "nomeAppello": "SCRITTO + ORALE CELLULE STAMINALI E MEDICINA RIGENERATIVA PRESIDENTE MESSINA GRAZIELLA",
+            "tipoSlam": "N",
+            "offertaLibera": "N"
+          },
+          "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+          "historical": false
+        }
+      ],
+      "provenance": {
+        "sourceUrl": "https://work.unimi.it/foProssimiEsami/json/FBG",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z"
+      },
+      "canonicalOfficialId": "20477524"
+    }
+  ],
+  "additionalCourses": [
+    {
+      "id": "f92-patenting-and-technology-transfer",
+      "name": "Patenting and technology transfer",
+      "englishName": "Patenting and technology transfer",
+      "code": "F1B-10",
+      "cfu": 6,
+      "totalHours": null,
+      "year": null,
+      "semester": "non-definito",
+      "choiceGroup": null,
+      "character": "scelta-libera",
+      "ssd": [],
+      "language": null,
+      "responsibleTeacherId": null,
+      "teacherIds": [],
+      "syllabus": null,
+      "learningGoals": null,
+      "prerequisites": null,
+      "examMode": null,
+      "offered": null,
+      "offeringNote": "Insegnamento presente negli appelli del precedente ordinamento F92; non incluso nel piano attuale di 33 attività.",
+      "officialPageUrl": "https://www.unimi.it/it/ugov/of/af20260000f1b-10",
+      "arielUrl": null,
+      "schedule": [],
+      "exceptions": [],
+      "conflicts": [],
+      "provenance": {
+        "sourceUrl": "https://www.unimi.it/it/ugov/of/af20260000f1b-10",
+        "sourceType": "scheda-insegnamento",
+        "retrievedAt": "2026-10-05T14:47:58.104Z",
+        "lastVerifiedAt": "2026-10-05T14:47:58.104Z",
+        "officialSource": true,
+        "confidence": 1
+      }
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://barb.cdl.unimi.it/it/studiare/appelli-esame",
+      "status": "verificato",
+      "note": "Pagina ufficiale BARB; calendario pubblico e prenotazione Unimia."
+    },
+    {
+      "url": "https://www.unimi.it/it/studiare/frequentare-un-corso-di-laurea/seguire-il-percorso-di-studi/esami/calendario-degli-appelli",
+      "status": "verificato",
+      "note": "Calendario pubblico ufficiale: servizio JSON completo, senza filtro oggi/mese."
+    },
+    {
+      "url": "https://myariel.unimi.it/course/search.php?lang=it&perpage=all&search=Cellule+staminali",
+      "status": "verificato",
+      "note": "Avviso pubblico di Graziella Messina: ridenominazione dal 2025/26 in Cellule staminali e medicina rigenerativa."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20260000f1b-10",
+      "status": "verificato",
+      "note": "Scheda ufficiale dell'insegnamento F1B-10: Patenting and technology transfer, 6 CFU."
+    },
+    {
+      "url": "https://work.unimi.it/foProssimiEsami/json/FBG",
+      "status": "verificato",
+      "note": "Tutti gli appelli futuri pubblicati per FBG; nessun filtro per insegnamento o mese."
+    },
+    {
+      "url": "https://work.unimi.it/foProssimiEsami/json/F92",
+      "status": "verificato",
+      "note": "Tutti gli appelli futuri pubblicati per F92; nessun filtro per insegnamento o mese."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-39",
+      "status": "verificato",
+      "note": "Scheda Anatomia dell'uomo: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-40",
+      "status": "verificato",
+      "note": "Scheda Genetica e genomica umana con elementi di bioinformatica: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-38",
+      "status": "verificato",
+      "note": "Scheda Farmacologia speciale: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-37",
+      "status": "verificato",
+      "note": "Scheda Patologia: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-36",
+      "status": "verificato",
+      "note": "Scheda Principi di fisiologia: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-29",
+      "status": "verificato",
+      "note": "Scheda Altre conoscenze utili per l'inserimento nel mondo del lavoro: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000b26-38",
+      "status": "verificato",
+      "note": "Scheda Accertamento di lingua inglese - livello b2 (3 CFU): controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-41",
+      "status": "verificato",
+      "note": "Scheda Biostatistica: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-53",
+      "status": "verificato",
+      "note": "Scheda Ecotossicologia: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-57",
+      "status": "verificato",
+      "note": "Scheda Meccanismi molecolari di trasduzione del segnale in biologia cellulare e patologia: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-67",
+      "status": "verificato",
+      "note": "Scheda Antropologia: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-44",
+      "status": "verificato",
+      "note": "Scheda Generazione di modelli di malattie umane e loro applicazione: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-46",
+      "status": "verificato",
+      "note": "Scheda Biochimica clinica e biologia molecolare clinica: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-50",
+      "status": "verificato",
+      "note": "Scheda Farmaci biologici e terapie avanzate: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-54",
+      "status": "verificato",
+      "note": "Scheda Cellule staminali e medicina rigenerativa: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-56",
+      "status": "verificato",
+      "note": "Scheda Approcci per l'identificazione di bersagli farmacologici nelle malattie genetiche: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-66",
+      "status": "verificato",
+      "note": "Scheda Fisiologia cellulare e molecolare: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-52",
+      "status": "verificato",
+      "note": "Scheda Fisiologia e farmacologia del sistema endocrino: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-55",
+      "status": "verificato",
+      "note": "Scheda Neuroanatomia umana e sperimentale: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-45",
+      "status": "verificato",
+      "note": "Scheda Microbiologia clinica e igiene: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-47",
+      "status": "verificato",
+      "note": "Scheda Neurofisiologia: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-48",
+      "status": "verificato",
+      "note": "Scheda Oncologia sperimentale: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-65",
+      "status": "verificato",
+      "note": "Scheda Patologia cellulare e molecolare: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-43",
+      "status": "verificato",
+      "note": "Scheda Scienze epidemiologiche e della prevenzione: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-42",
+      "status": "verificato",
+      "note": "Scheda Biologia molecolare applicata alla ricerca biomedica: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-49",
+      "status": "verificato",
+      "note": "Scheda Basi molecolari e funzionali dei disturbi cardiovascolari e metabolici: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-64",
+      "status": "verificato",
+      "note": "Scheda Biologia e basi molecolari delle malattie neuromuscolari: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-58",
+      "status": "verificato",
+      "note": "Scheda Diagnostica avanzata di laboratorio biosanitario: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-51",
+      "status": "verificato",
+      "note": "Scheda Tecniche avanzate di indagine biomedica: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-60",
+      "status": "verificato",
+      "note": "Scheda Microbiologia cellulare e immunologia: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-59",
+      "status": "verificato",
+      "note": "Scheda Methods in bioinformatics: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-31",
+      "status": "verificato",
+      "note": "Scheda Tirocinio formativo e di orientamento: controllo dei collegamenti pubblici agli appelli."
+    },
+    {
+      "url": "https://www.unimi.it/it/ugov/of/af20270000fbg-30",
+      "status": "verificato",
+      "note": "Scheda Prova finale: controllo dei collegamenti pubblici agli appelli."
+    }
+  ],
+  "unmatched": []
+}

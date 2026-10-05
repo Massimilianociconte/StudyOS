@@ -9,15 +9,21 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { BARB_META, useBarbStore } from "../store/useBarbStore";
+import { BARB_DATASET } from "../data/university/barb.dataset";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Drawer, EmptyState, Panel, Pill, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { CourseIcon } from "../components/CourseIcon";
+import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
+import { courseColor } from "../lib/barbCourseVisuals";
+import { SEMESTER_LABEL, SEMESTER_SHORT, SEMESTER_TONE, SEMESTER_IDS } from "../lib/semesters";
+import { resolveBarbCourse } from "../lib/university/examSessions";
 import { weekdayLabel } from "../lib/university/normalize";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import type { BarbCourse, BarbSemesterInfo, BarbTeacher } from "../lib/university/types";
 
 type Tab = "corsi" | "calendario" | "docenti" | "aule" | "fonti";
-type SemesterFilter = "tutti" | "primo" | "secondo" | "altro";
+type SemesterFilter = "tutti" | BarbCourse["semester"];
 type DetailTab = "panoramica" | "programma" | "esame";
 
 const ORARI_URL = "https://orari.unimi.it/PortaleStudenti/";
@@ -29,27 +35,6 @@ const CHARACTER_LABEL: Record<BarbCourse["character"], string> = {
   lingua: "Lingua",
   "altre-conoscenze": "Altre conoscenze",
   "tirocinio-tesi": "Tirocinio / Tesi"
-};
-
-const SEMESTER_LABEL: Record<BarbCourse["semester"], string> = {
-  primo: "1° semestre",
-  secondo: "2° semestre",
-  annuale: "Annuale",
-  "non-definito": "Periodo da definire"
-};
-
-const SEMESTER_SHORT: Record<BarbCourse["semester"], string> = {
-  primo: "1° sem",
-  secondo: "2° sem",
-  annuale: "Annuale",
-  "non-definito": "Da definire"
-};
-
-const SEMESTER_TONE: Record<BarbCourse["semester"], string> = {
-  primo: "var(--accent)",
-  secondo: "var(--accent-2)",
-  annuale: "var(--warning)",
-  "non-definito": "var(--faint)"
 };
 
 /** Struttura del piano di studi: ogni gruppo porta con sé la propria regola di scelta. */
@@ -211,30 +196,32 @@ function StatTile({ icon, label, value, detail }: { icon: string; label: string;
   );
 }
 
-function useSubjectNames() {
+function useSelectedCourseIds(courses: BarbCourse[]) {
   const subjects = useStudyStore((state) => state.subjects);
-  return useMemo(() => new Set(subjects.map((subject) => subject.name.trim().toLowerCase())), [subjects]);
+  return useMemo(() => new Set(subjects.map((subject) => resolveBarbCourse(subject, courses)?.id).filter(Boolean)), [subjects, courses]);
 }
 
 function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachersById: Map<string, BarbTeacher> }) {
   const [query, setQuery] = useUiState("barb.courseQuery", "", { scope: "tab" });
-  const [semester, setSemester] = useUiState<SemesterFilter>("barb.semester", "tutti", { validate: oneOf("tutti", "primo", "secondo", "altro") });
+  const [semester, setSemester] = useUiState<SemesterFilter>("barb.semester", "tutti", { validate: oneOf("tutti", "primo", "secondo", "annuale", "non-definito") });
   const [hideNotOffered, setHideNotOffered] = useUiState("barb.hideNotOffered", false);
   const [openId, setOpenId] = useUiState<string | null>("barb.openCourse", null, { scope: "tab", validate: isNullableString });
-  const inSubjects = useSubjectNames();
+  const inSubjects = useSelectedCourseIds(courses);
+  const [myPlanOnly, setMyPlanOnly] = useUiState("barb.myPlanOnly", false);
 
   const notOffered = courses.filter((course) => course.offered === false);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return courses.filter((course) => {
-      if (semester === "altro" ? course.semester === "primo" || course.semester === "secondo" : semester !== "tutti" && course.semester !== semester) return false;
+      if (semester !== "tutti" && course.semester !== semester) return false;
+      if (myPlanOnly && !inSubjects.has(course.id)) return false;
       if (hideNotOffered && course.offered === false) return false;
       if (!q) return true;
       const teacherNames = course.teacherIds.map((id) => teachersById.get(id)?.displayName ?? "").join(" ");
       return `${course.name} ${course.englishName ?? ""} ${course.ssd.join(" ")} ${course.cfu} ${teacherNames}`.toLowerCase().includes(q);
     });
-  }, [courses, query, semester, hideNotOffered, teachersById]);
+  }, [courses, query, semester, hideNotOffered, teachersById, myPlanOnly, inSubjects]);
 
   const groups = useMemo(() => {
     const assigned = new Set<string>();
@@ -257,7 +244,8 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
     { id: "tutti" as const, label: "Tutti", count: courses.length },
     { id: "primo" as const, label: "1° semestre", count: courses.filter((c) => c.semester === "primo").length },
     { id: "secondo" as const, label: "2° semestre", count: courses.filter((c) => c.semester === "secondo").length },
-    { id: "altro" as const, label: "Annuali / da definire", count: courses.filter((c) => c.semester === "non-definito" || c.semester === "annuale").length }
+    { id: "annuale" as const, label: "Annuali", count: courses.filter((c) => c.semester === "annuale").length },
+    { id: "non-definito" as const, label: "Da definire", count: courses.filter((c) => c.semester === "non-definito").length }
   ];
 
   return (
@@ -281,6 +269,10 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
             onChange={setSemester}
             options={semesterOptions}
           />
+          <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
+            <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={myPlanOnly} onChange={(event) => setMyPlanOnly(event.target.checked)} />
+            Solo il mio piano ({inSubjects.size})
+          </label>
           {notOffered.length ? (
             <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
               <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={hideNotOffered} onChange={(e) => setHideNotOffered(e.target.checked)} />
@@ -290,6 +282,13 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
         </div>
       </div>
 
+      {inSubjects.size > 0 ? <div className="mb-5 flex flex-wrap items-center gap-2 text-xs" aria-label="Semestri del mio piano">
+        <span className="mr-1 font-black">Il mio piano · periodi ufficiali</span>
+        {SEMESTER_IDS.map((id) => {
+          const selected = courses.filter((course) => inSubjects.has(course.id) && course.semester === id);
+          return selected.length ? <Tag key={id} color={SEMESTER_TONE[id]}>{SEMESTER_LABEL[id]} · {selected.length} attività · {selected.reduce((sum, course) => sum + course.cfu, 0)} CFU</Tag> : null;
+        })}
+      </div> : null}
       {groups.length === 0 ? <EmptyState icon="Search" title="Nessun corso" body="Prova a cambiare filtri o ricerca." /> : null}
 
       <div className="grid grid-cols-1 gap-6">
@@ -312,7 +311,7 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
                     key={course.id}
                     course={course}
                     responsible={course.responsibleTeacherId ? teachersById.get(course.responsibleTeacherId) ?? null : null}
-                    added={inSubjects.has(course.name.trim().toLowerCase())}
+                    added={inSubjects.has(course.id)}
                     onOpen={() => setOpenId(course.id)}
                   />
                 ))}
@@ -377,7 +376,11 @@ function CourseCard({
           <Icon name="ChevronRight" className="hidden h-4 w-4 text-[var(--faint)] transition-transform group-hover:translate-x-0.5 sm:block" />
         </span>
       </div>
-      <h4 className="three-line-safe mt-2 text-sm font-black leading-snug sm:text-[15px]">{course.name}</h4>
+      <div className="mt-3 flex min-w-0 items-start gap-2.5">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-8 w-8" /></span>
+        <h4 className="three-line-safe text-sm font-black leading-snug sm:text-[15px]">{course.name}</h4>
+      </div>
+      <BarbExamAvailability course={course} />
       <div className="mt-auto pt-2">
         {notOffered ? (
           <p className="text-xs font-black text-[var(--warning-text)]">Non erogato {BARB_META.academicYear}</p>
@@ -395,7 +398,7 @@ function CourseCard({
 function AddToSubjects({ course, teacher }: { course: BarbCourse; teacher: BarbTeacher | null }) {
   const { subjects, addSubject } = useStudyStore(useShallow((state) => ({ subjects: state.subjects, addSubject: state.addSubject })));
   const [busy, setBusy] = useState(false);
-  const exists = subjects.some((subject) => subject.name.trim().toLowerCase() === course.name.trim().toLowerCase());
+  const exists = subjects.some((subject) => resolveBarbCourse(subject, BARB_DATASET.courses)?.id === course.id);
   if (exists) {
     return (
       <span className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--success-bg)] px-4 text-sm font-extrabold text-[var(--success-text)]">
@@ -415,7 +418,10 @@ function AddToSubjects({ course, teacher }: { course: BarbCourse; teacher: BarbT
             name: course.name,
             teacher: teacher?.displayName ?? "",
             cfu: course.cfu,
-            semester: `${SEMESTER_LABEL[course.semester]} ${BARB_META.academicYear}`,
+            semester: course.semester,
+            universityCourseId: course.id,
+            icon: `barb:${course.id}`,
+            color: courseColor(course),
             status: "active",
             tags: ["barb", ...course.ssd],
             notes: [
@@ -511,6 +517,8 @@ function CourseDrawer({
       eyebrow={
         course ? (
           <>
+            <span className="grid h-11 w-11 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-9 w-9" /></span>
+            <Tag color={SEMESTER_TONE[course.semester]}>{SEMESTER_LABEL[course.semester]}</Tag>
             <Pill active={course.character === "obbligatorio"}>{CHARACTER_LABEL[course.character]}</Pill>
             {course.choiceGroup ? <Pill>{PLAN_GROUPS.find((group) => group.id === course.choiceGroup)?.title ?? course.choiceGroup}</Pill> : null}
             <Pill>{course.cfu} CFU</Pill>
@@ -556,6 +564,8 @@ function CourseDrawer({
               { id: "esame", label: "Esame e materiali" }
             ]}
           />
+
+          {detailTab === "esame" ? <BarbExamSessions course={course} /> : null}
 
           {detailTab === "panoramica" ? (
             <>
@@ -1055,4 +1065,3 @@ function WeekGrid({ courses }: { courses: BarbCourse[] }) {
     </div>
   );
 }
-

@@ -39,8 +39,8 @@
 - Su mobile la barra in basso mostra 4 sezioni + "Altro" (foglio con tutte le altre):
   una nuova vista va aggiunta a `navItems` in AppShell.
 - Layout per larghezza (AppShell): <640 px barra in basso + pulsante "+", 640–1279 px
-  barra laterale compatta a icone (92 px), ≥1280 px barra laterale completa. Lo spazio
-  utile è la larghezza meno la barra: a 768 px restano ~640 px, a 1024 ~880, a 1280 ~960.
+   barra laterale compatta a icone (92 px), ≥1280 px barra laterale completa (288 px). Lo spazio
+   utile è la larghezza meno la barra: a 768 px restano ~640 px, a 1024 ~880, a 1280 ~950.
   Scegliere i breakpoint delle viste su questi valori (due colonne affiancate da `lg`).
 - Tailwind usa `hoverOnlyWhenSupported`: un'azione nascosta fino al passaggio del mouse va
   scritta con `can-hover:opacity-0 can-hover:group-hover:opacity-100`, mai `opacity-0` +

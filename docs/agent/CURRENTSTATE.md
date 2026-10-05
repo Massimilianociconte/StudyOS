@@ -76,3 +76,16 @@ con schede, filtri, elemento aperto, data del calendario e scroll (`src/lib/uiSt
 le impostazioni locali passano a `schemaVersion` 2 e chi aveva la dashboard predefinita
 viene portato a "ultima sezione". Verifiche: 69 test, lint, build, prova nel browser di
 refresh, scheda nuova, schede parallele, BARB con corso aperto e telefono a 375 px.
+
+Corsi, appelli BARB e calendario personale (5 ottobre 2026): filtri per semestre
+nel catalogo BARB, nelle Materie e in Dashboard con override personale
+(`semesterOverride`); dataset versionato di 12 appelli ufficiali verificati
+(feed FBG/F92, vedi `docs/barb-exams.md`) con stati prossimo/futuro/passato;
+Calendario Esami BARB generale (giorno/settimana/mese, filtro corso, avvisi di
+stessa giornata) separato dal Calendario personale, con importazione selettiva
+idempotente (`sourceUid` stabile, promemoria giornalieri senza durata stimata);
+34 icone scientifiche distinte (`CourseIcon`, nessuna generica). Nav rinominata
+"Calendario personale"; sidebar xl a 288 px; titoli di sezione senza
+sillabazione automatica. Verifiche: 104 test, lint, build, `barb:validate` ed
+end-to-end in browser (2 corsi aggiunti, 10 appelli importati, re-import senza
+duplicati) in tema scuro/chiaro e a 375 px.

@@ -2,7 +2,7 @@
 // (barb.synced.json, generato SOLO da `npm run barb:sync -- --apply` / `npm run barb:apply`).
 
 import { BARB_SEED } from "./barb.seed";
-import syncedJson from "./barb.synced.json";
+import syncedJson from "./barb.synced.json" with { type: "json" };
 import { mergeUniversityDataset } from "../../lib/university/merge";
 import { contentHash } from "../../lib/university/validate";
 import type { UniversitySyncedData } from "../../lib/university/types";

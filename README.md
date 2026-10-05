@@ -45,6 +45,12 @@ docenti, contatti o orari tramite Firecrawl OSS locale, segui
 [`docs/barb-sync.md`](docs/barb-sync.md). La sincronizzazione è su richiesta:
 il browser non esegue scraping.
 
+Il **Calendario Esami BARB** è generale e indipendente dalle materie personali.
+Gli appelli verificati si possono scegliere per insegnamento o singola data e
+importare nel **Calendario personale**, evitando duplicati. Corsi e materie
+mostrano semestri distinti e icone scientifiche. Copertura, fonti e aggiornamento
+degli appelli: [`docs/barb-exams.md`](docs/barb-exams.md).
+
 ## Cloud sync
 
 L'implementazione opzionale con Supabase Auth, Postgres RLS e coda offline è

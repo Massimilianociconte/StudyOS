@@ -69,6 +69,10 @@ export type AppView =
   | "settings";
 
 export interface Subject extends BaseEntity {
+  /** Collegamento stabile al catalogo universitario, preservato anche rinominando la materia. */
+  universityCourseId?: string;
+  /** Semestre personale esplicitamente scelto; assente = semestre ufficiale del corso. */
+  semesterOverride?: "primo" | "secondo" | "annuale" | "non-definito";
   name: string;
   teacher: string;
   color: string;
@@ -127,6 +131,8 @@ export interface CalendarEvent extends BaseEntity {
    * Evento "Tutto il giorno": occupa l'intera giornata (start = mezzanotte locale del giorno,
    * end = mezzanotte successiva). Opzionale: gli eventi salvati prima dell'introduzione
    * (valore assente) restano eventi con orario.
+   * Gli appelli BARB importati usano ISO locale senza offset: una data ufficiale
+   * conserva lo stesso giorno anche su dispositivi con fusi orari diversi.
    */
   allDay?: boolean;
   recurrence?: "none" | "daily" | "weekly" | "monthly";
