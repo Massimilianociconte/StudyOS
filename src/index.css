@@ -296,6 +296,15 @@ textarea:focus-visible {
     opacity 180ms ease;
 }
 
+/* Micro-segnale della campanella: un cenno ogni ciclo, poi fermo. */
+@keyframes bell-nudge {
+  0%, 100% { transform: rotate(0deg); }
+  6% { transform: rotate(12deg); }
+  12% { transform: rotate(-9deg); }
+  18% { transform: rotate(5deg); }
+  24% { transform: rotate(0deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

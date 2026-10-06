@@ -56,6 +56,7 @@ const GoalsView = lazyView(() => import("./views/GoalsView"), "GoalsView");
 const StatsView = lazyView(() => import("./views/StatsView"), "StatsView");
 const SettingsView = lazyView(() => import("./views/SettingsView"), "SettingsView");
 const BarbView = lazyView(() => import("./views/BarbView"), "BarbView");
+const GroupsView = lazyView(() => import("./views/GroupsView"), "GroupsView");
 
 const views: Record<AppView, ReactNode> = {
   dashboard: <DashboardView />,
@@ -69,6 +70,7 @@ const views: Record<AppView, ReactNode> = {
   goals: <GoalsView />,
   stats: <StatsView />,
   barb: <BarbView />,
+  groups: <GroupsView />,
   settings: <SettingsView />
 };
 

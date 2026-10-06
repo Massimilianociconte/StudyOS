@@ -101,7 +101,12 @@ const COLLECTION_LABEL: Record<(typeof COLLECTIONS)[number], string> = {
   tags: "tag",
   reminders: "promemoria",
   widgets: "widget",
-  preferences: "preferenze"
+  preferences: "preferenze",
+  notifications: "notifiche",
+  studyGroups: "gruppi",
+  groupInvites: "inviti",
+  groupResources: "risorse condivise",
+  groupActivities: "attività dei gruppi"
 };
 
 export const backupSummary = (snapshot: StudySnapshot) => {

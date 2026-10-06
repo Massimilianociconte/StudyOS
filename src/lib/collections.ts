@@ -14,7 +14,12 @@ export const COLLECTIONS = [
   "tags",
   "reminders",
   "widgets",
-  "preferences"
+  "preferences",
+  "notifications",
+  "studyGroups",
+  "groupInvites",
+  "groupResources",
+  "groupActivities"
 ] as const;
 
 export type CollectionKey = (typeof COLLECTIONS)[number];
@@ -40,7 +45,12 @@ export const ENTITY_TYPES: Record<CollectionKey, string> = {
   tags: "tag",
   reminders: "reminder",
   widgets: "widget",
-  preferences: "preferences"
+  preferences: "preferences",
+  notifications: "notification",
+  studyGroups: "studyGroup",
+  groupInvites: "groupInvite",
+  groupResources: "groupResource",
+  groupActivities: "groupActivity"
 };
 
 export const COLLECTION_BY_ENTITY_TYPE: Record<string, CollectionKey> = Object.fromEntries(

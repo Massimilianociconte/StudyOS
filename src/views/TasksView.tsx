@@ -8,6 +8,7 @@ import { PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, capitalizeFirst, form
 import { Button, EmptyState, IconButton, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
+import { TaskModal } from "../components/TaskModal";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
@@ -54,8 +55,10 @@ export function TasksView() {
   const [mode, setMode] = useUiState<TaskMode>("tasks.mode", "list", { validate: oneOf("list", "kanban", "matrix", "subject", "focus") });
   const [sort, setSort] = useUiState<SortMode>("tasks.sort", "deadline", { validate: oneOf("deadline", "priority", "recent") });
   const [editingTaskId, setEditingTaskId] = useUiState<string | null>("tasks.editing", null, { scope: "tab", validate: isNullableString });
+  const [createOpen, setCreateOpen] = useState(false);
   const { tasks, subjects, addTask, updateTask, toggleTask, deleteTask } = useStudyStore();
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
+  const hasAnyTask = tasks.length > 0;
 
   const visible = useMemo(() => tasks.filter((task) => task.status !== "archived"), [tasks]);
   const open = visible.filter(isOpen);
@@ -84,64 +87,91 @@ export function TasksView() {
 
   return (
     <div>
-      <SectionTitle title="Task" subtitle="Scadenze, priorità e sottotask in un colpo d'occhio. Clicca una task per modificarla." />
+      <SectionTitle
+        title="Task"
+        subtitle="Scadenze, priorità e sottotask in un colpo d'occhio. Clicca una task per modificarla."
+        action={
+          hasAnyTask ? (
+            <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
+              Nuova task
+            </Button>
+          ) : undefined
+        }
+      />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <div key={stat.label} className="quiet-panel flex items-center gap-3 p-3.5">
-            <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: stat.tone }} />
-            <div className="min-w-0">
-              <p className="truncate text-xl font-black leading-tight">{stat.value}</p>
-              <p className="truncate text-xs font-bold text-[var(--muted)]">{stat.label}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <QuickTaskBar subjects={subjects} onAdd={addTask} />
-
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <Segmented
-          label="Vista task"
-          value={mode}
-          onChange={setMode}
-          options={[
-            { id: "list", label: "Lista", icon: "List" },
-            { id: "kanban", label: "Kanban", icon: "LayoutGrid" },
-            { id: "matrix", label: "Eisenhower", icon: "Grid2X2" },
-            { id: "subject", label: "Per materia", icon: "BookOpen" },
-            { id: "focus", label: "Focus oggi", icon: "Zap" }
-          ]}
-        />
-        {mode === "list" ? (
-          <label className="flex items-center gap-2 text-xs font-black text-[var(--muted)]">
-            Ordina
-            <select
-              className="min-h-11 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--text)]"
-              value={sort}
-              onChange={(event) => setSort(event.target.value as SortMode)}
-            >
-              <option value="deadline">Per scadenza</option>
-              <option value="priority">Per priorità</option>
-              <option value="recent">Più recenti</option>
-            </select>
-          </label>
-        ) : null}
-      </div>
-
-      {mode === "list" ? <GroupedList tasks={visible} sort={sort} actions={rowActions} /> : null}
-      {mode === "focus" ? (
+      {!hasAnyTask ? (
         <Panel>
-          <div className="mb-3 flex items-baseline justify-between gap-2">
-            <h3 className="text-xl font-black">Piano di oggi</h3>
-            <span className="text-xs font-bold text-[var(--muted)]">Le 6 task con scadenza e priorità più pressanti</span>
+          <div className="mx-auto max-w-md py-6 text-center">
+            <span className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-super bg-[var(--surface-strong)]">
+              <Icon name="Check" className="h-7 w-7 text-[var(--accent-ink)]" />
+            </span>
+            <h3 className="text-2xl font-black">Nessuna task aperta</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">Aggiungine una: titolo, materia, priorità e scadenza.</p>
+            <Button className="mt-5" icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
+              Nuova task
+            </Button>
           </div>
-          <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />
         </Panel>
-      ) : null}
-      {mode === "kanban" ? <Kanban tasks={visible} actions={rowActions} updateTask={updateTask} /> : null}
-      {mode === "matrix" ? <Matrix tasks={open} actions={rowActions} /> : null}
-      {mode === "subject" ? <BySubject tasks={visible} actions={rowActions} /> : null}
+      ) : (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {stats.map((stat) => (
+              <div key={stat.label} className="quiet-panel flex items-center gap-3 p-3.5">
+                <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: stat.tone }} />
+                <div className="min-w-0">
+                  <p className="truncate text-xl font-black leading-tight">{stat.value}</p>
+                  <p className="truncate text-xs font-bold text-[var(--muted)]">{stat.label}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <QuickTaskBar subjects={subjects} onAdd={addTask} />
+
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <Segmented
+              label="Vista task"
+              value={mode}
+              onChange={setMode}
+              options={[
+                { id: "list", label: "Lista", icon: "List" },
+                { id: "kanban", label: "Kanban", icon: "LayoutGrid" },
+                { id: "matrix", label: "Eisenhower", icon: "Grid2X2" },
+                { id: "subject", label: "Per materia", icon: "BookOpen" },
+                { id: "focus", label: "Focus oggi", icon: "Zap" }
+              ]}
+            />
+            {mode === "list" ? (
+              <label className="flex items-center gap-2 text-xs font-black text-[var(--muted)]">
+                Ordina
+                <select
+                  className="min-h-11 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--text)]"
+                  value={sort}
+                  onChange={(event) => setSort(event.target.value as SortMode)}
+                >
+                  <option value="deadline">Per scadenza</option>
+                  <option value="priority">Per priorità</option>
+                  <option value="recent">Più recenti</option>
+                </select>
+              </label>
+            ) : null}
+          </div>
+
+          {mode === "list" ? <GroupedList tasks={visible} sort={sort} actions={rowActions} onNew={() => setCreateOpen(true)} /> : null}
+          {mode === "focus" ? (
+            <Panel>
+              <div className="mb-3 flex items-baseline justify-between gap-2">
+                <h3 className="text-xl font-black">Piano di oggi</h3>
+                <span className="text-xs font-bold text-[var(--muted)]">Le 6 task con scadenza e priorità più pressanti</span>
+              </div>
+              <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />
+            </Panel>
+          ) : null}
+          {mode === "kanban" ? <Kanban tasks={visible} actions={rowActions} updateTask={updateTask} /> : null}
+          {mode === "matrix" ? <Matrix tasks={open} actions={rowActions} /> : null}
+          {mode === "subject" ? <BySubject tasks={visible} actions={rowActions} /> : null}
+        </>
+      )}
 
       {editingTask ? (
         <TaskEditorModal
@@ -154,6 +184,7 @@ export function TasksView() {
           }}
         />
       ) : null}
+      {createOpen ? <TaskModal onClose={() => setCreateOpen(false)} onCreate={(draft) => addTask(draft)} /> : null}
     </div>
   );
 }
@@ -182,7 +213,9 @@ function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnTy
 
   return (
     // Una riga sola solo da xl: su tablet il titolo ha una riga intera e i filtri stanno sotto.
-    <form onSubmit={submit} className="soft-panel mb-4 grid grid-cols-1 gap-2 p-2.5 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] xl:items-center">
+    <div className="mb-4">
+      <p className="mb-1.5 px-1 text-xs font-black uppercase text-[var(--faint)]">Aggiunta rapida</p>
+      <form onSubmit={submit} className="soft-panel grid grid-cols-1 gap-2 p-2.5 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] xl:items-center">
       <label className="relative block min-w-0">
         <span className="sr-only">Nuova task</span>
         <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
@@ -220,6 +253,7 @@ function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnTy
         </button>
       </div>
     </form>
+    </div>
   );
 }
 
@@ -338,7 +372,7 @@ function RowList({ tasks, actions, compact, empty }: { tasks: Task[]; actions: R
   );
 }
 
-function GroupedList({ tasks, sort, actions }: { tasks: Task[]; sort: SortMode; actions: RowActions }) {
+function GroupedList({ tasks, sort, actions, onNew }: { tasks: Task[]; sort: SortMode; actions: RowActions; onNew: () => void }) {
   const [showDone, setShowDone] = useUiState("tasks.showDone", false);
   const open = tasks.filter(isOpen);
   const done = tasks
@@ -362,13 +396,9 @@ function GroupedList({ tasks, sort, actions }: { tasks: Task[]; sort: SortMode; 
         <EmptyState
           icon="Check"
           title="Nessuna task aperta"
-          body="Aggiungine una qui sopra: titolo, materia, priorità e scadenza."
+          body="Le completate restano qui sotto. Aprine una nuova quando vuoi."
           action={
-            <Button
-              variant="primary"
-              icon="Plus"
-              onClick={() => document.getElementById("quick-task-title")?.focus()}
-            >
+            <Button variant="primary" icon="Plus" onClick={onNew}>
               Nuova task
             </Button>
           }

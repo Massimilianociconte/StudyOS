@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { PaletteName, ThemeMode, UserSettings } from "../types";
 import {
   backupSummary,
@@ -81,7 +81,12 @@ export function SettingsView() {
       tags: scope === "full" ? snapshot.tags : [],
       reminders: scope === "full" ? snapshot.reminders : [],
       widgets: scope === "full" ? snapshot.widgets : [],
-      preferences: scope === "full" ? snapshot.preferences : []
+      preferences: scope === "full" ? snapshot.preferences : [],
+      notifications: scope === "full" ? snapshot.notifications : [],
+      studyGroups: scope === "full" ? snapshot.studyGroups : [],
+      groupInvites: scope === "full" ? snapshot.groupInvites : [],
+      groupResources: scope === "full" ? snapshot.groupResources : [],
+      groupActivities: scope === "full" ? snapshot.groupActivities : []
       };
       const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined, scope);
       downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
@@ -188,14 +193,34 @@ export function SettingsView() {
         subtitle="Profilo, aspetto, privacy, cloud e backup dei tuoi dati."
       />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {message ? (
+        <p role="status" className="mb-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
+          {message}
+        </p>
+      ) : null}
+
+      <nav aria-label="Categorie di impostazioni" className="mb-5 flex gap-1.5 overflow-x-auto pb-1">
+        {SECTIONS.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            onClick={() => document.getElementById(`settings-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-[var(--surface-soft)] px-3.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]"
+          >
+            <Icon name={section.icon} className="h-3.5 w-3.5" />
+            {section.label}
+          </button>
+        ))}
+      </nav>
+
+      <div className="grid grid-cols-1 gap-4">
+        <section id="settings-profilo" aria-labelledby="settings-profilo-title" className="scroll-mt-24">
         <Panel>
-          <div className="mb-4">
-            <h3 className="text-2xl font-black">Profilo e obiettivi</h3>
-            <p className="safe-text mt-1 text-sm font-bold text-[var(--muted)]">
-              {displayName ? `Ciao, ${displayName}. ` : ""}Questi dati seguono il tuo account: con il cloud attivo sono uguali su ogni dispositivo.
-            </p>
-          </div>
+          <SettingHeader
+            section="profilo"
+            title="Profilo e obiettivi"
+            description={`${displayName ? `Ciao, ${displayName}. ` : ""}Chi sei e quanto vuoi studiare. Questi dati seguono il tuo account: con il cloud attivo sono uguali su ogni dispositivo.`}
+          />
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <div className="grid grid-cols-1 h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-super bg-[var(--surface-soft)]">
               {preferences.avatarDataUrl ? (
@@ -282,9 +307,11 @@ export function SettingsView() {
             <span className="min-w-0 flex-1">Mostra la sezione del corso BARB · UNIMI</span>
           </label>
         </Panel>
+        </section>
 
+        <section id="settings-aspetto" aria-labelledby="settings-aspetto-title" className="scroll-mt-24">
         <Panel>
-          <h3 className="mb-4 text-2xl font-black">Aspetto</h3>
+          <SettingHeader section="aspetto" title="Aspetto" description="Tema, colori e densità. Cambiano solo come vedi l'app su questo dispositivo." />
           <div className="grid grid-cols-1 gap-4">
             <Field label="Modalità">
               <div className="grid grid-cols-3 gap-2">
@@ -346,15 +373,21 @@ export function SettingsView() {
             </div>
           </div>
         </Panel>
+        </section>
 
+        <section id="settings-account" aria-labelledby="settings-account-title" className="scroll-mt-24">
+          <SettingHeader section="account" title="Account e sincronizzazione" description="Accedi per avere gli stessi dati su telefono e computer. Senza account tutto resta solo in questo browser." />
+          <CloudPanel />
+        </section>
+
+        <section id="settings-privacy" aria-labelledby="settings-privacy-title" className="scroll-mt-24">
         <Panel>
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-2xl font-black">Privacy locale</h3>
-              <p className="text-sm text-[var(--muted)]">GitHub Pages ospita solo il codice. I dati sono nel browser.</p>
-            </div>
-            <Pill active={settings.security.mode === "vault"} className="shrink-0">{settings.security.mode === "vault" ? "Vault cifrato" : "Standard"}</Pill>
-          </div>
+          <SettingHeader
+            section="privacy"
+            title="Privacy e vault"
+            description="GitHub Pages ospita solo il codice. I dati sono nel browser: il vault li cifra con una passphrase che non viene mai salvata."
+            action={<Pill active={settings.security.mode === "vault"}>{settings.security.mode === "vault" ? "Vault cifrato" : "Standard"}</Pill>}
+          />
 
           <div className="grid grid-cols-1 gap-3">
             <div className="quiet-panel flex items-center gap-3 p-4">
@@ -397,9 +430,11 @@ export function SettingsView() {
             </div>
           </div>
         </Panel>
+        </section>
 
+        <section id="settings-backup" aria-labelledby="settings-backup-title" className="scroll-mt-24">
         <Panel>
-          <h3 className="mb-4 text-2xl font-black">Backup e import</h3>
+          <SettingHeader section="backup" title="Backup e import" description="Scarica una copia dei tuoi dati o ripristina un backup precedente. Il backup cifrato richiede una passphrase." />
           <div className="grid grid-cols-1 gap-4">
             <label className="flex items-center gap-3 rounded-[22px] bg-[var(--surface-soft)] p-3 text-sm font-black">
               <input
@@ -449,9 +484,15 @@ export function SettingsView() {
             </Field>
           </div>
         </Panel>
+        </section>
 
+        <section id="settings-dati" aria-labelledby="settings-dati-title" className="scroll-mt-24">
         <Panel>
-          <h3 className="mb-4 text-2xl font-black">Dati locali</h3>
+          <SettingHeader
+            section="dati"
+            title="Spazio e dati"
+            description="Quanto occupa il tuo workspace e, solo se serve davvero, il reset completo. Il reset è irreversibile senza backup."
+          />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <DataStat label="Materie" value={subjects.length} />
             <DataStat label="Esami" value={exams.length} />
@@ -459,18 +500,40 @@ export function SettingsView() {
             <DataStat label="Eventi" value={events.length} />
             <DataStat label="Allegati" value={attachments.length} />
           </div>
-          <Button className="mt-5" icon="Trash2" variant="danger" onClick={() => void resetData()}>
-            Reset dati locali
-          </Button>
-          {message ? (
-            <p role="status" className="mt-4 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
-              {message}
-            </p>
-          ) : null}
+          <div className="mt-5 rounded-[20px] border border-[var(--danger-border)] p-3">
+            <p className="text-sm font-black text-[var(--danger-text)]">Zona pericolosa</p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">Con il cloud attivo puoi scegliere se eliminare anche i dati sincronizzati.</p>
+            <Button className="mt-3" icon="Trash2" variant="danger" onClick={() => void resetData()}>
+              Reset dati locali
+            </Button>
+          </div>
         </Panel>
-
-        <CloudPanel />
+        </section>
       </div>
+    </div>
+  );
+}
+
+const SECTIONS: { id: string; label: string; icon: string }[] = [
+  { id: "profilo", label: "Profilo", icon: "User" },
+  { id: "aspetto", label: "Aspetto", icon: "Palette" },
+  { id: "account", label: "Account", icon: "LogIn" },
+  { id: "privacy", label: "Privacy", icon: "Shield" },
+  { id: "backup", label: "Backup", icon: "Download" },
+  { id: "dati", label: "Dati", icon: "Trash2" }
+];
+
+/** Intestazione di categoria: titolo + descrizione breve + eventuale azione. */
+function SettingHeader({ section, title, description, action }: { section: string; title: string; description: string; action?: ReactNode }) {
+  return (
+    <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h3 id={`settings-${section}-title`} className="text-2xl font-black">
+          {title}
+        </h3>
+        <p className="safe-text mt-1 text-sm font-bold text-[var(--muted)]">{description}</p>
+      </div>
+      {action ? <span className="shrink-0">{action}</span> : null}
     </div>
   );
 }

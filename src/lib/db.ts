@@ -1,13 +1,18 @@
 import Dexie, { type Table } from "dexie";
 import type {
+  AppNotification,
   Attachment,
   CalendarEvent,
   DashboardWidget,
   Exam,
   Goal,
+  GroupActivity,
+  GroupInvite,
+  GroupResource,
   Note,
   Preferences,
   Reminder,
+  StudyGroup,
   StudySession,
   StudySnapshot,
   StudyTopic,
@@ -77,6 +82,11 @@ class StudyOSDatabase extends Dexie {
   reminders!: Table<Reminder, string>;
   widgets!: Table<DashboardWidget, string>;
   preferences!: Table<Preferences, string>;
+  notifications!: Table<AppNotification, string>;
+  studyGroups!: Table<StudyGroup, string>;
+  groupInvites!: Table<GroupInvite, string>;
+  groupResources!: Table<GroupResource, string>;
+  groupActivities!: Table<GroupActivity, string>;
   barbCourses!: Table<BarbCourseRow, string>;
   barbTeachers!: Table<BarbTeacherRow, string>;
   barbSyncLogs!: Table<UniversitySyncLog, string>;
@@ -105,6 +115,15 @@ class StudyOSDatabase extends Dexie {
     // v4: preferenze personali sincronizzate (nome, obiettivo settimanale, CFU del corso).
     this.version(4).stores({
       preferences: "id"
+    });
+
+    // v5: notifiche account + gruppi collaborativi. Tabelle precedenti invariate.
+    this.version(5).stores({
+      notifications: "id, updatedAt, kind, readAt",
+      studyGroups: "id, updatedAt, inviteCode",
+      groupInvites: "id, updatedAt, groupId, status, code",
+      groupResources: "id, updatedAt, groupId, pinned",
+      groupActivities: "id, updatedAt, groupId"
     });
   }
 }

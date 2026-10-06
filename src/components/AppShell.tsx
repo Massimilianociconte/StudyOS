@@ -6,6 +6,8 @@ import type { AppView } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
 import { Button, Drawer, IconButton } from "./ui";
+import { NotificationsBell } from "./NotificationsBell";
+import { NotificationsPanel } from "./NotificationsPanel";
 import { QuickAddModal } from "./QuickAddModal";
 import { CloudStatusBadge } from "./CloudStatusBadge";
 import { GlobalSearch } from "./GlobalSearch";
@@ -20,6 +22,7 @@ const navItems: { view: AppView; label: string; short: string; icon: string }[] 
   { view: "study", label: "Studio", short: "Studio", icon: "Timer" },
   { view: "subjects", label: "Materie", short: "Materie", icon: "BookOpen" },
   { view: "barb", label: "BARB · UNIMI", short: "BARB", icon: "Landmark" },
+  { view: "groups", label: "Gruppi", short: "Gruppi", icon: "Users" },
   { view: "exams", label: "Esami", short: "Esami", icon: "GraduationCap" },
   { view: "career", label: "Libretto e laurea", short: "Libretto", icon: "Award" },
   { view: "materials", label: "Materiali", short: "Materiali", icon: "Paperclip" },
@@ -34,6 +37,7 @@ const mobileItems = navItems.filter((item) => MOBILE_PRIMARY.includes(item.view)
 export function AppShell({ children }: PropsWithChildren) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const { activeView, setActiveView, settings, updateSettings, lockVault, persistError, retryPersist } = useStudyStore(
     useShallow((state) => ({
       activeView: state.activeView,
@@ -175,6 +179,7 @@ export function AppShell({ children }: PropsWithChildren) {
                 label={settings.themeMode === "light" ? "Passa al tema scuro" : "Passa al tema chiaro"}
                 onClick={() => updateSettings({ themeMode: settings.themeMode === "light" ? "dark" : "light" })}
               />
+              <NotificationsBell onOpen={() => setNotificationsOpen(true)} />
               <button
                 type="button"
                 aria-label="Profilo e impostazioni"
@@ -307,6 +312,7 @@ export function AppShell({ children }: PropsWithChildren) {
       <TaskTimerReminder />
       <StudyTimerWatcher />
       <QuickAddModal open={quickAddOpen} onClose={() => setQuickAddOpen(false)} />
+      {notificationsOpen ? <NotificationsPanel onClose={() => setNotificationsOpen(false)} /> : null}
     </main>
   );
 }

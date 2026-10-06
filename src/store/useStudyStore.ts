@@ -3,15 +3,21 @@ import type { BarbExamSession } from "../lib/university/examTypes";
 import { BARB_EXAM_COURSES, BARB_EXAM_SESSIONS } from "../lib/university/examSessions";
 import { barbReminderEventId, prepareBarbExamImport, preserveBarbReminderDates } from "../lib/barbExamImport";
 import type {
+  AppNotification,
   AppView,
   Attachment,
   CalendarEvent,
   DashboardWidget,
   Exam,
   Goal,
+  GroupActivity,
+  GroupInvite,
+  GroupMember,
+  GroupResource,
   Note,
   Preferences,
   Reminder,
+  StudyGroup,
   StudySession,
   StudySnapshot,
   StudyTopic,
@@ -24,6 +30,7 @@ import { DEFAULT_PREFERENCES, PREFERENCES_ID, SETTINGS_SCHEMA_VERSION, createEmp
 import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState";
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
+import { makeGroupInviteCode } from "../lib/groups";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { fileToDataUrl } from "../lib/files";
@@ -91,6 +98,11 @@ interface StudyState {
   reminders: Reminder[];
   widgets: DashboardWidget[];
   preferences: Preferences[];
+  notifications: AppNotification[];
+  studyGroups: StudyGroup[];
+  groupInvites: GroupInvite[];
+  groupResources: GroupResource[];
+  groupActivities: GroupActivity[];
   timer: TimerState;
   error?: string;
   /** Ultimo errore di salvataggio su IndexedDB (undefined = tutto salvato). */
@@ -130,6 +142,26 @@ interface StudyState {
   reviewTopic: (id: string, rating: ReviewRating) => Promise<void>;
   /** Aggiorna le preferenze personali sincronizzate (entità unica "main"). */
   updatePreferences: (patch: PreferencesPatch) => Promise<void>;
+  /** Crea una notifica dell'account (max 200 conservate, le più vecchie vengono potate). */
+  addNotification: (notification: Partial<AppNotification> & Pick<AppNotification, "kind" | "title">) => Promise<string>;
+  markNotificationRead: (id: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
+  deleteNotification: (id: string) => Promise<void>;
+  /** Crea un gruppo di studio con l'utente corrente come proprietario. */
+  createStudyGroup: (group: Partial<StudyGroup> & Pick<StudyGroup, "name">, owner: Pick<GroupMember, "userId" | "displayName" | "email">) => Promise<string>;
+  updateStudyGroup: (id: string, patch: Partial<StudyGroup>) => Promise<void>;
+  deleteStudyGroup: (id: string) => Promise<void>;
+  /** Crea un invito pendente (per email e/o codice condivisibile). */
+  createGroupInvite: (invite: Partial<GroupInvite> & Pick<GroupInvite, "groupId" | "groupName" | "fromUserId" | "fromDisplayName" | "code">) => Promise<string>;
+  /** Accetta un invito: entra nei membri e lo segna accettato. */
+  acceptGroupInvite: (inviteId: string, member: Pick<GroupMember, "userId" | "displayName" | "email">) => Promise<void>;
+  declineGroupInvite: (inviteId: string) => Promise<void>;
+  /** Entra in un gruppo tramite codice di invito; errore se il codice non esiste. */
+  joinGroupByCode: (code: string, member: Pick<GroupMember, "userId" | "displayName" | "email">) => Promise<string>;
+  addGroupResource: (resource: Partial<GroupResource> & Pick<GroupResource, "groupId" | "kind" | "title" | "addedByUserId" | "addedByDisplayName">) => Promise<string>;
+  toggleResourcePin: (id: string) => Promise<void>;
+  deleteGroupResource: (id: string) => Promise<void>;
+  logGroupActivity: (groupId: string, actorDisplayName: string, text: string) => Promise<void>;
   addAttachment: (file: File, link?: { type?: Attachment["linkedEntityType"]; id?: string }) => Promise<void>;
   addExternalAttachment: (url: string, name: string, description?: string) => Promise<void>;
   updateAttachment: (id: string, patch: Partial<Attachment>) => Promise<void>;
@@ -218,6 +250,7 @@ const APP_VIEWS: Record<AppView, true> = {
   goals: true,
   stats: true,
   barb: true,
+  groups: true,
   settings: true
 };
 
@@ -567,6 +600,230 @@ export const useStudyStore = create<StudyState>((set, get) => {
         attachments: state.attachments.map(detach),
         notes: state.notes.map(detach),
         reminders: state.reminders.map(detach)
+      }));
+      await commit();
+    },
+
+    addNotification: async (notification) => {
+      const now = nowIso();
+      const created: AppNotification = {
+        id: createId("notification"),
+        createdAt: now,
+        updatedAt: now,
+        archived: false,
+        tags: notification.tags ?? [],
+        kind: notification.kind,
+        title: notification.title,
+        body: notification.body ?? "",
+        linkView: notification.linkView,
+        linkGroupId: notification.linkGroupId
+      };
+      set((state) => {
+        // Tetto anti-rumore: si conservano le 200 più recenti (le lette vecchie escono per prime).
+        const next = [created, ...state.notifications].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const kept = next.slice(0, 200);
+        return { notifications: kept };
+      });
+      await commit();
+      return created.id;
+    },
+
+    markNotificationRead: async (id) => {
+      const now = nowIso();
+      set((state) => ({
+        notifications: state.notifications.map((item) =>
+          item.id === id && !item.readAt ? { ...item, readAt: now, updatedAt: now } : item
+        )
+      }));
+      await commit();
+    },
+
+    markAllNotificationsRead: async () => {
+      const now = nowIso();
+      set((state) => ({
+        notifications: state.notifications.map((item) => (item.readAt ? item : { ...item, readAt: now, updatedAt: now }))
+      }));
+      await commit();
+    },
+
+    deleteNotification: async (id) => {
+      set((state) => ({ notifications: state.notifications.filter((item) => item.id !== id) }));
+      await commit();
+    },
+
+    createStudyGroup: async (group, owner) => {
+      const now = nowIso();
+      const created: StudyGroup = {
+        id: createId("studyGroup"),
+        createdAt: now,
+        updatedAt: now,
+        archived: false,
+        tags: group.tags ?? [],
+        name: group.name.trim(),
+        description: group.description?.trim() ?? "",
+        ownerId: owner.userId,
+        ownerDisplayName: owner.displayName,
+        members: [{ userId: owner.userId, email: owner.email, displayName: owner.displayName, role: "owner", joinedAt: now }],
+        inviteCode: group.inviteCode ?? makeGroupInviteCode()
+      };
+      if (!created.name) throw new Error("Il gruppo deve avere un nome.");
+      set((state) => ({ studyGroups: [created, ...state.studyGroups] }));
+      await commit();
+      return created.id;
+    },
+
+    updateStudyGroup: async (id, patch) => {
+      set((state) => ({
+        studyGroups: state.studyGroups.map((group) =>
+          group.id === id ? { ...group, ...patch, name: patch.name?.trim() || group.name, updatedAt: nowIso() } : group
+        )
+      }));
+      await commit();
+    },
+
+    deleteStudyGroup: async (id) => {
+      set((state) => ({
+        studyGroups: state.studyGroups.filter((group) => group.id !== id),
+        groupInvites: state.groupInvites.filter((invite) => invite.groupId !== id),
+        groupResources: state.groupResources.filter((resource) => resource.groupId !== id),
+        groupActivities: state.groupActivities.filter((activity) => activity.groupId !== id)
+      }));
+      await commit();
+    },
+
+    createGroupInvite: async (invite) => {
+      const now = nowIso();
+      const created: GroupInvite = {
+        id: createId("groupInvite"),
+        createdAt: now,
+        updatedAt: now,
+        archived: false,
+        tags: [],
+        groupId: invite.groupId,
+        groupName: invite.groupName,
+        groupDescription: invite.groupDescription,
+        fromUserId: invite.fromUserId,
+        fromDisplayName: invite.fromDisplayName,
+        recipientEmail: invite.recipientEmail?.trim().toLowerCase() || undefined,
+        code: invite.code.trim().toUpperCase(),
+        status: "pending"
+      };
+      if (!created.code) throw new Error("Serve un codice di invito.");
+      set((state) => ({ groupInvites: [created, ...state.groupInvites] }));
+      await commit();
+      return created.id;
+    },
+
+    acceptGroupInvite: async (inviteId, member) => {
+      const now = nowIso();
+      const invite = get().groupInvites.find((item) => item.id === inviteId);
+      if (!invite) throw new Error("Invito non trovato.");
+      if (invite.status !== "pending") throw new Error("Invito già gestito.");
+      const group = get().studyGroups.find((item) => item.id === invite.groupId);
+      set((state) => ({
+        groupInvites: state.groupInvites.map((item) => (item.id === inviteId ? { ...item, status: "accepted" as const, updatedAt: now } : item)),
+        studyGroups: group && !group.members.some((m) => m.userId === member.userId)
+          ? state.studyGroups.map((item) =>
+              item.id === group.id
+                ? {
+                    ...item,
+                    members: [...item.members, { userId: member.userId, email: member.email, displayName: member.displayName, role: "member" as const, joinedAt: now }],
+                    updatedAt: now
+                  }
+                : item
+            )
+          : state.studyGroups
+      }));
+      await commit();
+    },
+
+    declineGroupInvite: async (inviteId) => {
+      const now = nowIso();
+      set((state) => ({
+        groupInvites: state.groupInvites.map((item) =>
+          item.id === inviteId && item.status === "pending" ? { ...item, status: "declined" as const, updatedAt: now } : item
+        )
+      }));
+      await commit();
+    },
+
+    joinGroupByCode: async (code, member) => {
+      const normalized = code.trim().toUpperCase();
+      const now = nowIso();
+      const group = get().studyGroups.find((item) => item.inviteCode.toUpperCase() === normalized);
+      if (!group) throw new Error("Nessun gruppo con questo codice su questo dispositivo.");
+      if (group.members.some((m) => m.userId === member.userId)) return group.id;
+      set((state) => ({
+        studyGroups: state.studyGroups.map((item) =>
+          item.id === group.id
+            ? {
+                ...item,
+                members: [...item.members, { userId: member.userId, email: member.email, displayName: member.displayName, role: "member" as const, joinedAt: now }],
+                updatedAt: now
+              }
+            : item
+        )
+      }));
+      await commit();
+      return group.id;
+    },
+
+    addGroupResource: async (resource) => {
+      const now = nowIso();
+      const created: GroupResource = {
+        id: createId("groupResource"),
+        createdAt: now,
+        updatedAt: now,
+        archived: false,
+        tags: resource.tags ?? [],
+        groupId: resource.groupId,
+        kind: resource.kind,
+        title: resource.title.trim(),
+        url: resource.url?.trim() || undefined,
+        body: resource.body?.trim() || undefined,
+        pinned: resource.pinned ?? false,
+        addedByUserId: resource.addedByUserId,
+        addedByDisplayName: resource.addedByDisplayName
+      };
+      if (!created.title) throw new Error("La risorsa deve avere un titolo.");
+      set((state) => ({ groupResources: [created, ...state.groupResources] }));
+      await commit();
+      return created.id;
+    },
+
+    toggleResourcePin: async (id) => {
+      set((state) => ({
+        groupResources: state.groupResources.map((resource) =>
+          resource.id === id ? { ...resource, pinned: !resource.pinned, updatedAt: nowIso() } : resource
+        )
+      }));
+      await commit();
+    },
+
+    deleteGroupResource: async (id) => {
+      set((state) => ({ groupResources: state.groupResources.filter((resource) => resource.id !== id) }));
+      await commit();
+    },
+
+    logGroupActivity: async (groupId, actorDisplayName, text) => {
+      const now = nowIso();
+      const entry: GroupActivity = {
+        id: createId("groupActivity"),
+        createdAt: now,
+        updatedAt: now,
+        archived: false,
+        tags: [],
+        groupId,
+        actorDisplayName,
+        text
+      };
+      set((state) => ({
+        // Cronologia leggera: ultime 100 voci per gruppo, gli altri gruppi restano intatti.
+        groupActivities: [
+          entry,
+          ...state.groupActivities.filter((item) => item.groupId !== groupId),
+          ...state.groupActivities.filter((item) => item.groupId === groupId).slice(0, 99)
+        ]
       }));
       await commit();
     },

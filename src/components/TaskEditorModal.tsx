@@ -2,6 +2,9 @@ import { useEffect, useId, useState } from "react";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, Pill, inputClass } from "./ui";
+import { DurationField } from "./DurationField";
+import { durationToMinutes, minutesToDuration } from "../lib/duration";
+import { formatMinutes } from "../lib/labels";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
@@ -33,12 +36,14 @@ export function TaskEditorModal({
   onSave: (id: string, patch: Partial<Task>) => Promise<void>;
   onDelete: (task: Task) => Promise<void>;
 }) {
+  const initialDuration = minutesToDuration(task.estimatedMinutes ?? 45);
   const [draft, setDraft] = useState({
     title: task.title,
     description: task.description,
     status: task.status,
     dueDate: toDatetimeLocal(task.dueDate),
-    estimatedMinutes: String(task.estimatedMinutes ?? 45),
+    durationValue: initialDuration.value,
+    durationUnit: initialDuration.unit,
     actualMinutes: task.actualMinutes === undefined ? "" : String(task.actualMinutes),
     energy: task.energy,
     priority: task.priority,
@@ -70,14 +75,17 @@ export function TaskEditorModal({
       return;
     }
 
-    const estimatedMinutes = Number(draft.estimatedMinutes);
+    const parsedDuration = Number(draft.durationValue.replace(",", "."));
+    const estimatedMinutes = draft.durationValue.trim() === "" || !Number.isFinite(parsedDuration) || parsedDuration < 0
+      ? NaN
+      : durationToMinutes(parsedDuration, draft.durationUnit);
     const actualMinutes = draft.actualMinutes.trim() ? Number(draft.actualMinutes) : undefined;
     const difficulty = Number(draft.difficulty);
     const importance = Number(draft.importance);
     const dueDate = draft.dueDate ? new Date(draft.dueDate) : undefined;
 
     if (!Number.isFinite(estimatedMinutes) || estimatedMinutes < 0) {
-      setError("La durata stimata deve essere un numero valido.");
+      setError("La durata stimata non è valida: usa 0 o più.");
       return;
     }
     if (actualMinutes !== undefined && (!Number.isFinite(actualMinutes) || actualMinutes < 0)) {
@@ -168,9 +176,12 @@ export function TaskEditorModal({
             <Field label="Data e ora">
               <input className={inputClass} type="datetime-local" value={draft.dueDate} onChange={(event) => setDraft((value) => ({ ...value, dueDate: event.target.value }))} />
             </Field>
-            <Field label="Durata stimata">
-              <input className={inputClass} type="number" min={0} step={5} value={draft.estimatedMinutes} onChange={(event) => setDraft((value) => ({ ...value, estimatedMinutes: event.target.value }))} />
-            </Field>
+            <DurationField
+              label="Durata stimata"
+              value={draft.durationValue}
+              unit={draft.durationUnit}
+              onChange={(value, unit) => setDraft((prev) => ({ ...prev, durationValue: value, durationUnit: unit }))}
+            />
             <Field label="Durata effettiva">
               <input className={inputClass} type="number" min={0} step={5} value={draft.actualMinutes} onChange={(event) => setDraft((value) => ({ ...value, actualMinutes: event.target.value }))} placeholder="Opzionale" />
             </Field>
@@ -206,7 +217,7 @@ export function TaskEditorModal({
           <div className="quiet-panel flex flex-wrap gap-2 p-3">
             <Pill>{TASK_STATUS_LABEL[draft.status]}</Pill>
             <Pill>Inserita {shortDate(task.createdAt)}</Pill>
-            <Pill>{draft.estimatedMinutes || 0} min stimati</Pill>
+            <Pill>{formatMinutes(durationToMinutes(Number(draft.durationValue.replace(",", ".")) || 0, draft.durationUnit))} stimati</Pill>
             {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent-ink)]">Timer {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
             {draft.actualMinutes ? <Pill>{draft.actualMinutes} min effettivi</Pill> : null}
             {task.completedAt ? <Pill>Completata {shortDate(task.completedAt)}</Pill> : null}

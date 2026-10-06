@@ -89,3 +89,16 @@ idempotente (`sourceUid` stabile, promemoria giornalieri senza durata stimata);
 sillabazione automatica. Verifiche: 104 test, lint, build, `barb:validate` ed
 end-to-end in browser (2 corsi aggiunti, 10 appelli importati, re-import senza
 duplicati) in tema scuro/chiaro e a 375 px.
+
+Impostazioni, gruppi, notifiche e task (6 ottobre 2026): Impostazioni
+riorganizzate in 6 categorie con navigazione ad ancore (Profilo, Aspetto,
+Account, Privacy, Backup, Spazio e dati con zona pericolosa); Task con empty
+state a CTA singola, TaskModal (Nuova task → Crea task) e durata valore+unità
+(fattori in `lib/duration.ts`); campanella notifiche con badge e pannello
+(lettura singola/totale, eliminazione; collezione sincronizzata); Gruppi con
+bacheca (pin, link/note/file/attività), membri con ruoli, inviti per email +
+codice/link (`?invito=`), cronologia attività e sync condivisa opzionale
+(`supabase/groups.sql` da applicare a mano, vedi `docs/groups-sync.md`;
+verificata su Postgres temporaneo con scenario Alice→Bob). Nuove collezioni
+sync: SYNC_SCHEMA 3, Dexie v5. Verifiche: 108 test, lint, build ed e2e browser
+completo (gruppo, risorsa, pin, invito, attività, badge) a 1440 px e 375 px.

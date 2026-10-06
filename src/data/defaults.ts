@@ -50,7 +50,12 @@ export const createEmptySnapshot = (): StudySnapshot => ({
   tags: [],
   reminders: [],
   widgets: [],
-  preferences: []
+  preferences: [],
+  notifications: [],
+  studyGroups: [],
+  groupInvites: [],
+  groupResources: [],
+  groupActivities: []
 });
 
 export const PREFERENCES_ID = "main";

@@ -18,7 +18,12 @@ export type EntityType =
   | "studyTopic"
   | "attachment"
   | "goal"
-  | "note";
+  | "note"
+  | "notification"
+  | "studyGroup"
+  | "groupInvite"
+  | "groupResource"
+  | "groupActivity";
 
 export interface BaseEntity {
   id: ID;
@@ -66,6 +71,7 @@ export type AppView =
   | "goals"
   | "stats"
   | "barb"
+  | "groups"
   | "settings";
 
 export interface Subject extends BaseEntity {
@@ -304,6 +310,73 @@ export interface Preferences extends BaseEntity {
   abroad?: boolean;
 }
 
+/** Notifica dell'account: segue l'utente su ogni dispositivo (collezione sincronizzata). */
+export interface AppNotification extends BaseEntity {
+  kind: "invite" | "group" | "system";
+  title: string;
+  body: string;
+  /** Vista da aprire toccando la notifica. */
+  linkView?: AppView;
+  /** Gruppo collegato (inviti, bacheca, membri). */
+  linkGroupId?: ID;
+  /** ISO di lettura; assente = non letta. */
+  readAt?: string;
+}
+
+/** Membro di un gruppo di studio. */
+export interface GroupMember {
+  userId: string;
+  email?: string;
+  displayName: string;
+  role: "owner" | "admin" | "member";
+  joinedAt: string;
+}
+
+/** Gruppo di studio collaborativo (local-first; condiviso via cloud se configurato). */
+export interface StudyGroup extends BaseEntity {
+  name: string;
+  description: string;
+  /** id utente del proprietario (auth) oppure id locale del dispositivo creatore. */
+  ownerId: string;
+  ownerDisplayName: string;
+  members: GroupMember[];
+  /** Codice di invito condivisibile (es. GRP-XXXX-XXXX). */
+  inviteCode: string;
+}
+
+/** Invito a un gruppo: per email e/o codice condivisibile. */
+export interface GroupInvite extends BaseEntity {
+  groupId: string;
+  groupName: string;
+  groupDescription?: string;
+  fromUserId: string;
+  fromDisplayName: string;
+  /** Email del destinatario, quando l'invito è nominale. */
+  recipientEmail?: string;
+  /** Codice usato per l'unione (uguale a StudyGroup.inviteCode o singolo). */
+  code: string;
+  status: "pending" | "accepted" | "declined";
+}
+
+/** Risorsa condivisa nella bacheca del gruppo. */
+export interface GroupResource extends BaseEntity {
+  groupId: string;
+  kind: "link" | "note" | "file" | "task";
+  title: string;
+  url?: string;
+  body?: string;
+  pinned: boolean;
+  addedByUserId: string;
+  addedByDisplayName: string;
+}
+
+/** Voce minima della cronologia attività del gruppo. */
+export interface GroupActivity extends BaseEntity {
+  groupId: string;
+  actorDisplayName: string;
+  text: string;
+}
+
 export interface VaultRecord {
   id: "main";
   encrypted: true;
@@ -332,6 +405,11 @@ export interface StudySnapshot {
   reminders: Reminder[];
   widgets: DashboardWidget[];
   preferences: Preferences[];
+  notifications: AppNotification[];
+  studyGroups: StudyGroup[];
+  groupInvites: GroupInvite[];
+  groupResources: GroupResource[];
+  groupActivities: GroupActivity[];
 }
 
 export interface BackupEnvelope {
