@@ -102,3 +102,19 @@ codice/link (`?invito=`), cronologia attività e sync condivisa opzionale
 verificata su Postgres temporaneo con scenario Alice→Bob). Nuove collezioni
 sync: SYNC_SCHEMA 3, Dexie v5. Verifiche: 108 test, lint, build ed e2e browser
 completo (gruppo, risorsa, pin, invito, attività, badge) a 1440 px e 375 px.
+
+Gruppi condivisi, sync e avvio (7 ottobre 2026): la condivisione tra account non poteva
+funzionare (upsert dei membri con `onConflict: "id"` su una tabella senza `id`, più la policy
+di lettura che nascondeva la riga nuova al proprietario). Corretti `groups.sql` (riga propria
+leggibile, niente scritture a nome di altri, trigger sulla bacheca, ruoli e uscita, codici
+univoci, nome di chi entra nelle RPC) e il client (appartenenze dal server, membri autorevoli,
+`sharedAt` per propagare cancellazioni e rimozioni, update mirati per ruolo e fissaggio,
+attività pubblicate, niente voci doppie, salvataggio dopo ogni scrittura). Realtime della sync
+personale: due sessioni in parallelo all'avvio lo spegnevano, ora serializzate. Avvio: niente
+supabase-js né dataset BARB nel bundle iniziale e framer-motion con `LazyMotion` (da ~294 a
+168 kB gzip). Verifiche: 115 test, lint, build, stack Supabase locale (41 controlli API ed
+end-to-end nell'app su due origini). Gli ultimi ritocchi (salvataggio dopo le scritture di
+groupSync, casella inviti caricata in differita dalla campanella, oggetti stabili nel merge)
+hanno test, typecheck, build e prova nel browser, ma non un secondo giro sullo stack locale.
+Da fare sul progetto reale: rieseguire `groups.sql`.
+

@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type PropsWithChildren, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
@@ -56,8 +56,7 @@ export function Panel({
   accent
 }: PropsWithChildren<{ className?: string; accent?: string }>) {
   return (
-    <motion.section
-      layout
+    <m.section
       className={`soft-panel min-w-0 p-[var(--pad)] ${className}`}
       style={accent ? ({ "--panel-accent": accent } as React.CSSProperties) : undefined}
       initial={{ opacity: 0, y: 12 }}
@@ -65,7 +64,7 @@ export function Panel({
       transition={{ duration: 0.24 }}
     >
       {children}
-    </motion.section>
+    </m.section>
   );
 }
 
@@ -118,7 +117,7 @@ export function ProgressBar({ value, color = "var(--accent)", label }: { value: 
       aria-valuenow={Math.round(clamped)}
       aria-label={label ?? "Progresso"}
     >
-      <motion.div
+      <m.div
         className="h-full rounded-full"
         style={{ background: color }}
         initial={{ width: 0 }}
@@ -146,7 +145,7 @@ export function ProgressRing({
     <div className="relative grid aspect-square w-full max-w-[180px] place-items-center rounded-super bg-[var(--surface-soft)]">
       <svg viewBox="0 0 108 108" className="absolute inset-0 h-full w-full rotate-[-90deg]">
         <circle cx="54" cy="54" r={radius} fill="none" stroke="var(--surface-strong)" strokeWidth="10" />
-        <motion.circle
+        <m.circle
           cx="54"
           cy="54"
           r={radius}
@@ -375,7 +374,7 @@ export function Drawer({
   return (
     <AnimatePresence>
       {open ? (
-        <motion.div
+        <m.div
           key="drawer"
           className="fixed inset-0 z-50 flex items-end justify-end bg-black/45 backdrop-blur-sm sm:items-stretch sm:p-3"
           initial={{ opacity: 0 }}
@@ -386,7 +385,7 @@ export function Drawer({
             if (event.target === event.currentTarget) onClose();
           }}
         >
-          <motion.div
+          <m.div
             ref={panelRef}
             role="dialog"
             aria-modal="true"
@@ -410,8 +409,8 @@ export function Drawer({
             </header>
             <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{children}</div>
             {footer ? <footer className="safe-bottom border-t border-[var(--border)] p-3 sm:p-4">{footer}</footer> : null}
-          </motion.div>
-        </motion.div>
+          </m.div>
+        </m.div>
       ) : null}
     </AnimatePresence>
   );

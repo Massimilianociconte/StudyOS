@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { selectableSubjects } from "../lib/selectors";
 import { addHours } from "date-fns";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, IconButton, Pill, fileInputClass, inputClass } from "./ui";
 import { Icon } from "./Icon";
@@ -147,7 +147,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <AnimatePresence>
       {open ? (
-        <motion.div
+        <m.div
           className="fixed inset-0 z-50 grid place-items-end bg-black/40 p-3 backdrop-blur-sm sm:place-items-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -156,7 +156,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
           aria-modal="true"
           aria-labelledby={titleId}
         >
-          <motion.div
+          <m.div
             className="soft-panel scrollbar-soft max-h-[85dvh] w-full max-w-xl overflow-y-auto p-4 sm:p-5"
             initial={{ y: 30, scale: 0.98 }}
             animate={{ y: 0, scale: 1 }}
@@ -322,8 +322,8 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                 </Button>
               </div>
             </div>
-          </motion.div>
-        </motion.div>
+          </m.div>
+        </m.div>
       ) : null}
     </AnimatePresence>
   );

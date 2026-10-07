@@ -8,6 +8,8 @@ import { groupInviteLink, groupInviteMessage, isInviteCodeShape, normalizeInvite
 import {
   acceptInviteRemote,
   declineInviteRemote,
+  deleteSharedGroup,
+  deleteSharedResource,
   ensureSharedMailbox,
   getActor,
   joinByCodeRemote,
@@ -15,8 +17,11 @@ import {
   pushSharedActivity,
   pushSharedGroup,
   pushSharedInvite,
+  pushSharedMemberRole,
   pushSharedMembership,
   pushSharedResource,
+  pushSharedResourcePin,
+  removeSharedMember,
   type Actor
 } from "../lib/groupSync";
 import { safeHref } from "../lib/safeUrl";
@@ -42,6 +47,12 @@ const ROLE_LABEL: Record<GroupMember["role"], string> = {
   owner: "Proprietario",
   admin: "Amministratore",
   member: "Membro"
+};
+
+/** Cronologia locale e, se il gruppo è condiviso, pubblicata anche per gli altri membri. */
+const logActivity = async (groupId: string, actorDisplayName: string, text: string) => {
+  const entry = await useStudyStore.getState().logGroupActivity(groupId, actorDisplayName, text);
+  await pushSharedActivity(entry);
 };
 
 export function GroupsView() {
@@ -95,7 +106,7 @@ export function GroupsView() {
     setJoinBusy(true);
     try {
       // Prima il backend condiviso (vale anche tra dispositivi diversi), poi il locale.
-      const remote = await joinByCodeRemote(joinCode);
+      const remote = await joinByCodeRemote(joinCode, actor.displayName);
       const store = useStudyStore.getState();
       let groupId: string;
       try {
@@ -108,7 +119,8 @@ export function GroupsView() {
         groupId = remote.groupId;
       }
       if (!groupId) throw new Error("Nessun gruppo con questo codice su questo dispositivo.");
-      await store.logGroupActivity(groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
+      // Con il backend condiviso l'ingresso è già registrato dal server (niente voce doppia).
+      if (!remote) await useStudyStore.getState().logGroupActivity(groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
       setJoinCode("");
       setOpenId(groupId);
       setNotice("Ti sei unito al gruppo.");
@@ -232,11 +244,12 @@ function InviteCard({ inviteId, actor, onDone }: { inviteId: string; actor: Acto
     if (!actor || busy) return;
     setBusy(true);
     try {
-      await acceptInviteRemote(invite.id);
+      const remote = await acceptInviteRemote(invite.id, actor.displayName);
       const store = useStudyStore.getState();
-      if (!store.studyGroups.some((g) => g.id === invite.groupId)) await pullSharedUpdates();
+      if (remote) await pullSharedUpdates();
       await store.acceptGroupInvite(invite.id, actor);
-      await store.logGroupActivity(invite.groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
+      // Con il backend condiviso l'ingresso è già registrato dal server (niente voce doppia).
+      if (!remote) await useStudyStore.getState().logGroupActivity(invite.groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
       onDone(`Benvenuto in "${invite.groupName}".`);
     } catch (cause) {
       onDone(cause instanceof Error ? cause.message : "Accettazione non riuscita.");
@@ -303,7 +316,7 @@ function CreateGroupModal({ actor, onClose, onCreated }: { actor: Actor; onClose
       if (group) {
         await pushSharedGroup(group);
         await pushSharedMembership(id, group.members[0]);
-        await store.logGroupActivity(id, actor.displayName, "ha creato il gruppo").catch(() => undefined);
+        await logActivity(id, actor.displayName, "ha creato il gruppo").catch(() => undefined);
       }
       onCreated(id);
       onClose();
@@ -366,7 +379,7 @@ function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; a
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--accent)] text-[#10131d]">
             <Icon name="Users" className="h-5 w-5" />
           </span>
-          <Tag>{group.members.length} membri</Tag>
+          <Tag>{group.members.length} {group.members.length === 1 ? "membro" : "membri"}</Tag>
           {myRole ? <Tag>{ROLE_LABEL[myRole]}</Tag> : null}
         </>
       }
@@ -465,11 +478,11 @@ function ResourceRow({ resource, canManage }: { resource: GroupResource; canMana
       </div>
       {canManage ? (
         <span className="flex shrink-0 gap-1">
-          <button type="button" onClick={() => void store.toggleResourcePin(resource.id).then(() => pushSharedResource({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
+          <button type="button" onClick={() => void store.toggleResourcePin(resource.id).then(() => pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
             className={`grid h-8 w-8 place-items-center rounded-full ${resource.pinned ? "bg-[var(--accent)] text-[#10131d]" : "hover:bg-[var(--surface-strong)]"}`}>
             <Icon name="Pin" className="h-4 w-4" />
           </button>
-          <button type="button" onClick={() => { if (window.confirm(`Eliminare "${resource.title}" dalla bacheca?`)) void store.deleteGroupResource(resource.id); }} aria-label="Elimina risorsa" className="grid h-8 w-8 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
+          <button type="button" onClick={() => { if (window.confirm(`Eliminare "${resource.title}" dalla bacheca?`)) void store.deleteGroupResource(resource.id).then(() => deleteSharedResource(resource.id)); }} aria-label="Elimina risorsa" className="grid h-8 w-8 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
             <Icon name="Trash2" className="h-4 w-4" />
           </button>
         </span>
@@ -488,14 +501,14 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
     const updated = useStudyStore.getState().studyGroups.find((g) => g.id === group.id);
     if (updated) {
       await pushSharedGroup(updated);
-      const changed = updated.members.find((m) => m.userId === member.userId);
-      if (changed) await pushSharedMembership(group.id, changed);
+      await pushSharedMemberRole(group.id, member.userId, role);
     }
   };
 
   const remove = async () => {
     if (!window.confirm(`Rimuovere ${member.displayName} dal gruppo?`)) return;
     await store.updateStudyGroup(group.id, { members: group.members.filter((m) => m.userId !== member.userId) });
+    await removeSharedMember(group.id, member.userId);
     onNotice(`${member.displayName} rimosso dal gruppo.`);
   };
 
@@ -510,12 +523,16 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
     const storeState = useStudyStore.getState();
     if (group.members.length === 1) {
       await storeState.deleteStudyGroup(group.id);
+      await deleteSharedGroup(group.id);
       onNotice("Gruppo eliminato: eri l'unico membro.");
       onClose();
       return;
     }
-    await storeState.updateStudyGroup(group.id, { members: group.members.filter((m) => m.userId !== member.userId) });
-    await storeState.logGroupActivity(group.id, member.displayName, "ha lasciato il gruppo").catch(() => undefined);
+    // Prima la voce in cronologia (serve ancora essere membri per pubblicarla), poi l'uscita.
+    await logActivity(group.id, member.displayName, "ha lasciato il gruppo").catch(() => undefined);
+    await removeSharedMember(group.id, member.userId);
+    // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
+    await storeState.deleteStudyGroup(group.id);
     onNotice("Hai lasciato il gruppo.");
     onClose();
   };
@@ -538,7 +555,6 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
         >
           <option value="member">Membro</option>
           <option value="admin">Amministratore</option>
-          <option value="owner">Proprietario</option>
         </select>
       ) : null}
       {canRemove ? (
@@ -564,10 +580,14 @@ function GroupDetailFooter({ group, actor, isOwner, onClose, onNotice }: { group
       return;
     }
     if (!window.confirm(isOwner ? "Eliminare definitivamente il gruppo?" : "Uscire dal gruppo?")) return;
-    if (isOwner) await store.deleteStudyGroup(group.id);
-    else {
-      await store.updateStudyGroup(group.id, { members: group.members.filter((m) => m.userId !== actor.userId) });
-      await store.logGroupActivity(group.id, actor.displayName, "ha lasciato il gruppo").catch(() => undefined);
+    if (isOwner) {
+      await store.deleteStudyGroup(group.id);
+      await deleteSharedGroup(group.id);
+    } else {
+      await logActivity(group.id, actor.displayName, "ha lasciato il gruppo").catch(() => undefined);
+      await removeSharedMember(group.id, actor.userId);
+      // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
+      await store.deleteStudyGroup(group.id);
     }
     onClose();
   };
@@ -615,7 +635,7 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
       });
       const created = useStudyStore.getState().groupResources.find((r) => r.id === id);
       if (created) await pushSharedResource(created);
-      await store.logGroupActivity(group.id, actor.displayName, `ha aggiunto "${title.trim()}"`).catch(() => undefined);
+      await logActivity(group.id, actor.displayName, `ha aggiunto "${title.trim()}"`).catch(() => undefined);
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Salvataggio non riuscito.");
@@ -709,7 +729,7 @@ function InviteModal({ group, actor, onClose, onNotice }: { group: StudyGroup; a
       });
       const created = useStudyStore.getState().groupInvites.find((i) => i.id === id);
       if (created) await pushSharedInvite(created);
-      await store.logGroupActivity(group.id, actor.displayName, `ha invitato ${recipient}`).catch(() => undefined);
+      await logActivity(group.id, actor.displayName, `ha invitato ${recipient}`).catch(() => undefined);
       setEmail("");
       onNotice(`Invito inviato a ${recipient}: comparirà nella sua sezione Gruppi al prossimo accesso.`);
     } catch (cause) {

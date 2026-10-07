@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 import type { AppView, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
@@ -390,7 +390,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
 
       <AnimatePresence>
         {showDropdown ? (
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
@@ -459,7 +459,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
                 })}
               </ul>
             )}
-          </motion.div>
+          </m.div>
         ) : null}
       </AnimatePresence>
     </div>

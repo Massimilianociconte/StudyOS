@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "./store/useStudyStore";
 import { AppShell } from "./components/AppShell";
@@ -124,7 +124,7 @@ export default function App() {
       {error ? (
         <div className="soft-panel border border-[var(--danger-border)] p-6 text-[var(--danger-text)]">{error}</div>
       ) : (
-        <motion.div
+        <m.div
           key={activeView}
           initial={{ opacity: 0, y: 14, scale: 0.99 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -135,7 +135,7 @@ export default function App() {
               {views[activeView]}
             </Suspense>
           </ViewErrorBoundary>
-        </motion.div>
+        </m.div>
       )}
     </AppShell>
   );

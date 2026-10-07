@@ -229,7 +229,8 @@ export const subscribeRemoteChanges = (
     .subscribe((status) => onStatus?.(status));
 };
 
-export const unsubscribeChannel = (channel: RealtimeChannel | null) => {
+/** Attendere la rimozione: supabase-js riusa un canale con lo stesso topic finché esiste. */
+export const unsubscribeChannel = async (channel: RealtimeChannel | null) => {
   if (!supabase || !channel) return;
-  void supabase.removeChannel(channel);
+  await supabase.removeChannel(channel).catch(() => undefined);
 };

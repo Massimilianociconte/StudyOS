@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useStudyStore } from "../store/useStudyStore";
-import { ensureSharedMailbox } from "../lib/groupSync";
+import { cloudConfigured } from "../lib/cloudSyncState";
 import { Icon } from "./Icon";
 
 export const unreadNotifications = (notifications: ReturnType<typeof useStudyStore.getState>["notifications"]) =>
@@ -17,7 +17,10 @@ export function NotificationsBell({ onOpen }: { onOpen: () => void }) {
   // Recapito inviti: se il cloud condiviso è attivo, gli inviti di altri utenti
   // compaiono qui senza dover aprire la sezione Gruppi.
   useEffect(() => {
-    void ensureSharedMailbox().catch(() => undefined);
+    // groupSync porta con sé supabase-js: import dinamico, solo se il cloud è configurato, così
+    // resta fuori dal caricamento iniziale (come il motore di sync in App).
+    if (!cloudConfigured) return;
+    void import("../lib/groupSync").then((module) => module.ensureSharedMailbox()).catch(() => undefined);
   }, []);
 
   return (

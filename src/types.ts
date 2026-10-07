@@ -342,6 +342,8 @@ export interface StudyGroup extends BaseEntity {
   members: GroupMember[];
   /** Codice di invito condivisibile (es. GRP-XXXX-XXXX). */
   inviteCode: string;
+  /** Visto almeno una volta sul backend condiviso: se poi sparisce, è stato eliminato o si è stati rimossi. */
+  sharedAt?: string;
 }
 
 /** Invito a un gruppo: per email e/o codice condivisibile. */
@@ -368,6 +370,8 @@ export interface GroupResource extends BaseEntity {
   pinned: boolean;
   addedByUserId: string;
   addedByDisplayName: string;
+  /** Visto almeno una volta sul backend condiviso: se poi sparisce, è stata cancellata. */
+  sharedAt?: string;
 }
 
 /** Voce minima della cronologia attività del gruppo. */

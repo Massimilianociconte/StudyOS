@@ -410,8 +410,8 @@ export const requestSync = (): Promise<void> => {
   return running;
 };
 
-const startRealtime = (userId: string) => {
-  stopRealtime();
+const startRealtime = async (userId: string) => {
+  await stopRealtime();
   realtimeChannel = subscribeRemoteChanges(
     userId,
     (writerId) => {
@@ -422,15 +422,25 @@ const startRealtime = (userId: string) => {
   );
 };
 
-const stopRealtime = () => {
-  unsubscribeChannel(realtimeChannel);
+const stopRealtime = async () => {
+  const channel = realtimeChannel;
   realtimeChannel = null;
   setState({ realtime: false });
+  await unsubscribeChannel(channel);
 };
 
-const handleSession = async (session: Session | null) => {
+// All'avvio arrivano due sessioni quasi insieme (INITIAL_SESSION di onAuthStateChange e
+// getSession): in parallelo entrambe avviavano il realtime, la seconda rimuoveva il canale della
+// prima e supabase-js restituiva lo stesso canale già iscritto → errore e realtime spento.
+let sessionChain: Promise<void> = Promise.resolve();
+const handleSession = (session: Session | null) => {
+  sessionChain = sessionChain.then(() => applySession(session)).catch(() => undefined);
+  return sessionChain;
+};
+
+const applySession = async (session: Session | null) => {
   if (!session) {
-    stopRealtime();
+    await stopRealtime();
     setState({
       session: null,
       status: isCloudConfigured() ? "idle" : "off",
@@ -444,7 +454,7 @@ const handleSession = async (session: Session | null) => {
   if (sameUser && realtimeChannel) return; // semplice refresh del token
   const lastSync = (await getMeta<string>(metaKeys.lastSync(session.user.id))) ?? null;
   setState({ lastSync });
-  startRealtime(session.user.id);
+  await startRealtime(session.user.id);
   await requestSync();
 };
 
@@ -498,7 +508,7 @@ export const initCloudSync = async () => {
 export const teardownCloudSync = () => {
   if (debounceTimer) clearTimeout(debounceTimer);
   if (retryTimer) clearTimeout(retryTimer);
-  stopRealtime();
+  void stopRealtime();
   cleanups.splice(0).forEach((cleanup) => cleanup());
   initialized = false;
 };

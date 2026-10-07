@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import type { BarbExamSession } from "../lib/university/examTypes";
-import { BARB_EXAM_COURSES, BARB_EXAM_SESSIONS } from "../lib/university/examSessions";
-import { barbReminderEventId, prepareBarbExamImport, preserveBarbReminderDates } from "../lib/barbExamImport";
+import { barbReminderEventId, preserveBarbReminderDates } from "../lib/barbReminders";
 import type {
   AppNotification,
   AppView,
@@ -161,7 +160,7 @@ interface StudyState {
   addGroupResource: (resource: Partial<GroupResource> & Pick<GroupResource, "groupId" | "kind" | "title" | "addedByUserId" | "addedByDisplayName">) => Promise<string>;
   toggleResourcePin: (id: string) => Promise<void>;
   deleteGroupResource: (id: string) => Promise<void>;
-  logGroupActivity: (groupId: string, actorDisplayName: string, text: string) => Promise<void>;
+  logGroupActivity: (groupId: string, actorDisplayName: string, text: string) => Promise<GroupActivity>;
   addAttachment: (file: File, link?: { type?: Attachment["linkedEntityType"]; id?: string }) => Promise<void>;
   addExternalAttachment: (url: string, name: string, description?: string) => Promise<void>;
   updateAttachment: (id: string, patch: Partial<Attachment>) => Promise<void>;
@@ -826,6 +825,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
         ]
       }));
       await commit();
+      return entry;
     },
 
     addEvent: async (event) => {
@@ -861,6 +861,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     importBarbExamSessions: async (incoming) => {
       if (get().locked || get().loading) throw new Error("Attendi il caricamento o sblocca il calendario personale.");
+      // Dataset BARB caricato solo qui (import dinamico): fuori dal bundle iniziale.
+      const [{ BARB_EXAM_COURSES, BARB_EXAM_SESSIONS }, { prepareBarbExamImport }] = await Promise.all([
+        import("../lib/university/examSessions"),
+        import("../lib/barbExamImport")
+      ]);
       // Solo record del dataset verificato: il chiamante sceglie gli id, non i contenuti ufficiali.
       const officialById = new Map(BARB_EXAM_SESSIONS.map((session) => [session.id, session]));
       const selected = incoming.flatMap((item) => {

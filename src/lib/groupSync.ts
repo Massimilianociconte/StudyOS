@@ -1,6 +1,7 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
 import { getMeta, setMeta } from "./db";
+import { mergeSharedSnapshot, type SharedSnapshot } from "./groups";
 import { getSession, isCloudConfigured, supabase } from "./supabase";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 
@@ -105,13 +106,6 @@ export const resetSharedCache = async () => {
   stopInviteSubscription();
 };
 
-export interface SharedSnapshot {
-  groups: StudyGroup[];
-  invites: GroupInvite[];
-  resources: GroupResource[];
-  activities: GroupActivity[];
-}
-
 const toGroup = (row: Record<string, unknown>): StudyGroup => ({
   id: String(row.id),
   createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
@@ -169,35 +163,32 @@ const toActivity = (row: Record<string, unknown>): GroupActivity => ({
   text: String(row.text ?? "")
 });
 
-const mergeShared = (snapshot: SharedSnapshot) => {
+type SharedPatch = Partial<Pick<ReturnType<typeof useStudyStore.getState>, "studyGroups" | "groupInvites" | "groupResources" | "groupActivities">>;
+
+/**
+ * setState da solo resta in memoria: lo store salva su IndexedDB (e accoda per la sync personale)
+ * solo con commit(), esposto come retryPersist. Senza, un refresh perdeva merge e marcature.
+ */
+const applyShared = async (patch: SharedPatch) => {
+  useStudyStore.setState(patch);
+  await useStudyStore.getState().retryPersist();
+};
+
+const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds: string[]) => {
   const state = useStudyStore.getState();
-  const byId = <T extends { id: string; updatedAt: string }>(items: T[]) => new Map(items.map((item) => [item.id, item]));
-  const merge = <T extends { id: string; updatedAt: string }>(current: T[], incoming: T[]): { next: T[]; fresh: T[] } => {
-    const map = byId(current);
-    const fresh: T[] = [];
-    for (const item of incoming) {
-      const existing = map.get(item.id);
-      if (!existing) {
-        map.set(item.id, item);
-        fresh.push(item);
-      } else if (item.updatedAt > existing.updatedAt) {
-        map.set(item.id, item);
-      }
-    }
-    return { next: [...map.values()], fresh };
-  };
-  const groups = merge(state.studyGroups, snapshot.groups);
-  const invites = merge(state.groupInvites, snapshot.invites);
-  const resources = merge(state.groupResources, snapshot.resources);
-  const activities = merge(state.groupActivities, snapshot.activities);
-  useStudyStore.setState({
-    studyGroups: groups.next,
-    groupInvites: invites.next,
-    groupResources: resources.next,
-    groupActivities: activities.next
+  const merged = mergeSharedSnapshot(
+    { groups: state.studyGroups, invites: state.groupInvites, resources: state.groupResources, activities: state.groupActivities },
+    snapshot,
+    me,
+    queriedGroupIds
+  );
+  await applyShared({
+    studyGroups: merged.groups,
+    groupInvites: merged.invites,
+    groupResources: merged.resources,
+    groupActivities: merged.activities
   });
-  // setState passa dalla sottoscrizione di persistenza: salvataggio e outbox automatici.
-  return { freshInvites: invites.fresh, freshGroups: groups.fresh };
+  return { freshInvites: merged.freshInvites, freshGroups: merged.freshGroups };
 };
 
 const notifyFreshInvites = async (fresh: GroupInvite[]) => {
@@ -242,7 +233,16 @@ export const pullSharedUpdates = async (): Promise<boolean> => {
     if (sentError) throw sentError;
     snapshot.invites.push(...(sent ?? []).map(toInvite));
     const localGroups = useStudyStore.getState().studyGroups;
-    const myGroupIds = [...new Set(localGroups.filter((g) => g.ownerId === me || g.members.some((m) => m.userId === me)).map((g) => g.id))];
+    // Le appartenenze vere sono sul server: un gruppo appena accettato o unito con codice (anche
+    // da un altro dispositivo) non è ancora tra quelli locali.
+    const { data: memberships, error: membershipsError } = await supabase.from("studyos_group_members").select("group_id").eq("user_id", me);
+    if (membershipsError) throw membershipsError;
+    const myGroupIds = [
+      ...new Set([
+        ...(memberships ?? []).map((row) => String(row.group_id)),
+        ...localGroups.filter((g) => g.ownerId === me || g.members.some((m) => m.userId === me)).map((g) => g.id)
+      ])
+    ];
     if (myGroupIds.length) {
       const { data: groups, error: groupsError } = await supabase.from("studyos_groups").select("*").in("id", myGroupIds);
       if (groupsError) throw groupsError;
@@ -278,7 +278,7 @@ export const pullSharedUpdates = async (): Promise<boolean> => {
       if (activitiesError) throw activitiesError;
       snapshot.activities.push(...(activities ?? []).map(toActivity));
     }
-    const { freshInvites } = mergeShared(snapshot);
+    const { freshInvites } = await mergeShared(snapshot, me, myGroupIds);
     await notifyFreshInvites(freshInvites);
     return true;
   } catch {
@@ -286,10 +286,10 @@ export const pullSharedUpdates = async (): Promise<boolean> => {
   }
 };
 
-const pushRow = async (table: string, row: Record<string, unknown>) => {
+const pushRow = async (table: string, row: Record<string, unknown>, onConflict = "id") => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   try {
-    const { error } = await supabase.from(table).upsert(row, { onConflict: "id" });
+    const { error } = await supabase.from(table).upsert(row, { onConflict });
     if (error) return false;
     return true;
   } catch {
@@ -307,8 +307,21 @@ const deleteRow = async (table: string, id: string) => {
   }
 };
 
-export const pushSharedGroup = (group: StudyGroup) =>
-  pushRow("studyos_groups", {
+/** Pubblicazione riuscita: da qui in poi, se sparisce dal server, è stato eliminato. */
+const markShared = async (kind: "group" | "resource", id: string) => {
+  const sharedAt = new Date().toISOString();
+  const state = useStudyStore.getState();
+  if (kind === "group") {
+    if (!state.studyGroups.some((group) => group.id === id && !group.sharedAt)) return;
+    await applyShared({ studyGroups: state.studyGroups.map((group) => (group.id === id ? { ...group, sharedAt } : group)) });
+  } else {
+    if (!state.groupResources.some((resource) => resource.id === id && !resource.sharedAt)) return;
+    await applyShared({ groupResources: state.groupResources.map((resource) => (resource.id === id ? { ...resource, sharedAt } : resource)) });
+  }
+};
+
+export const pushSharedGroup = async (group: StudyGroup) => {
+  const ok = await pushRow("studyos_groups", {
     id: group.id,
     name: group.name,
     description: group.description,
@@ -317,16 +330,60 @@ export const pushSharedGroup = (group: StudyGroup) =>
     invite_code: group.inviteCode,
     updated_at: group.updatedAt
   });
+  if (ok) await markShared("group", group.id);
+  return ok;
+};
 
+// La chiave dei membri è (group_id, user_id): con on_conflict=id l'upsert falliva sempre, e il
+// proprietario non risultava membro (niente elenco membri né inviti nominali lato server).
 export const pushSharedMembership = (groupId: string, member: StudyGroup["members"][number]) =>
-  pushRow("studyos_group_members", {
-    group_id: groupId,
-    user_id: member.userId,
-    email: member.email ?? null,
-    display_name: member.displayName,
-    role: member.role,
-    joined_at: member.joinedAt
-  });
+  pushRow(
+    "studyos_group_members",
+    {
+      group_id: groupId,
+      user_id: member.userId,
+      email: member.email ?? null,
+      display_name: member.displayName,
+      role: member.role,
+      joined_at: member.joinedAt
+    },
+    "group_id,user_id"
+  );
+
+/** Rimozione di un membro (proprietario) o uscita volontaria: senza, al pull ricompariva. */
+export const removeSharedMember = async (groupId: string, userId: string) => {
+  if (!(await isSharedAvailable()) || !supabase) return false;
+  try {
+    const { error } = await supabase.from("studyos_group_members").delete().eq("group_id", groupId).eq("user_id", userId);
+    return !error;
+  } catch {
+    return false;
+  }
+};
+
+// Ruolo e fissaggio con update mirati, non upsert: Postgres applica il controllo di INSERT
+// alla riga proposta anche quando diventa update, e la riga è di un altro utente.
+const updateRows = async (table: string, patch: Record<string, unknown>, match: Record<string, string>) => {
+  if (!(await isSharedAvailable()) || !supabase) return false;
+  try {
+    let query = supabase.from(table).update(patch);
+    for (const [column, value] of Object.entries(match)) query = query.eq(column, value);
+    const { error } = await query;
+    return !error;
+  } catch {
+    return false;
+  }
+};
+
+export const pushSharedMemberRole = (groupId: string, userId: string, role: StudyGroup["members"][number]["role"]) =>
+  updateRows("studyos_group_members", { role }, { group_id: groupId, user_id: userId });
+
+export const pushSharedResourcePin = (resource: GroupResource) =>
+  updateRows("studyos_group_resources", { pinned: resource.pinned, updated_at: resource.updatedAt }, { id: resource.id });
+
+export const deleteSharedGroup = (groupId: string) => deleteRow("studyos_groups", groupId);
+
+export const deleteSharedResource = (resourceId: string) => deleteRow("studyos_group_resources", resourceId);
 
 export const pushSharedInvite = (invite: GroupInvite) =>
   pushRow("studyos_group_invites", {
@@ -342,8 +399,8 @@ export const pushSharedInvite = (invite: GroupInvite) =>
     updated_at: invite.updatedAt
   });
 
-export const pushSharedResource = (resource: GroupResource) =>
-  pushRow("studyos_group_resources", {
+export const pushSharedResource = async (resource: GroupResource) => {
+  const ok = await pushRow("studyos_group_resources", {
     id: resource.id,
     group_id: resource.groupId,
     kind: resource.kind,
@@ -355,6 +412,9 @@ export const pushSharedResource = (resource: GroupResource) =>
     added_by_display_name: resource.addedByDisplayName,
     updated_at: resource.updatedAt
   });
+  if (ok) await markShared("resource", resource.id);
+  return ok;
+};
 
 export const pushSharedActivity = (activity: GroupActivity) =>
   pushRow("studyos_group_activity", {
@@ -364,11 +424,22 @@ export const pushSharedActivity = (activity: GroupActivity) =>
     text: activity.text
   });
 
+/**
+ * RPC con il nome di chi entra; se il progetto ha ancora la migrazione precedente (funzione
+ * senza p_display_name, errore PGRST202) si riprova con la firma vecchia.
+ */
+const callGroupRpc = async (name: string, args: Record<string, unknown>, displayName: string) => {
+  if (!supabase) return { data: null, error: { message: "offline" } };
+  const first = await supabase.rpc(name, { ...args, p_display_name: displayName });
+  if (first.error?.code === "PGRST202") return supabase.rpc(name, args);
+  return first;
+};
+
 /** Accettazione lato server: verifica destinatario, aggiunge membro, registra attività. */
-export const acceptInviteRemote = async (inviteId: string): Promise<boolean> => {
+export const acceptInviteRemote = async (inviteId: string, displayName: string): Promise<boolean> => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   try {
-    const { error } = await supabase.rpc("accept_group_invite", { p_invite_id: inviteId });
+    const { error } = await callGroupRpc("accept_group_invite", { p_invite_id: inviteId }, displayName);
     return !error;
   } catch {
     return false;
@@ -386,10 +457,10 @@ export const declineInviteRemote = async (inviteId: string): Promise<boolean> =>
 };
 
 /** Unione con codice lato server: valida il codice e aggiunge il membro. */
-export const joinByCodeRemote = async (code: string): Promise<{ groupId: string } | null> => {
+export const joinByCodeRemote = async (code: string, displayName: string): Promise<{ groupId: string } | null> => {
   if (!(await isSharedAvailable()) || !supabase) return null;
   try {
-    const { data, error } = await supabase.rpc("join_group_by_code", { p_code: code.trim().toUpperCase() });
+    const { data, error } = await callGroupRpc("join_group_by_code", { p_code: code.trim().toUpperCase() }, displayName);
     if (error || !data) return null;
     const groupId = typeof data === "string" ? data : (data as { group_id?: string }).group_id;
     return groupId ? { groupId } : null;
@@ -423,7 +494,7 @@ const startInviteSubscription = (email: string) => {
         if (!invite.id) return;
         const state = useStudyStore.getState();
         if (state.groupInvites.some((item) => item.id === invite.id)) return;
-        useStudyStore.setState({ groupInvites: [invite, ...state.groupInvites] });
+        void applyShared({ groupInvites: [invite, ...state.groupInvites] });
         void state
           .addNotification({
             kind: "invite",

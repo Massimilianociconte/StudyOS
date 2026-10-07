@@ -69,3 +69,16 @@
   ultima sezione). Ogni valore salvato passa da un validatore (`oneOf`, `isNullableString`)
   e gli id di entità sparite vanno ignorati nella vista. Una nuova vista va aggiunta anche
   ad `APP_VIEWS` nello store. Il reset dei dati locali svuota lo stato UI.
+- Supabase RLS e upsert: `INSERT … ON CONFLICT DO UPDATE` controlla la policy di INSERT sulla
+  riga proposta e quella di SELECT sulla riga nuova. Per modificare righe di altri utenti usare
+  `update` mirati; `onConflict` deve nominare la chiave vera (membri: `group_id,user_id`).
+  Verificare le policy con le chiamate reali del client, non solo SQL diretto.
+- `useStudyStore.setState` da solo non salva: IndexedDB e coda di sync si aggiornano solo con
+  `commit()` (fuori dallo store: `retryPersist`). Vale per ogni modulo che scrive nello store.
+- supabase-js riusa un canale realtime con lo stesso topic finché non è rimosso: attendere
+  `removeChannel` prima di ricrearlo e non avviare due sottoscrizioni in parallelo.
+- Bundle iniziale: niente import statici di `lib/supabase`, `lib/groupSync` o dei dati BARB
+  (`university/examSessions`, JSON) da store, shell o componenti sempre montati; usare
+  `import()` (vedi App, NotificationsBell, `importBarbExamSessions`). Animazioni con `m.` sotto
+  `LazyMotion` (strict): `motion.` lancia errore.
+
