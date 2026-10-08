@@ -24,8 +24,10 @@ Il workflow Pages richiede entrambe le variabili prima della build. La `.env`
 locale non viene caricata da GitHub Actions.
 
 `groups.sql` (gruppi condivisi, opzionale) va eseguito dopo `schema.sql`; se lo
-avevi già applicato, **rieseguilo dopo la revisione del 07/10/2026** (vedi
-[docs/groups-sync.md](../docs/groups-sync.md)).
+avevi già applicato, **rieseguilo dopo la revisione dell'08/10/2026** (vedi
+[docs/groups-sync.md](../docs/groups-sync.md)). Per gli inviti via link che
+passano dalla conferma email, tra i Redirect URLs aggiungi anche
+`https://massimilianociconte.github.io/StudyOS/**`.
 
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.

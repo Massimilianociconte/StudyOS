@@ -8,11 +8,37 @@ richiede questa migrazione, da eseguire una volta nel progetto Supabase
 supabase/groups.sql
 ```
 
-**Rieseguilo dopo la revisione del 07/10/2026** se lo avevi già applicato: è
+**Rieseguilo dopo la revisione dell'08/10/2026** se lo avevi già applicato: è
 idempotente e senza la nuova versione la condivisione non funziona (il
 proprietario non risultava membro, quindi niente elenco membri né inviti
-nominali lato server). Aggiorna policy, trigger, indice e le due RPC; le righe
-esistenti restano.
+nominali lato server). Aggiorna policy, trigger, indice e le RPC (compresa
+l'anteprima degli inviti); le righe esistenti restano.
+
+## Inviti con link, QR e codice
+
+- Pannello **Invita** (pulsante su ogni gruppo e in cima al dettaglio): link
+  da condividere (Condividi di sistema, WhatsApp, Telegram, email, copia), QR
+  code (scaricabile o condivisibile come immagine), codice del gruppo e invito
+  nominale per email (proprietario/amministratori). Il proprietario può
+  generare un nuovo codice: link e QR già inviati smettono di funzionare.
+- Link: `…/StudyOS/#invito=GRP-XXXX-XXXX`. Il codice sta nel frammento, che il
+  browser non invia ai server (log di GitHub Pages, referrer); i vecchi link
+  `?invito=` restano validi.
+- All'apertura (anche in una scheda già aperta) l'app ricorda l'invito per 14
+  giorni (`studyos-pending-invite` in localStorage), pulisce l'URL e apre
+  Gruppi con la scheda **Invito ricevuto**: anteprima dal server (RPC
+  `preview_group_invite`: nome, descrizione, membri, responsabile) e un tocco
+  su **Entra nel gruppo**. La conferma è voluta: entrando, nome ed email sono
+  visibili agli altri membri.
+- Senza accesso: **Accedi o registrati per entrare** apre il login nella
+  stessa schermata; appena arriva la sessione (login, registrazione o ritorno
+  dalla conferma email su questo dispositivo) si entra da soli con quell'account.
+  Il link di conferma email porta `?invito=…`, così aprendolo da un altro
+  dispositivo si ritrova la scheda dell'invito già con l'account confermato.
+- Perché quel link funzioni, in Supabase → Authentication → URL Configuration
+  i Redirect URLs devono accettare la query: aggiungi
+  `https://massimilianociconte.github.io/StudyOS/**` (altrimenti Supabase usa
+  il Site URL e l'invito vale solo sul dispositivo dove è stato aperto).
 
 Senza migrazione: creazione gruppi, bacheca, membri, attività e inviti via
 codice/link restano locali; `groupSync` rileva le tabelle assenti e non mostra
@@ -67,6 +93,14 @@ alcun errore.
   stati rimossi) e sparisce anche in locale.
 
 ## Verifiche eseguite
+
+08/10/2026, stack locale con lo schema aggiornato da quello precedente: link
+aperto da un account non registrato → registrazione dal pannello dell'invito →
+ingresso automatico (membro col nome dall'email, una sola voce in cronologia);
+anteprima e ingresso con un tocco da account già connesso; codice rigenerato:
+link vecchio "non più valido", nuovo valido; "Fai già parte del gruppo";
+link incollato in una scheda già aperta; QR riletto con un decoder
+indipendente (jsQR); pannello a 375 px senza sforamenti.
 
 07/10/2026, stack Supabase locale (CLI): `schema.sql`, `groups.sql` della
 versione precedente e poi quello nuovo (aggiornamento e riesecuzione senza

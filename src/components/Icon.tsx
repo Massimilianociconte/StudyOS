@@ -76,7 +76,12 @@ import {
   User,
   UserPlus,
   X,
-  Zap
+  Zap,
+  QrCode,
+  Share2,
+  MessageCircle,
+  RefreshCw,
+  ShieldCheck
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { CourseIcon } from "./CourseIcon";
@@ -159,7 +164,12 @@ const icons = {
   User,
   UserPlus,
   X,
-  Zap
+  Zap,
+  QrCode,
+  Share2,
+  MessageCircle,
+  RefreshCw,
+  ShieldCheck
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof icons;

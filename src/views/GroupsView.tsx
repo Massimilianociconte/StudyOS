@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GroupMember, GroupResource, StudyGroup } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Drawer, EmptyState, Field, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { formatNotificationTime } from "../components/NotificationsPanel";
-import { groupInviteLink, groupInviteMessage, isInviteCodeShape, normalizeInviteCode } from "../lib/groups";
+import { InviteLoginDrawer, InviteSheet, PendingInviteCard, useCloudSession } from "../components/GroupInvite";
+import { cloudConfigured } from "../lib/cloudSyncState";
+import { GROUP_JOINED_EVENT, confirmPendingInvite, inviteCodeFromText, savePendingInvite } from "../lib/groupInvite";
 import {
   acceptInviteRemote,
   declineInviteRemote,
@@ -12,11 +14,10 @@ import {
   deleteSharedResource,
   ensureSharedMailbox,
   getActor,
-  joinByCodeRemote,
+  joinGroupWithCode,
+  logSharedActivity,
   pullSharedUpdates,
-  pushSharedActivity,
   pushSharedGroup,
-  pushSharedInvite,
   pushSharedMemberRole,
   pushSharedMembership,
   pushSharedResource,
@@ -49,12 +50,6 @@ const ROLE_LABEL: Record<GroupMember["role"], string> = {
   member: "Membro"
 };
 
-/** Cronologia locale e, se il gruppo è condiviso, pubblicata anche per gli altri membri. */
-const logActivity = async (groupId: string, actorDisplayName: string, text: string) => {
-  const entry = await useStudyStore.getState().logGroupActivity(groupId, actorDisplayName, text);
-  await pushSharedActivity(entry);
-};
-
 export function GroupsView() {
   const { studyGroups, groupInvites, groupResources, groupActivities } = useStudyStore();
   const [actor, setActor] = useState<Actor | null>(null);
@@ -64,22 +59,31 @@ export function GroupsView() {
   const [joinBusy, setJoinBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [inviteGroupId, setInviteGroupId] = useState<string | null>(null);
+  const session = useCloudSession();
+  const sessionUserId = session?.user.id;
 
-  // All'avvio: cassetta postale condivisa + deep-link ?invito=CODICE.
+  // Identità e cassetta postale condivisa; si rileggono a ogni accesso o cambio di account.
+  // I link/QR di invito li legge l'app all'avvio (useGroupInviteLinks), qualunque sia la sezione.
   useEffect(() => {
     void getActor().then(setActor).catch(() => undefined);
     void ensureSharedMailbox().catch(() => undefined);
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get("invito");
-      if (code && isInviteCodeShape(code)) {
-        setJoinCode(normalizeInviteCode(code));
-        window.history.replaceState(null, "", window.location.pathname);
-      }
-    } catch {
-      // URL non leggibile: il codice si inserisce a mano
-    }
-  }, []);
+  }, [sessionUserId]);
+
+  // Ingresso completato dopo l'accesso (invito confermato prima del login): si apre il gruppo.
+  useEffect(() => {
+    const onJoined = (event: Event) => {
+      const groupId = (event as CustomEvent<{ groupId?: string }>).detail?.groupId;
+      if (!groupId) return;
+      setOpenId(groupId);
+      setNotice("Sei entrato nel gruppo.");
+    };
+    window.addEventListener(GROUP_JOINED_EVENT, onJoined);
+    return () => window.removeEventListener(GROUP_JOINED_EVENT, onJoined);
+  }, [setOpenId]);
+
+  const closeLogin = useCallback(() => setLoginOpen(false), []);
 
   const myId = actor?.userId;
   const received = groupInvites
@@ -99,28 +103,23 @@ export function GroupsView() {
   const join = async () => {
     if (!actor || joinBusy) return;
     setNotice("");
-    if (!isInviteCodeShape(joinCode)) {
-      setNotice("Codice non valido: usa il formato GRP-XXXX-XXXX.");
+    // Vale il codice, il link o anche l'intero messaggio d'invito incollato.
+    const code = inviteCodeFromText(joinCode);
+    if (!code) {
+      setNotice("Codice non valido: incolla il link ricevuto o un codice come GRP-AB12-CD34.");
+      return;
+    }
+    if (cloudConfigured && !session) {
+      // Senza accesso: l'invito resta in attesa e si entra appena si accede o ci si registra.
+      savePendingInvite(code);
+      confirmPendingInvite();
+      setJoinCode("");
+      setLoginOpen(true);
       return;
     }
     setJoinBusy(true);
     try {
-      // Prima il backend condiviso (vale anche tra dispositivi diversi), poi il locale.
-      const remote = await joinByCodeRemote(joinCode, actor.displayName);
-      const store = useStudyStore.getState();
-      let groupId: string;
-      try {
-        groupId = await store.joinGroupByCode(joinCode, actor);
-      } catch {
-        groupId = "";
-      }
-      if (!groupId && remote) {
-        await pullSharedUpdates();
-        groupId = remote.groupId;
-      }
-      if (!groupId) throw new Error("Nessun gruppo con questo codice su questo dispositivo.");
-      // Con il backend condiviso l'ingresso è già registrato dal server (niente voce doppia).
-      if (!remote) await useStudyStore.getState().logGroupActivity(groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
+      const groupId = await joinGroupWithCode(code, actor);
       setJoinCode("");
       setOpenId(groupId);
       setNotice("Ti sei unito al gruppo.");
@@ -154,6 +153,14 @@ export function GroupsView() {
         </p>
       ) : null}
 
+      <PendingInviteCard
+        onLogin={() => setLoginOpen(true)}
+        onJoined={(groupId, name) => {
+          setOpenId(groupId);
+          setNotice(`Benvenuto in "${name}".`);
+        }}
+      />
+
       {received.length ? (
         <section aria-label="Inviti ricevuti" className="mb-5">
           <h3 className="mb-2 px-1 text-xs font-black uppercase text-[var(--accent-ink)]">Inviti ricevuti · {received.length}</h3>
@@ -183,22 +190,35 @@ export function GroupsView() {
       ) : (
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
           {studyGroups.map((group) => (
-            <GroupCard key={group.id} group={group} myId={myId} resources={groupResources.filter((r) => r.groupId === group.id)} onOpen={() => setOpenId(group.id)} />
+            <GroupCard
+              key={group.id}
+              group={group}
+              myId={myId}
+              resources={groupResources.filter((r) => r.groupId === group.id)}
+              onOpen={() => setOpenId(group.id)}
+              onInvite={actor ? () => setInviteGroupId(group.id) : undefined}
+            />
           ))}
         </div>
       )}
 
       <Panel className="mt-5">
         <h3 className="text-lg font-black">Unisciti con codice</h3>
-        <p className="mt-1 text-sm text-[var(--muted)]">Incolla il codice ricevuto (es. GRP-AB12-CD34): se il gruppo è su questo dispositivo entri subito, altrimenti viene cercato sul cloud.</p>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Incolla il codice (es. GRP-AB12-CD34) o il link ricevuto. Hai un link o un QR? Aprilo direttamente: StudyOS ti porta all'ingresso del gruppo.
+        </p>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <input
             className={inputClass}
             value={joinCode}
-            onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-            placeholder="GRP-XXXX-XXXX"
-            aria-label="Codice di invito"
-            inputMode="text"
+            onChange={(event) => setJoinCode(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void join();
+            }}
+            placeholder="Codice o link di invito"
+            aria-label="Codice o link di invito"
+            autoCapitalize="characters"
+            autoComplete="off"
           />
           <Button icon="LogIn" variant="primary" onClick={() => void join()} disabled={joinBusy || !actor}>
             {joinBusy ? "Controllo…" : "Unisciti"}
@@ -208,29 +228,42 @@ export function GroupsView() {
 
       {createOpen && actor ? <CreateGroupModal actor={actor} onClose={() => setCreateOpen(false)} onCreated={setOpenId} /> : null}
       {open ? <GroupDetail group={open} actor={actor} onClose={() => setOpenId(null)} onNotice={setNotice} /> : null}
+      {inviteGroupId && actor && studyGroups.some((group) => group.id === inviteGroupId) ? (
+        <InviteSheet group={studyGroups.find((group) => group.id === inviteGroupId)!} actor={actor} onClose={() => setInviteGroupId(null)} onNotice={setNotice} />
+      ) : null}
+      <InviteLoginDrawer open={loginOpen} onClose={closeLogin} />
     </div>
   );
 }
 
-function GroupCard({ group, myId, resources, onOpen }: { group: StudyGroup; myId?: string; resources: GroupResource[]; onOpen: () => void }) {
+function GroupCard({ group, myId, resources, onOpen, onInvite }: { group: StudyGroup; myId?: string; resources: GroupResource[]; onOpen: () => void; onInvite?: () => void }) {
   const pinned = resources.filter((r) => r.pinned).length;
   const role = myId ? group.members.find((m) => m.userId === myId)?.role : undefined;
   return (
-    <button type="button" onClick={onOpen} className="quiet-panel motion-safe min-w-0 p-4 text-left hover:-translate-y-0.5 hover:bg-[var(--surface)]">
-      <div className="flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
-          <Icon name="Users" className="h-5 w-5" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="two-line-safe block text-base font-black leading-snug">{group.name}</span>
-          <span className="mt-0.5 block text-xs font-bold text-[var(--muted)]">
-            {group.members.length} {group.members.length === 1 ? "membro" : "membri"} · {pinned} fissati
+    <div className="quiet-panel motion-safe flex min-w-0 flex-col hover:-translate-y-0.5 hover:bg-[var(--surface)]">
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 rounded-[inherit] p-4 pb-2 text-left">
+        <div className="flex items-start gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
+            <Icon name="Users" className="h-5 w-5" />
           </span>
-        </span>
-        {role ? <Tag>{ROLE_LABEL[role]}</Tag> : null}
-      </div>
-      {group.description ? <p className="two-line-safe mt-2 text-xs text-[var(--muted)]">{group.description}</p> : null}
-    </button>
+          <span className="min-w-0 flex-1">
+            <span className="two-line-safe block text-base font-black leading-snug">{group.name}</span>
+            <span className="mt-0.5 block text-xs font-bold text-[var(--muted)]">
+              {group.members.length} {group.members.length === 1 ? "membro" : "membri"} · {pinned} fissati
+            </span>
+          </span>
+          {role ? <Tag>{ROLE_LABEL[role]}</Tag> : null}
+        </div>
+        {group.description ? <p className="two-line-safe mt-2 text-xs text-[var(--muted)]">{group.description}</p> : null}
+      </button>
+      {onInvite ? (
+        <div className="flex justify-end px-3 pb-3">
+          <Button variant="soft" icon="UserPlus" onClick={onInvite} aria-label={`Invita nel gruppo ${group.name}`}>
+            Invita
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -316,7 +349,7 @@ function CreateGroupModal({ actor, onClose, onCreated }: { actor: Actor; onClose
       if (group) {
         await pushSharedGroup(group);
         await pushSharedMembership(id, group.members[0]);
-        await logActivity(id, actor.displayName, "ha creato il gruppo").catch(() => undefined);
+        await logSharedActivity(id, actor.displayName, "ha creato il gruppo").catch(() => undefined);
       }
       onCreated(id);
       onClose();
@@ -386,6 +419,17 @@ function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; a
       footer={<GroupDetailFooter group={group} actor={actor} isOwner={isOwner} onClose={onClose} onNotice={onNotice} />}
     >
       {group.description ? <p className="safe-text mb-4 text-sm text-[var(--muted)]">{group.description}</p> : null}
+      {actor ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[20px] bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] p-3">
+          <p className="min-w-0 text-sm font-bold">
+            Invita compagni di corso
+            <span className="block text-xs font-bold text-[var(--muted)]">Link per WhatsApp e altre app, QR code o codice del gruppo.</span>
+          </p>
+          <Button variant="primary" icon="UserPlus" onClick={() => setInviteOpen(true)}>
+            Invita
+          </Button>
+        </div>
+      ) : null}
       <Segmented label="Sezioni del gruppo" size="sm" className="justify-self-start" value={tab} onChange={setTab}
         options={[{ id: "bacheca", label: "Bacheca" }, { id: "membri", label: "Membri" }, { id: "attivita", label: "Attività" }]} />
 
@@ -451,7 +495,7 @@ function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; a
       ) : null}
 
       {resourceOpen && actor ? <ResourceModal group={group} actor={actor} onClose={() => setResourceOpen(false)} /> : null}
-      {inviteOpen && actor ? <InviteModal group={group} actor={actor} onClose={() => setInviteOpen(false)} onNotice={onNotice} /> : null}
+      {inviteOpen && actor ? <InviteSheet group={group} actor={actor} onClose={() => setInviteOpen(false)} onNotice={onNotice} /> : null}
     </Drawer>
   );
 }
@@ -529,7 +573,7 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
       return;
     }
     // Prima la voce in cronologia (serve ancora essere membri per pubblicarla), poi l'uscita.
-    await logActivity(group.id, member.displayName, "ha lasciato il gruppo").catch(() => undefined);
+    await logSharedActivity(group.id, member.displayName, "ha lasciato il gruppo").catch(() => undefined);
     await removeSharedMember(group.id, member.userId);
     // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
     await storeState.deleteStudyGroup(group.id);
@@ -584,7 +628,7 @@ function GroupDetailFooter({ group, actor, isOwner, onClose, onNotice }: { group
       await store.deleteStudyGroup(group.id);
       await deleteSharedGroup(group.id);
     } else {
-      await logActivity(group.id, actor.displayName, "ha lasciato il gruppo").catch(() => undefined);
+      await logSharedActivity(group.id, actor.displayName, "ha lasciato il gruppo").catch(() => undefined);
       await removeSharedMember(group.id, actor.userId);
       // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
       await store.deleteStudyGroup(group.id);
@@ -635,7 +679,7 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
       });
       const created = useStudyStore.getState().groupResources.find((r) => r.id === id);
       if (created) await pushSharedResource(created);
-      await logActivity(group.id, actor.displayName, `ha aggiunto "${title.trim()}"`).catch(() => undefined);
+      await logSharedActivity(group.id, actor.displayName, `ha aggiunto "${title.trim()}"`).catch(() => undefined);
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Salvataggio non riuscito.");
@@ -683,97 +727,6 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="soft" onClick={onClose} disabled={busy}>Annulla</Button>
             <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>{busy ? "Salvataggio…" : "Condividi"}</Button>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function InviteModal({ group, actor, onClose, onNotice }: { group: StudyGroup; actor: Actor; onClose: () => void; onNotice: (text: string) => void }) {
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState("");
-  const code = group.inviteCode;
-  const message = groupInviteMessage(group.name, actor.displayName, code);
-  const mailto = `mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent(`Invito al gruppo "${group.name}" su StudyOS`)}&body=${encodeURIComponent(message)}`;
-
-  const copy = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(label);
-    } catch {
-      setError("Copia non riuscita: seleziona e copia a mano.");
-    }
-  };
-
-  const send = async () => {
-    if (busy) return;
-    const recipient = email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-      setError("Inserisci un indirizzo email valido.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const store = useStudyStore.getState();
-      const id = await store.createGroupInvite({
-        groupId: group.id,
-        groupName: group.name,
-        groupDescription: group.description || undefined,
-        fromUserId: actor.userId,
-        fromDisplayName: actor.displayName,
-        recipientEmail: recipient,
-        code
-      });
-      const created = useStudyStore.getState().groupInvites.find((i) => i.id === id);
-      if (created) await pushSharedInvite(created);
-      await logActivity(group.id, actor.displayName, `ha invitato ${recipient}`).catch(() => undefined);
-      setEmail("");
-      onNotice(`Invito inviato a ${recipient}: comparirà nella sua sezione Gruppi al prossimo accesso.`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Invito non riuscito.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true" aria-label="Invita nel gruppo"
-      onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
-      onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
-      <section className="soft-panel w-full max-w-lg p-4 sm:p-5">
-        <p className="text-xs font-black uppercase text-[var(--faint)]">Invita · {group.name}</p>
-        <h3 className="text-2xl font-black">Porta qualcuno nel gruppo</h3>
-        <div className="mt-4 grid grid-cols-1 gap-4">
-          <div>
-            <Field label="Email dell'account StudyOS">
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nome@esempio.it" inputMode="email" />
-                <Button variant="primary" icon="Send" onClick={() => void send()} disabled={busy}>{busy ? "Invio…" : "Invia invito"}</Button>
-              </div>
-            </Field>
-            <p className="mt-1 text-xs text-[var(--faint)]">Con un account cloud l'invito compare da solo nella sua app, con Accetta e Rifiuta.</p>
-            {email.trim() ? (
-              <a href={mailto} className="mt-2 inline-flex min-h-9 items-center gap-1.5 text-xs font-black text-[var(--accent-ink)]">
-                <Icon name="Mail" className="h-3.5 w-3.5" /> Apri email con invito precompilato
-              </a>
-            ) : null}
-          </div>
-          <div className="quiet-panel p-3">
-            <p className="text-xs font-black uppercase text-[var(--faint)]">Oppure condividi il codice</p>
-            <p className="mt-1 text-xl font-black tracking-widest">{code}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button variant="soft" icon="Copy" onClick={() => void copy(code, "Codice copiato.")}>Copia codice</Button>
-              <Button variant="soft" icon="Link" onClick={() => void copy(groupInviteLink(code), "Link copiato.")}>Copia link</Button>
-              <Button variant="soft" icon="Send" onClick={() => void copy(message, "Messaggio copiato.")}>Copia messaggio</Button>
-            </div>
-            {copied ? <p role="status" className="mt-2 text-xs font-bold text-[var(--success-text)]">{copied}</p> : null}
-          </div>
-          {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
-          <div className="flex justify-end">
-            <Button variant="soft" onClick={onClose} disabled={busy}>Chiudi</Button>
           </div>
         </div>
       </section>

@@ -81,4 +81,13 @@
   (`university/examSessions`, JSON) da store, shell o componenti sempre montati; usare
   `import()` (vedi App, NotificationsBell, `importBarbExamSessions`). Animazioni con `m.` sotto
   `LazyMotion` (strict): `motion.` lancia errore.
+- `Drawer` usa un portal su `body` e una pila: Esc e Tab li gestisce solo il drawer in cima.
+  Un drawer dentro un altro (es. Invita sopra il dettaglio del gruppo) è quindi sicuro.
+- `isSharedAvailable` (groupSync): senza sessione non memorizza nulla e salva in IndexedDB solo
+  l'esito positivo; "migrazione assente" vale 10 minuti in memoria. Un `false` persistente
+  impediva di usare i gruppi condivisi dopo il login o dopo aver applicato `groups.sql`.
+- Link di invito: codice nel frammento (`#invito=`), letto a livello di app
+  (`useGroupInviteLinks`, anche su `hashchange`), mai in GroupsView. L'invito in sospeso vive
+  in `lib/groupInvite.ts` (localStorage, 14 giorni); l'ingresso automatico dopo il login avviene
+  solo se l'utente l'aveva confermato.
 

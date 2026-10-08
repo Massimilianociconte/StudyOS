@@ -118,3 +118,13 @@ groupSync, casella inviti caricata in differita dalla campanella, oggetti stabil
 hanno test, typecheck, build e prova nel browser, ma non un secondo giro sullo stack locale.
 Da fare sul progetto reale: rieseguire `groups.sql`.
 
+Inviti ai gruppi (8 ottobre 2026): pannello Invita evidente (su ogni gruppo e nel dettaglio) con
+link per WhatsApp/Telegram/email/condivisione di sistema, QR code (`uqr`, scaricabile o
+condivisibile), codice e invito per email; il proprietario rigenera il codice per disattivare
+link e QR inviati. Link con il codice nel frammento; all'apertura l'app ricorda l'invito, apre
+Gruppi con anteprima (RPC `preview_group_invite`) e un tocco per entrare; senza account si
+accede o ci si registra dalla stessa scheda e si entra da soli dopo il login. Corretti anche
+`isSharedAvailable` (restava "non disponibile" dopo il login) e i drawer annidati. Verifiche:
+119 test, lint, build, end-to-end su stack Supabase locale (registrazione da link, anteprima,
+codice rigenerato, già membro) e QR riletto con jsQR. Da fare sul progetto reale: rieseguire
+`groups.sql` e aggiungere `https://massimilianociconte.github.io/StudyOS/**` ai Redirect URLs.

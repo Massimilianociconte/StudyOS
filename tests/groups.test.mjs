@@ -27,7 +27,9 @@ test("codici invito: forma stabile, senza ambiguità, normalizzazione", () => {
 
 test("link e messaggio di invito contengono il codice normalizzato", () => {
   const link = groupInviteLink("grp-ab12-cd34");
-  assert.ok(link.includes("?invito=GRP-AB12-CD34"));
+  // Nel frammento: il codice non arriva ai server (log di GitHub Pages, referrer).
+  assert.ok(link.includes("#invito=GRP-AB12-CD34"));
+  assert.ok(!link.includes("?invito="));
   const message = groupInviteMessage("Fisio", "Alice", "grp-ab12-cd34");
   assert.ok(message.includes("Fisio") && message.includes("Alice") && message.includes("GRP-AB12-CD34"));
 });

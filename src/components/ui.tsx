@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { AnimatePresence, m } from "framer-motion";
 import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type PropsWithChildren, type ReactNode } from "react";
 import { Icon } from "./Icon";
@@ -311,6 +312,10 @@ export function Tag({ children, color, className = "" }: PropsWithChildren<{ col
  * Pannello laterale per i dettagli: a destra su desktop, foglio dal basso su mobile.
  * Esc o click fuori chiudono; lo scroll della pagina resta bloccato finché è aperto.
  */
+// Drawer aperti, dal più vecchio al più recente: Esc e Tab li gestisce solo quello in cima (es.
+// "Invita" sopra il dettaglio del gruppo), altrimenti Esc chiudeva tutto e il focus scappava sotto.
+const openDrawers: symbol[] = [];
+
 export function Drawer({
   open,
   onClose,
@@ -338,11 +343,14 @@ export function Drawer({
 
   useEffect(() => {
     if (!open) return;
+    const token = Symbol("drawer");
+    openDrawers.push(token);
     const previousFocus = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     panelRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
+      if (openDrawers[openDrawers.length - 1] !== token) return;
       if (event.key === "Escape") {
         closeRef.current();
         return;
@@ -366,12 +374,15 @@ export function Drawer({
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      const index = openDrawers.lastIndexOf(token);
+      if (index >= 0) openDrawers.splice(index, 1);
       document.body.style.overflow = previousOverflow;
       previousFocus?.focus?.();
     };
   }, [open]);
 
-  return (
+  // Portal su body: un drawer aperto dentro un altro non resta confinato nel pannello sotto.
+  return createPortal(
     <AnimatePresence>
       {open ? (
         <m.div
@@ -412,6 +423,7 @@ export function Drawer({
           </m.div>
         </m.div>
       ) : null}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }

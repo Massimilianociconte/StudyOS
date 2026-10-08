@@ -9,6 +9,7 @@ import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { whenPersisted } from "./lib/persistence";
 import { cloudConfigured } from "./lib/cloudSyncState";
 import { useViewMemory } from "./lib/uiState";
+import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
 import type { AppView } from "./types";
 
 const CHUNK_RELOAD_KEY = "studyos-chunk-reload";
@@ -91,6 +92,8 @@ export default function App() {
 
   // Sezione e scroll sopravvivono al refresh (niente ritorno forzato alla dashboard).
   useViewMemory(activeView, !loading && !locked && !error);
+  // Link/QR di invito: apre Gruppi e completa l'ingresso dopo login o registrazione.
+  useGroupInviteLinks(!loading && !locked && !error);
 
   useEffect(() => {
     init().then(() => {

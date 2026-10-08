@@ -1,7 +1,8 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
 import { getMeta, setMeta } from "./db";
-import { mergeSharedSnapshot, type SharedSnapshot } from "./groups";
+import { makeGroupInviteCode, mergeSharedSnapshot, type SharedSnapshot } from "./groups";
+import { GROUP_JOINED_EVENT, clearPendingInvite, readPendingInvite } from "./groupInvite";
 import { getSession, isCloudConfigured, supabase } from "./supabase";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 
@@ -40,11 +41,14 @@ export const getLocalOwnerId = async (): Promise<string> => {
 
 /** Identità da firmare su membri/attività: account cloud se collegato, altrimenti stabile per dispositivo. */
 export const getActor = async (): Promise<Actor> => {
-  const displayName = selectPreferences(useStudyStore.getState()).displayName.trim() || "Studente";
+  const profile = selectPreferences(useStudyStore.getState()).displayName.trim();
+  const displayName = profile || "Studente";
   try {
     const session = await getSession();
     if (session?.user) {
-      return { userId: session.user.id, displayName, email: session.user.email ?? undefined };
+      // Senza nome nel profilo: la parte locale dell'email, come fa il server per chi entra.
+      const fallback = session.user.email?.split("@")[0]?.trim();
+      return { userId: session.user.id, displayName: profile || fallback || "Studente", email: session.user.email ?? undefined };
     }
   } catch {
     // senza rete si resta locali
@@ -54,36 +58,37 @@ export const getActor = async (): Promise<Actor> => {
 
 const SHARED_META_KEY = "groupSync:shared:v1";
 let sharedCache: boolean | null = null;
+let sharedCheckedAt = 0;
+/** Migrazione assente sul server: si ricontrolla dopo 10 minuti (può essere applicata nel frattempo). */
+const UNAVAILABLE_RETRY_MS = 10 * 60 * 1000;
 
 const missingTable = (error: { code?: string; message?: string } | null) =>
   Boolean(error && (/42P01|does not exist|Could not find the table/i.test(`${error.code ?? ""} ${error.message ?? ""}`)));
 
 /** Le tabelle condivise esistono e sono leggibili (migrazione applicata)? */
 export const isSharedAvailable = async (): Promise<boolean> => {
-  if (sharedCache !== null) return sharedCache;
+  if (sharedCache === true) return true;
+  if (sharedCache === false && Date.now() - sharedCheckedAt < UNAVAILABLE_RETRY_MS) return false;
   try {
-    const stored = await getMeta<boolean>(SHARED_META_KEY);
-    if (typeof stored === "boolean") {
-      sharedCache = stored;
-      return stored;
+    // Solo l'esito positivo resta tra le visite: un "no" salvato per sempre impediva di accorgersi
+    // della migrazione applicata dopo.
+    if ((await getMeta<boolean>(SHARED_META_KEY)) === true) {
+      sharedCache = true;
+      return true;
     }
   } catch {
-    // meta non disponibile: si riprova sotto
+    // meta non disponibile: si controlla sul server
   }
-  if (!isCloudConfigured() || !supabase) {
-    sharedCache = false;
-    return false;
-  }
+  if (!isCloudConfigured() || !supabase) return false;
   try {
     const session = await getSession();
-    if (!session) {
-      sharedCache = false;
-      return false;
-    }
+    // Senza sessione non si memorizza nulla: subito dopo il login (es. invito da completare) si
+    // deve poter riprovare, non restare "non disponibile" fino al prossimo avvio.
+    if (!session) return false;
     const { error } = await supabase.from("studyos_groups").select("id").limit(0);
     if (error && missingTable(error)) {
       sharedCache = false;
-      await setMeta(SHARED_META_KEY, false).catch(() => undefined);
+      sharedCheckedAt = Date.now();
       return false;
     }
     if (error) return false; // rete/permessi: non memorizzare, si riprova
@@ -436,7 +441,7 @@ const callGroupRpc = async (name: string, args: Record<string, unknown>, display
 };
 
 /** Accettazione lato server: verifica destinatario, aggiunge membro, registra attività. */
-export const acceptInviteRemote = async (inviteId: string, displayName: string): Promise<boolean> => {
+export const acceptInviteRemote = async (inviteId: string, displayName: string = profileName()): Promise<boolean> => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   try {
     const { error } = await callGroupRpc("accept_group_invite", { p_invite_id: inviteId }, displayName);
@@ -467,6 +472,132 @@ export const joinByCodeRemote = async (code: string, displayName: string): Promi
   } catch {
     return null;
   }
+};
+
+/** Cronologia locale e, se il gruppo è condiviso, pubblicata anche per gli altri membri. */
+export const logSharedActivity = async (groupId: string, actorDisplayName: string, text: string) => {
+  const entry = await useStudyStore.getState().logGroupActivity(groupId, actorDisplayName, text);
+  await pushSharedActivity(entry);
+};
+
+/** Nome da mandare al server: quello del profilo; vuoto = il server usa la parte locale dell'email. */
+const profileName = () => selectPreferences(useStudyStore.getState()).displayName.trim();
+
+export interface InvitePreview {
+  groupId: string;
+  name: string;
+  description: string;
+  memberCount: number;
+  ownerName: string;
+  isMember: boolean;
+}
+
+export type InvitePreviewResult =
+  | { status: "ok"; preview: InvitePreview }
+  | { status: "not-found" }
+  | { status: "unavailable" };
+
+/** Anteprima dal server (nome, membri, responsabile). "unavailable" senza login, offline o migrazione vecchia. */
+export const previewInvite = async (code: string): Promise<InvitePreviewResult> => {
+  if (!(await isSharedAvailable()) || !supabase) return { status: "unavailable" };
+  try {
+    const { data, error } = await supabase.rpc("preview_group_invite", { p_code: code.trim().toUpperCase() });
+    if (error) return { status: "unavailable" };
+    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | undefined;
+    if (!row) return { status: "not-found" };
+    return {
+      status: "ok",
+      preview: {
+        groupId: String(row.group_id ?? ""),
+        name: String(row.name ?? ""),
+        description: String(row.description ?? ""),
+        memberCount: Number(row.member_count ?? 0),
+        ownerName: String(row.owner_display_name ?? ""),
+        isMember: Boolean(row.is_member)
+      }
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
+};
+
+/**
+ * Ingresso con un codice (digitato, link o QR): prima il backend condiviso (vale tra account e
+ * dispositivi), poi il gruppo locale se è su questo dispositivo. Ritorna l'id del gruppo.
+ */
+export const joinGroupWithCode = async (code: string, actor: Actor): Promise<string> => {
+  const remote = await joinByCodeRemote(code, profileName());
+  const store = useStudyStore.getState();
+  let groupId = "";
+  try {
+    groupId = await store.joinGroupByCode(code, actor);
+  } catch {
+    groupId = "";
+  }
+  if (remote) {
+    await pullSharedUpdates();
+    groupId = groupId || remote.groupId;
+  }
+  if (!groupId) throw new Error("Codice non valido o gruppo non più disponibile. Chiedi un nuovo invito.");
+  // Con il backend condiviso l'ingresso è già registrato dal server (niente voce doppia).
+  if (!remote) await store.logGroupActivity(groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
+  return groupId;
+};
+
+const announceJoined = (groupId: string) => {
+  try {
+    window.dispatchEvent(new CustomEvent(GROUP_JOINED_EVENT, { detail: { groupId } }));
+  } catch {
+    // ambiente senza window
+  }
+};
+
+let completing = false;
+
+/**
+ * Dopo login o registrazione: se l'utente aveva già scelto "Entra" su un invito, entra da solo con
+ * l'account appena usato. Senza conferma non fa nulla (la scheda dell'invito resta in Gruppi).
+ */
+export const completePendingInvite = async (): Promise<void> => {
+  const pending = readPendingInvite();
+  if (!pending?.confirmed || completing) return;
+  completing = true;
+  try {
+    const actor = await getActor();
+    if (!actor.email) return; // ancora senza sessione: si riprova al prossimo login
+    const store = useStudyStore.getState();
+    try {
+      const groupId = await joinGroupWithCode(pending.code, actor);
+      clearPendingInvite();
+      const name = useStudyStore.getState().studyGroups.find((group) => group.id === groupId)?.name ?? "il gruppo";
+      await store
+        .addNotification({ kind: "group", title: `Sei entrato in "${name}"`, body: "Invito completato dopo l'accesso.", linkView: "groups", linkGroupId: groupId })
+        .catch(() => undefined);
+      announceJoined(groupId);
+    } catch (cause) {
+      clearPendingInvite();
+      await store
+        .addNotification({ kind: "system", title: "Invito non riuscito", body: cause instanceof Error ? cause.message : "Chiedi un nuovo invito.", linkView: "groups" })
+        .catch(() => undefined);
+    }
+  } finally {
+    completing = false;
+  }
+};
+
+/** Nuovo codice: link e QR già inviati smettono di funzionare. Solo il proprietario lo pubblica. */
+export const regenerateInviteCode = async (groupId: string): Promise<string> => {
+  const store = useStudyStore.getState();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const inviteCode = makeGroupInviteCode();
+    await store.updateStudyGroup(groupId, { inviteCode });
+    const group = useStudyStore.getState().studyGroups.find((item) => item.id === groupId);
+    if (!group) throw new Error("Gruppo non trovato.");
+    // Senza backend condiviso il codice nuovo vale in locale; sul server un codice già in uso
+    // (indice univoco) fa fallire la pubblicazione: se ne prova un altro.
+    if (!group.sharedAt || (await pushSharedGroup(group))) return inviteCode;
+  }
+  throw new Error("Non è stato possibile pubblicare il nuovo codice. Riprova.");
 };
 
 let inviteChannel: RealtimeChannel | null = null;

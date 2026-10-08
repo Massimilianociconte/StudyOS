@@ -7,6 +7,7 @@ import {
 } from "@supabase/supabase-js";
 import type { StudySnapshot } from "../types";
 import type { RemoteRow } from "./syncMerge";
+import { readPendingInvite } from "./groupInvite";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
@@ -52,7 +53,11 @@ const requireClient = () => {
 
 const getEmailRedirectTo = () => {
   if (typeof window === "undefined") return undefined;
-  return `${window.location.origin}${window.location.pathname}`;
+  // Con un invito in sospeso il link di conferma lo riporta (?invito=…): aprendolo anche da un
+  // altro dispositivo si arriva alla scheda dell'invito già con l'account confermato.
+  const pending = readPendingInvite();
+  const invite = pending ? `?invito=${encodeURIComponent(pending.code)}` : "";
+  return `${window.location.origin}${window.location.pathname}${invite}`;
 };
 
 export const signUp = async (email: string, password: string) => {

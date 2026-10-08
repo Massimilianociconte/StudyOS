@@ -378,6 +378,36 @@ $$;
 revoke all on function public.join_group_by_code(text, text) from public;
 grant execute on function public.join_group_by_code(text, text) to authenticated;
 
+-- Anteprima di un invito (link/QR/codice): chi ha il codice vede nome, descrizione, numero di
+-- membri e chi gestisce il gruppo prima di decidere se entrare. Solo account autenticati.
+create or replace function public.preview_group_invite(p_code text)
+returns table (
+  group_id text,
+  name text,
+  description text,
+  member_count integer,
+  owner_display_name text,
+  is_member boolean
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    g.id,
+    g.name,
+    g.description,
+    (select count(*)::integer from public.studyos_group_members m where m.group_id = g.id),
+    g.owner_display_name,
+    exists (select 1 from public.studyos_group_members m where m.group_id = g.id and m.user_id = auth.uid()::text)
+  from public.studyos_groups g
+  where auth.uid() is not null and upper(g.invite_code) = upper(p_code)
+$$;
+
+revoke all on function public.preview_group_invite(text) from public;
+grant execute on function public.preview_group_invite(text) to authenticated;
+
 -- ─── Realtime ───────────────────────────────────────────────────────────────
 
 do $$

@@ -26,11 +26,14 @@ const inviteLinkBase = () => {
   return `${window.location.origin}${window.location.pathname}`;
 };
 
-/** Link che all'apertura precompila il codice in Gruppi → Unisciti (parametro ?invito=). */
-export const groupInviteLink = (code: string) => `${inviteLinkBase()}?invito=${encodeURIComponent(normalizeInviteCode(code))}`;
+/**
+ * Link di invito: apre StudyOS direttamente sull'ingresso nel gruppo. Il codice sta nel frammento
+ * (#invito=…), che il browser non invia ai server né lascia nei loro log.
+ */
+export const groupInviteLink = (code: string) => `${inviteLinkBase()}#invito=${encodeURIComponent(normalizeInviteCode(code))}`;
 
 export const groupInviteMessage = (groupName: string, inviter: string, code: string) =>
-  `Unisciti al gruppo "${groupName}" su StudyOS (invito di ${inviter}).\n\nApri Gruppi → Unisciti con codice e inserisci: ${normalizeInviteCode(code)}\nOppure apri direttamente: ${groupInviteLink(code)}`;
+  `${inviter} ti invita nel gruppo di studio "${groupName}" su StudyOS.\n\nEntra da qui: ${groupInviteLink(code)}\n\nOppure apri Gruppi → Unisciti con codice e inserisci ${normalizeInviteCode(code)}`;
 
 export interface SharedSnapshot {
   groups: StudyGroup[];
