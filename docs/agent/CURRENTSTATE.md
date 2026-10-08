@@ -128,3 +128,11 @@ accede o ci si registra dalla stessa scheda e si entra da soli dopo il login. Co
 119 test, lint, build, end-to-end su stack Supabase locale (registrazione da link, anteprima,
 codice rigenerato, già membro) e QR riletto con jsQR. Da fare sul progetto reale: rieseguire
 `groups.sql` e aggiungere `https://massimilianociconte.github.io/StudyOS/**` ai Redirect URLs.
+
+
+Icone delle materie (8 ottobre 2026): `CourseIcon` ridisegnato in stile duotone (contorno,
+corpo tenue al 24% e accenti pieni, tutto `currentColor`) con metafore più specifiche:
+cromosoma per genetica, polmoni per fisiologia, gaussiana per biostatistica, capsula e
+compressa per farmacologia, mitocondrio, tiroide, micropiastra per la diagnostica, camice per
+il tirocinio, divisione asimmetrica per le staminali. Verifiche: fogli di confronto a 100/36/20/14
+px su riquadro pastello e su fondo scuro, viste BARB ed Esami nel browser, 119 test, lint, build.

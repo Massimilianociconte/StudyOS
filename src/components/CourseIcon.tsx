@@ -2,412 +2,453 @@ import type { ReactNode } from "react";
 import type { BarbCourse } from "../lib/university/types";
 import { courseVisual, type CourseSymbol } from "../lib/barbCourseVisuals";
 
-// Hand-drawn scientific line icons on a 32-unit canvas (content roughly 4..28).
-// Bold 2-unit rounded strokes with a few solid accents, so every symbol stays
-// legible from the 14px calendar chip up to the 36px course header.
-// Filled accents use fill="currentColor" stroke="none" inline.
+// Duotone scientific icons on a 32-unit canvas (content roughly 3..29).
+// Three tones of currentColor: a rounded outline, a soft body fill and a few
+// solid accents. The fill gives each symbol volume, so it still reads as a
+// shape on the 14px calendar chip and gains detail up to the 36px headers.
+const tone = { fill: "currentColor", fillOpacity: 0.24 } as const; // outline + soft body
+const wash = { fill: "currentColor", fillOpacity: 0.24, stroke: "none" } as const; // body only
+const solid = { fill: "currentColor", stroke: "none" } as const;
+const fine = { strokeWidth: 1.4 } as const;
+const faint = { strokeOpacity: 0.5 } as const;
 
-// Double helix with rungs.
-const dna = (
+// Anatomia: bust with ribcage and spine.
+const anatomy = (
   <>
-    <path d="M10.5 4.5c0 7 11 7.5 11 11.5s-11 4.5-11 11.5" />
-    <path d="M21.5 4.5c0 7-11 7.5-11 11.5s11 4.5 11 11.5" />
-    <path d="M11.5 9.5h9M12.5 20.5h7M13.4 16h5.2" />
+    <circle cx="16" cy="7.2" r="3.7" {...tone} />
+    <path d="M5.5 28v-5c0-4.9 3.5-8.6 7.3-9.5.9.9 2 1.4 3.2 1.4s2.3-.5 3.2-1.4c3.8.9 7.3 4.6 7.3 9.5v5Z" {...wash} />
+    <path d="M5.5 28v-5c0-4.9 3.5-8.6 7.3-9.5.9.9 2 1.4 3.2 1.4s2.3-.5 3.2-1.4c3.8.9 7.3 4.6 7.3 9.5v5" />
+    <path d="M16 17.6V28" {...fine} />
+    <path d="M14.8 19.2c-2.3.1-4 .9-5 2.2M17.2 19.2c2.3.1 4 .9 5 2.2M14.8 23c-2 .1-3.5.8-4.4 1.8M17.2 23c2 .1 3.5.8 4.4 1.8" {...fine} />
   </>
 );
 
-// Neuron: soma with nucleus, dendrites, long axon with terminals.
-const neuron = (
+// Farmacologia: two-tone capsule and a scored tablet.
+const pharmacology = (
   <>
-    <circle cx="11" cy="16" r="5.2" />
-    <circle cx="11" cy="16" r="1.6" fill="currentColor" stroke="none" />
-    <path d="M7 12.5 3.5 9M6.4 16H3M7 19.5l-3.5 3.5" />
-    <path d="M16 16h8" />
-    <path d="M24 16l4-3.5M24 16l4 3.5M24 16h4.5" />
+    <g transform="rotate(-45 12.5 12.5)">
+      <path d="M12.5 8.5h-4a4 4 0 0 0 0 8h4Z" {...solid} />
+      <rect x="4.5" y="8.5" width="16" height="8" rx="4" />
+      <path d="M12.5 8.5v8" />
+      <path d="M15 11h2.6" {...fine} />
+    </g>
+    <path d="M16.9 21.6v2.4c0 1.9 2.5 3.4 5.6 3.4s5.6-1.5 5.6-3.4v-2.4" {...tone} />
+    <ellipse cx="22.5" cy="21.6" rx="5.6" ry="3.4" {...tone} />
+    <path d="M20.2 21.6h4.6" {...fine} />
   </>
 );
 
-// Generic cell with nucleus.
-const cell = (
-  <>
-    <path d="M26 16c0 6.5-4.5 10.5-10.5 10S5 20.5 5 15 9.5 5.5 16 6s10 4.5 10 10Z" />
-    <circle cx="15" cy="15" r="3.8" />
-    <circle cx="15" cy="15" r="1.3" fill="currentColor" stroke="none" />
-  </>
-);
-
-// Antibody Y.
-const antibody = (
-  <>
-    <path d="M10.5 5.5 16 13.5 21.5 5.5M16 13.5V27" />
-    <circle cx="16" cy="24.5" r="1.2" fill="currentColor" stroke="none" />
-  </>
-);
-
-// Membrane receptor: lipid bilayer, Y receptor, ligand.
-const receptor = (
-  <>
-    <path d="M4 21.5h24M4 25.5h24" />
-    <path d="M11.5 11.5 16 17l4.5-5.5M16 17v8.5" />
-    <circle cx="24.5" cy="9" r="2.3" />
-    <circle cx="24.5" cy="9" r="0.9" fill="currentColor" stroke="none" />
-  </>
-);
-
-// Side-view microscope.
-const microscope = (
-  <>
-    <path d="M8 4.5h5M8.5 4.5V13M12.5 4.5V13" />
-    <path d="M10.5 13v3.5" />
-    <path d="M12.5 13c5.5 1 7.5 3.5 7.5 8.5" />
-    <path d="M10.5 20h13" />
-    <circle cx="17.5" cy="16.5" r="1.4" />
-    <path d="M7 27.5h16" />
-    <path d="M15 27.5v-3" />
-  </>
-);
-
-// Test tubes with liquid and bubbles.
-const vials = (
-  <>
-    <path d="M5.5 6.5h10" />
-    <path d="M7.5 6.5V19a3.2 3.2 0 0 0 6.4 0V6.5" />
-    <path d="M7.5 14.5h6.4" />
-    <path d="M19.5 10.5h8" />
-    <path d="M21 10.5v10a2.6 2.6 0 0 0 5.2 0v-10" />
-    <path d="M21 17h5.2" />
-    <circle cx="10.2" cy="17.2" r="1" fill="currentColor" stroke="none" />
-    <circle cx="23.4" cy="18.6" r="0.9" fill="currentColor" stroke="none" />
-  </>
-);
-
-// Heart with ECG trace.
-const heart = (
-  <>
-    <path d="M16 27S3.5 18.5 5.2 11.2C6.2 6.5 12 6.3 14.6 10c.5-.7 1-1.3 1.4-1.6.4.3.9.9 1.4 1.6 2.6-3.7 8.4-3.5 9.4 1.2 1.7 7.3-10.8 15.8-10.8 15.8Z" />
-    <path d="M8.5 16.5h3l1.7-3.4 2.6 6.8 1.8-3.4h5.4" />
-  </>
-);
-
-// Rod bacterium with pili, flagellum and granules.
-const microbe = (
-  <>
-    <rect x="7" y="12" width="13.5" height="8" rx="4" />
-    <path d="M9.5 12V8.5M13.5 12V8.5M17.5 12V8.5M10 20v3.5M14.5 20v3.5" />
-    <path d="M20.5 15c4 0 4 6 7.5 6.5" />
-    <circle cx="12" cy="16" r="1.1" fill="currentColor" stroke="none" />
-    <circle cx="16" cy="16" r="1.1" fill="currentColor" stroke="none" />
-  </>
-);
-
-// Human figure.
-const person = (
-  <>
-    <circle cx="16" cy="7.4" r="3.2" />
-    <path d="M16 11.5V21" />
-    <path d="M8 14.5 16 17.5 24 14.5" />
-    <path d="M16 21l-4.5 6M16 21l4.5 6" />
-  </>
-);
-
-// Genomics: mini helix beside a bar chart.
+// Genetica: banded chromosome, sister chromatids joined at the centromere.
+const chromatid = "M8.1 5.9a2.6 2.6 0 0 1 4.6-1.4l2.6 7c.4 1.2.3 3.3.3 4.5s.1 3.3-.3 4.5l-2.6 7a2.6 2.6 0 0 1-4.6-1.4l2.4-6.4c.7-1.8 1.4-2.7 1.4-3.7s-.7-1.9-1.4-3.7Z";
 const genomics = (
   <>
-    <path d="M5.5 5c0 6 8 6.5 8 11s-8 5-8 11" />
-    <path d="M13.5 5c0 6-8 6.5-8 11s8 5 8 11" />
-    <path d="M7 11h5M7 21h5" />
-    <path d="M18 25.5h10" />
-    <path d="M20 25.5V17M23.5 25.5v-11M27 25.5v-6" />
+    <path d={chromatid} {...tone} />
+    <path d={chromatid} {...tone} transform="matrix(-1 0 0 1 32 0)" />
+    <path d="M9.6 9.3 13.4 7.9M22.4 9.3l-3.8-1.4M9.6 22.7l3.8 1.4M22.4 22.7l-3.8 1.4" />
+    <path d="M10.6 12.2l3.6-1.2M21.4 12.2l-3.6-1.2M10.6 19.8l3.6 1.2M21.4 19.8l-3.6 1.2" {...fine} {...faint} />
+    <ellipse cx="16" cy="16" rx="1.9" ry="1.5" {...solid} />
   </>
 );
 
-// Diseased cell: cell plus circled X badge.
+// Patologia: injured cell, fragmented nucleus, shed apoptotic bodies.
 const pathology = (
   <>
-    <circle cx="12.5" cy="15" r="8" />
-    <circle cx="12.5" cy="15" r="1.5" fill="currentColor" stroke="none" />
-    <circle cx="22.5" cy="22.5" r="4.6" />
-    <path d="M20.6 20.6l3.8 3.8M24.4 20.6l-3.8 3.8" />
+    <path d="M14.2 5.5c5.2-.2 9.4 3.4 9.7 8.6.3 5.4-3.3 9.8-8.8 10.2C9.6 24.7 5 21 4.7 15.6 4.4 10.2 8.8 5.7 14.2 5.5Z" {...tone} />
+    <path d="M20.8 7.3 17.8 11.3l2.7 1.8-2.4 3.6" {...fine} />
+    <circle cx="11.6" cy="14.4" r="2" {...solid} />
+    <circle cx="14.8" cy="17.2" r="1.3" {...solid} />
+    <circle cx="11.4" cy="18.8" r="1.1" {...solid} />
+    <circle cx="25.4" cy="24.8" r="2.1" {...tone} />
+    <circle cx="21" cy="27.6" r="1.1" {...solid} />
+    <circle cx="27.6" cy="19.4" r="0.9" {...solid} />
   </>
 );
 
-// Physiology pulse trace.
+// Fisiologia: lungs with trachea and bronchi.
+const lung = "M13.4 10C9.4 10.3 5.7 16 5.4 22.6c-.1 2.6 1.5 4.1 4 3.6 2.6-.6 4.5-2 4.7-4.8l.6-10.1c.1-.8-.5-1.3-1.3-1.3Z";
 const physiology = (
   <>
-    <path d="M3 16.5h6l2.2-7.5 3.4 14 2.6-9.5 1.8 3H29" />
-    <circle cx="3" cy="16.5" r="1.2" fill="currentColor" stroke="none" />
+    <path d={lung} {...tone} />
+    <path d={lung} {...tone} transform="matrix(-1 0 0 1 32 0)" />
+    <path d="M16 3.5v9.3" />
+    <path d="M16 12.6c0 1.8-1.3 2.9-3 3.5M16 12.6c0 1.8 1.3 2.9 3 3.5" />
+    <path d="M11.2 17.8 9 20.4M10.4 22.4 8.6 23.6M20.8 17.8l2.2 2.6M21.6 22.4l1.8 1.2" {...fine} />
   </>
 );
 
-// Bar chart with trend arrow.
+// Biostatistica: Gaussian curve over a histogram, with the mean.
 const statistics = (
   <>
-    <path d="M5.5 4.5v21.5H27" />
-    <path d="M10.5 26v-9M15.5 26V12M20.5 26v-6" />
-    <path d="M9 12.5 14 9l3.5 2.5L24 5.5" />
-    <path d="M20.5 5.5H24V9" />
+    <path d="M4.5 26c4.6 0 6.4-16.5 11.5-16.5S22.9 26 27.5 26Z" {...wash} />
+    <path d="M10 18.5h3.2V26H10ZM14.4 12h3.2v14h-3.2ZM18.8 18.5H22V26h-3.2Z" {...wash} />
+    <path d="M4.5 26c4.6 0 6.4-16.5 11.5-16.5S22.9 26 27.5 26" />
+    <path d="M3.5 26.5h25" />
+    <path d="M16 5.5v2.2" {...fine} />
+    <circle cx="16" cy="9.5" r="1.5" {...solid} />
   </>
 );
 
-// Speech bubble with "Aa".
+// Inglese: two speech bubbles, the front one lettered.
 const language = (
   <>
-    <path d="M5 6.5h22v13H16.5L9.5 25v-5.5H5Z" />
-    <path d="M10 15.5 12.5 10l2.5 5.5M10.8 13.6h3.4" />
-    <circle cx="20.5" cy="14" r="1.8" />
-    <path d="M22.3 12.5v4.5" />
+    <path d="M15.5 9.8V7.5a3 3 0 0 1 3-3h7a3 3 0 0 1 3 3v5.8a3 3 0 0 1-3 3h-.4v3.2l-3.4-3.2" {...fine} />
+    <circle cx="20.6" cy="8.6" r="0.9" {...solid} />
+    <circle cx="23.6" cy="8.6" r="0.9" {...solid} />
+    <path d="M6.5 10.5h12.5a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-7.2l-4.4 4v-4h-.9a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3Z" {...tone} />
+    <path d="M7.4 19.6 9.8 13.8l2.4 5.8M8.3 17.6h3" {...fine} />
+    <path d="M14.2 17.5c0-1.2.9-2 2-2s1.9.8 1.9 2-.8 2-1.9 2-2-.8-2-2ZM18.1 15.6v4" {...fine} />
   </>
 );
 
-// Briefcase.
+// Mondo del lavoro: briefcase with curved flap and clasp.
 const career = (
   <>
-    <rect x="5.5" y="11" width="21" height="13.5" rx="2.5" />
-    <path d="M5.5 16.5h21" />
-    <path d="M12 11V8.7a1.7 1.7 0 0 1 1.7-1.7h4.6a1.7 1.7 0 0 1 1.7 1.7V11" />
-    <path d="M14.8 16.5v3h2.4v-3" />
+    <rect x="4.5" y="10.5" width="23" height="15.5" rx="3" {...tone} />
+    <path d="M12 10.5V8.6a2.1 2.1 0 0 1 2.1-2.1h3.8A2.1 2.1 0 0 1 20 8.6v1.9" />
+    <path d="M4.5 16.2c3.6 1.6 7.4 2.4 11.5 2.4s7.9-.8 11.5-2.4" {...fine} />
+    <rect x="13.8" y="16.6" width="4.4" height="4.4" rx="1.2" {...solid} />
   </>
 );
 
-// Skull, side-simplified front view.
+// Antropologia: skull with sockets, nasal aperture and teeth.
 const anthropology = (
   <>
-    <path d="M9 18.5v-1.2a7 7 0 0 1 14 0v1.2" />
-    <path d="M9 18.5V22M23 18.5V22" />
-    <circle cx="13" cy="16.3" r="1.5" fill="currentColor" stroke="none" />
-    <circle cx="19" cy="16.3" r="1.5" fill="currentColor" stroke="none" />
-    <path d="M16 18.3v2" />
-    <path d="M11.5 22.5h9" />
-    <path d="M13.8 22.5V26M16 22.5v3.5M18.2 22.5V26" />
-    <path d="M11.5 26h9" />
+    <path d="M16 4.5C9.9 4.5 5.5 8.9 5.5 14.7c0 3.4 1.5 5.8 3.8 7.2V25a2 2 0 0 0 2 2h9.4a2 2 0 0 0 2-2v-3.1c2.3-1.4 3.8-3.8 3.8-7.2 0-5.8-4.4-10.2-10.5-10.2Z" {...tone} />
+    <path d="M9.6 15.6c0-1.8 1.5-2.7 3.1-2.7s2.7 1.2 2.5 2.8c-.2 1.6-1.4 2.6-2.9 2.6s-2.7-1-2.7-2.7Z" {...solid} />
+    <path d="M22.4 15.6c0-1.8-1.5-2.7-3.1-2.7s-2.7 1.2-2.5 2.8c.2 1.6 1.4 2.6 2.9 2.6s2.7-1 2.7-2.7Z" {...solid} />
+    <path d="M16 18.9 14.9 21h2.2Z" {...solid} />
+    <path d="M13.2 23.6V27M16 23.6V27M18.8 23.6V27" {...fine} />
   </>
 );
 
-// Leaf with veins and a water droplet.
+// Ecotossicologia: veined leaf beside a falling drop.
 const ecotoxicology = (
   <>
-    <path d="M14.5 4.5C9 9 8 17 14.5 25 21 17 20 9 14.5 4.5Z" />
-    <path d="M14.5 8v14" />
-    <path d="M14.5 12.5 11.5 11M14.5 12.5l3 2M14.5 17l-3.5-1.5M14.5 17l3.5 2" />
-    <path d="M23.5 20c1.4 1.9 2.3 3 2.3 4.2a2.3 2.3 0 0 1-4.6 0c0-1.2.9-2.3 2.3-4.2Z" />
+    <path d="M4.5 25C4 15 10 7 22.5 6c.6 12-6 19.5-18 19Z" {...tone} />
+    <path d="M4.5 25 16.5 13" />
+    <path d="M9 20.5V17M9 20.5h3.6M13 16.5v-3.9M13 16.5h3.8" {...fine} />
+    <path d="M25 17.2c2 2.8 3.3 4.5 3.3 6.1a3.3 3.3 0 0 1-6.6 0c0-1.6 1.3-3.3 3.3-6.1Z" {...solid} />
   </>
 );
 
-// Lab mouse: body, ear, snout, tail, eye.
+// Modelli di malattia: lab mouse in profile.
 const diseaseModel = (
   <>
-    <circle cx="13.5" cy="18" r="6.5" />
-    <circle cx="19" cy="11.8" r="2.1" />
-    <path d="M19 16.5 26 19" />
-    <circle cx="26" cy="19" r="1" fill="currentColor" stroke="none" />
-    <path d="M7.5 19.5C4 20.5 3.5 25 6.5 26.3" />
-    <circle cx="16" cy="16.5" r="1.2" fill="currentColor" stroke="none" />
+    <path d="M15.45 12.5A3.3 3.3 0 1 1 21.3 13.8c-1.8-.9-3.7-1.3-5.85-1.3Z" {...tone} />
+    <path d="M5.5 23.5c-.4-6.2 4.2-11 10.2-11 4.8 0 8 2.6 9.6 5.6l2.4 1.2c.9.5.8 1.8-.2 2.1l-2.3.7c-1.3 1.6-3.6 2.7-6.7 2.7H6.7c-.7 0-1.2-.6-1.2-1.3Z" {...tone} />
+    <circle cx="21.8" cy="17.4" r="1.15" {...solid} />
+    <circle cx="27.9" cy="19.9" r="0.9" {...solid} />
+    <path d="M5.8 22.6c-2.5-.5-3.5 1.9-2.1 3.4 1.5 1.6 4.3 1.2 6.3 1.5" {...fine} />
+    <path d="M11 24.8v1.7M18.6 24.8v1.7" {...fine} />
+    <path d="M26.2 21.6l2.6 1.2M25.8 22.4l1.8 1.9" {...fine} {...faint} />
   </>
 );
 
-// Signaling: receptor in bilayer plus radiating ligand.
+// Trasduzione del segnale: ligand on a receptor across the bilayer, cascade inside.
 const signaling = (
   <>
-    <path d="M3.5 22h13M3.5 26h13" />
-    <path d="M9 13.5 13 18.5 17 13.5M13 18.5V24" />
-    <circle cx="23.5" cy="10" r="1.6" fill="currentColor" stroke="none" />
-    <path d="M19.5 6.5a5.6 5.6 0 0 1 8 0" />
-    <path d="M17.5 4a9 9 0 0 1 12 0" />
+    <path d="M3 12h26v5.5H3Z" {...wash} />
+    <path d="M3 12h10.6M18.4 12H29M3 17.5h10.6M18.4 17.5H29" {...fine} />
+    <circle cx="5.5" cy="12" r="1.1" {...solid} />
+    <circle cx="9.5" cy="12" r="1.1" {...solid} />
+    <circle cx="22.5" cy="12" r="1.1" {...solid} />
+    <circle cx="26.5" cy="12" r="1.1" {...solid} />
+    <circle cx="5.5" cy="17.5" r="1.1" {...solid} />
+    <circle cx="9.5" cy="17.5" r="1.1" {...solid} />
+    <circle cx="22.5" cy="17.5" r="1.1" {...solid} />
+    <circle cx="26.5" cy="17.5" r="1.1" {...solid} />
+    <path d="M16 21V10.4M16 10.4l-3.6-4.6M16 10.4l3.6-4.6" />
+    <circle cx="16" cy="5" r="1.9" {...solid} />
+    <path d="M12.6 22.6 16 25l3.4-2.4M12.6 26.4 16 28.8l3.4-2.4" {...fine} />
   </>
 );
 
-// Drug target: concentric rings struck by an arrow.
+// Bersagli farmacologici: bullseye hit by a fletched arrow.
 const drugTarget = (
   <>
-    <circle cx="14.5" cy="17.5" r="8" />
-    <circle cx="14.5" cy="17.5" r="4.2" />
-    <circle cx="14.5" cy="17.5" r="1.2" fill="currentColor" stroke="none" />
-    <path d="M25.5 6.5 18.5 13.5" />
-    <path d="M25.5 6.5h-4M25.5 6.5v4" />
+    <circle cx="14" cy="18" r="9.5" {...tone} />
+    <circle cx="14" cy="18" r="5.6" />
+    <circle cx="14" cy="18" r="2.2" {...solid} />
+    <path d="M14 18 26 6" />
+    <path d="M26 6h3M26 6V3M23.8 8.2h3M23.8 8.2v-3" {...fine} />
   </>
 );
 
-// Clinical tube with medical cross.
+// Biochimica clinica: capped blood tube, sample drop and medical cross.
 const clinical = (
   <>
-    <path d="M4.5 9.5h10" />
-    <path d="M6.5 9.5V19a3.2 3.2 0 0 0 6.4 0V9.5" />
-    <path d="M6.5 15.5h6.4" />
-    <circle cx="9.5" cy="17.8" r="1" fill="currentColor" stroke="none" />
-    <path d="M24 5v8M20 9h8" />
+    <rect x="6.3" y="3.5" width="9.4" height="4.2" rx="1.3" {...solid} />
+    <path d="M8 15h6v8.5a3 3 0 0 1-6 0Z" {...wash} />
+    <path d="M8 7.7v15.8a3 3 0 0 0 6 0V7.7" />
+    <path d="M8 11.5h3" {...fine} />
+    <circle cx="22.8" cy="21.6" r="6" {...tone} />
+    <path d="M22.8 18.4v6.4M19.6 21.6H26" />
+    <path d="M23.4 4.5c1.6 2.2 2.6 3.5 2.6 4.8a2.6 2.6 0 0 1-5.2 0c0-1.3 1-2.6 2.6-4.8Z" {...solid} />
   </>
 );
 
-// Dividing stem cell: mother budding a daughter.
+// Cellule staminali: asymmetric division, mother cell budding a daughter.
 const stemCell = (
   <>
-    <circle cx="12" cy="15" r="7.5" />
-    <circle cx="12" cy="15" r="2.2" />
-    <circle cx="12" cy="15" r="0.9" fill="currentColor" stroke="none" />
-    <circle cx="22.5" cy="19.5" r="4.8" />
-    <circle cx="22.5" cy="19.5" r="1.1" fill="currentColor" stroke="none" />
+    <path d="M16.87 13.01A7 7 0 1 0 18.5 17.55 5 5 0 1 0 16.87 13.01Z" {...tone} />
+    <circle cx="10.8" cy="18" r="2.7" {...fine} />
+    <circle cx="11.4" cy="17.4" r="1.1" {...solid} />
+    <circle cx="22.2" cy="13.6" r="1.7" {...solid} />
+    <path d="M7 2.4c.4 2 1.4 3 3.4 3.4-2 .4-3 1.4-3.4 3.4-.4-2-1.4-3-3.4-3.4 2-.4 3-1.4 3.4-3.4Z" {...solid} />
+    <path d="M26.2 22.6v4M24.2 24.6h4" {...fine} />
   </>
 );
 
-// Upright syringe.
-const syringe = (
+// Farmaci biologici: filled syringe.
+const biotherapy = (
   <>
-    <path d="M13 4.5h6" />
-    <path d="M16 4.5V9" />
-    <path d="M12 10.5h8" />
-    <path d="M12.5 10.5h7V20h-7Z" />
-    <path d="M12.5 14h2.5M12.5 17h2.5" />
-    <path d="M14.5 20h3" />
-    <path d="M16 21.5V28" />
+    <g transform="rotate(-45 16 16)">
+      <path d="M10 12.5h8.2v7H10Z" {...wash} />
+      <rect x="10" y="12.5" width="13.5" height="7" rx="1.3" />
+      <path d="M18.2 12.5v7" />
+      <path d="M12.6 12.5v2.4M15.2 12.5v2.4" {...fine} />
+      <path d="M23.5 11v10M23.5 16h4M27.5 12.6v6.8" />
+      <path d="M10 14.6H7.6v2.8H10" />
+      <path d="M7.6 16H3" {...fine} />
+    </g>
+    <circle cx="5.4" cy="28.2" r="1.2" {...solid} />
   </>
 );
 
-// Cell crossed by a pulse (cell physiology).
+// Fisiologia cellulare: mitochondrion with cristae.
 const cellPhysiology = (
   <>
-    <circle cx="16" cy="16" r="9" />
-    <circle cx="16" cy="16" r="1.5" fill="currentColor" stroke="none" />
-    <path d="M5 16h4l2-5 3 10 2.5-7 1.5 2H27" />
+    <g transform="rotate(-28 16 16)">
+      <ellipse cx="16" cy="16" rx="12" ry="7.2" {...tone} />
+      <path d="M6.8 16c1.4 0 1.5-3.4 3-3.4s1.4 6.8 3 6.8 1.5-6.8 3.1-6.8 1.5 6.8 3.1 6.8 1.5-6.8 3-6.8 1.6 3.4 3 3.4" {...fine} />
+    </g>
   </>
 );
 
-// Endocrine glands: two lobes, isthmus, hormone granules.
+// Sistema endocrino: thyroid lobes on the trachea, hormone granules.
 const endocrine = (
   <>
-    <ellipse cx="10.5" cy="16" rx="4" ry="7" />
-    <ellipse cx="21.5" cy="16" rx="4" ry="7" />
-    <path d="M14.5 16h3" />
-    <circle cx="10.5" cy="13" r="1.2" fill="currentColor" stroke="none" />
-    <circle cx="21.5" cy="19" r="1.2" fill="currentColor" stroke="none" />
+    <path d="M13.8 3.5v9.4M18.2 3.5v9.4M13.8 21.6v6.9M18.2 21.6v6.9" {...fine} />
+    <path d="M13.8 6.6h4.4M13.8 25.4h4.4" {...fine} />
+    <path d="M16 14.5c-1.3-1-2.5-1.4-3.6-1.4-.5-2.6-2.1-4.4-4.2-4.4C5.3 8.7 4 12.2 4 16.2 4 21 6.4 24 9.3 24c2.4 0 4.6-1.6 6.7-4.5 2.1 2.9 4.3 4.5 6.7 4.5 2.9 0 5.3-3 5.3-7.8 0-4-1.3-7.5-4.2-7.5-2.1 0-3.7 1.8-4.2 4.4-1.1 0-2.3.4-3.6 1.4Z" {...tone} />
+    <path d="M8.2 12.6c-1.3 1.6-1.7 4.4-.8 6.8M23.8 12.6c1.3 1.6 1.7 4.4.8 6.8" {...fine} {...faint} />
   </>
 );
 
-// Petri dish, top view, with colonies.
-const petri = (
+// Microbiologia: Petri dish with colonies on agar.
+const microbiology = (
   <>
-    <circle cx="16" cy="16" r="10.5" />
-    <circle cx="16" cy="16" r="6.8" />
-    <circle cx="13.5" cy="14" r="1.4" fill="currentColor" stroke="none" />
-    <circle cx="17.5" cy="18" r="1.4" fill="currentColor" stroke="none" />
-    <circle cx="18.5" cy="13.5" r="1.4" fill="currentColor" stroke="none" />
-    <circle cx="14.5" cy="19" r="1.6" />
+    <circle cx="16" cy="16" r="12" />
+    <circle cx="16" cy="16" r="9.4" {...wash} />
+    <circle cx="12.2" cy="12.6" r="1.7" {...solid} />
+    <circle cx="19.8" cy="11.8" r="1.1" {...solid} />
+    <circle cx="20.2" cy="19" r="2" {...solid} />
+    <circle cx="16.4" cy="15.6" r="0.9" {...solid} />
+    <circle cx="12.4" cy="19.8" r="2.5" {...tone} />
+    <path d="M8.2 7.6A11.6 11.6 0 0 1 12 5" {...fine} {...faint} />
   </>
 );
 
-// Brain hemispheres with midline and sulci.
+// Neuroanatomia: brain in lateral view with cerebellum and brainstem.
 const brain = (
   <>
-    <path d="M16 5.5C11.5 1.5 5 6 6.3 11 3.3 13.8 4.8 20.5 9.3 20.8c1 3.3 4.3 3.8 6.7 2 2.4 1.8 5.7 1.3 6.7-2 4.5-.3 6-7 3-9.8 1.3-5-5.2-9.5-9.7-5.5Z" />
-    <path d="M16 5.5V25" />
-    <path d="M11 9.5c-2.2.8-2.5 4-.5 5.2M21 9.5c2.2.8 2.5 4 .5 5.2" />
+    <path d="M24 21.8c2.6-1 4-3.4 4-6.4C28 9.6 22.5 5.5 15.6 5.5 8.8 5.5 4 9.6 4 15c0 4 2.6 6.9 6.4 7.4 1.6.2 2.9-.2 4-1l3 .9c1.8.5 3.5.3 5-.6Z" {...tone} />
+    <path d="M18.8 22.4c.4 2.3 2.5 3.8 4.8 3.4 2.2-.4 3.6-2.2 3.4-4.3-1.1.6-2.1.8-3 .3" {...wash} />
+    <path d="M18.8 22.4c.4 2.3 2.5 3.8 4.8 3.4 2.2-.4 3.6-2.2 3.4-4.3" />
+    <path d="M18.4 23.2c-.3 1.9-.8 3.5-1.8 5" />
+    <path d="M9.6 17.4c2.8-1 5.8-.8 8.4 1" {...fine} />
+    <path d="M16.6 5.9c-.8 2.6.6 4.8-.4 7.6" {...fine} />
+    <path d="M8.4 12.6c1.6-1.6 4-1.6 5.4-.2M20 9.6c1.6.6 2.6 2 2.6 3.8M21 17.4c1.4-.4 2.8 0 3.8 1" {...fine} />
   </>
 );
 
-// Awareness ribbon.
-const ribbon = (
+// Neurofisiologia: neuron with dendrites, myelinated axon and terminal boutons.
+const neuron = (
   <>
-    <path d="M16 4.5c-3.4 0-5.8 2.5-5.8 5.4 0 2.4 1.4 4.2 3.2 5.1L9.5 27h4L16 19.6" />
-    <path d="M16 4.5c3.4 0 5.8 2.5 5.8 5.4 0 2.4-1.4 4.2-3.2 5.1L22.5 27h-4L16 19.6" />
-    <circle cx="16" cy="9.8" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="9.6" cy="10.4" r="4.3" {...tone} />
+    <circle cx="9.6" cy="10.4" r="1.5" {...solid} />
+    <path d="M6.7 7.4C5.6 6.3 5 4.9 4.9 3.1M5.6 6C4.6 5.5 3.6 5.4 2.6 5.6M5.4 11.9c-1.3.5-2.6.4-3.6-.4M7.1 14.2c-.5 1.5-1.4 2.6-2.8 3.3M11.9 6.5c.4-1.5 1.3-2.7 2.8-3.4M13.2 4.6c-.2-.8-.6-1.6-1.2-2.2" {...fine} />
+    <path d="M12.7 13.5 24.9 25.7" />
+    <rect x="-2.7" y="-1.8" width="5.4" height="3.6" rx="1.8" transform="translate(17.2 18) rotate(45)" {...tone} />
+    <rect x="-2.7" y="-1.8" width="5.4" height="3.6" rx="1.8" transform="translate(21.7 22.5) rotate(45)" {...tone} />
+    <path d="M24.9 25.7l3 .6M24.9 25.7l.6 3M24.9 25.7l2.6 2.6" {...fine} />
+    <circle cx="28.2" cy="26.4" r="1.1" {...solid} />
+    <circle cx="25.6" cy="29" r="1.1" {...solid} />
+    <circle cx="27.8" cy="28.6" r="1.1" {...solid} />
   </>
 );
 
-// Cell under a magnifier.
-const cellInspector = (
+// Oncologia: awareness ribbon.
+const oncology = (
   <>
-    <circle cx="12.5" cy="14.5" r="7.5" />
-    <circle cx="12.5" cy="14.5" r="1.5" fill="currentColor" stroke="none" />
-    <circle cx="22" cy="21.5" r="4.2" />
-    <path d="M25.2 24.7 28 27.5" />
+    <path
+      d="M12.4 19.4C10.2 16.4 8 13.6 8 9.4a8 6.8 0 0 1 16 0c0 4.2-2.2 7-4.4 10l4.7 6a1.3 1.3 0 0 1-.3 1.9l-2.5 1.8a1.3 1.3 0 0 1-1.8-.3L16 23.8l-3.7 5a1.3 1.3 0 0 1-1.8.3L8 27.3a1.3 1.3 0 0 1-.3-1.9ZM16 15.4c-1.5-1.8-2.8-3.4-2.8-5.2a2.8 2.8 0 0 1 5.6 0c0 1.8-1.3 3.4-2.8 5.2Z"
+      fillRule="evenodd"
+      {...tone}
+    />
+    <path d="M12.4 19.4 16 15.4M16 23.8l3.6-4.4" />
+    <path d="M16 23.8 19.6 19.4l4.7 6a1.3 1.3 0 0 1-.3 1.9l-2.5 1.8a1.3 1.3 0 0 1-1.8-.3Z" {...wash} />
   </>
 );
 
-// Outbreak network: index case linked to four contacts.
-const outbreak = (
+// Patologia cellulare: magnifier on a cell with an irregular nucleus.
+const cellPathology = (
   <>
-    <path d="M9.5 10 14 13.8M22.5 10 18 13.8M9.5 22 14 18.2M22.5 22 18 18.2" />
-    <circle cx="16" cy="16" r="2.2" fill="currentColor" stroke="none" />
-    <circle cx="7.5" cy="8.5" r="2.2" />
-    <circle cx="24.5" cy="8.5" r="2.2" />
-    <circle cx="7.5" cy="23.5" r="2.2" />
-    <circle cx="24.5" cy="23.5" r="2.2" />
+    <circle cx="13.5" cy="13.5" r="9" {...tone} />
+    <path d="M20 20 27 27" strokeWidth={3.6} />
+    <path d="M13.7 8.6c2.9 0 5 2.1 5 4.9s-2.3 5.1-5.2 5.1-4.8-2.1-4.8-5c0-2.8 2.1-5 5-5Z" {...fine} />
+    <path d="M12.2 11.8c.9-.9 2.6-.8 3.1.4.4 1 .1 1.6.7 2.3.5.8-.3 1.9-1.4 1.7-1.2-.2-1.5-.9-2.4-1.1-1.1-.4-1-2.4 0-3.3Z" {...solid} />
   </>
 );
 
-// Neuromuscular junction: axon forking onto muscle fibers.
-const junction = (
+// Epidemiologia e prevenzione: globe with outbreak hotspots.
+const epidemiology = (
   <>
-    <path d="M4 16h9" />
-    <path d="M13 16l4.5-4.5M13 16l4.5 4.5" />
-    <circle cx="17.5" cy="11.5" r="1.2" fill="currentColor" stroke="none" />
-    <circle cx="17.5" cy="20.5" r="1.2" fill="currentColor" stroke="none" />
-    <path d="M20 11.5h8M20 16h8M20 20.5h8" />
-    <path d="M22.5 11.5v9" />
+    <circle cx="16" cy="16" r="11.8" {...tone} />
+    <ellipse cx="16" cy="16" rx="5" ry="11.8" {...fine} />
+    <path d="M4.2 16h23.6M6 10h20M6 22h20" {...fine} {...faint} />
+    <circle cx="10.6" cy="11.2" r="1.7" {...solid} />
+    <circle cx="10.6" cy="11.2" r="3.6" {...fine} />
+    <circle cx="21" cy="19.6" r="1.4" {...solid} />
   </>
 );
 
-// Code brackets with slash (bioinformatics).
-const codeChevrons = (
+// Cardiovascolare e metabolico: heart crossed by an ECG trace.
+const cardiovascular = (
   <>
-    <path d="M13.5 10.5 8.5 16l5 5.5" />
-    <path d="M18.5 10.5l5 5.5-5 5.5" />
-    <path d="M17.5 8.5 14.5 23.5" />
+    <path d="M16 27.5C9.5 23.2 4.5 18.4 4.5 12.2c0-3.7 2.7-6.6 6.3-6.6 2.2 0 4 1.1 5.2 2.9 1.2-1.8 3-2.9 5.2-2.9 3.6 0 6.3 2.9 6.3 6.6 0 6.2-5 11-11.5 15.3Z" {...tone} />
+    <path d="M2.5 16.5h7l1.8-3.6 2.8 7.4 2.6-9 2.2 5.2h10.6" />
+    <path d="M8.2 10.4c.5-1.1 1.4-1.8 2.6-2" {...fine} {...faint} />
   </>
 );
 
-// Shield with antibody (immunology).
-const shield = (
+// Malattie neuromuscolari: motor nerve ending on striated muscle fibers.
+const neuromuscular = (
   <>
-    <path d="M16 4.5 24.5 7.8v7c0 6.2-4.2 10-8.5 11.7-4.3-1.7-8.5-5.5-8.5-11.7v-7Z" />
-    <path d="M12.8 11.5 16 15.4 19.2 11.5M16 15.4v6.5" />
+    <rect x="3.5" y="15" width="25" height="6.2" rx="3.1" {...tone} />
+    <rect x="3.5" y="22.6" width="25" height="6.2" rx="3.1" {...tone} />
+    <path d="M8.5 15.8v4.6M12.5 15.8v4.6M23.5 15.8v4.6M8.5 23.4V28M12.5 23.4V28M16.5 23.4V28M20.5 23.4V28M24.5 23.4V28" {...fine} {...faint} />
+    <path d="M8 3.5c0 3.6 3.2 4.6 6.4 5.6 2.4.8 3.6 2 3.6 4" />
+    <path d="M18 13.1 15.6 14M18 13.1l2.4.9" {...fine} />
+    <circle cx="15" cy="14.2" r="1.3" {...solid} />
+    <circle cx="21" cy="14.2" r="1.3" {...solid} />
   </>
 );
 
-// Erlenmeyer flask with check badge (internship).
-const flaskCheck = (
+// Biologia molecolare: double helix with base pairs.
+const dna = (
   <>
-    <path d="M12.5 4.5h6" />
-    <path d="M13.5 4.5 8.5 20a2.3 2.3 0 0 0 2.2 3h6.6a2.3 2.3 0 0 0 2.2-3L18.5 4.5" />
-    <path d="M10.3 16h11.4" />
-    <circle cx="13" cy="19" r="1" fill="currentColor" stroke="none" />
-    <circle cx="23.5" cy="23" r="4.5" />
-    <path d="M21.4 23l1.6 1.6 2.8-3" />
+    <path d="M16 9.75C13 8.4 10 6.8 10 3.5h12c0 3.3-3 4.9-6 6.25ZM16 9.75c3 1.35 6 3 6 6.25s-3 4.9-6 6.25c-3-1.35-6-3-6-6.25s3-4.9 6-6.25ZM16 22.25c3 1.35 6 2.95 6 6.25H10c0-3.3 3-4.9 6-6.25Z" {...wash} fillOpacity={0.16} />
+    <path d="M10 3.5C10 10 22 10 22 16S10 22 10 28.5" />
+    <path d="M22 3.5C22 10 10 10 10 16s12 6 12 12.5" {...faint} />
+    <path d="M11.9 7.4h8.2M11.9 24.6h8.2" />
+    <path d="M11.9 12.4h8.2M11.9 19.6h8.2" {...faint} />
+    <circle cx="16" cy="9.8" r="1.5" {...solid} />
+    <circle cx="16" cy="22.2" r="1.5" {...solid} />
   </>
 );
 
-// Graduation cap (thesis).
-const mortarboard = (
+// Diagnostica di laboratorio: microplate with reacting wells.
+const wells = [8.5, 13.5, 18.5, 23.5].flatMap((x) => [12.5, 16.5, 20.5].map((y) => [x, y] as const));
+const positive = new Set(["8.5,12.5", "13.5,16.5", "18.5,12.5", "23.5,20.5", "18.5,20.5"]);
+const diagnostics = (
   <>
-    <path d="M16 5.5 28 10.5 16 15.5 4 10.5Z" />
-    <path d="M11 13v6.2c0 1.9 10 1.9 10 0V13" />
-    <path d="M24.5 13.5V21" />
-    <circle cx="24.5" cy="23" r="1.3" fill="currentColor" stroke="none" />
+    <path d="M6.5 7.5h19a3 3 0 0 1 3 3v11a3 3 0 0 1-3 3h-19a3 3 0 0 1-3-3v-8.5l3-3.5Z" {...tone} />
+    {wells.map(([x, y]) =>
+      positive.has(`${x},${y}`) ? <circle key={`${x},${y}`} cx={x} cy={y} r="1.65" {...solid} /> : <circle key={`${x},${y}`} cx={x} cy={y} r="1.4" {...fine} />
+    )}
   </>
 );
 
-// Patent: document with seal and ribbon.
+// Bioinformatica: double helix between code brackets.
+const bioinformatics = (
+  <>
+    <path d="M12.5 6C12.5 11 19.5 11 19.5 16S12.5 21 12.5 26H19.5C19.5 21 12.5 21 12.5 16S19.5 11 19.5 6Z" {...wash} />
+    <path d="M12.5 6c0 5 7 5 7 10s-7 5-7 10M19.5 6c0 5-7 5-7 10s7 5 7 10" />
+    <path d="M13.6 8.8h4.8M13.6 23.2h4.8" {...fine} />
+    <path d="M8 10.5 3 16l5 5.5M24 10.5l5 5.5-5 5.5" />
+  </>
+);
+
+// Immunologia: shield shaded on one side, antibody in front.
+const immunology = (
+  <>
+    <path d="M16 3.8 26 7.6v7.6c0 6.4-4.2 11-10 13.2C10.2 26.2 6 21.6 6 15.2V7.6Z" {...tone} />
+    <path d="M16 3.8 26 7.6v7.6c0 6.4-4.2 11-10 13.2Z" {...wash} />
+    <path d="M11.6 10.4 16 15.4l4.4-5M16 15.4v6.8" />
+    <circle cx="11.4" cy="10.2" r="1.5" {...solid} />
+    <circle cx="20.6" cy="10.2" r="1.5" {...solid} />
+  </>
+);
+
+// Tecniche di indagine: compound microscope in profile.
+const microscope = (
+  <>
+    <g transform="rotate(-24 14.4 9.8)">
+      <rect x="12.4" y="4.6" width="4" height="10.8" rx="1" {...tone} />
+      <rect x="11.6" y="2.4" width="5.6" height="2.4" rx="0.9" {...solid} />
+      <path d="M14.4 15.4v2.4" />
+    </g>
+    <path d="M17 9.4c4.2.5 7.2 4 7.2 8.3 0 2.6-1 4.9-2.8 6.8" />
+    <path d="M11.5 19.6h12" />
+    <path d="M13.6 18.2h4.2" {...fine} />
+    <circle cx="17.6" cy="22.2" r="1" {...solid} />
+    <rect x="7" y="24.5" width="18" height="3.6" rx="1.8" {...tone} />
+  </>
+);
+
+// Tirocinio: lab coat with lapels, buttons and a pen in the pocket.
+const internship = (
+  <>
+    <path d="M11.8 4.5h8.4l5.2 2.3c1.3.6 2.1 1.9 2.1 3.3V26a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 26V10.1c0-1.4.8-2.7 2.1-3.3Z" {...tone} />
+    <path d="M12.6 4.5 16 12l3.4-7.5" {...wash} />
+    <path d="M11.8 4.5 10.2 10l2.6.8L16 17l3.2-6.2 2.6-.8-1.6-5.5" {...fine} />
+    <path d="M16 17v10.5M8.6 13v14.5M23.4 13v14.5" {...fine} />
+    <circle cx="16" cy="20.4" r="1" {...solid} />
+    <circle cx="16" cy="24.2" r="1" {...solid} />
+    <path d="M18.6 15.2h3.4" {...fine} />
+    <path d="M20.6 12.4v2.8" />
+  </>
+);
+
+// Prova finale: mortarboard with tassel.
+const thesis = (
+  <>
+    <path d="M9 13.8 16 17l7-3.2v6.4c0 2-3.2 3.6-7 3.6s-7-1.6-7-3.6Z" {...wash} />
+    <path d="M9 13.8v6.4c0 2 3.2 3.6 7 3.6s7-1.6 7-3.6v-6.4" />
+    <path d="M16 5 29 11 16 17 3 11Z" {...tone} />
+    <path d="M16 11l8.5 3.4v7.4" {...fine} />
+    <path d="M23.3 21.8h2.4l.7 3.8h-3.8Z" {...solid} />
+    <circle cx="16" cy="11" r="1.2" {...solid} />
+  </>
+);
+
+// Brevetti: document with an idea bulb and a certification seal.
 const patent = (
   <>
-    <path d="M8 4.5h8.5L21.5 9.5V27.5H8Z" />
-    <path d="M16.5 4.5v5H21.5" />
-    <path d="M11 14.5h7M11 18h7" />
-    <circle cx="20.5" cy="22.5" r="3" />
-    <path d="M19 24.8 18 27.5M22 24.8l1 2.7" />
+    <path d="M17.5 4.5H7A1.5 1.5 0 0 0 5.5 6v20A1.5 1.5 0 0 0 7 27.5h10V22a5 5 0 0 1 6.5-4.8v-6.7Z" {...wash} />
+    <path d="M16.5 27.5H7A1.5 1.5 0 0 1 5.5 26V6A1.5 1.5 0 0 1 7 4.5h10.5l6 6v6.6" />
+    <path d="M17.5 4.5v4.5a1.5 1.5 0 0 0 1.5 1.5h4.5" {...fine} />
+    <path d="M12.2 8.6a3.7 3.7 0 0 0-2 6.8v1.6h4v-1.6a3.7 3.7 0 0 0-2-6.8ZM10.9 19.4h2.6" {...fine} />
+    <circle cx="22.5" cy="22" r="4.4" {...tone} />
+    <circle cx="22.5" cy="22" r="1.6" {...solid} />
+    <path d="M20.4 25.9 19.6 29.5l2.9-1.3 2.9 1.3-.8-3.6" {...fine} />
   </>
 );
 
-// Fallback book.
+// Fallback: open book.
 const book = (
   <>
-    <path d="M5.5 6.5c4.5-2 7.5-1.2 10.5 1.5 3-2.7 6-3.5 10.5-1.5v19.5c-4.5-2-7.5-1.2-10.5 1.5-3-2.7-6-3.5-10.5-1.5Z" />
-    <path d="M16 8v19.5" />
+    <path d="M16 8.2C13.2 6 9.6 5.4 4.5 6.2v19c5.1-.8 8.7-.2 11.5 2 2.8-2.2 6.4-2.8 11.5-2v-19c-5.1-.8-8.7-.2-11.5 2Z" {...tone} />
+    <path d="M16 8.2v19" />
+    <path d="M8 11.4c1.9-.2 3.6 0 5 .6M8 15.4c1.9-.2 3.6 0 5 .6M19 12c1.4-.6 3.1-.8 5-.6M19 16c1.4-.6 3.1-.8 5-.6" {...fine} />
   </>
 );
 
 const symbols: Record<CourseSymbol | "unknown", ReactNode> = {
   patent,
-  anatomy: person,
-  receptor,
+  anatomy,
+  receptor: pharmacology,
   genomics,
   pathology,
   physiology,
@@ -421,24 +462,24 @@ const symbols: Record<CourseSymbol | "unknown", ReactNode> = {
   "drug-target": drugTarget,
   clinical,
   "stem-cell": stemCell,
-  biotherapy: syringe,
+  biotherapy,
   "cell-physiology": cellPhysiology,
   endocrine,
-  microbiology: petri,
+  microbiology,
   brain,
   neuron,
-  oncology: ribbon,
-  "cell-pathology": cellInspector,
-  epidemiology: outbreak,
-  cardiovascular: heart,
-  neuromuscular: junction,
+  oncology,
+  "cell-pathology": cellPathology,
+  epidemiology,
+  cardiovascular,
+  neuromuscular,
   dna,
-  diagnostics: vials,
-  bioinformatics: codeChevrons,
-  immunology: shield,
+  diagnostics,
+  bioinformatics,
+  immunology,
   microscope,
-  internship: flaskCheck,
-  thesis: mortarboard,
+  internship,
+  thesis,
   unknown: book
 };
 
@@ -452,7 +493,7 @@ export function CourseIcon({ course, className }: { course: Pick<BarbCourse, "id
       viewBox="0 0 32 32"
       fill="none"
       stroke="currentColor"
-      strokeWidth={2}
+      strokeWidth={1.8}
       strokeLinecap="round"
       strokeLinejoin="round"
     >
