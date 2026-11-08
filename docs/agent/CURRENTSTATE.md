@@ -136,3 +136,15 @@ cromosoma per genetica, polmoni per fisiologia, gaussiana per biostatistica, cap
 compressa per farmacologia, mitocondrio, tiroide, micropiastra per la diagnostica, camice per
 il tirocinio, divisione asimmetrica per le staminali. Verifiche: fogli di confronto a 100/36/20/14
 px su riquadro pastello e su fondo scuro, viste BARB ed Esami nel browser, 119 test, lint, build.
+
+Agenti MCP (8 novembre 2026): hub locale su `127.0.0.1:47321` (`npm run agent`)
+con stdio per Claude/Cursor e HTTP per un tunnel OAuth usato da ChatGPT web e
+dall'app Mac. L'app conferma letture, modifiche ed eliminazioni e tiene il
+registro solo nel browser. I dati restano in IndexedDB, separati fra localhost
+e GitHub Pages. Con la scheda pubblicata collegata, le azioni di ChatGPT vanno
+lì; localhost le riceve solo se quella scheda non dà segno di vita da 45 secondi.
+Il sito pubblicato prova il loopback e, in ripiego, un indirizzo
+`https://….trycloudflare.com` salvato in Impostazioni. Verifiche: 126 test, lint,
+hub su loopback (401 senza token, origine e host rifiutati, codice monouso) e,
+nel browser, conferma e rifiuto di una task. Da fare sul progetto reale:
+rieseguire `groups.sql` e i Redirect URLs, invariati rispetto all'8 ottobre.

@@ -16,6 +16,7 @@ import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProg
 import { Button, Field, Panel, Pill, SectionTitle, fileInputClass, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CloudPanel } from "../components/CloudPanel";
+import { AgentSettings } from "../components/AgentDesk";
 
 const palettes: { id: PaletteName; label: string; colors: string[] }[] = [
   { id: "aurora", label: "Aurora Dark", colors: ["#7CF7C8", "#8B7CFF", "#FF7A8A"] },
@@ -190,7 +191,7 @@ export function SettingsView() {
     <div>
       <SectionTitle
         title="Impostazioni"
-        subtitle="Profilo, aspetto, privacy, cloud e backup dei tuoi dati."
+        subtitle="Profilo, aspetto, privacy, cloud, backup e agenti."
       />
 
       {message ? (
@@ -486,6 +487,17 @@ export function SettingsView() {
         </Panel>
         </section>
 
+        <section id="settings-agenti" aria-labelledby="settings-agenti-title" className="scroll-mt-24">
+        <Panel>
+          <SettingHeader
+            section="agenti"
+            title="Agenti"
+            description="Collega ChatGPT, Claude o un altro agente MCP. Le azioni passano da qui: puoi lasciar passare le letture e confermare il resto, una per una."
+          />
+          <AgentSettings />
+        </Panel>
+        </section>
+
         <section id="settings-dati" aria-labelledby="settings-dati-title" className="scroll-mt-24">
         <Panel>
           <SettingHeader
@@ -520,6 +532,7 @@ const SECTIONS: { id: string; label: string; icon: string }[] = [
   { id: "account", label: "Account", icon: "LogIn" },
   { id: "privacy", label: "Privacy", icon: "Shield" },
   { id: "backup", label: "Backup", icon: "Download" },
+  { id: "agenti", label: "Agenti", icon: "Sparkles" },
   { id: "dati", label: "Dati", icon: "Trash2" }
 ];
 

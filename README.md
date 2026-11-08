@@ -51,6 +51,13 @@ importare nel **Calendario personale**, evitando duplicati. Corsi e materie
 mostrano semestri distinti e icone scientifiche. Copertura, fonti e aggiornamento
 degli appelli: [`docs/barb-exams.md`](docs/barb-exams.md).
 
+## Agenti
+
+ChatGPT, Claude e gli altri client MCP si collegano con `npm run agent` e il
+codice in **Impostazioni → Agenti**. Le modifiche passano dalla conferma
+nell'app. Dettagli, tunnel per ChatGPT e comando stdio:
+[`docs/agent-mcp.md`](docs/agent-mcp.md).
+
 ## Cloud sync
 
 L'implementazione opzionale con Supabase Auth, Postgres RLS e coda offline è

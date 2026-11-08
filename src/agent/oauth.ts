@@ -1,0 +1,314 @@
+import { AGENT_DATA_SCOPES, AGENT_SCOPES, type AgentDataScope, type AgentScope } from "./constants";
+
+export interface OAuthClient {
+  clientId: string;
+  clientName: string;
+  redirectUris: string[];
+  createdAt: string;
+}
+
+export interface AccessRecord {
+  clientId: string;
+  clientName: string;
+  scopes: AgentDataScope[];
+  resource: string;
+  expiresAt: number;
+}
+
+export interface RefreshRecord extends AccessRecord {
+  family: string;
+}
+
+interface AuthRequest {
+  clientId: string;
+  clientName: string;
+  redirectUri: string;
+  codeChallenge: string;
+  state?: string;
+  resource: string;
+  scopes: AgentScope[];
+  expiresAt: number;
+  decision?: { approve: boolean; scopes: AgentDataScope[] };
+  code?: string;
+  redirectTo?: string;
+}
+
+export interface TokenActor {
+  name: string;
+  source: "oauth";
+  scopes: AgentDataScope[];
+  clientId: string;
+  resource: string;
+}
+
+const CODE_TTL_MS = 60_000;
+const ACCESS_TTL_MS = 60 * 60 * 1000;
+const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const REQUEST_TTL_MS = 10 * 60 * 1000;
+
+const bytesToBase64Url = (bytes: Uint8Array) => {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+
+export const randomToken = (size = 32) => {
+  const bytes = new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  return bytesToBase64Url(bytes);
+};
+
+export const sha256Base64Url = async (value: string) => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return bytesToBase64Url(new Uint8Array(digest));
+};
+
+export const timingSafeEqual = (left: string, right: string) => {
+  const a = new TextEncoder().encode(left);
+  const b = new TextEncoder().encode(right);
+  const length = Math.max(a.length, b.length);
+  let diff = a.length === b.length ? 0 : 1;
+  for (let index = 0; index < length; index += 1) diff |= (a[index] ?? 0) ^ (b[index] ?? 0);
+  return diff === 0;
+};
+
+export const canonicalResource = (value: string) => value.trim().replace(/\/+$/g, "");
+
+export const safeRedirectUri = (value: string) => {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.hash) return null;
+    const localhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (url.protocol === "https:") return url.toString();
+    if (url.protocol === "http:" && localhost) return url.toString();
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const parseScopes = (value: string | null | undefined): AgentScope[] => {
+  const requested = (value ?? "studyos:read studyos:write")
+    .split(/[\s,]+/)
+    .filter((scope): scope is AgentScope => (AGENT_SCOPES as readonly string[]).includes(scope));
+  const scopes = requested.length ? requested : (["studyos:read"] as AgentScope[]);
+  if (!scopes.includes("studyos:read")) scopes.unshift("studyos:read");
+  return scopes;
+};
+
+const dataScopes = (scopes: readonly string[], allowed: readonly string[]): AgentDataScope[] => {
+  const picked = scopes.filter((scope): scope is AgentDataScope => (AGENT_DATA_SCOPES as readonly string[]).includes(scope) && allowed.includes(scope));
+  return picked.length ? picked : ["studyos:read"];
+};
+
+export interface PersistedOauth {
+  clients: OAuthClient[];
+  access: Array<{ hash: string; record: AccessRecord }>;
+  refresh: Array<{ hash: string; record: RefreshRecord }>;
+}
+
+/**
+ * Authorization server OAuth 2.1 minimo per i client MCP (ChatGPT, Claude, altri):
+ * PKCE S256, client pubblici, registrazione dinamica, refresh ruotati, audience sul resource.
+ * I token in chiaro non vengono conservati: si salva solo l'hash.
+ */
+export class OauthServer {
+  private readonly canonical: string;
+  private readonly now: () => number;
+  private clients = new Map<string, OAuthClient>();
+  private requests = new Map<string, AuthRequest>();
+  private codes = new Map<string, { request: AuthRequest; scopes: AgentDataScope[]; expiresAt: number; used: boolean }>();
+  private access = new Map<string, AccessRecord>();
+  private refresh = new Map<string, RefreshRecord>();
+
+  constructor(canonical: string, now: () => number = () => Date.now()) {
+    this.canonical = canonical;
+    this.now = now;
+  }
+
+  load(state: PersistedOauth) {
+    this.clients = new Map(state.clients.map((client) => [client.clientId, client]));
+    this.access = new Map(state.access.map((item) => [item.hash, item.record]));
+    this.refresh = new Map(state.refresh.map((item) => [item.hash, item.record]));
+  }
+
+  dump(): PersistedOauth {
+    this.prune();
+    return {
+      clients: [...this.clients.values()],
+      access: [...this.access.entries()].map(([hash, record]) => ({ hash, record })),
+      refresh: [...this.refresh.entries()].map(([hash, record]) => ({ hash, record }))
+    };
+  }
+
+  register(body: unknown, now = this.now()): { ok: true; client: OAuthClient } | { ok: false; error: string; status: number } {
+    this.prune(now);
+    if (this.clients.size >= 50) return { ok: false, status: 400, error: "Troppi client registrati. Revoca gli accessi da StudyOS." };
+    const source = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const redirects = Array.isArray(source.redirect_uris) ? source.redirect_uris : [];
+    if (!redirects.length || redirects.length > 5) return { ok: false, status: 400, error: "Servono da 1 a 5 redirect_uris." };
+    const redirectUris: string[] = [];
+    for (const item of redirects) {
+      if (typeof item !== "string") return { ok: false, status: 400, error: "redirect_uris non valido." };
+      const safe = safeRedirectUri(item);
+      if (!safe) return { ok: false, status: 400, error: "redirect_uri deve essere https, oppure http su localhost." };
+      redirectUris.push(safe);
+    }
+    const method = source.token_endpoint_auth_method;
+    if (method !== undefined && method !== "none") return { ok: false, status: 400, error: "Sono accettati solo client pubblici (token_endpoint_auth_method=none)." };
+    const client: OAuthClient = {
+      clientId: randomToken(18),
+      clientName: typeof source.client_name === "string" ? source.client_name.slice(0, 80) : "Agente MCP",
+      redirectUris,
+      createdAt: new Date(now).toISOString()
+    };
+    this.clients.set(client.clientId, client);
+    return { ok: true, client };
+  }
+
+  beginAuthorization(query: URLSearchParams, now = this.now()): { ok: true; requestId: string; clientName: string; scopes: AgentScope[]; redirectHost: string } | { ok: false; error: string; description: string } {
+    this.prune(now);
+    const client = this.clients.get(query.get("client_id") ?? "");
+    if (!client) return { ok: false, error: "invalid_client", description: "Client non registrato." };
+    const redirect = safeRedirectUri(query.get("redirect_uri") ?? "");
+    if (!redirect || !client.redirectUris.includes(redirect)) return { ok: false, error: "invalid_request", description: "redirect_uri non registrato." };
+    if (query.get("response_type") !== "code") return { ok: false, error: "unsupported_response_type", description: "Solo response_type=code." };
+    const challenge = query.get("code_challenge") ?? "";
+    if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge) || (query.get("code_challenge_method") ?? "S256") !== "S256") {
+      return { ok: false, error: "invalid_request", description: "PKCE S256 obbligatorio." };
+    }
+    const resource = canonicalResource(query.get("resource") ?? "");
+    if (resource !== this.canonical) return { ok: false, error: "invalid_target", description: "Il parametro resource non coincide con questo server." };
+    const scopes = parseScopes(query.get("scope"));
+    const requestId = randomToken(18);
+    this.requests.set(requestId, {
+      clientId: client.clientId,
+      clientName: client.clientName,
+      redirectUri: redirect,
+      codeChallenge: challenge,
+      state: query.get("state") ?? undefined,
+      resource,
+      scopes,
+      expiresAt: now + REQUEST_TTL_MS
+    });
+    return { ok: true, requestId, clientName: client.clientName, scopes, redirectHost: new URL(redirect).host };
+  }
+
+  pendingConsent(requestId: string, now = this.now()) {
+    const request = this.requests.get(requestId);
+    if (!request || request.expiresAt <= now) return null;
+    return { requestId, clientName: request.clientName, scopes: request.scopes, redirectHost: new URL(request.redirectUri).host, decided: Boolean(request.decision) };
+  }
+
+  decide(requestId: string, approve: boolean, scopes: readonly string[], now = this.now()): { ok: true; redirectTo: string } | { ok: false; error: string } {
+    const request = this.requests.get(requestId);
+    if (!request || request.expiresAt <= now) return { ok: false, error: "Richiesta di accesso scaduta." };
+    if (request.decision) return { ok: false, error: "Richiesta già decisa." };
+    if (!approve) {
+      request.decision = { approve: false, scopes: [] };
+      request.redirectTo = this.redirect(request, { error: "access_denied" });
+      return { ok: true, redirectTo: request.redirectTo };
+    }
+    const granted = dataScopes(scopes.length ? scopes : request.scopes, request.scopes);
+    request.decision = { approve: true, scopes: granted };
+    const code = randomToken(32);
+    request.code = code;
+    this.codes.set(code, { request, scopes: granted, expiresAt: now + CODE_TTL_MS, used: false });
+    request.redirectTo = this.redirect(request, { code });
+    return { ok: true, redirectTo: request.redirectTo };
+  }
+
+  /** Solo la pagina che ha aperto /authorize (cookie) può leggere l'URL di ritorno, che contiene il code. */
+  resultFor(requestId: string, now = this.now()): { state: "pending" } | { state: "ready"; redirectTo: string } | null {
+    const request = this.requests.get(requestId);
+    if (!request || request.expiresAt <= now) return null;
+    if (!request.redirectTo) return { state: "pending" };
+    return { state: "ready", redirectTo: request.redirectTo };
+  }
+
+  async exchange(form: URLSearchParams, now = this.now()): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string; status: number }> {
+    this.prune(now);
+    const grant = form.get("grant_type");
+    const clientId = form.get("client_id") ?? "";
+    const client = this.clients.get(clientId);
+    if (!client) return { ok: false, status: 401, error: "invalid_client" };
+    const resource = canonicalResource(form.get("resource") ?? this.canonical);
+    if (resource !== this.canonical) return { ok: false, status: 400, error: "invalid_target" };
+    if (grant === "authorization_code") return this.exchangeCode(form, client, now);
+    if (grant === "refresh_token") return this.exchangeRefresh(form, client, now);
+    return { ok: false, status: 400, error: "unsupported_grant_type" };
+  }
+
+  async authenticate(token: string, now = this.now()): Promise<TokenActor | null> {
+    this.prune(now);
+    const record = this.access.get(await sha256Base64Url(token));
+    if (!record || record.expiresAt <= now || record.resource !== this.canonical) return null;
+    return { name: record.clientName, source: "oauth", scopes: record.scopes, clientId: record.clientId, resource: record.resource };
+  }
+
+  revokeAll() {
+    this.access.clear();
+    this.refresh.clear();
+    this.codes.clear();
+  }
+
+  private async exchangeCode(form: URLSearchParams, client: OAuthClient, now: number) {
+    const code = form.get("code") ?? "";
+    const stored = this.codes.get(code);
+    if (!stored || stored.used || stored.expiresAt <= now || stored.request.clientId !== client.clientId) {
+      return { ok: false as const, status: 400, error: "invalid_grant" };
+    }
+    const redirect = safeRedirectUri(form.get("redirect_uri") ?? "");
+    if (redirect !== stored.request.redirectUri) return { ok: false as const, status: 400, error: "invalid_grant" };
+    const verifier = form.get("code_verifier") ?? "";
+    const challenge = await sha256Base64Url(verifier);
+    if (!timingSafeEqual(challenge, stored.request.codeChallenge)) return { ok: false as const, status: 400, error: "invalid_grant" };
+    stored.used = true;
+    this.codes.delete(code);
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now) };
+  }
+
+  private async exchangeRefresh(form: URLSearchParams, client: OAuthClient, now: number) {
+    const raw = form.get("refresh_token") ?? "";
+    const hash = await sha256Base64Url(raw);
+    const stored = this.refresh.get(hash);
+    if (!stored || stored.expiresAt <= now || stored.clientId !== client.clientId) return { ok: false as const, status: 400, error: "invalid_grant" };
+    this.refresh.delete(hash);
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now) };
+  }
+
+  private async issue(client: OAuthClient, scopes: AgentDataScope[], now: number) {
+    const access = randomToken(32);
+    const refresh = randomToken(32);
+    const record: AccessRecord = {
+      clientId: client.clientId,
+      clientName: client.clientName,
+      scopes,
+      resource: this.canonical,
+      expiresAt: now + ACCESS_TTL_MS
+    };
+    this.access.set(await sha256Base64Url(access), record);
+    this.refresh.set(await sha256Base64Url(refresh), { ...record, expiresAt: now + REFRESH_TTL_MS, family: randomToken(8) });
+    return {
+      access_token: access,
+      token_type: "Bearer",
+      expires_in: Math.floor(ACCESS_TTL_MS / 1000),
+      refresh_token: refresh,
+      scope: scopes.join(" ")
+    };
+  }
+
+  private redirect(request: AuthRequest, params: Record<string, string>) {
+    const url = new URL(request.redirectUri);
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+    if (request.state) url.searchParams.set("state", request.state);
+    return url.toString();
+  }
+
+  private prune(now = this.now()) {
+    for (const [id, request] of this.requests) if (request.expiresAt <= now) this.requests.delete(id);
+    for (const [code, stored] of this.codes) if (stored.expiresAt <= now || stored.used) this.codes.delete(code);
+    for (const [hash, record] of this.access) if (record.expiresAt <= now) this.access.delete(hash);
+    for (const [hash, record] of this.refresh) if (record.expiresAt <= now) this.refresh.delete(hash);
+  }
+}

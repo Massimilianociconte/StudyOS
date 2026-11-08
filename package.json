@@ -10,6 +10,8 @@
     "lint": "tsc -b --noEmit",
     "icons": "node scripts/generate-icons.mjs",
     "test": "node --import ./scripts/lib/register-ts.mjs --test tests/*.test.mjs",
+    "agent": "node --import ./scripts/lib/register-ts.mjs scripts/agent.ts",
+    "agent:stdio": "node --import ./scripts/lib/register-ts.mjs scripts/agent.ts --stdio",
     "barb:sync": "node scripts/barb.mjs sync",
     "barb:sync:schedule": "node scripts/barb.mjs sync --scope schedule",
     "barb:sync:courses": "node scripts/barb.mjs sync --scope courses",

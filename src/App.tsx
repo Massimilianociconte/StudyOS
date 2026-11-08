@@ -9,6 +9,7 @@ import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { whenPersisted } from "./lib/persistence";
 import { cloudConfigured } from "./lib/cloudSyncState";
 import { useViewMemory } from "./lib/uiState";
+import { startAgentLink } from "./lib/agentLink";
 import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
 import type { AppView } from "./types";
 
@@ -107,6 +108,11 @@ export default function App() {
     document.documentElement.dataset.palette = palette;
     document.documentElement.dataset.density = density;
   }, [themeMode, palette, density]);
+
+  useEffect(() => {
+    if (loading) return;
+    return startAgentLink();
+  }, [loading]);
 
   if (loading) {
     return (

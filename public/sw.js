@@ -1,4 +1,4 @@
-const CACHE_NAME = "studyos-shell-v5";
+const CACHE_NAME = "studyos-shell-v6";
 const PRECACHE_MANIFEST = "./precache-manifest.json";
 const NAVIGATION_TIMEOUT_MS = 4000;
 const PRECACHE_REFRESH_MS = 10 * 60 * 1000;

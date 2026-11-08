@@ -37,7 +37,7 @@ const contentSecurityPolicy = (supabaseUrl: string | undefined): Plugin => {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    `connect-src 'self' ${supabase}`,
+    `connect-src 'self' ${supabase} http://127.0.0.1:47321 http://localhost:47321 https://*.trycloudflare.com`,
     "worker-src 'self'",
     "manifest-src 'self'",
     "object-src 'none'",

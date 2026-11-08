@@ -69,6 +69,18 @@
   ultima sezione). Ogni valore salvato passa da un validatore (`oneOf`, `isNullableString`)
   e gli id di entità sparite vanno ignorati nella vista. Una nuova vista va aggiunta anche
   ad `APP_VIEWS` nello store. Il reset dei dati locali svuota lo stato UI.
+- Agenti MCP: l'hub ascolta solo `127.0.0.1:47321`. La CSP di build deve elencare
+  `http://127.0.0.1:47321`, `http://localhost:47321` e `https://*.trycloudflare.com`.
+  Il token nel browser non autorizza `/mcp`. L'origine della richiesta, non il
+  corpo, decide se la scheda è quella pubblicata: finché il suo heartbeat è
+  fresco le azioni non finiscono sulla copia di localhost. I due origin non
+  condividono IndexedDB. Agli agenti non vanno mai codici di invito, email, byte
+  dei file, foto o materiale del vault. Le note esistono nello store ma non hanno
+  una schermata propria. ChatGPT web e l'app Mac usano un MCP HTTPS (tunnel +
+  `STUDYOS_PUBLIC_ORIGIN` + OAuth); lo stdio serve ai client che avviano un
+  processo locale. Non promettere che l'app ChatGPT per Mac lanci da sola l'hub.
+  Il nome del quick tunnel cambia a ogni riavvio: va salvato di nuovo sul sito
+  pubblicato se il loopback da https non risponde.
 - Supabase RLS e upsert: `INSERT … ON CONFLICT DO UPDATE` controlla la policy di INSERT sulla
   riga proposta e quella di SELECT sulla riga nuova. Per modificare righe di altri utenti usare
   `update` mirati; `onConflict` deve nominare la chiave vera (membri: `group_id,user_id`).

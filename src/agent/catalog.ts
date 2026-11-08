@@ -1,0 +1,809 @@
+import type { AgentRisk } from "./policy";
+import type { JsonSchema } from "./schema";
+
+const ID = { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9_.:-]{1,120}$", description: "Id StudyOS restituito da una lettura precedente." } as const satisfies JsonSchema;
+const LIMIT = { type: "integer", minimum: 1, maximum: 100, default: 30, description: "Quanti elementi restituire (1–100, default 30)." } as const satisfies JsonSchema;
+const OFFSET = { type: "integer", minimum: 0, maximum: 10000, default: 0, description: "Quanti elementi saltare." } as const satisfies JsonSchema;
+const QUERY = { type: "string", minLength: 0, maxLength: 200, default: "", description: "Testo da cercare nel titolo o nel nome. Vuoto = nessun filtro." } as const satisfies JsonSchema;
+const CONFIRM = { type: "boolean", const: true, description: "Deve essere true. Usalo solo se la persona ha chiesto esplicitamente di eliminare questo elemento." } as const satisfies JsonSchema;
+
+const page = { limit: LIMIT, offset: OFFSET, query: QUERY };
+
+const objectSchema = (properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema => ({
+  type: "object",
+  additionalProperties: false,
+  properties,
+  required
+});
+
+export interface AgentTool {
+  name: string;
+  title: string;
+  description: string;
+  risk: AgentRisk;
+  idempotent: boolean;
+  inputSchema: JsonSchema;
+  summary: (args: Record<string, unknown>) => string;
+}
+
+const text = (value: unknown, fallback: string) => (typeof value === "string" && value.trim() ? value.trim() : fallback);
+
+const tool = (definition: AgentTool): AgentTool => definition;
+
+export const AGENT_TOOLS: readonly AgentTool[] = [
+  tool({
+    name: "studyos_status",
+    title: "Stato di StudyOS",
+    description: "Dice se l'app è collegata, se il vault è bloccato, quanti elementi ci sono e qual è la policy di conferma. Non modifica nulla. Usalo all'inizio se non sai se i dati sono raggiungibili.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({}),
+    summary: () => "Leggere lo stato di StudyOS"
+  }),
+  tool({
+    name: "studyos_overview",
+    title: "Panoramica di studio",
+    description: "Riassume la giornata: eventi di oggi, task urgenti, prossimi esami, minuti studiati nella settimana, streak e obiettivo settimanale. Sola lettura.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({}),
+    summary: () => "Leggere la panoramica di studio"
+  }),
+  tool({
+    name: "studyos_search",
+    title: "Cerca in StudyOS",
+    description: "Cerca un testo in materie, task, eventi, esami, sessioni, argomenti, note, obiettivi e materiali. Non cerca dentro i file allegati. Restituisce tipo, id e un estratto breve.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ query: { ...QUERY, minLength: 1, default: undefined }, limit: LIMIT }, ["query"]),
+    summary: (args) => `Cercare «${text(args.query, "")}»`
+  }),
+  tool({
+    name: "studyos_list_subjects",
+    title: "Elenco materie",
+    description: "Elenca le materie personali con id, nome, docente, CFU, semestre, stato e voto obiettivo. Le archiviate sono escluse salvo includeArchived=true.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page, includeArchived: { type: "boolean", default: false, description: "Include le materie archiviate." }, status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed", "archived"], description: "Filtra per stato." } }),
+    summary: () => "Leggere le materie"
+  }),
+  tool({
+    name: "studyos_get_subject",
+    title: "Dettaglio materia",
+    description: "Legge una materia, incluse le note. Serve l'id restituito da studyos_list_subjects o studyos_search.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID }, ["id"]),
+    summary: () => "Leggere una materia"
+  }),
+  tool({
+    name: "studyos_create_subject",
+    title: "Crea materia",
+    description: "Crea una materia personale. name è obbligatorio. Non collega da sola il catalogo universitario: universityCourseId si imposta solo se lo conosci già.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      name: { type: "string", minLength: 1, maxLength: 160, description: "Nome della materia." },
+      teacher: { type: "string", maxLength: 160, default: "", description: "Docente." },
+      cfu: { type: "integer", minimum: 0, maximum: 60, default: 0, description: "Crediti." },
+      semester: { type: "string", maxLength: 80, default: "", description: "Semestre o periodo, testo libero." },
+      status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed"], default: "active", description: "Stato iniziale." },
+      targetGrade: { type: "integer", minimum: 18, maximum: 30, description: "Voto obiettivo, se noto." },
+      notes: { type: "string", maxLength: 8000, default: "", description: "Note." },
+      color: { type: "string", maxLength: 40, default: "", description: "Colore CSS opzionale, es. #38BDF8." }
+    }, ["name"]),
+    summary: (args) => `Creare la materia «${text(args.name, "senza nome")}»`
+  }),
+  tool({
+    name: "studyos_update_subject",
+    title: "Aggiorna materia",
+    description: "Aggiorna i campi indicati di una materia esistente. I campi omessi restano invariati. archived=true la archivia senza eliminarla.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      name: { type: "string", minLength: 1, maxLength: 160 },
+      teacher: { type: "string", maxLength: 160 },
+      cfu: { type: "integer", minimum: 0, maximum: 60 },
+      semester: { type: "string", maxLength: 80 },
+      status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed", "archived"] },
+      targetGrade: { type: "integer", minimum: 18, maximum: 30 },
+      notes: { type: "string", maxLength: 8000 },
+      color: { type: "string", maxLength: 40 },
+      archived: { type: "boolean" },
+      semesterOverride: { type: "string", enum: ["primo", "secondo", "annuale", "non-definito"] }
+    }, ["id"]),
+    summary: () => "Aggiornare una materia"
+  }),
+  tool({
+    name: "studyos_list_tasks",
+    title: "Elenco task",
+    description: "Elenca le task con filtri su stato, materia e testo. Non include le archiviate salvo includeArchived=true.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({
+      ...page,
+      status: { type: "string", enum: ["todo", "doing", "blocked", "done", "postponed", "archived"] },
+      subjectId: ID,
+      includeArchived: { type: "boolean", default: false }
+    }),
+    summary: () => "Leggere le task"
+  }),
+  tool({
+    name: "studyos_get_task",
+    title: "Dettaglio task",
+    description: "Legge una task, sottotask incluse.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID }, ["id"]),
+    summary: () => "Leggere una task"
+  }),
+  tool({
+    name: "studyos_create_task",
+    title: "Crea task",
+    description: "Crea una task. title è obbligatorio. dueDate è una data ISO. estimatedMinutes è la durata prevista. Lo stato iniziale è todo salvo diversa indicazione.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 4000, default: "" },
+      priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
+      dueDate: { type: "string", format: "date-time", description: "Scadenza ISO. Vuoto = nessuna." },
+      subjectId: ID,
+      status: { type: "string", enum: ["todo", "doing", "blocked", "done", "postponed"], default: "todo" },
+      notes: { type: "string", maxLength: 8000, default: "" },
+      estimatedMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, default: 0 },
+      energy: { type: "string", enum: ["low", "medium", "high"], default: "medium" },
+      difficulty: { type: "integer", minimum: 1, maximum: 5, default: 3 },
+      importance: { type: "integer", minimum: 1, maximum: 5, default: 3 }
+    }, ["title"]),
+    summary: (args) => `Creare la task «${text(args.title, "senza titolo")}»`
+  }),
+  tool({
+    name: "studyos_update_task",
+    title: "Aggiorna task",
+    description: "Aggiorna i campi indicati. Cambiare status in doing o done aggiorna anche il timer interno della task, come nell'app. dueDate vuota toglie la scadenza. subtasks, se presente, sostituisce l'elenco.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 4000 },
+      priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+      dueDate: { type: "string", maxLength: 40, description: "ISO, oppure stringa vuota per togliere la scadenza." },
+      subjectId: { type: "string", maxLength: 120, description: "Id materia, oppure stringa vuota per scollegare." },
+      status: { type: "string", enum: ["todo", "doing", "blocked", "done", "postponed", "archived"] },
+      notes: { type: "string", maxLength: 8000 },
+      estimatedMinutes: { type: "integer", minimum: 0, maximum: 24 * 60 },
+      energy: { type: "string", enum: ["low", "medium", "high"] },
+      difficulty: { type: "integer", minimum: 1, maximum: 5 },
+      importance: { type: "integer", minimum: 1, maximum: 5 },
+      subtasks: {
+        type: "array",
+        maxItems: 40,
+        items: objectSchema({
+          text: { type: "string", minLength: 1, maxLength: 300 },
+          done: { type: "boolean", default: false }
+        }, ["text"])
+      }
+    }, ["id"]),
+    summary: () => "Aggiornare una task"
+  }),
+  tool({
+    name: "studyos_delete_task",
+    title: "Elimina task",
+    description: "Elimina una task in modo definitivo. Richiede confirm=true e la conferma della persona in StudyOS. Non usarla per completare una task: usa studyos_update_task con status=done.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare una task"
+  }),
+  tool({
+    name: "studyos_list_events",
+    title: "Elenco eventi",
+    description: "Elenca gli eventi del calendario personale nell'intervallo from/to (ISO). Senza intervallo restituisce i prossimi. Gli eventi ripetuti restano un solo record: le occorrenze non sono copie.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({
+      ...page,
+      from: { type: "string", format: "date-time", description: "Inizio intervallo ISO." },
+      to: { type: "string", format: "date-time", description: "Fine intervallo ISO." },
+      subjectId: ID
+    }),
+    summary: () => "Leggere il calendario"
+  }),
+  tool({
+    name: "studyos_get_event",
+    title: "Dettaglio evento",
+    description: "Legge un evento del calendario personale.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID }, ["id"]),
+    summary: () => "Leggere un evento"
+  }),
+  tool({
+    name: "studyos_create_event",
+    title: "Crea evento",
+    description: "Crea un evento nel calendario personale. start e end sono ISO. Per un evento di un'intera giornata imposta allDay=true e usa la mezzanotte locale come start e la mezzanotte successiva come end. Modificare una serie vale per tutte le occorrenze.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      start: { type: "string", format: "date-time" },
+      end: { type: "string", format: "date-time" },
+      category: { type: "string", enum: ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other"], default: "study" },
+      description: { type: "string", maxLength: 4000, default: "" },
+      notes: { type: "string", maxLength: 8000, default: "" },
+      subjectId: ID,
+      allDay: { type: "boolean", default: false },
+      priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
+      recurrence: { type: "string", enum: ["none", "daily", "weekly", "monthly"], default: "none" },
+      recurrenceUntil: { type: "string", format: "date", description: "Ultimo giorno della serie, YYYY-MM-DD." }
+    }, ["title", "start", "end"]),
+    summary: (args) => `Creare l'evento «${text(args.title, "senza titolo")}»`
+  }),
+  tool({
+    name: "studyos_update_event",
+    title: "Aggiorna evento",
+    description: "Aggiorna un evento. Su una serie la modifica vale per tutte le occorrenze, come nell'app.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      start: { type: "string", format: "date-time" },
+      end: { type: "string", format: "date-time" },
+      category: { type: "string", enum: ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other"] },
+      description: { type: "string", maxLength: 4000 },
+      notes: { type: "string", maxLength: 8000 },
+      subjectId: { type: "string", maxLength: 120 },
+      allDay: { type: "boolean" },
+      priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+      status: { type: "string", enum: ["planned", "in-progress", "done", "skipped"] },
+      recurrence: { type: "string", enum: ["none", "daily", "weekly", "monthly"] },
+      recurrenceUntil: { type: "string", maxLength: 40 }
+    }, ["id"]),
+    summary: () => "Aggiornare un evento"
+  }),
+  tool({
+    name: "studyos_delete_event",
+    title: "Elimina evento",
+    description: "Elimina un evento del calendario personale. Su una serie elimina l'intera serie. Richiede confirm=true e la conferma in StudyOS.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare un evento"
+  }),
+  tool({
+    name: "studyos_list_exams",
+    title: "Elenco esami personali",
+    description: "Elenca gli esami collegati alle materie personali (non il calendario ufficiale BARB). Include voto, lode, idoneità e stato di preparazione.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page, subjectId: ID }),
+    summary: () => "Leggere gli esami personali"
+  }),
+  tool({
+    name: "studyos_get_exam",
+    title: "Dettaglio esame",
+    description: "Legge un esame personale, programma e domande frequenti inclusi.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID }, ["id"]),
+    summary: () => "Leggere un esame"
+  }),
+  tool({
+    name: "studyos_create_exam",
+    title: "Crea esame personale",
+    description: "Crea un esame collegato a una materia. subjectId e date (ISO) sono obbligatori. Per registrare un voto usa studyos_record_grade.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      subjectId: ID,
+      date: { type: "string", format: "date-time" },
+      program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 }, description: "Argomenti del programma." },
+      preparation: { type: "integer", minimum: 0, maximum: 100, default: 0 },
+      targetGrade: { type: "integer", minimum: 18, maximum: 30, default: 24 },
+      status: { type: "string", enum: ["planning", "studying", "reviewing", "ready", "done"], default: "planning" }
+    }, ["subjectId", "date"]),
+    summary: () => "Creare un esame personale"
+  }),
+  tool({
+    name: "studyos_update_exam",
+    title: "Aggiorna esame",
+    description: "Aggiorna preparazione, data, stato o programma di un esame personale. Il voto si registra con studyos_record_grade.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      date: { type: "string", format: "date-time" },
+      program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 } },
+      preparation: { type: "integer", minimum: 0, maximum: 100 },
+      targetGrade: { type: "integer", minimum: 18, maximum: 30 },
+      status: { type: "string", enum: ["planning", "studying", "reviewing", "ready", "done"] },
+      simulations: { type: "integer", minimum: 0, maximum: 100 },
+      frequentQuestions: { type: "array", maxItems: 40, items: { type: "string", minLength: 1, maxLength: 300 } }
+    }, ["id"]),
+    summary: () => "Aggiornare un esame"
+  }),
+  tool({
+    name: "studyos_record_grade",
+    title: "Registra voto",
+    description: "Scrive l'esito sul libretto. grade è 18–30; honors=true è la lode (in media vale 30); passFail=true è un'idoneità senza voto. Imposta lo stato dell'esame a done.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      grade: { type: "integer", minimum: 18, maximum: 30, description: "Obbligatorio se passFail non è true." },
+      honors: { type: "boolean", default: false },
+      passFail: { type: "boolean", default: false, description: "Idoneità: conta solo i CFU." }
+    }, ["id"]),
+    summary: (args) => `Registrare un voto${typeof args.grade === "number" ? ` (${args.grade}${args.honors ? " e lode" : ""})` : ""}`
+  }),
+  tool({
+    name: "studyos_delete_exam",
+    title: "Elimina esame",
+    description: "Elimina un esame personale e il voto collegato. Richiede confirm=true e la conferma in StudyOS.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare un esame"
+  }),
+  tool({
+    name: "studyos_list_sessions",
+    title: "Sessioni di studio",
+    description: "Elenca le sessioni di studio registrate o pianificate.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page, subjectId: ID, status: { type: "string", enum: ["planned", "running", "completed", "skipped"] } }),
+    summary: () => "Leggere le sessioni di studio"
+  }),
+  tool({
+    name: "studyos_create_session",
+    title: "Registra sessione",
+    description: "Crea una sessione di studio. Per una sessione già fatta imposta status=completed, actualMinutes e start. Non avvia da sola il timer visivo: per quello c'è studyos_timer_control.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      subjectId: ID,
+      template: { type: "string", enum: ["new-topic", "review", "exercises", "exam-simulation", "pdf-reading", "notes-cleanup", "memorization", "lab", "oral-prep"], default: "review" },
+      plannedMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, default: 50 },
+      actualMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, default: 0 },
+      start: { type: "string", format: "date-time", description: "Inizio ISO. Se assente, è adesso." },
+      status: { type: "string", enum: ["planned", "completed", "skipped"], default: "planned" },
+      topics: { type: "array", maxItems: 30, items: { type: "string", minLength: 1, maxLength: 200 } },
+      notes: { type: "string", maxLength: 8000, default: "" },
+      perceivedDifficulty: { type: "integer", minimum: 1, maximum: 5, default: 3 },
+      focusLevel: { type: "integer", minimum: 1, maximum: 5, default: 3 }
+    }, ["title"]),
+    summary: (args) => `Registrare la sessione «${text(args.title, "senza titolo")}»`
+  }),
+  tool({
+    name: "studyos_update_session",
+    title: "Aggiorna sessione",
+    description: "Aggiorna una sessione esistente: minuti reali, stato, note, focus.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      actualMinutes: { type: "integer", minimum: 0, maximum: 24 * 60 },
+      plannedMinutes: { type: "integer", minimum: 0, maximum: 24 * 60 },
+      status: { type: "string", enum: ["planned", "running", "completed", "skipped"] },
+      notes: { type: "string", maxLength: 8000 },
+      perceivedDifficulty: { type: "integer", minimum: 1, maximum: 5 },
+      focusLevel: { type: "integer", minimum: 1, maximum: 5 },
+      topics: { type: "array", maxItems: 30, items: { type: "string", minLength: 1, maxLength: 200 } }
+    }, ["id"]),
+    summary: () => "Aggiornare una sessione"
+  }),
+  tool({
+    name: "studyos_delete_session",
+    title: "Elimina sessione",
+    description: "Elimina una sessione di studio. Richiede confirm=true e la conferma in StudyOS.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare una sessione"
+  }),
+  tool({
+    name: "studyos_list_topics",
+    title: "Argomenti di ripasso",
+    description: "Elenca gli argomenti del ripasso attivo. dueOnly=true restituisce solo quelli con nextReviewDate oggi o nel passato.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page, subjectId: ID, dueOnly: { type: "boolean", default: false, description: "Solo gli argomenti da ripassare ora." } }),
+    summary: () => "Leggere gli argomenti di ripasso"
+  }),
+  tool({
+    name: "studyos_add_topics",
+    title: "Aggiungi argomenti",
+    description: "Crea argomenti di ripasso. I duplicati dello stesso titolo nella stessa materia vengono saltati. Restituisce quanti ne ha aggiunti.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      topics: {
+        type: "array",
+        minItems: 1,
+        maxItems: 40,
+        items: objectSchema({
+          subjectId: ID,
+          title: { type: "string", minLength: 1, maxLength: 200 },
+          notes: { type: "string", maxLength: 4000, default: "" }
+        }, ["subjectId", "title"])
+      }
+    }, ["topics"]),
+    summary: (args) => `Aggiungere ${Array.isArray(args.topics) ? args.topics.length : ""} argomenti di ripasso`.trim()
+  }),
+  tool({
+    name: "studyos_review_topic",
+    title: "Valuta un ripasso",
+    description: "Registra quanto la persona ricordava e pianifica il ripasso successivo (again, hard, good, easy). È l'azione di ripasso dell'app, non una modifica libera delle date.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      id: ID,
+      rating: { type: "string", enum: ["again", "hard", "good", "easy"], description: "again = non ricordavo, hard = difficile, good = bene, easy = facile." }
+    }, ["id", "rating"]),
+    summary: (args) => `Registrare un ripasso (${text(args.rating, "")})`
+  }),
+  tool({
+    name: "studyos_update_topic",
+    title: "Aggiorna argomento",
+    description: "Aggiorna titolo, note o difficoltà di un argomento. Per pianificare il prossimo ripasso usa studyos_review_topic.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      notes: { type: "string", maxLength: 8000 },
+      difficulty: { type: "integer", minimum: 1, maximum: 5 },
+      comprehension: { type: "integer", minimum: 1, maximum: 5 }
+    }, ["id"]),
+    summary: () => "Aggiornare un argomento"
+  }),
+  tool({
+    name: "studyos_delete_topic",
+    title: "Elimina argomento",
+    description: "Elimina un argomento di ripasso. Richiede confirm=true e la conferma in StudyOS.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare un argomento"
+  }),
+  tool({
+    name: "studyos_list_materials",
+    title: "Elenco materiali",
+    description: "Elenca gli allegati (nome, tipo, dimensione, link esterno). Non restituisce il contenuto dei file.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page, linkedEntityId: ID }),
+    summary: () => "Leggere i materiali"
+  }),
+  tool({
+    name: "studyos_add_link",
+    title: "Aggiungi link",
+    description: "Salva un link http, https o mailto tra i materiali. Rifiuta gli altri schemi. Non carica file.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      url: { type: "string", minLength: 1, maxLength: 2000 },
+      name: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 2000, default: "" }
+    }, ["url", "name"]),
+    summary: (args) => `Salvare il link «${text(args.name, "materiale")}»`
+  }),
+  tool({
+    name: "studyos_update_material",
+    title: "Aggiorna materiale",
+    description: "Aggiorna nome o descrizione di un materiale. Non sostituisce il file.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      name: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 2000 }
+    }, ["id"]),
+    summary: () => "Aggiornare un materiale"
+  }),
+  tool({
+    name: "studyos_delete_material",
+    title: "Elimina materiale",
+    description: "Elimina un materiale. Richiede confirm=true e la conferma in StudyOS.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare un materiale"
+  }),
+  tool({
+    name: "studyos_list_notes",
+    title: "Elenco note",
+    description: "Elenca le note. In elenco il testo è accorciato; studyos_search o il dettaglio completo passano dal campo body solo in studyos_get_note.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page }),
+    summary: () => "Leggere le note"
+  }),
+  tool({
+    name: "studyos_get_note",
+    title: "Dettaglio nota",
+    description: "Legge una nota per intero, fino al limite di risposta.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID }, ["id"]),
+    summary: () => "Leggere una nota"
+  }),
+  tool({
+    name: "studyos_create_note",
+    title: "Crea nota",
+    description: "Crea una nota. title e body sono testuali. linkedEntityType e linkedEntityId sono opzionali.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      body: { type: "string", maxLength: 20000, default: "" },
+      linkedEntityType: { type: "string", enum: ["subject", "exam", "calendarEvent", "task", "studySession", "studyTopic", "attachment", "goal", "note"] },
+      linkedEntityId: ID
+    }, ["title"]),
+    summary: (args) => `Creare la nota «${text(args.title, "senza titolo")}»`
+  }),
+  tool({
+    name: "studyos_update_note",
+    title: "Aggiorna nota",
+    description: "Aggiorna titolo o testo di una nota.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      body: { type: "string", maxLength: 20000 }
+    }, ["id"]),
+    summary: () => "Aggiornare una nota"
+  }),
+  tool({
+    name: "studyos_delete_note",
+    title: "Elimina nota",
+    description: "Elimina una nota. Richiede confirm=true e la conferma in StudyOS.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare una nota"
+  }),
+  tool({
+    name: "studyos_list_goals",
+    title: "Elenco obiettivi",
+    description: "Elenca gli obiettivi personali.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page, status: { type: "string", enum: ["active", "paused", "done", "archived"] } }),
+    summary: () => "Leggere gli obiettivi"
+  }),
+  tool({
+    name: "studyos_create_goal",
+    title: "Crea obiettivo",
+    description: "Crea un obiettivo. progress è una percentuale 0–100.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 4000, default: "" },
+      category: { type: "string", enum: ["study", "exam", "notes", "review", "streak", "fitness", "personal", "project"], default: "study" },
+      deadline: { type: "string", format: "date-time" },
+      progress: { type: "integer", minimum: 0, maximum: 100, default: 0 },
+      metric: { type: "string", maxLength: 120, default: "" },
+      notes: { type: "string", maxLength: 8000, default: "" }
+    }, ["title"]),
+    summary: (args) => `Creare l'obiettivo «${text(args.title, "senza titolo")}»`
+  }),
+  tool({
+    name: "studyos_update_goal",
+    title: "Aggiorna obiettivo",
+    description: "Aggiorna progresso, stato, scadenza o note di un obiettivo.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      description: { type: "string", maxLength: 4000 },
+      progress: { type: "integer", minimum: 0, maximum: 100 },
+      status: { type: "string", enum: ["active", "paused", "done", "archived"] },
+      deadline: { type: "string", maxLength: 40 },
+      notes: { type: "string", maxLength: 8000 },
+      metric: { type: "string", maxLength: 120 }
+    }, ["id"]),
+    summary: () => "Aggiornare un obiettivo"
+  }),
+  tool({
+    name: "studyos_delete_goal",
+    title: "Elimina obiettivo",
+    description: "Elimina un obiettivo. Richiede confirm=true e la conferma in StudyOS.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Eliminare un obiettivo"
+  }),
+  tool({
+    name: "studyos_get_preferences",
+    title: "Preferenze di studio",
+    description: "Legge nome, obiettivo settimanale, CFU del corso e parametri della proiezione di laurea. Non restituisce la foto profilo.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({}),
+    summary: () => "Leggere le preferenze"
+  }),
+  tool({
+    name: "studyos_update_preferences",
+    title: "Aggiorna preferenze",
+    description: "Aggiorna le preferenze personali sincronizzate. Non cambia tema, vault, passphrase o backup: quelli restano nell'app.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      displayName: { type: "string", maxLength: 80 },
+      weeklyTargetMinutes: { type: "integer", minimum: 0, maximum: 10080 },
+      degreeCfu: { type: "integer", minimum: 1, maximum: 400 },
+      showBarb: { type: "boolean" },
+      degreeProgram: { type: "string", enum: ["barb", "scienze-biologiche"] },
+      sbThesisGrade: { type: "integer", minimum: 18, maximum: 30 },
+      barbThesisPoints: { type: "integer", minimum: 1, maximum: 9 },
+      abroad: { type: "boolean" }
+    }),
+    summary: () => "Aggiornare le preferenze di studio"
+  }),
+  tool({
+    name: "studyos_list_notifications",
+    title: "Notifiche",
+    description: "Elenca le notifiche dell'account. unreadOnly=true mostra solo quelle non lette.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page, unreadOnly: { type: "boolean", default: false } }),
+    summary: () => "Leggere le notifiche"
+  }),
+  tool({
+    name: "studyos_mark_notifications_read",
+    title: "Segna notifiche lette",
+    description: "Segna come lette una notifica (id) oppure tutte se all=true.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      id: ID,
+      all: { type: "boolean", default: false, description: "Se true, segna tutte come lette e id si ignora." }
+    }),
+    summary: (args) => (args.all === true ? "Segnare tutte le notifiche come lette" : "Segnare una notifica come letta")
+  }),
+  tool({
+    name: "studyos_list_groups",
+    title: "Gruppi di studio",
+    description: "Elenca i gruppi visibili su questo dispositivo: nome, descrizione e ruoli. Non restituisce codici di invito né email.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ ...page }),
+    summary: () => "Leggere i gruppi"
+  }),
+  tool({
+    name: "studyos_list_group_board",
+    title: "Bacheca del gruppo",
+    description: "Elenca risorse e attività recenti di un gruppo. Non crea inviti e non mostra codici.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ groupId: ID, limit: LIMIT }, ["groupId"]),
+    summary: () => "Leggere la bacheca di un gruppo"
+  }),
+  tool({
+    name: "studyos_add_group_resource",
+    title: "Pubblica in bacheca",
+    description: "Aggiunge un link o una nota alla bacheca del gruppo, a nome della persona collegata. I link passano dal controllo di sicurezza dell'app. Non invita persone e non cambia i ruoli.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      groupId: ID,
+      kind: { type: "string", enum: ["link", "note"] },
+      title: { type: "string", minLength: 1, maxLength: 200 },
+      url: { type: "string", maxLength: 2000, description: "Obbligatorio se kind=link." },
+      body: { type: "string", maxLength: 8000, default: "" }
+    }, ["groupId", "kind", "title"]),
+    summary: (args) => `Pubblicare «${text(args.title, "risorsa")}» in bacheca`
+  }),
+  tool({
+    name: "studyos_delete_group_resource",
+    title: "Rimuovi dalla bacheca",
+    description: "Elimina una risorsa della bacheca. Richiede confirm=true e la conferma in StudyOS. Non elimina il gruppo.",
+    risk: "destructive",
+    idempotent: true,
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
+    summary: () => "Rimuovere una risorsa dalla bacheca"
+  }),
+  tool({
+    name: "studyos_list_barb_exams",
+    title: "Appelli ufficiali BARB",
+    description: "Elenca gli appelli BARB verificati inclusi nell'app. Sono dati pubblici del dataset, non il calendario personale. Puoi filtrare per courseId o per nome corso (query) e per intervallo di date YYYY-MM-DD. L'assenza di date non significa assenza di esami.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({
+      ...page,
+      courseId: ID,
+      from: { type: "string", format: "date" },
+      to: { type: "string", format: "date" }
+    }),
+    summary: () => "Leggere gli appelli ufficiali BARB"
+  }),
+  tool({
+    name: "studyos_import_barb_exams",
+    title: "Importa appelli nel calendario",
+    description: "Copia nel calendario personale gli appelli ufficiali indicati per id. È idempotente: lo stesso id non crea duplicati. Gli id si ottengono da studyos_list_barb_exams. Non accetta date inventate.",
+    risk: "write",
+    idempotent: true,
+    inputSchema: objectSchema({
+      ids: { type: "array", minItems: 1, maxItems: 40, items: ID, description: "Id degli appelli ufficiali da importare." }
+    }, ["ids"]),
+    summary: (args) => `Importare ${Array.isArray(args.ids) ? args.ids.length : ""} appelli BARB nel calendario`.trim()
+  }),
+  tool({
+    name: "studyos_timer_status",
+    title: "Stato del timer",
+    description: "Legge il timer di studio di questo dispositivo (pomodoro, classico, deep focus): se è in corsa e quanti secondi restano.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({}),
+    summary: () => "Leggere il timer di studio"
+  }),
+  tool({
+    name: "studyos_timer_control",
+    title: "Controlla il timer",
+    description: "Avvia, mette in pausa o azzera il timer di questo dispositivo. action=start richiede mode. Non registra da sola una sessione nello storico: al termine usa studyos_create_session.",
+    risk: "write",
+    idempotent: false,
+    inputSchema: objectSchema({
+      action: { type: "string", enum: ["start", "toggle", "reset"] },
+      mode: { type: "string", enum: ["classic", "pomodoro", "deep-focus"], description: "Richiesto se action=start." }
+    }, ["action"]),
+    summary: (args) => `Controllare il timer (${text(args.action, "")})`
+  }),
+  tool({
+    name: "studyos_approval_status",
+    title: "Esito di una conferma",
+    description: "Recupera l'esito di un'azione che era in attesa di conferma. Passa approvalId restituito quando lo stato era pending_approval. Non crea una nuova azione.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({
+      approvalId: { type: "string", minLength: 8, maxLength: 80, description: "Id restituito insieme a status=pending_approval." }
+    }, ["approvalId"]),
+    summary: () => "Controllare l'esito di una conferma"
+  }),
+  tool({
+    name: "studyos_list_audit",
+    title: "Registro azioni degli agenti",
+    description: "Legge il registro locale delle azioni già chieste dagli agenti su questo browser: strumento, esito, orario. Non include passphrase, file o codici di invito.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({ limit: { ...LIMIT, default: 20 } }),
+    summary: () => "Leggere il registro delle azioni degli agenti"
+  })
+];
+
+const BY_NAME = new Map(AGENT_TOOLS.map((item) => [item.name, item]));
+
+export const findAgentTool = (name: string) => BY_NAME.get(name);
+
+export const toolSummary = (name: string, args: Record<string, unknown>) => {
+  const found = BY_NAME.get(name);
+  if (!found) return name;
+  try {
+    return found.summary(args).slice(0, 240);
+  } catch {
+    return found.title;
+  }
+};
+
+export const mcpToolDefinition = (item: AgentTool) => ({
+  name: item.name,
+  title: item.title,
+  description: item.description,
+  inputSchema: item.inputSchema,
+  annotations: {
+    readOnlyHint: item.risk === "read",
+    destructiveHint: item.risk === "destructive",
+    idempotentHint: item.idempotent,
+    openWorldHint: false
+  }
+});

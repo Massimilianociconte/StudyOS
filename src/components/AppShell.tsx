@@ -12,6 +12,7 @@ import { QuickAddModal } from "./QuickAddModal";
 import { CloudStatusBadge } from "./CloudStatusBadge";
 import { GlobalSearch } from "./GlobalSearch";
 import { TaskTimerReminder } from "./TaskTimerReminder";
+import { AgentDock } from "./AgentDesk";
 import { StudyTimerWatcher } from "./StudyTimerWatcher";
 
 // `short`: etichetta per la barra compatta dei tablet e per la barra in basso su telefono.
@@ -310,6 +311,7 @@ export function AppShell({ children }: PropsWithChildren) {
       </Drawer>
 
       <TaskTimerReminder />
+      <AgentDock />
       <StudyTimerWatcher />
       <QuickAddModal open={quickAddOpen} onClose={() => setQuickAddOpen(false)} />
       {notificationsOpen ? <NotificationsPanel onClose={() => setNotificationsOpen(false)} /> : null}
