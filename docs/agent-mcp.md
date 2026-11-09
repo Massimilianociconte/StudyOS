@@ -59,7 +59,10 @@ chiave di collegamento una volta. Poi in ChatGPT aggiungi il server MCP
 all'indirizzo mostrato in quella schermata (finisce con `/mcp`).
 
 L'accesso è OAuth: la conferma compare in Impostazioni → Agenti del browser
-che è collegato. Tieni quella pagina aperta. I dati restano nel suo IndexedDB:
+che è collegato. ChatGPT poi chiede l'elenco delle azioni con `server/discover`
+(protocollo 2026-07-28). Se quel passo era già fallito, in ChatGPT apri il
+connettore e scegli Aggiorna; se resta l'errore, eliminalo e crealo di nuovo
+con lo stesso indirizzo. Tieni quella pagina aperta. I dati restano nel suo IndexedDB:
 un telefono appena aperto vede lo studio solo se è lo stesso browser già usato
 oppure se è entrato con lo stesso account cloud.
 

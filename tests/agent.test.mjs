@@ -173,6 +173,51 @@ test("MCP: initialize, elenco senza app, argomenti invalidi e vault di conferma"
   assert.equal(unknown.error.code, -32601);
 });
 
+test("MCP: server/discover e tools/list nel formato che ChatGPT usa nel 2026", async () => {
+  const deps = {
+    actor,
+    ledger: new ResultLedger(),
+    connected: () => false,
+    invoke: async () => { throw new Error("la discovery non deve chiamare l'app"); }
+  };
+  const discovered = await handleMcpRpc({
+    jsonrpc: "2.0",
+    id: "discover-1",
+    method: "server/discover",
+    params: {
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { name: "ChatGPT", version: "1" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  }, deps);
+  assert.equal(discovered.error, undefined);
+  assert.equal(discovered.result.resultType, "complete");
+  assert.equal(discovered.result.supportedVersions.includes("2026-07-28"), true);
+  assert.equal(discovered.result.capabilities.tools.listChanged, false);
+  assert.equal(typeof discovered.result.ttlMs, "number");
+  assert.ok(discovered.result.ttlMs >= 0);
+  assert.equal(discovered.result.cacheScope, "public");
+  assert.equal(discovered.result._meta["io.modelcontextprotocol/serverInfo"].name, "studyos-mcp-server");
+  assert.equal(typeof discovered.result.instructions, "string");
+
+  const listed = await handleMcpRpc({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, deps);
+  assert.equal(listed.result.resultType, "complete");
+  assert.equal(typeof listed.result.ttlMs, "number");
+  assert.equal(listed.result.cacheScope, "public");
+  assert.equal(listed.result.tools.length, AGENT_TOOLS.length);
+
+  const called = await handleMcpRpc({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "studyos_status", arguments: {} }
+  }, deps);
+  assert.equal(called.result.resultType, "complete");
+  assert.equal(called.result.isError, false);
+});
+
 test("OAuth: PKCE, redirect, audience, code usa e getta, refresh ruotato", async () => {
   let now = 1_700_000_000_000;
   const canonical = "http://127.0.0.1:47321/mcp";

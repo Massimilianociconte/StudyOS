@@ -100,4 +100,55 @@ test("hub pubblico: rifiuta host e origine, accetta la chiave e risponde a ChatG
   const tools = await listed.json();
   assert.equal(Array.isArray(tools.result.tools), true);
   assert.equal(tools.result.tools.some((tool) => tool.name === "studyos_status"), true);
+
+  const discovered = await ask(agent, "/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${agent.serviceToken}`,
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "server/discover"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "discover-1",
+      method: "server/discover",
+      params: { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } }
+    })
+  });
+  assert.equal(discovered.status, 200);
+  assert.match(discovered.headers.get("content-type") ?? "", /^application\/json/);
+  const discovery = await discovered.json();
+  assert.equal(discovery.result.supportedVersions.includes("2026-07-28"), true);
+
+  const unsupported = await ask(agent, "/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${agent.serviceToken}`,
+      "mcp-protocol-version": "2099-01-01",
+      "mcp-method": "server/discover"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "server/discover", params: {} })
+  });
+  assert.equal(unsupported.status, 400);
+  const rejected = await unsupported.json();
+  assert.equal(rejected.error.code, -32022);
+  assert.equal(rejected.error.data.supported.includes("2026-07-28"), true);
+
+  const missing = await ask(agent, "/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${agent.serviceToken}`,
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "inesistente"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "inesistente", params: {} })
+  });
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error.code, -32601);
 });

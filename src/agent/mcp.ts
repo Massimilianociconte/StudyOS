@@ -32,6 +32,7 @@ const clip = (value: unknown) => {
 };
 
 export const toToolContent = (result: AgentCallResult) => ({
+  resultType: "complete" as const,
   content: [{ type: "text" as const, text: clip(result) }],
   isError: result.ok === false
 });
@@ -73,8 +74,34 @@ export const handleMcpRpc = async (message: unknown, deps: McpDeps): Promise<Rec
       };
     }
     if (rpc.method === "ping") return { jsonrpc: "2.0", id: rpc.id, result: {} };
+    if (rpc.method === "server/discover") {
+      return {
+        jsonrpc: "2.0",
+        id: rpc.id,
+        result: {
+          resultType: "complete",
+          supportedVersions: [...AGENT_PROTOCOL_VERSIONS],
+          capabilities: { tools: { listChanged: false } },
+          _meta: {
+            "io.modelcontextprotocol/serverInfo": { name: AGENT_SERVER_NAME, version: AGENT_SERVER_VERSION }
+          },
+          instructions: AGENT_INSTRUCTIONS,
+          ttlMs: 3_600_000,
+          cacheScope: "public"
+        }
+      };
+    }
     if (rpc.method === "tools/list") {
-      return { jsonrpc: "2.0", id: rpc.id, result: { tools: AGENT_TOOLS.map(mcpToolDefinition) } };
+      return {
+        jsonrpc: "2.0",
+        id: rpc.id,
+        result: {
+          resultType: "complete",
+          tools: AGENT_TOOLS.map(mcpToolDefinition),
+          ttlMs: 300_000,
+          cacheScope: "public"
+        }
+      };
     }
     if (rpc.method === "tools/call") {
       const params = rpc.params && typeof rpc.params === "object" ? (rpc.params as { name?: unknown; arguments?: unknown }) : {};

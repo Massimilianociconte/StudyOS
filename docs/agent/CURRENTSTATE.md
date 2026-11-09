@@ -142,6 +142,8 @@ Workers, non con `npm run agent`. Il sito pubblicato riceve l'origine da
 `VITE_AGENT_HUB_ORIGIN` e non chiama il loopback, così funziona anche dal
 telefono con la pagina aperta. La chiave di collegamento è un secret di
 Wrangler. `npm run agent` resta per lo sviluppo e per lo stdio di Claude e
-Cursor. I dati restano nell'IndexedDB del browser collegato. Da fare sul
-progetto reale: rieseguire `groups.sql` e i Redirect URLs, invariati rispetto
-all'8 ottobre.
+Cursor. I dati restano nell'IndexedDB del browser collegato. La discovery di
+ChatGPT usa MCP `2026-07-28`: l'hub risponde a `server/discover` e `tools/list`
+con `resultType`, `ttlMs` e `cacheScope`. Senza quella risposta l'accesso OAuth
+riesce e l'elenco azioni fallisce. Da fare sul progetto reale: rieseguire
+`groups.sql` e i Redirect URLs, invariati rispetto all'8 ottobre.

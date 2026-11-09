@@ -1,6 +1,6 @@
 // Ponte HTTP di StudyOS. Lo stesso codice gira sul programma locale e sull'hub pubblico.
 // Non legge IndexedDB: consegna le azioni al browser collegato e conserva solo token (in hash) e esiti.
-import { AGENT_MCP_PATH, AGENT_SERVER_VERSION } from "./constants";
+import { AGENT_MCP_PATH, AGENT_PROTOCOL_VERSIONS, AGENT_SERVER_VERSION } from "./constants";
 import { toolSummary } from "./catalog";
 import { choosePoller, siteFromOrigin, type BridgeSite } from "./hubEndpoint";
 import { ResultLedger } from "./ledger";
@@ -10,6 +10,57 @@ import type { AgentActor, AgentCallResult } from "./types";
 
 const BODY_LIMIT = 262_144;
 const PUBLISHED_FRESH_MS = 45_000;
+
+const rpcId = (message: unknown) => {
+  if (!message || typeof message !== "object" || !("id" in message)) return null;
+  return (message as { id?: unknown }).id ?? null;
+};
+
+const metaProtocolVersion = (message: unknown) => {
+  if (!message || typeof message !== "object") return null;
+  const params = (message as { params?: unknown }).params;
+  if (!params || typeof params !== "object") return null;
+  const meta = (params as { _meta?: unknown })._meta;
+  if (!meta || typeof meta !== "object") return null;
+  const value = (meta as Record<string, unknown>)["io.modelcontextprotocol/protocolVersion"];
+  return typeof value === "string" ? value : null;
+};
+
+const bodyMethod = (message: unknown) => {
+  if (!message || typeof message !== "object") return null;
+  const method = (message as { method?: unknown }).method;
+  return typeof method === "string" ? method : null;
+};
+
+const protocolVersion = (request: Request, message: unknown) => request.headers.get("mcp-protocol-version") ?? metaProtocolVersion(message);
+
+/** null = la richiesta può proseguire. Le versioni 2026 rifiutano header e versioni incoerenti prima del metodo. */
+const protocolStatus = (request: Request, message: unknown): { status: number; body: Record<string, unknown> } | null => {
+  const headerVersion = request.headers.get("mcp-protocol-version");
+  const fromMeta = metaProtocolVersion(message);
+  const id = rpcId(message);
+  const error = (status: number, code: number, messageText: string, data?: unknown) => ({
+    status,
+    body: {
+      jsonrpc: "2.0",
+      id,
+      error: data === undefined ? { code, message: messageText } : { code, message: messageText, data }
+    }
+  });
+  if (headerVersion && fromMeta && headerVersion !== fromMeta) {
+    return error(400, -32020, "MCP-Protocol-Version non coincide con il corpo della richiesta.");
+  }
+  const headerMethod = request.headers.get("mcp-method");
+  const method = bodyMethod(message);
+  if (headerMethod && method && headerMethod !== method) {
+    return error(400, -32020, "Mcp-Method non coincide con il metodo JSON-RPC.");
+  }
+  const version = headerVersion ?? fromMeta;
+  if (version && !(AGENT_PROTOCOL_VERSIONS as readonly string[]).includes(version)) {
+    return error(400, -32022, "Unsupported protocol version", { supported: [...AGENT_PROTOCOL_VERSIONS], requested: version });
+  }
+  return null;
+};
 
 export interface HubSnapshot {
   issuer: string;
@@ -312,6 +363,8 @@ export class HttpHub {
       if (error instanceof Error && error.message === "payload") throw error;
       return this.json(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "JSON non valido." } });
     }
+    const gated = protocolStatus(request, message);
+    if (gated) return this.json(gated.status, gated.body);
     const response = await handleMcpRpc(message, {
       actor,
       ledger: this.ledger,
@@ -319,6 +372,10 @@ export class HttpHub {
       invoke: (call) => this.invoke(call)
     });
     if (!response) return new Response(null, { status: 202, headers: { "cache-control": "no-store" } });
+    const version = protocolVersion(request, message);
+    const errorCode = response.error && typeof response.error === "object" ? (response.error as { code?: unknown }).code : undefined;
+    // 404 solo sul protocollo moderno: un client precedente legge l'errore JSON-RPC su HTTP 200.
+    if (version === "2026-07-28" && errorCode === -32601) return this.json(404, response);
     const accept = request.headers.get("accept") ?? "";
     if (accept.includes("text/event-stream") && !accept.includes("application/json")) {
       return new Response(`event: message\ndata: ${JSON.stringify(response)}\n\n`, {
