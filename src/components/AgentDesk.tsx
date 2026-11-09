@@ -69,7 +69,9 @@ export function AgentDock() {
     >
       {pending ? (
         <section role="dialog" aria-labelledby="agent-call-title" className="soft-panel border border-[var(--border)] p-4 shadow-soft">
-          <p className="text-xs font-black uppercase text-[var(--faint)]">{pending.actorName} · {RISK_LABEL[pending.risk]}</p>
+          <p className="text-xs font-black uppercase text-[var(--faint)]">
+            {pending.actorName} · {RISK_LABEL[pending.risk]}{link.queuedCalls ? ` · altre ${link.queuedCalls} in attesa` : ""}
+          </p>
           <h2 id="agent-call-title" className="mt-1 text-xl font-black">{pending.summary}</h2>
           <p className="mt-1 text-sm font-bold text-[var(--muted)]">{pending.title}</p>
           {previewArgs(pending.args) ? (

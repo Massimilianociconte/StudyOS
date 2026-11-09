@@ -5,7 +5,10 @@ const ID = { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9
 const LIMIT = { type: "integer", minimum: 1, maximum: 100, default: 30, description: "Quanti elementi restituire (1–100, default 30)." } as const satisfies JsonSchema;
 const OFFSET = { type: "integer", minimum: 0, maximum: 10000, default: 0, description: "Quanti elementi saltare." } as const satisfies JsonSchema;
 const QUERY = { type: "string", minLength: 0, maxLength: 200, default: "", description: "Testo da cercare nel titolo o nel nome. Vuoto = nessun filtro." } as const satisfies JsonSchema;
-const CONFIRM = { type: "boolean", const: true, description: "Deve essere true. Usalo solo se la persona ha chiesto esplicitamente di eliminare questo elemento." } as const satisfies JsonSchema;
+// enum invece di const: lo capiscono anche gli schemi ridotti di Gemini e delle function call.
+const CONFIRM = { type: "boolean", enum: [true], description: "Deve essere true. Usalo solo se la persona ha chiesto esplicitamente di eliminare questo elemento." } as const satisfies JsonSchema;
+const WHEN = "ISO 8601, es. 2026-11-10T14:30:00+01:00. Senza offset vale l'ora locale della persona (timeZone in studyos_status).";
+const DAY = "Giorno YYYY-MM-DD.";
 
 const page = { limit: LIMIT, offset: OFFSET, query: QUERY };
 
@@ -13,7 +16,8 @@ const objectSchema = (properties: Record<string, JsonSchema>, required: string[]
   type: "object",
   additionalProperties: false,
   properties,
-  required
+  // required vuoto non è valido in draft-04 e alcuni client lo rifiutano: si omette.
+  ...(required.length ? { required } : {})
 });
 
 export interface AgentTool {
@@ -22,6 +26,10 @@ export interface AgentTool {
   description: string;
   risk: AgentRisk;
   idempotent: boolean;
+  /** Solo aggiunte: non sovrascrive né toglie dati esistenti (destructiveHint=false). */
+  additive?: boolean;
+  /** L'effetto è visibile ad altre persone, per esempio la bacheca di un gruppo (openWorldHint). */
+  openWorld?: boolean;
   inputSchema: JsonSchema;
   summary: (args: Record<string, unknown>) => string;
 }
@@ -34,7 +42,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_status",
     title: "Stato di StudyOS",
-    description: "Dice se l'app è collegata, se il vault è bloccato, quanti elementi ci sono e qual è la policy di conferma. Non modifica nulla. Usalo all'inizio se non sai se i dati sono raggiungibili.",
+    description: "Dice se l'app è collegata, se il vault è bloccato, quanti elementi ci sono, qual è la policy di conferma e l'ora locale della persona (now, today, timeZone). Non modifica nulla. Usalo all'inizio se non sai se i dati sono raggiungibili.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),
@@ -43,7 +51,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_overview",
     title: "Panoramica di studio",
-    description: "Riassume la giornata: eventi di oggi, task urgenti, prossimi esami, minuti studiati nella settimana, streak e obiettivo settimanale. Sola lettura.",
+    description: "Riassume la giornata: data e ora locali, eventi di oggi (ripetuti inclusi), task urgenti, prossimi esami con materia, argomenti da ripassare, notifiche non lette, minuti studiati nella settimana, streak e obiettivo settimanale. Sola lettura. È il punto di partenza consigliato.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),
@@ -61,7 +69,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_subjects",
     title: "Elenco materie",
-    description: "Elenca le materie personali con id, nome, docente, CFU, semestre, stato e voto obiettivo. Le archiviate sono escluse salvo includeArchived=true.",
+    description: "Elenca le materie personali con id, nome, docente, CFU, semestre, stato e voto obiettivo. Le archiviate sono escluse salvo includeArchived=true o status=archived.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ ...page, includeArchived: { type: "boolean", default: false, description: "Include le materie archiviate." }, status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed", "archived"], description: "Filtra per stato." } }),
@@ -79,9 +87,10 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_subject",
     title: "Crea materia",
-    description: "Crea una materia personale. name è obbligatorio. Non collega da sola il catalogo universitario: universityCourseId si imposta solo se lo conosci già.",
+    description: "Crea una materia personale. name è obbligatorio. Per un insegnamento ufficiale del corso BARB usa invece studyos_add_barb_courses, che collega il catalogo e compila CFU, docente e semestre.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       name: { type: "string", minLength: 1, maxLength: 160, description: "Nome della materia." },
       teacher: { type: "string", maxLength: 160, default: "", description: "Docente." },
@@ -118,13 +127,14 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_tasks",
     title: "Elenco task",
-    description: "Elenca le task con filtri su stato, materia e testo. Non include le archiviate salvo includeArchived=true.",
+    description: "Elenca le task con filtri su stato, materia, scadenza e testo, dalla scadenza più vicina; le chiuse vanno in fondo. Non include le archiviate salvo includeArchived=true.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
       ...page,
       status: { type: "string", enum: ["todo", "doing", "blocked", "done", "postponed", "archived"] },
       subjectId: ID,
+      dueBefore: { type: "string", format: "date-time", description: `Solo task con scadenza entro questo istante. ${WHEN}` },
       includeArchived: { type: "boolean", default: false }
     }),
     summary: () => "Leggere le task"
@@ -141,14 +151,15 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_task",
     title: "Crea task",
-    description: "Crea una task. title è obbligatorio. dueDate è una data ISO. estimatedMinutes è la durata prevista. Lo stato iniziale è todo salvo diversa indicazione.",
+    description: "Crea una task. title è obbligatorio. estimatedMinutes è la durata prevista. Lo stato iniziale è todo salvo diversa indicazione. Restituisce l'id.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 200 },
       description: { type: "string", maxLength: 4000, default: "" },
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
-      dueDate: { type: "string", format: "date-time", description: "Scadenza ISO. Vuoto = nessuna." },
+      dueDate: { type: "string", format: "date-time", description: `Scadenza. ${WHEN} Solo data (YYYY-MM-DD) = entro fine giornata.` },
       subjectId: ID,
       status: { type: "string", enum: ["todo", "doing", "blocked", "done", "postponed"], default: "todo" },
       notes: { type: "string", maxLength: 8000, default: "" },
@@ -170,7 +181,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       title: { type: "string", minLength: 1, maxLength: 200 },
       description: { type: "string", maxLength: 4000 },
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
-      dueDate: { type: "string", maxLength: 40, description: "ISO, oppure stringa vuota per togliere la scadenza." },
+      dueDate: { type: "string", maxLength: 40, description: `Nuova scadenza (${WHEN}), oppure stringa vuota per toglierla.` },
       subjectId: { type: "string", maxLength: 120, description: "Id materia, oppure stringa vuota per scollegare." },
       status: { type: "string", enum: ["todo", "doing", "blocked", "done", "postponed", "archived"] },
       notes: { type: "string", maxLength: 8000 },
@@ -201,13 +212,13 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_events",
     title: "Elenco eventi",
-    description: "Elenca gli eventi del calendario personale nell'intervallo from/to (ISO). Senza intervallo restituisce i prossimi. Gli eventi ripetuti restano un solo record: le occorrenze non sono copie.",
+    description: "Elenca gli eventi del calendario personale tra from e to, in ordine di inizio. Senza from parte da oggi; senza to copre 60 giorni (massimo 400). Gli eventi ripetuti compaiono una volta per occorrenza con recurring=true: l'id è quello della serie, e modificarlo cambia tutte le occorrenze.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
       ...page,
-      from: { type: "string", format: "date-time", description: "Inizio intervallo ISO." },
-      to: { type: "string", format: "date-time", description: "Fine intervallo ISO." },
+      from: { type: "string", format: "date-time", description: `Inizio intervallo. ${WHEN}` },
+      to: { type: "string", format: "date-time", description: `Fine intervallo. ${WHEN}` },
       subjectId: ID
     }),
     summary: () => "Leggere il calendario"
@@ -224,13 +235,14 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_event",
     title: "Crea evento",
-    description: "Crea un evento nel calendario personale. start e end sono ISO. Per un evento di un'intera giornata imposta allDay=true e usa la mezzanotte locale come start e la mezzanotte successiva come end. Modificare una serie vale per tutte le occorrenze.",
+    description: "Crea un evento nel calendario personale. Senza end dura un'ora. Con allDay=true basta il giorno in start (YYYY-MM-DD): occupa quella giornata intera. recurrence ripete l'evento fino a recurrenceUntil. Restituisce l'id.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 200 },
-      start: { type: "string", format: "date-time" },
-      end: { type: "string", format: "date-time" },
+      start: { type: "string", format: "date-time", description: `Inizio. ${WHEN}` },
+      end: { type: "string", format: "date-time", description: `Fine, dopo start. ${WHEN}` },
       category: { type: "string", enum: ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other"], default: "study" },
       description: { type: "string", maxLength: 4000, default: "" },
       notes: { type: "string", maxLength: 8000, default: "" },
@@ -238,21 +250,21 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       allDay: { type: "boolean", default: false },
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
       recurrence: { type: "string", enum: ["none", "daily", "weekly", "monthly"], default: "none" },
-      recurrenceUntil: { type: "string", format: "date", description: "Ultimo giorno della serie, YYYY-MM-DD." }
-    }, ["title", "start", "end"]),
+      recurrenceUntil: { type: "string", format: "date", description: `Ultimo giorno della serie. ${DAY}` }
+    }, ["title", "start"]),
     summary: (args) => `Creare l'evento «${text(args.title, "senza titolo")}»`
   }),
   tool({
     name: "studyos_update_event",
     title: "Aggiorna evento",
-    description: "Aggiorna un evento. Su una serie la modifica vale per tutte le occorrenze, come nell'app.",
+    description: "Aggiorna un evento. Se cambi solo start, la durata resta la stessa. Su una serie la modifica vale per tutte le occorrenze, come nell'app.",
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
       id: ID,
       title: { type: "string", minLength: 1, maxLength: 200 },
-      start: { type: "string", format: "date-time" },
-      end: { type: "string", format: "date-time" },
+      start: { type: "string", format: "date-time", description: WHEN },
+      end: { type: "string", format: "date-time", description: WHEN },
       category: { type: "string", enum: ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other"] },
       description: { type: "string", maxLength: 4000 },
       notes: { type: "string", maxLength: 8000 },
@@ -261,7 +273,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
       status: { type: "string", enum: ["planned", "in-progress", "done", "skipped"] },
       recurrence: { type: "string", enum: ["none", "daily", "weekly", "monthly"] },
-      recurrenceUntil: { type: "string", maxLength: 40 }
+      recurrenceUntil: { type: "string", maxLength: 10, description: `${DAY} Stringa vuota = serie senza fine.` }
     }, ["id"]),
     summary: () => "Aggiornare un evento"
   }),
@@ -277,7 +289,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_exams",
     title: "Elenco esami personali",
-    description: "Elenca gli esami collegati alle materie personali (non il calendario ufficiale BARB). Include voto, lode, idoneità e stato di preparazione.",
+    description: "Elenca gli esami collegati alle materie personali (non il calendario ufficiale BARB), in ordine di data e con il nome della materia. Include voto, lode, idoneità e stato di preparazione.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ ...page, subjectId: ID }),
@@ -295,12 +307,13 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_exam",
     title: "Crea esame personale",
-    description: "Crea un esame collegato a una materia. subjectId e date (ISO) sono obbligatori. Per registrare un voto usa studyos_record_grade.",
+    description: "Crea un esame collegato a una materia. subjectId e date sono obbligatori. Per registrare un voto usa studyos_record_grade. Restituisce l'id.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       subjectId: ID,
-      date: { type: "string", format: "date-time" },
+      date: { type: "string", format: "date-time", description: WHEN },
       program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 }, description: "Argomenti del programma." },
       preparation: { type: "integer", minimum: 0, maximum: 100, default: 0 },
       targetGrade: { type: "integer", minimum: 18, maximum: 30, default: 24 },
@@ -316,7 +329,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     idempotent: true,
     inputSchema: objectSchema({
       id: ID,
-      date: { type: "string", format: "date-time" },
+      date: { type: "string", format: "date-time", description: WHEN },
       program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 } },
       preparation: { type: "integer", minimum: 0, maximum: 100 },
       targetGrade: { type: "integer", minimum: 18, maximum: 30 },
@@ -350,27 +363,43 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     summary: () => "Eliminare un esame"
   }),
   tool({
-    name: "studyos_list_sessions",
-    title: "Sessioni di studio",
-    description: "Elenca le sessioni di studio registrate o pianificate.",
+    name: "studyos_get_libretto",
+    title: "Libretto e media",
+    description: "Legge il libretto: esami superati con voto e CFU, media ponderata e aritmetica, CFU acquisiti su quelli del corso, base di laurea in centodecimi e proiezione del voto di laurea con le regole del corso scelto. Sono gli stessi calcoli della sezione Libretto. Sola lettura.",
     risk: "read",
     idempotent: true,
-    inputSchema: objectSchema({ ...page, subjectId: ID, status: { type: "string", enum: ["planned", "running", "completed", "skipped"] } }),
+    inputSchema: objectSchema({}),
+    summary: () => "Leggere il libretto"
+  }),
+  tool({
+    name: "studyos_list_sessions",
+    title: "Sessioni di studio",
+    description: "Elenca le sessioni di studio registrate o pianificate, dalla più recente. from e to filtrano per inizio (per esempio la settimana in corso).",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({
+      ...page,
+      subjectId: ID,
+      status: { type: "string", enum: ["planned", "running", "completed", "skipped"] },
+      from: { type: "string", format: "date-time", description: WHEN },
+      to: { type: "string", format: "date-time", description: WHEN }
+    }),
     summary: () => "Leggere le sessioni di studio"
   }),
   tool({
     name: "studyos_create_session",
     title: "Registra sessione",
-    description: "Crea una sessione di studio. Per una sessione già fatta imposta status=completed, actualMinutes e start. Non avvia da sola il timer visivo: per quello c'è studyos_timer_control.",
+    description: "Crea una sessione di studio. Per una sessione già fatta imposta status=completed, actualMinutes e start: conta nei minuti della settimana e nello streak. Non avvia il timer visivo: per quello c'è studyos_timer_control.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 200 },
       subjectId: ID,
       template: { type: "string", enum: ["new-topic", "review", "exercises", "exam-simulation", "pdf-reading", "notes-cleanup", "memorization", "lab", "oral-prep"], default: "review" },
       plannedMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, default: 50 },
-      actualMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, default: 0 },
-      start: { type: "string", format: "date-time", description: "Inizio ISO. Se assente, è adesso." },
+      actualMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, description: "Minuti effettivi. Se status=completed e manca, valgono i minuti pianificati." },
+      start: { type: "string", format: "date-time", description: `Inizio. Se assente, è adesso. ${WHEN}` },
       status: { type: "string", enum: ["planned", "completed", "skipped"], default: "planned" },
       topics: { type: "array", maxItems: 30, items: { type: "string", minLength: 1, maxLength: 200 } },
       notes: { type: "string", maxLength: 8000, default: "" },
@@ -422,6 +451,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     description: "Crea argomenti di ripasso. I duplicati dello stesso titolo nella stessa materia vengono saltati. Restituisce quanti ne ha aggiunti.",
     risk: "write",
     idempotent: true,
+    additive: true,
     inputSchema: objectSchema({
       topics: {
         type: "array",
@@ -484,13 +514,16 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_add_link",
     title: "Aggiungi link",
-    description: "Salva un link http, https o mailto tra i materiali. Rifiuta gli altri schemi. Non carica file.",
+    description: "Salva un link http, https o mailto tra i materiali, se vuoi collegato a una materia, un esame o un altro elemento. Rifiuta gli altri schemi. Non carica file.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       url: { type: "string", minLength: 1, maxLength: 2000 },
       name: { type: "string", minLength: 1, maxLength: 200 },
-      description: { type: "string", maxLength: 2000, default: "" }
+      description: { type: "string", maxLength: 2000, default: "" },
+      linkedEntityType: { type: "string", enum: ["subject", "exam", "calendarEvent", "task", "studySession", "studyTopic", "goal", "note"], description: "Tipo dell'elemento a cui collegarlo." },
+      linkedEntityId: { ...ID, description: "Id dell'elemento a cui collegarlo. Serve insieme a linkedEntityType." }
     }, ["url", "name"]),
     summary: (args) => `Salvare il link «${text(args.name, "materiale")}»`
   }),
@@ -519,7 +552,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_notes",
     title: "Elenco note",
-    description: "Elenca le note. In elenco il testo è accorciato; studyos_search o il dettaglio completo passano dal campo body solo in studyos_get_note.",
+    description: "Elenca le note, dalla più recente. In elenco il testo è accorciato a 180 caratteri: per leggerlo intero usa studyos_get_note.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ ...page }),
@@ -537,9 +570,10 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_note",
     title: "Crea nota",
-    description: "Crea una nota. title e body sono testuali. linkedEntityType e linkedEntityId sono opzionali.",
+    description: "Crea una nota. title e body sono testuali. linkedEntityType e linkedEntityId sono opzionali. Restituisce l'id.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 200 },
       body: { type: "string", maxLength: 20000, default: "" },
@@ -582,14 +616,15 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_goal",
     title: "Crea obiettivo",
-    description: "Crea un obiettivo. progress è una percentuale 0–100.",
+    description: "Crea un obiettivo. progress è una percentuale 0–100. Restituisce l'id.",
     risk: "write",
     idempotent: false,
+    additive: true,
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 200 },
       description: { type: "string", maxLength: 4000, default: "" },
       category: { type: "string", enum: ["study", "exam", "notes", "review", "streak", "fitness", "personal", "project"], default: "study" },
-      deadline: { type: "string", format: "date-time" },
+      deadline: { type: "string", format: "date", description: DAY },
       progress: { type: "integer", minimum: 0, maximum: 100, default: 0 },
       metric: { type: "string", maxLength: 120, default: "" },
       notes: { type: "string", maxLength: 8000, default: "" }
@@ -608,7 +643,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       description: { type: "string", maxLength: 4000 },
       progress: { type: "integer", minimum: 0, maximum: 100 },
       status: { type: "string", enum: ["active", "paused", "done", "archived"] },
-      deadline: { type: "string", maxLength: 40 },
+      deadline: { type: "string", maxLength: 10, description: `${DAY} Stringa vuota = nessuna scadenza.` },
       notes: { type: "string", maxLength: 8000 },
       metric: { type: "string", maxLength: 120 }
     }, ["id"]),
@@ -692,9 +727,11 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_add_group_resource",
     title: "Pubblica in bacheca",
-    description: "Aggiunge un link o una nota alla bacheca del gruppo, a nome della persona collegata. I link passano dal controllo di sicurezza dell'app. Non invita persone e non cambia i ruoli.",
+    description: "Aggiunge un link o una nota alla bacheca del gruppo, a nome della persona collegata: la vedono tutti i membri. I link passano dal controllo di sicurezza dell'app. Non invita persone e non cambia i ruoli.",
     risk: "write",
     idempotent: false,
+    additive: true,
+    openWorld: true,
     inputSchema: objectSchema({
       groupId: ID,
       kind: { type: "string", enum: ["link", "note"] },
@@ -707,9 +744,10 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_delete_group_resource",
     title: "Rimuovi dalla bacheca",
-    description: "Elimina una risorsa della bacheca. Richiede confirm=true e la conferma in StudyOS. Non elimina il gruppo.",
+    description: "Elimina una risorsa della bacheca anche per gli altri membri. Richiede confirm=true e la conferma in StudyOS. Non elimina il gruppo.",
     risk: "destructive",
     idempotent: true,
+    openWorld: true,
     inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
     summary: () => "Rimuovere una risorsa dalla bacheca"
   }),
@@ -722,8 +760,8 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     inputSchema: objectSchema({
       ...page,
       courseId: ID,
-      from: { type: "string", format: "date" },
-      to: { type: "string", format: "date" }
+      from: { type: "string", format: "date", description: `${DAY} Se assente, da oggi: gli appelli passati escono solo indicando from.` },
+      to: { type: "string", format: "date", description: DAY }
     }),
     summary: () => "Leggere gli appelli ufficiali BARB"
   }),
@@ -733,10 +771,36 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     description: "Copia nel calendario personale gli appelli ufficiali indicati per id. È idempotente: lo stesso id non crea duplicati. Gli id si ottengono da studyos_list_barb_exams. Non accetta date inventate.",
     risk: "write",
     idempotent: true,
+    additive: true,
     inputSchema: objectSchema({
       ids: { type: "array", minItems: 1, maxItems: 40, items: ID, description: "Id degli appelli ufficiali da importare." }
     }, ["ids"]),
     summary: (args) => `Importare ${Array.isArray(args.ids) ? args.ids.length : ""} appelli BARB nel calendario`.trim()
+  }),
+  tool({
+    name: "studyos_list_barb_courses",
+    title: "Insegnamenti BARB",
+    description: "Elenca gli insegnamenti ufficiali del corso BARB inclusi nell'app: id, nome, CFU, anno, semestre, gruppo a scelta, docente responsabile, modalità d'esame e se sono già tra le materie. Dati pubblici, sola lettura.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({
+      ...page,
+      year: { type: "integer", enum: [1, 2], description: "Anno di corso." },
+      semester: { type: "string", enum: ["primo", "secondo", "annuale", "non-definito"] }
+    }),
+    summary: () => "Leggere gli insegnamenti BARB"
+  }),
+  tool({
+    name: "studyos_add_barb_courses",
+    title: "Aggiungi insegnamenti alle materie",
+    description: "Aggiunge alle materie gli insegnamenti BARB indicati per id, come il pulsante dell'app: nome, CFU, docente, semestre e collegamento al catalogo ufficiale. Quelli già presenti vengono saltati. Gli id si ottengono da studyos_list_barb_courses.",
+    risk: "write",
+    idempotent: true,
+    additive: true,
+    inputSchema: objectSchema({
+      ids: { type: "array", minItems: 1, maxItems: 40, items: ID, description: "Id degli insegnamenti da aggiungere." }
+    }, ["ids"]),
+    summary: (args) => `Aggiungere ${Array.isArray(args.ids) ? args.ids.length : ""} insegnamenti BARB alle materie`.trim()
   }),
   tool({
     name: "studyos_timer_status",
@@ -762,7 +826,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_approval_status",
     title: "Esito di una conferma",
-    description: "Recupera l'esito di un'azione che era in attesa di conferma. Passa approvalId restituito quando lo stato era pending_approval. Non crea una nuova azione.",
+    description: "Recupera l'esito di un'azione che era in attesa di conferma. Passa approvalId restituito quando lo stato era pending_approval. Se la persona non ha ancora deciso aspetta fino a 40 secondi, poi risponde di nuovo pending_approval. Non crea una nuova azione.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
@@ -801,9 +865,12 @@ export const mcpToolDefinition = (item: AgentTool) => ({
   description: item.description,
   inputSchema: item.inputSchema,
   annotations: {
+    // title anche qui: i client 2025-03-26 lo leggono solo dalle annotazioni.
+    title: item.title,
     readOnlyHint: item.risk === "read",
-    destructiveHint: item.risk === "destructive",
+    // Un aggiornamento sovrascrive dati esistenti: per la specifica è distruttivo quanto un'eliminazione.
+    destructiveHint: item.risk === "destructive" || (item.risk === "write" && item.additive !== true),
     idempotentHint: item.idempotent,
-    openWorldHint: false
+    openWorldHint: item.openWorld === true
   }
 });

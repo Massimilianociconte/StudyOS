@@ -25,8 +25,11 @@ da solo le chiamate MCP. I token OAuth e il token del client locale stanno in
 
 Gli strumenti coprono lo stato, la panoramica, la ricerca e la gestione di
 materie, task, eventi, esami personali, sessioni, ripasso, materiali (solo
-link), note, obiettivi, preferenze di studio, notifiche, bacheca dei gruppi e
-appelli BARB. Le letture, di base, passano. Modifiche ed eliminazioni chiedono
+link), note, obiettivi, preferenze di studio, notifiche, bacheca dei gruppi,
+libretto con medie e proiezione di laurea, insegnamenti e appelli BARB. Gli
+eventi ripetuti compaiono come singole occorrenze. Ogni risposta riporta il nome
+della materia accanto all'id, e `studyos_status` e `studyos_overview` danno data,
+ora e fuso orario della persona. Le letture, di base, passano. Modifiche ed eliminazioni chiedono
 conferma nell'app. Si può consentire le sole modifiche per 15 minuti. Le
 eliminazioni chiedono comunque conferma, e un agente non può cambiare queste
 regole.
@@ -46,57 +49,119 @@ delle azioni resta in questo browser.
 A vault bloccato l'app risponde che i dati non sono disponibili e non mostra
 conteggi vuoti come se fossero veri.
 
-## ChatGPT sul web e app per Mac
+## Indirizzo da usare
 
-ChatGPT, sia sul web sia nell'app Mac, parla con i connettori dell'account.
-Quei connettori raggiungono solo un indirizzo HTTPS pubblico. Non parlano con
-`localhost` e l'app Mac non avvia il programma sul computer.
+Ogni client remoto usa lo stesso indirizzo, mostrato in **Impostazioni → Agenti**
+del sito pubblicato: `https://studyos-agent.<account>.workers.dev/mcp`. È l'hub
+Cloudflare sempre acceso. Non serve `npm run dev`, `npm run agent` né un tunnel.
+Apri il sito pubblicato (`https://massimilianociconte.github.io/StudyOS/`),
+anche dal telefono, incolla la chiave di collegamento una volta e tieni la
+pagina aperta mentre l'agente lavora: i dati restano nel suo IndexedDB.
 
-Il sito pubblicato (`https://massimilianociconte.github.io/StudyOS/`) usa un
-hub sempre acceso. Non serve `npm run dev`, `npm run agent` né un tunnel.
-Apri il sito, anche dal telefono, e in **Impostazioni → Agenti** incolla la
-chiave di collegamento una volta. Poi in ChatGPT aggiungi il server MCP
-all'indirizzo mostrato in quella schermata (finisce con `/mcp`).
+L'accesso è OAuth 2.1 con PKCE e registrazione dinamica del client. Al primo
+collegamento la conferma compare in Impostazioni → Agenti del browser
+collegato. Sono accettati redirect https, loopback con qualsiasi porta
+(`http://127.0.0.1:…`, `http://localhost:…`) e schemi delle app native come
+`cursor://`. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
+(`initialize` per i client precedenti, `server/discover` per il 2026), sempre in
+JSON e mai in stream.
 
-L'accesso è OAuth: la conferma compare in Impostazioni → Agenti del browser
-che è collegato. ChatGPT poi chiede l'elenco delle azioni con `server/discover`
-(protocollo 2026-07-28). Se quel passo era già fallito, in ChatGPT apri il
-connettore e scegli Aggiorna; se resta l'errore, eliminalo e crealo di nuovo
-con lo stesso indirizzo. Tieni quella pagina aperta. I dati restano nel suo IndexedDB:
-un telefono appena aperto vede lo studio solo se è lo stesso browser già usato
-oppure se è entrato con lo stesso account cloud.
+## Collegare i client
 
-`npm run agent` resta per la finestra di sviluppo e per Claude, Cursor e gli
-altri client locali. Il tunnel `trycloudflare` non serve più al sito pubblicato.
+**ChatGPT** (web, app desktop e mobile): Impostazioni → App e connettori →
+Avanzate → attiva la modalità sviluppatore, poi Crea connettore con l'indirizzo
+`/mcp` e autenticazione OAuth. In una chat nuova premi + e aggiungi StudyOS.
+Una chat già aperta non lo vede. Se l'elenco azioni era già fallito o è
+cambiato, elimina il connettore e crealo di nuovo: Aggiorna riusa l'elenco
+vecchio.
 
-## Claude, Cursor e gli altri client locali
+**Claude** (web, desktop, mobile): Impostazioni → Connettori → Aggiungi
+connettore personalizzato con l'indirizzo `/mcp`. L'app mobile usa i connettori
+aggiunti dal web.
 
-Con l'hub già avviato da `npm run agent`, il comando stdio è:
+**Claude Code**:
 
 ```bash
-node --import ./scripts/lib/register-ts.mjs ./scripts/agent.ts --stdio
+claude mcp add --transport http studyos https://studyos-agent.<account>.workers.dev/mcp
 ```
 
-La directory di lavoro deve essere la cartella di StudyOS. In alternativa,
-`npm run agent:stdio`. Lo stdout è riservato al protocollo MCP.
+Poi in Claude Code esegui `/mcp` e completa il login.
 
-Esempio per Claude Desktop o Cursor:
+**Codex** (CLI, app e estensione IDE) in `~/.codex/config.toml`, poi
+`codex mcp login studyos`:
+
+```toml
+[mcp_servers.studyos]
+url = "https://studyos-agent.<account>.workers.dev/mcp"
+```
+
+**Cursor** in `~/.cursor/mcp.json`. **Antigravity** in
+`~/.gemini/antigravity/mcp_config.json`, con `serverUrl` al posto di `url`.
+**Gemini CLI** in `~/.gemini/settings.json`, con `httpUrl` al posto di `url`,
+poi `/mcp auth studyos`:
 
 ```json
 {
   "mcpServers": {
-    "studyos": {
+    "studyos": { "url": "https://studyos-agent.<account>.workers.dev/mcp" }
+  }
+}
+```
+
+**VS Code** (Copilot) in `.vscode/mcp.json` o nel profilo utente:
+
+```json
+{
+  "servers": {
+    "studyos": { "type": "http", "url": "https://studyos-agent.<account>.workers.dev/mcp" }
+  }
+}
+```
+
+**Grok**: su grok.com apri Connettori, aggiungi un connettore personalizzato con
+l'indirizzo `/mcp` e completa l'OAuth.
+
+## Tempi delle conferme
+
+Le conferme rispondono entro 45 secondi, sotto il timeout di 60 secondi della
+maggior parte dei client. Se la persona non ha ancora deciso, l'agente riceve
+`pending_approval` e richiama `studyos_approval_status`, che aspetta fino a 40
+secondi la decisione. Le letture non aspettano le conferme in corso: più
+modifiche si mettono in coda nel riquadro di conferma. Un'azione che nessun
+browser ritira entro 2 minuti non parte più. Una conferma lasciata aperta 30
+minuti scade senza eseguire nulla.
+
+## Client locali con stdio (sviluppo)
+
+`npm run agent` serve la finestra di sviluppo (`npm run dev`), che ha un
+IndexedDB suo, distinto da quello del sito pubblicato. Per un client che avvia
+un comando, con percorsi assoluti:
+
+```json
+{
+  "mcpServers": {
+    "studyos-locale": {
       "command": "node",
-      "args": ["--import", "./scripts/lib/register-ts.mjs", "./scripts/agent.ts", "--stdio"],
-      "cwd": "/percorso/assoluto/StudyOS"
+      "args": [
+        "--import", "/percorso/assoluto/StudyOS/scripts/lib/register-ts.mjs",
+        "/percorso/assoluto/StudyOS/scripts/agent.ts", "--stdio"
+      ]
     }
   }
 }
 ```
 
-Se l'hub non è già in esecuzione, lo stdio ne avvia uno e ne inoltra il
-messaggio sul terminale, compreso il codice. Il modo chiaro per leggerlo resta
-`npm run agent`.
+Per Claude Code:
+
+```bash
+claude mcp add studyos-locale -- node --import /percorso/assoluto/StudyOS/scripts/lib/register-ts.mjs /percorso/assoluto/StudyOS/scripts/agent.ts --stdio
+```
+
+Lo stdio usa un messaggio JSON per riga, come vuole MCP, e accetta ancora il
+vecchio framing `Content-Length`. Le richieste partono in parallelo. Legge la
+chiave da `~/.studyos/agent.json` senza riscriverla. Se l'hub non è avviato lo
+avvia; il codice di collegamento si legge meglio con `npm run agent`. Dopo un
+aggiornamento chiudi l'hub vecchio e riavvia `npm run agent`.
 
 ## Build pubblicata
 
@@ -109,3 +174,16 @@ La build pubblicata non chiama `127.0.0.1`. L'origine dell'hub arriva da
 includere quell'origine esatta: `https://*.workers.dev` non copre un nome con
 due etichette. Dopo una modifica alla CSP serve una nuova build, pubblicata
 dal workflow su `main`.
+
+## Ripubblicare dopo una modifica
+
+1. Verifica: `npm test`, `npm run lint`, `npm run build`.
+2. Hub: `npx wrangler deploy -c worker/wrangler.jsonc` (la prima volta
+   `npx wrangler login`). Il secret `STUDYOS_PAIR_KEY` e lo stato del Durable
+   Object restano: client OAuth e collegamento del browser non cambiano.
+3. Sito: push su `main`. Il workflow Pages costruisce con
+   `VITE_AGENT_HUB_ORIGIN` delle variabili Actions.
+4. Ricarica la scheda del sito pubblicato collegata: è lei a eseguire gli
+   strumenti, e una scheda vecchia esegue il codice vecchio.
+5. Se l'elenco strumenti è cambiato: in ChatGPT elimina e ricrea il connettore;
+   negli altri client riconnetti il server o apri una sessione nuova.

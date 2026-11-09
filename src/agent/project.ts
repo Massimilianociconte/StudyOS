@@ -2,6 +2,23 @@
 
 const clip = (value: string | undefined, max: number) => (value && value.length > max ? `${value.slice(0, max)}…` : value ?? "");
 
+/** Campi mai inviati: copertine e file incorporati, stato interno del timer, UID degli import. */
+const HIDDEN_FIELDS = new Set(["cover", "dataUrl", "avatarDataUrl", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt", "sourceUid"]);
+
+/**
+ * Copia di un'entità senza i campi nascosti e senza stringhe data: (foto, file).
+ * `brief` accorcia i testi lunghi negli elenchi; il dettaglio li restituisce interi.
+ */
+export const publicEntity = (item: object, extra: Record<string, unknown> = {}, brief: readonly string[] = []) => {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(item)) {
+    if (HIDDEN_FIELDS.has(key)) continue;
+    if (typeof value === "string" && value.startsWith("data:")) continue;
+    output[key] = brief.includes(key) && typeof value === "string" ? clip(value, 300) : value;
+  }
+  return { ...output, ...extra };
+};
+
 export const publicSubject = (item: {
   id: string;
   name: string;

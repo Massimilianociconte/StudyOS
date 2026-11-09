@@ -144,6 +144,19 @@ telefono con la pagina aperta. La chiave di collegamento è un secret di
 Wrangler. `npm run agent` resta per lo sviluppo e per lo stdio di Claude e
 Cursor. I dati restano nell'IndexedDB del browser collegato. La discovery di
 ChatGPT usa MCP `2026-07-28`: l'hub risponde a `server/discover` e `tools/list`
-con `resultType`, `ttlMs` e `cacheScope`. Senza quella risposta l'accesso OAuth
-riesce e l'elenco azioni fallisce. Da fare sul progetto reale: rieseguire
+con `resultType`, `ttlMs` e `cacheScope`, in JSON, sia su `/mcp` sia sulla radice.
+`resources/list` e `prompts/list` rispondono con elenchi vuoti. Senza una risposta
+JSON-RPC valida l'accesso OAuth riesce e l'elenco azioni fallisce. Una chat già
+aperta non vede il connettore finché non lo si aggiunge da +. Da fare sul progetto reale: rieseguire
 `groups.sql` e i Redirect URLs, invariati rispetto all'8 ottobre.
+
+Audit agenti MCP (9 novembre 2026, server 1.1.0): 62 strumenti, tre nuovi
+(`studyos_get_libretto`, `studyos_list_barb_courses`, `studyos_add_barb_courses`).
+Eventi ripetuti espansi in occorrenze, nomi delle materie nelle risposte, data e
+fuso orario in stato e panoramica, date ISO validate, copertine e file mai inviati.
+Conferme in coda senza bloccare le letture, risposta entro 45 s, azioni non
+ritirate scartate dopo 2 minuti. OAuth: `iss` nel redirect, `resource` assente o
+radice accettati, `/revoke`, loopback con porta variabile e `cursor://`. Stdio
+riscritto in JSON per riga. Verifiche: 132 test, lint, build, dry-run del Worker,
+stdio reale, strumenti eseguiti nell'app in sviluppo e conferma end-to-end con
+l'hub locale. Da fare: deploy del Worker e push su `main`.

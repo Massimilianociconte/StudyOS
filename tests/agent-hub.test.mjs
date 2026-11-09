@@ -5,6 +5,8 @@ import { HttpHub } from "../src/agent/httpHub.ts";
 const origin = "https://studyos-agent.esempio.workers.dev";
 const key = "chiave-di-prova-lunga-abbastanza";
 
+const clock = { now: Date.now() };
+
 const hub = () => new HttpHub({
   issuer: origin,
   canonical: `${origin}/mcp`,
@@ -13,7 +15,9 @@ const hub = () => new HttpHub({
   pairKey: key,
   disconnectedHint: "Apri StudyOS.",
   approvalWaitMs: 40,
+  approvalPollMs: 2000,
   pollWaitMs: 40,
+  now: () => clock.now,
   allowHost: (host) => host === "studyos-agent.esempio.workers.dev",
   allowOrigin: (value, mcp) => !value || value === "https://massimilianociconte.github.io" || mcp
 });
@@ -151,4 +155,127 @@ test("hub pubblico: rifiuta host e origine, accetta la chiave e risponde a ChatG
   });
   assert.equal(missing.status, 404);
   assert.equal((await missing.json()).error.code, -32601);
+
+  const streamOnly = await ask(agent, "/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      authorization: `Bearer ${agent.serviceToken}`,
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "server/discover",
+      origin: "https://chatgpt.com"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "discover-sse", method: "server/discover", params: {} })
+  });
+  assert.equal(streamOnly.status, 200);
+  assert.match(streamOnly.headers.get("content-type") ?? "", /^application\/json/);
+
+  const atRoot = await ask(agent, "/", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${agent.serviceToken}`,
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "server/discover",
+      origin: "https://chatgpt.com"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "discover-root", method: "server/discover", params: {} })
+  });
+  assert.equal(atRoot.status, 200);
+  assert.match(atRoot.headers.get("content-type") ?? "", /^application\/json/);
+  assert.equal((await atRoot.json()).result.supportedVersions.includes("2026-07-28"), true);
+
+  const resources = await ask(agent, "/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      authorization: `Bearer ${agent.serviceToken}`,
+      "mcp-protocol-version": "2026-07-28",
+      "mcp-method": "resources/list"
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 10, method: "resources/list", params: {} })
+  });
+  assert.equal(resources.status, 200);
+  const resourceBody = await resources.json();
+  assert.deepEqual(resourceBody.result.resources, []);
+  assert.equal(resourceBody.result.resultType, "complete");
+});
+
+const site = { "content-type": "application/json", origin: "https://massimilianociconte.github.io" };
+const mcpCall = (instance, id, name, args = {}, headers = {}) => ask(instance, "/mcp", {
+  method: "POST",
+  headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${instance.serviceToken}`, ...headers },
+  body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } })
+});
+const toolResult = async (response) => JSON.parse((await response.json()).result.content[0].text);
+const pairBrowser = async (instance) => {
+  const paired = await ask(instance, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code: key }) });
+  return (await paired.json()).token;
+};
+
+test("hub: Mcp-Name verificato, preflight CORS con le intestazioni MCP, revoca RFC 7009", async () => {
+  const agent = hub();
+  const mismatch = await mcpCall(agent, 1, "studyos_status", {}, { "mcp-method": "tools/call", "mcp-name": "studyos_delete_task" });
+  assert.equal(mismatch.status, 400);
+  assert.equal((await mismatch.json()).error.code, -32020);
+  const encoded = await mcpCall(agent, 2, "studyos_status", {}, { "mcp-method": "tools/call", "mcp-name": `=?base64?${Buffer.from("studyos_status").toString("base64")}?=` });
+  assert.equal(encoded.status, 200);
+
+  const preflight = await ask(agent, "/mcp", {
+    method: "OPTIONS",
+    headers: {
+      origin: "https://claude.ai",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "authorization, content-type, mcp-protocol-version, mcp-method, mcp-name, mcp-param-id"
+    }
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "https://claude.ai");
+  const allowed = preflight.headers.get("access-control-allow-headers");
+  for (const header of ["authorization", "mcp-protocol-version", "mcp-method", "mcp-name", "mcp-param-id"]) assert.match(allowed, new RegExp(header));
+
+  const revoked = await ask(agent, "/revoke", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: "sconosciuto", token_type_hint: "access_token" })
+  });
+  assert.equal(revoked.status, 200);
+  const metadata = await (await ask(agent, "/.well-known/oauth-authorization-server")).json();
+  assert.equal(metadata.revocation_endpoint, `${origin}/revoke`);
+  assert.equal(metadata.authorization_response_iss_parameter_supported, true);
+});
+
+test("hub: la conferma arriva con approval_status e le azioni mai ritirate scadono", async () => {
+  clock.now = Date.now();
+  const agent = hub();
+  const token = await pairBrowser(agent);
+  await ask(agent, "/bridge/poll", { method: "POST", headers: site, body: JSON.stringify({ token }) });
+
+  const pending = await toolResult(await mcpCall(agent, 1, "studyos_create_task", { title: "Ripasso" }));
+  assert.equal(pending.data.status, "pending_approval");
+  const approvalId = pending.data.approvalId;
+
+  const job = await (await ask(agent, "/bridge/poll", { method: "POST", headers: site, body: JSON.stringify({ token }) })).json();
+  assert.equal(job.type, "call");
+  assert.equal(job.id, approvalId);
+  const waiting = mcpCall(agent, 2, "studyos_approval_status", { approvalId });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const delivered = await ask(agent, "/bridge/result", { method: "POST", headers: site, body: JSON.stringify({ token, id: approvalId, result: { ok: true, data: { id: "task_1" } } }) });
+  assert.equal(delivered.status, 200);
+  const settled = await toolResult(await waiting);
+  assert.equal(settled.ok, true);
+  assert.equal(settled.data.id, "task_1");
+
+  const stale = await toolResult(await mcpCall(agent, 3, "studyos_create_task", { title: "Mai ritirata" }));
+  assert.equal(stale.data.status, "pending_approval");
+  clock.now += 121_000;
+  const idle = await (await ask(agent, "/bridge/poll", { method: "POST", headers: site, body: JSON.stringify({ token }) })).json();
+  assert.equal(idle.type, "idle");
+  const dropped = await toolResult(await mcpCall(agent, 4, "studyos_approval_status", { approvalId: stale.data.approvalId }));
+  assert.equal(dropped.ok, false);
+  assert.equal(dropped.code, "not_connected");
+  clock.now = Date.now();
 });

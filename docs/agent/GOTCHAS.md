@@ -78,6 +78,15 @@
   usano l'hub pubblico e OAuth; non lanciano un processo sul Mac. I dati restano
   nell'IndexedDB del browser aperto. Agli agenti non vanno mai codici di invito,
   email, byte dei file, foto, passphrase o la chiave di collegamento.
+- Agenti MCP, tempi e formato: l'hub risponde a `tools/call` entro 45 s
+  (`approvalWaitMs`) perché i client MCP chiudono a 60 s; oltre, `pending_approval` e
+  `studyos_approval_status`. Le conferme nel browser sono in coda e non fermano il poll:
+  le esecuzioni restano in serie (`serial` in `agentLink`), perché `createdId` legge
+  l'id nuovo per differenza. Lo stdio MCP è un JSON per riga, non `Content-Length`.
+  Ogni entità verso gli agenti passa da `publicEntity` (via `cover`, `dataUrl` e
+  stringhe `data:`). Negli schemi niente `const` né `required: []`: Gemini e i
+  function schema OpenAI li rifiutano. Una lista troppo lunga si accorcia togliendo
+  elementi (`has_more`/`next_offset`), mai tagliando il JSON.
 - Supabase RLS e upsert: `INSERT … ON CONFLICT DO UPDATE` controlla la policy di INSERT sulla
   riga proposta e quella di SELECT sulla riga nuova. Per modificare righe di altri utenti usare
   `update` mirati; `onConflict` deve nominare la chiave vera (membri: `group_id,user_id`).

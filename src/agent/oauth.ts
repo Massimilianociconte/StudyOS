@@ -13,6 +13,8 @@ export interface AccessRecord {
   scopes: AgentDataScope[];
   resource: string;
   expiresAt: number;
+  /** Stessa concessione di access e refresh: revocarne uno revoca tutta la famiglia. */
+  family?: string;
 }
 
 export interface RefreshRecord extends AccessRecord {
@@ -74,17 +76,37 @@ export const timingSafeEqual = (left: string, right: string) => {
 
 export const canonicalResource = (value: string) => value.trim().replace(/\/+$/g, "");
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const BLOCKED_SCHEMES = new Set(["javascript:", "data:", "file:", "vbscript:", "blob:", "about:", "filesystem:", "intent:", "ftp:", "ws:", "wss:"]);
+
+const isLoopback = (url: URL) => url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+
+/**
+ * https ovunque, http solo in loopback e lo schema privato di un'app nativa (RFC 8252 §7.1),
+ * per esempio cursor://. Mai javascript:, data:, file: e simili.
+ */
 export const safeRedirectUri = (value: string) => {
   try {
     const url = new URL(value);
     if (url.username || url.password || url.hash) return null;
-    const localhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
     if (url.protocol === "https:") return url.toString();
-    if (url.protocol === "http:" && localhost) return url.toString();
-    return null;
+    if (url.protocol === "http:") return isLoopback(url) ? url.toString() : null;
+    if (BLOCKED_SCHEMES.has(url.protocol) || !/^[a-z][a-z0-9+.-]*:$/.test(url.protocol)) return null;
+    return url.toString();
   } catch {
     return null;
   }
+};
+
+/** In loopback la porta cambia a ogni avvio del client nativo (RFC 8252 §7.3): conta il resto. */
+const redirectRegistered = (registered: readonly string[], redirect: string) => {
+  if (registered.includes(redirect)) return true;
+  const asked = new URL(redirect);
+  if (!isLoopback(asked)) return false;
+  return registered.some((item) => {
+    const known = new URL(item);
+    return isLoopback(known) && known.hostname === asked.hostname && known.pathname === asked.pathname && known.search === asked.search;
+  });
 };
 
 const parseScopes = (value: string | null | undefined): AgentScope[] => {
@@ -114,6 +136,8 @@ export interface PersistedOauth {
  */
 export class OauthServer {
   private readonly canonical: string;
+  /** Origine dell'hub: issuer OAuth e alias del resource per i client che si collegano alla radice. */
+  private readonly issuer: string;
   private readonly now: () => number;
   private clients = new Map<string, OAuthClient>();
   private requests = new Map<string, AuthRequest>();
@@ -123,7 +147,14 @@ export class OauthServer {
 
   constructor(canonical: string, now: () => number = () => Date.now()) {
     this.canonical = canonical;
+    this.issuer = new URL(canonical).origin;
     this.now = now;
+  }
+
+  /** Il resource indica questo server: indirizzo /mcp, radice dell'hub o assente (client più vecchi). */
+  private resourceMatches(value: string | null) {
+    const resource = canonicalResource(value ?? "");
+    return !resource || resource === this.canonical || resource === this.issuer;
   }
 
   load(state: PersistedOauth) {
@@ -154,8 +185,8 @@ export class OauthServer {
       if (!safe) return { ok: false, status: 400, error: "redirect_uri deve essere https, oppure http su localhost." };
       redirectUris.push(safe);
     }
-    const method = source.token_endpoint_auth_method;
-    if (method !== undefined && method !== "none") return { ok: false, status: 400, error: "Sono accettati solo client pubblici (token_endpoint_auth_method=none)." };
+    // Ogni client è registrato come pubblico (PKCE, nessun segreto). Il metodo chiesto non blocca la
+    // registrazione: la risposta dice token_endpoint_auth_method=none e il client si adegua (RFC 7591 §3.2.1).
     const client: OAuthClient = {
       clientId: randomToken(18),
       clientName: typeof source.client_name === "string" ? source.client_name.slice(0, 80) : "Agente MCP",
@@ -171,14 +202,14 @@ export class OauthServer {
     const client = this.clients.get(query.get("client_id") ?? "");
     if (!client) return { ok: false, error: "invalid_client", description: "Client non registrato." };
     const redirect = safeRedirectUri(query.get("redirect_uri") ?? "");
-    if (!redirect || !client.redirectUris.includes(redirect)) return { ok: false, error: "invalid_request", description: "redirect_uri non registrato." };
+    if (!redirect || !redirectRegistered(client.redirectUris, redirect)) return { ok: false, error: "invalid_request", description: "redirect_uri non registrato." };
     if (query.get("response_type") !== "code") return { ok: false, error: "unsupported_response_type", description: "Solo response_type=code." };
     const challenge = query.get("code_challenge") ?? "";
     if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge) || (query.get("code_challenge_method") ?? "S256") !== "S256") {
       return { ok: false, error: "invalid_request", description: "PKCE S256 obbligatorio." };
     }
-    const resource = canonicalResource(query.get("resource") ?? "");
-    if (resource !== this.canonical) return { ok: false, error: "invalid_target", description: "Il parametro resource non coincide con questo server." };
+    if (!this.resourceMatches(query.get("resource"))) return { ok: false, error: "invalid_target", description: "Il parametro resource non coincide con questo server." };
+    const resource = this.canonical;
     const scopes = parseScopes(query.get("scope"));
     const requestId = randomToken(18);
     this.requests.set(requestId, {
@@ -232,8 +263,7 @@ export class OauthServer {
     const clientId = form.get("client_id") ?? "";
     const client = this.clients.get(clientId);
     if (!client) return { ok: false, status: 401, error: "invalid_client" };
-    const resource = canonicalResource(form.get("resource") ?? this.canonical);
-    if (resource !== this.canonical) return { ok: false, status: 400, error: "invalid_target" };
+    if (!this.resourceMatches(form.get("resource"))) return { ok: false, status: 400, error: "invalid_target" };
     if (grant === "authorization_code") return this.exchangeCode(form, client, now);
     if (grant === "refresh_token") return this.exchangeRefresh(form, client, now);
     return { ok: false, status: 400, error: "unsupported_grant_type" };
@@ -252,6 +282,19 @@ export class OauthServer {
     this.codes.clear();
   }
 
+  /** RFC 7009: revoca un access o refresh token e il resto della stessa concessione. Esito sempre ok. */
+  async revokeToken(raw: string, clientId?: string) {
+    if (!raw) return;
+    const hash = await sha256Base64Url(raw);
+    const record = this.access.get(hash) ?? this.refresh.get(hash);
+    if (!record || (clientId && record.clientId !== clientId)) return;
+    this.access.delete(hash);
+    this.refresh.delete(hash);
+    if (!record.family) return;
+    for (const [key, item] of this.access) if (item.family === record.family) this.access.delete(key);
+    for (const [key, item] of this.refresh) if (item.family === record.family) this.refresh.delete(key);
+  }
+
   private async exchangeCode(form: URLSearchParams, client: OAuthClient, now: number) {
     const code = form.get("code") ?? "";
     const stored = this.codes.get(code);
@@ -265,7 +308,7 @@ export class OauthServer {
     if (!timingSafeEqual(challenge, stored.request.codeChallenge)) return { ok: false as const, status: 400, error: "invalid_grant" };
     stored.used = true;
     this.codes.delete(code);
-    return { ok: true as const, body: await this.issue(client, stored.scopes, now) };
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now, randomToken(8)) };
   }
 
   private async exchangeRefresh(form: URLSearchParams, client: OAuthClient, now: number) {
@@ -274,10 +317,10 @@ export class OauthServer {
     const stored = this.refresh.get(hash);
     if (!stored || stored.expiresAt <= now || stored.clientId !== client.clientId) return { ok: false as const, status: 400, error: "invalid_grant" };
     this.refresh.delete(hash);
-    return { ok: true as const, body: await this.issue(client, stored.scopes, now) };
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now, stored.family) };
   }
 
-  private async issue(client: OAuthClient, scopes: AgentDataScope[], now: number) {
+  private async issue(client: OAuthClient, scopes: AgentDataScope[], now: number, family: string) {
     const access = randomToken(32);
     const refresh = randomToken(32);
     const record: AccessRecord = {
@@ -285,10 +328,11 @@ export class OauthServer {
       clientName: client.clientName,
       scopes,
       resource: this.canonical,
-      expiresAt: now + ACCESS_TTL_MS
+      expiresAt: now + ACCESS_TTL_MS,
+      family
     };
     this.access.set(await sha256Base64Url(access), record);
-    this.refresh.set(await sha256Base64Url(refresh), { ...record, expiresAt: now + REFRESH_TTL_MS, family: randomToken(8) });
+    this.refresh.set(await sha256Base64Url(refresh), { ...record, expiresAt: now + REFRESH_TTL_MS, family });
     return {
       access_token: access,
       token_type: "Bearer",
@@ -302,6 +346,8 @@ export class OauthServer {
     const url = new URL(request.redirectUri);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     if (request.state) url.searchParams.set("state", request.state);
+    // RFC 9207: il client controlla che la risposta arrivi dall'issuer con cui ha iniziato.
+    url.searchParams.set("iss", this.issuer);
     return url.toString();
   }
 

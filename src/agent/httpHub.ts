@@ -10,6 +10,10 @@ import type { AgentActor, AgentCallResult } from "./types";
 
 const BODY_LIMIT = 262_144;
 const PUBLISHED_FRESH_MS = 45_000;
+/** Un'azione che il browser non ha ritirato entro questo tempo non parte più: niente esecuzioni a sorpresa ore dopo. */
+const STALE_CALL_MS = 120_000;
+
+const isPendingResult = (result: AgentCallResult | undefined) => Boolean(result?.ok && result.data.status === "pending_approval");
 
 const rpcId = (message: unknown) => {
   if (!message || typeof message !== "object" || !("id" in message)) return null;
@@ -30,6 +34,27 @@ const bodyMethod = (message: unknown) => {
   if (!message || typeof message !== "object") return null;
   const method = (message as { method?: unknown }).method;
   return typeof method === "string" ? method : null;
+};
+
+/** Valore che Mcp-Name deve riportare: params.name (tools/call, prompts/get) o params.uri (resources/read). */
+const bodyName = (message: unknown) => {
+  if (!message || typeof message !== "object") return null;
+  const params = (message as { params?: unknown }).params;
+  if (!params || typeof params !== "object") return null;
+  const { name, uri } = params as { name?: unknown; uri?: unknown };
+  if (typeof name === "string") return name;
+  return typeof uri === "string" ? uri : null;
+};
+
+/** Le intestazioni MCP con caratteri non ASCII arrivano come =?base64?…?= */
+const decodeHeaderValue = (value: string) => {
+  const match = /^=\?base64\?([A-Za-z0-9+/=]*)\?=$/.exec(value);
+  if (!match) return value;
+  try {
+    return new TextDecoder().decode(Uint8Array.from(atob(match[1]), (char) => char.charCodeAt(0)));
+  } catch {
+    return null;
+  }
 };
 
 const protocolVersion = (request: Request, message: unknown) => request.headers.get("mcp-protocol-version") ?? metaProtocolVersion(message);
@@ -54,6 +79,11 @@ const protocolStatus = (request: Request, message: unknown): { status: number; b
   const method = bodyMethod(message);
   if (headerMethod && method && headerMethod !== method) {
     return error(400, -32020, "Mcp-Method non coincide con il metodo JSON-RPC.");
+  }
+  const headerName = request.headers.get("mcp-name");
+  const name = bodyName(message);
+  if (headerName && name !== null && decodeHeaderValue(headerName) !== name) {
+    return error(400, -32020, "Mcp-Name non coincide con il nome nel corpo della richiesta.");
   }
   const version = headerVersion ?? fromMeta;
   if (version && !(AGENT_PROTOCOL_VERSIONS as readonly string[]).includes(version)) {
@@ -85,6 +115,8 @@ export interface HttpHubOptions {
   now?: () => number;
   approvalWaitMs?: number;
   pollWaitMs?: number;
+  /** Quanto studyos_approval_status aspetta una conferma ancora aperta prima di rispondere. */
+  approvalPollMs?: number;
   persist?: () => Promise<void>;
 }
 
@@ -95,6 +127,7 @@ interface CallJob {
   args: Record<string, unknown>;
   actor: AgentActor;
   summary: string;
+  queuedAt: number;
 }
 
 interface ConsentJob {
@@ -127,6 +160,7 @@ export class HttpHub {
   private readonly now: () => number;
   private readonly approvalWaitMs: number;
   private readonly pollWaitMs: number;
+  private readonly approvalPollMs: number;
   private pairCode = "";
   private pairExpires = 0;
   private pairFailures = 0;
@@ -134,6 +168,9 @@ export class HttpHub {
   private readonly calls: CallJob[] = [];
   private readonly consents: ConsentJob[] = [];
   private readonly finishers = new Map<string, (result: AgentCallResult) => void>();
+  /** Azioni non ancora concluse dal browser, anche dopo che l'agente ha ricevuto pending_approval. */
+  private readonly open = new Set<string>();
+  private readonly watchers = new Map<string, Set<(result: AgentCallResult) => void>>();
   private readonly waiters: Waiter[] = [];
   private lastSeen = 0;
   private publishedSeen = 0;
@@ -143,8 +180,10 @@ export class HttpHub {
   constructor(options: HttpHubOptions) {
     this.options = options;
     this.now = options.now ?? (() => Date.now());
-    this.approvalWaitMs = options.approvalWaitMs ?? 110_000;
+    // Sotto i 60 s: è il timeout predefinito dell'SDK MCP TypeScript (Claude Desktop, Cursor) e di Codex.
+    this.approvalWaitMs = options.approvalWaitMs ?? 45_000;
     this.pollWaitMs = options.pollWaitMs ?? 20_000;
+    this.approvalPollMs = options.approvalPollMs ?? 40_000;
     this.oauth = new OauthServer(options.canonical, this.now);
     this.bridgeToken = randomToken(32);
     this.serviceToken = randomToken(32);
@@ -192,7 +231,7 @@ export class HttpHub {
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const host = request.headers.get("host") ?? url.host;
-    const mcp = url.pathname === AGENT_MCP_PATH;
+    const mcp = url.pathname === AGENT_MCP_PATH || url.pathname === "/";
     if (host.toLowerCase() !== url.host.toLowerCase() || !this.options.allowHost(host)) {
       return this.json(421, { error: "Host non ammesso." });
     }
@@ -204,6 +243,7 @@ export class HttpHub {
 
     try {
       const response = await this.route(request, url, origin);
+      if (mcp) this.traceMcp(request, response);
       return this.withCors(request, response, mcp);
     } catch (error) {
       const payload = error instanceof Error && error.message === "payload";
@@ -223,8 +263,9 @@ export class HttpHub {
       });
     }
     if (request.method === "GET" && (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp")) {
+      // RFC 9728: il documento alla radice descrive la radice, quello con /mcp descrive /mcp.
       return this.json(200, {
-        resource: this.options.canonical,
+        resource: url.pathname.endsWith("/mcp") ? this.options.canonical : this.options.issuer,
         authorization_servers: [this.options.issuer],
         scopes_supported: ["studyos:read", "studyos:write", "offline_access"],
         bearer_methods_supported: ["header"]
@@ -240,6 +281,7 @@ export class HttpHub {
         await this.markDirty();
         return this.json(201, {
           client_id: created.client.clientId,
+          client_id_issued_at: Math.floor(Date.parse(created.client.createdAt) / 1000),
           client_name: created.client.clientName,
           redirect_uris: created.client.redirectUris,
           token_endpoint_auth_method: "none",
@@ -271,16 +313,19 @@ export class HttpHub {
     }
     if (request.method === "POST" && url.pathname === "/token") {
       return this.exclusive(async () => {
-        const raw = await this.readBody(request);
-        const form = new URLSearchParams(request.headers.get("content-type")?.includes("application/json") ? "" : raw);
-        if (request.headers.get("content-type")?.includes("application/json")) {
-          const parsed = JSON.parse(raw || "{}") as Record<string, unknown>;
-          for (const [key, value] of Object.entries(parsed)) if (typeof value === "string") form.set(key, value);
-        }
+        const form = await this.readForm(request);
         const exchanged = await this.oauth.exchange(form);
         if (!exchanged.ok) return this.json(exchanged.status, { error: exchanged.error });
         await this.markDirty();
         return this.json(200, exchanged.body);
+      });
+    }
+    if (request.method === "POST" && url.pathname === "/revoke") {
+      return this.exclusive(async () => {
+        const form = await this.readForm(request);
+        await this.oauth.revokeToken(form.get("token") ?? "", form.get("client_id") ?? undefined);
+        await this.markDirty();
+        return this.json(200, {});
       });
     }
     if (request.method === "POST" && url.pathname === "/pair") {
@@ -342,18 +387,42 @@ export class HttpHub {
       const job = await this.poll(site);
       return this.json(200, job ?? { type: "idle" });
     }
-    if (url.pathname === AGENT_MCP_PATH) return this.mcp(request);
+    if (url.pathname === AGENT_MCP_PATH || url.pathname === "/") return this.mcp(request, url);
     return this.json(404, { error: "Non trovato." });
   }
 
-  private async mcp(request: Request): Promise<Response> {
+  /** Form OAuth: x-www-form-urlencoded o JSON; client_id anche da Authorization: Basic (client_secret_basic). */
+  private async readForm(request: Request) {
+    const raw = await this.readBody(request);
+    const json = request.headers.get("content-type")?.includes("application/json") ?? false;
+    const form = new URLSearchParams(json ? "" : raw);
+    if (json) {
+      const parsed = JSON.parse(raw || "{}") as Record<string, unknown>;
+      for (const [key, value] of Object.entries(parsed)) if (typeof value === "string") form.set(key, value);
+    }
+    const basic = /^Basic\s+(.+)$/i.exec(request.headers.get("authorization") ?? "");
+    if (basic && !form.get("client_id")) {
+      try {
+        const decoded = atob(basic[1].trim());
+        const clientId = decodeURIComponent(decoded.slice(0, decoded.includes(":") ? decoded.indexOf(":") : undefined));
+        if (clientId) form.set("client_id", clientId);
+      } catch {
+        // intestazione malformata: il client_id manca e /token risponde invalid_client
+      }
+    }
+    return form;
+  }
+
+  private async mcp(request: Request, url: URL): Promise<Response> {
     if (request.method === "DELETE") return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
-    if (request.method !== "POST") return this.json(request.method === "GET" ? 405 : 405, { error: request.method === "GET" ? "Usa POST. Il server risponde in JSON." : "Metodo non ammesso." });
+    // Nessuno stream GET (rimosso dal protocollo 2026-07-28): 405 come chiede la specifica.
+    if (request.method !== "POST") return this.json(405, { error: "Usa POST. Il server risponde in JSON." }, { allow: "POST, DELETE" });
     const token = this.bearer(request);
     const actor = await this.actorFor(token);
     if (!actor) {
+      const metadata = `${this.options.issuer}/.well-known/oauth-protected-resource${url.pathname === AGENT_MCP_PATH ? AGENT_MCP_PATH : ""}`;
       return this.json(401, { error: "unauthorized" }, {
-        "www-authenticate": `Bearer realm="studyos", resource_metadata="${this.options.issuer}/.well-known/oauth-protected-resource/mcp"`
+        "www-authenticate": `Bearer realm="studyos", resource_metadata="${metadata}"`
       });
     }
     let message: unknown;
@@ -369,21 +438,31 @@ export class HttpHub {
       actor,
       ledger: this.ledger,
       connected: () => this.connected(),
-      invoke: (call) => this.invoke(call)
+      invoke: (call) => this.invoke(call),
+      waitForResult: (id) => this.waitForResult(id)
     });
     if (!response) return new Response(null, { status: 202, headers: { "cache-control": "no-store" } });
     const version = protocolVersion(request, message);
     const errorCode = response.error && typeof response.error === "object" ? (response.error as { code?: unknown }).code : undefined;
     // 404 solo sul protocollo moderno: un client precedente legge l'errore JSON-RPC su HTTP 200.
     if (version === "2026-07-28" && errorCode === -32601) return this.json(404, response);
-    const accept = request.headers.get("accept") ?? "";
-    if (accept.includes("text/event-stream") && !accept.includes("application/json")) {
-      return new Response(`event: message\ndata: ${JSON.stringify(response)}\n\n`, {
-        status: 200,
-        headers: { "content-type": "text/event-stream", "cache-control": "no-cache" }
-      });
-    }
+    // ChatGPT segna come incoerente una discovery il cui Content-Type è text/event-stream, anche con HTTP 200.
     return this.json(200, response);
+  }
+
+  private traceMcp(request: Request, response: Response) {
+    const url = new URL(request.url);
+    console.log(JSON.stringify({
+      studyos: "mcp",
+      path: url.pathname,
+      http: request.method,
+      status: response.status,
+      protocol: request.headers.get("mcp-protocol-version") ?? "",
+      rpc: request.headers.get("mcp-method") ?? "",
+      accept: (request.headers.get("accept") ?? "").slice(0, 90),
+      origin: request.headers.get("origin") ?? "",
+      type: response.headers.get("content-type") ?? ""
+    }));
   }
 
   private invoke(call: { id: string; name: string; args: Record<string, unknown>; actor: AgentActor }) {
@@ -404,7 +483,7 @@ export class HttpHub {
             data: {
               status: "pending_approval",
               approvalId: call.id,
-              message: "L'azione è in attesa della conferma in StudyOS. Non ripeterla: chiama studyos_approval_status con questo approvalId."
+              message: "L'azione aspetta la conferma della persona in StudyOS. Non ripeterla: avvisa la persona e chiama studyos_approval_status con questo approvalId."
             }
           });
           await this.markDirty();
@@ -412,11 +491,13 @@ export class HttpHub {
         });
       }, this.approvalWaitMs);
       void this.exclusive(async () => {
+        if (this.dropStaleCalls()) await this.markDirty();
         this.finishers.set(call.id, (result) => {
           this.ledger.remember(call.id, result);
           done(result);
         });
-        this.calls.push({ type: "call", id: call.id, name: call.name, args: call.args, actor: call.actor, summary: toolSummary(call.name, call.args) });
+        this.open.add(call.id);
+        this.calls.push({ type: "call", id: call.id, name: call.name, args: call.args, actor: call.actor, summary: toolSummary(call.name, call.args), queuedAt: this.now() });
         this.claim();
       });
     });
@@ -425,13 +506,57 @@ export class HttpHub {
   private settle(id: string, result: AgentCallResult) {
     const index = this.calls.findIndex((item) => item.id === id);
     if (index >= 0) this.calls.splice(index, 1);
+    this.open.delete(id);
     const finish = this.finishers.get(id);
     if (finish) {
       this.finishers.delete(id);
       finish(result);
-      return;
+    } else {
+      this.ledger.remember(id, result);
     }
-    this.ledger.remember(id, result);
+    const waiting = this.watchers.get(id);
+    this.watchers.delete(id);
+    for (const notify of waiting ?? []) notify(result);
+  }
+
+  /** Esito di un'azione: se è ancora in attesa di conferma, aspetta un poco che la persona decida. */
+  waitForResult(id: string): Promise<AgentCallResult | undefined> {
+    const current = this.ledger.recall(id);
+    if (!isPendingResult(current) || !this.open.has(id)) return Promise.resolve(current);
+    return new Promise((resolve) => {
+      const listeners = this.watchers.get(id) ?? new Set<(result: AgentCallResult) => void>();
+      const notify = (result: AgentCallResult) => {
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        listeners.delete(notify);
+        resolve(this.ledger.recall(id));
+      }, this.approvalPollMs);
+      listeners.add(notify);
+      this.watchers.set(id, listeners);
+    });
+  }
+
+  /** Toglie dalla coda le azioni che nessun browser ha ritirato in tempo e lo scrive nell'esito. */
+  private dropStaleCalls() {
+    const limit = this.now() - STALE_CALL_MS;
+    let dropped = 0;
+    for (let index = this.calls.length - 1; index >= 0; index -= 1) {
+      const job = this.calls[index];
+      if (job.queuedAt > limit) continue;
+      this.calls.splice(index, 1);
+      dropped += 1;
+      this.settle(job.id, {
+        ok: false,
+        code: "not_connected",
+        error: "StudyOS non ha ricevuto l'azione entro 2 minuti e non l'ha eseguita. Chiedi alla persona di aprire StudyOS e riprova."
+      });
+    }
+    for (let index = this.consents.length - 1; index >= 0; index -= 1) {
+      if (!this.oauth.pendingConsent(this.consents[index].requestId)) this.consents.splice(index, 1);
+    }
+    return dropped > 0;
   }
 
   private async poll(site: BridgeSite): Promise<Job | null> {
@@ -443,6 +568,7 @@ export class HttpHub {
     await this.exclusive(async () => {
       this.lastSeen = this.now();
       if (site === "published") this.publishedSeen = this.now();
+      if (this.dropStaleCalls()) await this.markDirty();
       this.waiters.push(entry);
       entry.timer = setTimeout(() => {
         void this.exclusive(async () => {
@@ -509,6 +635,8 @@ export class HttpHub {
       token_endpoint: `${issuer}/token`,
       registration_endpoint: `${issuer}/register`,
       revocation_endpoint: `${issuer}/revoke`,
+      revocation_endpoint_auth_methods_supported: ["none"],
+      authorization_response_iss_parameter_supported: true,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
@@ -602,14 +730,22 @@ export class HttpHub {
     headers.set("access-control-allow-origin", origin);
     headers.set("vary", "Origin");
     headers.set("access-control-allow-private-network", "true");
+    // Un client MCP nel browser deve poter leggere la sfida OAuth e la versione del protocollo.
+    headers.set("access-control-expose-headers", "www-authenticate, mcp-protocol-version, mcp-session-id");
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   }
 
   private preflight(request: Request, mcp: boolean) {
     const origin = request.headers.get("origin");
+    // Intestazioni standard MCP più le Mcp-Param-* dei tool: si rimandano quelle chieste, se sono nomi validi.
+    const asked = (request.headers.get("access-control-request-headers") ?? "")
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => /^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(item));
+    const allowed = new Set(["authorization", "content-type", "accept", "mcp-protocol-version", "mcp-method", "mcp-name", "mcp-session-id", "last-event-id", ...asked]);
     const headers = new Headers({
       "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-      "access-control-allow-headers": "authorization, content-type, accept, access-control-request-private-network",
+      "access-control-allow-headers": [...allowed].join(", "),
       "access-control-allow-private-network": "true",
       "access-control-max-age": "600"
     });

@@ -36,7 +36,8 @@ export class StudyHubObject extends DurableObject<Env> {
           if (!requestOrigin) return mcp;
           if (requestOrigin === PUBLISHED_ORIGIN || requestOrigin === origin) return true;
           if (/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(requestOrigin)) return true;
-          if (mcp && /^https:\/\/([a-z0-9-]+\.)?(chatgpt\.com|chat\.openai\.com|claude\.ai|claude\.com)$/.test(requestOrigin)) return true;
+          // /mcp vuole sempre il token Bearer: qualsiasi client web in https (ChatGPT, Claude, Grok, Gemini, ispettori MCP) può chiamarlo.
+          if (mcp && /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(requestOrigin)) return true;
           return false;
         },
         persist: async () => {

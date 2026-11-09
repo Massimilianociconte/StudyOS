@@ -71,12 +71,16 @@ test("catalogo: nomi unici, schemi chiusi, eliminazioni con confirm", () => {
     assert.equal(extra.ok, false, tool.name);
     if (tool.risk === "destructive") {
       assert.equal(tool.inputSchema.required.includes("confirm"), true, tool.name);
-      assert.equal(tool.inputSchema.properties.confirm.const, true, tool.name);
+      assert.deepEqual(tool.inputSchema.properties.confirm.enum, [true], tool.name);
       assert.equal(parseToolArgs(tool.inputSchema, { id: "task_1", confirm: false }).ok, false);
       assert.equal(parseToolArgs(tool.inputSchema, { id: "task_1", confirm: true }).ok, true);
     }
   }
   assert.equal(parseToolArgs({ type: "object", additionalProperties: false, properties: { note: { type: "string", pattern: "^[a-z]+$" } } }, { note: "" }).ok, true);
+  // Gemini e i function schema OpenAI rifiutano "const" e required vuoti.
+  const schemas = JSON.stringify(AGENT_TOOLS.map((tool) => tool.inputSchema));
+  assert.equal(schemas.includes('"const"'), false);
+  assert.equal(schemas.includes('"required":[]'), false);
   assert.equal(parseToolArgs(findAgentTool("studyos_get_task").inputSchema, { id: "" }).ok, false);
 });
 
@@ -139,7 +143,9 @@ test("MCP: initialize, elenco senza app, argomenti invalidi e vault di conferma"
   };
   const offline = { ...deps, connected: () => false, invoke: async () => { throw new Error("non doveva chiamare l'app"); } };
   const init = await handleMcpRpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2099-01-01" } }, deps);
-  assert.equal(init.result.protocolVersion, "2025-06-18");
+  assert.equal(init.result.protocolVersion, "2025-11-25");
+  const echoed = await handleMcpRpc({ jsonrpc: "2.0", id: 10, method: "initialize", params: { protocolVersion: "2025-06-18" } }, deps);
+  assert.equal(echoed.result.protocolVersion, "2025-06-18");
   assert.equal(init.result.serverInfo.name, "studyos-mcp-server");
   const listed = await handleMcpRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, offline);
   assert.equal(listed.result.tools.length, AGENT_TOOLS.length);
@@ -195,6 +201,7 @@ test("MCP: server/discover e tools/list nel formato che ChatGPT usa nel 2026", a
   assert.equal(discovered.error, undefined);
   assert.equal(discovered.result.resultType, "complete");
   assert.equal(discovered.result.supportedVersions.includes("2026-07-28"), true);
+  assert.equal(discovered.result.supportedVersions.includes("2025-11-25"), true);
   assert.equal(discovered.result.capabilities.tools.listChanged, false);
   assert.equal(typeof discovered.result.ttlMs, "number");
   assert.ok(discovered.result.ttlMs >= 0);
@@ -207,6 +214,9 @@ test("MCP: server/discover e tools/list nel formato che ChatGPT usa nel 2026", a
   assert.equal(typeof listed.result.ttlMs, "number");
   assert.equal(listed.result.cacheScope, "public");
   assert.equal(listed.result.tools.length, AGENT_TOOLS.length);
+  const prompts = await handleMcpRpc({ jsonrpc: "2.0", id: 4, method: "prompts/list", params: {} }, deps);
+  assert.deepEqual(prompts.result.prompts, []);
+  assert.equal(prompts.result.resultType, "complete");
 
   const called = await handleMcpRpc({
     jsonrpc: "2.0",
@@ -299,4 +309,79 @@ test("OAuth: PKCE, redirect, audience, code usa e getta, refresh ruotato", async
   oauth.revokeAll();
   assert.equal(await oauth.authenticate(again.body.access_token), null);
   void now;
+});
+
+test("MCP: annotazioni coerenti con il rischio e liste lunghe accorciate in JSON valido", async () => {
+  const listed = await handleMcpRpc({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { actor, ledger: new ResultLedger(), connected: () => false, invoke: async () => ({ ok: true, data: {} }) });
+  for (const tool of listed.result.tools) {
+    const source = findAgentTool(tool.name);
+    assert.equal(tool.annotations.readOnlyHint, source.risk === "read", tool.name);
+    if (source.risk === "destructive") assert.equal(tool.annotations.destructiveHint, true, tool.name);
+    if (source.risk === "read") assert.equal(tool.annotations.destructiveHint, false, tool.name);
+    assert.equal(typeof tool.annotations.title, "string", tool.name);
+  }
+  assert.equal(listed.result.tools.find((tool) => tool.name === "studyos_create_task").annotations.destructiveHint, false);
+  assert.equal(listed.result.tools.find((tool) => tool.name === "studyos_update_task").annotations.destructiveHint, true);
+
+  const items = Array.from({ length: 400 }, (_, index) => ({ id: `task_${index}`, title: "x".repeat(200) }));
+  const long = await handleMcpRpc({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "studyos_list_tasks", arguments: {} } }, {
+    actor,
+    ledger: new ResultLedger(),
+    connected: () => true,
+    invoke: async () => ({ ok: true, data: { total: 400, count: 400, offset: 0, limit: 400, has_more: false, items } })
+  });
+  const parsed = JSON.parse(long.result.content[0].text);
+  assert.equal(parsed.data.has_more, true);
+  assert.equal(parsed.data.next_offset, parsed.data.items.length);
+  assert.ok(parsed.data.items.length < 400);
+  assert.ok(long.result.content[0].text.length <= 24_000);
+});
+
+test("OAuth: iss nel redirect, resource assente o radice, cursor://, loopback con porta diversa, revoca", async () => {
+  const canonical = "https://studyos-agent.esempio.workers.dev/mcp";
+  const oauth = new OauthServer(canonical);
+  const verifier = "b".repeat(50);
+  const challenge = await sha256Base64Url(verifier);
+  assert.equal(oauth.register({ client_name: "Male", redirect_uris: ["javascript:alert(1)"] }).ok, false);
+  assert.equal(oauth.register({ client_name: "Male", redirect_uris: ["http://evil.example/cb"] }).ok, false);
+  const cursor = oauth.register({ client_name: "Cursor", redirect_uris: ["cursor://anysphere.cursor-mcp/oauth/callback"], token_endpoint_auth_method: "client_secret_post" });
+  assert.equal(cursor.ok, true);
+  const local = oauth.register({ client_name: "Claude Code", redirect_uris: ["http://localhost:33418/callback"] });
+  assert.equal(local.ok, true);
+
+  const start = (client, redirect, extra = {}) => oauth.beginAuthorization(new URLSearchParams({
+    client_id: client.client.clientId,
+    redirect_uri: redirect,
+    response_type: "code",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    scope: "studyos:read studyos:write",
+    state: "s",
+    ...extra
+  }));
+  const noResource = start(cursor, "cursor://anysphere.cursor-mcp/oauth/callback");
+  assert.equal(noResource.ok, true);
+  assert.equal(start(cursor, "cursor://anysphere.cursor-mcp/oauth/callback", { resource: "https://studyos-agent.esempio.workers.dev" }).ok, true);
+  assert.equal(start(cursor, "cursor://altro/oauth/callback").ok, false);
+  const otherPort = start(local, "http://localhost:51234/callback");
+  assert.equal(otherPort.ok, true);
+  assert.equal(start(local, "http://localhost:51234/altro").ok, false);
+
+  const decided = oauth.decide(otherPort.requestId, true, ["studyos:read"]);
+  const back = new URL(decided.redirectTo);
+  assert.equal(back.origin, "http://localhost:51234");
+  assert.equal(back.searchParams.get("iss"), "https://studyos-agent.esempio.workers.dev");
+  const token = await oauth.exchange(new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: local.client.clientId,
+    redirect_uri: "http://localhost:51234/callback",
+    code: back.searchParams.get("code"),
+    code_verifier: verifier
+  }));
+  assert.equal(token.ok, true);
+  assert.deepEqual((await oauth.authenticate(token.body.access_token)).scopes, ["studyos:read"]);
+  await oauth.revokeToken(token.body.refresh_token);
+  assert.equal(await oauth.authenticate(token.body.access_token), null);
+  const refreshed = await oauth.exchange(new URLSearchParams({ grant_type: "refresh_token", client_id: local.client.clientId, refresh_token: token.body.refresh_token }));
+  assert.equal(refreshed.ok, false);
 });

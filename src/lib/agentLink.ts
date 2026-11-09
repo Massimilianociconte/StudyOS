@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
-import { findAgentTool, toolSummary } from "../agent/catalog";
-import { executeAgentTool } from "../agent/execute";
+import { findAgentTool } from "../agent/catalog";
+import { describeAgentCall, executeAgentTool } from "../agent/execute";
 import { hubCandidates, isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { decideAgentAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
 import type { AgentCallResult, AuditEntry } from "../agent/types";
@@ -31,18 +31,33 @@ export interface AgentLinkSnapshot {
   error: string;
   notice: string;
   pendingCall: PendingAgentCall | null;
+  /** Altre azioni in coda dietro a quella mostrata. */
+  queuedCalls: number;
   pendingConsent: PendingAgentConsent | null;
   policy: AgentPolicy;
   audit: AuditEntry[];
 }
 
 type ConsentChoice = { approve: boolean; scopes: string[] };
+type CallChoice = "approve" | "deny" | "locked" | "expired";
+
+/** Una conferma lasciata a metà non vale per sempre: dopo 30 minuti l'agente non la aspetta più. */
+const APPROVAL_TTL_MS = 30 * 60_000;
 
 const listeners = new Set<() => void>();
 let generation = 0;
 let pollAbort: AbortController | null = null;
-let decisionWait: ((choice: "approve" | "deny") => void) | null = null;
-let consentWait: ((choice: ConsentChoice) => void) | null = null;
+// Code di conferma: il giro di poll continua, così le letture non aspettano la decisione su una modifica.
+const callQueue: Array<{ call: PendingAgentCall; decide: (choice: CallChoice) => void }> = [];
+const consentQueue: Array<{ job: PendingAgentConsent; decide: (choice: ConsentChoice) => void }> = [];
+// Le azioni girano una alla volta, nell'ordine in cui la persona le approva.
+let running: Promise<unknown> = Promise.resolve();
+
+const serial = <T>(task: () => Promise<T>): Promise<T> => {
+  const next = running.then(task, task);
+  running = next.catch(() => undefined);
+  return next;
+};
 
 const storedSlice = () => ({
   paired: Boolean(readAgentToken()),
@@ -55,6 +70,7 @@ let snapshot: AgentLinkSnapshot = {
   error: "",
   notice: "",
   pendingCall: null,
+  queuedCalls: 0,
   pendingConsent: null,
   ...storedSlice()
 };
@@ -66,6 +82,7 @@ const refresh = (patch: Partial<AgentLinkSnapshot> = {}) => {
     && next.error === snapshot.error
     && next.notice === snapshot.notice
     && next.pendingCall === snapshot.pendingCall
+    && next.queuedCalls === snapshot.queuedCalls
     && next.pendingConsent === snapshot.pendingConsent
     && JSON.stringify(next.policy) === JSON.stringify(snapshot.policy)
     && JSON.stringify(next.audit) === JSON.stringify(snapshot.audit);
@@ -170,89 +187,93 @@ const deliver = async (id: string, result: AgentCallResult) => {
   }
 };
 
+const showQueues = (patch: Partial<AgentLinkSnapshot> = {}) => refresh({
+  pendingCall: callQueue[0]?.call ?? null,
+  queuedCalls: Math.max(0, callQueue.length - 1),
+  pendingConsent: consentQueue[0]?.job ?? null,
+  ...patch
+});
+
+const vaultClosed = () => {
+  const current = useStudyStore.getState();
+  return current.loading || current.locked;
+};
+
+const askPerson = (call: PendingAgentCall) => new Promise<CallChoice>((resolve) => {
+  let finished = false;
+  const entry = { call, decide: (choice: CallChoice) => finish(choice) };
+  const watch = window.setInterval(() => {
+    if (vaultClosed()) finish("locked");
+  }, 400);
+  const expiry = window.setTimeout(() => finish("expired"), APPROVAL_TTL_MS);
+  function finish(choice: CallChoice) {
+    if (finished) return;
+    finished = true;
+    window.clearInterval(watch);
+    window.clearTimeout(expiry);
+    const index = callQueue.indexOf(entry);
+    if (index >= 0) callQueue.splice(index, 1);
+    showQueues();
+    resolve(choice);
+  }
+  callQueue.push(entry);
+  showQueues({ notice: "" });
+});
+
+const policyFor = (risk: AgentRisk) => decideAgentAction(readStoredPolicy(), risk);
+
 const handleCall = async (job: { id: string; name: string; args: Record<string, unknown>; actorName: string }) => {
   const tool = findAgentTool(job.name);
-  const summary = toolSummary(job.name, job.args);
-  if (!tool) {
-    const result: AgentCallResult = { ok: false, code: "denied", error: "Strumento non riconosciuto da questa versione di StudyOS." };
-    record({ tool: job.name, risk: "write", decision: "deny", status: "denied", summary, actor: job.actorName });
+  const summary = describeAgentCall(job.name, job.args);
+  const finish = async (result: AgentCallResult, decision: PolicyChoice) => {
+    record({ tool: job.name, risk: tool?.risk ?? "write", decision, status: outcome(result), summary, actor: job.actorName });
     await deliver(job.id, result);
-    return;
-  }
-  const vaultClosed = () => {
-    const current = useStudyStore.getState();
-    return current.loading || current.locked;
   };
+  if (!tool) {
+    await finish({ ok: false, code: "denied", error: "Strumento non riconosciuto da questa versione di StudyOS." }, "deny");
+    return;
+  }
+  // Vault chiuso: l'esecuzione risponde «bloccato» senza toccare i dati e senza dialogo.
   if (vaultClosed()) {
-    const result = await executeAgentTool(job.name, job.args);
-    record({ tool: job.name, risk: tool.risk, decision: decideAgentAction(readStoredPolicy(), tool.risk), status: outcome(result), summary, actor: job.actorName });
-    await deliver(job.id, result);
+    await finish(await executeAgentTool(job.name, job.args), policyFor(tool.risk));
     return;
   }
-  const decision = decideAgentAction(readStoredPolicy(), tool.risk);
+  const decision = policyFor(tool.risk);
   if (decision === "deny") {
-    const result: AgentCallResult = { ok: false, code: "denied", error: "Bloccato dalla policy di StudyOS. Puoi cambiarla in Impostazioni → Agenti." };
-    record({ tool: job.name, risk: tool.risk, decision: "deny", status: "denied", summary, actor: job.actorName });
-    await deliver(job.id, result);
+    await finish({ ok: false, code: "denied", error: "Bloccato dalla policy di StudyOS. Puoi cambiarla in Impostazioni → Agenti." }, "deny");
     return;
   }
-  let taken: PolicyChoice = decision;
   if (decision === "ask") {
-    refresh({
-      pendingCall: {
-        id: job.id,
-        name: job.name,
-        title: tool.title,
-        args: job.args,
-        actorName: job.actorName,
-        summary,
-        risk: tool.risk
-      },
-      notice: ""
-    });
-    const choice = await new Promise<"approve" | "deny" | "locked">((resolve) => {
-      decisionWait = (value) => resolve(value);
-      const watch = window.setInterval(() => {
-        if (vaultClosed()) {
-          window.clearInterval(watch);
-          decisionWait = null;
-          resolve("locked");
-        }
-      }, 400);
-      const previous = decisionWait;
-      decisionWait = (value) => {
-        window.clearInterval(watch);
-        previous?.(value);
-      };
-    });
-    decisionWait = null;
-    refresh({ pendingCall: null });
-    if (choice !== "approve") {
-      if (choice === "locked") {
-        const result = await executeAgentTool(job.name, job.args);
-        record({ tool: job.name, risk: tool.risk, decision: "ask", status: outcome(result), summary, actor: job.actorName });
-        await deliver(job.id, result);
-        return;
-      }
-      const result: AgentCallResult = { ok: false, code: "denied", error: "Rifiutato in StudyOS." };
-      record({ tool: job.name, risk: tool.risk, decision: "ask", status: "denied", summary, actor: job.actorName });
-      await deliver(job.id, result);
+    const choice = await askPerson({ id: job.id, name: job.name, title: tool.title, args: job.args, actorName: job.actorName, summary, risk: tool.risk });
+    if (choice === "deny") {
+      await finish({ ok: false, code: "denied", error: "Rifiutato in StudyOS." }, "ask");
       return;
     }
-    taken = "ask";
+    if (choice === "expired") {
+      await finish({ ok: false, code: "denied", error: "Nessuna conferma in StudyOS entro 30 minuti: l'azione non è stata eseguita." }, "ask");
+      return;
+    }
   }
-  const result = await executeAgentTool(job.name, job.args);
-  record({ tool: job.name, risk: tool.risk, decision: taken, status: outcome(result), summary, actor: job.actorName });
-  await deliver(job.id, result);
+  const result = await serial(() => executeAgentTool(job.name, job.args));
+  await finish(result, decision);
 };
 
 const handleConsent = async (job: PendingAgentConsent) => {
-  refresh({ pendingConsent: job, notice: "" });
   const choice = await new Promise<ConsentChoice>((resolve) => {
-    consentWait = resolve;
+    const entry = {
+      job,
+      decide: (value: ConsentChoice) => {
+        const index = consentQueue.indexOf(entry);
+        if (index < 0) return;
+        consentQueue.splice(index, 1);
+        showQueues();
+        resolve(value);
+      }
+    };
+    consentQueue.push(entry);
+    showQueues({ notice: "" });
   });
-  consentWait = null;
-  refresh({ pendingConsent: null });
+  if (!readAgentToken()) return;
   try {
     await postJson("/oauth/decide", {
       token: readAgentToken(),
@@ -264,6 +285,11 @@ const handleConsent = async (job: PendingAgentConsent) => {
   } catch (error) {
     refresh({ error: error instanceof Error ? error.message : "Conferma non inviata." });
   }
+};
+
+const dropQueues = () => {
+  for (const entry of [...callQueue]) entry.decide("deny");
+  for (const entry of [...consentQueue]) entry.decide({ approve: false, scopes: [] });
 };
 
 const heartbeat = async () => {
@@ -314,7 +340,7 @@ const loop = async (mine: number) => {
       refresh({ hub: "up", error: snapshot.error.startsWith("Il programma") ? "" : snapshot.error });
       if (!isRecord(job) || job.type === "idle") continue;
       if (job.type === "consent" && typeof job.requestId === "string") {
-        await handleConsent({
+        void handleConsent({
           requestId: job.requestId,
           clientName: typeof job.clientName === "string" && job.clientName.trim() ? job.clientName : "Agente",
           scopes: Array.isArray(job.scopes) ? job.scopes.filter((item): item is string => typeof item === "string") : [],
@@ -324,7 +350,7 @@ const loop = async (mine: number) => {
       }
       if (job.type === "call" && typeof job.id === "string" && typeof job.name === "string" && isRecord(job.args)) {
         const actor = isRecord(job.actor) && typeof job.actor.name === "string" ? job.actor.name : "Agente";
-        await handleCall({ id: job.id, name: job.name, args: job.args, actorName: actor });
+        void handleCall({ id: job.id, name: job.name, args: job.args, actorName: actor }).catch(() => undefined);
       }
     } catch (error) {
       if (mine !== generation) return;
@@ -355,11 +381,7 @@ export const startAgentLink = () => {
     if (generation === mine) generation += 1;
     window.clearInterval(heart);
     pollAbort?.abort();
-    decisionWait?.("deny");
-    decisionWait = null;
-    consentWait?.({ approve: false, scopes: [] });
-    consentWait = null;
-    refresh({ pendingCall: null, pendingConsent: null });
+    dropQueues();
   };
 };
 
@@ -405,12 +427,12 @@ export const pairAgent = async (code: string) => {
 
 export const disconnectAgent = () => {
   writeAgentToken(null);
+  dropQueues();
   refresh({
     error: "",
     notice: localProgram()
       ? "Browser scollegato. Gli agenti non possono più leggere questo studio finché non inserisci un codice nuovo."
-      : "Browser scollegato. Gli agenti non possono più leggere questo studio finché non incolli di nuovo la chiave.",
-    pendingCall: null
+      : "Browser scollegato. Gli agenti non possono più leggere questo studio finché non incolli di nuovo la chiave."
   });
 };
 
@@ -432,12 +454,12 @@ export const clearTrustedWrites = () => {
   refresh({ notice: "Le modifiche tornano a chiedere conferma." });
 };
 
-export const approvePendingCall = () => decisionWait?.("approve");
-export const denyPendingCall = () => decisionWait?.("deny");
+export const approvePendingCall = () => callQueue[0]?.decide("approve");
+export const denyPendingCall = () => callQueue[0]?.decide("deny");
 
 export const decideAgentConsent = (approve: boolean, scopes: string[]) => {
   const granted = approve ? ["studyos:read", ...scopes.filter((scope) => scope === "studyos:write")] : [];
-  consentWait?.({ approve, scopes: granted });
+  consentQueue[0]?.decide({ approve, scopes: granted });
 };
 
 export const revokeAgentAccess = async () => {
