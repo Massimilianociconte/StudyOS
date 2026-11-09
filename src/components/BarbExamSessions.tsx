@@ -15,8 +15,11 @@ export const barbToday = (now: Date) => new Intl.DateTimeFormat("en-CA", { timeZ
 export const barbSessionDate = (date: string) => format(parseISO(date), "d MMMM yyyy", { locale: it });
 export const barbSessionType = (type: string | null) => type ? ({ written: "Scritto", oral: "Orale", practical: "Pratico", exam: "Esame", partial: "Parziale" }[type] ?? type) : "Tipo non pubblicato";
 
+const examSlotKey = (session: BarbExamSession): string =>
+  `${session.date}|${session.type ?? ""}|${session.time ?? ""}`;
+
 export function BarbExamAvailability({ course }: { course: BarbCourse }) {
-  const count = BARB_EXAM_SESSIONS.filter((session) => session.courseId === course.id).length;
+  const count = new Set(BARB_EXAM_SESSIONS.filter(session => session.courseId === course.id).map(examSlotKey)).size;
   return <p className={`mt-2 text-xs font-bold ${count ? "text-[var(--accent-ink)]" : "text-[var(--faint)]"}`}>{count ? `${count} ${count === 1 ? "appello verificato" : "appelli verificati"}` : "Nessun appello verificato"}</p>;
 }
 
@@ -49,11 +52,70 @@ export function BarbExamSessionDetail({ session, course, onClose, inline = false
 export function BarbExamSessions({ course }: { course: BarbCourse }) {
   const today = barbToday(useNow(60_000));
   const [selected, setSelected] = useState<BarbExamSession | null>(null);
-  useEffect(() => setSelected(null), [course.id]);
-  const sessions = BARB_EXAM_SESSIONS.filter((session) => session.courseId === course.id).sort((a, b) => a.date.localeCompare(b.date));
+  const [expanded, setExpanded] = useState<string | null>(null);
+  useEffect(() => {
+    setSelected(null);
+    setExpanded(null);
+  }, [course.id]);
+  const sessions = BARB_EXAM_SESSIONS.filter(session => session.courseId === course.id)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? ""));
+  // The official FBG feed includes distinct enrolments for different teaching units.
+  // Show a single date/time card without discarding any original published registration.
+  const groups = new Map<string, BarbExamSession[]>();
+  for (const session of sessions) {
+    const key = examSlotKey(session);
+    groups.set(key, [...(groups.get(key) ?? []), session]);
+  }
   return <div className="min-w-0">
-    <div className="mb-3 flex items-start gap-3"><span style={{ color: courseColor(course) }}><CourseIcon course={course} className="h-6 w-6" /></span><div className="min-w-0"><h3 className="safe-text text-lg font-black">{course.name}</h3><p className="text-xs font-bold text-[var(--muted)]">Tutti gli appelli pubblicati · {sessions.length}</p></div></div>
-    {sessions.length ? <ul className="grid grid-cols-1 gap-2">{sessions.map((session) => <li key={session.id}><button type="button" onClick={() => setSelected(session)} className="quiet-panel flex w-full min-w-0 flex-wrap items-center gap-2 p-3 text-left hover:bg-[var(--surface)]"><div className="min-w-0 flex-1"><div className="text-sm font-extrabold">{barbSessionDate(session.date)}</div><div className="safe-text mt-1 text-xs text-[var(--muted)]">{barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}</div></div><Tag color={getExamStatus(session, BARB_EXAM_SESSIONS, today) === "prossimo" ? "var(--accent)" : undefined}>{({ passato: "Passato", prossimo: "Prossimo", futuro: "Futuro" })[getExamStatus(session, BARB_EXAM_SESSIONS, today)]}</Tag></button></li>)}</ul> : <EmptyState icon="CalendarDays" title="Nessun appello verificato" body="Nelle fonti consultate non risultano date verificate per questo insegnamento. Non significa che non siano previsti esami." />}
+    <div className="mb-3 flex items-start gap-3">
+      <span style={{ color: courseColor(course) }}><CourseIcon course={course} className="h-6 w-6" /></span>
+      <div className="min-w-0">
+        <h3 className="safe-text text-lg font-black">{course.name}</h3>
+        <p className="text-xs font-bold text-[var(--muted)]">
+          Tutti gli appelli pubblicati · {groups.size}
+          {sessions.length > groups.size && <span> · {sessions.length} registrazioni ufficiali</span>}
+        </p>
+      </div>
+    </div>
+    {groups.size ? <ul className="grid grid-cols-1 gap-2">
+      {[...groups.entries()].map(([key, group]) => {
+        const session = group[0];
+        const status = getExamStatus(session, BARB_EXAM_SESSIONS, today);
+        return <li key={key} className="min-w-0">
+          <button type="button" onClick={() => {
+            if (group.length > 1) {
+              setExpanded(previous => previous === key ? null : key);
+              setSelected(null);
+            } else {
+              setExpanded(null);
+              setSelected(session);
+            }
+          }} className="quiet-panel flex w-full min-w-0 flex-wrap items-center gap-2 p-3 text-left hover:bg-[var(--surface)]">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-extrabold">{barbSessionDate(session.date)}</div>
+              <div className="safe-text mt-1 text-xs text-[var(--muted)]">
+                {barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}
+                {group.length > 1 ? ` · ${group.length} registrazioni` : ""}
+              </div>
+            </div>
+            <Tag color={status === "prossimo" ? "var(--accent)" : undefined}>
+              {({ passato: "Passato", prossimo: "Prossimo", futuro: "Futuro" })[status]}
+            </Tag>
+          </button>
+          {group.length > 1 && expanded === key && <div className="ml-2 mt-1 grid gap-1 border-l-2 border-[var(--accent)] pl-2">
+            {group.map((variant, index) => <button key={variant.id} type="button"
+              onClick={() => setSelected(variant)}
+              className="quiet-panel flex min-w-0 flex-wrap items-center gap-2 p-2 text-left text-xs hover:bg-[var(--surface)]">
+              <span className="min-w-0 flex-1 font-bold">
+                {variant.sourceCourseCode ?? `Registrazione ${index + 1}`}
+                {variant.commission ? ` · ${variant.commission}` : ""}
+              </span>
+              <span className="text-[var(--accent-ink)]">Dettagli</span>
+            </button>)}
+          </div>}
+        </li>;
+      })}
+    </ul> : <EmptyState icon="CalendarDays" title="Nessun appello verificato" body="Nelle fonti consultate non risultano date verificate per questo insegnamento. Non significa che non siano previsti esami." />}
     {selected && selected.courseId === course.id && <BarbExamSessionDetail inline session={selected} course={course} onClose={() => setSelected(null)} />}
   </div>;
 }
