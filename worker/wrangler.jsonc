@@ -1,0 +1,17 @@
+{
+  "name": "studyos-agent",
+  "main": "index.ts",
+  "compatibility_date": "2026-11-09",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "HUB", "class_name": "StudyHubObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["StudyHubObject"] }
+  ]
+}

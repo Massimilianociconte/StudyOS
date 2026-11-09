@@ -1,8 +1,7 @@
 import { useSyncExternalStore } from "react";
-import { AGENT_HUB_ORIGIN } from "../agent/constants";
 import { findAgentTool, toolSummary } from "../agent/catalog";
 import { executeAgentTool } from "../agent/execute";
-import { hubCandidates, normalizePublicHub } from "../agent/hubEndpoint";
+import { hubCandidates, isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { decideAgentAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
 import type { AgentCallResult, AuditEntry } from "../agent/types";
 import { appendAudit, readAgentToken, readAudit, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
@@ -88,7 +87,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-let activeHub = AGENT_HUB_ORIGIN;
+const configuredHub = () => {
+  const value = import.meta.env.VITE_AGENT_HUB_ORIGIN;
+  return typeof value === "string" ? value : "";
+};
 
 const pageOrigin = () => {
   try {
@@ -98,16 +100,32 @@ const pageOrigin = () => {
   }
 };
 
+const candidateList = () => hubCandidates(pageOrigin(), readSavedHub(), configuredHub());
+
+let activeHub = "";
+
+const localProgram = () => isLocalPage(pageOrigin());
+
+const offlineCopy = () => localProgram()
+  ? "Il programma agenti non risponde. Nella cartella di StudyOS avvia npm run agent."
+  : "Il collegamento agenti non risponde. Ricarica StudyOS: ChatGPT parla con questo sito, anche dal telefono, senza il programma sul computer.";
+
 const rememberPublicOrigin = (data: Record<string, unknown>) => {
   const advertised = typeof data.publicOrigin === "string" ? normalizePublicHub(data.publicOrigin) : null;
   if (advertised) writeSavedHub(advertised);
 };
 
-const endpoints = () => [...new Set([activeHub, ...hubCandidates(pageOrigin(), readSavedHub())])];
+const endpoints = () => {
+  const list = candidateList();
+  if (activeHub && list.includes(activeHub)) return [...new Set([activeHub, ...list])];
+  return list;
+};
 
 const postJson = async (path: string, body: unknown, signal?: AbortSignal) => {
+  const origins = endpoints();
+  if (!origins.length) throw new Error(offlineCopy());
   let last: Error | null = null;
-  for (const origin of endpoints()) {
+  for (const origin of origins) {
     try {
       const response = await fetch(`${origin}${path}`, {
         method: "POST",
@@ -260,7 +278,12 @@ const heartbeat = async () => {
 };
 
 const checkHealth = async () => {
-  for (const origin of endpoints()) {
+  const origins = endpoints();
+  if (!origins.length) {
+    refresh({ hub: "down", error: offlineCopy() });
+    return;
+  }
+  for (const origin of origins) {
     try {
       const response = await fetch(`${origin}/health`, { headers: { accept: "application/json" } });
       if (!response.ok) continue;
@@ -309,9 +332,11 @@ const loop = async (mine: number) => {
       const message = error instanceof Error ? error.message : "Programma agenti non raggiungibile.";
       if (message.includes("non riconosciuto")) {
         writeAgentToken(null);
-        refresh({ hub: "up", error: "Il collegamento non vale più. In StudyOS inserisci il codice nuovo di npm run agent." });
+        refresh({ hub: "up", error: localProgram()
+          ? "Il collegamento non vale più. In StudyOS inserisci il codice nuovo di npm run agent."
+          : "Il collegamento non vale più. In Impostazioni → Agenti incolla di nuovo la chiave." });
       } else {
-        refresh({ hub: "down", error: "Il programma agenti non risponde. Nella cartella di StudyOS avvia npm run agent." });
+        refresh({ hub: "down", error: offlineCopy() });
         await sleep(2000);
       }
     } finally {
@@ -350,26 +375,43 @@ export const saveAgentHubAddress = (value: string) => {
 };
 
 export const pairAgent = async (code: string) => {
-  const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (normalized.length !== 8) {
+  const local = localProgram();
+  const normalized = local ? code.toUpperCase().replace(/[^A-Z0-9]/g, "") : code.trim();
+  if (local && normalized.length !== 8) {
     refresh({ error: "Il codice ha 8 caratteri, nel formato ABCD-EFGH." });
     throw new Error("Codice incompleto.");
+  }
+  if (!local && (normalized.length < 20 || /\s/.test(normalized))) {
+    refresh({ error: "Incolla la chiave di collegamento per intero, senza spazi." });
+    throw new Error("Chiave incompleta.");
   }
   try {
     const data = await postJson("/pair", { code: normalized });
     if (typeof data.token !== "string" || data.token.length < 20) throw new Error("Risposta di collegamento incompleta.");
     writeAgentToken(data.token);
-    refresh({ hub: "up", error: "", notice: "Questo browser è collegato. Le azioni degli agenti compariranno qui." });
+    refresh({
+      hub: "up",
+      error: "",
+      notice: localProgram()
+        ? "Questo browser è collegato. Le azioni degli agenti compariranno qui."
+        : "Questo browser è collegato al sito pubblicato. Tienilo aperto, anche dal telefono, mentre usi ChatGPT."
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Collegamento non riuscito.";
-    refresh({ error: message === "Codice incompleto." ? snapshot.error : message });
+    refresh({ error: message === "Codice incompleto." || message === "Chiave incompleta." ? snapshot.error : message });
     throw error;
   }
 };
 
 export const disconnectAgent = () => {
   writeAgentToken(null);
-  refresh({ error: "", notice: "Browser scollegato. Gli agenti non possono più leggere questo studio finché non inserisci un codice nuovo.", pendingCall: null });
+  refresh({
+    error: "",
+    notice: localProgram()
+      ? "Browser scollegato. Gli agenti non possono più leggere questo studio finché non inserisci un codice nuovo."
+      : "Browser scollegato. Gli agenti non possono più leggere questo studio finché non incolli di nuovo la chiave.",
+    pendingCall: null
+  });
 };
 
 export const setAgentPolicyChoice = (risk: AgentRisk, choice: PolicyChoice) => {

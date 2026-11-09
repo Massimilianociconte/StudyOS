@@ -49,27 +49,22 @@ conteggi vuoti come se fossero veri.
 ## ChatGPT sul web e app per Mac
 
 ChatGPT, sia sul web sia nell'app Mac, parla con i connettori dell'account.
-Quei connettori raggiungono un indirizzo HTTPS pubblico, non `localhost` e non
-un processo avviato in automatico sul Mac. L'app Mac non va quindi descritta
-come un client che lancia da solo il programma locale.
+Quei connettori raggiungono solo un indirizzo HTTPS pubblico. Non parlano con
+`localhost` e l'app Mac non avvia il programma sul computer.
 
-1. Tieni aperti `npm run dev` e `npm run agent`, e collega il codice.
-2. Esponi la porta 47321 con un tunnel HTTPS, per esempio
-   `cloudflared tunnel --url http://127.0.0.1:47321`.
-3. Riavvia l'hub con l'origine pubblica, senza slash finale:
+Il sito pubblicato (`https://massimilianociconte.github.io/StudyOS/`) usa un
+hub sempre acceso. Non serve `npm run dev`, `npm run agent` né un tunnel.
+Apri il sito, anche dal telefono, e in **Impostazioni → Agenti** incolla la
+chiave di collegamento una volta. Poi in ChatGPT aggiungi il server MCP
+all'indirizzo mostrato in quella schermata (finisce con `/mcp`).
 
-   ```bash
-   STUDYOS_PUBLIC_ORIGIN=https://il-tuo-nome.trycloudflare.com npm run agent
-   ```
+L'accesso è OAuth: la conferma compare in Impostazioni → Agenti del browser
+che è collegato. Tieni quella pagina aperta. I dati restano nel suo IndexedDB:
+un telefono appena aperto vede lo studio solo se è lo stesso browser già usato
+oppure se è entrato con lo stesso account cloud.
 
-4. In ChatGPT aggiungi un server MCP personalizzato all'URL
-   `https://il-tuo-nome.trycloudflare.com/mcp`.
-5. L'accesso è OAuth. La pagina di conferma resta sul tunnel; in StudyOS
-   compare la richiesta, in Impostazioni → Agenti o nel riquadro in basso.
-   Approvi lì. Il codice di autorizzazione torna solo al browser di ChatGPT.
-
-Senza `STUDYOS_PUBLIC_ORIGIN` l'hub accetta solo Host `127.0.0.1` e
-`localhost`. Non usa `X-Forwarded-*`.
+`npm run agent` resta per la finestra di sviluppo e per Claude, Cursor e gli
+altri client locali. Il tunnel `trycloudflare` non serve più al sito pubblicato.
 
 ## Claude, Cursor e gli altri client locali
 
@@ -103,12 +98,11 @@ messaggio sul terminale, compreso il codice. Il modo chiaro per leggerlo resta
 ## Build pubblicata
 
 localhost e GitHub Pages non condividono i dati: ognuno ha il suo IndexedDB.
-Se la scheda `https://massimilianociconte.github.io/StudyOS/` è aperta e
-collegata, ChatGPT modifica quella. La finestra di sviluppo riceve le azioni
-solo quando la scheda pubblicata è chiusa da almeno 45 secondi.
+ChatGPT, collegato all'hub pubblico, modifica solo la scheda pubblicata aperta
+e collegata. La finestra di sviluppo non riceve quelle azioni.
 
-La build prova prima `http://127.0.0.1:47321`. Se il browser blocca il
-loopback da un sito https, in Impostazioni → Agenti incolla l'indirizzo
-`https://….trycloudflare.com` (senza `/mcp`) e salva. La CSP di build consente
-il loopback sulla porta 47321 e `https://*.trycloudflare.com`. Dopo una modifica
-alla CSP serve una nuova build, pubblicata dal workflow su `main`.
+La build pubblicata non chiama `127.0.0.1`. L'origine dell'hub arriva da
+`VITE_AGENT_HUB_ORIGIN` al momento del deploy. La CSP di quella build deve
+includere quell'origine esatta: `https://*.workers.dev` non copre un nome con
+due etichette. Dopo una modifica alla CSP serve una nuova build, pubblicata
+dal workflow su `main`.

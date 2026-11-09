@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isLocalPage } from "../agent/hubEndpoint";
+import { isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { trustedWritesActive } from "../agent/policy";
 import type { AgentRisk, PolicyChoice } from "../agent/policy";
 import {
@@ -114,7 +114,7 @@ export function AgentDock() {
           }}
         >
           <Icon name="AlertTriangle" className="h-4 w-4 shrink-0 text-[var(--danger-text)]" />
-          <span>Agenti: il programma locale non risponde</span>
+          <span>{window.location.hostname === "massimilianociconte.github.io" ? "Agenti: riapri StudyOS per ricollegarti" : "Agenti: il programma locale non risponde"}</span>
         </button>
       ) : null}
     </div>
@@ -129,6 +129,10 @@ export function AgentSettings() {
   const trusted = trustedWritesActive(link.policy);
   const localPage = isLocalPage(window.location.origin);
   const published = window.location.hostname === "massimilianociconte.github.io";
+  const hostedHub = published ? normalizePublicHub(import.meta.env.VITE_AGENT_HUB_ORIGIN ?? "") : null;
+  const pairReady = localPage
+    ? code.replace(/[^A-Za-z0-9]/g, "").length === 8
+    : code.trim().length >= 20 && !/\s/.test(code.trim());
 
   const submitCode = async () => {
     setBusy(true);
@@ -163,31 +167,39 @@ export function AgentSettings() {
           void submitCode();
         }}
       >
-        <Field label="Codice di collegamento">
+        <Field label={localPage ? "Codice di collegamento" : "Chiave di collegamento"}>
           <input
             className={inputClass}
             value={code}
-            onChange={(event) => setCode(event.target.value.toUpperCase())}
-            placeholder="ABCD-EFGH"
+            onChange={(event) => setCode(localPage ? event.target.value.toUpperCase() : event.target.value)}
+            placeholder={localPage ? "ABCD-EFGH" : "Incolla la chiave"}
             autoComplete="off"
             spellCheck={false}
             inputMode="text"
             aria-describedby="agent-pair-help"
           />
         </Field>
-        <Button type="submit" variant="primary" icon="Link" disabled={busy || code.replace(/[^A-Za-z0-9]/g, "").length !== 8}>
+        <Button type="submit" variant="primary" icon="Link" disabled={busy || !pairReady}>
           Collega
         </Button>
       </form>
       <p id="agent-pair-help" className="text-sm font-bold text-[var(--muted)]">
-        Nella cartella di StudyOS avvia <code className="font-black">npm run agent</code>. Il codice compare nel terminale, vale 15 minuti e si usa una volta sola.
+        {localPage
+          ? <>Nella cartella di StudyOS avvia <code className="font-black">npm run agent</code>. Il codice compare nel terminale, vale 15 minuti e si usa una volta sola.</>
+          : "Incolla la chiave una volta. Resta in questo browser, anche sul telefono. Non serve avere il computer acceso né la versione localhost aperta."}
       </p>
       <p className="text-sm font-bold text-[var(--muted)]">
         {published
           ? "ChatGPT modifica i dati di questo sito pubblicato. La finestra di localhost resta una copia a parte e riceve le modifiche solo se questa scheda è chiusa."
           : "ChatGPT modifica i dati di questa finestra. Con il sito pubblicato aperto e collegato, le modifiche vanno lì."}
       </p>
-      {localPage ? null : (
+      {hostedHub ? (
+        <p className="text-sm font-bold text-[var(--muted)]">
+          In ChatGPT aggiungi un server MCP personalizzato a questo indirizzo, poi autorizza da questa pagina:
+          <code className="mt-2 block overflow-x-auto rounded-[14px] bg-[var(--surface-soft)] p-3 text-xs font-black text-[var(--text)]">{hostedHub}/mcp</code>
+        </p>
+      ) : null}
+      {localPage || hostedHub ? null : (
         <form
           className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
           onSubmit={(event) => {
@@ -279,10 +291,12 @@ export function AgentSettings() {
         <p className="mt-2">Claude, Cursor e gli altri client locali usano, con la cartella di StudyOS come directory di lavoro:</p>
         <code className="mt-2 block overflow-x-auto rounded-[14px] bg-[var(--surface)] p-3 text-xs font-black text-[var(--text)]">node --import ./scripts/lib/register-ts.mjs ./scripts/agent.ts --stdio</code>
         <p className="mt-3">
-          ChatGPT sul web e l’app per Mac usano i connettori dell’account, che raggiungono solo un indirizzo HTTPS pubblico. Avvia un tunnel verso la porta 47321, riesegui <code className="font-black">STUDYOS_PUBLIC_ORIGIN=https://il-tuo-indirizzo npm run agent</code> e in ChatGPT aggiungi un server MCP personalizzato all’indirizzo <code className="font-black">https://il-tuo-indirizzo/mcp</code>. L’accesso è OAuth: la conferma compare in questa schermata.
+          {hostedHub
+            ? "ChatGPT, sul web e nell’app per Mac, usa l’indirizzo MCP qui sopra. L’accesso è OAuth e la conferma compare in questa schermata. Tieni aperta questa pagina, anche dal telefono: i dati restano in questo browser."
+            : "ChatGPT sul web parla con il sito pubblicato, non con questa finestra di sviluppo. Qui colleghi solo i client locali, con il codice del terminale."}
         </p>
         <p className="mt-3">
-          L’app aperta con <code className="font-black">npm run dev</code> parla in modo affidabile con il programma locale. La copia pubblicata su GitHub Pages può essere bloccata dal browser perché è un sito https che chiama il computer.
+          La finestra aperta con <code className="font-black">npm run dev</code> è una copia a parte e parla solo con <code className="font-black">npm run agent</code> sul computer.
         </p>
       </div>
     </div>

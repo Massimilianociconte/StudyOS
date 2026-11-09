@@ -53,9 +53,9 @@ degli appelli: [`docs/barb-exams.md`](docs/barb-exams.md).
 
 ## Agenti
 
-ChatGPT, Claude e gli altri client MCP si collegano con `npm run agent` e il
-codice in **Impostazioni → Agenti**. Le modifiche passano dalla conferma
-nell'app. Dettagli, tunnel per ChatGPT e comando stdio:
+ChatGPT usa il sito pubblicato, anche dal telefono: la chiave si incolla in
+**Impostazioni → Agenti** e non serve il programma sul computer. Claude, Cursor
+e la finestra di sviluppo usano ancora `npm run agent`. Dettagli:
 [`docs/agent-mcp.md`](docs/agent-mcp.md).
 
 ## Cloud sync

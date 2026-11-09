@@ -5,7 +5,7 @@ import { parseToolArgs } from "./schema";
 import type { AgentActor, AgentCallResult } from "./types";
 
 export const AGENT_INSTRUCTIONS = [
-  "StudyOS è il workspace di studio della persona, sul suo computer. I dati non vanno copiati altrove e non vanno chiesti segreti (passphrase, codici di invito, token).",
+  "StudyOS è il workspace di studio della persona. I dati stanno nel browser che ha il sito aperto (anche dal telefono, sulla copia pubblicata) e non vanno copiati altrove. Non chiedere segreti (passphrase, codici di invito, token, chiave di collegamento).",
   "Le letture rispondono subito. Le modifiche e le eliminazioni restano in attesa finché la persona le conferma nell'app, salvo una policy più stretta.",
   "Se la risposta contiene status=pending_approval, non ripetere l'azione: chiama studyos_approval_status con approvalId.",
   "Prima di aggiornare o eliminare, leggi l'id con uno strumento di elenco. Non inventare id, date di esami ufficiali o voti.",
@@ -40,7 +40,7 @@ const offlineStatus = () => ({
   ok: true as const,
   data: {
     connected: false,
-    message: "StudyOS non è collegato. Apri l'app, vai in Impostazioni → Agenti e inserisci il codice mostrato dal comando npm run agent."
+    message: "StudyOS non è collegato. Apri https://massimilianociconte.github.io/StudyOS/ (va bene anche dal telefono), vai in Impostazioni → Agenti e collega questo browser. Tieni la pagina aperta: i dati restano lì."
   }
 });
 

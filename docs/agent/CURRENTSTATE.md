@@ -137,14 +137,11 @@ compressa per farmacologia, mitocondrio, tiroide, micropiastra per la diagnostic
 il tirocinio, divisione asimmetrica per le staminali. Verifiche: fogli di confronto a 100/36/20/14
 px su riquadro pastello e su fondo scuro, viste BARB ed Esami nel browser, 119 test, lint, build.
 
-Agenti MCP (8 novembre 2026): hub locale su `127.0.0.1:47321` (`npm run agent`)
-con stdio per Claude/Cursor e HTTP per un tunnel OAuth usato da ChatGPT web e
-dall'app Mac. L'app conferma letture, modifiche ed eliminazioni e tiene il
-registro solo nel browser. I dati restano in IndexedDB, separati fra localhost
-e GitHub Pages. Con la scheda pubblicata collegata, le azioni di ChatGPT vanno
-lì; localhost le riceve solo se quella scheda non dà segno di vita da 45 secondi.
-Il sito pubblicato prova il loopback e, in ripiego, un indirizzo
-`https://….trycloudflare.com` salvato in Impostazioni. Verifiche: 126 test, lint,
-hub su loopback (401 senza token, origine e host rifiutati, codice monouso) e,
-nel browser, conferma e rifiuto di una task. Da fare sul progetto reale:
-rieseguire `groups.sql` e i Redirect URLs, invariati rispetto all'8 ottobre.
+Agenti MCP (9 novembre 2026): ChatGPT parla con l'hub pubblico su Cloudflare
+Workers, non con `npm run agent`. Il sito pubblicato riceve l'origine da
+`VITE_AGENT_HUB_ORIGIN` e non chiama il loopback, così funziona anche dal
+telefono con la pagina aperta. La chiave di collegamento è un secret di
+Wrangler. `npm run agent` resta per lo sviluppo e per lo stdio di Claude e
+Cursor. I dati restano nell'IndexedDB del browser collegato. Da fare sul
+progetto reale: rieseguire `groups.sql` e i Redirect URLs, invariati rispetto
+all'8 ottobre.

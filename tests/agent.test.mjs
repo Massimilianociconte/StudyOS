@@ -23,8 +23,13 @@ test("hub: il sito pubblicato è preferito e il tunnel accettato è solo https",
   assert.equal(normalizePublicHub("https://earn-meet-boss-mia.trycloudflare.com/altro"), null);
   assert.equal(normalizePublicHub("https://a.b.trycloudflare.com"), null);
   assert.equal(normalizePublicHub("https://evil.com"), null);
+  assert.equal(normalizePublicHub("https://studyos-agent.esempio.workers.dev/mcp"), "https://studyos-agent.esempio.workers.dev");
+  assert.equal(normalizePublicHub("https://workers.dev"), null);
   assert.deepEqual(hubCandidates("http://localhost:5173", tunnel), ["http://127.0.0.1:47321"]);
-  assert.deepEqual(hubCandidates("https://massimilianociconte.github.io", `${tunnel}/mcp`), ["http://127.0.0.1:47321", tunnel]);
+  assert.deepEqual(hubCandidates("http://localhost:5173", tunnel, "https://studyos-agent.esempio.workers.dev"), ["http://127.0.0.1:47321"]);
+  assert.deepEqual(hubCandidates("https://massimilianociconte.github.io", `${tunnel}/mcp`, "https://studyos-agent.esempio.workers.dev"), ["https://studyos-agent.esempio.workers.dev"]);
+  assert.deepEqual(hubCandidates("https://massimilianociconte.github.io", `${tunnel}/mcp`, ""), [tunnel]);
+  assert.deepEqual(hubCandidates("https://massimilianociconte.github.io", "", ""), []);
   assert.equal(siteFromOrigin("https://massimilianociconte.github.io"), "published");
   assert.equal(siteFromOrigin("http://localhost:5173"), "local");
   const local = { site: "local", id: "locale" };

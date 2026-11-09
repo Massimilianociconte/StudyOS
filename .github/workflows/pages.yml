@@ -20,6 +20,7 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_AGENT_HUB_ORIGIN: ${{ vars.VITE_AGENT_HUB_ORIGIN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,8 +36,8 @@ jobs:
 
       - name: Verify Supabase build configuration
         run: |
-          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]; then
-            echo "::error::Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in repository Actions variables before deploying."
+          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ] || [ -z "$VITE_AGENT_HUB_ORIGIN" ]; then
+            echo "::error::Set VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY and VITE_AGENT_HUB_ORIGIN in repository Actions variables before deploying."
             exit 1
           fi
 

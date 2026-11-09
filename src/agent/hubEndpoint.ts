@@ -5,6 +5,7 @@ export const PUBLISHED_HOST = "massimilianociconte.github.io";
 export type BridgeSite = "published" | "local";
 
 const TUNNEL_HOST = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.trycloudflare\.com$/;
+const WORKERS_HOST = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+workers\.dev$/;
 
 export const normalizePublicHub = (value: string): string | null => {
   let raw = value.trim().replace(/\/mcp\/?$/i, "").replace(/\/+$/, "");
@@ -18,7 +19,7 @@ export const normalizePublicHub = (value: string): string | null => {
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.port) return null;
   if (url.pathname !== "/" && url.pathname !== "") return null;
   const host = url.hostname.toLowerCase();
-  if (!TUNNEL_HOST.test(host)) return null;
+  if (!TUNNEL_HOST.test(host) && !WORKERS_HOST.test(host)) return null;
   return `https://${host}`;
 };
 
@@ -31,11 +32,17 @@ export const isLocalPage = (pageOrigin: string) => {
   }
 };
 
-/** In sviluppo si parla solo col loopback. Sul sito pubblicato si prova prima quello, poi il tunnel salvato. */
-export const hubCandidates = (pageOrigin: string, saved: string | null | undefined): string[] => {
+/**
+ * In sviluppo si parla solo col loopback.
+ * Sul sito pubblicato si usa l'hub configurato in build. Il tunnel salvato è il ripiego
+ * se quella build non ha ancora un hub. Mai il loopback: da telefono non esiste.
+ */
+export const hubCandidates = (pageOrigin: string, saved: string | null | undefined, configured?: string | null): string[] => {
   if (isLocalPage(pageOrigin)) return [AGENT_HUB_ORIGIN];
+  const fixed = configured ? normalizePublicHub(configured) : null;
+  if (fixed) return [fixed];
   const tunnel = saved ? normalizePublicHub(saved) : null;
-  return tunnel ? [AGENT_HUB_ORIGIN, tunnel] : [AGENT_HUB_ORIGIN];
+  return tunnel ? [tunnel] : [];
 };
 
 export const bridgeSite = (hostname: string): BridgeSite => hostname.toLowerCase() === PUBLISHED_HOST ? "published" : "local";

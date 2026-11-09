@@ -16,6 +16,15 @@ export class ResultLedger {
     return this.results.get(id)?.result;
   }
 
+  exportState(now = Date.now()) {
+    this.prune(now);
+    return [...this.results.entries()].map(([id, item]) => ({ id, at: item.at, result: item.result }));
+  }
+
+  importState(items: Array<{ id: string; at: number; result: AgentCallResult }>) {
+    this.results = new Map(items.map((item) => [item.id, { at: item.at, result: item.result }]));
+  }
+
   private prune(now: number) {
     for (const [id, item] of this.results) {
       if (now - item.at > TTL_MS) this.results.delete(id);
