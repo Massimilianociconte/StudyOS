@@ -1,10 +1,56 @@
 import examJson from "../../data/university/barb.exams.json" with { type: "json" };
+import updatedFbgJson from "../../data/university/barb.exams.fbg-2026-27.json" with { type: "json" };
 import { BARB_DATASET } from "../../data/university/barb.dataset";
 import { contentHash } from "./validate";
 import type { BarbCourse } from "./types";
 import type { BarbExamDataset, BarbExamSession, BarbExamSourceReference } from "./examTypes";
 
-export const BARB_EXAM_DATA = examJson as unknown as BarbExamDataset;
+/** Verified full FBG feed, kept separately from older F92 records for provenance. */
+type FbgExamRow = [
+  officialId: string, italianDate: string, time: string | null, type: string | null,
+  location: string | null, opens: string | null, closes: string | null,
+  commission: string | null, component: string | null, notes: string | null,
+];
+const updatedFbg = updatedFbgJson as unknown as {
+  checkedAt: string; sourceUrl: string;
+  groups: Array<{ courseId: string; code: string; name: string; records: FbgExamRow[] }>;
+};
+const examDateISO = (date: string | null): string | null =>
+  date ? `${date.slice(6, 10)}-${date.slice(3, 5)}-${date.slice(0, 2)}` : null;
+const currentFbgSessions: BarbExamSession[] = updatedFbg.groups.flatMap((group) =>
+  group.records.map(([officialId, italianDate, time, type, location, opens, closes, commission, component, notes]) => {
+    const registrationOpens = examDateISO(opens), registrationCloses = examDateISO(closes);
+    return {
+      id: `barb-exam-unimi-${officialId}`, courseId: group.courseId,
+      date: examDateISO(italianDate)!, type, time, location, notes,
+      registrationOpens, registrationCloses, officialId, commission,
+      sourceCourseCode: group.code, component,
+      sourceReferences: [{
+        sourceUrl: updatedFbg.sourceUrl, officialId, sourceCourseCode: group.code,
+        sourceCourseName: group.name, degreeCode: "FBG",
+        registrationOpens, registrationCloses,
+        sourceRecord: { idAppello: officialId, dataStr: italianDate, ora: time, prova: type,
+          luogo: location, aperturaStr: opens, chiusuraStr: closes,
+          docente: commission, nomeAppello: component, avviso: notes },
+        lastVerifiedAt: updatedFbg.checkedAt, historical: false,
+      }],
+      provenance: {
+        sourceUrl: updatedFbg.sourceUrl, retrievedAt: updatedFbg.checkedAt,
+        lastVerifiedAt: updatedFbg.checkedAt,
+      },
+    };
+  })
+);
+const previousExamData = examJson as unknown as BarbExamDataset;
+export const BARB_EXAM_DATA: BarbExamDataset = {
+  ...previousExamData, checkedAt: updatedFbg.checkedAt,
+  // FBG is refreshed as a complete feed; retain independently verified legacy F92 courses.
+  sessions: [...currentFbgSessions, ...previousExamData.sessions.filter(session => session.courseId.startsWith("f92-"))]
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.courseId.localeCompare(b.courseId)),
+  sources: previousExamData.sources.map(source => source.url === updatedFbg.sourceUrl
+    ? { ...source, status: "verificato" as const, note: `Feed FBG completo, aggiornato il ${updatedFbg.checkedAt}.` }
+    : source),
+};
 export const BARB_EXAM_SESSIONS = BARB_EXAM_DATA.sessions;
 /** Legacy exam descriptors supplement the calendar, never the current study plan. */
 export const BARB_EXAM_COURSES: BarbCourse[] = [...BARB_DATASET.courses, ...BARB_EXAM_DATA.additionalCourses];
