@@ -150,6 +150,9 @@ export const useSharedStore = create<SharedState>((set, get) => {
     setAvailability: (availability) => set({ availability }),
 
     hydrate: async (viewerId, persistent) => {
+      // Passaggio al vault: subito in sola memoria, prima di qualunque attesa. Una scrittura ancora in
+      // corso (setShares, applyRows…) non arriva più sul disco dopo che clearTables lo ha svuotato.
+      if (!persistent) set({ persistent: false });
       // Un errore dell'archivio non blocca l'avvio: si lavora in memoria e lo si segnala.
       let storageFailed = false;
       const failed = () => {

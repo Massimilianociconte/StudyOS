@@ -6,13 +6,17 @@ import {
   grantSignature,
   initialsOf,
   inviteFromRow,
+  isMissingSharingObject,
   itemAccess,
   mergeSharedRows,
+  missingVisibleKeys,
   ownerColor,
   ownerEntityTypes,
   prepareSharedWrite,
   reconcileOwner,
   scopeCovers,
+  shareErrorText,
+  shareNotices,
   shareTokenFromText,
   sharedKey,
   sharedPushBatches,
@@ -205,3 +209,43 @@ test("firma delle condivisioni: cambia con sezioni e materie, non con l'ordine o
   assert.notEqual(grantSignature(a, "alice"), grantSignature([grant({ id: "1", subjectIds: ["a"] })], "alice"));
   assert.equal(grantSignature(a, "dario"), "[]");
 });
+
+test("cursore saltato: righe visibili sul server ma né in cache né in coda", () => {
+  const items = [item("alice", "calendarEvent", "e1"), item("dario", "calendarEvent", "e3")];
+  const outbox = [{ key: sharedKey("alice", "calendarEvent", "e2"), ownerId: "alice", entityType: "calendarEvent", entityId: "e2", deleted: true, deletedAt: "x", queuedAt: "x" }];
+  const visible = new Set(["calendarEvent:e1", "calendarEvent:e2", "calendarEvent:e3", "task:t1"]);
+  // e3 è in cache ma di un altro proprietario: per Alice manca.
+  assert.deepEqual(missingVisibleKeys(items, outbox, "alice", visible), ["calendarEvent:e3", "task:t1"]);
+  assert.deepEqual(missingVisibleKeys(items, outbox, "alice", new Set(["calendarEvent:e1", "calendarEvent:e2"])), []);
+});
+
+test("errori del server in italiano: rete, migrazione mancante, permessi", () => {
+  for (const message of ["TypeError: Failed to fetch", "TypeError: Load failed", "AbortError: signal timed out", "TypeError: NetworkError when attempting to fetch resource."]) {
+    assert.match(shareErrorText({ message, code: "" }), /non raggiungibile/, message);
+  }
+  assert.match(shareErrorText({ code: "PGRST205", message: "Could not find the table 'public.studyos_shares' in the schema cache" }), /sharing\.sql/);
+  assert.match(shareErrorText({ code: "42501", message: "new row violates row-level security policy" }), /permesso/);
+  assert.equal(shareErrorText({ code: "P0001", message: "Invito già usato" }), "Invito già usato");
+  assert.equal(isMissingSharingObject({ code: "42883", message: "function public.push_shared_rows does not exist" }), true);
+  assert.equal(isMissingSharingObject({ code: "", message: "TypeError: Failed to fetch" }), false);
+  assert.equal(isMissingSharingObject(null), false);
+});
+
+test("notifiche: solo novità; il silenzio dopo un'accettazione finisce quando la condivisione arriva davvero", () => {
+  const pending = (id, owner, status = "pending") => inviteFromRow({ id, owner_id: owner, owner_name: owner, status, expires_at: "2999-01-01T00:00:00Z", offers: [] });
+  const received = [grant({ id: "g1" }), grant({ id: "g2", scope: "tasks" }), grant({ id: "g3", ownerId: "dario", ownerName: "Dario" })];
+  const invites = [pending("i1", "carla"), pending("i2", "bob"), pending("i3", "carla", "accepted")];
+  // Primo controllo sul dispositivo: nessuna raffica, tutto segnato come visto (non i propri inviti).
+  const first = shareNotices("bob", received, invites, undefined, new Set());
+  assert.deepEqual([first.grants, first.invites], [[], []]);
+  assert.deepEqual(first.ids, ["g1", "g2", "g3", "invite-i1"]);
+  // Passata partita prima dell'accettazione: la nuova condivisione di Alice non c'è ancora, il silenzio resta.
+  const early = shareNotices("bob", [received[0], received[2]], [], ["g1", "g3"], new Set(["alice"]));
+  assert.deepEqual([early.grants, early.consumed], [[], []]);
+  // La passata che la vede: niente notifica per Alice e il silenzio finisce; Dario e Carla sì.
+  const later = shareNotices("bob", received, invites, ["g1"], new Set(["alice"]));
+  assert.deepEqual(later.grants.map((entry) => entry.id), ["g3"]);
+  assert.deepEqual(later.invites.map((entry) => entry.id), ["i1"]);
+  assert.deepEqual(later.consumed, ["alice"]);
+});
+

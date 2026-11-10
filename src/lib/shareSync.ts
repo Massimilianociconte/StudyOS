@@ -12,15 +12,20 @@
 
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
-import { getMeta, setMeta } from "./db";
+import { db, getMeta, setMeta } from "./db";
 import { SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
 import {
+  SHARING_UNAVAILABLE_TEXT,
   grantFromRow,
   grantSignature,
   inviteFromRow,
+  isMissingSharingObject,
+  missingVisibleKeys,
   offerToRow,
   ownerEntityTypes,
   revisionFromRow,
+  shareErrorText,
+  shareNotices,
   sharedKey,
   sharedPushBatches,
   type ItemRevision,
@@ -55,9 +60,6 @@ const SHARE_COLUMNS =
 const INVITE_COLUMNS = "id, owner_id, owner_name, offers, requests, recipient_email, status, accepted_by, expires_at, created_at";
 const ROW_COLUMNS = "entity_type, entity_id, payload, deleted, updated_at";
 
-const UNAVAILABLE_TEXT =
-  "La condivisione non è ancora attiva sul server: esegui supabase/sharing.sql nel SQL Editor di Supabase (vedi supabase/README.md).";
-
 // Un id per caricamento di pagina: gli eventi Realtime delle proprie scritture si ignorano.
 const clientId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `share-${Date.now()}`;
 
@@ -85,19 +87,8 @@ export interface ShareTarget {
 
 type DbError = { message: string; code?: string } | null;
 
-const missingObject = (error: DbError) =>
-  Boolean(error && /42P01|42883|PGRST202|PGRST205|does not exist|Could not find the (table|function)/i.test(`${error.code ?? ""} ${error.message}`));
-
-const friendly = (error: NonNullable<DbError>) => {
-  if (missingObject(error)) return UNAVAILABLE_TEXT;
-  if (error.code === "42501" || /row-level security/i.test(error.message)) {
-    return "Non hai il permesso per questa operazione. Puoi condividere direttamente solo con persone che conosci (un gruppo in comune o una condivisione già attiva): per le altre crea un invito.";
-  }
-  return error.message;
-};
-
 const fail = (error: DbError) => {
-  if (error) throw new Error(friendly(error));
+  if (error) throw new Error(shareErrorText(error));
 };
 
 const client = () => {
@@ -139,6 +130,7 @@ let checkedAt = 0;
 export const isSharingAvailable = async (): Promise<boolean> => {
   if (available === true) return true;
   if (available === false && Date.now() - checkedAt < UNAVAILABLE_RETRY_MS) return false;
+  const gen = generation;
   // Solo l'esito positivo resta tra le visite (come i gruppi): la migrazione può arrivare dopo.
   if ((await getMeta<boolean>(AVAILABLE_META).catch(() => undefined)) === true) {
     available = true;
@@ -146,10 +138,11 @@ export const isSharingAvailable = async (): Promise<boolean> => {
   }
   if (!supabase || !viewer()) return false;
   const { error } = await supabase.from("studyos_shares").select("id").limit(0);
-  if (error && missingObject(error)) {
+  if (error && isMissingSharingObject(error)) {
     available = false;
     checkedAt = Date.now();
-    useSharedStore.getState().setAvailability("missing");
+    // Dopo un logout (o un altro cambio) lo stato dello store non è più di questa richiesta.
+    if (gen === generation) useSharedStore.getState().setAvailability("missing");
     return false;
   }
   if (error) return false;
@@ -160,29 +153,43 @@ export const isSharingAvailable = async (): Promise<boolean> => {
 
 const requireSharing = async () => {
   if (!viewer()) throw new Error("Accedi al tuo account per usare la condivisione.");
-  if (!(await isSharingAvailable())) throw new Error(UNAVAILABLE_TEXT);
+  if (!(await isSharingAvailable())) throw new Error(SHARING_UNAVAILABLE_TEXT);
 };
 
-// ——— Cursori (in memoria con il vault: la cache non sopravvive al ricaricamento) ———
+// ——— Cursori e condivisioni già viste (in memoria con il vault: non sopravvivono al ricaricamento) ———
 
-const memoryCursors = new Map<string, OwnerCursor>();
+const memoryMeta = new Map<string, unknown>();
 
-const readCursor = async (key: string) =>
-  useSharedStore.getState().persistent ? await getMeta<OwnerCursor>(key).catch(() => undefined) : memoryCursors.get(key);
+const readMeta = async <T,>(key: string) =>
+  useSharedStore.getState().persistent ? await getMeta<T>(key).catch(() => undefined) : (memoryMeta.get(key) as T | undefined);
 
-const writeCursor = async (key: string, value: OwnerCursor) => {
+const writeMeta = async (key: string, value: unknown) => {
   if (useSharedStore.getState().persistent) await setMeta(key, value).catch(() => undefined);
-  else memoryCursors.set(key, value);
+  else memoryMeta.set(key, value);
+};
+
+/**
+ * Via i cursori dei proprietari che non condividono più nulla con chi guarda: se ricondividono le
+ * stesse sezioni (stessa firma) il pull riparte da zero invece di saltare le righe vecchie.
+ */
+const forgetCursors = async (me: string, owners: ReadonlySet<string>) => {
+  const prefix = cursorMeta(me, "");
+  const stale = (key: string) => key.startsWith(prefix) && !owners.has(key.slice(prefix.length));
+  for (const key of [...memoryMeta.keys()]) if (stale(key)) memoryMeta.delete(key);
+  // Anche su disco col vault o con la cache degradata: un cursore rimasto lì varrebbe al prossimo avvio.
+  const keys = await db.meta.where("key").startsWith(prefix).primaryKeys().catch(() => [] as string[]);
+  const old = keys.map(String).filter(stale);
+  if (old.length) await db.meta.bulkDelete(old).catch(() => undefined);
 };
 
 // ——— Pull ———
 
 const pullShares = async (me: string, gen: number) => {
-  const db = client();
+  const server = client();
   const [shares, invites, labels] = await Promise.all([
-    db.from("studyos_shares").select(SHARE_COLUMNS).order("created_at", { ascending: true }).limit(1000),
-    db.from("studyos_share_invites").select(INVITE_COLUMNS).order("created_at", { ascending: false }).limit(100),
-    db.rpc("shared_subject_labels")
+    server.from("studyos_shares").select(SHARE_COLUMNS).order("created_at", { ascending: true }).limit(1000),
+    server.from("studyos_share_invites").select(INVITE_COLUMNS).order("created_at", { ascending: false }).limit(100),
+    server.rpc("shared_subject_labels")
   ]);
   still(gen);
   fail(shares.error);
@@ -205,15 +212,12 @@ const pullShares = async (me: string, gen: number) => {
   return { received, invites: inviteList };
 };
 
-const pullOwner = async (me: string, ownerId: string, types: string[], sig: string, gen: number) => {
-  const db = client();
-  const key = cursorMeta(me, ownerId);
-  const stored = await readCursor(key);
-  const since = stored?.sig === sig ? stored.at : null;
+/** Righe di `ownerId` cambiate da `since` (tutte con null), pagina per pagina. Ritorna l'ultimo updated_at visto. */
+const pullRows = async (ownerId: string, types: string[], since: string | null, gen: number) => {
   const from = since ? new Date(Date.parse(since) - CURSOR_OVERLAP_MS).toISOString() : null;
   let latest = since;
   for (let offset = 0; ; offset += PAGE_SIZE) {
-    let query = db
+    let query = client()
       .from("studyos_items")
       .select(ROW_COLUMNS)
       .eq("user_id", ownerId)
@@ -232,10 +236,14 @@ const pullOwner = async (me: string, ownerId: string, types: string[], sig: stri
     }
     if (rows.length < PAGE_SIZE) break;
   }
-  // Id ancora visibili: toglie dalla cache revoche, filtri cambiati, materie escluse, voti registrati.
+  return latest;
+};
+
+/** Id ancora visibili (`${tipo}:${id}`): la riconciliazione toglie revoche, filtri cambiati, materie escluse, voti registrati. */
+const visibleKeys = async (ownerId: string, types: string[], gen: number) => {
   const visible = new Set<string>();
   for (let offset = 0; ; offset += ID_PAGE_SIZE) {
-    const { data, error } = await db
+    const { data, error } = await client()
       .from("studyos_items")
       .select("entity_type, entity_id")
       .eq("user_id", ownerId)
@@ -248,10 +256,26 @@ const pullOwner = async (me: string, ownerId: string, types: string[], sig: stri
     for (const row of data ?? []) visible.add(`${row.entity_type}:${row.entity_id}`);
     if (!data || data.length < ID_PAGE_SIZE) break;
   }
+  return visible;
+};
+
+const pullOwner = async (me: string, ownerId: string, types: string[], sig: string, gen: number) => {
+  const key = cursorMeta(me, ownerId);
+  const stored = await readMeta<OwnerCursor>(key);
+  still(gen);
+  const since = stored?.sig === sig ? stored.at : null;
+  let latest = await pullRows(ownerId, types, since, gen);
+  const visible = await visibleKeys(ownerId, types, gen);
+  // Il server mostra righe che qui mancano: il cursore le ha saltate (es. revoca e poi la stessa
+  // condivisione di nuovo). Si riscarica tutto da zero, una volta per passata.
+  const state = useSharedStore.getState();
+  if (since !== null && missingVisibleKeys(state.items, state.outbox, ownerId, visible).length) {
+    latest = (await pullRows(ownerId, types, null, gen)) ?? latest;
+  }
   await useSharedStore.getState().reconcile(ownerId, types, visible);
   // Il cursore avanza solo se le righe sono finite nello store di questa generazione.
   still(gen);
-  await writeCursor(key, { sig, at: latest });
+  await writeMeta(key, { sig, at: latest } satisfies OwnerCursor);
 };
 
 const refetchRow = async (ownerId: string, entityType: string, entityId: string, gen: number) => {
@@ -310,47 +334,46 @@ const pushOutbox = async (gen: number) => {
 
 // ——— Notifiche ———
 
-/** Proprietari appena accettati da chi guarda: niente notifica per ciò che ha appena scelto. */
-const silentOwners = new Set<string>();
+/**
+ * Proprietari di un invito appena accettato da chi guarda (con scadenza): niente notifica per ciò
+ * che ha appena scelto. Il silenzio finisce quando una passata vede davvero la nuova condivisione:
+ * una passata già in corso al momento dell'accettazione non la vede ancora.
+ */
+const silentOwners = new Map<string, number>();
+const SILENT_MS = 2 * 60_000;
 
 const notifyNew = async (me: string, received: ShareGrant[], invites: ShareInviteSummary[], gen: number) => {
-  const incoming = invites.filter((invite) => invite.ownerId !== me && invite.status === "pending");
-  const ids = [...received.map((grant) => grant.id), ...incoming.map((invite) => `invite-${invite.id}`)];
-  const seen = await getMeta<string[]>(seenMeta(me)).catch(() => undefined);
+  const seen = await readMeta<string[]>(seenMeta(me));
   still(gen);
-  const silent = new Set(silentOwners);
-  silentOwners.clear();
-  // Primo controllo su questo dispositivo: nessuna raffica di notifiche per condivisioni vecchie.
-  if (seen) {
-    const known = new Set(seen);
-    const add = useStudyStore.getState().addNotification;
-    for (const grant of received) {
-      if (known.has(grant.id) || silent.has(grant.ownerId)) continue;
-      still(gen);
-      await add({
-        id: `notif-share-${grant.id}`,
-        kind: "share",
-        title: `${grant.ownerName || "Qualcuno"} condivide con te: ${SHARE_SCOPE_LABEL[grant.scope]}`,
-        body: grant.permission === "edit" ? "Puoi vedere e modificare. Lo trovi in Condivisione." : "Puoi vedere. Lo trovi in Condivisione.",
-        linkView: "sharing"
-      });
-    }
-    for (const invite of incoming) {
-      if (known.has(`invite-${invite.id}`)) continue;
-      still(gen);
-      await add({
-        id: `notif-share-invite-${invite.id}`,
-        kind: "share",
-        title: `${invite.ownerName || "Qualcuno"} ti invita a condividere`,
-        body: `${scopesSummary(invite.offers)}. Apri Condivisione per rispondere.`,
-        linkView: "sharing"
-      });
-    }
+  const now = Date.now();
+  for (const [owner, until] of silentOwners) if (until <= now) silentOwners.delete(owner);
+  const notices = shareNotices(me, received, invites, seen, new Set(silentOwners.keys()));
+  for (const owner of notices.consumed) silentOwners.delete(owner);
+  const add = useStudyStore.getState().addNotification;
+  for (const grant of notices.grants) {
+    still(gen);
+    await add({
+      id: `notif-share-${grant.id}`,
+      kind: "share",
+      title: `${grant.ownerName || "Qualcuno"} condivide con te: ${SHARE_SCOPE_LABEL[grant.scope]}`,
+      body: grant.permission === "edit" ? "Puoi vedere e modificare. Lo trovi in Condivisione." : "Puoi vedere. Lo trovi in Condivisione.",
+      linkView: "sharing"
+    });
+  }
+  for (const invite of notices.invites) {
+    still(gen);
+    await add({
+      id: `notif-share-invite-${invite.id}`,
+      kind: "share",
+      title: `${invite.ownerName || "Qualcuno"} ti invita a condividere`,
+      body: `${scopesSummary(invite.offers)}. Apri Condivisione per rispondere.`,
+      linkView: "sharing"
+    });
   }
   // Segnate come viste dopo le notifiche: una passata interrotta a metà non ne perde nessuna
-  // (gli id stabili evitano i doppioni alla passata dopo).
+  // (gli id stabili evitano i doppioni alla passata dopo). Col vault restano in memoria.
   still(gen);
-  await setMeta(seenMeta(me), ids).catch(() => undefined);
+  await writeMeta(seenMeta(me), notices.ids);
 };
 
 // ——— Realtime ———
@@ -428,6 +451,7 @@ const syncOnce = async () => {
     await pushOutbox(gen);
     const { received, invites } = await pullShares(me, gen);
     const owners = ownerEntityTypes(received);
+    await forgetCursors(me, new Set(owners.keys()));
     for (const [ownerId, types] of owners) await pullOwner(me, ownerId, types, grantSignature(received, ownerId), gen);
     await notifyNew(me, received, invites, gen);
     await ensureRealtime(me, [...owners.keys()], gen);
@@ -437,7 +461,8 @@ const syncOnce = async () => {
     // Chi guarda è cambiato: la passata della nuova generazione parte da sola.
     if (error instanceof ViewerChanged || gen !== generation) return;
     // Rete assente o errore temporaneo: si riprova al prossimo segnale o al controllo periodico.
-    showError(error instanceof Error ? error.message : "Aggiornamento non riuscito.");
+    // I testi da fail() sono già pronti; un errore grezzo (es. TypeError di rete) diventa italiano.
+    showError(error instanceof Error ? shareErrorText({ message: error.message }) : "Aggiornamento non riuscito.");
   }
 };
 
@@ -469,7 +494,7 @@ const isPersistent = () => useStudyStore.getState().settings.security.mode !== "
 const switchViewer = async (next: string | null, previous: string | null, gen: number) => {
   await stopRealtime();
   available = null;
-  memoryCursors.clear();
+  memoryMeta.clear();
   const store = useSharedStore.getState();
   if (!next) {
     // Logout vero (c'era un account): via i dati altrui anche dal disco. Le scritture ancora in
@@ -493,6 +518,7 @@ const switchViewer = async (next: string | null, previous: string | null, gen: n
 /** Le risposte in corso si scartano subito; i caricamenti dello store si eseguono in fila. */
 const requestSwitch = (next: string | null, previous: string | null) => {
   generation += 1;
+  silentOwners.clear();
   const gen = generation;
   switching = switching.then(() => switchViewer(next, previous, gen)).catch(() => undefined);
 };
@@ -582,7 +608,7 @@ export const acceptShareInvite = async (inviteId: string, token: string | null, 
   });
   fail(error);
   const result = data as { owner_id: string; owner_name: string; granted: number; shared_back: number };
-  if (gen === generation) silentOwners.add(result.owner_id);
+  if (gen === generation) silentOwners.set(result.owner_id, Date.now() + SILENT_MS);
   await syncSharedNow();
   return result;
 };

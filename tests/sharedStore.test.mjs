@@ -254,3 +254,20 @@ test("fine invio dopo logout o blocco del vault: nessun effetto", async () => {
   assert.equal(store.getState().outbox.length, 0);
   assert.equal(store.getState().items.length, 0);
 });
+
+// In Node ogni accesso al disco fallisce: un tentativo di scrittura lascerebbe l'avviso dell'archivio.
+test("vault attivato durante un aggiornamento: da hydrate(…, false) in poi nessuna scrittura su disco", async () => {
+  store.setState({ persistent: true, syncError: null });
+  const errors = [];
+  const unsubscribe = store.subscribe((state) => {
+    if (state.syncError) errors.push(state.syncError);
+  });
+  const shares = store.getState().setShares([], [grant()], []);
+  const hydrate = store.getState().hydrate("bob", false);
+  assert.equal(store.getState().persistent, false);
+  await Promise.all([shares, hydrate]);
+  unsubscribe();
+  assert.deepEqual(errors, []);
+  assert.equal(store.getState().persistent, false);
+});
+

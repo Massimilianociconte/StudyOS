@@ -180,7 +180,7 @@ export const grantSignature = (received: readonly ShareGrant[], ownerId: string)
       .sort()
   );
 
-export const sharedKey =(ownerId: string, entityType: string, entityId: string) => `${ownerId}:${entityType}:${entityId}`;
+export const sharedKey = (ownerId: string, entityType: string, entityId: string) => `${ownerId}:${entityType}:${entityId}`;
 
 /** Applica righe del server alla cache (LWW). Una scrittura locale in coda e più recente vince. */
 export const mergeSharedRows = (
@@ -245,6 +245,22 @@ export const reconcileOwner = (
       pending.has(entry.key) ||
       visible.has(`${entry.entityType}:${entry.entityId}`)
   );
+
+/**
+ * Chiavi `${tipo}:${id}` che il server mostra per `ownerId` ma che qui mancano (né in cache né in
+ * coda): il cursore le ha saltate, ad esempio dopo una revoca e una nuova condivisione identica.
+ */
+export const missingVisibleKeys = (
+  items: readonly SharedItem[],
+  outbox: readonly SharedOutboxEntry[],
+  ownerId: string,
+  visible: ReadonlySet<string>
+) => {
+  const known = new Set(
+    [...items, ...outbox].filter((entry) => entry.ownerId === ownerId).map((entry) => `${entry.entityType}:${entry.entityId}`)
+  );
+  return [...visible].filter((key) => !known.has(key));
+};
 
 /** Via gli elementi di proprietari o tipi non più condivisi. */
 export const dropUnshared = (items: readonly SharedItem[], received: readonly ShareGrant[], pending: ReadonlySet<string>) => {
@@ -406,6 +422,54 @@ export const revisionFromRow = (row: Record<string, unknown>): ItemRevision => (
 
 export const revisionTitle = (revision: Pick<ItemRevision, "payload">) =>
   str(revision.payload.title) || str(revision.payload.name) || "Elemento senza titolo";
+
+// ——— Errori e notifiche ———
+
+export const SHARING_UNAVAILABLE_TEXT =
+  "La condivisione non è ancora attiva sul server: esegui supabase/sharing.sql nel SQL Editor di Supabase (vedi supabase/README.md).";
+
+type ServerError = { message: string; code?: string } | null;
+
+/** Tabella o funzione assente: supabase/sharing.sql non è stato eseguito. */
+export const isMissingSharingObject = (error: ServerError) =>
+  Boolean(error && /42P01|42883|PGRST202|PGRST205|does not exist|Could not find the (table|function)/i.test(`${error.code ?? ""} ${error.message}`));
+
+/** Testo da mostrare per un errore del server (supabase-js riporta la rete come "TypeError: Failed to fetch"). */
+export const shareErrorText = (error: NonNullable<ServerError>) => {
+  if (isMissingSharingObject(error)) return SHARING_UNAVAILABLE_TEXT;
+  // Stessi casi di errorMessage in cloudSync.ts.
+  if (/failed to fetch|networkerror|load failed|network request failed|timed? ?out|timeout|aborted|err_connection/i.test(error.message)) {
+    return "Server cloud non raggiungibile: controlla la connessione. I dati condivisi si aggiornano da soli appena torna.";
+  }
+  if (error.code === "42501" || /row-level security/i.test(error.message)) {
+    return "Non hai il permesso per questa operazione. Puoi condividere direttamente solo con persone che conosci (un gruppo in comune o una condivisione già attiva): per le altre crea un invito.";
+  }
+  return error.message;
+};
+
+/**
+ * Cosa notificare dopo un aggiornamento: condivisioni e inviti mai visti su questo dispositivo.
+ * Senza `seen` (primo controllo) nessuna notifica: niente raffica per condivisioni vecchie.
+ * I proprietari in `silent` (invito appena accettato da chi guarda) non generano notifiche;
+ * `consumed` elenca quelli di cui arriva davvero una condivisione nuova: solo allora il silenzio finisce.
+ */
+export const shareNotices = (
+  me: string,
+  received: readonly ShareGrant[],
+  invites: readonly ShareInviteSummary[],
+  seen: readonly string[] | undefined,
+  silent: ReadonlySet<string>
+) => {
+  const incoming = invites.filter((invite) => invite.ownerId !== me && invite.status === "pending");
+  const known = new Set(seen ?? []);
+  const fresh = received.filter((grant) => !known.has(grant.id));
+  return {
+    ids: [...received.map((grant) => grant.id), ...incoming.map((invite) => `invite-${invite.id}`)],
+    grants: seen ? fresh.filter((grant) => !silent.has(grant.ownerId)) : [],
+    invites: seen ? incoming.filter((invite) => !known.has(`invite-${invite.id}`)) : [],
+    consumed: [...new Set(fresh.map((grant) => grant.ownerId))].filter((owner) => silent.has(owner))
+  };
+};
 
 // ——— Link di invito ———
 
