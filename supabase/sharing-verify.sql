@@ -1,0 +1,29 @@
+-- Controllo in sola lettura dopo aver eseguito sharing.sql nel SQL Editor.
+-- Atteso: ogni colonna *_ready è true, shared_item_policies vale 3 e own_item_policies vale 4.
+select
+  to_regclass('public.studyos_shares') is not null
+    and to_regclass('public.studyos_share_invites') is not null
+    and to_regclass('public.studyos_item_revisions') is not null as tables_ready,
+  coalesce((select bool_and(relrowsecurity) from pg_class where oid in (
+    to_regclass('public.studyos_shares'), to_regclass('public.studyos_share_invites'),
+    to_regclass('public.studyos_item_revisions'))), false) as rls_ready,
+  to_regprocedure('public.push_shared_rows(uuid,text,jsonb)') is not null
+    and to_regprocedure('public.accept_share_invite(uuid,text,text,jsonb)') is not null
+    and to_regprocedure('public.create_share_invite(text,jsonb,jsonb,text)') is not null
+    and to_regprocedure('public.preview_share_invite(text)') is not null
+    and to_regprocedure('public.decline_share_invite(uuid,text)') is not null
+    and to_regprocedure('public.shared_subject_labels()') is not null as rpc_ready,
+  coalesce(has_function_privilege('authenticated',
+    to_regprocedure('public.push_shared_rows(uuid,text,jsonb)'), 'EXECUTE'), false) as authenticated_rpc_ready,
+  not coalesce(has_column_privilege('authenticated', to_regclass('public.studyos_share_invites'), 'token_hash', 'SELECT'), true)
+    as token_hidden_ready,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'studyos_items'
+    and policyname in ('studyos_select_shared_items', 'studyos_insert_shared_items', 'studyos_update_shared_items'))
+    as shared_item_policies,
+  (select count(*) from pg_policies where schemaname = 'public' and tablename = 'studyos_items'
+    and policyname in ('studyos_select_own_items', 'studyos_insert_own_items',
+      'studyos_update_own_items', 'studyos_delete_own_items')) as own_item_policies,
+  exists (select 1 from pg_trigger where tgname = 'studyos_items_revision') and
+    exists (select 1 from pg_trigger where tgname = 'studyos_items_guard') as triggers_ready,
+  exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
+    and schemaname = 'public' and tablename = 'studyos_shares') as realtime_ready;

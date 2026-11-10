@@ -1,0 +1,933 @@
+-- StudyOS: condivisione granulare tra account (migrazione opzionale).
+--
+-- Da eseguire nel SQL Editor DOPO schema.sql e groups.sql. Rieseguibile: tabelle e righe
+-- esistenti restano, funzioni, policy e trigger si aggiornano.
+--
+-- Una sola copia dei dati: chi riceve una condivisione legge (e con "edit" scrive) le righe
+-- originali del proprietario in studyos_items. Le policy del proprietario restano identiche;
+-- quelle nuove si aggiungono e consultano studyos_shares. Vedi docs/groups-sync.md.
+
+do $$
+begin
+  if to_regclass('public.studyos_items') is null then
+    raise exception 'Esegui prima supabase/schema.sql';
+  end if;
+  if to_regclass('public.studyos_groups') is null or to_regclass('public.studyos_group_members') is null then
+    raise exception 'Esegui prima supabase/groups.sql';
+  end if;
+end $$;
+
+-- ─── Tabelle ────────────────────────────────────────────────────────────────
+
+create table if not exists public.studyos_shares (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  owner_name text not null default '',
+  scope text not null,
+  subject_ids text[] not null default '{}',
+  permission text not null default 'view',
+  grantee_user_id uuid references auth.users (id) on delete cascade,
+  grantee_group_id text references public.studyos_groups (id) on delete cascade,
+  grantee_name text not null default '',
+  grantee_email text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.studyos_shares drop constraint if exists studyos_shares_scope_check;
+alter table public.studyos_shares add constraint studyos_shares_scope_check
+  check (scope in ('calendar', 'barb_exams', 'tasks', 'study', 'progress', 'materials', 'goals'));
+alter table public.studyos_shares drop constraint if exists studyos_shares_permission_check;
+alter table public.studyos_shares add constraint studyos_shares_permission_check
+  check (permission in ('view', 'edit') and (scope <> 'barb_exams' or permission = 'view'));
+alter table public.studyos_shares drop constraint if exists studyos_shares_subjects_check;
+alter table public.studyos_shares add constraint studyos_shares_subjects_check
+  check (cardinality(subject_ids) <= 50 and (scope <> 'goals' or cardinality(subject_ids) = 0));
+alter table public.studyos_shares drop constraint if exists studyos_shares_target_check;
+alter table public.studyos_shares add constraint studyos_shares_target_check
+  check (num_nonnulls(grantee_user_id, grantee_group_id) = 1 and grantee_user_id is distinct from owner_id);
+alter table public.studyos_shares drop constraint if exists studyos_shares_names_check;
+alter table public.studyos_shares add constraint studyos_shares_names_check
+  check (char_length(owner_name) <= 120 and char_length(grantee_name) <= 120);
+
+create unique index if not exists studyos_shares_target_key
+  on public.studyos_shares (owner_id, scope, (coalesce(grantee_user_id::text, grantee_group_id)));
+create index if not exists studyos_shares_grantee_user_idx
+  on public.studyos_shares (grantee_user_id) where grantee_user_id is not null;
+create index if not exists studyos_shares_grantee_group_idx
+  on public.studyos_shares (grantee_group_id) where grantee_group_id is not null;
+create index if not exists studyos_shares_owner_idx on public.studyos_shares (owner_id);
+
+create table if not exists public.studyos_share_invites (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  owner_name text not null default '',
+  offers jsonb not null default '[]'::jsonb,
+  requests jsonb not null default '[]'::jsonb,
+  recipient_email text,
+  token_hash bytea not null,
+  status text not null default 'pending',
+  accepted_by uuid references auth.users (id) on delete set null,
+  expires_at timestamptz not null default now() + interval '14 days',
+  created_at timestamptz not null default now()
+);
+
+alter table public.studyos_share_invites drop constraint if exists studyos_share_invites_status_check;
+alter table public.studyos_share_invites add constraint studyos_share_invites_status_check
+  check (status in ('pending', 'accepted', 'declined'));
+create unique index if not exists studyos_share_invites_token_key on public.studyos_share_invites (token_hash);
+create index if not exists studyos_share_invites_owner_idx on public.studyos_share_invites (owner_id, status);
+create index if not exists studyos_share_invites_recipient_idx
+  on public.studyos_share_invites (recipient_email, status) where recipient_email is not null;
+
+create table if not exists public.studyos_item_revisions (
+  id bigint generated always as identity primary key,
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  entity_type text not null,
+  entity_id text not null,
+  payload jsonb not null,
+  deleted boolean not null default false,
+  change text not null,
+  changed_by uuid,
+  changed_at timestamptz not null default now()
+);
+
+alter table public.studyos_item_revisions drop constraint if exists studyos_item_revisions_change_check;
+alter table public.studyos_item_revisions add constraint studyos_item_revisions_change_check
+  check (change in ('create', 'update', 'delete'));
+create index if not exists studyos_item_revisions_owner_idx
+  on public.studyos_item_revisions (owner_id, changed_at desc);
+
+-- ─── Funzioni di copertura e permesso ───────────────────────────────────────
+
+-- Specchio esatto di scopeCovers in src/lib/sharing.ts (stessi casi in tests/sharing.test.mjs).
+create or replace function public.studyos_scope_types(p_scope text)
+returns text[]
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select case p_scope
+    when 'calendar' then array['calendarEvent']
+    when 'barb_exams' then array['calendarEvent']
+    when 'tasks' then array['task']
+    when 'study' then array['studySession', 'studyTopic']
+    when 'progress' then array['exam']
+    when 'materials' then array['attachment', 'note']
+    when 'goals' then array['goal']
+    else array[]::text[]
+  end
+$$;
+
+create or replace function public.studyos_scope_covers(
+  p_scope text,
+  p_entity_type text,
+  p_payload jsonb,
+  p_subject_ids text[]
+)
+returns boolean
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select p_entity_type = any (public.studyos_scope_types(p_scope))
+    and case p_scope
+      when 'barb_exams' then starts_with(coalesce(p_payload->>'sourceUid', ''), 'barb-exam-')
+      -- I progressi sono gli esami ancora da sostenere: il libretto (voti) non si condivide.
+      when 'progress' then (p_payload->>'grade') is null and coalesce(p_payload->>'passFail', 'false') <> 'true'
+      else true
+    end
+    and (
+      coalesce(cardinality(p_subject_ids), 0) = 0
+      or (
+        case when p_entity_type in ('attachment', 'note')
+          then case when p_payload->>'linkedEntityType' = 'subject' then p_payload->>'linkedEntityId' end
+          else p_payload->>'subjectId'
+        end
+      ) = any (p_subject_ids)
+    )
+$$;
+
+-- Condivisioni ricevute da p_owner: dirette o tramite un gruppo di cui si è membri.
+create or replace function public.studyos_received_shares(p_owner uuid)
+returns setof public.studyos_shares
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.*
+  from public.studyos_shares s
+  where s.owner_id = p_owner
+    and (
+      s.grantee_user_id = auth.uid()
+      or (
+        s.grantee_group_id is not null
+        and exists (
+          select 1 from public.studyos_group_members m
+          where m.group_id = s.grantee_group_id and m.user_id = auth.uid()::text
+        )
+      )
+    )
+$$;
+
+-- null = nessun accesso, 'view' o 'edit' (edit vince) sulla riga indicata.
+create or replace function public.studyos_item_access(p_owner uuid, p_entity_type text, p_payload jsonb)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+cost 1000
+as $$
+  select case
+    when bool_or(s.permission = 'edit') then 'edit'
+    when count(*) > 0 then 'view'
+  end
+  from public.studyos_received_shares(p_owner) s
+  where public.studyos_scope_covers(s.scope, p_entity_type, p_payload, s.subject_ids)
+$$;
+
+-- Accesso al tipo, ignorando i filtri: serve ai tombstone (payload ridotto a id e deletedAt).
+create or replace function public.studyos_type_access(p_owner uuid, p_entity_type text)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+cost 1000
+as $$
+  select case
+    when bool_or(s.permission = 'edit') then 'edit'
+    when count(*) > 0 then 'view'
+  end
+  from public.studyos_received_shares(p_owner) s
+  where p_entity_type = any (public.studyos_scope_types(s.scope))
+$$;
+
+-- Persona nota: gruppo in comune o condivisione in una delle due direzioni.
+create or replace function public.studyos_knows_user(p_user uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select auth.uid() is not null and p_user is not null and p_user <> auth.uid() and (
+    exists (
+      select 1
+      from public.studyos_group_members mine
+      join public.studyos_group_members theirs on theirs.group_id = mine.group_id
+      where mine.user_id = auth.uid()::text and theirs.user_id = p_user::text
+    )
+    or exists (
+      select 1 from public.studyos_shares s
+      where (s.owner_id = auth.uid() and s.grantee_user_id = p_user)
+         or (s.owner_id = p_user and s.grantee_user_id = auth.uid())
+    )
+  )
+$$;
+
+revoke all on function public.studyos_received_shares(uuid) from public;
+revoke all on function public.studyos_item_access(uuid, text, jsonb) from public;
+revoke all on function public.studyos_type_access(uuid, text) from public;
+revoke all on function public.studyos_knows_user(uuid) from public;
+grant execute on function public.studyos_scope_types(text) to authenticated;
+grant execute on function public.studyos_scope_covers(text, text, jsonb, text[]) to authenticated;
+grant execute on function public.studyos_received_shares(uuid) to authenticated;
+grant execute on function public.studyos_item_access(uuid, text, jsonb) to authenticated;
+grant execute on function public.studyos_type_access(uuid, text) to authenticated;
+grant execute on function public.studyos_knows_user(uuid) to authenticated;
+
+-- ─── RLS aggiuntiva su studyos_items ────────────────────────────────────────
+-- Le quattro policy "own" di schema.sql restano invariate. In ogni espressione il confronto col
+-- proprietario viene prima: la sync personale non chiama mai le funzioni di condivisione.
+
+drop policy if exists studyos_select_shared_items on public.studyos_items;
+create policy studyos_select_shared_items on public.studyos_items
+for select to authenticated
+using (
+  user_id <> (select auth.uid())
+  and case
+    when deleted then public.studyos_type_access(user_id, entity_type) is not null
+    else public.studyos_item_access(user_id, entity_type, payload) is not null
+  end
+);
+
+drop policy if exists studyos_insert_shared_items on public.studyos_items;
+create policy studyos_insert_shared_items on public.studyos_items
+for insert to authenticated
+with check (
+  user_id <> (select auth.uid())
+  and deleted = false
+  and public.studyos_item_access(user_id, entity_type, payload) = 'edit'
+);
+
+drop policy if exists studyos_update_shared_items on public.studyos_items;
+create policy studyos_update_shared_items on public.studyos_items
+for update to authenticated
+using (
+  user_id <> (select auth.uid())
+  and deleted = false
+  and public.studyos_item_access(user_id, entity_type, payload) = 'edit'
+)
+with check (
+  user_id <> (select auth.uid())
+  and case
+    when deleted then public.studyos_type_access(user_id, entity_type) = 'edit'
+      and (payload - 'id' - 'deletedAt') = '{}'::jsonb
+    else public.studyos_item_access(user_id, entity_type, payload) = 'edit'
+  end
+);
+
+-- Proprietario, tipo e id di una riga non cambiano mai (nemmeno con un update diretto).
+create or replace function public.studyos_items_guard()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  if new.user_id <> old.user_id or new.entity_type <> old.entity_type or new.entity_id <> old.entity_id then
+    raise exception 'Proprietario, tipo e id di un elemento non si possono cambiare';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists studyos_items_guard on public.studyos_items;
+create trigger studyos_items_guard
+before update on public.studyos_items
+for each row execute function public.studyos_items_guard();
+
+-- Cronologia delle modifiche fatte da altri: creazione (riga nuova), modifica ed eliminazione
+-- (riga precedente). Il proprietario la legge e ripristina con la sync normale.
+create or replace function public.studyos_items_revision()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor uuid := auth.uid();
+begin
+  if tg_op = 'INSERT' then
+    if v_actor is null or v_actor = new.user_id then
+      return null;
+    end if;
+    insert into public.studyos_item_revisions (owner_id, entity_type, entity_id, payload, deleted, change, changed_by)
+    values (new.user_id, new.entity_type, new.entity_id, new.payload, new.deleted, 'create', v_actor);
+  else
+    if v_actor is null or v_actor = old.user_id then
+      return null;
+    end if;
+    insert into public.studyos_item_revisions (owner_id, entity_type, entity_id, payload, deleted, change, changed_by)
+    values (
+      old.user_id, old.entity_type, old.entity_id, old.payload, old.deleted,
+      case when new.deleted and not old.deleted then 'delete' else 'update' end,
+      v_actor
+    );
+  end if;
+  delete from public.studyos_item_revisions
+  where owner_id = coalesce(new.user_id, old.user_id) and changed_at < now() - interval '90 days';
+  return null;
+end;
+$$;
+
+revoke all on function public.studyos_items_revision() from public;
+
+drop trigger if exists studyos_items_revision on public.studyos_items;
+create trigger studyos_items_revision
+after insert or update on public.studyos_items
+for each row execute function public.studyos_items_revision();
+
+-- ─── RLS delle nuove tabelle ────────────────────────────────────────────────
+
+alter table public.studyos_shares enable row level security;
+alter table public.studyos_share_invites enable row level security;
+alter table public.studyos_item_revisions enable row level security;
+
+revoke all on table public.studyos_shares from anon;
+revoke all on table public.studyos_share_invites from anon;
+revoke all on table public.studyos_item_revisions from anon;
+revoke all on table public.studyos_share_invites from authenticated;
+revoke all on table public.studyos_item_revisions from authenticated;
+-- Toglie anche i privilegi predefiniti (TRUNCATE, TRIGGER, REFERENCES) prima di concedere i quattro necessari.
+revoke all on table public.studyos_shares from authenticated;
+grant select, insert, update, delete on table public.studyos_shares to authenticated;
+-- token_hash resta fuori dalle colonne leggibili.
+grant select (id, owner_id, owner_name, offers, requests, recipient_email, status, accepted_by, expires_at, created_at)
+  on table public.studyos_share_invites to authenticated;
+grant delete on table public.studyos_share_invites to authenticated;
+grant select, delete on table public.studyos_item_revisions to authenticated;
+
+drop policy if exists studyos_shares_select on public.studyos_shares;
+create policy studyos_shares_select on public.studyos_shares
+for select to authenticated
+using (
+  owner_id = (select auth.uid())
+  or grantee_user_id = (select auth.uid())
+  or (grantee_group_id is not null and public.studyos_is_group_member(grantee_group_id))
+);
+
+drop policy if exists studyos_shares_insert on public.studyos_shares;
+create policy studyos_shares_insert on public.studyos_shares
+for insert to authenticated
+with check (
+  owner_id = (select auth.uid())
+  and grantee_email is null
+  and case
+    when grantee_group_id is not null then public.studyos_is_group_member(grantee_group_id)
+    else public.studyos_knows_user(grantee_user_id)
+  end
+);
+
+drop policy if exists studyos_shares_update on public.studyos_shares;
+create policy studyos_shares_update on public.studyos_shares
+for update to authenticated
+using (owner_id = (select auth.uid()))
+with check (owner_id = (select auth.uid()));
+
+drop policy if exists studyos_shares_delete on public.studyos_shares;
+create policy studyos_shares_delete on public.studyos_shares
+for delete to authenticated
+using (owner_id = (select auth.uid()) or grantee_user_id = (select auth.uid()));
+
+-- Il proprietario cambia permesso, materie e nomi; destinatario e sezione restano quelli.
+create or replace function public.studyos_shares_guard()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  if new.owner_id <> old.owner_id or new.scope <> old.scope
+     or new.grantee_user_id is distinct from old.grantee_user_id
+     or new.grantee_group_id is distinct from old.grantee_group_id then
+    raise exception 'Destinatario e sezione di una condivisione non si possono cambiare';
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists studyos_shares_guard on public.studyos_shares;
+create trigger studyos_shares_guard
+before update on public.studyos_shares
+for each row execute function public.studyos_shares_guard();
+
+-- Chi esce da un gruppo (o ne viene rimosso) smette di condividere con quel gruppo.
+create or replace function public.studyos_group_member_left()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from public.studyos_shares
+  where grantee_group_id = old.group_id and owner_id::text = old.user_id;
+  return old;
+end;
+$$;
+
+revoke all on function public.studyos_group_member_left() from public;
+
+drop trigger if exists studyos_group_member_left on public.studyos_group_members;
+create trigger studyos_group_member_left
+after delete on public.studyos_group_members
+for each row execute function public.studyos_group_member_left();
+
+drop policy if exists studyos_share_invites_select on public.studyos_share_invites;
+create policy studyos_share_invites_select on public.studyos_share_invites
+for select to authenticated
+using (
+  owner_id = (select auth.uid())
+  or (
+    status = 'pending'
+    and recipient_email is not null
+    and recipient_email = lower((select auth.jwt()) ->> 'email')
+  )
+);
+
+drop policy if exists studyos_share_invites_delete on public.studyos_share_invites;
+create policy studyos_share_invites_delete on public.studyos_share_invites
+for delete to authenticated
+using (owner_id = (select auth.uid()));
+
+drop policy if exists studyos_item_revisions_select on public.studyos_item_revisions;
+create policy studyos_item_revisions_select on public.studyos_item_revisions
+for select to authenticated
+using (owner_id = (select auth.uid()));
+
+drop policy if exists studyos_item_revisions_delete on public.studyos_item_revisions;
+create policy studyos_item_revisions_delete on public.studyos_item_revisions
+for delete to authenticated
+using (owner_id = (select auth.uid()));
+
+-- ─── RPC ────────────────────────────────────────────────────────────────────
+
+create or replace function public.studyos_validate_share_items(p_items jsonb, p_require boolean)
+returns void
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v_item jsonb;
+  v_scope text;
+  v_permission text;
+  v_subjects jsonb;
+  v_names jsonb;
+  v_seen text[] := '{}';
+begin
+  if p_items is null or jsonb_typeof(p_items) <> 'array' then
+    raise exception 'Sezioni non valide';
+  end if;
+  if p_require and jsonb_array_length(p_items) = 0 then
+    raise exception 'Scegli almeno una sezione';
+  end if;
+  if jsonb_array_length(p_items) > 7 then
+    raise exception 'Troppe sezioni';
+  end if;
+  for v_item in select value from jsonb_array_elements(p_items) loop
+    v_scope := v_item->>'scope';
+    v_permission := coalesce(v_item->>'permission', 'view');
+    v_subjects := coalesce(v_item->'subject_ids', '[]'::jsonb);
+    v_names := coalesce(v_item->'subject_names', '[]'::jsonb);
+    if v_scope is null or v_scope not in ('calendar', 'barb_exams', 'tasks', 'study', 'progress', 'materials', 'goals') then
+      raise exception 'Sezione non valida: %', coalesce(v_scope, '');
+    end if;
+    if v_scope = any (v_seen) then
+      raise exception 'Sezione ripetuta: %', v_scope;
+    end if;
+    v_seen := v_seen || v_scope;
+    if v_permission not in ('view', 'edit') then
+      raise exception 'Permesso non valido';
+    end if;
+    if v_scope = 'barb_exams' and v_permission <> 'view' then
+      raise exception 'Gli appelli BARB si condividono solo in lettura';
+    end if;
+    if jsonb_typeof(v_subjects) <> 'array' or jsonb_array_length(v_subjects) > 50
+       or exists (select 1 from jsonb_array_elements(v_subjects) e where jsonb_typeof(e) <> 'string' or char_length(e #>> '{}') > 120) then
+      raise exception 'Materie non valide';
+    end if;
+    if jsonb_typeof(v_names) <> 'array' or jsonb_array_length(v_names) > 50
+       or exists (select 1 from jsonb_array_elements(v_names) e where jsonb_typeof(e) <> 'string' or char_length(e #>> '{}') > 120) then
+      raise exception 'Nomi delle materie non validi';
+    end if;
+    if v_scope = 'goals' and jsonb_array_length(v_subjects) > 0 then
+      raise exception 'Gli obiettivi non hanno materie';
+    end if;
+  end loop;
+end;
+$$;
+
+create or replace function public.studyos_share_name(p_display_name text, p_email text)
+returns text
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select left(coalesce(nullif(btrim(p_display_name), ''), nullif(split_part(p_email, '@', 1), ''), 'Studente'), 80)
+$$;
+
+create or replace function public.create_share_invite(
+  p_owner_name text,
+  p_offers jsonb,
+  p_requests jsonb default '[]'::jsonb,
+  p_recipient_email text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_token text := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+  v_email text := nullif(lower(btrim(coalesce(p_recipient_email, ''))), '');
+  v_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Accesso richiesto';
+  end if;
+  perform public.studyos_validate_share_items(p_offers, true);
+  perform public.studyos_validate_share_items(coalesce(p_requests, '[]'::jsonb), false);
+  if v_email is not null and v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'Email non valida';
+  end if;
+  if v_email is not null and v_email = lower(auth.jwt() ->> 'email') then
+    raise exception 'Non puoi invitare te stesso';
+  end if;
+  if (
+    select count(*) from public.studyos_share_invites
+    where owner_id = auth.uid() and status = 'pending' and expires_at > now()
+  ) >= 50 then
+    raise exception 'Troppi inviti in attesa: annullane qualcuno';
+  end if;
+  insert into public.studyos_share_invites (owner_id, owner_name, offers, requests, recipient_email, token_hash)
+  values (
+    auth.uid(),
+    public.studyos_share_name(p_owner_name, auth.jwt() ->> 'email'),
+    p_offers,
+    coalesce(p_requests, '[]'::jsonb),
+    v_email,
+    sha256(convert_to(v_token, 'UTF8'))
+  )
+  returning id into v_id;
+  return jsonb_build_object('id', v_id, 'token', v_token);
+end;
+$$;
+
+create or replace function public.preview_share_invite(p_token text)
+returns table (
+  invite_id uuid,
+  owner_name text,
+  offers jsonb,
+  requests jsonb,
+  expires_at timestamptz,
+  status text,
+  for_other_account boolean,
+  is_own boolean
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    i.id,
+    i.owner_name,
+    i.offers,
+    i.requests,
+    i.expires_at,
+    case when i.status = 'pending' and i.expires_at <= now() then 'expired' else i.status end,
+    i.recipient_email is not null and i.recipient_email <> lower(auth.jwt() ->> 'email'),
+    i.owner_id = auth.uid()
+  from public.studyos_share_invites i
+  where auth.uid() is not null
+    and p_token ~ '^[0-9a-f]{64}$'
+    and i.token_hash = sha256(convert_to(p_token, 'UTF8'))
+$$;
+
+-- Verifica l'invito per chi lo apre: email destinataria, oppure token per gli inviti via link.
+create or replace function public.studyos_claim_share_invite(p_invite_id uuid, p_token text)
+returns public.studyos_share_invites
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_invite public.studyos_share_invites%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception 'Accesso richiesto';
+  end if;
+  select * into v_invite from public.studyos_share_invites where id = p_invite_id for update;
+  if not found then
+    raise exception 'Invito non trovato';
+  end if;
+  if v_invite.owner_id = auth.uid() then
+    raise exception 'È un tuo invito: mandalo a un''altra persona';
+  end if;
+  if v_invite.status <> 'pending' then
+    raise exception 'Invito già usato';
+  end if;
+  if v_invite.expires_at <= now() then
+    raise exception 'Invito scaduto: chiedine uno nuovo';
+  end if;
+  if v_invite.recipient_email is not null then
+    if v_invite.recipient_email <> lower(auth.jwt() ->> 'email') then
+      raise exception 'Invito destinato a un altro account';
+    end if;
+  elsif p_token is null or v_invite.token_hash <> sha256(convert_to(p_token, 'UTF8')) then
+    raise exception 'Link di invito non valido';
+  end if;
+  return v_invite;
+end;
+$$;
+
+create or replace function public.accept_share_invite(
+  p_invite_id uuid,
+  p_token text default null,
+  p_display_name text default null,
+  p_reciprocal jsonb default '[]'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_invite public.studyos_share_invites%rowtype;
+  v_email text := lower(auth.jwt() ->> 'email');
+  v_name text := public.studyos_share_name(p_display_name, lower(auth.jwt() ->> 'email'));
+  v_item jsonb;
+  v_request jsonb;
+  v_granted integer := 0;
+  v_back integer := 0;
+begin
+  v_invite := public.studyos_claim_share_invite(p_invite_id, p_token);
+  perform public.studyos_validate_share_items(coalesce(p_reciprocal, '[]'::jsonb), false);
+
+  for v_item in select value from jsonb_array_elements(v_invite.offers) loop
+    insert into public.studyos_shares
+      (owner_id, owner_name, scope, subject_ids, permission, grantee_user_id, grantee_name, grantee_email)
+    values (
+      v_invite.owner_id,
+      v_invite.owner_name,
+      v_item->>'scope',
+      array(select jsonb_array_elements_text(coalesce(v_item->'subject_ids', '[]'::jsonb))),
+      coalesce(v_item->>'permission', 'view'),
+      auth.uid(),
+      v_name,
+      v_email
+    )
+    on conflict (owner_id, scope, (coalesce(grantee_user_id::text, grantee_group_id))) do update set
+      permission = excluded.permission,
+      subject_ids = excluded.subject_ids,
+      owner_name = excluded.owner_name,
+      grantee_name = excluded.grantee_name,
+      grantee_email = excluded.grantee_email;
+    v_granted := v_granted + 1;
+  end loop;
+
+  -- Condivisione inversa: solo sezioni richieste, mai con un permesso più ampio di quello chiesto.
+  for v_item in select value from jsonb_array_elements(coalesce(p_reciprocal, '[]'::jsonb)) loop
+    v_request := null;
+    select value into v_request from jsonb_array_elements(v_invite.requests)
+    where value->>'scope' = v_item->>'scope';
+    if v_request is null then
+      raise exception 'Sezione non richiesta: %', v_item->>'scope';
+    end if;
+    if coalesce(v_item->>'permission', 'view') = 'edit' and coalesce(v_request->>'permission', 'view') <> 'edit' then
+      raise exception 'Permesso più ampio di quello richiesto';
+    end if;
+    insert into public.studyos_shares
+      (owner_id, owner_name, scope, subject_ids, permission, grantee_user_id, grantee_name)
+    values (
+      auth.uid(),
+      v_name,
+      v_item->>'scope',
+      array(select jsonb_array_elements_text(coalesce(v_item->'subject_ids', '[]'::jsonb))),
+      coalesce(v_item->>'permission', 'view'),
+      v_invite.owner_id,
+      v_invite.owner_name
+    )
+    on conflict (owner_id, scope, (coalesce(grantee_user_id::text, grantee_group_id))) do update set
+      permission = excluded.permission,
+      subject_ids = excluded.subject_ids,
+      owner_name = excluded.owner_name,
+      grantee_name = excluded.grantee_name;
+    v_back := v_back + 1;
+  end loop;
+
+  update public.studyos_share_invites
+  set status = 'accepted', accepted_by = auth.uid()
+  where id = v_invite.id;
+
+  return jsonb_build_object(
+    'owner_id', v_invite.owner_id,
+    'owner_name', v_invite.owner_name,
+    'granted', v_granted,
+    'shared_back', v_back
+  );
+end;
+$$;
+
+create or replace function public.decline_share_invite(p_invite_id uuid, p_token text default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_invite public.studyos_share_invites%rowtype;
+begin
+  v_invite := public.studyos_claim_share_invite(p_invite_id, p_token);
+  update public.studyos_share_invites set status = 'declined' where id = v_invite.id;
+end;
+$$;
+
+-- Etichette delle materie dei proprietari che condividono con me: mai note, docente o voto.
+-- Con soli filtri per materia si vedono solo le materie scelte.
+create or replace function public.shared_subject_labels()
+returns table (owner_id uuid, subject_id text, name text, color text, icon text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    i.user_id,
+    i.entity_id,
+    left(coalesce(i.payload->>'name', ''), 120),
+    left(coalesce(i.payload->>'color', ''), 40),
+    left(coalesce(i.payload->>'icon', ''), 40)
+  from public.studyos_items i
+  where auth.uid() is not null
+    and i.entity_type = 'subject'
+    and i.deleted = false
+    and i.user_id <> auth.uid()
+    and exists (
+      select 1 from public.studyos_received_shares(i.user_id) s
+      where s.scope <> 'goals'
+        and (cardinality(s.subject_ids) = 0 or i.entity_id = any (s.subject_ids))
+    )
+$$;
+
+-- Scritture di chi riceve sulle righe del proprietario, con la regola LWW di push_studyos_rows.
+-- Ogni riga viene controllata prima di scrivere: una riga non consentita torna "denied" e non
+-- fa fallire il batch. RLS resta attiva (SECURITY INVOKER) come garanzia finale.
+create or replace function public.push_shared_rows(p_owner_id uuid, p_client_id text, p_rows jsonb)
+returns table (entity_type text, entity_id text, accepted boolean, reason text)
+language plpgsql
+security invoker
+set search_path = public
+as $$
+#variable_conflict use_column
+declare
+  v_row jsonb;
+  v_type text;
+  v_id text;
+  v_payload jsonb;
+  v_deleted boolean;
+  v_exists boolean;
+  v_applied boolean;
+  v_reason text;
+  v_current public.studyos_items%rowtype;
+begin
+  if auth.uid() is null or p_owner_id is null or p_owner_id = auth.uid() then
+    raise exception 'Proprietario non valido';
+  end if;
+  if jsonb_typeof(p_rows) <> 'array' or jsonb_array_length(p_rows) > 200 then
+    raise exception 'Batch di sincronizzazione non valido';
+  end if;
+
+  for v_row in select value from jsonb_array_elements(p_rows) loop
+    v_type := v_row->>'entity_type';
+    v_id := v_row->>'entity_id';
+    v_payload := v_row->'payload';
+    v_deleted := coalesce((v_row->>'deleted')::boolean, false);
+    if nullif(v_type, '') is null or nullif(v_id, '') is null
+       or jsonb_typeof(v_payload) <> 'object'
+       or (v_payload->>'id') is distinct from v_id then
+      raise exception 'Entità di sincronizzazione non valida';
+    end if;
+
+    v_applied := false;
+    v_reason := null;
+    select * into v_current from public.studyos_items i
+    where i.user_id = p_owner_id and i.entity_type = v_type and i.entity_id = v_id;
+    v_exists := found;
+
+    if v_deleted then
+      v_payload := jsonb_build_object('id', v_id, 'deletedAt', coalesce(v_payload->>'deletedAt', v_payload->>'updatedAt'));
+      if not v_exists or v_current.deleted
+         or public.studyos_item_access(p_owner_id, v_type, v_current.payload) is distinct from 'edit' then
+        v_reason := 'denied';
+      else
+        update public.studyos_items as current_row
+        set payload = v_payload, deleted = true, encrypted = false, client_id = p_client_id
+        where current_row.user_id = p_owner_id and current_row.entity_type = v_type and current_row.entity_id = v_id
+          and public.studyos_item_stamp(v_payload, true, now())
+            > public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+        returning true into v_applied;
+        if not coalesce(v_applied, false) then
+          v_reason := 'stale';
+        end if;
+      end if;
+    elsif public.studyos_item_access(p_owner_id, v_type, v_payload) is distinct from 'edit'
+       or (v_exists and (v_current.deleted
+         or public.studyos_item_access(p_owner_id, v_type, v_current.payload) is distinct from 'edit')) then
+      v_reason := 'denied';
+    elsif v_exists then
+      update public.studyos_items as current_row
+      set payload = v_payload, deleted = false, encrypted = false, client_id = p_client_id
+      where current_row.user_id = p_owner_id and current_row.entity_type = v_type and current_row.entity_id = v_id
+        and (
+          public.studyos_item_stamp(v_payload, false, now())
+            > public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+          or (
+            public.studyos_item_stamp(v_payload, false, now())
+              = public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+            and v_payload = current_row.payload
+          )
+        )
+      returning true into v_applied;
+      if not coalesce(v_applied, false) then
+        v_reason := 'stale';
+      end if;
+    else
+      insert into public.studyos_items (user_id, entity_type, entity_id, payload, deleted, encrypted, client_id)
+      values (p_owner_id, v_type, v_id, v_payload, false, false, p_client_id)
+      on conflict (user_id, entity_type, entity_id) do nothing
+      returning true into v_applied;
+      if not coalesce(v_applied, false) then
+        v_reason := 'stale';
+      end if;
+    end if;
+
+    entity_type := v_type;
+    entity_id := v_id;
+    accepted := coalesce(v_applied, false);
+    reason := v_reason;
+    return next;
+  end loop;
+end;
+$$;
+
+revoke all on function public.studyos_validate_share_items(jsonb, boolean) from public;
+revoke all on function public.studyos_share_name(text, text) from public;
+revoke all on function public.create_share_invite(text, jsonb, jsonb, text) from public;
+revoke all on function public.preview_share_invite(text) from public;
+revoke all on function public.studyos_claim_share_invite(uuid, text) from public;
+revoke all on function public.accept_share_invite(uuid, text, text, jsonb) from public;
+revoke all on function public.decline_share_invite(uuid, text) from public;
+revoke all on function public.shared_subject_labels() from public;
+revoke all on function public.push_shared_rows(uuid, text, jsonb) from public;
+grant execute on function public.studyos_validate_share_items(jsonb, boolean) to authenticated;
+grant execute on function public.studyos_share_name(text, text) to authenticated;
+grant execute on function public.create_share_invite(text, jsonb, jsonb, text) to authenticated;
+grant execute on function public.preview_share_invite(text) to authenticated;
+grant execute on function public.accept_share_invite(uuid, text, text, jsonb) to authenticated;
+grant execute on function public.decline_share_invite(uuid, text) to authenticated;
+grant execute on function public.shared_subject_labels() to authenticated;
+grant execute on function public.push_shared_rows(uuid, text, jsonb) to authenticated;
+
+-- Su alcuni progetti i privilegi predefiniti danno EXECUTE anche ad anon e authenticated, e
+-- "revoke ... from public" non li toglie: si tolgono in modo esplicito (come per push_studyos_rows
+-- in schema.sql). studyos_claim_share_invite resta chiamabile solo dalle RPC DEFINER.
+revoke all on function public.studyos_scope_types(text) from public, anon;
+revoke all on function public.studyos_scope_covers(text, text, jsonb, text[]) from public, anon;
+revoke all on function public.studyos_received_shares(uuid) from anon;
+revoke all on function public.studyos_item_access(uuid, text, jsonb) from anon;
+revoke all on function public.studyos_type_access(uuid, text) from anon;
+revoke all on function public.studyos_knows_user(uuid) from anon;
+revoke all on function public.studyos_validate_share_items(jsonb, boolean) from anon;
+revoke all on function public.studyos_share_name(text, text) from anon;
+revoke all on function public.create_share_invite(text, jsonb, jsonb, text) from anon;
+revoke all on function public.preview_share_invite(text) from anon;
+revoke all on function public.accept_share_invite(uuid, text, text, jsonb) from anon;
+revoke all on function public.decline_share_invite(uuid, text) from anon;
+revoke all on function public.shared_subject_labels() from anon;
+revoke all on function public.push_shared_rows(uuid, text, jsonb) from anon;
+revoke all on function public.studyos_claim_share_invite(uuid, text) from anon, authenticated;
+
+-- ─── Realtime ───────────────────────────────────────────────────────────────
+-- studyos_items è già nella pubblicazione (schema.sql). Il client usa gli eventi come segnale.
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'studyos_shares'
+    ) then
+      execute 'alter publication supabase_realtime add table public.studyos_shares';
+    end if;
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'studyos_share_invites'
+    ) then
+      execute 'alter publication supabase_realtime add table public.studyos_share_invites';
+    end if;
+  end if;
+end $$;
