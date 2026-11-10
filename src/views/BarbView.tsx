@@ -401,9 +401,12 @@ function CourseCard({
         notOffered ? "opacity-65" : ""
       }`}
     >
-      <div className="flex min-w-0 items-center gap-1.5">
-        <Tag color={SEMESTER_TONE[course.semester]}>{SEMESTER_SHORT[course.semester]}</Tag>
-        <Tag className="shrink-0">{course.cfu} CFU</Tag>
+      <div className="flex min-w-0 items-start gap-1.5">
+        {/* Su mobile la scheda è larga ~170 px: "Da definire" + CFU + icona non ci stanno, quindi i tag vanno a capo. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Tag color={SEMESTER_TONE[course.semester]}>{SEMESTER_SHORT[course.semester]}</Tag>
+          <Tag className="shrink-0">{course.cfu} CFU</Tag>
+        </div>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {added ? (
             <span className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--accent)] text-[#10131d]" title="Già nelle tue materie">
