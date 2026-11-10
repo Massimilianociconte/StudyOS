@@ -1,20 +1,27 @@
 #!/usr/bin/env node
 // Prova API della condivisione con le stesse chiamate del client e quattro account:
 // Alice (proprietaria), Bob (invitato, reciproco), Carla (membro di gruppo), Mallory (estranea).
-// Solo contro uno stack Supabase LOCALE: vedi scripts/supabase/local-stack.md.
+// Solo contro lo stack Supabase LOCALE della condivisione (porte 55421-55429): vedi scripts/supabase/local-stack.md.
 import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.SUPABASE_URL ?? "";
 const key = process.env.SUPABASE_KEY ?? "";
-const host = (() => {
+const target = (() => {
   try {
-    return new URL(url).hostname;
+    const { hostname, port } = new URL(url);
+    return { host: hostname, port: Number(port) };
   } catch {
-    return "";
+    return null;
   }
 })();
-if (!["127.0.0.1", "localhost", "[::1]"].includes(host)) {
-  console.error("Solo stack locale: SUPABASE_URL deve puntare a 127.0.0.1 o localhost.");
+if (!url) {
+  console.error("SUPABASE_URL mancante: atteso lo stack locale della condivisione, http://127.0.0.1:55421 (vedi scripts/supabase/local-stack.md).");
+  process.exit(2);
+}
+// Solo le porte 55421-55429 dello stack `studyos-sharing`: altri stack locali (5432x e simili) non si toccano.
+if (!target || !["127.0.0.1", "localhost", "[::1]"].includes(target.host) || !(target.port >= 55421 && target.port <= 55429)) {
+  const found = target ? `${target.host}:${target.port || "porta predefinita"}` : "URL non valido";
+  console.error(`Solo stack locale: SUPABASE_URL deve puntare a 127.0.0.1 o localhost sulle porte 55421-55429 (trovato: ${found}).`);
   process.exit(2);
 }
 if (!key) {
@@ -29,9 +36,19 @@ const check = (name, condition, detail = "") => {
   else failures.push(detail ? `${name} — ${detail}` : name);
   console.log(`${condition ? "✓" : "✗"} ${name}${!condition && detail ? ` (${detail})` : ""}`);
 };
+// Un controllo da cui dipendono tutti i successivi: se fallisce si interrompe con un esito pulito, senza stack.
+class Abort extends Error {}
+const need = (name, condition, detail = "") => {
+  check(name, condition, detail);
+  if (!condition) throw new Abort(name);
+};
 const rejects = async (name, request) => {
   const { error } = await request;
   check(name, Boolean(error), error ? "" : "nessun errore");
+};
+const summary = () => {
+  console.log(`\n${passed} controlli superati, ${failures.length} falliti.`);
+  if (failures.length) console.log(failures.map((item) => `- ${item}`).join("\n"));
 };
 
 const run = Date.now().toString(36);
@@ -71,6 +88,14 @@ const share = async (who, filter) => {
   if (error) throw new Error(error.message);
   return data;
 };
+// Righe visibili in una tabella: l'errore di lettura non si scambia per "nessuna riga".
+const count = async (who, table) => {
+  const { data, error } = await who.client.from(table).select("id");
+  return { rows: data?.length ?? 0, error: error?.message };
+};
+
+// Il canale Realtime di Bob si chiude in ogni caso (esito pulito, controllo fallito, eccezione).
+let closeRealtime = async () => {};
 
 const main = async () => {
   const alice = await account("alice");
@@ -101,14 +126,28 @@ const main = async () => {
   // Nessun accesso prima di una condivisione.
   check("Bob senza condivisione non vede gli eventi di Alice", liveIds(await items(bob, alice, "calendarEvent")) === "");
 
-  // Realtime: Bob ascolta le righe di Alice (Realtime applica la RLS).
+  // Realtime: Bob ascolta le righe di Alice (Realtime applica la RLS). Si registrano id e titolo
+  // di ogni evento, così una consegna in ritardo di una modifica vecchia non vale come prova.
   const received = [];
   const channel = bob.client
     .channel(`check-${run}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "studyos_items", filter: `user_id=in.(${alice.id})` }, (payload) =>
-      received.push(payload.new?.entity_id ?? payload.old?.entity_id)
+      received.push({ id: payload.new?.entity_id ?? payload.old?.entity_id, title: payload.new?.payload?.title })
     );
-  await new Promise((resolve) => channel.subscribe((status) => status === "SUBSCRIBED" && resolve()));
+  closeRealtime = async () => {
+    closeRealtime = async () => {};
+    await bob.client.removeChannel(channel);
+  };
+  // L'iscrizione non deve mai bloccare lo script: ogni esito (anche errore o timeout) chiude l'attesa.
+  const subscribed = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("nessuna risposta in 10 s"), 10_000);
+    channel.subscribe((status, error) => {
+      if (!["SUBSCRIBED", "CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) return;
+      clearTimeout(timer);
+      resolve(status === "SUBSCRIBED" ? status : `${status}${error?.message ? `: ${error.message}` : ""}`);
+    });
+  });
+  check("Realtime: Bob si iscrive al canale", subscribed === "SUBSCRIBED", subscribed);
 
   // Invito via link: calendario con modifica, in cambio calendario in lettura.
   const { data: invite, error: inviteError } = await alice.client.rpc("create_share_invite", {
@@ -117,11 +156,14 @@ const main = async () => {
     p_requests: [{ scope: "calendar", permission: "view" }],
     p_recipient_email: null
   });
-  check("Alice crea un invito via link", !inviteError && /^[0-9a-f]{64}$/.test(invite?.token ?? ""), inviteError?.message);
+  need("Alice crea un invito via link", !inviteError && /^[0-9a-f]{64}$/.test(invite?.token ?? "") && Boolean(invite?.id), inviteError?.message ?? "risposta senza id o token");
   // `select *` è negato perché token_hash è nascosto per colonna: sugli inviti si elencano sempre le colonne.
-  const { data: tokenRow } = await alice.client.from("studyos_share_invites").select(inviteColumns).eq("id", invite.id).single();
+  const { data: tokenRow, error: tokenRowError } = await alice.client.from("studyos_share_invites").select(inviteColumns).eq("id", invite.id).single();
   const { error: hashError } = await alice.client.from("studyos_share_invites").select("token_hash").eq("id", invite.id);
-  check("Il token non è leggibile dalla tabella", tokenRow?.id === invite.id && !("token_hash" in tokenRow) && Boolean(hashError), hashError ? "" : "token_hash leggibile");
+  const { error: starError } = await alice.client.from("studyos_share_invites").select("*").eq("id", invite.id);
+  check("Alice legge il proprio invito (colonne elencate)", tokenRow?.id === invite.id, tokenRowError?.message);
+  check("Il token non è leggibile dalla tabella", hashError?.code === "42501", hashError ? `${hashError.code}: ${hashError.message}` : "token_hash leggibile");
+  check("select * sugli inviti è negato (vanno elencate le colonne)", starError?.code === "42501", starError ? `${starError.code}: ${starError.message}` : "select * riuscita");
   await rejects("barb_exams con modifica rifiutato", alice.client.rpc("create_share_invite", {
     p_owner_name: "Alice", p_offers: [{ scope: "barb_exams", permission: "edit" }], p_requests: [], p_recipient_email: null
   }));
@@ -146,9 +188,17 @@ const main = async () => {
 
   // Lettura secondo la sezione.
   check("Bob vede tutti gli eventi di Alice", liveIds(await items(bob, alice, "calendarEvent")) === [E1.id, E2.id, E3.id].sort().join(","));
+  // Controllo positivo: le righe esistono davvero (le legge Alice) prima di constatare che Bob non le vede.
+  const hiddenTypes = ["task", "exam", "goal", "subject", "preferences"];
+  const aliceOwn = [];
+  const bobSees = [];
+  for (const type of hiddenTypes) {
+    aliceOwn.push((await items(alice, alice, type)).length);
+    bobSees.push((await items(bob, alice, type)).length);
+  }
   check("Bob non vede attività, esami, obiettivi, materie e preferenze",
-    (await items(bob, alice, "task")).length + (await items(bob, alice, "exam")).length + (await items(bob, alice, "goal")).length +
-      (await items(bob, alice, "subject")).length + (await items(bob, alice, "preferences")).length === 0);
+    aliceOwn.every((total) => total > 0) && bobSees.every((total) => total === 0),
+    `Alice ${hiddenTypes.map((type, index) => `${type}=${aliceOwn[index]}`).join(" ")}; Bob ${bobSees.join(",")}`);
   check("Alice vede l'evento di Bob (reciproco)", liveIds(await items(alice, bob, "calendarEvent")) === B1.id);
   const { data: labels } = await bob.client.rpc("shared_subject_labels");
   check("Etichette delle materie senza note né docente", labels?.length === 2 && labels.every((label) => !("teacher" in label) && !("notes" in label)));
@@ -173,7 +223,8 @@ const main = async () => {
   check("Cronologia: creazione, modifica ed eliminazione di Bob",
     ["update", "create", "delete"].every((change) => revisions?.some((rev) => rev.change === change && rev.changed_by === bob.id)));
   check("La revisione conserva la versione precedente", revisions?.find((rev) => rev.change === "update")?.payload.title === "Biochimica");
-  check("Bob non legge la cronologia di Alice", ((await bob.client.from("studyos_item_revisions").select("id")).data ?? []).length === 0);
+  const bobRevisions = await count(bob, "studyos_item_revisions");
+  check("Bob non legge la cronologia di Alice", !bobRevisions.error && bobRevisions.rows === 0, bobRevisions.error ?? `${bobRevisions.rows} righe`);
 
   // Tentativi vietati.
   const { data: viewOnly } = await pushShared(alice, bob, [row("calendarEvent", { ...B1, title: "no", updatedAt: iso(5_000) })]);
@@ -184,14 +235,20 @@ const main = async () => {
     .update({ deleted: true, payload: { id: E1.id, deletedAt: iso(9_000), extra: "x" } }).eq("user_id", alice.id).eq("entity_id", E1.id).select().single());
   await rejects("Cambio di proprietario rifiutato", bob.client.from("studyos_items")
     .update({ user_id: bob.id }).eq("user_id", alice.id).eq("entity_id", E1.id).select().single());
-  check("Bob non cancella fisicamente righe di Alice",
-    ((await bob.client.from("studyos_items").delete().eq("user_id", alice.id).eq("entity_id", E1.id).select()).data ?? []).length === 0);
+  const { data: removedRows, error: removeError } = await bob.client.from("studyos_items").delete().eq("user_id", alice.id).eq("entity_id", E1.id).select();
+  check("Bob non cancella fisicamente righe di Alice", !removeError && removedRows?.length === 0, removeError?.message ?? `${removedRows?.length} righe cancellate`);
 
   // Permessi e filtri cambiati dal proprietario.
   const [calendarShare] = await share(alice, { owner_id: alice.id, grantee_user_id: bob.id, scope: "calendar" });
+  need("Esiste la condivisione del calendario con Bob", Boolean(calendarShare));
   await alice.client.from("studyos_shares").update({ permission: "view" }).eq("id", calendarShare.id);
   const { data: afterView } = await pushShared(bob, alice, [row("calendarEvent", { ...E1b, title: "ancora", updatedAt: iso(10_000) })]);
   check("Con 'Può vedere' Bob non modifica più", afterView?.[0]?.reason === "denied");
+  // Un evento vivo di Genetica (S2): senza di lui il filtro per materia non potrebbe mai fallire,
+  // perché l'unico altro evento di S2 (E2) è già un tombstone e `liveIds` lo scarta.
+  const E5 = entity(`event-e5-${run}`, { title: "Genetica (lezione)", subjectId: S2, start: iso(), end: iso(3_600_000) });
+  await pushOwn(alice, [row("calendarEvent", E5)]);
+  check("Senza filtro Bob vede anche l'evento vivo di Genetica", liveIds(await items(bob, alice, "calendarEvent")) === [E1.id, E3.id, E4.id, E5.id].sort().join(","));
   await alice.client.from("studyos_shares").update({ subject_ids: [S1] }).eq("id", calendarShare.id);
   check("Filtro materie: solo gli eventi di Biochimica", liveIds(await items(bob, alice, "calendarEvent")) === [E1.id, E3.id, E4.id].sort().join(","));
   const { data: filteredLabels } = await bob.client.rpc("shared_subject_labels");
@@ -214,7 +271,7 @@ const main = async () => {
 
   // Gruppo: Carla entra e vede le attività condivise col gruppo; uscendo perde l'accesso.
   const groupId = `group-${run}`;
-  const code = `GRP-${run.slice(-4).toUpperCase().padStart(4, "Q")}-TEST`;
+  const code = `GRP-${run.slice(-4).toUpperCase()}-TEST`;
   await alice.client.from("studyos_groups").insert({ id: groupId, name: "Prova", owner_id: alice.id, owner_display_name: "Alice", invite_code: code });
   await alice.client.from("studyos_group_members").insert({ group_id: groupId, user_id: alice.id, email: alice.email, display_name: "Alice", role: "owner" });
   const { error: joinError } = await carla.client.rpc("join_group_by_code", { p_code: code, p_display_name: "Carla" });
@@ -229,14 +286,19 @@ const main = async () => {
     owner_id: carla.id, owner_name: "Carla", scope: "goals", permission: "view", grantee_group_id: groupId, grantee_name: "Prova"
   });
   check("Carla condivide i suoi obiettivi col gruppo", !carlaShareError, carlaShareError?.message);
+  // Carla legge la propria condivisione verso il gruppo: prima di uscire c'è, dopo non c'è più.
+  const carlaSharesBefore = await share(carla, { grantee_group_id: groupId, owner_id: carla.id });
   await carla.client.from("studyos_group_members").delete().eq("group_id", groupId).eq("user_id", carla.id);
   check("Uscita dal gruppo: Carla non vede più le attività", (await items(carla, alice, "task")).length === 0);
-  check("Uscita dal gruppo: la condivisione di Carla verso il gruppo è sparita", (await share(alice, { grantee_group_id: groupId, owner_id: carla.id })).length === 0);
+  const carlaSharesAfter = await share(carla, { grantee_group_id: groupId, owner_id: carla.id });
+  check("Uscita dal gruppo: la condivisione di Carla verso il gruppo è sparita", carlaSharesBefore.length === 1 && carlaSharesAfter.length === 0,
+    `prima ${carlaSharesBefore.length}, dopo ${carlaSharesAfter.length}`);
 
   // Invito per email: vale solo per l'account indicato, anche senza token.
-  const { data: emailInvite } = await alice.client.rpc("create_share_invite", {
+  const { data: emailInvite, error: emailInviteError } = await alice.client.rpc("create_share_invite", {
     p_owner_name: "Alice", p_offers: [{ scope: "goals", permission: "view" }], p_requests: [], p_recipient_email: carla.email.toUpperCase()
   });
+  need("Alice crea un invito per email", !emailInviteError && Boolean(emailInvite?.id), emailInviteError?.message ?? "risposta senza id");
   const { data: carlaInbox } = await carla.client.from("studyos_share_invites").select("id, owner_name, offers").eq("status", "pending");
   check("Carla vede l'invito per email", carlaInbox?.some((item) => item.id === emailInvite.id));
   await rejects("Bob non accetta un invito per Carla", bob.client.rpc("accept_share_invite", {
@@ -258,44 +320,61 @@ const main = async () => {
   // Realtime: arrivano le modifiche condivise, non quelle private.
   // Su un tenant Realtime appena avviato i primi eventi possono perdersi: si riprova qualche volta
   // con versioni sempre più recenti (altrimenti il server le scarterebbe come vecchie).
+  // Vale solo un evento di E1 con il titolo scritto da Alice in questo passo: le modifiche di Bob
+  // a E1 fatte prima producono eventi dello stesso id, che su un tenant lento possono arrivare tardi.
   received.length = 0;
-  for (let attempt = 0; attempt < 4 && !received.includes(E1.id); attempt += 1) {
+  const gotShared = () => received.some((event) => event.id === E1.id && event.title === "Realtime");
+  for (let attempt = 0; subscribed === "SUBSCRIBED" && attempt < 4 && !gotShared(); attempt += 1) {
     const updatedAt = iso(20_000 + attempt * 1_000);
     await pushOwn(alice, [row("calendarEvent", { ...E1b, title: "Realtime", updatedAt }), row("task", { ...T1, title: "privata", updatedAt })]);
     await sleep(3_000);
   }
-  check("Realtime: Bob riceve l'evento condiviso", received.includes(E1.id));
-  check("Realtime: Bob non riceve l'attività non condivisa", !received.includes(T1.id));
-  await bob.client.removeChannel(channel);
+  const leaked = received.filter((event) => event.id === T1.id);
+  check("Realtime: Bob riceve l'evento condiviso", gotShared(),
+    subscribed === "SUBSCRIBED" ? `eventi ricevuti: ${received.map((event) => `${event.id}=${event.title}`).join(", ") || "nessuno"}` : "canale non attivo");
+  // Senza l'evento condiviso la prova sarebbe vuota (nessun evento = nessuna fuga): serve entrambi.
+  check("Realtime: Bob non riceve l'attività non condivisa", gotShared() && leaked.length === 0,
+    leaked.length ? `ricevuti ${leaked.length} eventi su ${T1.id}: ${leaked.map((event) => event.title).join(", ")}` : "");
+  await closeRealtime();
 
   // Revoca e uscita.
   await alice.client.from("studyos_shares").delete().eq("owner_id", alice.id).eq("grantee_user_id", bob.id);
   check("Revoca: Bob non vede più nulla di Alice", (await items(bob, alice, "calendarEvent")).length + (await items(bob, alice, "exam")).length === 0);
-  check("Revoca: i dati di Alice restano", liveIds(await items(alice, alice, "calendarEvent")) === [E1.id, E3.id, E4.id].sort().join(","));
+  check("Revoca: i dati di Alice restano", liveIds(await items(alice, alice, "calendarEvent")) === [E1.id, E3.id, E4.id, E5.id].sort().join(","));
   const { error: leaveError } = await alice.client.from("studyos_shares").delete().eq("owner_id", bob.id).eq("grantee_user_id", alice.id);
   check("Alice esce dalla condivisione di Bob", !leaveError && (await items(alice, bob, "calendarEvent")).length === 0);
 
-  // Mallory: nessuna lettura di condivisioni, inviti e cronologia altrui.
+  // Mallory: nessuna lettura di condivisioni, inviti e cronologia altrui. Il controllo positivo
+  // (Alice le legge, quindi le righe esistono) evita che "zero righe" nasconda un errore o una tabella vuota.
+  const tables = ["studyos_shares", "studyos_share_invites", "studyos_item_revisions"];
+  const malloryReads = [];
+  const aliceReads = [];
+  for (const table of tables) {
+    malloryReads.push(await count(mallory, table));
+    aliceReads.push(await count(alice, table));
+  }
   check("Mallory non vede condivisioni, inviti e cronologia di altri",
-    ((await mallory.client.from("studyos_shares").select("id")).data ?? []).length +
-      ((await mallory.client.from("studyos_share_invites").select("id")).data ?? []).length +
-      ((await mallory.client.from("studyos_item_revisions").select("id")).data ?? []).length === 0);
+    malloryReads.every((read) => !read.error && read.rows === 0) && aliceReads.every((read) => !read.error && read.rows > 0),
+    tables.map((table, index) => `${table}: Mallory ${malloryReads[index].error ?? malloryReads[index].rows}, Alice ${aliceReads[index].error ?? aliceReads[index].rows}`).join("; "));
 
   // Prestazioni: il pull del proprietario non paga le funzioni di condivisione.
   const many = Array.from({ length: 200 }, (_, index) => row("calendarEvent", entity(`event-bulk-${index}-${run}`, { title: `Bulk ${index}`, start: iso(), end: iso(1_000) })));
-  await pushOwn(alice, many);
+  const pushedMany = await pushOwn(alice, many);
+  check("Alice carica 200 eventi in blocco", pushedMany?.filter((result) => result.accepted).length === 200, `${pushedMany?.filter((result) => result.accepted).length ?? 0} accettati`);
   const started = performance.now();
-  await items(alice, alice, "calendarEvent");
-  check("Pull del proprietario con 200+ righe sotto 1 s", performance.now() - started < 1_000, `${Math.round(performance.now() - started)} ms`);
-
-  console.log(`\n${passed} controlli superati, ${failures.length} falliti.`);
-  if (failures.length) {
-    console.log(failures.map((item) => `- ${item}`).join("\n"));
-    process.exit(1);
-  }
+  const pulled = await items(alice, alice, "calendarEvent");
+  const elapsed = Math.round(performance.now() - started);
+  check("Pull del proprietario con 200+ righe sotto 1 s", pulled.length >= 200 && elapsed < 1_000, `${pulled.length} righe in ${elapsed} ms`);
 };
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    if (!(error instanceof Abort)) console.error(error);
+    process.exitCode = 1;
+  })
+  .then(() => closeRealtime().catch(() => {}))
+  .then(() => {
+    summary();
+    if (failures.length) process.exitCode = 1;
+    process.exit(process.exitCode ?? 0);
+  });
