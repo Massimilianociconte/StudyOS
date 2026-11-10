@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ShareUserError, sharedKey, sharedPushBatches } from "../src/lib/sharing.ts";
 import { readUiState } from "../src/lib/uiState.ts";
 import { sharedOfTypes, useSharedStore } from "../src/store/useSharedStore.ts";
+import { ViewerChanged, createViewerLifecycle } from "../src/lib/shareViewer.ts";
 
 // Solo memoria (`persistent: false`, come col vault attivo): niente IndexedDB in Node.
 // La persistenza su Dexie è provata a parte, su un database v5 reale.
@@ -273,3 +274,116 @@ test("vault attivato durante un aggiornamento: da hydrate(…, false) in poi nes
   assert.equal(store.getState().persistent, false);
 });
 
+
+// ——— Chi guarda (shareViewer.ts, usato da shareSync.ts) ———
+
+/** Ciclo di vita con agganci finti: `ready` registra la generazione per cui parte la prima passata. */
+const viewerLifecycle = (overrides = {}) => {
+  const state = { locked: false, ready: [] };
+  const viewers = createViewerLifecycle({
+    reset: async () => {},
+    isLocked: () => state.locked,
+    isPersistent: () => false,
+    ready: () => state.ready.push(viewers.generation),
+    ...overrides
+  });
+  return { viewers, state };
+};
+
+// H1: ogni cambio di chi guarda fa salire la generazione; ciò che era partito prima si ferma.
+test("H1: dopo un cambio di account la passata vecchia si ferma e la nuova parte solo a store caricato", async () => {
+  const { viewers, state } = viewerLifecycle();
+  viewers.setViewer("bob");
+  assert.equal(viewers.isHydrated(viewers.generation), false);
+  await viewers.settled();
+  assert.equal(store.getState().viewerId, "bob");
+  assert.deepEqual(state.ready, [1]);
+  assert.equal(viewers.isHydrated(1), true);
+
+  // Una passata di Bob in corso (risposta del server in arrivo) quando entra Carol.
+  const gen = viewers.generation;
+  viewers.setViewer("carol");
+  assert.throws(() => viewers.still(gen), ViewerChanged);
+  assert.equal(viewers.isHydrated(viewers.generation), false);
+  await viewers.settled();
+  assert.equal(store.getState().viewerId, "carol");
+  assert.deepEqual(state.ready, [1, 2]);
+  assert.doesNotThrow(() => viewers.still(viewers.generation));
+  // Stessa sessione rinotificata: nessun cambio.
+  viewers.setViewer("carol");
+  assert.equal(viewers.generation, 2);
+});
+
+test("H1: cambi rapidi in fila, solo l'ultimo avvia la passata e lo store è del suo account", async () => {
+  // Ogni cambio aspetta (Realtime da fermare): il secondo arriva mentre il primo carica.
+  const { viewers, state } = viewerLifecycle({ reset: () => wait(5) });
+  viewers.setViewer("bob");
+  viewers.setViewer("carol");
+  await viewers.settled();
+  assert.equal(store.getState().viewerId, "carol");
+  assert.deepEqual(state.ready, [2]);
+  assert.equal(viewers.isHydrated(1), false);
+  // Logout: via i dati altrui, nessuna passata.
+  viewers.setViewer(null);
+  await viewers.settled();
+  assert.equal(store.getState().viewerId, null);
+  assert.equal(store.getState().availability, "off");
+  assert.deepEqual(state.ready, [2]);
+});
+
+test("H1: blocco del vault, memoria svuotata subito e niente passata fino allo sblocco", async () => {
+  const { viewers, state } = viewerLifecycle();
+  viewers.setViewer("bob");
+  await viewers.settled();
+  await store.getState().applyRows("alice", [row("e1")]);
+  const gen = viewers.generation;
+  state.locked = true;
+  viewers.studyChanged({ locked: true, mode: "vault" }, { locked: false, mode: "vault" });
+  // Subito, prima della fila: le viste non mostrano più dati altrui.
+  assert.equal(store.getState().items.length, 0);
+  assert.throws(() => viewers.still(gen), ViewerChanged);
+  await viewers.settled();
+  assert.equal(store.getState().viewerId, null);
+  assert.deepEqual(state.ready, [1]);
+  // Una risposta in ritardo della passata di prima non rimette nulla in memoria.
+  await store.getState().applyRows("alice", [row("e1")]);
+  assert.equal(store.getState().items.length, 0);
+  state.locked = false;
+  viewers.studyChanged({ locked: false, mode: "vault" }, { locked: true, mode: "vault" });
+  await viewers.settled();
+  assert.equal(store.getState().viewerId, "bob");
+  assert.deepEqual(state.ready, [1, 3]);
+});
+
+// H2: resetAllData → useSharedStore.clear() con l'account ancora collegato (la sessione non cambia).
+test("H2: dopo il reset locale la condivisione si ricarica senza ricaricare la pagina", async () => {
+  const { viewers, state } = viewerLifecycle();
+  const unwatch = viewers.watch();
+  try {
+    viewers.setViewer("bob");
+    await viewers.settled();
+    await store.getState().applyRows("alice", [row("e1")]);
+    assert.equal(store.getState().items.length, 1);
+    await store.getState().clear();
+    await viewers.settled();
+    assert.equal(store.getState().viewerId, "bob");
+    assert.equal(store.getState().items.length, 0);
+    assert.deepEqual(state.ready, [1, 2]);
+
+    // Col vault bloccato no: ci pensa lo sblocco.
+    state.locked = true;
+    await store.getState().clear();
+    await viewers.settled();
+    assert.equal(store.getState().viewerId, null);
+    assert.deepEqual(state.ready, [1, 2]);
+    state.locked = false;
+
+    // Logout vero: clear() senza account, nessun nuovo caricamento.
+    viewers.setViewer(null);
+    await viewers.settled();
+    assert.equal(store.getState().viewerId, null);
+    assert.deepEqual(state.ready, [1, 2]);
+  } finally {
+    unwatch();
+  }
+});

@@ -3,12 +3,12 @@
 // migrazione la condivisione è spenta e il resto dell'app non se ne accorge.
 //
 // Ciclo: invia la coda (push_shared_rows) → scarica condivisioni, inviti, etichette → per ogni
-// proprietario scarica le righe dei tipi coperti (cursore) e riconcilia con gli id visibili →
-// notifiche → Realtime (solo segnale). Riserva: ogni 5 minuti e al ritorno sulla scheda.
+// proprietario scarica le righe dei tipi coperti (cursore) → notifiche → Realtime (solo segnale).
+// Riserva: ogni 5 minuti e al ritorno sulla scheda. Il confronto con gli id ancora visibili (revoche,
+// filtri cambiati, elementi usciti da un filtro) costa una lettura di tutti gli id: si fa solo al
+// controllo dei 5 minuti e quando cambiano i permessi di un proprietario, non a ogni segnale Realtime.
 //
-// Ogni cambio di chi guarda (accesso, logout, altro account, blocco/sblocco del vault, cambio di
-// modalità, reset locale) fa salire la generazione: una passata, un invio o una rilettura partiti
-// prima si fermano senza toccare lo store, e la passata nuova parte solo a store ricaricato.
+// Chi guarda e la sua generazione: shareViewer.ts.
 
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
@@ -54,6 +54,7 @@ import {
 import { supabase } from "./supabase";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
+import { ViewerChanged, createViewerLifecycle } from "./shareViewer";
 
 const PAGE_SIZE = 200;
 const ID_PAGE_SIZE = 1000;
@@ -118,24 +119,25 @@ const myName = () => {
   return (name || getCloudSyncState().session?.user.email?.split("@")[0] || "").slice(0, 120);
 };
 
-// ——— Generazione di chi guarda ———
+// ——— Generazione di chi guarda (shareViewer.ts) ———
 
-/** Sale a ogni cambio di chi guarda (requestSwitch, blocco del vault). */
-let generation = 0;
-/** Generazione per cui lo store è caricato (hydrate concluso): solo allora parte una passata. */
-let hydrated = -1;
+const isPersistent = () => useStudyStore.getState().settings.security.mode !== "vault";
 
-class ViewerChanged extends Error {
-  constructor() {
-    super("Account cambiato durante l'aggiornamento.");
-    this.name = "ViewerChanged";
-  }
-}
+const viewers = createViewerLifecycle({
+  requested: () => silentOwners.clear(),
+  reset: async () => {
+    await stopRealtime();
+    available = null;
+    memoryMeta.clear();
+    rechecked.clear();
+  },
+  isLocked: () => useStudyStore.getState().locked,
+  isPersistent,
+  ready: () => schedule(0)
+});
 
 /** Da chiamare dopo ogni attesa e prima di toccare lo store: un risultato di un'altra generazione si scarta. */
-const still = (gen: number) => {
-  if (gen !== generation) throw new ViewerChanged();
-};
+const still = (gen: number) => viewers.still(gen);
 
 // ——— Disponibilità (migrazione eseguita?) ———
 
@@ -151,7 +153,7 @@ type Probe = { state: "available" } | { state: "missing" } | { state: "failed"; 
 const probeSharing = async (): Promise<Probe> => {
   if (available === true) return { state: "available" };
   if (available === false && Date.now() - checkedAt < UNAVAILABLE_RETRY_MS) return { state: "missing" };
-  const gen = generation;
+  const gen = viewers.generation;
   // Solo l'esito positivo resta tra le visite (come i gruppi): la migrazione può arrivare dopo.
   if ((await getMeta<boolean>(AVAILABLE_META).catch(() => undefined)) === true) {
     available = true;
@@ -165,7 +167,7 @@ const probeSharing = async (): Promise<Probe> => {
     available = false;
     checkedAt = Date.now();
     // Dopo un logout (o un altro cambio) lo stato dello store non è più di questa richiesta.
-    if (gen === generation) useSharedStore.getState().setAvailability("missing");
+    if (gen === viewers.generation) useSharedStore.getState().setAvailability("missing");
     return { state: "missing" };
   }
   if (outcome === "failed") return { state: "failed", message: shareErrorText(error as NonNullable<typeof error>) };
@@ -287,20 +289,37 @@ const visibleKeys = async (ownerId: string, types: string[], gen: number) => {
   return visible;
 };
 
-const pullOwner = async (me: string, ownerId: string, types: string[], sig: string, gen: number) => {
+// ——— Ricontrollo degli id visibili ———
+
+/** Il prossimo passaggio ricontrolla tutti i proprietari: lo chiede il controllo dei 5 minuti. */
+let recheckDue = false;
+/** Firma dei permessi con cui ogni proprietario è stato ricontrollato l'ultima volta (in memoria). */
+const rechecked = new Map<string, string>();
+
+/**
+ * Ricontrollo per questo proprietario: al controllo dei 5 minuti, e subito se i suoi permessi sono
+ * cambiati (anche la prima volta dopo l'avvio o un cambio di chi guarda: la mappa è vuota).
+ */
+const needsRecheck = (ownerId: string, sig: string, full: boolean) => full || rechecked.get(ownerId) !== sig;
+
+const pullOwner = async (me: string, ownerId: string, types: string[], sig: string, full: boolean, gen: number) => {
   const key = cursorMeta(me, ownerId);
   const stored = await readMeta<OwnerCursor>(key);
   still(gen);
   const since = stored?.sig === sig ? stored.at : null;
   let latest = await pullRows(ownerId, types, since, gen);
-  const visible = await visibleKeys(ownerId, types, gen);
-  // Il server mostra righe che qui mancano: il cursore le ha saltate (es. revoca e poi la stessa
-  // condivisione di nuovo). Si riscarica tutto da zero, una volta per passata.
-  const state = useSharedStore.getState();
-  if (since !== null && missingVisibleKeys(state.items, state.outbox, ownerId, visible).length) {
-    latest = (await pullRows(ownerId, types, null, gen)) ?? latest;
+  if (needsRecheck(ownerId, sig, full)) {
+    const visible = await visibleKeys(ownerId, types, gen);
+    // Il server mostra righe che qui mancano: il cursore le ha saltate (es. revoca e poi la stessa
+    // condivisione di nuovo). Si riscarica tutto da zero, una volta per passata.
+    const state = useSharedStore.getState();
+    if (since !== null && missingVisibleKeys(state.items, state.outbox, ownerId, visible).length) {
+      latest = (await pullRows(ownerId, types, null, gen)) ?? latest;
+    }
+    await useSharedStore.getState().reconcile(ownerId, types, visible);
+    still(gen);
+    rechecked.set(ownerId, sig);
   }
-  await useSharedStore.getState().reconcile(ownerId, types, visible);
   // Il cursore avanza solo se le righe sono finite nello store di questa generazione.
   still(gen);
   await writeMeta(key, { sig, at: latest } satisfies OwnerCursor);
@@ -436,6 +455,9 @@ const ensureRealtime = async (me: string, owners: string[], gen: number) => {
       "postgres_changes",
       { event: "*", schema: "public", table: "studyos_items", filter: `user_id=in.(${watched.join(",")})` },
       (payload) => {
+        // Una riga cancellata davvero (non un tombstone: solo account eliminati) non torna col cursore:
+        // la toglie il ricontrollo degli id visibili.
+        if (payload.eventType === "DELETE") recheckDue = true;
         const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
         // Il server antepone a client_id di chi riceve "r:<id utente>:" (studyos_items_recipient_values).
         if (row?.client_id && (row.client_id === clientId || row.client_id === `r:${me}:${clientId}`)) return;
@@ -470,10 +492,13 @@ const schedule = (delay = DEBOUNCE_MS) => {
 };
 
 const syncOnce = async () => {
-  const gen = generation;
+  const gen = viewers.generation;
   const me = viewer();
-  // Store non ancora caricato per chi guarda ora: switchViewer chiede la passata a fine caricamento.
-  if (!me || hydrated !== gen || useStudyStore.getState().locked) return;
+  // Store non ancora caricato per chi guarda ora: il cambio di chi guarda chiede la passata a fine caricamento.
+  if (!me || !viewers.isHydrated(gen) || useStudyStore.getState().locked) return;
+  // Preso ora: un controllo dei 5 minuti che arriva durante la passata vale per quella dopo.
+  const full = recheckDue;
+  recheckDue = false;
   try {
     if (!(await isSharingAvailable())) return;
     still(gen);
@@ -482,14 +507,18 @@ const syncOnce = async () => {
     const { received, invites } = await pullShares(me, gen);
     const owners = ownerEntityTypes(received);
     await forgetCursors(me, new Set(owners.keys()));
-    for (const [ownerId, types] of owners) await pullOwner(me, ownerId, types, grantSignature(received, ownerId), gen);
+    // Chi non condivide più nulla: se ricondivide, si ricontrolla da capo.
+    for (const ownerId of [...rechecked.keys()]) if (!owners.has(ownerId)) rechecked.delete(ownerId);
+    for (const [ownerId, types] of owners) await pullOwner(me, ownerId, types, grantSignature(received, ownerId), full, gen);
     await notifyNew(me, received, invites, gen);
     await ensureRealtime(me, [...owners.keys()], gen);
     still(gen);
     showError(null);
   } catch (error) {
-    // Chi guarda è cambiato: la passata della nuova generazione parte da sola.
-    if (error instanceof ViewerChanged || gen !== generation) return;
+    // Chi guarda è cambiato: la passata della nuova generazione parte da sola (e ricontrolla tutto).
+    if (error instanceof ViewerChanged || gen !== viewers.generation) return;
+    // Il controllo dei 5 minuti non riuscito si ripete alla passata dopo.
+    if (full) recheckDue = true;
     // Rete assente o errore temporaneo: si riprova al prossimo segnale o al controllo periodico.
     // Si passa l'errore stesso, non il suo messaggio: un ShareUserError (da fail()) è già in italiano e
     // resta com'è; un errore grezzo (TypeError di rete, bug) diventa testo italiano.
@@ -517,79 +546,26 @@ export const syncSharedNow = (): Promise<void> => {
 // ——— Chi guarda ———
 
 let initialized = false;
-let currentViewer: string | null = null;
-let switching: Promise<void> = Promise.resolve();
-
-const isPersistent = () => useStudyStore.getState().settings.security.mode !== "vault";
-
-const switchViewer = async (next: string | null, previous: string | null, gen: number) => {
-  await stopRealtime();
-  available = null;
-  memoryMeta.clear();
-  const store = useSharedStore.getState();
-  if (!next) {
-    // Logout vero (c'era un account): via i dati altrui anche dal disco. Le scritture ancora in
-    // coda si perdono: senza sessione non si possono inviare.
-    if (previous) await store.clear();
-    store.setAvailability("off");
-    return;
-  }
-  // Vault bloccato: dati altrui fuori dalla memoria (la cache su disco, se c'è, resta). Lo sblocco li ricarica.
-  if (useStudyStore.getState().locked) {
-    store.forgetMemory();
-    return;
-  }
-  await store.hydrate(next, isPersistent());
-  // Un altro cambio è arrivato durante il caricamento: è già in coda e decide lui.
-  if (gen !== generation) return;
-  hydrated = gen;
-  schedule(0);
-};
-
-/** Le risposte in corso si scartano subito; i caricamenti dello store si eseguono in fila. */
-const requestSwitch = (next: string | null, previous: string | null) => {
-  generation += 1;
-  silentOwners.clear();
-  const gen = generation;
-  switching = switching.then(() => switchViewer(next, previous, gen)).catch(() => undefined);
-};
 
 export const initShareSync = () => {
   if (initialized || !supabase) return;
   initialized = true;
-  subscribeCloudSync((state) => {
-    const next = state.session?.user.id ?? null;
-    if (next === currentViewer) return;
-    const previous = currentViewer;
-    currentViewer = next;
-    requestSwitch(next, previous);
-  });
+  subscribeCloudSync((state) => viewers.setViewer(state.session?.user.id ?? null));
   useSharedStore.subscribe((curr, prev) => {
     if (curr.outbox !== prev.outbox && curr.outbox.length) schedule();
-    // Reset locale con l'account ancora collegato (resetAllData → clear()): la sessione non cambia,
-    // quindi si ricarica da qui. Il blocco del vault (forgetMemory) no: ci pensa lo sblocco.
-    if (prev.viewerId && !curr.viewerId && currentViewer && !useStudyStore.getState().locked) {
-      requestSwitch(currentViewer, currentViewer);
-    }
   });
-  useStudyStore.subscribe((curr, prev) => {
-    if (!prev.locked && curr.locked) {
-      // Subito fuori dalla memoria; il cambio in coda lo ripete dopo un eventuale caricamento in corso.
-      useSharedStore.getState().forgetMemory();
-      requestSwitch(currentViewer, currentViewer);
-      return;
-    }
-    if (curr.locked || !currentViewer) return;
-    // Sblocco, oppure vault attivato o tolto: la cache passa da disco a memoria (o viceversa) da capo.
-    if (prev.locked || curr.settings.security.mode !== prev.settings.security.mode) requestSwitch(currentViewer, currentViewer);
-  });
+  viewers.watch();
+  const flags = (state: ReturnType<typeof useStudyStore.getState>) => ({ locked: state.locked, mode: state.settings.security.mode });
+  useStudyStore.subscribe((curr, prev) => viewers.studyChanged(flags(curr), flags(prev)));
   if (typeof window !== "undefined") {
     window.addEventListener("online", () => schedule(0));
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && currentViewer) schedule();
+      if (document.visibilityState === "visible" && viewers.viewer) schedule();
     });
     window.setInterval(() => {
-      if (currentViewer && document.visibilityState === "visible") void syncSharedNow();
+      if (!viewers.viewer || document.visibilityState !== "visible") return;
+      recheckDue = true;
+      void syncSharedNow();
     }, PERIODIC_MS);
   }
 };
@@ -630,7 +606,7 @@ export const previewShareInvite = async (token: string): Promise<ShareInvitePrev
 
 export const acceptShareInvite = async (inviteId: string, token: string | null, reciprocal: ShareOffer[]) => {
   await requireSharing();
-  const gen = generation;
+  const gen = viewers.generation;
   const { data, error } = await client().rpc("accept_share_invite", {
     p_invite_id: inviteId,
     p_token: token,
@@ -639,7 +615,7 @@ export const acceptShareInvite = async (inviteId: string, token: string | null, 
   });
   fail(error);
   const result = data as { owner_id: string; owner_name: string; granted: number; shared_back: number };
-  if (gen === generation) silentOwners.set(result.owner_id, Date.now() + SILENT_MS);
+  if (gen === viewers.generation) silentOwners.set(result.owner_id, Date.now() + SILENT_MS);
   await syncSharedNow();
   return result;
 };
