@@ -8,6 +8,7 @@ import {
 import type { StudySnapshot } from "../types";
 import type { RemoteRow } from "./syncMerge";
 import { readPendingInvite } from "./groupInvite";
+import { readPendingShare } from "./shareInvite";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
@@ -53,11 +54,15 @@ const requireClient = () => {
 
 const getEmailRedirectTo = () => {
   if (typeof window === "undefined") return undefined;
-  // Con un invito in sospeso il link di conferma lo riporta (?invito=…): aprendolo anche da un
-  // altro dispositivo si arriva alla scheda dell'invito già con l'account confermato.
+  // Con un invito in sospeso il link di conferma lo riporta (?invito=… / ?condividi=…): aprendolo
+  // anche da un altro dispositivo si arriva alla scheda dell'invito già con l'account confermato.
+  const params = new URLSearchParams();
   const pending = readPendingInvite();
-  const invite = pending ? `?invito=${encodeURIComponent(pending.code)}` : "";
-  return `${window.location.origin}${window.location.pathname}${invite}`;
+  const share = readPendingShare();
+  if (pending) params.set("invito", pending.code);
+  if (share) params.set("condividi", share.token);
+  const query = params.toString();
+  return `${window.location.origin}${window.location.pathname}${query ? `?${query}` : ""}`;
 };
 
 export const signUp = async (email: string, password: string) => {

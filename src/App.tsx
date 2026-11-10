@@ -11,6 +11,7 @@ import { cloudConfigured } from "./lib/cloudSyncState";
 import { useViewMemory } from "./lib/uiState";
 import { startAgentLink } from "./lib/agentLink";
 import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
+import { useShareInviteLinks } from "./hooks/useShareInviteLinks";
 import type { AppView } from "./types";
 
 const CHUNK_RELOAD_KEY = "studyos-chunk-reload";
@@ -97,6 +98,8 @@ export default function App() {
   useViewMemory(activeView, !loading && !locked && !error);
   // Link/QR di invito: apre Gruppi e completa l'ingresso dopo login o registrazione.
   useGroupInviteLinks(!loading && !locked && !error);
+  // Link/QR di condivisione: apre Condivisione sulla scheda dell'invito.
+  useShareInviteLinks(!loading && !locked && !error);
 
   useEffect(() => {
     init().then(() => {
