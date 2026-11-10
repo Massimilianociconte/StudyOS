@@ -283,3 +283,18 @@ export const SHARED_ENTITY_LABEL: Record<string, string> = {
   note: "nota",
   goal: "obiettivo"
 };
+
+/** Etichetta di un tipo che arriva dal server: i nomi di Object.prototype ("constructor"…) non sono tipi. */
+export const sharedEntityLabel = (type: string) =>
+  Object.prototype.hasOwnProperty.call(SHARED_ENTITY_LABEL, type) ? SHARED_ENTITY_LABEL[type] : "elemento";
+
+/** Chi ha fatto una modifica quando non si sa il nome: in testa a una frase, e in mezzo ("prima che un'altra persona…"). */
+export const UNKNOWN_PERSON = "Un'altra persona";
+export const UNKNOWN_PERSON_IN_SENTENCE = "un'altra persona";
+
+/**
+ * Intestazione della cronologia. La lista ha un tetto (`limit`): se è piena le modifiche più vecchie
+ * possono mancare e lo dice, invece di promettere "gli ultimi 90 giorni".
+ */
+export const revisionListIntro = (shown: number, limit: number) =>
+  `${shown >= limit ? `Ultime ${limit} modifiche degli ultimi 90 giorni (le più vecchie non compaiono).` : "Ultimi 90 giorni."} «Ripristina» riporta l'elemento alla versione prima della modifica.`;

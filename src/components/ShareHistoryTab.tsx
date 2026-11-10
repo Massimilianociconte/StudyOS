@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { format, isValid, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { useStudyStore } from "../store/useStudyStore";
-import { REVISION_CHANGE_LABEL, SHARED_ENTITY_LABEL } from "../lib/labels";
+import { REVISION_CHANGE_LABEL, revisionListIntro, sharedEntityLabel } from "../lib/labels";
 import {
+  REVISION_LIST_LIMIT,
   ShareUserError,
+  actorInSentence,
   canRestoreRevision,
   revisionActorName,
   revisionTitle,
@@ -22,9 +24,6 @@ const shownTitle = (revision: ItemRevision) => {
   const title = revisionTitle(revision).trim();
   return title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX).trimEnd()}…` : title;
 };
-
-// Il tipo viene dal server: i nomi di Object.prototype ("constructor"…) non sono etichette.
-const entityLabel = (type: string) => (Object.prototype.hasOwnProperty.call(SHARED_ENTITY_LABEL, type) ? SHARED_ENTITY_LABEL[type] : "elemento");
 
 const whenText = (iso: string) => {
   const date = parseISO(iso);
@@ -59,7 +58,7 @@ export function ShareHistoryTab({
     setError("");
     try {
       const sync = await import("../lib/shareSync");
-      const rows = await sync.listRevisions();
+      const rows = await sync.listRevisions(REVISION_LIST_LIMIT);
       if (mine === latest.current) setRevisions(rows);
     } catch (cause) {
       if (mine !== latest.current) return;
@@ -78,12 +77,12 @@ export function ShareHistoryTab({
     };
   }, [load]);
 
-  /** Esito del ripristino per ConfirmWithError: null se riuscito, altrimenti il testo dell'errore. */
+  /** Esito del ripristino per ConfirmWithError: null se riuscito, altrimenti il testo dell'errore. `who` va in mezzo a una frase. */
   const restore = async (revision: ItemRevision, who: string): Promise<string | null> => {
     try {
-      // Anche qui, oltre al pulsante: una versione che non è un elemento vero dello stesso id non si scrive.
+      // Il controllo sull'elemento sta nel negozio (che riceve l'id della cronologia); qui si evita di arrivarci.
       if (!canRestoreRevision(revision)) throw new ShareUserError("Questo elemento non si può ripristinare.");
-      await useStudyStore.getState().restoreEntity(revision.entityType, revision.payload);
+      await useStudyStore.getState().restoreEntity(revision.entityType, revision.payload, revision.entityId);
     } catch (cause) {
       return shareActionErrorTextSafe("restore", cause);
     }
@@ -119,7 +118,7 @@ export function ShareHistoryTab({
   return (
     <Panel>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <p className="min-w-0 flex-1 text-sm font-bold text-[var(--muted)]">Ultimi 90 giorni. «Ripristina» riporta l'elemento alla versione prima della modifica.</p>
+        <p className="min-w-0 flex-1 text-sm font-bold text-[var(--muted)]">{revisionListIntro(revisions.length, REVISION_LIST_LIMIT)}</p>
         <Button variant="ghost" icon="RotateCcw" onClick={() => void load()} disabled={loading}>
           {loading ? "Aggiorno…" : "Aggiorna"}
         </Button>
@@ -132,6 +131,8 @@ export function ShareHistoryTab({
       <ul className="grid grid-cols-1 gap-2">
         {revisions.map((revision) => {
           const who = revisionActorName(revision.changedBy, given, groups);
+          // "Un'altra persona" apre la riga; dopo "che" o "di" si legge in minuscolo.
+          const whoMid = actorInSentence(who);
           const title = shownTitle(revision);
           const when = whenText(revision.changedAt);
           const done = restored.has(revision.id);
@@ -139,7 +140,7 @@ export function ShareHistoryTab({
             <li key={revision.id} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="safe-text min-w-0 flex-1 text-sm font-bold">
-                  <span className="font-black">{who}</span> {REVISION_CHANGE_LABEL[revision.change]} {entityLabel(revision.entityType)} «{title}»
+                  <span className="font-black">{who}</span> {REVISION_CHANGE_LABEL[revision.change]} {sharedEntityLabel(revision.entityType)} «{title}»
                   {when ? <span className="block text-xs text-[var(--muted)]">{when}</span> : null}
                 </span>
                 {done ? (
@@ -148,7 +149,7 @@ export function ShareHistoryTab({
                   <Button
                     variant="soft"
                     icon="RotateCcw"
-                    aria-label={`Ripristina «${title}» com'era prima della modifica di ${who}`}
+                    aria-label={`Ripristina «${title}» com'era prima della modifica di ${whoMid}`}
                     onClick={() => setConfirmId(revision.id)}
                   >
                     Ripristina
@@ -157,11 +158,11 @@ export function ShareHistoryTab({
               </div>
               {confirmId === revision.id && !done ? (
                 <ConfirmWithError
-                  text={`«${title}» torna com'era prima che ${who} lo ${revision.change === "delete" ? "eliminasse" : "modificasse"}. Le modifiche successive vengono sostituite.`}
+                  text={`«${title}» torna com'era prima che ${whoMid} lo ${revision.change === "delete" ? "eliminasse" : "modificasse"}. Le modifiche successive vengono sostituite.`}
                   confirmLabel="Ripristina"
                   icon="RotateCcw"
                   onCancel={() => setConfirmId(null)}
-                  onConfirm={() => restore(revision, who)}
+                  onConfirm={() => restore(revision, whoMid)}
                 />
               ) : null}
             </li>

@@ -38,9 +38,19 @@ import {
   canRestoreRevision,
   isRestorableEntity,
   shareActionErrorTextSafe,
-  SHARED_ENTITY_TYPES
+  SHARED_ENTITY_TYPES,
+  REVISION_LIST_LIMIT,
+  actorInSentence,
+  restoredUpdatedAt
 } from "../src/lib/sharing.ts";
-import { SHARED_ENTITY_LABEL, SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../src/lib/labels.ts";
+import {
+  SHARED_ENTITY_LABEL,
+  SHARE_PERMISSION_LABEL,
+  SHARE_SCOPE_LABEL,
+  revisionListIntro,
+  scopesSummary,
+  sharedEntityLabel
+} from "../src/lib/labels.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
 
 // Stessi casi provati in SQL da scripts/supabase/sharing-check.mjs (studyos_scope_covers).
@@ -537,4 +547,50 @@ test("errori della cronologia: un guasto tecnico non mostra mai il suo testo (in
   // Un errore qualunque (bug, infrastruttura) resta generico.
   assert.equal(shareActionErrorTextSafe("restore", new TypeError("Cannot read properties of undefined (reading 'id')")), "Ripristino non riuscito. Riprova tra poco.");
   assert.equal(shareActionErrorTextSafe("history", "non è un Error"), "Cronologia non caricata. Riprova tra poco.");
+});
+
+test("cronologia: chi ha modificato si legge bene anche in mezzo a una frase", () => {
+  // In testa alla riga resta "Un'altra persona"; dopo "che" o "di" va in minuscolo.
+  assert.equal(actorInSentence(revisionActorName(null, [], [])), "un'altra persona");
+  assert.equal(actorInSentence("Un'altra persona"), "un'altra persona");
+  // I nomi veri non si toccano, nemmeno se iniziano in minuscolo.
+  assert.equal(actorInSentence("Bob"), "Bob");
+  assert.equal(actorInSentence("de Rossi"), "de Rossi");
+  assert.equal(revisionActorName(null, [], []), "Un'altra persona");
+});
+
+test("cronologia: l'etichetta del tipo non pesca dai nomi di Object.prototype", () => {
+  assert.equal(sharedEntityLabel("calendarEvent"), "evento");
+  assert.equal(sharedEntityLabel("task"), "attività");
+  for (const type of ["preferences", "", "nope", "constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+    assert.equal(sharedEntityLabel(type), "elemento", type);
+  }
+});
+
+test("cronologia: l'intestazione non promette più di quanto mostra", () => {
+  assert.equal(REVISION_LIST_LIMIT, 100);
+  const partial = revisionListIntro(7, REVISION_LIST_LIMIT);
+  assert.match(partial, /90 giorni/);
+  assert.doesNotMatch(partial, /100/);
+  // Con la lista piena le più vecchie possono mancare: lo dice, col numero giusto.
+  const full = revisionListIntro(REVISION_LIST_LIMIT, REVISION_LIST_LIMIT);
+  assert.match(full, /ultime 100/i);
+  assert.match(full, /90 giorni/);
+  assert.match(full, /Ripristina/);
+  assert.match(partial, /Ripristina/);
+});
+
+test("ripristino: l'updatedAt non è mai più vecchio della copia locale (orologio dell'altra persona avanti)", () => {
+  const now = "2026-11-10T16:00:00.000Z";
+  // Nessuna copia locale (eliminata da altri): vale l'ora attuale, com'è.
+  assert.equal(restoredUpdatedAt(now, undefined), now);
+  assert.equal(restoredUpdatedAt(now, ""), now);
+  assert.equal(restoredUpdatedAt(now, "non è una data"), now);
+  // La copia locale è più vecchia: vale l'ora attuale.
+  assert.equal(restoredUpdatedAt(now, "2026-11-10T15:00:00.000Z"), now);
+  // Stesso istante: un millisecondo dopo, altrimenti non vince per LWW.
+  assert.equal(restoredUpdatedAt(now, now), "2026-11-10T16:00:00.001Z");
+  // L'altra persona ha l'orologio avanti: un millisecondo dopo la sua modifica.
+  assert.equal(restoredUpdatedAt(now, "2026-11-10T18:30:15.250Z"), "2026-11-10T18:30:15.251Z");
+  assert.ok(Date.parse(restoredUpdatedAt(now, "2026-11-10T18:30:15.250Z")) > Date.parse("2026-11-10T18:30:15.250Z"));
 });

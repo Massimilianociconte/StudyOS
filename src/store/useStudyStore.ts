@@ -30,7 +30,7 @@ import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState"
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { makeGroupInviteCode } from "../lib/groups";
-import { ShareUserError, isRestorableEntity } from "../lib/sharing";
+import { ShareUserError, isRestorableEntity, restoredUpdatedAt } from "../lib/sharing";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { fileToDataUrl } from "../lib/files";
@@ -149,9 +149,10 @@ interface StudyState {
   /**
    * Ripristina una versione salvata nella cronologia come nuova versione locale (poi sync normale).
    * Solo elementi dei tipi che la condivisione copre; il contenuto lo hanno scritto altri, quindi
-   * un tipo diverso o un `id` mancante lanciano un errore senza scrivere nulla.
+   * un tipo diverso, un `id` mancante o una versione che non è di `entityId` (l'elemento di cui la
+   * cronologia parla) lanciano un errore senza scrivere nulla.
    */
-  restoreEntity: (entityType: string, payload: Record<string, unknown>) => Promise<void>;
+  restoreEntity: (entityType: string, payload: Record<string, unknown>, entityId: string) => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   deleteNotification: (id: string) => Promise<void>;
@@ -639,15 +640,22 @@ export const useStudyStore = create<StudyState>((set, get) => {
       return created.id;
     },
 
-    restoreEntity: async (entityType, payload) => {
+    restoreEntity: async (entityType, payload, entityId) => {
       const collection = COLLECTION_BY_ENTITY_TYPE[entityType];
-      if (!collection || !isRestorableEntity(entityType, payload)) throw new ShareUserError("Questo elemento non si può ripristinare.");
+      // Il negozio è il confine di fiducia: la versione deve essere di quell'elemento (`entityId`), non di un altro.
+      if (!collection || typeof entityId !== "string" || !isRestorableEntity(entityType, payload, entityId)) {
+        throw new ShareUserError("Questo elemento non si può ripristinare.");
+      }
+      const now = nowIso();
       // Stessa strada di ogni modifica locale: updatedAt nuovo, diff di persistenza, outbox e sync. Con
-      // un updatedAt più recente vince per LWW e arriva anche a chi ha la condivisione.
-      const restored = { ...payload, updatedAt: nowIso() } as unknown as SyncableEntity;
+      // un updatedAt più recente della copia locale vince per LWW e arriva anche a chi ha la condivisione.
       set((state) => {
         const current = state[collection] as unknown as SyncableEntity[];
-        return { [collection]: [...current.filter((entry) => entry.id !== restored.id), restored] } as unknown as Partial<StudyState>;
+        const existing = current.find((entry) => entry.id === entityId);
+        const restored = { ...payload, updatedAt: restoredUpdatedAt(now, existing?.updatedAt) } as unknown as SyncableEntity;
+        // Al suo posto se c'è già (come gli altri aggiornamenti), in fondo se era stato eliminato.
+        const next = existing ? current.map((entry) => (entry.id === entityId ? restored : entry)) : [...current, restored];
+        return { [collection]: next } as unknown as Partial<StudyState>;
       });
       await commit();
     },

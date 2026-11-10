@@ -4,7 +4,7 @@
 
 import { timestampOf, type SyncableEntity } from "./collections";
 import { inviteLinkBase } from "./groups";
-import { SHARE_ACTION_FAILED, scopesSummary } from "./labels";
+import { SHARE_ACTION_FAILED, UNKNOWN_PERSON, UNKNOWN_PERSON_IN_SENTENCE, scopesSummary } from "./labels";
 
 export const SHARE_SCOPES = ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals"] as const;
 export type ShareScope = (typeof SHARE_SCOPES)[number];
@@ -449,6 +449,20 @@ export const isRestorableEntity = (entityType: string, payload: unknown, entityI
 export const canRestoreRevision = (revision: ItemRevision) =>
   revision.change !== "create" && !revision.deleted && isRestorableEntity(revision.entityType, revision.payload, revision.entityId);
 
+/** Quante modifiche mostra la cronologia (le più recenti): l'intestazione lo dice quando la lista è piena. */
+export const REVISION_LIST_LIMIT = 100;
+
+/**
+ * `updatedAt` di una versione ripristinata. Di norma l'ora attuale, ma se la copia locale è più recente
+ * o uguale (l'altra persona ha l'orologio avanti) un millisecondo dopo: un ripristino con un
+ * timestamp più vecchio perderebbe per LWW e non arriverebbe a nessuno. Senza copia locale
+ * (elemento eliminato da altri) vale l'ora attuale.
+ */
+export const restoredUpdatedAt = (now: string, existingUpdatedAt?: string | null) => {
+  const existing = timestampOf(existingUpdatedAt);
+  return existing > 0 && existing >= timestampOf(now) ? new Date(existing + 1).toISOString() : now;
+};
+
 // ——— Errori e notifiche ———
 
 export const SHARING_UNAVAILABLE_TEXT =
@@ -745,12 +759,15 @@ export const revisionActorName = (
   given: readonly ShareGrant[],
   groups: readonly { members: readonly { userId: string; displayName: string }[] }[]
 ) => {
-  if (!changedBy) return "Un'altra persona";
+  if (!changedBy) return UNKNOWN_PERSON;
   const direct = given.find((grant) => grant.granteeUserId === changedBy)?.granteeName;
   if (direct) return direct;
   for (const group of groups) {
     const member = group.members.find((candidate) => candidate.userId === changedBy);
     if (member?.displayName) return member.displayName;
   }
-  return "Un'altra persona";
+  return UNKNOWN_PERSON;
 };
+
+/** Il nome di `revisionActorName` in mezzo a una frase ("prima che un'altra persona…"): solo il nome sconosciuto cambia. */
+export const actorInSentence = (name: string) => (name === UNKNOWN_PERSON ? UNKNOWN_PERSON_IN_SENTENCE : name);
