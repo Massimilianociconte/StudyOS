@@ -60,6 +60,7 @@ const StatsView = lazyView(() => import("./views/StatsView"), "StatsView");
 const SettingsView = lazyView(() => import("./views/SettingsView"), "SettingsView");
 const BarbView = lazyView(() => import("./views/BarbView"), "BarbView");
 const GroupsView = lazyView(() => import("./views/GroupsView"), "GroupsView");
+const SharingView = lazyView(() => import("./views/SharingView"), "SharingView");
 
 const views: Record<AppView, ReactNode> = {
   dashboard: <DashboardView />,
@@ -74,8 +75,7 @@ const views: Record<AppView, ReactNode> = {
   stats: <StatsView />,
   barb: <BarbView />,
   groups: <GroupsView />,
-  // Provvisorio: la vista Condivisione arriva al Task 8.
-  sharing: <GroupsView />,
+  sharing: <SharingView />,
   settings: <SettingsView />
 };
 

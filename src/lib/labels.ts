@@ -1,6 +1,6 @@
 // Etichette italiane per i valori enum salvati nei dati: la UI non mostra mai i codici interni.
 import type { Attachment, CalendarEvent, Exam, Goal, StudySession, Subject, Task } from "../types";
-import type { ItemRevision, ShareAction, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
+import type { InviteBlock, ItemRevision, ShareAction, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
 
 export const PRIORITY_LABEL: Record<Task["priority"], string> = {
   low: "Bassa",
@@ -218,11 +218,35 @@ export const SHARE_INVITE_STATUS_LABEL: Record<ShareInviteStatus, string> = {
   expired: "Scaduto"
 };
 
-/** Cosa non è andato a buon fine quando fallisce un'azione appena fatta nel pannello Condividi. */
+/** Cosa non è andato a buon fine quando fallisce un'azione appena fatta (pannello Condividi, sezione Condivisione). */
 export const SHARE_ACTION_FAILED: Record<ShareAction, string> = {
   invite: "Invito non creato.",
-  share: "Condivisione non salvata."
+  share: "Condivisione non salvata.",
+  accept: "Invito non accettato.",
+  decline: "Invito non rifiutato.",
+  cancel: "Invito non annullato.",
+  update: "Permessi non aggiornati.",
+  revoke: "Condivisione non tolta.",
+  leave: "Non sei uscito dalla condivisione.",
+  open: "Invito non aperto."
 };
+
+/** Perché un invito aperto da link non si può accettare (il link salvato su questo dispositivo si toglie). */
+export const SHARE_INVITE_BLOCKED: Record<InviteBlock, string> = {
+  invalid: "Link non valido, oppure l'invito è stato annullato.",
+  own: "È un tuo invito: mandalo a un'altra persona.",
+  otherAccount: "Questo invito è per un altro indirizzo email: accedi con quell'account e riapri il link.",
+  accepted: "Invito già usato.",
+  declined: "Invito rifiutato.",
+  expired: "Invito scaduto: chiedine uno nuovo."
+};
+
+/** Schede della sezione Condivisione (il Task 10 aggiunge la cronologia). */
+export const SHARING_TAB_LABEL = {
+  mine: "Condivisi da me",
+  received: "Condivisi con me",
+  invites: "Inviti"
+} as const;
 
 /** Testi del pulsante e del pannello Condividi che non dipendono da un valore enum. */
 export const SHARE_TEXT = {

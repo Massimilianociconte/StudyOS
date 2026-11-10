@@ -5,6 +5,7 @@ import {
   grantFromRow,
   grantSignature,
   initialsOf,
+  inviteBlockedReason,
   inviteFromRow,
   isMissingSharingObject,
   itemAccess,
@@ -309,6 +310,37 @@ test("errori delle azioni: anche il caricamento di un pezzo dell'app fallito par
   ]) {
     assert.equal(shareActionErrorText("invite", new TypeError(message)), `Invito non creato. ${network}`, message);
   }
+});
+
+test("errori delle azioni della sezione Condivisione: ogni azione dice cosa non è andato a buon fine, in italiano", () => {
+  const network = "Server cloud non raggiungibile: controlla la connessione. Riprova appena torna.";
+  const prefixes = {
+    accept: "Invito non accettato.",
+    decline: "Invito non rifiutato.",
+    cancel: "Invito non annullato.",
+    update: "Permessi non aggiornati.",
+    revoke: "Condivisione non tolta.",
+    leave: "Non sei uscito dalla condivisione.",
+    open: "Invito non aperto."
+  };
+  for (const [action, prefix] of Object.entries(prefixes)) {
+    assert.equal(shareActionErrorText(action, new TypeError("Failed to fetch")), `${prefix} ${network}`, action);
+    assert.equal(shareActionErrorText(action, new Error("Invito già usato")), `${prefix} Invito già usato`, action);
+    assert.equal(shareActionErrorText(action, "non è un Error"), `${prefix} Riprova tra poco.`, action);
+  }
+});
+
+test("invito aperto da link: quando non si può rispondere (e il link salvato va tolto)", () => {
+  const open = { status: "pending", isOwn: false, forOtherAccount: false };
+  assert.equal(inviteBlockedReason(open), null);
+  // Il server non conosce il link (sbagliato o invito annullato).
+  assert.equal(inviteBlockedReason(null), "invalid");
+  assert.equal(inviteBlockedReason({ ...open, isOwn: true }), "own");
+  assert.equal(inviteBlockedReason({ ...open, forOtherAccount: true }), "otherAccount");
+  for (const status of ["accepted", "declined", "expired"]) assert.equal(inviteBlockedReason({ ...open, status }), status);
+  // L'invito proprio e quello per un altro indirizzo hanno la precedenza sullo stato.
+  assert.equal(inviteBlockedReason({ status: "accepted", isOwn: true, forOtherAccount: false }), "own");
+  assert.equal(inviteBlockedReason({ status: "declined", isOwn: false, forOtherAccount: true }), "otherAccount");
 });
 
 test("sonda della migrazione: solo un oggetto mancante vale 'non attiva', un errore di rete resta incerto", () => {

@@ -463,10 +463,11 @@ export const shareErrorText = (error: NonNullable<ServerError>) => {
   return error.message;
 };
 
-export type ShareAction = "invite" | "share";
+/** Azione dell'utente che può fallire: crea invito e condividi (pannello), poi quelle della sezione Condivisione. */
+export type ShareAction = "invite" | "share" | "accept" | "decline" | "cancel" | "update" | "revoke" | "leave" | "open";
 
 /**
- * Errore di un'azione che l'utente ha appena fatto (crea invito, condividi): dice cosa non è
+ * Errore di un'azione che l'utente ha appena fatto (crea invito, condividi, accetta…): dice cosa non è
  * stato salvato. Il testo di rete di shareErrorText parla della sync in background ("si aggiornano
  * da soli"), che per un invito non creato sarebbe fuorviante.
  */
@@ -522,6 +523,23 @@ export const shareTokenFromText = (value: string): string | null => {
   } catch {
     return null;
   }
+};
+
+export type InviteBlock = "invalid" | "own" | "otherAccount" | Exclude<ShareInviteStatus, "pending">;
+
+/**
+ * Perché chi ha aperto un invito da link non può rispondere (null = può). Se c'è un motivo il
+ * link salvato su questo dispositivo non serve più e si toglie, mostrando il motivo una volta.
+ * `preview` null: il server non conosce il link. Un invito proprio o per un altro indirizzo
+ * email conta prima dello stato.
+ */
+export const inviteBlockedReason = (
+  preview: { status: ShareInviteStatus; isOwn: boolean; forOtherAccount: boolean } | null
+): InviteBlock | null => {
+  if (!preview) return "invalid";
+  if (preview.isOwn) return "own";
+  if (preview.forOtherAccount) return "otherAccount";
+  return preview.status === "pending" ? null : preview.status;
 };
 
 export const urlWithoutShare = (href: string) => {

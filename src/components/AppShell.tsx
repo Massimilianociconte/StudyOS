@@ -47,7 +47,8 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { view: "materials", label: "Materiali", short: "Materiali", icon: "Paperclip", hint: "File, PDF e link" },
       { view: "goals", label: "Obiettivi", short: "Obiettivi", icon: "Target", hint: "Traguardi da raggiungere" },
       { view: "stats", label: "Statistiche", short: "Statistiche", icon: "BarChart3", hint: "Quanto e come studi" },
-      { view: "groups", label: "Gruppi", short: "Gruppi", icon: "Users", hint: "Studia con i compagni" }
+      { view: "groups", label: "Gruppi", short: "Gruppi", icon: "Users", hint: "Studia con i compagni" },
+      { view: "sharing", label: "Condivisione", short: "Condividi", icon: "Share2", hint: "Cosa vedono gli altri e cosa vedi tu" }
     ]
   }
 ];
