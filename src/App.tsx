@@ -102,6 +102,7 @@ export default function App() {
     init().then(() => {
       // Motore di sync + supabase-js caricati in differita: fuori dal bundle iniziale.
       if (cloudConfigured) void import("./lib/cloudSync").then((module) => module.initCloudSync());
+      if (cloudConfigured) void import("./lib/shareSync").then((module) => module.initShareSync());
     });
   }, [init]);
 

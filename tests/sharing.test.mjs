@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   dropUnshared,
   grantFromRow,
+  grantSignature,
   initialsOf,
   inviteFromRow,
   itemAccess,
@@ -195,4 +196,12 @@ test("righe del server: una eliminazione in coda scarta le righe più vecchie, n
   // Un'eliminazione in coda per un altro proprietario non tocca queste righe; senza tombstone nulla cambia.
   assert.equal(withoutSupersededRows(rows, "dario", [tombstone]).length, rows.length);
   assert.equal(withoutSupersededRows(rows, "alice", [edit]).length, rows.length);
+});
+
+test("firma delle condivisioni: cambia con sezioni e materie, non con l'ordine o il permesso", () => {
+  const a = [grant({ id: "1", subjectIds: ["b", "a"] }), grant({ id: "2", scope: "tasks" })];
+  const b = [grant({ id: "2", scope: "tasks", permission: "edit" }), grant({ id: "1", subjectIds: ["a", "b"] })];
+  assert.equal(grantSignature(a, "alice"), grantSignature(b, "alice"));
+  assert.notEqual(grantSignature(a, "alice"), grantSignature([grant({ id: "1", subjectIds: ["a"] })], "alice"));
+  assert.equal(grantSignature(a, "dario"), "[]");
 });

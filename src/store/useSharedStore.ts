@@ -60,6 +60,8 @@ export interface SharedState {
   saveSharedItem: (ownerId: string, entityType: string, entity: SharedEntity) => Promise<void>;
   deleteSharedItem: (ownerId: string, entityType: string, entityId: string) => Promise<void>;
   settleOutbox: (entries: readonly SharedOutboxEntry[]) => Promise<void>;
+  /** Fine di un invio: `entries` inviate, `accepted` quelle che il server ha scritto. */
+  settlePushed: (entries: readonly SharedOutboxEntry[], accepted: readonly SharedOutboxEntry[]) => Promise<void>;
   toggleOwner: (ownerId: string) => void;
   setNotice: (text: string | null) => void;
   setSyncError: (text: string | null) => void;
@@ -250,6 +252,28 @@ export const useSharedStore = create<SharedState>((set, get) => {
       const outbox = get().outbox.filter((entry) => !done.has(`${entry.key}|${entry.queuedAt}`));
       // Un elemento tenuto solo per la scrittura in coda, con la condivisione ormai revocata, esce ora.
       await writeItems(dropUnshared(get().items, get().received, pendingKeys(outbox)), outbox);
+    },
+
+    settlePushed: async (entries, accepted) => {
+      if (!get().viewerId) return;
+      const state = get();
+      const done = new Set(entries.map((entry) => `${entry.key}|${entry.queuedAt}`));
+      const outbox = state.outbox.filter((entry) => !done.has(`${entry.key}|${entry.queuedAt}`));
+      const written = new Set(accepted.filter((entry) => !entry.deleted).map((entry) => entry.key));
+      const now = new Date().toISOString();
+      // Ora la riga esiste sul server: un'eliminazione successiva deve mandare il tombstone.
+      // Il pull rimette la versione vera del server; qui basta che non sia più vuota.
+      const items = state.items.map((entry) => (written.has(entry.key) && entry.serverUpdatedAt === "" ? { ...entry, serverUpdatedAt: now } : entry));
+      // Creato qui ed eliminato mentre l'invio era in corso: allora sembrava mai arrivato al server
+      // (nessun tombstone), ma la riga c'è e il pull lo riporterebbe in vita.
+      const cached = new Set(items.map((entry) => entry.key));
+      const pending = pendingKeys(outbox);
+      for (const entry of accepted) {
+        if (!written.has(entry.key) || cached.has(entry.key) || pending.has(entry.key)) continue;
+        outbox.push({ key: entry.key, ownerId: entry.ownerId, entityType: entry.entityType, entityId: entry.entityId, deleted: true, deletedAt: now, queuedAt: now });
+        pending.add(entry.key);
+      }
+      await writeItems(dropUnshared(items, get().received, pendingKeys(outbox)), outbox);
     },
 
     toggleOwner: (ownerId) => {

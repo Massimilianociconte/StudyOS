@@ -30,6 +30,9 @@ VITE_SUPABASE_URL=http://127.0.0.1:55421 VITE_SUPABASE_PUBLISHABLE_KEY=<chiave p
 VITE_SUPABASE_URL=http://127.0.0.1:55421 VITE_SUPABASE_PUBLISHABLE_KEY=<chiave publishable locale> npx vite --port 5181 --strictPort
 ```
 
+Account di prova per l'app (solo stack locale, nessuna conferma email): `alice@studyos.test` e
+`bob@studyos.test`, password `Prova-Locale-2026!` per entrambi.
+
 In build la CSP accetta solo l'URL configurato. Alla fine:
 
 ```bash

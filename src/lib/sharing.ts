@@ -168,7 +168,19 @@ export const ownerEntityTypes = (received: readonly ShareGrant[]) => {
   return result;
 };
 
-export const sharedKey = (ownerId: string, entityType: string, entityId: string) => `${ownerId}:${entityType}:${entityId}`;
+/**
+ * Firma di ciò che `ownerId` condivide con chi guarda. Se cambia (sezione nuova, materie in più)
+ * il cursore non vale più: righe vecchie diventano visibili e vanno scaricate da capo.
+ */
+export const grantSignature = (received: readonly ShareGrant[], ownerId: string) =>
+  JSON.stringify(
+    received
+      .filter((grant) => grant.ownerId === ownerId)
+      .map((grant) => `${grant.scope}:${[...grant.subjectIds].sort().join(",")}`)
+      .sort()
+  );
+
+export const sharedKey =(ownerId: string, entityType: string, entityId: string) => `${ownerId}:${entityType}:${entityId}`;
 
 /** Applica righe del server alla cache (LWW). Una scrittura locale in coda e più recente vince. */
 export const mergeSharedRows = (

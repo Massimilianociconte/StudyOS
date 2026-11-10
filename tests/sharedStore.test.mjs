@@ -195,3 +195,62 @@ test("archivio non disponibile all'avvio: hydrate resta in memoria e lo segnala,
   assert.equal(store.getState().persistent, false);
   assert.equal(store.getState().syncError, null);
 });
+
+// H3: dopo un invio accettato la riga esiste sul server, anche se qui l'elemento sembrava "mai arrivato".
+test("creato ed eliminato mentre il suo invio era in corso: tombstone dopo l'accettazione, il pull non lo riporta", async () => {
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "n1", title: "Nuovo", updatedAt: "x" });
+  const createdAt = store.getState().items[0].entity.updatedAt;
+  const sent = [...store.getState().outbox];
+  // Durante l'invio: senza versione del server, l'eliminazione non accoda nulla.
+  await store.getState().deleteSharedItem("alice", "calendarEvent", "n1");
+  assert.equal(store.getState().outbox.length, 0);
+  await wait(5);
+  await store.getState().settlePushed(sent, sent);
+  assert.deepEqual(store.getState().outbox.map((entry) => [entry.entityId, entry.deleted]), [["n1", true]]);
+  assert.equal(store.getState().items.length, 0);
+  // La riga appena creata torna col pull: resta eliminata, e il prossimo invio la elimina sul server.
+  await store.getState().applyRows("alice", [row("n1", { updatedAt: createdAt })]);
+  assert.equal(store.getState().items.length, 0);
+  const { batches } = sharedPushBatches(store.getState().outbox, store.getState().items);
+  assert.deepEqual(batches[0].rows.map((entry) => [entry.entity_id, entry.deleted, Object.keys(entry.payload).sort()]), [["n1", true, ["deletedAt", "id"]]]);
+});
+
+test("creato e inviato, poi modificato ed eliminato prima del pull: l'eliminazione accoda il tombstone", async () => {
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "n2", title: "Nuovo", updatedAt: "x" });
+  const sent = [...store.getState().outbox];
+  await store.getState().settlePushed(sent, sent);
+  assert.equal(store.getState().outbox.length, 0);
+  assert.notEqual(store.getState().items[0].serverUpdatedAt, "");
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "n2", title: "Modificato", updatedAt: "x" });
+  await store.getState().deleteSharedItem("alice", "calendarEvent", "n2");
+  assert.equal(store.getState().items.length, 0);
+  assert.deepEqual(store.getState().outbox.map((entry) => [entry.entityId, entry.deleted]), [["n2", true]]);
+});
+
+test("fine invio: le voci rifiutate non diventano note al server, le modifiche fatte durante l'invio restano in coda", async () => {
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "r1", title: "Rifiutato", updatedAt: "x" });
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "a1", title: "Accettato", updatedAt: "x" });
+  const sent = [...store.getState().outbox];
+  await wait(5);
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "a1", title: "Accettato bis", updatedAt: "x" });
+  await store.getState().settlePushed(sent, sent.filter((entry) => entry.entityId === "a1"));
+  const byId = Object.fromEntries(store.getState().items.map((entry) => [entry.entityId, entry]));
+  assert.equal(byId.r1.serverUpdatedAt, "");
+  assert.notEqual(byId.a1.serverUpdatedAt, "");
+  assert.deepEqual(store.getState().outbox.map((entry) => [entry.entityId, entry.deleted]), [["a1", false]]);
+  // Un elemento già noto al server conserva la sua versione.
+  await store.getState().applyRows("alice", [row("e1")]);
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "e1", title: "modificato", updatedAt: "x" });
+  const edit = store.getState().outbox.filter((entry) => entry.entityId === "e1");
+  await store.getState().settlePushed(edit, edit);
+  assert.equal(store.getState().items.find((entry) => entry.entityId === "e1").serverUpdatedAt, "2026-11-10T10:00:01Z");
+});
+
+test("fine invio dopo logout o blocco del vault: nessun effetto", async () => {
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "n3", title: "Nuovo", updatedAt: "x" });
+  const sent = [...store.getState().outbox];
+  store.getState().forgetMemory();
+  await store.getState().settlePushed(sent, sent);
+  assert.equal(store.getState().outbox.length, 0);
+  assert.equal(store.getState().items.length, 0);
+});
