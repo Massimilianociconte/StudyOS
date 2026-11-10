@@ -155,7 +155,7 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   consentirebbe. Chi riceve non può impostare né cambiare `cover`, `dataUrl`, `avatarDataUrl`
   e gli altri `*DataUrl`, `sourceUid`, l'etichetta `appello-importato` e i `links` di un
   evento (restano quelli già salvati; in creazione `links` è `[]`). Il `color` deve essere
-  esadecimale (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`), i link devono essere http(s), e una
+  esadecimale (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`), i link (anche `externalUrl`) devono essere http(s); in entrambi i casi vale anche un valore uguale a quello già salvato. Una
   data di aggiornamento o eliminazione nel futuro (`updatedAt`, `deletedAt`) viene ridotta
   all'ora del server. Una riga rifiutata esce come `denied`. Anche le viste del proprietario
   ripuliscono colori, immagini e link (`safeCssColor`, `safeImageDataUrl`, `safeHref`).
@@ -200,7 +200,7 @@ girare fuori da localhost.
   della conferma email (scelta di design) e può finire nei log di autenticazione o proxy e
   nella cronologia del browser, ma è monouso e scade dopo 14 giorni; la cronologia mostra al
   più le ultime 100 modifiche degli ultimi 90 giorni; ripristinare un elemento eliminato da
-  un'altra persona usa l'orologio del proprietario (raro caso di LWW perso se quello
-  dell'altra persona era avanti, ora limitato dal clamp del server); un lotto di chi riceve
+  un'altra persona usa l'orologio del proprietario (raro caso in cui una modifica più recente va persa se
+  l'orologio dell'altra persona era avanti, ora limitato dal controllo del server sulle date future); un lotto di chi riceve
   può fallire con un errore invece di `denied` in una rara corsa, se il proprietario cambia
   un colore non esadecimale nello stesso istante.
