@@ -453,33 +453,33 @@ const GENERIC_ERROR_TEXT = "Il server ha risposto con un errore. Riprova tra poc
 const OWN_SQL_EXCEPTION = "P0001";
 
 /**
- * Testi già resi italiani da shareErrorText: fail() li avvolge in un Error e il ciclo di sync li
- * ripassa da qui, quindi un testo noto non si tocca. Qualunque altro messaggio sconosciuto
- * (infrastruttura, bug) non arriva mai all'utente in inglese.
+ * Errore con un testo già pronto per l'utente (in italiano). Chi lo lancia (fail() in shareSync, le
+ * azioni) dichiara così che il messaggio si può mostrare tale e quale: shareErrorText lo lascia
+ * com'è, mentre qualunque altro messaggio sconosciuto (infrastruttura, bug) non arriva mai
+ * all'utente in inglese.
  */
-const mappedTexts = new Set<string>();
-const mapped = (text: string) => {
-  mappedTexts.add(text);
-  return text;
-};
+export class ShareUserError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ShareUserError";
+  }
+}
 
 /** Testo da mostrare per un errore del server (supabase-js riporta la rete come "TypeError: Failed to fetch"). */
 export const shareErrorText = (error: NonNullable<ServerError>) => {
-  if (mappedTexts.has(error.message)) return error.message;
-  if (isMissingSharingObject(error)) return mapped(SHARING_UNAVAILABLE_TEXT);
+  if (error instanceof ShareUserError) return error.message;
+  if (isMissingSharingObject(error)) return SHARING_UNAVAILABLE_TEXT;
   if (NETWORK_ERROR_RE.test(error.message)) {
-    return mapped(`${SERVER_UNREACHABLE_TEXT} I dati condivisi si aggiornano da soli appena torna.`);
+    return `${SERVER_UNREACHABLE_TEXT} I dati condivisi si aggiornano da soli appena torna.`;
   }
   if (error.code === "42501" || /row-level security/i.test(error.message)) {
-    return mapped(
-      "Non hai il permesso per questa operazione. Puoi condividere direttamente solo con persone che conosci (un gruppo in comune o una condivisione già attiva): per le altre crea un invito."
-    );
+    return "Non hai il permesso per questa operazione. Puoi condividere direttamente solo con persone che conosci (un gruppo in comune o una condivisione già attiva): per le altre crea un invito.";
   }
   // Indice unico (proprietario, sezione, destinatario): la sezione è già condivisa con quella persona o quel gruppo.
   if (error.code === "23505" || /duplicate key/i.test(error.message)) {
-    return mapped("Questa sezione è già condivisa con questa persona o questo gruppo.");
+    return "Questa sezione è già condivisa con questa persona o questo gruppo.";
   }
-  return mapped(error.code === OWN_SQL_EXCEPTION && error.message.trim() ? error.message : GENERIC_ERROR_TEXT);
+  return error.code === OWN_SQL_EXCEPTION && error.message.trim() ? error.message : GENERIC_ERROR_TEXT;
 };
 
 /** Azione dell'utente che può fallire: crea invito e condividi (pannello), poi quelle della sezione Condivisione. */

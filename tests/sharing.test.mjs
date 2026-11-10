@@ -19,6 +19,7 @@ import {
   reconcileOwner,
   scopeCovers,
   sharingProbeOutcome,
+  ShareUserError,
   shareActionErrorText,
   shareErrorText,
   shareNotices,
@@ -246,15 +247,28 @@ test("errori del server sconosciuti: mai inglese grezzo, passano solo i testi it
   assert.equal(shareErrorText({ code: "XX000", message: "internal error" }), generic);
   assert.equal(shareErrorText({ code: "", message: "permission denied for table studyos_shares" }), generic);
   assert.equal(shareErrorText({ message: "Cannot read properties of undefined (reading 'id')" }), generic);
-  // Un testo già reso italiano (fail() lo avvolge in un Error e il ciclo lo ripassa da qui) non cambia.
-  const network = shareErrorText({ message: "TypeError: Failed to fetch" });
-  assert.equal(shareErrorText({ message: network }), network);
-  const own = shareErrorText({ code: "P0001", message: "Invito scaduto: chiedine uno nuovo" });
-  assert.equal(shareErrorText({ message: own }), own);
-  assert.equal(shareErrorText({ message: shareErrorText({ code: "XX000", message: "internal error" }) }), generic);
   // Gli altri casi mappati restano come prima.
   assert.match(shareErrorText({ code: "23505", message: "duplicate key value violates unique constraint" }), /già condivisa/);
   assert.match(shareErrorText({ code: "42501", message: "new row violates row-level security policy" }), /permesso/);
+});
+
+test("errori per l'utente: un errore marcato passa uguale, un messaggio sconosciuto non marcato diventa la frase generica", () => {
+  const generic = "Il server ha risposto con un errore. Riprova tra poco.";
+  // fail() lancia un errore marcato con il testo già in italiano; il ciclo di sync lo ripassa da shareErrorText.
+  const friendly = new ShareUserError("Server cloud non raggiungibile: controlla la connessione. I dati condivisi si aggiornano da soli appena torna.");
+  assert.ok(friendly instanceof Error);
+  assert.equal(friendly.name, "ShareUserError");
+  assert.equal(shareErrorText(friendly), friendly.message);
+  assert.equal(shareErrorText(new ShareUserError("Sezione ripetuta: tasks")), "Sezione ripetuta: tasks");
+  // Lo stesso testo senza marcatura, o un errore inglese qualunque, non passa.
+  assert.equal(shareErrorText({ message: "Sezione ripetuta: tasks" }), generic);
+  assert.equal(shareErrorText(new Error("Sezione ripetuta: tasks")), generic);
+  assert.equal(shareErrorText(new Error("JWT expired")), generic);
+  assert.equal(shareErrorText(new TypeError("Cannot read properties of undefined (reading 'id')")), generic);
+  // Un errore di rete non marcato (TypeError di fetch) resta riconosciuto come rete.
+  assert.match(shareErrorText(new TypeError("Failed to fetch")), /non raggiungibile/);
+  // Il testo di un errore marcato arriva intero anche all'azione dell'utente.
+  assert.equal(shareActionErrorText("accept", new ShareUserError("Invito già usato")), "Invito non accettato. Invito già usato");
 });
 
 test("notifiche: solo novità; il silenzio dopo un'accettazione finisce quando la condivisione arriva davvero", () => {

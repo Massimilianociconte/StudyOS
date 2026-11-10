@@ -29,6 +29,7 @@ import {
   sharedKey,
   sharedPushBatches,
   sharingProbeOutcome,
+  ShareUserError,
   type ItemRevision,
   type RemoteSharedRow,
   type ShareGrant,
@@ -89,12 +90,13 @@ export interface ShareTarget {
 
 type DbError = { message: string; code?: string } | null;
 
+/** Errore del server: lancia un ShareUserError con il testo già in italiano (marcato, così non viene riscritto). */
 const fail = (error: DbError) => {
-  if (error) throw new Error(shareErrorText(error));
+  if (error) throw new ShareUserError(shareErrorText(error));
 };
 
 const client = () => {
-  if (!supabase) throw new Error("Gli account non sono attivi in questa versione dell'app.");
+  if (!supabase) throw new ShareUserError("Gli account non sono attivi in questa versione dell'app.");
   return supabase;
 };
 
@@ -164,10 +166,10 @@ const probeSharing = async (): Promise<Probe> => {
 export const isSharingAvailable = async (): Promise<boolean> => (await probeSharing()).state === "available";
 
 const requireSharing = async () => {
-  if (!viewer()) throw new Error("Accedi al tuo account per usare la condivisione.");
+  if (!viewer()) throw new ShareUserError("Accedi al tuo account per usare la condivisione.");
   const probe = await probeSharing();
-  if (probe.state === "missing") throw new Error(SHARING_UNAVAILABLE_TEXT);
-  if (probe.state === "failed") throw new Error(probe.message);
+  if (probe.state === "missing") throw new ShareUserError(SHARING_UNAVAILABLE_TEXT);
+  if (probe.state === "failed") throw new ShareUserError(probe.message);
 };
 
 // ——— Cursori e condivisioni già viste (in memoria con il vault: non sopravvivono al ricaricamento) ———
@@ -475,8 +477,9 @@ const syncOnce = async () => {
     // Chi guarda è cambiato: la passata della nuova generazione parte da sola.
     if (error instanceof ViewerChanged || gen !== generation) return;
     // Rete assente o errore temporaneo: si riprova al prossimo segnale o al controllo periodico.
-    // I testi da fail() sono già pronti; un errore grezzo (es. TypeError di rete) diventa italiano.
-    showError(error instanceof Error ? shareErrorText({ message: error.message }) : "Aggiornamento non riuscito.");
+    // Si passa l'errore stesso, non il suo messaggio: un ShareUserError (da fail()) è già in italiano e
+    // resta com'è; un errore grezzo (TypeError di rete, bug) diventa testo italiano.
+    showError(error instanceof Error ? shareErrorText(error) : "Aggiornamento non riuscito.");
   }
 };
 
@@ -686,7 +689,9 @@ export const shareWith = async (target: ShareTarget, offers: ShareOffer[]) => {
     }
   } catch (cause) {
     if (saved.length && cause instanceof Error) {
-      throw new Error(`${cause.message} Già condivise prima dell'errore: ${saved.map((scope) => SHARE_SCOPE_LABEL[scope]).join(", ")}.`);
+      const text = `${cause.message} Già condivise prima dell'errore: ${saved.map((scope) => SHARE_SCOPE_LABEL[scope]).join(", ")}.`;
+      // Il marcatore passa solo se il testo di partenza era già per l'utente.
+      throw cause instanceof ShareUserError ? new ShareUserError(text) : new Error(text);
     }
     throw cause;
   } finally {
