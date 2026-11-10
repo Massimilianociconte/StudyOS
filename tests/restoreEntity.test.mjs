@@ -1,6 +1,7 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { ShareUserError, SHARED_ENTITY_TYPES } from "../src/lib/sharing.ts";
+import { RESTORE_TEXT } from "../src/lib/labels.ts";
 import { COLLECTION_BY_ENTITY_TYPE } from "../src/lib/collections.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 
@@ -24,7 +25,7 @@ test("ripristino: ogni tipo condivisibile ha la sua collezione personale", () =>
 
 test("ripristino: la versione salvata torna tra i dati personali con un updatedAt nuovo", async () => {
   const before = Date.now();
-  await store.getState().restoreEntity("calendarEvent", { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, "e1");
+  await store.getState().restoreEntity({ entityType: "calendarEvent", payload: { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, entityId: "e1" });
   const events = store.getState().events;
   assert.equal(events.length, 1);
   assert.equal(events[0].title, "Prima della modifica");
@@ -32,7 +33,7 @@ test("ripristino: la versione salvata torna tra i dati personali con un updatedA
 });
 
 test("ripristino: un elemento eliminato da altri torna come nuovo, in fondo all'elenco", async () => {
-  await store.getState().restoreEntity("task", { id: "t2", title: "Eliminata da Bob", updatedAt: OLD }, "t2");
+  await store.getState().restoreEntity({ entityType: "task", payload: { id: "t2", title: "Eliminata da Bob", updatedAt: OLD }, entityId: "t2", complete: true });
   assert.deepEqual(store.getState().tasks.map((task) => task.id), ["t1", "t2"]);
 });
 
@@ -45,7 +46,7 @@ test("ripristino: un elemento che esiste già si sostituisce al suo posto, non i
     ]
   });
   const [a, , b] = store.getState().events;
-  await store.getState().restoreEntity("calendarEvent", { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, "e1");
+  await store.getState().restoreEntity({ entityType: "calendarEvent", payload: { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, entityId: "e1" });
   const events = store.getState().events;
   assert.deepEqual(events.map((event) => event.id), ["a", "e1", "b"]);
   assert.equal(events[1].title, "Prima della modifica");
@@ -57,7 +58,7 @@ test("ripristino: un elemento che esiste già si sostituisce al suo posto, non i
 test("ripristino: se l'altra persona ha l'orologio avanti, il ripristino resta più recente della copia locale", async () => {
   const ahead = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   store.setState({ events: [{ id: "e1", title: "Dopo la modifica", start: OLD, end: OLD, updatedAt: ahead }] });
-  await store.getState().restoreEntity("calendarEvent", { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, "e1");
+  await store.getState().restoreEntity({ entityType: "calendarEvent", payload: { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, entityId: "e1" });
   const [restored] = store.getState().events;
   assert.equal(restored.title, "Prima della modifica");
   assert.ok(Date.parse(restored.updatedAt) > Date.parse(ahead), "altrimenti il ripristino perde per LWW e non arriva a nessuno");
@@ -85,7 +86,7 @@ test("ripristino: tipi non condivisibili, senza id o con un id diverso non scriv
   ];
   for (const [type, payload, entityId] of attempts) {
     await assert.rejects(
-      store.getState().restoreEntity(type, payload, entityId),
+      store.getState().restoreEntity({ entityType: type, payload, entityId }),
       (error) => error instanceof ShareUserError && error.message === "Questo elemento non si può ripristinare.",
       `${type} ${JSON.stringify(payload)} ${String(entityId)}`
     );
@@ -103,8 +104,8 @@ test("ripristino: copertina, file e UID restano quelli attuali del proprietario 
     attachments: [{ id: "a1", name: "Dopo", mimeType: "application/pdf", dataUrl: "data:application/pdf;base64,JVBERi0=", updatedAt: OLD }]
   });
   // Versioni di una modifica: senza chiavi protette (sharing.sql le toglie).
-  await store.getState().restoreEntity("calendarEvent", { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, "e1");
-  await store.getState().restoreEntity("attachment", { id: "a1", name: "Prima", mimeType: "application/pdf", updatedAt: OLD }, "a1");
+  await store.getState().restoreEntity({ entityType: "calendarEvent", payload: { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, entityId: "e1" });
+  await store.getState().restoreEntity({ entityType: "attachment", payload: { id: "a1", name: "Prima", mimeType: "application/pdf", updatedAt: OLD }, entityId: "a1" });
   const [event] = store.getState().events;
   const [attachment] = store.getState().attachments;
   assert.equal(event.title, "Prima della modifica");
@@ -113,10 +114,10 @@ test("ripristino: copertina, file e UID restano quelli attuali del proprietario 
   assert.equal(attachment.name, "Prima");
   assert.equal(attachment.dataUrl, "data:application/pdf;base64,JVBERi0=");
   // Una versione vecchia con le sue chiavi (salvata prima della regola) non riporta un file superato.
-  await store.getState().restoreEntity("attachment", { id: "a1", name: "Vecchia", mimeType: "application/pdf", dataUrl: "data:vecchio", updatedAt: OLD }, "a1");
+  await store.getState().restoreEntity({ entityType: "attachment", payload: { id: "a1", name: "Vecchia", mimeType: "application/pdf", dataUrl: "data:vecchio", updatedAt: OLD }, entityId: "a1" });
   assert.equal(store.getState().attachments[0].dataUrl, "data:application/pdf;base64,JVBERi0=");
   // Eliminato da altri: nessuna copia locale, la versione (un'eliminazione) porta il suo file.
-  await store.getState().restoreEntity("attachment", { id: "a2", name: "Eliminato", mimeType: "application/pdf", dataUrl: "data:a2", updatedAt: OLD }, "a2");
+  await store.getState().restoreEntity({ entityType: "attachment", payload: { id: "a2", name: "Eliminato", mimeType: "application/pdf", dataUrl: "data:a2", updatedAt: OLD }, entityId: "a2", complete: true });
   assert.equal(store.getState().attachments.find((entry) => entry.id === "a2").dataUrl, "data:a2");
 });
 
@@ -127,7 +128,7 @@ test("ripristino di più elementi insieme: un salvataggio solo, le versioni non 
   });
   const count = await store.getState().restoreEntities([
     { entityType: "calendarEvent", payload: { id: "e1", title: "Prima", start: OLD, end: OLD, updatedAt: OLD }, entityId: "e1" },
-    { entityType: "task", payload: { id: "t2", title: "Eliminata da Bob", updatedAt: OLD }, entityId: "t2" },
+    { entityType: "task", payload: { id: "t2", title: "Eliminata da Bob", updatedAt: OLD }, entityId: "t2", complete: true },
     { entityType: "task", payload: { id: "t1", title: "Punta altrove" }, entityId: "altro" },
     { entityType: "preferences", payload: { id: "main", displayName: "Bob" }, entityId: "main" }
   ]);
@@ -139,4 +140,48 @@ test("ripristino di più elementi insieme: un salvataggio solo, le versioni non 
   assert.equal(store.getState().tasks[0].title, "Attività");
   assert.equal(store.getState().preferences[0].displayName, "Alice");
   assert.equal(await store.getState().restoreEntities([{ entityType: "preferences", payload: { id: "main" }, entityId: "main" }]), 0);
+});
+
+test("ripristino: la versione di una modifica non riscrive senza file un elemento sparito nel frattempo", async () => {
+  // Il controllo ha visto l'allegato tra i miei dati; poi la sync ha applicato l'eliminazione di Bob.
+  store.setState({ attachments: [{ id: "a1", name: "Rinominato da Bob", mimeType: "application/pdf", dataUrl: "data:file", updatedAt: OLD }] });
+  const edit = { entityType: "attachment", entityId: "a1", payload: { id: "a1", name: "Appunti.pdf", mimeType: "application/pdf", updatedAt: OLD } };
+  store.setState({ attachments: [] });
+  let writes = 0;
+  const unsubscribe = store.subscribe(() => {
+    writes += 1;
+  });
+  assert.equal(await store.getState().restoreEntities([edit]), 0);
+  await assert.rejects(store.getState().restoreEntity(edit), (error) => error instanceof ShareUserError && error.message === RESTORE_TEXT.notHere);
+  unsubscribe();
+  assert.equal(writes, 0, "nessun allegato senza file, e niente da inviare");
+  assert.deepEqual(store.getState().attachments, []);
+  // Con l'eliminazione salvata dopo, il file torna.
+  assert.equal(await store.getState().restoreEntities([{ ...edit, protectedFrom: { id: "a1", name: "Rinominato da Bob", dataUrl: "data:file" } }]), 1);
+  assert.deepEqual(
+    store.getState().attachments.map(({ name, dataUrl }) => [name, dataUrl]),
+    [["Appunti.pdf", "data:file"]]
+  );
+});
+
+test("ripristino: obiettivi, note, sessioni e argomenti (senza file) tornano anche se non ci sono più", async () => {
+  store.setState({ goals: [], notes: [] });
+  const count = await store.getState().restoreEntities([
+    { entityType: "goal", entityId: "g1", payload: { id: "g1", title: "Prima", updatedAt: OLD } },
+    { entityType: "note", entityId: "n1", payload: { id: "n1", title: "Prima", updatedAt: OLD } }
+  ]);
+  assert.equal(count, 2);
+  assert.deepEqual(store.getState().goals.map((goal) => goal.title), ["Prima"]);
+  assert.deepEqual(store.getState().notes.map((note) => note.title), ["Prima"]);
+});
+
+test("ripristino di un'eliminazione: il file della versione completa una copia attuale che l'ha perso", async () => {
+  store.setState({ attachments: [{ id: "a1", name: "Guscio", mimeType: "application/pdf", updatedAt: OLD }] });
+  await store.getState().restoreEntity({
+    entityType: "attachment",
+    entityId: "a1",
+    payload: { id: "a1", name: "Appunti.pdf", mimeType: "application/pdf", dataUrl: "data:file", updatedAt: OLD },
+    complete: true
+  });
+  assert.deepEqual(store.getState().attachments.map(({ name, dataUrl }) => [name, dataUrl]), [["Appunti.pdf", "data:file"]]);
 });

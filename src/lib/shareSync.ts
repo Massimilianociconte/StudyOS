@@ -14,7 +14,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { db, getMeta, setMeta } from "./db";
 import { COLLECTION_BY_ENTITY_TYPE } from "./collections";
-import { REVERT_TEXT, SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
+import { RESTORE_TEXT, REVERT_TEXT, SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
 import {
   SHARING_UNAVAILABLE_TEXT,
   grantFromRow,
@@ -27,9 +27,8 @@ import {
   requireAffectedShare,
   REVISION_LIST_COLUMNS,
   SHARED_ENTITY_TYPES,
+  PROTECTED_ENTITY_TYPES,
   canRestoreRevision,
-  planRevert,
-  revertSummary,
   revisionFromRow,
   revisionTitle,
   safeCssColor,
@@ -39,9 +38,8 @@ import {
   sharedPushBatches,
   sharingProbeOutcome,
   ShareUserError,
-  withProtectedFrom,
-  type RevertSummary,
   type ItemRevision,
+  type RestoreVersion,
   type RemoteSharedRow,
   type ShareGrant,
   type ShareInviteStatus,
@@ -55,6 +53,18 @@ import { supabase } from "./supabase";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { ViewerChanged, createViewerLifecycle } from "./shareViewer";
+import { createRecheckCadence } from "./shareRecheck";
+import {
+  entriesToRun,
+  planKey,
+  planRevert,
+  revertSummary,
+  revertVersions,
+  touchedEntities,
+  type ItemState,
+  type RevertPlan,
+  type RevertSummary
+} from "./shareHistory";
 
 const PAGE_SIZE = 200;
 const ID_PAGE_SIZE = 1000;
@@ -129,7 +139,7 @@ const viewers = createViewerLifecycle({
     await stopRealtime();
     available = null;
     memoryMeta.clear();
-    rechecked.clear();
+    cadence.reset();
   },
   isLocked: () => useStudyStore.getState().locked,
   isPersistent,
@@ -291,24 +301,18 @@ const visibleKeys = async (ownerId: string, types: string[], gen: number) => {
 
 // ——— Ricontrollo degli id visibili ———
 
-/** Il prossimo passaggio ricontrolla tutti i proprietari: lo chiede il controllo dei 5 minuti. */
-let recheckDue = false;
-/** Firma dei permessi con cui ogni proprietario è stato ricontrollato l'ultima volta (in memoria). */
-const rechecked = new Map<string, string>();
+/** Quando confrontare la cache con gli id visibili (shareRecheck.ts). */
+const cadence = createRecheckCadence(PERIODIC_MS);
 
-/**
- * Ricontrollo per questo proprietario: al controllo dei 5 minuti, e subito se i suoi permessi sono
- * cambiati (anche la prima volta dopo l'avvio o un cambio di chi guarda: la mappa è vuota).
- */
-const needsRecheck = (ownerId: string, sig: string, full: boolean) => full || rechecked.get(ownerId) !== sig;
-
+/** Ritorna se ha ricontrollato gli id visibili di questo proprietario. */
 const pullOwner = async (me: string, ownerId: string, types: string[], sig: string, full: boolean, gen: number) => {
   const key = cursorMeta(me, ownerId);
   const stored = await readMeta<OwnerCursor>(key);
   still(gen);
   const since = stored?.sig === sig ? stored.at : null;
   let latest = await pullRows(ownerId, types, since, gen);
-  if (needsRecheck(ownerId, sig, full)) {
+  const recheck = cadence.needs(ownerId, sig, full);
+  if (recheck) {
     const visible = await visibleKeys(ownerId, types, gen);
     // Il server mostra righe che qui mancano: il cursore le ha saltate (es. revoca e poi la stessa
     // condivisione di nuovo). Si riscarica tutto da zero, una volta per passata.
@@ -318,11 +322,12 @@ const pullOwner = async (me: string, ownerId: string, types: string[], sig: stri
     }
     await useSharedStore.getState().reconcile(ownerId, types, visible);
     still(gen);
-    rechecked.set(ownerId, sig);
+    cadence.checked(ownerId, sig);
   }
   // Il cursore avanza solo se le righe sono finite nello store di questa generazione.
   still(gen);
   await writeMeta(key, { sig, at: latest } satisfies OwnerCursor);
+  return recheck;
 };
 
 const refetchRow = async (ownerId: string, entityType: string, entityId: string, gen: number) => {
@@ -455,9 +460,9 @@ const ensureRealtime = async (me: string, owners: string[], gen: number) => {
       "postgres_changes",
       { event: "*", schema: "public", table: "studyos_items", filter: `user_id=in.(${watched.join(",")})` },
       (payload) => {
-        // Una riga cancellata davvero (non un tombstone: solo account eliminati) non torna col cursore:
-        // la toglie il ricontrollo degli id visibili.
-        if (payload.eventType === "DELETE") recheckDue = true;
+        // Le cancellazioni vere (non i tombstone: solo account eliminati) qui non arrivano mai: la riga
+        // vecchia di un DELETE ha solo l'id, quindi il filtro su user_id non la trova (provato sullo
+        // stack locale). Le toglie il ricontrollo dei 5 minuti.
         const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
         // Il server antepone a client_id di chi riceve "r:<id utente>:" (studyos_items_recipient_values).
         if (row?.client_id && (row.client_id === clientId || row.client_id === `r:${me}:${clientId}`)) return;
@@ -497,8 +502,7 @@ const syncOnce = async () => {
   // Store non ancora caricato per chi guarda ora: il cambio di chi guarda chiede la passata a fine caricamento.
   if (!me || !viewers.isHydrated(gen) || useStudyStore.getState().locked) return;
   // Preso ora: un controllo dei 5 minuti che arriva durante la passata vale per quella dopo.
-  const full = recheckDue;
-  recheckDue = false;
+  const full = cadence.take();
   try {
     if (!(await isSharingAvailable())) return;
     still(gen);
@@ -508,8 +512,12 @@ const syncOnce = async () => {
     const owners = ownerEntityTypes(received);
     await forgetCursors(me, new Set(owners.keys()));
     // Chi non condivide più nulla: se ricondivide, si ricontrolla da capo.
-    for (const ownerId of [...rechecked.keys()]) if (!owners.has(ownerId)) rechecked.delete(ownerId);
-    for (const [ownerId, types] of owners) await pullOwner(me, ownerId, types, grantSignature(received, ownerId), full, gen);
+    cadence.keep(new Set(owners.keys()));
+    let allChecked = true;
+    for (const [ownerId, types] of owners) {
+      if (!(await pullOwner(me, ownerId, types, grantSignature(received, ownerId), full, gen))) allChecked = false;
+    }
+    cadence.passDone(allChecked, Date.now());
     await notifyNew(me, received, invites, gen);
     await ensureRealtime(me, [...owners.keys()], gen);
     still(gen);
@@ -518,7 +526,7 @@ const syncOnce = async () => {
     // Chi guarda è cambiato: la passata della nuova generazione parte da sola (e ricontrolla tutto).
     if (error instanceof ViewerChanged || gen !== viewers.generation) return;
     // Il controllo dei 5 minuti non riuscito si ripete alla passata dopo.
-    if (full) recheckDue = true;
+    cadence.passFailed(full);
     // Rete assente o errore temporaneo: si riprova al prossimo segnale o al controllo periodico.
     // Si passa l'errore stesso, non il suo messaggio: un ShareUserError (da fail()) è già in italiano e
     // resta com'è; un errore grezzo (TypeError di rete, bug) diventa testo italiano.
@@ -560,11 +568,14 @@ export const initShareSync = () => {
   if (typeof window !== "undefined") {
     window.addEventListener("online", () => schedule(0));
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && viewers.viewer) schedule();
+      if (document.visibilityState !== "visible" || !viewers.viewer) return;
+      // Scheda rimasta nascosta: il controllo dei 5 minuti non è passato, si fa ora se è scaduto.
+      cadence.resumed(Date.now());
+      schedule();
     });
     window.setInterval(() => {
       if (!viewers.viewer || document.visibilityState !== "visible") return;
-      recheckDue = true;
+      cadence.requestFull();
       void syncSharedNow();
     }, PERIODIC_MS);
   }
@@ -766,91 +777,178 @@ const loadRevisionPayloads = async (ids: readonly number[]) => {
   return payloads;
 };
 
-/** Il proprietario ha ancora l'elemento tra i suoi dati (copertine e file attuali stanno lì). */
-const hasLocal = (entityType: string, entityId: string) => {
+/** Copia del proprietario su questo dispositivo (copertine e file attuali stanno lì), se c'è. */
+const localEntity = (entityType: string, entityId: string) => {
   const collection = COLLECTION_BY_ENTITY_TYPE[entityType];
-  if (!collection || !SHARED_ENTITY_TYPES.has(entityType)) return false;
-  const entries = useStudyStore.getState()[collection] as unknown as readonly { id: string }[];
-  return entries.some((entry) => entry.id === entityId);
+  if (!collection || !SHARED_ENTITY_TYPES.has(entityType)) return null;
+  const entries = useStudyStore.getState()[collection] as unknown as readonly { id: string; updatedAt?: string }[];
+  return entries.find((entry) => entry.id === entityId) ?? null;
 };
 
-const GONE_TEXT = (title: string) => `«${title}» non c'è più tra i tuoi dati (l'hai eliminato tu): questa versione non si può ripristinare.`;
+const isPayload = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** L'ultima eliminazione dell'elemento dopo questa versione: conserva copertine e file. */
+const latestDeletion = async (revision: ItemRevision) => {
+  const { data, error } = await client()
+    .from(REVISIONS)
+    .select("payload")
+    .eq("entity_type", revision.entityType)
+    .eq("entity_id", revision.entityId)
+    .eq("change", "delete")
+    .gte("changed_at", revision.changedAt)
+    .order("changed_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  fail(error);
+  const payload = (data as { payload: unknown } | null)?.payload;
+  return isPayload(payload) ? payload : null;
+};
 
 /**
  * Ripristina una versione della cronologia. Le versioni delle modifiche non hanno copertine, file e UID:
- * li riprende il negozio dalla copia del proprietario o, se l'elemento è stato poi eliminato da altri,
- * qui dall'eliminazione salvata (che li conserva).
+ * li riprende il negozio dalla copia del proprietario o, se l'elemento non è su questo dispositivo, qui
+ * dall'eliminazione salvata dopo (che li conserva). I tipi senza copertine e file si ripristinano anche
+ * senza copia.
  */
 export const restoreRevision = async (revision: ItemRevision) => {
   await requireSharing();
-  if (!canRestoreRevision(revision)) throw new ShareUserError("Questo elemento non si può ripristinare.");
+  if (!canRestoreRevision(revision)) throw new ShareUserError(RESTORE_TEXT.notRestorable);
   const payloads = await loadRevisionPayloads([revision.id]);
-  let payload = payloads.get(revision.id);
-  if (!payload) throw new ShareUserError("Questa versione non c'è più nella cronologia: aggiorna l'elenco.");
-  if (revision.change === "update" && !hasLocal(revision.entityType, revision.entityId)) {
-    const { data, error } = await client()
-      .from(REVISIONS)
-      .select("payload")
-      .eq("entity_type", revision.entityType)
-      .eq("entity_id", revision.entityId)
-      .eq("change", "delete")
-      .gte("changed_at", revision.changedAt)
-      .order("changed_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    fail(error);
-    const deleted = (data as { payload: unknown } | null)?.payload;
-    if (typeof deleted !== "object" || deleted === null || Array.isArray(deleted)) throw new ShareUserError(GONE_TEXT(revisionTitle(revision)));
-    payload = withProtectedFrom(payload, deleted as Record<string, unknown>);
+  const payload = payloads.get(revision.id);
+  if (!payload) throw new ShareUserError(RESTORE_TEXT.missing);
+  const version: RestoreVersion = {
+    entityType: revision.entityType,
+    entityId: revision.entityId,
+    payload,
+    complete: revision.change === "delete",
+    protectedFrom: null
+  };
+  if (!version.complete && PROTECTED_ENTITY_TYPES.has(revision.entityType) && !localEntity(revision.entityType, revision.entityId)) {
+    version.protectedFrom = await latestDeletion(revision);
+    if (!version.protectedFrom) throw new ShareUserError(RESTORE_TEXT.gone(revisionTitle(revision)));
   }
-  await useStudyStore.getState().restoreEntity(revision.entityType, payload, revision.entityId);
+  await useStudyStore.getState().restoreEntity(version);
 };
 
-/** Revisioni di tutti da `since` (dalla più vecchia), solo titoli: servono a pianificare l'annullamento. */
+/**
+ * Revisioni di tutti da `since` (dalla più vecchia), solo titoli: servono a pianificare l'annullamento.
+ * Pagine per (changed_at, id), non per posizione: la pulizia dei 90 giorni può togliere le righe più
+ * vecchie durante la lettura, e con le posizioni qualche riga verrebbe saltata.
+ */
 const revisionsSince = async (since: string) => {
   const rows: ItemRevision[] = [];
-  for (let offset = 0; ; offset += ID_PAGE_SIZE) {
-    const { data, error } = await client()
+  let after: ItemRevision | null = null;
+  for (;;) {
+    let query = client()
       .from(REVISIONS)
       .select(REVISION_LIST_COLUMNS)
-      .gte("changed_at", since)
       .order("changed_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(offset, offset + ID_PAGE_SIZE - 1);
+      .limit(ID_PAGE_SIZE);
+    query = after
+      ? query.or(`changed_at.gt."${after.changedAt}",and(changed_at.eq."${after.changedAt}",id.gt.${after.id})`)
+      : query.gte("changed_at", since);
+    const { data, error } = await query;
     fail(error);
     const page = ((data ?? []) as unknown as Record<string, unknown>[]).map((row) => revisionFromRow(row));
     rows.push(...page);
     if (rows.length > REVERT_SCAN_MAX) throw new ShareUserError(REVERT_TEXT.tooMany);
     if (page.length < ID_PAGE_SIZE) return rows;
+    after = page[page.length - 1];
   }
 };
 
+/** Id per richiesta delle righe di cui serve lo stato. */
+const STATE_PAGE_SIZE = 100;
+
+/**
+ * Dove sta oggi ogni elemento: la copia su questo dispositivo e la riga sul server. `updated_at` della
+ * riga è dell'orologio del server, come `changed_at` delle revisioni: una scrittura del proprietario
+ * (che non lascia revisioni) si riconosce perché è più recente dell'ultima revisione.
+ */
+const itemStates = async (entities: readonly { entityType: string; entityId: string }[]) => {
+  const me = viewer();
+  if (!me) throw new ShareUserError("Accedi al tuo account per usare la condivisione.");
+  const server = new Map<string, NonNullable<ItemState["server"]>>();
+  const ids = [...new Set(entities.map((entity) => entity.entityId))];
+  for (let start = 0; start < ids.length; start += STATE_PAGE_SIZE) {
+    const { data, error } = await client()
+      .from("studyos_items")
+      .select("entity_type, entity_id, updated_at, deleted")
+      .eq("user_id", me)
+      .in("entity_id", ids.slice(start, start + STATE_PAGE_SIZE));
+    fail(error);
+    for (const row of (data ?? []) as { entity_type: string; entity_id: string; updated_at: string; deleted: boolean }[]) {
+      server.set(`${row.entity_type}:${row.entity_id}`, { updatedAt: String(row.updated_at), deleted: row.deleted === true });
+    }
+  }
+  return (entityType: string, entityId: string): ItemState => {
+    const local = localEntity(entityType, entityId);
+    return { local: local ? { updatedAt: local.updatedAt } : null, server: server.get(`${entityType}:${entityId}`) ?? null };
+  };
+};
+
+const buildRevertPlan = async (actorId: string, since: string) => {
+  const revisions = await revisionsSince(since);
+  const stateOf = await itemStates(touchedEntities(revisions, actorId, since));
+  return planRevert(revisions, actorId, since, stateOf);
+};
+
+/** Il controllo mostrato alla persona: la conferma esegue proprio questo. */
+export interface RevertPreview {
+  actorId: string;
+  since: string;
+  plan: RevertPlan;
+}
+
+export type RevertOutcome = { status: "changed"; preview: RevertPreview } | { status: "done"; summary: RevertSummary };
+
 /** Cosa farebbe l'annullamento delle modifiche di una persona da `since`, senza toccare nulla. */
-export const previewRevert = async (actorId: string, since: string): Promise<RevertSummary> => {
+export const previewRevert = async (actorId: string, since: string): Promise<RevertPreview> => {
   await requireSharing();
-  return revertSummary(planRevert(await revisionsSince(since), actorId, since, hasLocal));
+  return { actorId, since, plan: await buildRevertPlan(actorId, since) };
 };
 
 /**
- * Annulla tutte le modifiche di una persona da `since`: ogni elemento che ha modificato o eliminato
- * torna alla versione prima della sua prima modifica (stesso ripristino di un elemento solo, tutto
- * in un salvataggio). Gli elementi che ha aggiunto restano.
+ * Annulla tutte le modifiche di una persona da un giorno, come confermato: ogni elemento che ha
+ * modificato o eliminato torna alla versione prima della sua prima modifica (stesso ripristino di un
+ * elemento solo, tutto in un salvataggio). Gli elementi che ha aggiunto restano. Se da quel controllo
+ * qualcosa è cambiato (un'altra modifica, un elemento eliminato), non scrive nulla e ridà il controllo
+ * nuovo da confermare.
  */
-export const revertPersonSince = async (actorId: string, since: string): Promise<RevertSummary> => {
+export const revertPersonSince = async (confirmed: RevertPreview, skipChanged: boolean): Promise<RevertOutcome> => {
   await requireSharing();
-  const plan = planRevert(await revisionsSince(since), actorId, since, hasLocal);
+  const plan = await buildRevertPlan(confirmed.actorId, confirmed.since);
+  if (planKey(plan, skipChanged) !== planKey(confirmed.plan, skipChanged)) return { status: "changed", preview: { ...confirmed, plan } };
+  const entries = entriesToRun(confirmed.plan, skipChanged);
   const payloads = await loadRevisionPayloads(
-    plan.restore.flatMap(({ revision, deletedAfter }) => (deletedAfter ? [revision.id, deletedAfter.id] : [revision.id]))
+    entries.flatMap(({ revision, deletedAfter }) => (deletedAfter ? [revision.id, deletedAfter.id] : [revision.id]))
   );
-  const versions = plan.restore.flatMap(({ revision, deletedAfter }) => {
-    const payload = payloads.get(revision.id);
-    if (!payload) return [];
-    const source = deletedAfter ? payloads.get(deletedAfter.id) : undefined;
-    // Senza l'eliminazione intera mancherebbero copertine e file: meglio non ripristinare a metà.
-    if (deletedAfter && !source) return [];
-    return [{ entityType: revision.entityType, entityId: revision.entityId, payload: source ? withProtectedFrom(payload, source) : payload }];
-  });
+  const { versions } = revertVersions(entries, payloads);
+  // Il negozio ricontrolla al momento di scrivere: un elemento eliminato durante lo scaricamento non
+  // torna senza il suo file, e si conta tra quelli non ripristinati.
   const restored = versions.length ? await useStudyStore.getState().restoreEntities(versions) : 0;
-  return { ...revertSummary(plan), restored };
+  return { status: "done", summary: { ...revertSummary(confirmed.plan, skipChanged), restored, notRestored: entries.length - restored } };
+};
+
+/** Persone che hanno cambiato i miei dati negli ultimi 90 giorni (al più 50): una lettura per persona. */
+const ACTORS_MAX = 50;
+
+export const revisionActors = async (): Promise<string[]> => {
+  await requireSharing();
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString();
+  const found: string[] = [];
+  while (found.length < ACTORS_MAX) {
+    const query = client().from(REVISIONS).select("changed_by").gte("changed_at", since).not("changed_by", "is", null);
+    const { data, error } = await (found.length ? query.not("changed_by", "in", `(${found.join(",")})`) : query)
+      .order("changed_at", { ascending: false })
+      .limit(1);
+    fail(error);
+    const next = (data as { changed_by: unknown }[] | null)?.[0]?.changed_by;
+    if (typeof next !== "string") break;
+    found.push(next);
+  }
+  return found;
 };

@@ -30,7 +30,8 @@ import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState"
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { makeGroupInviteCode } from "../lib/groups";
-import { ShareUserError, isRestorableEntity, restoredUpdatedAt, withProtectedFrom } from "../lib/sharing";
+import { ShareUserError, isRestorableEntity, restoredPayload, restoredUpdatedAt, type RestoreVersion } from "../lib/sharing";
+import { RESTORE_TEXT } from "../lib/labels";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { fileToDataUrl } from "../lib/files";
@@ -80,13 +81,6 @@ export interface RemoteChange {
   /** Timestamp LWW remoto: se nel frattempo l'entità locale è più recente, la modifica è scartata. */
   stamp?: number;
   force?: boolean;
-}
-
-/** Versione della cronologia da riscrivere tra i dati personali (`entityId`: l'elemento di cui parla). */
-export interface RestoreVersion {
-  entityType: string;
-  payload: Record<string, unknown>;
-  entityId: string;
 }
 
 const isRestorableVersion = ({ entityType, payload, entityId }: RestoreVersion) =>
@@ -162,7 +156,7 @@ interface StudyState {
    * un tipo diverso, un `id` mancante o una versione che non è di `entityId` (l'elemento di cui la
    * cronologia parla) lanciano un errore senza scrivere nulla.
    */
-  restoreEntity: (entityType: string, payload: Record<string, unknown>, entityId: string) => Promise<void>;
+  restoreEntity: (version: RestoreVersion) => Promise<void>;
   /**
    * Più versioni insieme (un solo salvataggio e una sola sync), per annullare le modifiche di una
    * persona. Le versioni non valide si saltano; restituisce quante sono state ripristinate.
@@ -655,9 +649,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
       return created.id;
     },
 
-    restoreEntity: async (entityType, payload, entityId) => {
-      if (!isRestorableVersion({ entityType, payload, entityId })) throw new ShareUserError("Questo elemento non si può ripristinare.");
-      await get().restoreEntities([{ entityType, payload, entityId }]);
+    restoreEntity: async (version) => {
+      if (!isRestorableVersion(version)) throw new ShareUserError(RESTORE_TEXT.notRestorable);
+      if (!(await get().restoreEntities([version]))) throw new ShareUserError(RESTORE_TEXT.notHere);
     },
 
     restoreEntities: async (versions) => {
@@ -667,23 +661,26 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const now = nowIso();
       // Stessa strada di ogni modifica locale: updatedAt nuovo, diff di persistenza, outbox e sync. Con
       // un updatedAt più recente della copia locale vince per LWW e arriva anche a chi ha la condivisione.
-      set((state) => {
-        const patch: Partial<Record<CollectionKey, SyncableEntity[]>> = {};
-        for (const { entityType, payload, entityId } of valid) {
-          const collection = COLLECTION_BY_ENTITY_TYPE[entityType];
-          const current = patch[collection] ?? (state[collection] as unknown as SyncableEntity[]);
-          const existing = current.find((entry) => entry.id === entityId);
-          // Copertine, file e UID sono quelli attuali del proprietario: la cronologia delle modifiche
-          // non li conserva e chi riceve non li cambia mai.
-          const base = existing ? withProtectedFrom(payload, existing as unknown as Record<string, unknown>) : payload;
-          const restored = { ...base, updatedAt: restoredUpdatedAt(now, existing?.updatedAt) } as unknown as SyncableEntity;
-          // Al suo posto se c'è già (come gli altri aggiornamenti), in fondo se era stato eliminato.
-          patch[collection] = existing ? current.map((entry) => (entry.id === entityId ? restored : entry)) : [...current, restored];
-        }
-        return patch as unknown as Partial<StudyState>;
-      });
+      // Si decide qui, al momento di scrivere: tra il controllo e la scrittura l'elemento può essere
+      // stato eliminato (dalla sync), e la versione di una modifica senza copia lo riscriverebbe senza file.
+      const state = get();
+      const patch: Partial<Record<CollectionKey, SyncableEntity[]>> = {};
+      let written = 0;
+      for (const version of valid) {
+        const collection = COLLECTION_BY_ENTITY_TYPE[version.entityType];
+        const current = patch[collection] ?? (state[collection] as unknown as SyncableEntity[]);
+        const existing = current.find((entry) => entry.id === version.entityId);
+        const base = restoredPayload(version, existing as unknown as Record<string, unknown> | undefined);
+        if (!base) continue;
+        const restored = { ...base, updatedAt: restoredUpdatedAt(now, existing?.updatedAt) } as unknown as SyncableEntity;
+        // Al suo posto se c'è già (come gli altri aggiornamenti), in fondo se era stato eliminato.
+        patch[collection] = existing ? current.map((entry) => (entry.id === version.entityId ? restored : entry)) : [...current, restored];
+        written += 1;
+      }
+      if (!written) return 0;
+      set(patch as unknown as Partial<StudyState>);
       await commit();
-      return valid.length;
+      return written;
     },
 
     markNotificationRead: async (id) => {

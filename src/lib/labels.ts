@@ -1,6 +1,7 @@
 // Etichette italiane per i valori enum salvati nei dati: la UI non mostra mai i codici interni.
 import type { Attachment, CalendarEvent, Exam, Goal, StudySession, Subject, Task } from "../types";
-import type { InviteBlock, ItemRevision, RevertSummary, ShareAction, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
+import type { InviteBlock, ItemRevision, ShareAction, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
+import type { RevertSummary } from "./shareHistory";
 
 export const PRIORITY_LABEL: Record<Task["priority"], string> = {
   low: "Bassa",
@@ -351,6 +352,9 @@ const several = (count: number, one: string, many: (count: number) => string) =>
  * "Modifiche di altri" → annullare tutte le modifiche di una persona da un giorno. `who` è il nome già
  * adatto a una frase (actorInSentence), `day` il giorno scelto ("3 nov").
  */
+/** "dal 3 nov", ma "dall'8 nov" e "dall'11 nov" (`Dal`/`Dall'` a inizio frase). */
+const fromDay = (day: string, start = false) => `${start ? "D" : "d"}${/^(?:8|11)\b/.test(day) ? "all'" : "al "}${day}`;
+
 export const REVERT_TEXT = {
   open: "Annulla le modifiche di una persona",
   intro:
@@ -364,18 +368,23 @@ export const REVERT_TEXT = {
   /** Accanto ad "Annulla" (che chiude la conferma): non deve iniziare con la stessa parola. */
   confirm: "Ripristina tutto",
   tooMany: "Troppe modifiche da quel giorno: scegli un giorno più vicino.",
-  nothing: (who: string, day: string) => `Dal ${day} ${who} non ha cambiato nulla dei tuoi dati.`,
-  /** Cosa succede confermando: prima ciò che torna, poi ciò che resta com'è. */
+  /** Tra il controllo e la conferma qualcosa è cambiato: si conferma solo ciò che si è letto. */
+  changed: "Nel frattempo è cambiato qualcosa: rileggi il riepilogo e conferma di nuovo.",
+  skipChanged: (count: number) =>
+    several(count, "Lascia com'è l'elemento cambiato dopo da te o da altri", (n) => `Lascia come sono i ${n} elementi cambiati dopo da te o da altri`),
+  skipChangedHint: "Così torna solo ciò che, dopo questa persona, nessun altro ha toccato.",
+  nothing: (who: string, day: string) => `${fromDay(day, true)} ${who} non ha cambiato nulla dei tuoi dati.`,
+  /** Cosa succede confermando: prima ciò che torna (e cosa si perde), poi ciò che resta com'è. */
   plan: (who: string, day: string, summary: RevertSummary) =>
     [
       summary.toRestore
-        ? several(summary.toRestore, "1 elemento torna com'era", (n) => `${n} elementi tornano com'erano`) + ` prima delle modifiche di ${who} dal ${day}.`
-        : `Nessun elemento da riportare indietro: dal ${day} ${who} non ha modificato né eliminato nulla che hai ancora.`,
-      summary.added
-        ? several(summary.added, `1 elemento aggiunto da ${who} resta: eliminalo tu, se non ti serve.`, (n) => `${n} elementi aggiunti da ${who} restano: eliminali tu, se non ti servono.`)
+        ? several(summary.toRestore, "1 elemento torna com'era", (n) => `${n} elementi tornano com'erano`) + ` prima delle modifiche di ${who} ${fromDay(day)}.`
+        : "Nessun elemento da riportare indietro.",
+      summary.ownerDeleted
+        ? several(summary.ownerDeleted, "1 di questi l'avevi eliminato tu: torna tra i tuoi dati.", (n) => `${n} di questi li avevi eliminati tu: tornano tra i tuoi dati.`)
         : "",
-      summary.gone
-        ? several(summary.gone, "1 elemento che hai eliminato tu resta eliminato.", (n) => `${n} elementi che hai eliminato tu restano eliminati.`)
+      summary.ownerAfter
+        ? several(summary.ownerAfter, "Su 1 di questi hai fatto modifiche anche tu, dopo: vengono sostituite.", (n) => `Su ${n} di questi hai fatto modifiche anche tu, dopo: vengono sostituite.`)
         : "",
       summary.othersAfter
         ? several(
@@ -384,12 +393,54 @@ export const REVERT_TEXT = {
             (n) => `Su ${n} di questi elementi hanno fatto modifiche anche altre persone, dopo: si perdono anche quelle.`
           )
         : "",
-      summary.toRestore ? "Anche le tue modifiche successive su questi elementi vengono sostituite." : ""
+      summary.skipped
+        ? several(summary.skipped, "1 elemento cambiato dopo da te o da altri resta com'è ora.", (n) => `${n} elementi cambiati dopo da te o da altri restano come sono ora.`)
+        : "",
+      summary.added
+        ? several(summary.added, `1 elemento aggiunto da ${who} resta: eliminalo tu, se non ti serve.`, (n) => `${n} elementi aggiunti da ${who} restano: eliminali tu, se non ti servono.`)
+        : "",
+      summary.gone
+        ? several(summary.gone, "1 elemento che hai eliminato tu resta eliminato.", (n) => `${n} elementi che hai eliminato tu restano eliminati.`)
+        : "",
+      summary.notHere
+        ? several(
+            summary.notHere,
+            "1 elemento non è ancora arrivato su questo dispositivo e resta com'è: controlla di nuovo dopo la sincronizzazione.",
+            (n) => `${n} elementi non sono ancora arrivati su questo dispositivo e restano come sono: controlla di nuovo dopo la sincronizzazione.`
+          )
+        : ""
     ]
       .filter(Boolean)
       .join(" "),
-  done: (who: string, restored: number) =>
-    restored
-      ? several(restored, `Fatto: 1 elemento è tornato com'era prima delle modifiche di ${who}.`, (n) => `Fatto: ${n} elementi sono tornati com'erano prima delle modifiche di ${who}.`)
-      : `Nessun elemento è cambiato: le modifiche di ${who} non c'erano più da annullare.`
+  done: (who: string, restored: number, notRestored: number) =>
+    [
+      restored
+        ? several(restored, `Fatto: 1 elemento è tornato com'era prima delle modifiche di ${who}.`, (n) => `Fatto: ${n} elementi sono tornati com'erano prima delle modifiche di ${who}.`)
+        : notRestored
+          ? "Nessun elemento è cambiato."
+          : `Nessun elemento è cambiato: le modifiche di ${who} non c'erano più da annullare.`,
+      notRestored
+        ? several(
+            notRestored,
+            "1 elemento non si è potuto ripristinare: non era più tra i tuoi dati o nella cronologia.",
+            (n) => `${n} elementi non si sono potuti ripristinare: non erano più tra i tuoi dati o nella cronologia.`
+          )
+        : ""
+    ]
+      .filter(Boolean)
+      .join(" ")
+} as const;
+
+/** Ripristino di una versione dalla cronologia "Modifiche di altri". */
+export const RESTORE_TEXT = {
+  notRestorable: "Questo elemento non si può ripristinare.",
+  missing: "Questa versione non c'è più nella cronologia: aggiorna l'elenco.",
+  /** Il controllo al momento di scrivere (l'elemento è sparito nel frattempo, e la versione non ha i suoi file). */
+  notHere: "Questo elemento non è più tra i tuoi dati: aggiorna l'elenco e riprova.",
+  /** Versione di una modifica, senza file: l'elemento non è qui e nessuna eliminazione salvata li conserva. */
+  gone: (title: string) =>
+    `«${title}» non è tra i tuoi dati su questo dispositivo (l'hai eliminato, o non è ancora arrivato) e questa versione non ha i suoi file: non si può ripristinare.`,
+  /** Al posto di «Ripristina» quando il ripristino non riuscirebbe (gone). */
+  blocked: "Non ripristinabile",
+  blockedHint: "Non è tra i tuoi dati su questo dispositivo e questa versione non ha i suoi file."
 } as const;

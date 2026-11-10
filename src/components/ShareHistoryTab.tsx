@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format, isValid, parseISO, startOfDay, subDays } from "date-fns";
 import { it } from "date-fns/locale";
-import { REVERT_TEXT, REVISION_CHANGE_LABEL, revisionListIntro, sharedEntityLabel } from "../lib/labels";
+import { useShallow } from "zustand/react/shallow";
+import { COLLECTION_BY_ENTITY_TYPE } from "../lib/collections";
+import { RESTORE_TEXT, REVERT_TEXT, REVISION_CHANGE_LABEL, revisionListIntro, sharedEntityLabel } from "../lib/labels";
 import {
+  PROTECTED_ENTITY_TYPES,
   REVISION_LIST_LIMIT,
   ShareUserError,
   actorInSentence,
   canRestoreRevision,
-  revertCandidates,
   revisionActorName,
   revisionTitle,
   shareActionErrorTextSafe,
   type ItemRevision,
-  type RevertSummary,
   type ShareGrant
 } from "../lib/sharing";
+import { restoreBlocked, revertCandidates, revertSummary } from "../lib/shareHistory";
+import type { RevertPreview } from "../lib/shareSync";
+import { useStudyStore } from "../store/useStudyStore";
 import { Button, EmptyState, Field, Panel, Tag, inputClass } from "./ui";
 import { ConfirmWithError } from "./ConfirmWithError";
 
@@ -34,6 +38,8 @@ const whenText = (iso: string) => {
 };
 
 const DAY_FORMAT = "yyyy-MM-dd";
+
+const PROTECTED_TYPES = [...PROTECTED_ENTITY_TYPES];
 
 /**
  * Scheda "Modifiche di altri": cosa hanno cambiato, aggiunto o eliminato le persone con "Può modificare"
@@ -59,6 +65,15 @@ export function ShareHistoryTab({
   const [reverting, setReverting] = useState(false);
   // Solo l'ultimo caricamento conta: uno più vecchio, o arrivato dopo aver lasciato la scheda, non sovrascrive.
   const latest = useRef(0);
+  // Elementi con copertine o file che ho su questo dispositivo: senza, la versione di una modifica non si ripristina.
+  const protectedLists = useStudyStore(
+    useShallow((state) => PROTECTED_TYPES.map((type) => state[COLLECTION_BY_ENTITY_TYPE[type]] as unknown as readonly { id: string }[]))
+  );
+  const localKeys = useMemo(
+    () => new Set(protectedLists.flatMap((entries, index) => entries.map((entry) => `${PROTECTED_TYPES[index]}:${entry.id}`))),
+    [protectedLists]
+  );
+  const hasLocal = useCallback((entityType: string, entityId: string) => localKeys.has(`${entityType}:${entityId}`), [localKeys]);
 
   const load = useCallback(async () => {
     const mine = ++latest.current;
@@ -89,7 +104,7 @@ export function ShareHistoryTab({
   const restore = async (revision: ItemRevision, who: string): Promise<string | null> => {
     try {
       // Il controllo sull'elemento sta nel negozio (che riceve l'id della cronologia); qui si evita di arrivarci.
-      if (!canRestoreRevision(revision)) throw new ShareUserError("Questo elemento non si può ripristinare.");
+      if (!canRestoreRevision(revision)) throw new ShareUserError(RESTORE_TEXT.notRestorable);
       // L'elenco ha solo i titoli: la versione intera (e copertine e file) la prende shareSync.
       const sync = await import("../lib/shareSync");
       await sync.restoreRevision(revision);
@@ -129,7 +144,10 @@ export function ShareHistoryTab({
     <div className="grid grid-cols-1 gap-4">
       {reverting ? (
         <RevertPanel
-          people={revertCandidates(revisions, given, groups, me)}
+          me={me}
+          given={given}
+          groups={groups}
+          seen={revisions.map((revision) => revision.changedBy)}
           onClose={() => setReverting(false)}
           onReverted={(text) => {
             setReverting(false);
@@ -164,6 +182,7 @@ export function ShareHistoryTab({
             const title = shownTitle(revision);
             const when = whenText(revision.changedAt);
             const done = restored.has(revision.id);
+            const blocked = !done && canRestoreRevision(revision) && restoreBlocked(revision, revisions, hasLocal);
             return (
               <li key={revision.id} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -173,6 +192,10 @@ export function ShareHistoryTab({
                   </span>
                   {done ? (
                     <Tag>Ripristinato</Tag>
+                  ) : blocked ? (
+                    <span className="text-xs font-bold text-[var(--muted)]" title={RESTORE_TEXT.blockedHint}>
+                      {RESTORE_TEXT.blocked}
+                    </span>
                   ) : canRestoreRevision(revision) ? (
                     <Button
                       variant="soft"
@@ -184,7 +207,7 @@ export function ShareHistoryTab({
                     </Button>
                   ) : null}
                 </div>
-                {confirmId === revision.id && !done ? (
+                {confirmId === revision.id && !done && !blocked ? (
                   <ConfirmWithError
                     text={`«${title}» torna com'era prima che ${whoMid} lo ${revision.change === "delete" ? "eliminasse" : "modificasse"}. Le modifiche successive vengono sostituite.`}
                     confirmLabel="Ripristina"
@@ -204,24 +227,58 @@ export function ShareHistoryTab({
 
 /**
  * Annulla tutte le modifiche di una persona da un giorno: prima un controllo (cosa torna, cosa resta),
- * poi la conferma. Cambiare persona o giorno toglie il controllo: si conferma solo ciò che si è letto.
+ * poi la conferma, che esegue proprio il controllo letto. Cambiare persona, giorno o scelta toglie il
+ * controllo o il suo riepilogo cambia; se nel frattempo è cambiato qualcosa sul server, si rilegge.
  */
 function RevertPanel({
-  people,
+  me,
+  given,
+  groups,
+  seen,
   onClose,
   onReverted
 }: {
-  people: { id: string; name: string; label: string }[];
+  me: string;
+  given: ShareGrant[];
+  groups: HistoryGroup[];
+  /** Chi compare nella cronologia caricata. */
+  seen: readonly (string | null)[];
   onClose: () => void;
   onReverted: (text: string) => void;
 }) {
   const today = useMemo(() => format(new Date(), DAY_FORMAT), []);
   const oldest = useMemo(() => format(subDays(new Date(), 90), DAY_FORMAT), []);
+  // Chi ha cambiato qualcosa negli ultimi 90 giorni, anche oltre le modifiche caricate nell'elenco.
+  const [actors, setActors] = useState<readonly string[]>([]);
+  const people = useMemo(() => revertCandidates([...seen, ...actors], given, groups, me), [seen, actors, given, groups, me]);
   const [actor, setActor] = useState(people[0]?.id ?? "");
   const [day, setDay] = useState(today);
+  const [skipChanged, setSkipChanged] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
-  const [plan, setPlan] = useState<{ actor: string; day: string; summary: RevertSummary } | null>(null);
+  const [notice, setNotice] = useState("");
+  const [preview, setPreview] = useState<{ day: string; data: RevertPreview } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void import("../lib/shareSync")
+      .then((sync) => sync.revisionActors())
+      .then((ids) => {
+        if (active) setActors(ids);
+      })
+      // Senza l'elenco completo restano chi è nella cronologia caricata e chi può modificare.
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // La persona scelta non è più tra quelle elencate (es. dopo «Aggiorna»): si torna alla prima.
+  useEffect(() => {
+    if (people.some((candidate) => candidate.id === actor)) return;
+    setActor(people[0]?.id ?? "");
+    setPreview(null);
+  }, [people, actor]);
 
   const person = people.find((candidate) => candidate.id === actor);
   const who = actorInSentence(person?.name ?? "");
@@ -234,11 +291,11 @@ function RevertPanel({
     if (!actor || !validDay) return;
     setChecking(true);
     setError("");
-    setPlan(null);
+    setNotice("");
+    setPreview(null);
     try {
       const sync = await import("../lib/shareSync");
-      const summary = await sync.previewRevert(actor, since);
-      setPlan({ actor, day, summary });
+      setPreview({ day, data: await sync.previewRevert(actor, since) });
     } catch (cause) {
       setError(shareActionErrorTextSafe("revertCheck", cause));
     } finally {
@@ -246,19 +303,28 @@ function RevertPanel({
     }
   };
 
+  const current = preview && preview.data.actorId === actor && preview.day === day ? preview.data : null;
+
   const revert = async (): Promise<string | null> => {
+    if (!current) return null;
     try {
       const sync = await import("../lib/shareSync");
-      const result = await sync.revertPersonSince(actor, since);
-      onReverted(REVERT_TEXT.done(who, result.restored));
+      const outcome = await sync.revertPersonSince(current, skipChanged);
+      if (outcome.status === "changed") {
+        // Nulla è stato scritto: il riepilogo nuovo prende il posto del vecchio, da confermare di nuovo.
+        setPreview({ day, data: outcome.preview });
+        setNotice(REVERT_TEXT.changed);
+        return null;
+      }
+      onReverted(REVERT_TEXT.done(who, outcome.summary.restored, outcome.summary.notRestored));
       return null;
     } catch (cause) {
       return shareActionErrorTextSafe("revert", cause);
     }
   };
 
-  const current = plan && plan.actor === actor && plan.day === day ? plan.summary : null;
-  const nothing = current && !current.toRestore && !current.added && !current.gone;
+  const summary = current ? revertSummary(current.plan, skipChanged) : null;
+  const nothing = summary && !summary.toRestore && !summary.skipped && !summary.added && !summary.gone && !summary.notHere;
 
   return (
     <Panel>
@@ -278,7 +344,8 @@ function RevertPanel({
                 value={actor}
                 onChange={(event) => {
                   setActor(event.target.value);
-                  setPlan(null);
+                  setPreview(null);
+                  setNotice("");
                 }}
               >
                 {people.map((candidate) => (
@@ -297,7 +364,8 @@ function RevertPanel({
                 max={today}
                 onChange={(event) => {
                   setDay(event.target.value);
-                  setPlan(null);
+                  setPreview(null);
+                  setNotice("");
                 }}
               />
             </Field>
@@ -312,22 +380,47 @@ function RevertPanel({
               {error}
             </p>
           ) : null}
-          {current ? (
+          {notice && summary ? (
+            <p role="alert" className="mt-3 text-sm font-bold text-[var(--danger-text)]">
+              {notice}
+            </p>
+          ) : null}
+          {summary && summary.changedAfter ? (
+            <label className="mt-3 flex min-h-11 cursor-pointer items-start gap-3 rounded-[18px] bg-[var(--surface-soft)] p-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
+                checked={skipChanged}
+                onChange={(event) => {
+                  setSkipChanged(event.target.checked);
+                  setNotice("");
+                }}
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-black">{REVERT_TEXT.skipChanged(summary.changedAfter)}</span>
+                <span className="block text-xs font-semibold text-[var(--muted)]">{REVERT_TEXT.skipChangedHint}</span>
+              </span>
+            </label>
+          ) : null}
+          {summary ? (
             nothing ? (
               <p role="status" className="mt-3 text-sm font-bold">
                 {REVERT_TEXT.nothing(who, dayText)}
               </p>
-            ) : current.toRestore ? (
+            ) : summary.toRestore ? (
               <ConfirmWithError
-                text={REVERT_TEXT.plan(who, dayText, current)}
+                text={REVERT_TEXT.plan(who, dayText, summary)}
                 confirmLabel={REVERT_TEXT.confirm}
                 icon="RotateCcw"
-                onCancel={() => setPlan(null)}
+                onCancel={() => {
+                  setPreview(null);
+                  setNotice("");
+                }}
                 onConfirm={revert}
               />
             ) : (
               <p role="status" className="safe-text mt-3 text-sm font-bold">
-                {REVERT_TEXT.plan(who, dayText, current)}
+                {REVERT_TEXT.plan(who, dayText, summary)}
               </p>
             )
           ) : null}

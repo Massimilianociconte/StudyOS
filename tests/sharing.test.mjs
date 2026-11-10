@@ -54,17 +54,16 @@ import {
   sharedEditResult,
   sharedFieldInput,
   parseSharedField,
-  planRevert,
-  revertCandidates,
-  revertSummary,
   revisionFromRow,
-  withProtectedFrom
+  withProtectedFrom,
+  restoredPayload,
+  PROTECTED_ENTITY_TYPES
 } from "../src/lib/sharing.ts";
+import { readFileSync } from "node:fs";
 import {
   SHARED_ENTITY_LABEL,
   SHARE_PERMISSION_LABEL,
   SHARE_SCOPE_LABEL,
-  REVERT_TEXT,
   revisionListIntro,
   scopesSummary,
   sharedEntityLabel
@@ -912,61 +911,48 @@ test("ripristino senza chiavi protette nella versione: copertina, file e UID ven
   assert.equal(Object.getPrototypeOf(withProtectedFrom(version, JSON.parse('{"__proto__": {"x": 1}}'))), Object.prototype);
 });
 
-const rev = (id, entityId, change, changedBy, changedAt, extra = {}) => ({
-  id, entityType: "calendarEvent", entityId, payload: { id: entityId, title: `${entityId} v${id}` }, deleted: false, change, changedBy, changedAt, ...extra
+test("ripristino: le chiavi protette vengono dalla copia attuale, poi dall'elemento intero della versione", () => {
+  const edit = { id: "a1", name: "Prima", dataUrl: "data:vecchio" };
+  // Versione di una modifica con la copia del proprietario: file attuale, mai quello (superato) della versione.
+  assert.deepEqual(restoredPayload({ entityType: "attachment", entityId: "a1", payload: edit }, { id: "a1", name: "Dopo", dataUrl: "data:ora" }), {
+    id: "a1", name: "Prima", dataUrl: "data:ora"
+  });
+  // Senza copia e senza eliminazione da cui prenderlo: rifiutata (diventerebbe un allegato senza file).
+  assert.equal(restoredPayload({ entityType: "attachment", entityId: "a1", payload: edit }, undefined), null);
+  assert.equal(restoredPayload({ entityType: "calendarEvent", entityId: "e1", payload: { id: "e1" }, protectedFrom: null }, undefined), null);
+  // Con l'eliminazione successiva: file e copertina da lì.
+  assert.deepEqual(
+    restoredPayload({ entityType: "attachment", entityId: "a1", payload: edit, protectedFrom: { id: "a1", name: "Eliminato", dataUrl: "data:file" } }, undefined),
+    { id: "a1", name: "Prima", dataUrl: "data:file" }
+  );
+  // Tipi senza copertine e file: la versione di una modifica è già intera.
+  for (const type of ["studySession", "studyTopic", "goal", "note"]) {
+    assert.deepEqual(restoredPayload({ entityType: type, entityId: "x", payload: { id: "x", title: "Prima" } }, undefined), { id: "x", title: "Prima" }, type);
+  }
+  // Versione di un'eliminazione (intera): il suo file completa una copia attuale che l'ha perso.
+  assert.deepEqual(
+    restoredPayload({ entityType: "attachment", entityId: "a1", payload: { id: "a1", name: "Prima", dataUrl: "data:file" }, complete: true }, { id: "a1", name: "Guscio" }),
+    { id: "a1", name: "Prima", dataUrl: "data:file" }
+  );
+  // …ma non sostituisce quello attuale.
+  assert.equal(
+    restoredPayload({ entityType: "attachment", entityId: "a1", payload: { id: "a1", dataUrl: "data:vecchio" }, complete: true }, { id: "a1", dataUrl: "data:ora" }).dataUrl,
+    "data:ora"
+  );
+  const polluted = restoredPayload({ entityType: "attachment", entityId: "a1", payload: JSON.parse('{"id":"a1","__proto__":{"x":1}}'), complete: true }, undefined);
+  assert.equal(Object.getPrototypeOf(polluted), Object.prototype);
 });
 
-test("annulla le modifiche di una persona: versione prima della sua prima modifica, aggiunte e eliminazioni del proprietario restano", () => {
-  const since = "2026-11-03T00:00:00.000Z";
-  const revisions = [
-    rev(1, "vecchio", "update", "bob", "2026-11-01T10:00:00.000Z"), // prima del giorno scelto
-    rev(2, "e1", "update", "bob", "2026-11-04T10:00:00.000Z"),
-    rev(3, "e1", "update", "bob", "2026-11-05T10:00:00.000Z"),
-    rev(4, "e1", "update", "carla", "2026-11-06T10:00:00.000Z"), // dopo Bob: anche questa si perde
-    rev(5, "e2", "delete", "bob", "2026-11-04T11:00:00.000Z"),
-    rev(6, "e3", "create", "bob", "2026-11-04T12:00:00.000Z"),
-    rev(7, "e3", "update", "bob", "2026-11-04T13:00:00.000Z"),
-    rev(8, "e4", "update", "bob", "2026-11-04T14:00:00.000Z"), // poi eliminato dal proprietario
-    rev(9, "e5", "update", "bob", "2026-11-04T15:00:00.000Z"),
-    rev(10, "e5", "delete", "carla", "2026-11-05T15:00:00.000Z"), // eliminato da altri: ha ancora i file
-    rev(11, "e6", "update", "carla", "2026-11-04T16:00:00.000Z"), // di altri soltanto
-    rev(12, "e7", "update", "bob", "2026-11-04T17:00:00.000Z", { deleted: true, payload: { id: "e7", deletedAt: "x" } }) // rimesso da Bob
-  ];
-  const local = new Set(["e1", "e3", "e6"]);
-  const plan = planRevert(revisions, "bob", since, (_type, id) => local.has(id));
-  assert.deepEqual(plan.restore.map(({ revision, deletedAfter }) => [revision.id, deletedAfter?.id ?? null]), [[2, null], [5, null], [9, 10]]);
-  assert.equal(plan.added, 2);
-  assert.equal(plan.gone, 1);
-  assert.equal(plan.othersAfter, 2);
-  assert.deepEqual(revertSummary(plan), { toRestore: 3, added: 2, gone: 1, othersAfter: 2, restored: 0 });
-  // Stesso istante: vale l'ordine di inserimento.
-  const same = "2026-11-04T10:00:00.000Z";
-  const tied = planRevert([rev(21, "e9", "update", "bob", same), rev(20, "e9", "update", "bob", same)], "bob", since, () => true);
-  assert.equal(tied.restore[0].revision.id, 20);
-  assert.deepEqual(planRevert(revisions, "dario", since, () => true), { restore: [], added: 0, gone: 0, othersAfter: 0 });
-});
-
-test("annulla le modifiche: persone tra cui scegliere, senza chi guarda e con nomi distinguibili", () => {
-  const given = [
-    { id: "g1", ownerId: "me", ownerName: "Io", scope: "calendar", subjectIds: [], permission: "edit", granteeUserId: "bob", granteeGroupId: null, granteeName: "Bob", granteeEmail: null, createdAt: "", updatedAt: "" },
-    { id: "g2", ownerId: "me", ownerName: "Io", scope: "tasks", subjectIds: [], permission: "view", granteeUserId: "vera", granteeGroupId: null, granteeName: "Vera", granteeEmail: null, createdAt: "", updatedAt: "" },
-    { id: "g3", ownerId: "me", ownerName: "Io", scope: "goals", subjectIds: [], permission: "edit", granteeUserId: null, granteeGroupId: "grp", granteeName: "Gruppo", granteeEmail: null, createdAt: "", updatedAt: "" }
-  ];
-  const groups = [{ id: "grp", members: [{ userId: "me", displayName: "Io" }, { userId: "carla", displayName: "Carla" }] }];
-  const people = revertCandidates([{ changedBy: "ex1" }, { changedBy: "ex2" }, { changedBy: null }, { changedBy: "bob" }], given, groups, "me");
-  assert.deepEqual(people.map((person) => [person.id, person.label]), [
-    ["bob", "Bob"], ["carla", "Carla"], ["ex1", "Un'altra persona"], ["ex2", "Un'altra persona (2)"]
-  ]);
-  assert.equal(people[3].name, "Un'altra persona");
-});
-
-test("annulla le modifiche: testi della conferma e dell'esito in italiano semplice", () => {
-  const plan = REVERT_TEXT.plan("Bob", "3 nov", { toRestore: 1, added: 2, gone: 1, othersAfter: 1, restored: 0 });
-  assert.match(plan, /^1 elemento torna com'era prima delle modifiche di Bob dal 3 nov\./);
-  assert.match(plan, /2 elementi aggiunti da Bob restano/);
-  assert.match(plan, /1 elemento che hai eliminato tu resta eliminato\./);
-  assert.match(plan, /anche un'altra persona/);
-  assert.doesNotMatch(REVERT_TEXT.plan("Bob", "3 nov", { toRestore: 3, added: 0, gone: 0, othersAfter: 0, restored: 0 }), /aggiunt|eliminat|altre persone/);
-  assert.equal(REVERT_TEXT.done("Bob", 3), "Fatto: 3 elementi sono tornati com'erano prima delle modifiche di Bob.");
-  assert.notEqual(REVERT_TEXT.confirm.split(" ")[0], "Annulla");
+test("ripristino: i tipi con copertine, file o UID sono proprio quelli che in src/types.ts li hanno", () => {
+  const source = readFileSync(new URL("../src/types.ts", import.meta.url), "utf8");
+  const interfaces = { calendarEvent: "CalendarEvent", task: "Task", exam: "Exam", attachment: "Attachment", studySession: "StudySession", studyTopic: "StudyTopic", goal: "Goal", note: "Note" };
+  assert.deepEqual(new Set(Object.keys(interfaces)), SHARED_ENTITY_TYPES);
+  for (const [type, name] of Object.entries(interfaces)) {
+    const start = source.indexOf(`export interface ${name} extends BaseEntity {`);
+    assert.ok(start >= 0, name);
+    const next = source.indexOf("\nexport ", start + 1);
+    const body = source.slice(start, next < 0 ? undefined : next);
+    const hasProtected = /^\s*(?:cover|dataUrl|sourceUid|[A-Za-z]*DataUrl)\??:/m.test(body);
+    assert.equal(PROTECTED_ENTITY_TYPES.has(type), hasProtected, type);
+  }
 });
