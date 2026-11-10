@@ -13,9 +13,11 @@ import {
   missingVisibleKeys,
   ownerColor,
   ownerEntityTypes,
+  planShareWrites,
   prepareSharedWrite,
   reconcileOwner,
   scopeCovers,
+  sharingProbeOutcome,
   shareActionErrorText,
   shareErrorText,
   shareNotices,
@@ -149,7 +151,7 @@ test("righe del server: conversione e nomi leggibili", () => {
   });
   assert.equal(invite.status, "expired");
   assert.equal(invite.offers.length, 1);
-  assert.equal(SHARE_SCOPE_LABEL.barb_exams, "Appelli BARB");
+  assert.equal(SHARE_SCOPE_LABEL.barb_exams, "Appelli ufficiali");
   assert.equal(SHARE_PERMISSION_LABEL.edit, "Può modificare");
   assert.equal(scopesSummary(invite.offers), "Calendario (Può modificare)");
   assert.equal(initialsOf("giulia rossi"), "GR");
@@ -294,4 +296,46 @@ test("errori delle azioni dell'utente: dicono cosa non è stato salvato, senza p
   assert.equal(shareActionErrorText("share", offline), "Condivisione non salvata. Server cloud non raggiungibile: controlla la connessione. Riprova appena torna.");
   assert.equal(shareActionErrorText("share", new Error("Invito già usato")), "Condivisione non salvata. Invito già usato");
   assert.equal(shareActionErrorText("invite", "non è un Error"), "Invito non creato. Riprova tra poco.");
+});
+
+test("errori delle azioni: anche il caricamento di un pezzo dell'app fallito parla di connessione, in italiano", () => {
+  const network = "Server cloud non raggiungibile: controlla la connessione. Riprova appena torna.";
+  for (const message of [
+    "Failed to fetch dynamically imported module: https://x.github.io/StudyOS/assets/ShareDrawer-abc.js",
+    "error loading dynamically imported module: https://x.github.io/StudyOS/assets/ShareDrawer-abc.js",
+    "Importing a module script failed.",
+    "TypeError: Failed to fetch",
+    "Load failed"
+  ]) {
+    assert.equal(shareActionErrorText("invite", new TypeError(message)), `Invito non creato. ${network}`, message);
+  }
+});
+
+test("sonda della migrazione: solo un oggetto mancante vale 'non attiva', un errore di rete resta incerto", () => {
+  assert.equal(sharingProbeOutcome(null), "available");
+  assert.equal(sharingProbeOutcome({ code: "PGRST205", message: "Could not find the table 'public.studyos_shares' in the schema cache" }), "missing");
+  assert.equal(sharingProbeOutcome({ code: "42P01", message: 'relation "studyos_shares" does not exist' }), "missing");
+  assert.equal(sharingProbeOutcome({ message: "TypeError: Failed to fetch" }), "failed");
+  assert.equal(sharingProbeOutcome({ code: "PGRST301", message: "JWT expired" }), "failed");
+});
+
+test("condivisione già presente: una sezione doppia dà una frase chiara, non l'errore grezzo del database", () => {
+  const text = shareErrorText({ code: "23505", message: 'duplicate key value violates unique constraint "studyos_shares_grantee_key"' });
+  assert.equal(text, "Questa sezione è già condivisa con questa persona o questo gruppo.");
+});
+
+test("condividere con una persona: le sezioni nuove si creano insieme, quelle già condivise si aggiornano", () => {
+  const given = [
+    grant({ id: "g1", ownerId: "me", scope: "calendar", granteeUserId: "bob" }),
+    grant({ id: "g2", ownerId: "me", scope: "tasks", granteeUserId: null, granteeGroupId: "grp" }),
+    grant({ id: "g3", ownerId: "me", scope: "study", granteeUserId: "carla" })
+  ];
+  const offer = (scope) => ({ scope, permission: "edit", subjectIds: [], subjectNames: [] });
+  const plan = planShareWrites(given, { userId: "bob" }, [offer("calendar"), offer("tasks"), offer("study")]);
+  assert.deepEqual(plan.update.map((entry) => [entry.id, entry.offer.scope]), [["g1", "calendar"]]);
+  assert.deepEqual(plan.create.map((entry) => entry.scope), ["tasks", "study"]);
+  // Per un gruppo conta solo la condivisione con quel gruppo.
+  const forGroup = planShareWrites(given, { groupId: "grp" }, [offer("calendar"), offer("tasks")]);
+  assert.deepEqual(forGroup.update.map((entry) => entry.id), ["g2"]);
+  assert.deepEqual(forGroup.create.map((entry) => entry.scope), ["calendar"]);
 });

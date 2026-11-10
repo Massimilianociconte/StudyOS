@@ -188,7 +188,7 @@ export const hostOf = (url: string | undefined) => {
 
 export const SHARE_SCOPE_LABEL: Record<ShareScope, string> = {
   calendar: "Calendario",
-  barb_exams: "Appelli BARB",
+  barb_exams: "Appelli ufficiali",
   tasks: "Attività",
   study: "Studio",
   progress: "Progressi",
@@ -223,6 +223,14 @@ export const SHARE_ACTION_FAILED: Record<ShareAction, string> = {
   invite: "Invito non creato.",
   share: "Condivisione non salvata."
 };
+
+/** Testi del pulsante e del pannello Condividi che non dipendono da un valore enum. */
+export const SHARE_TEXT = {
+  opening: "Apro…",
+  loadFailed: "Non riesco ad aprire Condividi: controlla la connessione e riprova. Se succede ancora, ricarica la pagina.",
+  done: "Fatto",
+  linkOnce: "Il link non si può rivedere dopo aver chiuso questa finestra: se lo perdi, crea un nuovo invito."
+} as const;
 
 export const REVISION_CHANGE_LABEL: Record<ItemRevision["change"], string> = {
   create: "ha aggiunto",

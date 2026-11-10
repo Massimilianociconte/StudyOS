@@ -19,15 +19,16 @@ import {
   grantFromRow,
   grantSignature,
   inviteFromRow,
-  isMissingSharingObject,
   missingVisibleKeys,
   offerToRow,
   ownerEntityTypes,
+  planShareWrites,
   revisionFromRow,
   shareErrorText,
   shareNotices,
   sharedKey,
   sharedPushBatches,
+  sharingProbeOutcome,
   type ItemRevision,
   type RemoteSharedRow,
   type ShareGrant,
@@ -35,7 +36,8 @@ import {
   type ShareInviteSummary,
   type ShareOffer,
   type SharePermission,
-  type ShareRequest
+  type ShareRequest,
+  type ShareScope
 } from "./sharing";
 import { supabase } from "./supabase";
 import { useSharedStore } from "../store/useSharedStore";
@@ -127,33 +129,45 @@ const still = (gen: number) => {
 let available: boolean | null = null;
 let checkedAt = 0;
 
-export const isSharingAvailable = async (): Promise<boolean> => {
-  if (available === true) return true;
-  if (available === false && Date.now() - checkedAt < UNAVAILABLE_RETRY_MS) return false;
+/**
+ * Esito della sonda: "missing" solo se la migrazione manca davvero; rete assente o altri errori
+ * lasciano la disponibilità incerta (niente cache) e dicono la causa vera a chi ha chiesto un'azione.
+ */
+type Probe = { state: "available" } | { state: "missing" } | { state: "failed"; message: string };
+
+const probeSharing = async (): Promise<Probe> => {
+  if (available === true) return { state: "available" };
+  if (available === false && Date.now() - checkedAt < UNAVAILABLE_RETRY_MS) return { state: "missing" };
   const gen = generation;
   // Solo l'esito positivo resta tra le visite (come i gruppi): la migrazione può arrivare dopo.
   if ((await getMeta<boolean>(AVAILABLE_META).catch(() => undefined)) === true) {
     available = true;
-    return true;
+    return { state: "available" };
   }
-  if (!supabase || !viewer()) return false;
+  if (!supabase) return { state: "failed", message: "Gli account non sono attivi in questa versione dell'app." };
+  if (!viewer()) return { state: "failed", message: "Accedi al tuo account per usare la condivisione." };
   const { error } = await supabase.from("studyos_shares").select("id").limit(0);
-  if (error && isMissingSharingObject(error)) {
+  const outcome = sharingProbeOutcome(error);
+  if (outcome === "missing") {
     available = false;
     checkedAt = Date.now();
     // Dopo un logout (o un altro cambio) lo stato dello store non è più di questa richiesta.
     if (gen === generation) useSharedStore.getState().setAvailability("missing");
-    return false;
+    return { state: "missing" };
   }
-  if (error) return false;
+  if (outcome === "failed") return { state: "failed", message: shareErrorText(error as NonNullable<typeof error>) };
   available = true;
   await setMeta(AVAILABLE_META, true).catch(() => undefined);
-  return true;
+  return { state: "available" };
 };
+
+export const isSharingAvailable = async (): Promise<boolean> => (await probeSharing()).state === "available";
 
 const requireSharing = async () => {
   if (!viewer()) throw new Error("Accedi al tuo account per usare la condivisione.");
-  if (!(await isSharingAvailable())) throw new Error(SHARING_UNAVAILABLE_TEXT);
+  const probe = await probeSharing();
+  if (probe.state === "missing") throw new Error(SHARING_UNAVAILABLE_TEXT);
+  if (probe.state === "failed") throw new Error(probe.message);
 };
 
 // ——— Cursori e condivisioni già viste (in memoria con il vault: non sopravvivono al ricaricamento) ———
@@ -628,36 +642,56 @@ export const cancelShareInvite = async (inviteId: string) => {
   await syncSharedNow();
 };
 
-/** Condivisione diretta con una persona già collegata o con un gruppo (la RLS lo verifica). */
+/**
+ * Condivisione diretta con una persona già collegata o con un gruppo (la RLS lo verifica).
+ * Le sezioni nuove si creano con un solo insert (tutte o nessuna), poi si aggiornano quelle già
+ * condivise. La rilettura parte comunque: se un passo fallisce dopo che altri sono andati a buon
+ * fine, l'elenco "condivisi da me" è già aggiornato e l'errore dice cosa è stato salvato.
+ */
 export const shareWith = async (target: ShareTarget, offers: ShareOffer[]) => {
   await requireSharing();
   const me = viewer() as string;
-  const given = useSharedStore.getState().given;
-  for (const offer of offers) {
-    const row = offerToRow(offer);
-    const current = given.find(
-      (grant) =>
-        grant.scope === offer.scope &&
-        (target.userId ? grant.granteeUserId === target.userId : grant.granteeGroupId === target.groupId)
-    );
-    const { error } = current
-      ? await client()
-          .from("studyos_shares")
-          .update({ permission: row.permission, subject_ids: row.subject_ids, owner_name: myName() })
-          .eq("id", current.id)
-      : await client().from("studyos_shares").insert({
-          owner_id: me,
-          owner_name: myName(),
-          scope: row.scope,
-          permission: row.permission,
-          subject_ids: row.subject_ids,
-          grantee_user_id: target.userId ?? null,
-          grantee_group_id: target.groupId ?? null,
-          grantee_name: target.name.slice(0, 120)
-        });
-    fail(error);
+  const { create, update } = planShareWrites(useSharedStore.getState().given, target, offers);
+  const saved: ShareScope[] = [];
+  try {
+    if (create.length) {
+      const { error } = await client()
+        .from("studyos_shares")
+        .insert(
+          create.map((offer) => {
+            const row = offerToRow(offer);
+            return {
+              owner_id: me,
+              owner_name: myName(),
+              scope: row.scope,
+              permission: row.permission,
+              subject_ids: row.subject_ids,
+              grantee_user_id: target.userId ?? null,
+              grantee_group_id: target.groupId ?? null,
+              grantee_name: target.name.slice(0, 120)
+            };
+          })
+        );
+      fail(error);
+      saved.push(...create.map((offer) => offer.scope));
+    }
+    for (const { id, offer } of update) {
+      const row = offerToRow(offer);
+      const { error } = await client()
+        .from("studyos_shares")
+        .update({ permission: row.permission, subject_ids: row.subject_ids, owner_name: myName() })
+        .eq("id", id);
+      fail(error);
+      saved.push(offer.scope);
+    }
+  } catch (cause) {
+    if (saved.length && cause instanceof Error) {
+      throw new Error(`${cause.message} Già condivise prima dell'errore: ${saved.map((scope) => SHARE_SCOPE_LABEL[scope]).join(", ")}.`);
+    }
+    throw cause;
+  } finally {
+    await syncSharedNow().catch(() => undefined);
   }
-  await syncSharedNow();
 };
 
 export const updateShare = async (id: string, patch: { permission: SharePermission; subjectIds: string[] }) => {

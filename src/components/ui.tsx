@@ -324,7 +324,8 @@ export function Drawer({
   headerExtra,
   footer,
   children,
-  width = "max-w-[640px]"
+  width = "max-w-[640px]",
+  dismissOutside = true
 }: PropsWithChildren<{
   open: boolean;
   onClose: () => void;
@@ -333,11 +334,15 @@ export function Drawer({
   headerExtra?: ReactNode;
   footer?: ReactNode;
   width?: string;
+  /** false: click fuori ed Esc non chiudono (resta la X): per contenuti che non si possono rivedere. */
+  dismissOutside?: boolean;
 }>) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const outsideRef = useRef(dismissOutside);
+  outsideRef.current = dismissOutside;
   // Su mobile è un foglio che sale dal basso, su desktop un pannello che entra da destra.
   const offset = typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches ? { x: 40 } : { y: 60 };
 
@@ -352,7 +357,7 @@ export function Drawer({
     const onKey = (event: KeyboardEvent) => {
       if (openDrawers[openDrawers.length - 1] !== token) return;
       if (event.key === "Escape") {
-        closeRef.current();
+        if (outsideRef.current) closeRef.current();
         return;
       }
       // Tab resta dentro il pannello (aria-modal): niente focus sugli elementi della pagina sotto.
@@ -393,7 +398,7 @@ export function Drawer({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) onClose();
+            if (event.target === event.currentTarget && dismissOutside) onClose();
           }}
         >
           <m.div

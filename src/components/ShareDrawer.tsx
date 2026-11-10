@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { useSharedStore } from "../store/useSharedStore";
 import { useCloudSession } from "../hooks/useCloudSession";
 import { cloudConfigured } from "../lib/cloudSyncState";
-import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_HINT, SHARE_SCOPE_LABEL, scopesSummary } from "../lib/labels";
+import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_HINT, SHARE_SCOPE_LABEL, SHARE_TEXT, scopesSummary } from "../lib/labels";
 import {
   SHARE_SCOPES,
   SUBJECTLESS_SCOPES,
@@ -68,6 +68,10 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
     target === "invite" || people.some((person) => `user:${person.userId}` === target) || groups.some((group) => `group:${group.id}` === target)
       ? target
       : "invite";
+  // Lo stato non resta sul bersaglio sparito: se la persona torna raggiungibile non si riseleziona da sola.
+  useEffect(() => {
+    if (chosen !== target) setTarget(chosen);
+  }, [chosen, target]);
 
   const offers = (): ShareOffer[] =>
     scopes.map((scope) => ({
@@ -114,7 +118,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
   const footer = !ready ? undefined : created || done ? (
     <div className="flex justify-end">
       <Button variant="primary" icon="Check" onClick={onClose}>
-        Fine
+        {SHARE_TEXT.done}
       </Button>
     </div>
   ) : (
@@ -138,6 +142,8 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
       title="Condividi"
       width="max-w-[600px]"
       footer={footer}
+      // Il link dell'invito non si può rivedere: un click fuori o Esc non lo fanno sparire per sbaglio.
+      dismissOutside={!created}
     >
       {!cloudConfigured ? (
         <p className={infoClass}>Gli account non sono attivi in questa versione dell'app: la condivisione non è disponibile.</p>
@@ -159,7 +165,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
             <Icon name="Check" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
             <span>
               Invito pronto: {scopesSummary(created.offers)}. Il link vale 14 giorni e si può usare una volta sola: mandalo solo alla
-              persona giusta.
+              persona giusta. {SHARE_TEXT.linkOnce}
             </span>
           </p>
           <ShareLinkPanel

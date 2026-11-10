@@ -436,15 +436,29 @@ const SERVER_UNREACHABLE_TEXT = "Server cloud non raggiungibile: controlla la co
 export const isMissingSharingObject = (error: ServerError) =>
   Boolean(error && /42P01|42883|PGRST202|PGRST205|does not exist|Could not find the (table|function)/i.test(`${error.code ?? ""} ${error.message}`));
 
+/**
+ * Rete assente o pezzo dell'app non scaricabile. Stessi casi di errorMessage in cloudSync.ts più i
+ * messaggi di un import() fallito (Chrome, Firefox, Safari).
+ */
+const NETWORK_ERROR_RE =
+  /failed to fetch|networkerror|load failed|network request failed|timed? ?out|timeout|aborted|err_connection|dynamically imported module|importing a module script failed/i;
+
+/** Sonda sulla tabella delle condivisioni: solo un oggetto mancante vale "non attiva", un errore di rete resta incerto. */
+export const sharingProbeOutcome = (error: ServerError): "available" | "missing" | "failed" =>
+  !error ? "available" : isMissingSharingObject(error) ? "missing" : "failed";
+
 /** Testo da mostrare per un errore del server (supabase-js riporta la rete come "TypeError: Failed to fetch"). */
 export const shareErrorText = (error: NonNullable<ServerError>) => {
   if (isMissingSharingObject(error)) return SHARING_UNAVAILABLE_TEXT;
-  // Stessi casi di errorMessage in cloudSync.ts.
-  if (/failed to fetch|networkerror|load failed|network request failed|timed? ?out|timeout|aborted|err_connection/i.test(error.message)) {
+  if (NETWORK_ERROR_RE.test(error.message)) {
     return `${SERVER_UNREACHABLE_TEXT} I dati condivisi si aggiornano da soli appena torna.`;
   }
   if (error.code === "42501" || /row-level security/i.test(error.message)) {
     return "Non hai il permesso per questa operazione. Puoi condividere direttamente solo con persone che conosci (un gruppo in comune o una condivisione già attiva): per le altre crea un invito.";
+  }
+  // Indice unico (proprietario, sezione, destinatario): la sezione è già condivisa con quella persona o quel gruppo.
+  if (error.code === "23505" || /duplicate key/i.test(error.message)) {
+    return "Questa sezione è già condivisa con questa persona o questo gruppo.";
   }
   return error.message;
 };
@@ -458,7 +472,7 @@ export type ShareAction = "invite" | "share";
  */
 export const shareActionErrorText = (action: ShareAction, cause: unknown) => {
   const message = cause instanceof Error ? cause.message.trim() : "";
-  const reason = message.startsWith(SERVER_UNREACHABLE_TEXT)
+  const reason = message.startsWith(SERVER_UNREACHABLE_TEXT) || NETWORK_ERROR_RE.test(message)
     ? `${SERVER_UNREACHABLE_TEXT} Riprova appena torna.`
     : message || "Riprova tra poco.";
   return `${SHARE_ACTION_FAILED[action]} ${reason}`;
@@ -564,6 +578,27 @@ export const originOf = (received: readonly ShareGrant[], entry: SharedItem, lab
 };
 
 // ——— Con chi si può condividere ———
+
+/**
+ * Condivisione diretta: le sezioni non ancora condivise con quel destinatario si creano tutte
+ * insieme (un solo insert, atomico), quelle già condivise si aggiornano.
+ */
+export const planShareWrites = (
+  given: readonly ShareGrant[],
+  target: { userId?: string; groupId?: string },
+  offers: readonly ShareOffer[]
+) => {
+  const create: ShareOffer[] = [];
+  const update: { id: string; offer: ShareOffer }[] = [];
+  for (const offer of offers) {
+    const current = given.find(
+      (grant) => grant.scope === offer.scope && (target.userId ? grant.granteeUserId === target.userId : grant.granteeGroupId === target.groupId)
+    );
+    if (current) update.push({ id: current.id, offer });
+    else create.push(offer);
+  }
+  return { create, update };
+};
 
 export interface ShareContact {
   userId: string;
