@@ -9,6 +9,22 @@ import { choosePoller, hubCandidates, normalizePublicHub, siteFromOrigin } from 
 import { decideAgentAction, normalizeAgentPolicy } from "../src/agent/policy.ts";
 import { publicAttachment, publicGroup, publicPreferences } from "../src/agent/project.ts";
 import { parseToolArgs } from "../src/agent/schema.ts";
+import { SHARE_SCOPES, ShareUserError } from "../src/lib/sharing.ts";
+import {
+  agentOffers,
+  findSharedByHandle,
+  newSharedEntity,
+  personHandle,
+  planSharedCreate,
+  planSharedDelete,
+  planSharedUpdate,
+  publicShareGrant,
+  sharedHandle,
+  sharedItemsView
+} from "../src/agent/shared.ts";
+import { describeAgentCall, executeAgentTool } from "../src/agent/execute.ts";
+import { useSharedStore } from "../src/store/useSharedStore.ts";
+import { useStudyStore } from "../src/store/useStudyStore.ts";
 
 const actor = { name: "Prova", source: "stdio", scopes: ["studyos:read", "studyos:write"] };
 const reader = { name: "Lettore", source: "oauth", scopes: ["studyos:read"] };
@@ -70,6 +86,8 @@ test("catalogo: nomi unici, schemi chiusi, eliminazioni con confirm", () => {
     const extra = parseToolArgs(tool.inputSchema, { campoInatteso: true });
     assert.equal(extra.ok, false, tool.name);
     if (tool.risk === "destructive") {
+      // Un'eliminazione indica solo cosa eliminare: niente campi che ne cambino l'effetto.
+      assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ["confirm", "id"], tool.name);
       assert.equal(tool.inputSchema.required.includes("confirm"), true, tool.name);
       assert.deepEqual(tool.inputSchema.properties.confirm.enum, [true], tool.name);
       assert.equal(parseToolArgs(tool.inputSchema, { id: "task_1", confirm: false }).ok, false);
@@ -384,4 +402,346 @@ test("OAuth: iss nel redirect, resource assente o radice, cursor://, loopback co
   assert.equal(await oauth.authenticate(token.body.access_token), null);
   const refreshed = await oauth.exchange(new URLSearchParams({ grant_type: "refresh_token", client_id: local.client.clientId, refresh_token: token.body.refresh_token }));
   assert.equal(refreshed.ok, false);
+});
+
+const shareGrant = (over) => ({
+  id: "s1",
+  ownerId: "owner-uuid-1",
+  ownerName: "Alice",
+  scope: "tasks",
+  subjectIds: [],
+  permission: "view",
+  granteeUserId: "me-uuid",
+  granteeGroupId: null,
+  granteeName: "Bob",
+  granteeEmail: "bob@example.com",
+  createdAt: "2026-11-10T00:00:00.000Z",
+  updatedAt: "2026-11-10T00:00:00.000Z",
+  ...over
+});
+
+const sharedEntry = (entityType, entityId, entity) => ({
+  key: `owner-uuid-1:${entityType}:${entityId}`,
+  ownerId: "owner-uuid-1",
+  entityType,
+  entityId,
+  entity: { id: entityId, updatedAt: "2026-11-10T08:00:00.000Z", ...entity },
+  serverUpdatedAt: "2026-11-10T08:00:00.000Z"
+});
+
+test("condivisione per agenti: id opachi, niente email, id di account o file", () => {
+  const items = [
+    sharedEntry("task", "task_1", { title: "Relazione", status: "todo", subjectId: "sub_bio" }),
+    sharedEntry("attachment", "att_1", { name: "dispense", dataUrl: "data:application/pdf;base64,SEGRETOFILE" }),
+    sharedEntry("calendarEvent", "event_1", {
+      title: "Appello",
+      description: "",
+      start: "2026-11-12T09:00:00.000Z",
+      end: "2026-11-12T11:00:00.000Z",
+      recurrence: "none",
+      sourceUid: "barb-exam-x"
+    })
+  ];
+  const received = [shareGrant({ scope: "tasks" }), shareGrant({ id: "s2", scope: "materials" }), shareGrant({ id: "s3", scope: "calendar" })];
+  const labels = [{ ownerId: "owner-uuid-1", id: "sub_bio", name: "Biochimica", color: "#22c55e", icon: "" }];
+  const span = { from: new Date("2026-11-10T00:00:00.000Z"), to: new Date("2026-11-20T00:00:00.000Z") };
+  const view = sharedItemsView(items, received, labels, span);
+  const grants = received.map((entry) => publicShareGrant(entry, "received", () => "Biochimica"));
+  const given = publicShareGrant(shareGrant({ ownerId: "me-uuid", granteeUserId: "friend-uuid" }), "given", () => undefined);
+  const packed = JSON.stringify({ view, grants, given });
+  for (const secret of ["owner-uuid-1", "me-uuid", "friend-uuid", "bob@example.com", "SEGRETOFILE", "barb-exam-x"]) {
+    assert.equal(packed.includes(secret), false, secret);
+  }
+  assert.equal(view.length, 3);
+  const event = view.find((item) => item.entityType === "calendarEvent");
+  assert.equal(event.officialExam, true);
+  assert.equal(event.owner, "Alice");
+  assert.equal(event.canEdit, false);
+  assert.equal(view.find((item) => item.entityType === "task").subjectName, "Biochimica");
+  assert.match(personHandle("owner-uuid-1"), /^person_[0-9a-f]{8}$/);
+  assert.equal(given.personId, personHandle("friend-uuid"));
+  assert.equal(findSharedByHandle(items, sharedHandle(items[0])), items[0]);
+  assert.equal(sharedItemsView(items, received, labels, { ...span, scope: "tasks" }).length, 1);
+  assert.equal(sharedItemsView(items, received, labels, { ...span, personId: "person_00000000" }).length, 0);
+});
+
+test("condivisione per agenti: si scrive solo con «Può modificare» e solo nei campi previsti", () => {
+  const now = "2026-11-10T09:00:00.000Z";
+  const entry = sharedEntry("task", "task_1", { title: "Relazione", status: "todo", subjectId: "sub_bio" });
+  const viewOnly = [shareGrant({ scope: "tasks", permission: "view" })];
+  const editBio = [shareGrant({ scope: "tasks", permission: "edit", subjectIds: ["sub_bio"] })];
+  assert.equal(planSharedUpdate(viewOnly, entry, { status: "done" }, now).code, "denied");
+  assert.equal(planSharedDelete(viewOnly, entry).code, "denied");
+  const done = planSharedUpdate(editBio, entry, { status: "done" }, now);
+  assert.equal(done.ok, true);
+  assert.equal(done.entity.completedAt, now);
+  assert.equal(done.entity.updatedAt, now);
+  assert.equal(planSharedUpdate(editBio, entry, { subjectId: "sub_chim" }, now).code, "invalid");
+  assert.equal(planSharedUpdate(editBio, entry, { status: "finita" }, now).code, "invalid");
+  assert.equal(planSharedUpdate(editBio, entry, {}, now).code, "invalid");
+  assert.equal(planSharedDelete(editBio, entry).ok, true);
+
+  const draft = { entityType: "task", title: "Nuova", description: "", notes: "", priority: "medium", color: "#7CF7C8" };
+  assert.equal(planSharedCreate(viewOnly, "owner-uuid-1", newSharedEntity(draft, "task_9", now)).code, "denied");
+  // Con il filtro per materia, un'attività senza materia esce da ciò che è condiviso.
+  assert.equal(planSharedCreate(editBio, "owner-uuid-1", newSharedEntity(draft, "task_9", now)).code, "denied");
+  const created = planSharedCreate(editBio, "owner-uuid-1", newSharedEntity({ ...draft, subjectId: "sub_bio" }, "task_9", now));
+  assert.equal(created.ok, true);
+  assert.equal(created.entity.status, "todo");
+  assert.equal(created.entity.id, "task_9");
+
+  const offers = agentOffers(["barb_exams", "goals", "tasks"], "edit", ["sub_bio"], [{ id: "sub_bio", name: "Biochimica" }]);
+  assert.deepEqual(offers.map((offer) => [offer.scope, offer.permission, offer.subjectIds, offer.subjectNames]), [
+    ["barb_exams", "view", ["sub_bio"], ["Biochimica"]],
+    ["goals", "edit", [], []],
+    ["tasks", "edit", ["sub_bio"], ["Biochimica"]]
+  ]);
+  for (const name of ["studyos_list_shared_items", "studyos_share_with"]) {
+    const schema = findAgentTool(name).inputSchema.properties;
+    const scopes = schema.scope?.enum ?? schema.scopes.items.enum;
+    assert.deepEqual(scopes, [...SHARE_SCOPES], name);
+  }
+});
+
+test("condivisione per agenti: un cambio di stato chiude il cronometro del proprietario e non lo avvia mai", () => {
+  const now = "2026-11-10T10:00:00.000Z";
+  const edit = [shareGrant({ scope: "tasks", permission: "edit" })];
+  const running = sharedEntry("task", "task_r", {
+    title: "Laboratorio",
+    status: "doing",
+    timerStartedAt: "2026-11-10T09:30:00.000Z",
+    timerAccumulatedSeconds: 600,
+    timerLastReminderAt: "2026-11-10T09:30:00.000Z"
+  });
+  // Come l'app del proprietario: il tempo già contato (10 min) più quello in corso (30 min) resta.
+  const done = planSharedUpdate(edit, running, { status: "done" }, now);
+  assert.equal(done.ok, true);
+  assert.equal(done.entity.status, "done");
+  assert.equal(done.entity.timerStartedAt, undefined);
+  assert.equal(done.entity.timerAccumulatedSeconds, 2400);
+  assert.equal(done.entity.actualMinutes, 40);
+  assert.equal(done.entity.completedAt, now);
+  const blocked = planSharedUpdate(edit, running, { status: "blocked" }, now);
+  assert.equal(blocked.entity.timerStartedAt, undefined);
+  assert.equal(blocked.entity.actualMinutes, 40);
+  // Riaprire un'attività completata toglie il completamento.
+  const reopened = planSharedUpdate(edit, sharedEntry("task", "task_d", { title: "Fatta", status: "done", completedAt: now }), { status: "todo" }, now);
+  assert.equal(reopened.entity.completedAt, undefined);
+  // Chi riceve non avvia mai il cronometro del proprietario.
+  const todo = sharedEntry("task", "task_t", { title: "Relazione", status: "todo" });
+  const started = planSharedUpdate(edit, todo, { status: "doing" }, now);
+  assert.equal(started.ok, false);
+  assert.equal(started.code, "denied");
+  assert.match(started.error, /cronometro/);
+  // Già «In corso»: si può lasciare com'è, il cronometro continua.
+  const kept = planSharedUpdate(edit, running, { status: "doing", title: "Laboratorio 2" }, now);
+  assert.equal(kept.ok, true);
+  assert.equal(kept.entity.timerStartedAt, "2026-11-10T09:30:00.000Z");
+  assert.equal(kept.entity.title, "Laboratorio 2");
+  // Solo i campi indicati cambiano: il resto dell'ultima copia resta.
+  assert.equal(kept.entity.timerAccumulatedSeconds, 600);
+});
+
+test("condivisione per agenti: niente copertine, file, colori o link pericolosi dai dati altrui", () => {
+  const items = [
+    sharedEntry("task", "task_c", {
+      title: "Con copertina",
+      status: "doing",
+      cover: "data:image/png;base64,COPERTINA",
+      timerStartedAt: "2026-11-10T09:00:00.000Z",
+      timerAccumulatedSeconds: 77,
+      timerLastReminderAt: "2026-11-10T09:00:00.000Z"
+    }),
+    sharedEntry("calendarEvent", "event_c", {
+      title: "Colorato",
+      description: "",
+      start: "2026-11-12T09:00:00.000Z",
+      end: "2026-11-12T10:00:00.000Z",
+      color: "url(https://tracker.example/pixel)",
+      cover: "data:image/png;base64,FOTOEVENTO",
+      links: ["javascript:alert(1)", "https://example.org/ok", "data:text/html,PAYLOAD", 42]
+    }),
+    sharedEntry("calendarEvent", "event_h", { title: "Esadecimale", start: "2026-11-13T09:00:00.000Z", end: "2026-11-13T10:00:00.000Z", color: "#22c55e" }),
+    // Dati altrui malformati: non si mostrano come occorrenze e non bloccano l'elenco.
+    sharedEntry("calendarEvent", "event_bad", { title: "Rotto", start: 42, end: null, recurrence: "weekly", recurrenceUntil: 7 }),
+    sharedEntry("attachment", "att_l", { name: "Link", externalUrl: "javascript:alert(2)", mimeType: "text/uri-list" }),
+    sharedEntry("attachment", "att_ok", { name: "Dispense", externalUrl: "https://example.org/dispense" })
+  ];
+  const received = [
+    shareGrant({ scope: "tasks" }),
+    shareGrant({ id: "s2", scope: "calendar" }),
+    shareGrant({ id: "s3", scope: "materials" })
+  ];
+  const span = { from: new Date("2026-11-10T00:00:00.000Z"), to: new Date("2026-11-20T00:00:00.000Z") };
+  const view = sharedItemsView(items, received, [], span);
+  const packed = JSON.stringify(view);
+  for (const secret of ["COPERTINA", "FOTOEVENTO", "tracker.example", "javascript:", "PAYLOAD", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt"]) {
+    assert.equal(packed.includes(secret), false, secret);
+  }
+  const colored = view.find((item) => item.title === "Colorato");
+  assert.deepEqual(colored.links, ["https://example.org/ok"]);
+  assert.equal(colored.color, undefined);
+  assert.equal(view.find((item) => item.title === "Esadecimale").color, "#22c55e");
+  assert.equal(view.some((item) => item.title === "Rotto"), false);
+  assert.equal(view.find((item) => item.name === "Link").externalUrl, undefined);
+  assert.equal(view.find((item) => item.name === "Dispense").externalUrl, "https://example.org/dispense");
+});
+
+const seedApp = (shared = {}) => {
+  useStudyStore.setState({
+    loading: false,
+    locked: false,
+    persistError: null,
+    subjects: [],
+    tasks: [],
+    events: [],
+    exams: [],
+    sessions: [],
+    topics: [],
+    notes: [],
+    goals: [],
+    attachments: [],
+    notifications: [],
+    preferences: [],
+    studyGroups: [],
+    groupResources: []
+  });
+  useSharedStore.setState({
+    availability: "ready",
+    viewerId: "me-uuid",
+    persistent: false,
+    given: [],
+    received: [],
+    invites: [],
+    items: [],
+    labels: [],
+    outbox: [],
+    hiddenOwners: [],
+    notice: null,
+    syncError: null,
+    ...shared
+  });
+};
+
+test("strumenti condivisi: elenco, permessi e conferma con il nome di chi condivide", async () => {
+  const task = sharedEntry("task", "task_1", { title: "Relazione", status: "todo", subjectId: "sub_bio" });
+  const labels = [{ ownerId: "owner-uuid-1", id: "sub_bio", name: "Biochimica", color: "url(https://x)", icon: "" }];
+  seedApp({ received: [shareGrant({ scope: "tasks", permission: "view" })], items: [task], labels });
+  const handle = sharedHandle(task);
+  const alice = personHandle("owner-uuid-1");
+
+  const shares = await executeAgentTool("studyos_list_shares", {});
+  assert.equal(shares.ok, true);
+  assert.equal(shares.data.received[0].personId, alice);
+  assert.equal(shares.data.received[0].owner, "Alice");
+  const packed = JSON.stringify(shares);
+  for (const secret of ["owner-uuid-1", "me-uuid", "bob@example.com", "@"]) assert.equal(packed.includes(secret), false, secret);
+
+  const listed = await executeAgentTool("studyos_list_shared_items", { scope: "tasks" });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.data.total, 1);
+  assert.equal(listed.data.items[0].id, handle);
+  assert.equal(listed.data.items[0].canEdit, false);
+
+  // La conferma in StudyOS dice di chi è l'elemento, mai un id.
+  assert.equal(describeAgentCall("studyos_update_shared_item", { id: handle, status: "done" }), "Modificare un elemento condiviso con te: «Relazione di Alice»");
+  assert.equal(describeAgentCall("studyos_share_with", { personId: alice, scopes: ["calendar"] }), "Condividere Calendario: «Alice»");
+  assert.equal(describeAgentCall("studyos_revoke_share", { id: "s1", confirm: true }), "Togliere una condivisione: «Attività · Alice»");
+
+  const denied = await executeAgentTool("studyos_update_shared_item", { id: handle, status: "done" });
+  assert.deepEqual(denied, { ok: false, code: "denied", error: "Puoi solo vedere questo elemento." });
+  assert.equal((await executeAgentTool("studyos_delete_shared_item", { id: handle, confirm: true })).code, "denied");
+  assert.equal(useSharedStore.getState().outbox.length, 0);
+
+  useSharedStore.setState({ received: [shareGrant({ scope: "tasks", permission: "edit" })] });
+  const updated = await executeAgentTool("studyos_update_shared_item", { id: handle, status: "done", notes: "Fatto ieri" });
+  assert.equal(updated.ok, true);
+  const saved = useSharedStore.getState().items[0].entity;
+  assert.equal(saved.status, "done");
+  assert.equal(saved.notes, "Fatto ieri");
+  assert.equal(saved.title, "Relazione");
+  assert.equal(typeof saved.completedAt, "string");
+  assert.equal(useSharedStore.getState().outbox.length, 1);
+
+  const created = await executeAgentTool("studyos_create_shared_item", { personId: alice, entityType: "task", title: "Nuova", subjectId: "sub_bio" });
+  assert.equal(created.ok, true);
+  assert.match(created.data.id, new RegExp(`^${alice}:task:task_`));
+  assert.equal((await executeAgentTool("studyos_create_shared_item", { personId: "person_00000000", entityType: "task", title: "X" })).code, "not_found");
+
+  // Un id di un elemento altrui non collega una nota personale.
+  const linked = await executeAgentTool("studyos_create_note", { title: "Nota", body: "", linkedEntityType: "task", linkedEntityId: handle });
+  assert.equal(linked.ok, false);
+  assert.equal(linked.code, "invalid");
+});
+
+test("strumenti condivisi: le persone nascoste spariscono come nell'app", async () => {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const event = sharedEntry("calendarEvent", "event_today", {
+    title: "Laboratorio di oggi",
+    description: "",
+    start: today.toISOString(),
+    end: new Date(today.getTime() + 3_600_000).toISOString()
+  });
+  const task = sharedEntry("task", "task_1", { title: "Relazione", status: "todo" });
+  seedApp({ received: [shareGrant({ scope: "tasks", permission: "edit" }), shareGrant({ id: "s2", scope: "calendar", permission: "edit" })], items: [event, task] });
+
+  const overview = await executeAgentTool("studyos_overview", {});
+  assert.equal(overview.ok, true);
+  assert.equal(overview.data.sharedTodayEvents.length, 1);
+  assert.equal(overview.data.sharedTodayEvents[0].owner, "Alice");
+  assert.equal((await executeAgentTool("studyos_list_shared_items", {})).data.total, 2);
+
+  useSharedStore.setState({ hiddenOwners: ["owner-uuid-1"] });
+  assert.equal((await executeAgentTool("studyos_list_shared_items", {})).data.total, 0);
+  assert.equal((await executeAgentTool("studyos_overview", {})).data.sharedTodayEvents, undefined);
+  const handle = sharedHandle(task);
+  assert.equal((await executeAgentTool("studyos_update_shared_item", { id: handle, title: "Altro" })).code, "not_found");
+  assert.equal((await executeAgentTool("studyos_delete_shared_item", { id: handle, confirm: true })).code, "not_found");
+  assert.equal(describeAgentCall("studyos_delete_shared_item", { id: handle, confirm: true }), "Eliminare un elemento condiviso con te");
+  assert.equal(useSharedStore.getState().items.length, 2);
+  const shares = await executeAgentTool("studyos_list_shares", {});
+  assert.equal(shares.data.received.every((grant) => grant.hidden === true), true);
+});
+
+test("strumenti condivisi: mai errori grezzi, solo testi in italiano", async () => {
+  const task = sharedEntry("task", "task_1", { title: "Relazione", status: "todo" });
+  seedApp({ received: [shareGrant({ scope: "tasks", permission: "edit" })], items: [task] });
+  const handle = sharedHandle(task);
+  const original = useSharedStore.getState();
+  const failing = async (cause, run) => {
+    useSharedStore.setState({ saveSharedItem: async () => { throw cause; }, deleteSharedItem: async () => { throw cause; } });
+    try {
+      return await run();
+    } finally {
+      useSharedStore.setState({ saveSharedItem: original.saveSharedItem, deleteSharedItem: original.deleteSharedItem });
+    }
+  };
+  const update = () => executeAgentTool("studyos_update_shared_item", { id: handle, title: "Nuovo titolo" });
+
+  const crashed = await failing(new Error("QuotaExceededError: IndexedDB exploded"), update);
+  assert.deepEqual(crashed, { ok: false, code: "failed", error: "Modifiche non salvate. Riprova tra poco." });
+  const offline = await failing(new TypeError("Failed to fetch"), update);
+  assert.equal(offline.code, "failed");
+  assert.match(offline.error, /^Modifiche non salvate\. Server cloud non raggiungibile/);
+  const refused = await failing(new ShareUserError("Puoi solo vedere questo elemento."), () => executeAgentTool("studyos_delete_shared_item", { id: handle, confirm: true }));
+  assert.deepEqual(refused, { ok: false, code: "denied", error: "Elemento non eliminato. Puoi solo vedere questo elemento." });
+
+  // shareSync non si carica in Node (niente import.meta.env): l'errore tecnico non arriva all'agente.
+  useSharedStore.setState({ given: [shareGrant({ id: "g1", ownerId: "me-uuid", granteeUserId: "owner-uuid-1", granteeName: "Alice" })] });
+  const shared = await executeAgentTool("studyos_share_with", { personId: personHandle("owner-uuid-1"), scopes: ["calendar"], permission: "view" });
+  assert.equal(shared.ok, false);
+  assert.equal(shared.code, "failed");
+  assert.match(shared.error, /^Condivisione non salvata\. /);
+  assert.equal(/undefined|Cannot|import\.meta/.test(shared.error), false, shared.error);
+
+  // Regole controllate prima del server.
+  assert.equal((await executeAgentTool("studyos_share_with", { personId: "person_00000000", scopes: ["calendar"] })).code, "not_found");
+  assert.equal((await executeAgentTool("studyos_update_share", { id: "s1", permission: "edit" })).code, "not_found");
+  useSharedStore.setState({ given: [shareGrant({ id: "g2", ownerId: "me-uuid", scope: "barb_exams", granteeUserId: "owner-uuid-1" })] });
+  assert.equal((await executeAgentTool("studyos_update_share", { id: "g2", permission: "edit" })).code, "invalid");
+  useSharedStore.setState({ received: [shareGrant({ id: "via-group", granteeUserId: null, granteeGroupId: "group-1" })] });
+  assert.equal((await executeAgentTool("studyos_revoke_share", { id: "via-group", confirm: true })).code, "denied");
+  useSharedStore.setState({ viewerId: null });
+  assert.equal((await executeAgentTool("studyos_list_shares", {})).code, "not_connected");
 });
