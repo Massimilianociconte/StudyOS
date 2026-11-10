@@ -33,9 +33,14 @@ import {
   withoutSupersededRows,
   changedFields,
   originOf,
-  safeCssColor
+  safeCssColor,
+  revisionActorName,
+  canRestoreRevision,
+  isRestorableEntity,
+  shareActionErrorTextSafe,
+  SHARED_ENTITY_TYPES
 } from "../src/lib/sharing.ts";
-import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../src/lib/labels.ts";
+import { SHARED_ENTITY_LABEL, SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../src/lib/labels.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
 
 // Stessi casi provati in SQL da scripts/supabase/sharing-check.mjs (studyos_scope_covers).
@@ -359,7 +364,9 @@ test("errori delle azioni della sezione Condivisione: ogni azione dice cosa non 
     update: "Permessi non aggiornati.",
     revoke: "Condivisione non tolta.",
     leave: "Non sei uscito dalla condivisione.",
-    open: "Invito non aperto."
+    open: "Invito non aperto.",
+    history: "Cronologia non caricata.",
+    restore: "Ripristino non riuscito."
   };
   for (const [action, prefix] of Object.entries(prefixes)) {
     assert.equal(shareActionErrorText(action, new TypeError("Failed to fetch")), `${prefix} ${network}`, action);
@@ -465,4 +472,69 @@ test("changedFields: solo i campi cambiati (per valore), e i gruppi legati vanno
   const groups = [["start", "end", "allDay"], ["recurrence", "recurrenceUntil"]];
   assert.deepEqual(changedFields(before, { ...before, end: "c" }, groups), { start: "a", end: "c", allDay: false });
   assert.deepEqual(changedFields(before, { ...before, title: "Nuovo" }, groups), { title: "Nuovo" });
+});
+
+test("cronologia: nome di chi ha modificato da condivisioni e gruppi, mai l'id", () => {
+  const given = [grant({ ownerId: "me", granteeUserId: "bob", granteeName: "Bob" })];
+  const groups = [{ members: [{ userId: "carla", displayName: "Carla" }] }];
+  assert.equal(revisionActorName("bob", given, groups), "Bob");
+  assert.equal(revisionActorName("carla", given, groups), "Carla");
+  assert.equal(revisionActorName("sconosciuto", given, groups), "Un'altra persona");
+  assert.equal(revisionActorName(null, given, groups), "Un'altra persona");
+});
+
+test("cronologia: senza un nome da mostrare non compare mai l'id o l'email dell'account", () => {
+  const given = [grant({ granteeUserId: "u-9f1c", granteeName: "", granteeEmail: "bob@example.com" })];
+  const groups = [{ members: [{ userId: "u-77aa", displayName: "" }] }];
+  assert.equal(revisionActorName("u-9f1c", given, groups), "Un'altra persona");
+  assert.equal(revisionActorName("u-77aa", given, groups), "Un'altra persona");
+});
+
+test("cronologia: ogni tipo condivisibile ha un'etichetta in italiano", () => {
+  for (const type of SHARED_ENTITY_TYPES) assert.ok(SHARED_ENTITY_LABEL[type], type);
+  assert.deepEqual([...SHARED_ENTITY_TYPES].sort(), ["attachment", "calendarEvent", "exam", "goal", "note", "studySession", "studyTopic", "task"]);
+});
+
+test("ripristino: solo elementi veri di un tipo condivisibile, con un id", () => {
+  const event = { id: "e1", title: "Lezione", updatedAt: "2026-11-10T10:00:00.000Z" };
+  assert.equal(isRestorableEntity("calendarEvent", event), true);
+  for (const type of SHARED_ENTITY_TYPES) assert.equal(isRestorableEntity(type, { id: "x1" }), true, type);
+  // Tipi personali che la condivisione non copre: mai (preferenze, notifiche, gruppi, materie, tag…).
+  for (const type of ["preferences", "notification", "studyGroup", "groupInvite", "groupResource", "groupActivity", "subject", "tag", "reminder", "widget", "", "nope"]) {
+    assert.equal(isRestorableEntity(type, event), false, type);
+  }
+  // Chiavi di Object.prototype non sono tipi.
+  for (const type of ["constructor", "__proto__", "toString", "hasOwnProperty"]) assert.equal(isRestorableEntity(type, event), false, type);
+  // Senza un id testuale non vuoto, o con un contenuto che non è un oggetto, non si scrive niente.
+  for (const payload of [{}, { id: "" }, { id: "   " }, { id: 7 }, { id: null }, { id: ["e1"] }, null, undefined, "e1", 5, ["e1"]]) {
+    assert.equal(isRestorableEntity("calendarEvent", payload), false, JSON.stringify(payload));
+  }
+  // L'id deve essere quello dell'elemento, se noto: una versione non può sovrascriverne un altro.
+  assert.equal(isRestorableEntity("calendarEvent", event, "e1"), true);
+  assert.equal(isRestorableEntity("calendarEvent", event, "e2"), false);
+});
+
+test("ripristino: una cronologia si ripristina se è una versione precedente intera, non una creazione né un'eliminazione già registrata", () => {
+  const base = { id: 1, entityType: "calendarEvent", entityId: "e1", payload: { id: "e1", title: "Lezione" }, deleted: false, change: "update", changedBy: "bob", changedAt: "2026-11-10T10:00:00.000Z" };
+  assert.equal(canRestoreRevision(base), true);
+  assert.equal(canRestoreRevision({ ...base, change: "delete" }), true);
+  // Una creazione non ha una versione precedente da recuperare.
+  assert.equal(canRestoreRevision({ ...base, change: "create" }), false);
+  // Il contenuto di una riga già eliminata è solo un tombstone, non un elemento.
+  assert.equal(canRestoreRevision({ ...base, deleted: true }), false);
+  assert.equal(canRestoreRevision({ ...base, payload: { id: "e1", deletedAt: "2026-11-09T10:00:00.000Z" } }), false);
+  // Il contenuto scritto da altri non può puntare a un altro elemento o a un tipo non condivisibile.
+  assert.equal(canRestoreRevision({ ...base, payload: { id: "e2", title: "Altro" } }), false);
+  assert.equal(canRestoreRevision({ ...base, entityType: "preferences", payload: { id: "e1" } }), false);
+});
+
+test("errori della cronologia: un guasto tecnico non mostra mai il suo testo (in inglese)", () => {
+  const network = "Server cloud non raggiungibile: controlla la connessione. Riprova appena torna.";
+  // Testi pensati per l'utente e problemi di rete passano come nelle altre azioni.
+  assert.equal(shareActionErrorTextSafe("restore", new ShareUserError("Questo elemento non si può ripristinare.")), "Ripristino non riuscito. Questo elemento non si può ripristinare.");
+  assert.equal(shareActionErrorTextSafe("history", new ShareUserError("Accedi al tuo account per usare la condivisione.")), "Cronologia non caricata. Accedi al tuo account per usare la condivisione.");
+  assert.equal(shareActionErrorTextSafe("history", new TypeError("Failed to fetch dynamically imported module: https://x/y.js")), `Cronologia non caricata. ${network}`);
+  // Un errore qualunque (bug, infrastruttura) resta generico.
+  assert.equal(shareActionErrorTextSafe("restore", new TypeError("Cannot read properties of undefined (reading 'id')")), "Ripristino non riuscito. Riprova tra poco.");
+  assert.equal(shareActionErrorTextSafe("history", "non è un Error"), "Cronologia non caricata. Riprova tra poco.");
 });

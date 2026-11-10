@@ -20,6 +20,9 @@ export const SCOPE_ENTITY_TYPES: Record<ShareScope, readonly string[]> = {
   goals: ["goal"]
 };
 
+/** Tipi di elemento che la condivisione copre: gli unici che una cronologia di altri può contenere e ripristinare. */
+export const SHARED_ENTITY_TYPES: ReadonlySet<string> = new Set(Object.values(SCOPE_ENTITY_TYPES).flat());
+
 /** Date ufficiali: si condividono solo in lettura. */
 export const VIEW_ONLY_SCOPES: ReadonlySet<ShareScope> = new Set<ShareScope>(["barb_exams"]);
 /** Sezioni senza materia: il filtro per materie non si applica. */
@@ -423,6 +426,29 @@ export const revisionFromRow = (row: Record<string, unknown>): ItemRevision => (
 export const revisionTitle = (revision: Pick<ItemRevision, "payload">) =>
   str(revision.payload.title) || str(revision.payload.name) || "Elemento senza titolo";
 
+/**
+ * Una versione salvata si può riscrivere tra i dati personali solo se è un elemento vero: un tipo
+ * che la condivisione copre (mai preferenze, notifiche, gruppi…), un oggetto con un `id` testuale non
+ * vuoto e non un tombstone. Se si conosce l'elemento di cui è una versione (`entityId`), l'id deve
+ * essere lo stesso: chi può modificare i miei dati ha scritto quel contenuto e non può farlo
+ * puntare a un altro elemento.
+ */
+export const isRestorableEntity = (entityType: string, payload: unknown, entityId?: string): payload is Payload & { id: string } => {
+  if (!SHARED_ENTITY_TYPES.has(entityType)) return false;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+  const entry = payload as Payload;
+  if (typeof entry.id !== "string" || !entry.id.trim()) return false;
+  if ("deletedAt" in entry) return false;
+  return entityId === undefined || entry.id === entityId;
+};
+
+/**
+ * Il pulsante "Ripristina" compare solo per le versioni precedenti a una modifica o a un'eliminazione:
+ * una creazione non ha una versione prima, e il contenuto di una riga già eliminata è un tombstone.
+ */
+export const canRestoreRevision = (revision: ItemRevision) =>
+  revision.change !== "create" && !revision.deleted && isRestorableEntity(revision.entityType, revision.payload, revision.entityId);
+
 // ——— Errori e notifiche ———
 
 export const SHARING_UNAVAILABLE_TEXT =
@@ -483,7 +509,7 @@ export const shareErrorText = (error: NonNullable<ServerError>) => {
 };
 
 /** Azione dell'utente che può fallire: crea invito e condividi (pannello), poi quelle della sezione Condivisione. */
-export type ShareAction = "invite" | "share" | "accept" | "decline" | "cancel" | "update" | "revoke" | "leave" | "open";
+export type ShareAction = "invite" | "share" | "accept" | "decline" | "cancel" | "update" | "revoke" | "leave" | "open" | "history" | "restore";
 
 /**
  * Errore di un'azione che l'utente ha appena fatto (crea invito, condividi, accetta…): dice cosa non è
@@ -497,6 +523,14 @@ export const shareActionErrorText = (action: ShareAction, cause: unknown) => {
     : message || "Riprova tra poco.";
   return `${SHARE_ACTION_FAILED[action]} ${reason}`;
 };
+
+/**
+ * Come shareActionErrorText, per le azioni che toccano anche codice dell'app (cronologia, ripristino):
+ * passano solo i testi pensati per l'utente (ShareUserError) e i problemi di rete; un guasto
+ * tecnico non mostra mai il proprio messaggio, che sarebbe in inglese.
+ */
+export const shareActionErrorTextSafe = (action: ShareAction, cause: unknown) =>
+  shareActionErrorText(action, cause instanceof ShareUserError || (cause instanceof Error && NETWORK_ERROR_RE.test(cause.message)) ? cause : undefined);
 
 /**
  * Cosa notificare dopo un aggiornamento: condivisioni e inviti mai visti su questo dispositivo.
@@ -704,3 +738,19 @@ export const shareableGroups = <G extends { ownerId: string; sharedAt?: string; 
   groups: readonly G[],
   me: string
 ) => groups.filter((group) => Boolean(group.sharedAt) && !group.ownerId.startsWith("local-") && group.members.some((member) => member.userId === me));
+
+/** Chi ha fatto una modifica: nome dalla condivisione o dal gruppo, mai l'id dell'account. */
+export const revisionActorName = (
+  changedBy: string | null,
+  given: readonly ShareGrant[],
+  groups: readonly { members: readonly { userId: string; displayName: string }[] }[]
+) => {
+  if (!changedBy) return "Un'altra persona";
+  const direct = given.find((grant) => grant.granteeUserId === changedBy)?.granteeName;
+  if (direct) return direct;
+  for (const group of groups) {
+    const member = group.members.find((candidate) => candidate.userId === changedBy);
+    if (member?.displayName) return member.displayName;
+  }
+  return "Un'altra persona";
+};

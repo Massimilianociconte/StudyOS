@@ -231,7 +231,9 @@ export const SHARE_ACTION_FAILED: Record<ShareAction, string> = {
   update: "Permessi non aggiornati.",
   revoke: "Condivisione non tolta.",
   leave: "Non sei uscito dalla condivisione.",
-  open: "Invito non aperto."
+  open: "Invito non aperto.",
+  history: "Cronologia non caricata.",
+  restore: "Ripristino non riuscito."
 };
 
 /** Perché un invito aperto da link non si può accettare (il link salvato su questo dispositivo si toglie). */
@@ -244,11 +246,12 @@ export const SHARE_INVITE_BLOCKED: Record<InviteBlock, string> = {
   expired: "Invito scaduto: chiedine uno nuovo."
 };
 
-/** Schede della sezione Condivisione (il Task 10 aggiunge la cronologia). */
+/** Schede della sezione Condivisione. */
 export const SHARING_TAB_LABEL = {
   mine: "Condivisi da me",
   received: "Condivisi con me",
-  invites: "Inviti"
+  invites: "Inviti",
+  history: "Modifiche di altri"
 } as const;
 
 /** Testi del pulsante e del pannello Condividi che non dipendono da un valore enum. */
@@ -268,3 +271,15 @@ export const REVISION_CHANGE_LABEL: Record<ItemRevision["change"], string> = {
 /** "Calendario (Può modificare), Attività (Può vedere)". */
 export const scopesSummary = (offers: ReadonlyArray<{ scope: ShareScope; permission: SharePermission }>) =>
   offers.map((offer) => `${SHARE_SCOPE_LABEL[offer.scope]} (${SHARE_PERMISSION_LABEL[offer.permission]})`).join(", ");
+
+/** Tipo di elemento condivisibile, per la cronologia ("ha modificato l'evento …"). */
+export const SHARED_ENTITY_LABEL: Record<string, string> = {
+  calendarEvent: "evento",
+  task: "attività",
+  studySession: "sessione di studio",
+  studyTopic: "argomento",
+  exam: "esame",
+  attachment: "materiale",
+  note: "nota",
+  goal: "obiettivo"
+};

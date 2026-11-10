@@ -39,9 +39,11 @@ import type { ShareInvitePreview } from "../lib/shareSync";
 import { Button, Drawer, EmptyState, Panel, SectionTitle, Segmented, Tag } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
-import { InlineConfirm, InviteLoginDrawer, type LoginReason } from "../components/GroupInvite";
+import { InviteLoginDrawer, type LoginReason } from "../components/GroupInvite";
+import { ConfirmWithError } from "../components/ConfirmWithError";
+import { ShareHistoryTab } from "../components/ShareHistoryTab";
 
-export const SHARING_TABS = ["mine", "received", "invites"] as const;
+export const SHARING_TABS = ["mine", "received", "invites", "history"] as const;
 type SharingTab = (typeof SHARING_TABS)[number];
 
 type ShareSync = typeof import("../lib/shareSync");
@@ -280,6 +282,8 @@ export function SharingView() {
         <MineTab me={me} given={given} received={received} subjects={subjects} groups={studyGroups} perform={perform} onDone={say} />
       ) : tab === "received" ? (
         <ReceivedTab me={me} received={received} items={items} hiddenOwners={hiddenOwners} groups={studyGroups} perform={perform} onDone={say} />
+      ) : tab === "history" ? (
+        <ShareHistoryTab given={given} groups={studyGroups} onDone={say} />
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {pending ? (
@@ -320,43 +324,6 @@ export function SharingView() {
           ) : null}
         </div>
       )}
-    </div>
-  );
-}
-
-/** Conferma sul posto che resta aperta se l'azione fallisce, con l'errore accanto al pulsante. */
-function ConfirmWithError({
-  text,
-  confirmLabel,
-  icon,
-  onCancel,
-  onConfirm
-}: {
-  text: string;
-  confirmLabel: string;
-  icon: string;
-  onCancel: () => void;
-  onConfirm: () => Promise<string | null>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const confirm = async () => {
-    setBusy(true);
-    setError("");
-    const failure = await onConfirm();
-    setBusy(false);
-    if (failure) setError(failure);
-  };
-
-  return (
-    <div className="mt-2 grid grid-cols-1 gap-2">
-      <InlineConfirm text={text} confirmLabel={confirmLabel} icon={icon} busy={busy} onCancel={onCancel} onConfirm={() => void confirm()} />
-      {error ? (
-        <p role="alert" className={errorClass}>
-          {error}
-        </p>
-      ) : null}
     </div>
   );
 }

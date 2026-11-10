@@ -30,12 +30,14 @@ import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState"
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { makeGroupInviteCode } from "../lib/groups";
+import { ShareUserError, isRestorableEntity } from "../lib/sharing";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { fileToDataUrl } from "../lib/files";
 import { normalizeTaskPatch, taskStatusTransitionPatch } from "../lib/taskTimer";
 import {
   COLLECTIONS,
+  COLLECTION_BY_ENTITY_TYPE,
   countEntities,
   normalizeCollections,
   pickCollections,
@@ -144,6 +146,12 @@ interface StudyState {
   updatePreferences: (patch: PreferencesPatch) => Promise<void>;
   /** Crea una notifica dell'account (max 200 conservate, le più vecchie vengono potate). */
   addNotification: (notification: Partial<AppNotification> & Pick<AppNotification, "kind" | "title">) => Promise<string>;
+  /**
+   * Ripristina una versione salvata nella cronologia come nuova versione locale (poi sync normale).
+   * Solo elementi dei tipi che la condivisione copre; il contenuto lo hanno scritto altri, quindi
+   * un tipo diverso o un `id` mancante lanciano un errore senza scrivere nulla.
+   */
+  restoreEntity: (entityType: string, payload: Record<string, unknown>) => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   deleteNotification: (id: string) => Promise<void>;
@@ -629,6 +637,19 @@ export const useStudyStore = create<StudyState>((set, get) => {
       });
       await commit();
       return created.id;
+    },
+
+    restoreEntity: async (entityType, payload) => {
+      const collection = COLLECTION_BY_ENTITY_TYPE[entityType];
+      if (!collection || !isRestorableEntity(entityType, payload)) throw new ShareUserError("Questo elemento non si può ripristinare.");
+      // Stessa strada di ogni modifica locale: updatedAt nuovo, diff di persistenza, outbox e sync. Con
+      // un updatedAt più recente vince per LWW e arriva anche a chi ha la condivisione.
+      const restored = { ...payload, updatedAt: nowIso() } as unknown as SyncableEntity;
+      set((state) => {
+        const current = state[collection] as unknown as SyncableEntity[];
+        return { [collection]: [...current.filter((entry) => entry.id !== restored.id), restored] } as unknown as Partial<StudyState>;
+      });
+      await commit();
     },
 
     markNotificationRead: async (id) => {
