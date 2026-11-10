@@ -30,7 +30,10 @@ import {
   sharedWriteError,
   typeAccess,
   urlWithoutShare,
-  withoutSupersededRows
+  withoutSupersededRows,
+  changedFields,
+  originOf,
+  safeCssColor
 } from "../src/lib/sharing.ts";
 import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../src/lib/labels.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
@@ -416,4 +419,50 @@ test("expandEvents conserva i campi extra (sharedFrom) anche sulle occorrenze ri
   const found = expandEvents([{ ...base, sharedFrom: { ownerId: "alice" } }], new Date("2026-11-10T00:00:00Z"), new Date("2026-11-12T00:00:00Z"));
   assert.equal(found.length, 2);
   assert.ok(found.every((item) => item.sharedFrom?.ownerId === "alice" && item.recurring));
+});
+
+test("safeCssColor: dai dati altrui passano solo colori esadecimali, mai url() o altre dichiarazioni", () => {
+  for (const color of ["#abc", "#ABCD", "#a1b2c3", "#A1B2C3D4"]) assert.equal(safeCssColor(color), color);
+  assert.equal(safeCssColor("  #7CF7C8 "), "#7CF7C8");
+  for (const color of [
+    'url("https://tracker.example/p.png")',
+    "url(https://tracker.example/p.png)",
+    "red; background-image: url(https://tracker.example/p.png)",
+    "#fff; background-image: url(x)",
+    "var(--x)",
+    "image-set(\"https://tracker.example/p.png\" 1x)",
+    "red",
+    "#ab",
+    "#abcde",
+    "#ggg",
+    ""
+  ]) assert.equal(safeCssColor(color), "", color);
+  for (const value of [undefined, null, 42, {}, ["#fff"], true]) assert.equal(safeCssColor(value), "");
+});
+
+test("originOf: il colore della materia altrui passa da safeCssColor", () => {
+  const received = [{ id: "g", ownerId: "alice", ownerName: "Alice", scope: "calendar", permission: "view", subjectIds: [], subjectNames: [] }];
+  const entry = (subjectId) => ({ key: "k", ownerId: "alice", entityType: "calendarEvent", entityId: "e1", entity: { id: "e1", subjectId }, serverUpdatedAt: "" });
+  const labels = [
+    { ownerId: "alice", id: "s1", name: "Anatomia", color: 'url("https://tracker.example/p.png")', icon: "" },
+    { ownerId: "alice", id: "s2", name: "Chimica", color: "#F472B6", icon: "" }
+  ];
+  const tainted = originOf(received, entry("s1"), labels);
+  assert.equal(tainted.subjectName, "Anatomia");
+  assert.equal(tainted.subjectColor, undefined);
+  assert.equal(originOf(received, entry("s2"), labels).subjectColor, "#F472B6");
+});
+
+test("changedFields: solo i campi cambiati (per valore), e i gruppi legati vanno insieme", () => {
+  const before = { title: "Lezione", description: "", start: "a", end: "b", allDay: false, tags: ["x"], recurrence: "weekly", recurrenceUntil: "2026-12-01" };
+  assert.deepEqual(changedFields(before, { ...before, tags: ["x"] }), {});
+  assert.deepEqual(changedFields(before, { ...before, description: "Aula 3" }), { description: "Aula 3" });
+  // Un campo tolto (undefined) è un cambiamento: la chiave resta, così sovrascrive il valore precedente.
+  const cleared = changedFields(before, { ...before, recurrence: "none", recurrenceUntil: undefined });
+  assert.deepEqual(Object.keys(cleared).sort(), ["recurrence", "recurrenceUntil"]);
+  assert.equal(cleared.recurrenceUntil, undefined);
+  // Con un gruppo (orari): cambia la fine, si mandano anche inizio e "tutto il giorno".
+  const groups = [["start", "end", "allDay"], ["recurrence", "recurrenceUntil"]];
+  assert.deepEqual(changedFields(before, { ...before, end: "c" }, groups), { start: "a", end: "c", allDay: false });
+  assert.deepEqual(changedFields(before, { ...before, title: "Nuovo" }, groups), { title: "Nuovo" });
 });

@@ -24,6 +24,7 @@ import {
   ownerEntityTypes,
   planShareWrites,
   revisionFromRow,
+  safeCssColor,
   shareErrorText,
   shareNotices,
   sharedKey,
@@ -221,7 +222,8 @@ const pullShares = async (me: string, gen: number) => {
       ownerId: String(row.owner_id),
       id: String(row.subject_id),
       name: String(row.name ?? ""),
-      color: String(row.color ?? ""),
+      // Colore scelto da un'altra persona: solo esadecimale, mai un url() che il browser scaricherebbe.
+      color: safeCssColor(row.color),
       icon: String(row.icon ?? "")
     }))
   );

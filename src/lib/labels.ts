@@ -169,6 +169,9 @@ export const UNIVERSITY_SOURCE_KIND_LABEL: Record<string, string> = {
 /** Etichetta degli eventi senza orario, che occupano l'intera giornata. */
 export const ALL_DAY_LABEL = "Tutto il giorno";
 
+/** Evento senza materia, o con una materia che non si conosce (es. di un'altra persona, non condivisa). */
+export const NO_SUBJECT_LABEL = "Senza materia";
+
 /**
  * Prima lettera maiuscola: nomi di giorni/mesi da date-fns a inizio frase, etichette
  * dinamiche in Tag/Pill. Non tocca il resto della stringa (acronimi e nomi propri salvi).

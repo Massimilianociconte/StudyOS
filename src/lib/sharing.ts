@@ -583,6 +583,31 @@ export const shareInviteMessage = (ownerName: string, offers: readonly ShareOffe
 // Toni chiari: le iniziali sopra sono sempre scure (#10131d), leggibili in tema chiaro e scuro.
 const OWNER_COLORS = ["#A78BFA", "#38BDF8", "#FB923C", "#34D399", "#F472B6", "#FACC15", "#818CF8", "#2DD4BF"];
 
+const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/**
+ * Colore da dati di altri, pronto per uno stile in linea: solo #rgb, #rgba, #rrggbb o #rrggbbaa,
+ * altrimenti "". Così un valore come `url("https://…")` non fa scaricare nulla a chi guarda.
+ */
+export const safeCssColor = (value: unknown) => {
+  if (typeof value !== "string") return "";
+  const color = value.trim();
+  return HEX_COLOR.test(color) ? color : "";
+};
+
+/**
+ * Campi di `after` diversi da `before` (confronto per valore). Una modifica a un dato altrui invia
+ * solo questi, così non riporta indietro ciò che il proprietario ha cambiato nel frattempo. I campi
+ * di un gruppo vanno insieme: se ne cambia uno, si mandano tutti (es. inizio, fine, tutto il giorno).
+ */
+export const changedFields = <T extends object>(before: T, after: T, groups: readonly (readonly string[])[] = []): Partial<T> => {
+  const previous = before as Record<string, unknown>;
+  const next = after as Record<string, unknown>;
+  const changed = new Set([...Object.keys(previous), ...Object.keys(next)].filter((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key])));
+  for (const group of groups) if (group.some((key) => changed.has(key))) for (const key of group) changed.add(key);
+  return Object.fromEntries([...changed].map((key) => [key, next[key]])) as Partial<T>;
+};
+
 /** Colore stabile per persona: lo stesso proprietario ha lo stesso colore in ogni vista. */
 export const ownerColor = (ownerId: string) => {
   let hash = 0;
@@ -610,7 +635,7 @@ export const originOf = (received: readonly ShareGrant[], entry: SharedItem, lab
     color: ownerColor(entry.ownerId),
     initials: initialsOf(ownerName),
     subjectName: label?.name,
-    subjectColor: label?.color || undefined
+    subjectColor: safeCssColor(label?.color) || undefined
   };
 };
 

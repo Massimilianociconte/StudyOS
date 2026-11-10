@@ -31,7 +31,7 @@ import {
 import { it } from "date-fns/locale";
 import { useStudyStore } from "../store/useStudyStore";
 import { sharedOfTypes, useSharedStore } from "../store/useSharedStore";
-import { originOf, ownerColor, sharedKey, ShareUserError, type SharedEntity, type SharedOrigin } from "../lib/sharing";
+import { changedFields, originOf, ownerColor, safeCssColor, sharedKey, ShareUserError, type SharedEntity, type SharedOrigin } from "../lib/sharing";
 import { SharedMark } from "../components/SharedMark";
 import { ShareButton } from "../components/ShareButton";
 import { createId } from "../lib/id";
@@ -52,6 +52,7 @@ import {
   EVENT_CATEGORY_LABEL,
   EVENT_STATUS_LABEL,
   EXAM_STATUS_LABEL,
+  NO_SUBJECT_LABEL,
   PRIORITY_LABEL,
   PRIORITY_TONE,
   TASK_STATUS_LABEL,
@@ -77,6 +78,8 @@ interface WritableCalendar {
   ownerId: string;
   name: string;
   subjects: { id: string; name: string; color: string }[];
+  /** Ogni condivisione con "Può modificare" è limitata ad alcune materie: l'evento ne deve avere una. */
+  subjectRequired: boolean;
 }
 
 /**
@@ -94,19 +97,13 @@ const sharedCalendarEvent = (entity: SharedEntity): CalendarEvent | null => {
     ...event,
     description: text(entity.description),
     notes: text(entity.notes),
-    color: text(entity.color),
+    // Colore scelto da un'altra persona: solo esadecimale (mai un url() da scaricare); se manca, quello di riserva.
+    color: safeCssColor(entity.color),
     tags: strings(entity.tags),
     links: strings(entity.links),
     checklist: Array.isArray(entity.checklist) ? event.checklist : [],
     attachmentIds: strings(entity.attachmentIds)
   };
-};
-
-/** Copia salvabile di un evento altrui: la marcatura resta solo nell'interfaccia. */
-const withoutOrigin = (event: ShownEvent): CalendarEvent => {
-  const copy = { ...event };
-  delete copy.sharedFrom;
-  return copy;
 };
 
 /** Si trascina solo ciò che si può modificare: gli eventi altrui in sola lettura non sono trascinabili. */
@@ -124,6 +121,16 @@ const SHARED_OUTLINE = "outline-dashed outline-1 -outline-offset-1 outline-[colo
 const sharedOutlineClass = (item: ShownEvent) => (item.sharedFrom ? SHARED_OUTLINE : "");
 const sharedOutline = (item: ShownEvent): CSSProperties =>
   item.sharedFrom ? ({ "--owner-color": item.sharedFrom.color } as CSSProperties) : {};
+
+/** Campi dell'evento che cambiano insieme: se ne cambia uno, una modifica a un evento altrui li manda tutti. */
+const LINKED_EVENT_FIELDS = [
+  ["start", "end", "allDay"],
+  ["recurrence", "recurrenceUntil"]
+] as const;
+
+/** Sola lettura: i campi disattivati si vedono attenuati e non invitano al clic. */
+const DIMMED_DISABLED_FIELDS =
+  "[&_input:disabled]:cursor-not-allowed [&_input:disabled]:opacity-60 [&_select:disabled]:cursor-not-allowed [&_select:disabled]:opacity-60 [&_textarea:disabled]:cursor-not-allowed [&_textarea:disabled]:opacity-60";
 
 /** Errore di una scrittura sui dati altrui: il testo dello store (già in italiano) o quello di riserva. */
 const sharedFailure = (cause: unknown, fallback: string) => (cause instanceof ShareUserError ? cause.message : fallback);
@@ -184,9 +191,10 @@ interface Handlers {
   onPreviewHide: () => void;
 }
 
-// Evento di altri senza colore: quello della sua materia (dal proprietario), mai di una delle mie.
+// Evento di altri senza colore valido: quello della sua materia (dal proprietario), poi quello della persona;
+// mai di una delle mie materie.
 const eventColor = (event: ShownEvent, subjects: Subjects) =>
-  event.color || (event.sharedFrom ? event.sharedFrom.subjectColor ?? "var(--accent)" : subjectColor(subjects, event.subjectId));
+  event.color || (event.sharedFrom ? event.sharedFrom.subjectColor || event.sharedFrom.color : subjectColor(subjects, event.subjectId));
 const allDayEventLabel = (event: CalendarEvent) => event.tags?.includes("appello-importato") ? "Data appello" : ALL_DAY_LABEL;
 
 export function CalendarView() {
@@ -211,8 +219,16 @@ export function CalendarView() {
     useShallow((state) => ({ sharedItems: state.items, received: state.received, labels: state.labels, hiddenOwners: state.hiddenOwners }))
   );
   const [editingSharedKey, setEditingSharedKey] = useUiState<string | null>("calendar.editingShared", null, { scope: "tab", validate: isNullableString });
-  // Errore di uno spostamento di un evento altrui: si mostra sopra il calendario, dove è avvenuto.
-  const [moveError, setMoveError] = useState("");
+  // Avviso sopra il calendario: spostamento non riuscito, evento altrui non più condiviso.
+  const [notice, setNotice] = useState("");
+  // Bozza non salvata nell'editor di un evento altrui: se la condivisione sparisce, lo si dice.
+  const sharedDraftDirty = useRef(false);
+  // Persone viste tra chi mi condivide il calendario, in questa sessione della vista.
+  const seenOwners = useRef(new Set<string>());
+  const closeSharedEditor = () => {
+    sharedDraftDirty.current = false;
+    setEditingSharedKey(null);
+  };
   const sharedEvents = useMemo<SharedCalendarEvent[]>(
     () =>
       sharedOfTypes({ items: sharedItems, hiddenOwners }, ["calendarEvent"]).flatMap((entry) => {
@@ -232,6 +248,21 @@ export function CalendarView() {
     }
     return [...owners.entries()].map(([id, name]) => ({ id, name }));
   }, [received]);
+  // L'evento altrui aperto si chiude quando quella persona non mi condivide più né calendario né appelli.
+  // Non basta che manchi l'evento: col vault i dati altrui sono solo in memoria e, dopo un refresh,
+  // arrivano dal server poco dopo. Per lo stesso motivo un elenco ancora vuoto non chiude nulla,
+  // a meno che quella persona non ci fosse già prima.
+  useEffect(() => {
+    for (const owner of calendarOwners) seenOwners.current.add(owner.id);
+    if (!editingSharedKey) return;
+    const ownerId = editingSharedKey.slice(0, editingSharedKey.indexOf(":"));
+    if (calendarOwners.some((owner) => owner.id === ownerId)) return;
+    if (!received.length && !seenOwners.current.has(ownerId)) return;
+    if (sharedDraftDirty.current) setNotice("L'evento che stavi modificando non è più condiviso con te: le modifiche non salvate sono andate perse.");
+    closeSharedEditor();
+  }, [calendarOwners, received, editingSharedKey]);
+  // L'avviso riguarda la vista in cui è nato: cambiando vista sparisce.
+  useEffect(() => setNotice(""), [mode]);
   /** Calendari altrui in cui posso aggiungere eventi ("Nel calendario di"), con le sole materie del proprietario. */
   const writableCalendars = useMemo(() => {
     const result = new Map<string, WritableCalendar>();
@@ -239,11 +270,12 @@ export function CalendarView() {
       if (grant.scope !== "calendar" || grant.permission !== "edit") continue;
       const ownLabels = labels.filter((label) => label.ownerId === grant.ownerId && (!grant.subjectIds.length || grant.subjectIds.includes(label.id)));
       const current = result.get(grant.ownerId);
-      const subjectsOf = [...(current?.subjects ?? []), ...ownLabels.map(({ id, name, color }) => ({ id, name, color }))];
+      const subjectsOf = [...(current?.subjects ?? []), ...ownLabels.map(({ id, name, color }) => ({ id, name, color: safeCssColor(color) }))];
       result.set(grant.ownerId, {
         ownerId: grant.ownerId,
         name: grant.ownerName || "Un'altra persona",
-        subjects: subjectsOf.filter((subject, index) => subjectsOf.findIndex((other) => other.id === subject.id) === index)
+        subjects: subjectsOf.filter((subject, index) => subjectsOf.findIndex((other) => other.id === subject.id) === index),
+        subjectRequired: (current?.subjectRequired ?? true) && grant.subjectIds.length > 0
       });
     }
     return [...result.values()];
@@ -317,18 +349,20 @@ export function CalendarView() {
     const end = new Date(parseISO(series.end).getTime() + delta);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
     if (origin) {
-      // Solo dallo store dei dati altrui: controlla il permesso e mette in coda la scrittura.
+      // Solo dallo store dei dati altrui (controlla il permesso e mette in coda la scrittura), sull'ultima
+      // versione salvata: cambiano solo gli orari, il resto resta com'è per il proprietario.
+      const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(origin.ownerId, "calendarEvent", series.id))?.entity;
+      if (!latest) return;
       try {
-        await useSharedStore
-          .getState()
-          .saveSharedItem(origin.ownerId, "calendarEvent", { ...withoutOrigin(series), start: start.toISOString(), end: end.toISOString() });
-        setMoveError("");
+        await useSharedStore.getState().saveSharedItem(origin.ownerId, "calendarEvent", { ...latest, start: start.toISOString(), end: end.toISOString() });
+        setNotice("");
       } catch (cause) {
-        setMoveError(sharedFailure(cause, `"${series.title}" non è stato spostato. Riprova.`));
+        setNotice(sharedFailure(cause, `"${series.title}" non è stato spostato. Riprova.`));
       }
       return;
     }
     await updateEvent(series.id, { start: start.toISOString(), end: end.toISOString() });
+    setNotice("");
   };
 
   const handlers: Handlers = {
@@ -434,10 +468,10 @@ export function CalendarView() {
         </div>
       ) : null}
 
-      {moveError ? (
+      {notice ? (
         <div role="alert" className="mb-4 flex items-start gap-2 rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
-          <p className="min-w-0 flex-1">{moveError}</p>
-          <IconButton icon="X" label="Chiudi l'avviso" onClick={() => setMoveError("")} />
+          <p className="min-w-0 flex-1">{notice}</p>
+          <IconButton icon="X" label="Chiudi l'avviso" onClick={() => setNotice("")} />
         </div>
       ) : null}
 
@@ -513,18 +547,26 @@ export function CalendarView() {
           event={editingShared}
           subjects={subjects}
           sharedFrom={editingShared.sharedFrom}
-          onClose={() => setEditingSharedKey(null)}
-          onSave={async (patch) => {
+          onClose={closeSharedEditor}
+          onDirtyChange={(dirty) => {
+            sharedDraftDirty.current = dirty;
+          }}
+          onSave={async (_patch, changes) => {
+            const ownerId = editingShared.sharedFrom.ownerId;
+            // Solo i campi cambiati qui, sopra l'ultima versione nello store: ciò che il proprietario ha
+            // cambiato nel frattempo resta. La materia è sua e da qui non cambia.
+            const update: Partial<CalendarEvent> = { ...changes };
+            delete update.subjectId;
+            if (!Object.keys(update).length) {
+              closeSharedEditor();
+              return;
+            }
+            const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(ownerId, "calendarEvent", editingShared.id))?.entity;
+            if (!latest) return "Questo evento non è più condiviso con te.";
             try {
-              // Solo dallo store dei dati altrui; la materia resta quella del proprietario.
-              await useSharedStore
-                .getState()
-                .saveSharedItem(editingShared.sharedFrom.ownerId, "calendarEvent", {
-                  ...withoutOrigin(editingShared),
-                  ...patch,
-                  subjectId: editingShared.subjectId
-                });
-              setEditingSharedKey(null);
+              // Solo dallo store dei dati altrui: mai nel mio calendario.
+              await useSharedStore.getState().saveSharedItem(ownerId, "calendarEvent", { ...latest, ...update });
+              closeSharedEditor();
             } catch (cause) {
               return sharedFailure(cause, "Modifiche non salvate. Riprova.");
             }
@@ -534,7 +576,7 @@ export function CalendarView() {
             if (!window.confirm(`Eliminare "${editingShared.title}" dal calendario di ${owner}? Resta nella sua cronologia e può ripristinarlo.`)) return;
             try {
               await useSharedStore.getState().deleteSharedItem(editingShared.sharedFrom.ownerId, "calendarEvent", editingShared.id);
-              setEditingSharedKey(null);
+              closeSharedEditor();
             } catch (cause) {
               return sharedFailure(cause, "Evento non eliminato. Riprova.");
             }
@@ -1493,7 +1535,7 @@ function CalendarHoverPreview({ preview, subjects }: { preview: CalendarPreviewS
           </p>
           <div className="flex flex-wrap gap-1.5">
             {preview.event.sharedFrom ? <SharedMark origin={preview.event.sharedFrom} /> : null}
-            <Tag color={accent}>{preview.event.sharedFrom ? preview.event.sharedFrom.subjectName ?? "Senza materia" : subjectName(subjects, preview.event.subjectId)}</Tag>
+            <Tag color={accent}>{preview.event.sharedFrom ? preview.event.sharedFrom.subjectName ?? NO_SUBJECT_LABEL : subjectName(subjects, preview.event.subjectId)}</Tag>
             <Tag>{EVENT_STATUS_LABEL[preview.event.status]}</Tag>
             {preview.event.recurrence && preview.event.recurrence !== "none" ? <Tag>{RECURRENCE_LABEL[preview.event.recurrence]}</Tag> : null}
             {preview.event.category === "deadline" || preview.event.category === "exam" ? <Tag>{studyDaysLabel(preview.event.start)}</Tag> : null}
@@ -1567,22 +1609,30 @@ function EventEditorModal({
   sharedFrom,
   onClose,
   onSave,
-  onDelete
+  onDelete,
+  onDirtyChange
 }: {
   event: CalendarEvent;
   subjects: Subjects;
   /** Evento di un'altra persona: sola lettura senza `canEdit`, materia del proprietario non modificabile. */
   sharedFrom?: SharedOrigin;
   onClose: () => void;
-  /** Un testo restituito è un errore da mostrare accanto ai pulsanti (l'editor resta aperto). */
-  onSave: (patch: Partial<CalendarEvent>) => Promise<string | void>;
+  /**
+   * `patch` ha tutti i campi del modulo, `changes` solo quelli cambiati da quando l'editor è aperto
+   * (orari e ripetizione insieme). Un testo restituito è un errore da mostrare accanto ai pulsanti.
+   */
+  onSave: (patch: Partial<CalendarEvent>, changes: Partial<CalendarEvent>) => Promise<string | void>;
   onDelete: () => Promise<string | void>;
+  /** Ci sono modifiche non salvate nel modulo. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const readOnly = Boolean(sharedFrom && !sharedFrom.canEdit);
   const ownerFirstName = sharedFrom ? sharedFrom.ownerName.trim().split(/\s+/)[0] || sharedFrom.ownerName : "";
-  // Colore di riserva: per un evento altrui quello della sua materia (dal proprietario), mai di una delle mie.
-  const fallbackColor = (subjectId?: string) => (sharedFrom ? sharedFrom.subjectColor ?? event.color : subjectColor(subjects, subjectId));
-  const [draft, setDraft] = useState({
+  // Colore di riserva: per un evento altrui quello della sua materia (dal proprietario), poi quello della
+  // persona; mai di una delle mie materie.
+  const fallbackColor = (subjectId?: string) => (sharedFrom ? sharedFrom.subjectColor || sharedFrom.color : subjectColor(subjects, subjectId));
+  // Bozza all'apertura: il confronto con questa dice cosa è stato cambiato qui.
+  const [initialDraft] = useState(() => ({
     title: event.title,
     description: event.description,
     category: event.category,
@@ -1598,9 +1648,38 @@ function EventEditorModal({
     color: event.color || fallbackColor(event.subjectId),
     recurrence: event.recurrence ?? "none",
     recurrenceUntil: event.recurrenceUntil ?? ""
-  });
+  }));
+  const [draft, setDraft] = useState(initialDraft);
   const [error, setError] = useState("");
   const recurring = draft.recurrence !== "none";
+  // Gli orari precedenti servono solo a "Tutto il giorno": non contano come modifiche.
+  const dirty = Object.keys(changedFields({ ...initialDraft, prevStart: "", prevEnd: "" }, { ...draft, prevStart: "", prevEnd: "" })).length > 0;
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+
+  // Da bozza a campi dell'evento. La stessa conversione vale per la bozza iniziale e per quella attuale,
+  // così il confronto vede solo ciò che è stato cambiato qui (le date si validano prima, in save).
+  const toPatch = (value: typeof draft): Partial<CalendarEvent> => {
+    const iso = (local: string) => {
+      const at = new Date(local);
+      return Number.isNaN(at.getTime()) ? local : at.toISOString();
+    };
+    const day = new Date(`${value.start.slice(0, 10)}T00:00`);
+    const times = !value.allDay ? { start: iso(value.start), end: iso(value.end) } : Number.isNaN(day.getTime()) ? { start: value.start, end: value.end } : allDayRange(day);
+    return {
+      title: value.title.trim(),
+      description: value.description.trim(),
+      category: value.category,
+      subjectId: value.subjectId || undefined,
+      priority: value.priority,
+      status: value.status,
+      start: times.start,
+      end: times.end,
+      allDay: value.allDay,
+      color: value.color || fallbackColor(value.subjectId),
+      recurrence: value.recurrence,
+      recurrenceUntil: value.recurrence !== "none" && value.recurrenceUntil ? value.recurrenceUntil : undefined
+    };
+  };
 
   const setAllDay = (value: boolean) => {
     setDraft((v) => {
@@ -1614,11 +1693,6 @@ function EventEditorModal({
         end: sameDay ? v.prevEnd : `${day}T10:00`
       };
     });
-  };
-
-  const submit = async (patch: Partial<CalendarEvent>) => {
-    const failure = await onSave(patch);
-    if (failure) setError(failure);
   };
 
   const remove = async () => {
@@ -1642,43 +1716,17 @@ function EventEditorModal({
         setError("Scegli il giorno dell'evento.");
         return;
       }
-      const range = allDayRange(at);
-      await submit({
-        title: draft.title.trim(),
-        description: draft.description.trim(),
-        category: draft.category,
-        subjectId: draft.subjectId || undefined,
-        priority: draft.priority,
-        status: draft.status,
-        start: range.start,
-        end: range.end,
-        allDay: true,
-        color: draft.color || fallbackColor(draft.subjectId),
-        recurrence: draft.recurrence,
-        recurrenceUntil: recurring && draft.recurrenceUntil ? draft.recurrenceUntil : undefined
-      });
-      return;
+    } else {
+      const start = new Date(draft.start);
+      const end = new Date(draft.end);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+        setError("L'orario di fine deve venire dopo l'inizio: correggi «Fine».");
+        return;
+      }
     }
-    const start = new Date(draft.start);
-    const end = new Date(draft.end);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
-      setError("L'orario di fine deve venire dopo l'inizio: correggi «Fine».");
-      return;
-    }
-    await submit({
-      title: draft.title.trim(),
-      description: draft.description.trim(),
-      category: draft.category,
-      subjectId: draft.subjectId || undefined,
-      priority: draft.priority,
-      status: draft.status,
-      start: start.toISOString(),
-      end: end.toISOString(),
-      allDay: false,
-      color: draft.color || fallbackColor(draft.subjectId),
-      recurrence: draft.recurrence,
-      recurrenceUntil: recurring && draft.recurrenceUntil ? draft.recurrenceUntil : undefined
-    });
+    const patch = toPatch(draft);
+    const failure = await onSave(patch, changedFields(toPatch(initialDraft), patch, LINKED_EVENT_FIELDS));
+    if (failure) setError(failure);
   };
 
   return (
@@ -1704,7 +1752,7 @@ function EventEditorModal({
             </span>
           </p>
         ) : null}
-        <fieldset disabled={readOnly} className="m-0 grid min-w-0 grid-cols-1 gap-3 border-0 p-0">
+        <fieldset disabled={readOnly} className={`m-0 grid min-w-0 grid-cols-1 gap-3 border-0 p-0 ${DIMMED_DISABLED_FIELDS}`}>
           {event.tags?.includes("appello-importato") ? (
             <Panel className="p-3">
               <h4 className="font-black">{sharedFrom ? "Appello ufficiale" : "Appello ufficiale aggiunto al tuo calendario"}</h4>
@@ -1719,7 +1767,7 @@ function EventEditorModal({
           <Field label="Titolo">
             <input className={inputClass} value={draft.title} placeholder="Es. Lezione di Anatomia" onChange={(e) => setDraft((v) => ({ ...v, title: e.target.value }))} />
           </Field>
-          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 py-2 text-sm font-bold">
+          <label className={`flex min-h-11 items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 py-2 text-sm font-bold ${readOnly ? "cursor-not-allowed" : "cursor-pointer"}`}>
             <input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" checked={draft.allDay} onChange={(e) => setAllDay(e.target.checked)} />
             <span className="min-w-0 flex-1">
               {ALL_DAY_LABEL}
@@ -1766,7 +1814,7 @@ function EventEditorModal({
             <Field label={sharedFrom ? "Materia" : "Materia (facoltativa)"}>
               {sharedFrom ? (
                 // La materia è del proprietario e decide cosa è condiviso: si mostra, non si cambia.
-                <span className={`${inputClass} flex items-center text-[var(--muted)]`}>{sharedFrom.subjectName ?? "Nessuna"}</span>
+                <span className={`${inputClass} flex items-center text-[var(--muted)] opacity-60`}>{sharedFrom.subjectName ?? NO_SUBJECT_LABEL}</span>
               ) : (
                 <select
                   className={inputClass}
@@ -1914,6 +1962,7 @@ function CreateModal({
 }) {
   const [kind, setKind] = useState(initial.kind);
   const [ownerId, setOwnerId] = useState("");
+  const [ownerNotice, setOwnerNotice] = useState("");
   const [error, setError] = useState("");
   const [title, setTitle] = useState("");
   const [subjectId, setSubjectId] = useState("");
@@ -1924,13 +1973,21 @@ function CreateModal({
   const [recurrence, setRecurrence] = useState<NonNullable<CalendarEvent["recurrence"]>>("none");
   const allDay = kind === "event" && duration === "allday";
   const start = new Date(startsAt);
-  const valid = Boolean(title.trim()) && !Number.isNaN(start.getTime());
-  // Evento nel calendario di un'altra persona: si scelgono solo le sue materie, mai le mie
-  // (anche se nel frattempo quel calendario non è più modificabile: allora nessuna).
-  const inOtherCalendar = kind === "event" && Boolean(ownerId);
-  const subjectOptions = inOtherCalendar
-    ? calendars.find((calendar) => calendar.ownerId === ownerId)?.subjects ?? []
-    : selectableSubjects(subjects, subjectId);
+  // Calendario scelto non più modificabile (permesso tolto a modulo aperto): si torna al mio, senza la
+  // materia dell'altra persona, e lo si dice. Il menu resta utilizzabile.
+  const target = ownerId ? calendars.find((calendar) => calendar.ownerId === ownerId) : undefined;
+  if (ownerId && !target) {
+    setOwnerId("");
+    setSubjectId("");
+    setOwnerNotice("Non puoi più aggiungere eventi in quel calendario: l'evento andrà nel tuo.");
+  }
+  // Evento nel calendario di un'altra persona: si scelgono solo le sue materie, mai le mie. Se mi ha
+  // condiviso solo alcune materie, un evento senza materia non passerebbe: allora va scelta.
+  const inOtherCalendar = kind === "event" && Boolean(target);
+  const subjectRequired = inOtherCalendar && Boolean(target?.subjectRequired);
+  const subjectOptions = inOtherCalendar && target ? target.subjects : selectableSubjects(subjects, subjectId);
+  const validDate = !Number.isNaN(start.getTime());
+  const valid = Boolean(title.trim()) && validDate && (!subjectRequired || Boolean(subjectId));
 
   const submit = async () => {
     if (!valid) return;
@@ -1945,15 +2002,21 @@ function CreateModal({
       priority,
       category,
       recurrence,
-      ownerId: kind === "event" ? ownerId : ""
+      ownerId: inOtherCalendar ? ownerId : ""
     });
     if (failure) setError(failure);
   };
 
   const subjectField = (
-    <Field label="Materia (facoltativa)">
+    <Field label={subjectRequired ? "Materia" : "Materia (facoltativa)"}>
       <select className={inputClass} value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-        <option value="">Nessuna</option>
+        {subjectRequired ? (
+          <option value="" disabled>
+            {subjectOptions.length ? "Scegli una materia" : "Nessuna materia condivisa"}
+          </option>
+        ) : (
+          <option value="">Nessuna</option>
+        )}
         {subjectOptions.map((subject) => (
           <option key={subject.id} value={subject.id}>
             {subject.name}
@@ -1999,6 +2062,7 @@ function CreateModal({
                 setOwnerId(e.target.value);
                 setSubjectId("");
                 setError("");
+                setOwnerNotice("");
               }}
             >
               <option value="">Il mio calendario</option>
@@ -2009,6 +2073,11 @@ function CreateModal({
               ))}
             </select>
           </Field>
+        ) : null}
+        {ownerNotice && kind === "event" ? (
+          <p role="status" className="text-xs font-bold text-[var(--muted)]">
+            {ownerNotice}
+          </p>
         ) : null}
         <Field label="Titolo">
           <input
@@ -2092,7 +2161,9 @@ function CreateModal({
           </div>
         </details>
         {!valid ? (
-          <p className="text-xs font-bold text-[var(--muted)]">{!title.trim() ? "Scrivi un titolo per continuare." : "Scegli una data valida."}</p>
+          <p className="text-xs font-bold text-[var(--muted)]">
+            {!title.trim() ? "Scrivi un titolo per continuare." : !validDate ? "Scegli una data valida." : "Scegli una materia per continuare."}
+          </p>
         ) : null}
         {error ? (
           <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
