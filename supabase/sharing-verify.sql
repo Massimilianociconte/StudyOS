@@ -53,8 +53,10 @@ select
   -- Valori scritti da chi riceve (chiavi protette, colori e link sicuri): funzione e trigger.
   to_regprocedure('public.studyos_recipient_payload(text,jsonb,jsonb)') is not null
     and exists (select 1 from pg_trigger where tgname = 'studyos_items_recipient_values') as recipient_values_ready,
-  -- Cronologia leggera: copertine, file e sourceUid restano solo nelle eliminazioni.
+  -- Cronologia leggera: copertine, file e sourceUid restano solo nelle eliminazioni. Anche il trigger
+  -- deve essere quello nuovo: con il vecchio i dati sembrano a posto finché nessuno modifica nulla.
   to_regprocedure('public.studyos_without_protected(jsonb)') is not null
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_items_revision()')) like '%studyos_without_protected%', false)
     and not exists (
       select 1 from public.studyos_item_revisions as revision, jsonb_object_keys(
         case when jsonb_typeof(revision.payload) = 'object' then revision.payload else '{}'::jsonb end

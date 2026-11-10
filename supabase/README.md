@@ -46,7 +46,7 @@ una transazione che lo avvolge) e premi Run; si può rieseguire. Poi incolla
 [sharing-verify.sql](sharing-verify.sql) in una nuova query: tutte le 12 colonne `*_ready`
 devono essere `true` (compresi `recipient_values_ready`, la regola sui valori scritti da chi
 riceve, `triggers_ready`, che controlla anche i trigger su condivisioni e membri dei
-gruppi, e `light_history_ready`: la cronologia tiene copertine e file solo nelle eliminazioni), `shared_item_policies` deve valere `3` e `own_item_policies` `4`. Sul progetto
+gruppi, e `light_history_ready`: la cronologia tiene copertine e file solo nelle eliminazioni, anche nel trigger), `shared_item_policies` deve valere `3` e `own_item_policies` `4`. Sul progetto
 reale `sharing.sql` non è mai stato eseguito: non serve alcuna pulizia di valori vecchi.
 Senza questa migrazione la sezione Condivisione spiega che la funzione non è attiva e il
 resto dell'app non cambia. I link di invito usano `#condividi=` (e `?condividi=` dopo la

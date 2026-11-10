@@ -626,7 +626,8 @@ after insert or update on public.studyos_items
 for each row execute function public.studyos_items_revision();
 
 -- Revisioni salvate prima di questa regola: via le chiavi protette da creazioni e modifiche (una
--- volta sola: rieseguendo lo script non trova più nulla da cambiare).
+-- volta sola: rieseguendo lo script non trova più nulla da cambiare; su un progetto nuovo non c'è
+-- nessuna revisione e non fa nulla).
 update public.studyos_item_revisions as revision
 set payload = public.studyos_without_protected(revision.payload)
 where revision.change <> 'delete'

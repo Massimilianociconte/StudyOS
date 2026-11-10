@@ -339,7 +339,7 @@ const main = async () => {
   await pushOwn(alice, [row("calendarEvent", F1)]);
   const { data: f1Delete } = await pushShared(bob, alice, [row("calendarEvent", { id: F1.id, deletedAt: iso(1_000) }, true)]);
   const { data: f1Revisions } = await alice.client.from("studyos_item_revisions")
-    .select("change, payload").eq("entity_id", F1.id).order("id");
+    .select("change, payload, changed_at").eq("entity_id", F1.id).order("id");
   check("Revisione di eliminazione con copertina e UID",
     f1Delete?.[0]?.accepted === true && f1Revisions?.length === 1 && f1Revisions[0].change === "delete"
       && f1Revisions[0].payload.cover === F1.cover && f1Revisions[0].payload.sourceUid === F1.sourceUid,
@@ -350,7 +350,58 @@ const main = async () => {
   check("Elenco leggero della cronologia (titolo e id dal payload)",
     !lightError && light?.[0]?.title === F1.title && light[0].payload_id === F1.id && light[0].name === null && !("payload" in light[0]),
     lightError?.message ?? JSON.stringify(light));
+  // Annullamento delle modifiche di una persona (shareSync.ts): la riga scritta da chi riceve ha la
+  // stessa ora del server della sua revisione (stessa transazione); una scrittura successiva del
+  // proprietario, che non lascia revisioni, ha un'ora più recente. Stato chiesto per id, solo righe di Alice.
+  const f1State = async () => (await alice.client.from("studyos_items")
+    .select("entity_type, entity_id, updated_at, deleted").eq("user_id", alice.id).in("entity_id", [F1.id])).data?.[0];
+  const f1DeletedAt = f1Revisions?.[0]?.changed_at;
+  const f1ByBob = await f1State();
+  check("Riga eliminata da chi riceve: stessa ora del server della sua revisione",
+    f1ByBob?.deleted === true && typeof f1DeletedAt === "string" && f1ByBob.updated_at === f1DeletedAt,
+    JSON.stringify({ f1ByBob, f1DeletedAt }));
   await pushOwn(alice, [row("calendarEvent", { id: F1.id, deletedAt: iso(2_000) }, true)]);
+  const f1ByAlice = await f1State();
+  const { data: f1After } = await alice.client.from("studyos_item_revisions").select("id").eq("entity_id", F1.id);
+  check("Scrittura successiva del proprietario: nessuna revisione, ora più recente",
+    f1After?.length === 1 && Date.parse(f1ByAlice?.updated_at ?? "") > Date.parse(f1DeletedAt ?? ""),
+    JSON.stringify({ f1ByAlice, f1After }));
+  // Due creazioni nello stesso invio: stessa ora del server. Le pagine per (changed_at, id) non saltano
+  // né ripetono righe anche se il confine cade tra le due.
+  const K1 = fullEvent(`event-k1-${run}`, { title: "Pagina 1", subjectId: S1 });
+  const K2 = fullEvent(`event-k2-${run}`, { title: "Pagina 2", subjectId: S1 });
+  const { data: pair } = await pushShared(bob, alice, [row("calendarEvent", K1), row("calendarEvent", K2)]);
+  const { data: allRevisions } = await alice.client.from("studyos_item_revisions").select("id, entity_id, changed_at")
+    .order("changed_at", { ascending: true }).order("id", { ascending: true });
+  const boundary = allRevisions?.findIndex((revision) => revision.entity_id === K1.id) ?? -1;
+  const firstPage = allRevisions?.slice(0, boundary + 1) ?? [];
+  const last = firstPage.at(-1);
+  const { data: nextPage, error: pageError } = await alice.client.from("studyos_item_revisions").select("id, entity_id, changed_at")
+    .or(`changed_at.gt."${last?.changed_at}",and(changed_at.eq."${last?.changed_at}",id.gt.${last?.id})`)
+    .order("changed_at", { ascending: true }).order("id", { ascending: true });
+  const sameInstant = allRevisions?.find((revision) => revision.entity_id === K2.id)?.changed_at === last?.changed_at;
+  check("Cronologia a pagine per (changed_at, id): nessuna riga saltata né ripetuta",
+    pair?.every((result) => result.accepted) && boundary >= 0 && sameInstant && !pageError
+      && JSON.stringify([...firstPage, ...(nextPage ?? [])].map((revision) => revision.id)) === JSON.stringify(allRevisions.map((revision) => revision.id)),
+    pageError?.message ?? JSON.stringify({ boundary, sameInstant, next: nextPage?.length, all: allRevisions?.length }));
+  await pushOwn(alice, [row("calendarEvent", { id: K1.id, deletedAt: iso(3_000) }, true), row("calendarEvent", { id: K2.id, deletedAt: iso(3_000) }, true)]);
+  // Persone che hanno cambiato qualcosa: una lettura per persona, escludendo quelle già trovate.
+  const actors = [];
+  for (let round = 0; round < 10; round += 1) {
+    const query = alice.client.from("studyos_item_revisions").select("changed_by").not("changed_by", "is", null);
+    const { data: next, error: actorError } = await (actors.length ? query.not("changed_by", "in", `(${actors.join(",")})`) : query)
+      .order("changed_at", { ascending: false }).limit(1);
+    if (actorError) {
+      actors.push(`errore: ${actorError.message}`);
+      break;
+    }
+    if (!next?.length) break;
+    actors.push(next[0].changed_by);
+  }
+  const { data: everyActor } = await alice.client.from("studyos_item_revisions").select("changed_by");
+  const distinctActors = [...new Set((everyActor ?? []).map((revision) => revision.changed_by).filter(Boolean))].sort();
+  check("Persone della cronologia, una per lettura", actors.includes(bob.id) && JSON.stringify([...actors].sort()) === JSON.stringify(distinctActors),
+    JSON.stringify({ actors, distinctActors }));
 
   const D1 = fullEvent(`event-d1-${run}`, { title: "Inserito diretto", subjectId: S1, sourceUid: "barb-exam-z", cover: tracker });
   const { error: insertError } = await bob.client.from("studyos_items")
