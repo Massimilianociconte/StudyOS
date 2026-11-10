@@ -9,6 +9,8 @@ import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, type R
 import { Button, Drawer, Field, IconButton, Panel, ProgressBar, ProgressRing, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TopicManager, reviewDueLabel } from "../components/TopicManager";
+import { ShareButton } from "../components/ShareButton";
+import { SharedSection } from "../components/SharedSection";
 import { TIMER_PRESET_NAME } from "../components/StudyTimerWatcher";
 import { useNow } from "../hooks/useNow";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
@@ -107,7 +109,11 @@ export function StudyView() {
 
   return (
     <div>
-      <SectionTitle title="Studio" subtitle="Cronometra lo studio, tieni il conto delle ore e ripassa ogni argomento al momento giusto." />
+      <SectionTitle
+        title="Studio"
+        subtitle="Cronometra lo studio, tieni il conto delle ore e ripassa ogni argomento al momento giusto."
+        action={<ShareButton scopes={["study"]} />}
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="grid grid-cols-1 min-w-0 content-start gap-4">
@@ -318,6 +324,8 @@ export function StudyView() {
           setNotice(`Studio aggiunto: ${formatMinutes(session.actualMinutes ?? 0)}.`);
         }}
       />
+
+      <SharedSection entityTypes={["studySession", "studyTopic"]} />
     </div>
   );
 }

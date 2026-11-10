@@ -9,6 +9,8 @@ import { Button, EmptyState, IconButton, Panel, SectionTitle, Segmented, Tag, in
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { TaskModal } from "../components/TaskModal";
+import { ShareButton } from "../components/ShareButton";
+import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
@@ -101,11 +103,14 @@ export function TasksView() {
         title="Attività"
         subtitle="Segna cosa devi fare, con scadenza e priorità, e spunta ogni attività quando l'hai finita."
         action={
-          hasAnyTask ? (
-            <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
-              Nuova attività
-            </Button>
-          ) : undefined
+          <div className="flex flex-wrap gap-2">
+            {hasAnyTask ? (
+              <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
+                Nuova attività
+              </Button>
+            ) : null}
+            <ShareButton scopes={["tasks"]} />
+          </div>
         }
       />
 
@@ -195,6 +200,8 @@ export function TasksView() {
         />
       ) : null}
       {createOpen ? <TaskModal onClose={() => setCreateOpen(false)} onCreate={(draft) => addTask(draft)} /> : null}
+
+      <SharedSection entityTypes={["task"]} />
     </div>
   );
 }

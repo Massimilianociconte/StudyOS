@@ -5,6 +5,8 @@ import { selectableSubjects, shortDate, subjectColor, subjectName } from "../lib
 import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, attachmentKind, hostOf, type AttachmentKind } from "../lib/labels";
 import { Button, EmptyState, Field, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { ShareButton } from "../components/ShareButton";
+import { SharedSection } from "../components/SharedSection";
 import { normalizeExternalUrl, safeDataUrl, safeHref } from "../lib/safeUrl";
 import { oneOf, useUiState } from "../lib/uiState";
 
@@ -112,7 +114,11 @@ export function MaterialsView() {
 
   return (
     <div>
-      <SectionTitle title="Materiali" subtitle="Dispense, appunti e link utili in un solo posto. Collegali a una materia per ritrovarli subito." />
+      <SectionTitle
+        title="Materiali"
+        subtitle="Dispense, appunti e link utili in un solo posto. Collegali a una materia per ritrovarli subito."
+        action={<ShareButton scopes={["materials"]} />}
+      />
 
       <AddBar
         onFile={async (file) => {
@@ -338,6 +344,8 @@ export function MaterialsView() {
           </section>
         </div>
       ) : null}
+
+      <SharedSection entityTypes={["attachment", "note"]} />
     </div>
   );
 }

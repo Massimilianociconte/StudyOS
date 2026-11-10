@@ -12,6 +12,8 @@ import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { BarbExamCalendar } from "../components/BarbExamCalendar";
 import { BarbExamImport } from "../components/BarbExamImport";
+import { ShareButton } from "../components/ShareButton";
+import { SharedSection } from "../components/SharedSection";
 import { Segmented } from "../components/ui";
 import { oneOf, useUiState } from "../lib/uiState";
 
@@ -188,7 +190,8 @@ function PersonalExamsView() {
         title="I miei esami"
         subtitle="Le date dei tuoi prossimi esami e quanto sei pronto. Voti e medie sono in Libretto e laurea."
         action={
-          <div className="flex flex-wrap gap-2">
+          // Con quattro pulsanti in fila il titolo resterebbe senza spazio: da sm vanno a capo, in riga sola da xl.
+          <div className="flex flex-wrap gap-2 sm:max-w-[26rem] xl:max-w-none">
             <Button icon="Download" variant="ghost" onClick={() => setImportOpen(true)}>Importa appelli ufficiali</Button>
             <Button icon="Award" variant="soft" onClick={() => setGradeOpen(true)}>
               Registra un voto
@@ -196,6 +199,7 @@ function PersonalExamsView() {
             <Button icon="Plus" variant={headerPrimary ? "primary" : "soft"} onClick={openCreate}>
               Aggiungi esame
             </Button>
+            <ShareButton scopes={["progress"]} label="Condividi i progressi" />
           </div>
         }
       />
@@ -469,6 +473,8 @@ function PersonalExamsView() {
           </section>
         </div>
       ) : null}
+
+      <SharedSection entityTypes={["exam"]} title="Progressi condivisi con te" />
     </div>
   );
 }

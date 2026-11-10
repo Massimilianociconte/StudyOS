@@ -6,6 +6,8 @@ import { useStudyStore } from "../store/useStudyStore";
 import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL } from "../lib/labels";
 import { Button, Drawer, EmptyState, Field, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { ShareButton } from "../components/ShareButton";
+import { SharedSection } from "../components/SharedSection";
 import { isNullableString, useUiState } from "../lib/uiState";
 
 const CATEGORY_ICON: Record<Goal["category"], string> = {
@@ -42,7 +44,11 @@ export function GoalsView() {
 
   return (
     <div>
-      <SectionTitle title="Obiettivi" subtitle="Fissa i tuoi traguardi e segna a che punto sei: ogni + o − sposta il progresso del 5%." />
+      <SectionTitle
+        title="Obiettivi"
+        subtitle="Fissa i tuoi traguardi e segna a che punto sei: ogni + o − sposta il progresso del 5%."
+        action={<ShareButton scopes={["goals"]} />}
+      />
 
       <NewGoalBar onAdd={(title, category) => addGoal({ title, category, progress: 0, metric: "%" })} />
 
@@ -82,6 +88,8 @@ export function GoalsView() {
       ) : null}
 
       <GoalDrawer goal={open} onClose={() => setOpenId(null)} onSave={(patch) => (open ? updateGoal(open.id, patch) : Promise.resolve())} />
+
+      <SharedSection entityTypes={["goal"]} />
     </div>
   );
 }
