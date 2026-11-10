@@ -57,6 +57,7 @@ import {
   PRIORITY_TONE,
   TASK_STATUS_LABEL,
   capitalizeFirst,
+  eventLinkLabel,
   formatMinutes
 } from "../lib/labels";
 import { useNow } from "../hooks/useNow";
@@ -1756,7 +1757,11 @@ function EventEditorModal({
               <h4 className="font-black">{sharedFrom ? "Appello ufficiale" : "Appello ufficiale aggiunto al tuo calendario"}</h4>
               <p className="mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{event.description}</p>
               <p className="mt-2 whitespace-pre-line text-xs text-[var(--muted)]">{event.notes}</p>
-              {event.links.map((url) => <a key={url} href={safeHref(url)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-bold text-[var(--accent-ink)] underline">Apri la pagina ufficiale UniMi</a>)}
+              {event.links.map((url) => {
+                const href = safeHref(url);
+                // «Ufficiale UniMi» solo se il link porta davvero a unimi.it.
+                return <a key={url} href={href} target="_blank" rel="noreferrer" className="safe-text mt-2 inline-block text-sm font-bold text-[var(--accent-ink)] underline">{eventLinkLabel(href)}</a>;
+              })}
               {sharedFrom ? null : (
                 <p className="mt-2 text-xs text-[var(--muted)]">Qui modifichi solo il tuo promemoria: la data ufficiale resta visibile in Esami › Date ufficiali.</p>
               )}

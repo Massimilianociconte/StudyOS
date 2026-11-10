@@ -329,10 +329,14 @@ for each row execute function public.studyos_items_guard();
 --   salvate, anche se mancano; in una creazione si tolgono;
 -- - colore solo esadecimale, link e indirizzo esterno solo http(s), tag in lista e senza aggiungere
 --   o togliere il segno di appello ufficiale ("appello-importato").
+-- - link di un evento (la pagina ufficiale di un appello importato): li scrive solo il proprietario.
+--   In una modifica restano quelli salvati, in una creazione l'evento nasce senza (lista vuota).
+--   Nessun editor di chi riceve li cambia (modulo dell'evento, dettaglio, agente).
 -- Un valore uguale a quello salvato passa sempre: è del proprietario (es. il colore di riserva o un
 -- link mailto che la sua app salva), e chi modifica rimanda l'elemento intero.
 -- Restituisce il payload da salvare, o null se la riga va rifiutata.
-create or replace function public.studyos_recipient_payload(p_new jsonb, p_current jsonb)
+drop function if exists public.studyos_recipient_payload(jsonb, jsonb);
+create or replace function public.studyos_recipient_payload(p_type text, p_new jsonb, p_current jsonb)
 returns jsonb
 language plpgsql
 immutable
@@ -340,6 +344,8 @@ set search_path = pg_catalog
 as $$
 declare
   v_old jsonb := case when jsonb_typeof(p_current) = 'object' then p_current else '{}'::jsonb end;
+  v_links jsonb;
+  v_result jsonb;
   v_hex constant text := '^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$';
   v_web constant text := '^[hH][tT][tT][pP][sS]?://[^[:space:][:cntrl:]]+$';
   -- Come NEVER_KEYS in src/agent/shared.ts, tranne il cronometro (lo chiude un cambio di stato).
@@ -380,7 +386,17 @@ begin
      ) then
     return null;
   end if;
-  return (
+  if p_type = 'calendarEvent' then
+    if jsonb_typeof(p_current) = 'object' then
+      -- Mai tolti: le viste del proprietario scorrono event.links.
+      v_links := case when jsonb_typeof(v_old->'links') = 'array' then v_old->'links' else '[]'::jsonb end;
+    elsif coalesce(p_new->'links', 'null'::jsonb) not in ('null'::jsonb, '[]'::jsonb) then
+      return null;
+    else
+      v_links := '[]'::jsonb;
+    end if;
+  end if;
+  v_result := (
     select coalesce(jsonb_object_agg(field.key, field.value), '{}'::jsonb)
     from jsonb_each(p_new) as field
     where field.key !~ v_protected
@@ -389,15 +405,21 @@ begin
     from jsonb_each(v_old) as field
     where field.key ~ v_protected
   );
+  if v_links is not null then
+    v_result := v_result || jsonb_build_object('links', v_links);
+  end if;
+  return v_result;
 end;
 $$;
 
-revoke all on function public.studyos_recipient_payload(jsonb, jsonb) from public;
-grant execute on function public.studyos_recipient_payload(jsonb, jsonb) to authenticated;
+revoke all on function public.studyos_recipient_payload(text, jsonb, jsonb) from public;
+grant execute on function public.studyos_recipient_payload(text, jsonb, jsonb) to authenticated;
 
 -- Stessa regola per ogni scrittura di chi riceve, anche diretta sulla tabella (le policy "shared" la
 -- consentono): le chiavi protette tornano quelle salvate, un valore non sicuro fa fallire la scrittura.
 -- push_shared_rows manda qui solo righe già controllate: le altre tornano "denied" senza errori.
+-- Uno stamp nel futuro (orologio avanti o scelto apposta) si salva come adesso, tombstone compresi:
+-- altrimenti ogni modifica successiva del proprietario perderebbe il confronto LWW.
 create or replace function public.studyos_items_recipient_values()
 returns trigger
 language plpgsql
@@ -407,8 +429,21 @@ declare
   v_current jsonb;
   v_payload jsonb;
 begin
-  -- La sync del proprietario, le scritture senza utente (SQL Editor) e i tombstone (policy) non passano di qui.
-  if auth.uid() is null or auth.uid() = new.user_id or new.deleted then
+  -- La sync del proprietario e le scritture senza utente (SQL Editor) non passano di qui.
+  if auth.uid() is null or auth.uid() = new.user_id then
+    return new;
+  end if;
+  if jsonb_typeof(new.payload) = 'object'
+     and public.studyos_item_stamp(new.payload, new.deleted, now()) > now() then
+    -- Stesso formato del client: ISO UTC con millisecondi.
+    new.payload := jsonb_set(
+      new.payload,
+      case when new.deleted then '{deletedAt}' else '{updatedAt}' end::text[],
+      to_jsonb(to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+    );
+  end if;
+  -- I tombstone hanno già la forma { id, deletedAt } (policy e push_shared_rows).
+  if new.deleted then
     return new;
   end if;
   if tg_op = 'UPDATE' then
@@ -416,7 +451,7 @@ begin
       v_current := old.payload;
     end if;
   end if;
-  v_payload := public.studyos_recipient_payload(new.payload, v_current);
+  v_payload := public.studyos_recipient_payload(new.entity_type, new.payload, v_current);
   if v_payload is null or (v_payload->>'id') is distinct from new.entity_id then
     raise exception 'Valori non consentiti in un elemento di un''altra persona';
   end if;
@@ -969,7 +1004,7 @@ begin
     v_exists := found;
     if not v_deleted then
       -- Chiavi protette dalla riga salvata, colori e link sicuri; null = riga rifiutata.
-      v_payload := public.studyos_recipient_payload(v_payload, case when v_exists and not v_current.deleted then v_current.payload end);
+      v_payload := public.studyos_recipient_payload(v_type, v_payload, case when v_exists and not v_current.deleted then v_current.payload end);
     end if;
 
     if v_deleted then
@@ -1061,7 +1096,7 @@ revoke all on function public.studyos_item_access(uuid, text, jsonb) from anon;
 revoke all on function public.studyos_type_access(uuid, text) from anon;
 revoke all on function public.studyos_knows_user(uuid) from anon;
 revoke all on function public.studyos_account_email() from anon;
-revoke all on function public.studyos_recipient_payload(jsonb, jsonb) from anon;
+revoke all on function public.studyos_recipient_payload(text, jsonb, jsonb) from anon;
 revoke all on function public.studyos_validate_share_items(jsonb, boolean) from anon;
 revoke all on function public.studyos_share_name(text) from anon;
 revoke all on function public.create_share_invite(text, jsonb, jsonb, text) from anon;

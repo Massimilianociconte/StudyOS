@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { expandEvents } from "../src/lib/recurrence.ts";
 import { studyStreak } from "../src/lib/selectors.ts";
-import { attachmentKind, formatHours, formatMinutes } from "../src/lib/labels.ts";
+import { attachmentKind, eventLinkLabel, formatHours, formatMinutes } from "../src/lib/labels.ts";
 
 const event = (patch) => ({
   id: "e1",
@@ -97,4 +97,18 @@ test("tipo di allegato riconosciuto da mime, nome e URL", () => {
   assert.equal(attachmentKind({ mimeType: "text/uri-list", name: "Video", externalUrl: "https://youtu.be/abc" }), "video");
   assert.equal(attachmentKind({ mimeType: "text/uri-list", name: "Sito", externalUrl: "https://example.com" }), "link");
   assert.equal(attachmentKind({ mimeType: "image/png", name: "a.png" }), "image");
+});
+
+test("link di un appello: «ufficiale UniMi» solo per unimi.it e i suoi sottodomini", () => {
+  assert.equal(eventLinkLabel("https://www.unimi.it/it/appello"), "Apri la pagina ufficiale UniMi");
+  assert.equal(eventLinkLabel("https://unimi.it/"), "Apri la pagina ufficiale UniMi");
+  assert.equal(eventLinkLabel("https://cdlbiotec.cdl.UNIMI.it/esami"), "Apri la pagina ufficiale UniMi");
+  assert.equal(eventLinkLabel("http://www.unimi.it/"), "Apri la pagina ufficiale UniMi");
+  assert.equal(eventLinkLabel("https://phish.example/login"), "Apri la pagina · phish.example");
+  assert.equal(eventLinkLabel("https://unimi.it.phish.example/"), "Apri la pagina · unimi.it.phish.example");
+  assert.equal(eventLinkLabel("https://notunimi.it/"), "Apri la pagina · notunimi.it");
+  assert.equal(eventLinkLabel("https://unimi.it@phish.example/"), "Apri la pagina · phish.example");
+  assert.equal(eventLinkLabel("ftp://www.unimi.it/"), "Apri il link");
+  assert.equal(eventLinkLabel(undefined), "Apri il link");
+  assert.equal(eventLinkLabel("non un link"), "Apri il link");
 });

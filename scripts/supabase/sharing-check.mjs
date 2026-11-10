@@ -249,9 +249,11 @@ const main = async () => {
   check("Link javascript: scritto da chi riceve: rifiutato, riga invariata", linkDenied?.[0]?.reason === "denied" && unchanged(await stored(P1.id)),
     JSON.stringify(linkDenied));
   const { data: urlDenied } = await pushShared(bob, alice, [row("calendarEvent", { ...P1, externalUrl: "javascript:alert(1)", updatedAt: iso(1_200) })]);
-  check("Indirizzo esterno non http(s): rifiutato", urlDenied?.[0]?.reason === "denied", JSON.stringify(urlDenied));
-  const { data: markerDenied } = await pushShared(bob, alice, [row("calendarEvent", { ...P1, tags: ["BARB", "appello-importato"], updatedAt: iso(1_300) })]);
-  check("Chi riceve non trasforma un evento in appello ufficiale (tag)", markerDenied?.[0]?.reason === "denied", JSON.stringify(markerDenied));
+  check("Indirizzo esterno non http(s): rifiutato, riga invariata", urlDenied?.[0]?.reason === "denied" && unchanged(await stored(P1.id)),
+    JSON.stringify(urlDenied));
+  const { data: markerDenied } = await pushShared(bob, alice, [row("calendarEvent", { ...P1, title: "Appello finto", tags: ["BARB", "appello-importato"], updatedAt: iso(1_300) })]);
+  check("Chi riceve non trasforma un evento in appello ufficiale (tag): riga invariata",
+    markerDenied?.[0]?.reason === "denied" && unchanged(await stored(P1.id)), JSON.stringify(markerDenied));
 
   // Una riga rifiutata non ferma il lotto; la modifica legittima rimanda colore e link di Alice uguali.
   const { data: mixed } = await pushShared(bob, alice, [
@@ -297,6 +299,65 @@ const main = async () => {
   check("Update diretto: copertina e UID restano quelli di Alice",
     !directError && afterDirect?.title === "Diretto" && afterDirect?.cover === P1.cover && afterDirect?.sourceUid === P1.sourceUid,
     directError?.message ?? JSON.stringify(afterDirect));
+  const D1 = entity(`event-d1-${run}`, {
+    title: "Inserito diretto", subjectId: S1, start: iso(), end: iso(3_600_000), color: "#7CF7C8", links: [], tags: [], sourceUid: "barb-exam-z", cover: tracker
+  });
+  const { error: insertError } = await bob.client.from("studyos_items")
+    .insert({ user_id: alice.id, entity_type: "calendarEvent", entity_id: D1.id, payload: D1, deleted: false, encrypted: false }).select().single();
+  const d1 = await stored(D1.id);
+  check("Insert diretto con UID d'appello e copertina: salvato senza",
+    !insertError && d1?.title === D1.title && !("sourceUid" in (d1 ?? { sourceUid: 1 })) && !("cover" in (d1 ?? { cover: 1 })),
+    insertError?.message ?? JSON.stringify(d1));
+
+  // Link di un appello ufficiale (la pagina UniMi): li scrive solo Alice. Chi riceve non li sostituisce
+  // né ne aggiunge, e un evento che crea nasce senza link.
+  const OFFICIAL = entity(`event-official-${run}`, {
+    title: "Appello di Biochimica", subjectId: S1, allDay: true, start: iso(), end: iso(86_400_000), color: "#123456",
+    links: ["https://www.unimi.it/it/appello-14b"], tags: ["BARB", "appello-importato"]
+  });
+  await pushOwn(alice, [row("calendarEvent", OFFICIAL)]);
+  const officialLinks = (payload) => JSON.stringify(payload?.links) === JSON.stringify(OFFICIAL.links);
+  const { data: linkSwap } = await pushShared(bob, alice, [row("calendarEvent", {
+    ...OFFICIAL, title: "Appello (Bob)", links: ["https://phish.example/login"], updatedAt: iso(1_000)
+  })]);
+  const afterSwap = await stored(OFFICIAL.id);
+  check("Link dell'appello ufficiale sostituito da chi riceve: restano quelli di Alice",
+    linkSwap?.[0]?.accepted === true && afterSwap?.title === "Appello (Bob)" && officialLinks(afterSwap), JSON.stringify({ linkSwap, afterSwap }));
+  const { data: linkAdd } = await pushShared(bob, alice, [row("calendarEvent", {
+    ...afterSwap, title: "Appello (Bob 2)", links: [...OFFICIAL.links, "https://phish.example/"], updatedAt: iso(2_000)
+  })]);
+  const afterAdd = await stored(OFFICIAL.id);
+  check("Link aggiunto all'appello ufficiale da chi riceve: restano quelli di Alice",
+    linkAdd?.[0]?.accepted === true && afterAdd?.title === "Appello (Bob 2)" && officialLinks(afterAdd), JSON.stringify({ linkAdd, afterAdd }));
+  const L1 = entity(`event-l1-${run}`, { title: "Con link", subjectId: S1, start: iso(), end: iso(3_600_000), color: "#7CF7C8", links: ["https://phish.example/"], tags: [] });
+  const { data: linkCreate } = await pushShared(bob, alice, [row("calendarEvent", L1)]);
+  check("Evento nuovo di chi riceve con un link: rifiutato", linkCreate?.[0]?.reason === "denied" && !(await stored(L1.id)), JSON.stringify(linkCreate));
+  const { links: _links, ...L2 } = { ...L1, id: `event-l2-${run}`, title: "Senza link" };
+  const { data: noLinks } = await pushShared(bob, alice, [row("calendarEvent", L2)]);
+  const l2 = await stored(L2.id);
+  check("Evento nuovo di chi riceve senza link: salvato con una lista vuota",
+    noLinks?.[0]?.accepted === true && Array.isArray(l2?.links) && l2.links.length === 0, JSON.stringify({ noLinks, l2 }));
+
+  // Stamp nel futuro: il server lo riporta ad adesso, così le modifiche successive di Alice valgono ancora.
+  const FAR = "9999-12-31T23:59:59.999Z";
+  const notFuture = (stamp) => typeof stamp === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(stamp) && Date.parse(stamp) <= Date.now() + 60_000;
+  const storedRow = async (id) => (await items(alice, alice, "calendarEvent")).find((item) => item.entity_id === id);
+  const { data: farUpdate } = await pushShared(bob, alice, [row("calendarEvent", { ...(await stored(P2.id)), title: "Ricevimento (futuro)", updatedAt: FAR })]);
+  const afterFar = await stored(P2.id);
+  check("Modifica con stamp nel futuro: salvata con lo stamp di adesso",
+    farUpdate?.[0]?.accepted === true && afterFar?.title === "Ricevimento (futuro)" && notFuture(afterFar?.updatedAt), JSON.stringify({ farUpdate, stamp: afterFar?.updatedAt }));
+  const [aliceNext] = await pushOwn(alice, [row("calendarEvent", { ...afterFar, title: "Ricevimento (Alice dopo)", updatedAt: iso(1_000) })]);
+  check("Dopo uno stamp nel futuro la modifica di Alice vale", aliceNext?.accepted === true && (await stored(P2.id))?.title === "Ricevimento (Alice dopo)",
+    JSON.stringify(aliceNext));
+  const { data: farDelete } = await pushShared(bob, alice, [row("calendarEvent", { id: L2.id, deletedAt: FAR }, true)]);
+  const farTomb = await storedRow(L2.id);
+  check("Tombstone con stamp nel futuro: salvato con lo stamp di adesso",
+    farDelete?.[0]?.accepted === true && farTomb?.deleted === true && Object.keys(farTomb.payload).sort().join(",") === "deletedAt,id" && notFuture(farTomb.payload.deletedAt),
+    JSON.stringify({ farDelete, farTomb }));
+  const [aliceRestore] = await pushOwn(alice, [row("calendarEvent", { ...l2, title: "Ripristinato da Alice", updatedAt: iso(1_000) })]);
+  const restored = await storedRow(L2.id);
+  check("Dopo un tombstone nel futuro Alice ripristina l'evento", aliceRestore?.accepted === true && restored?.deleted === false && restored?.payload.title === "Ripristinato da Alice",
+    JSON.stringify(aliceRestore));
 
   // La sync personale di Alice non cambia: i suoi dati restano come li scrive.
   const own = { ...P1, title: "Di Alice", color: "hsl(0 0% 50%)", cover: "data:image/png;base64,BBBB", sourceUid: `ics-own-${run}`, updatedAt: iso(30_000) };
@@ -305,7 +366,7 @@ const main = async () => {
   check("Le scritture di Alice sui propri dati restano invariate",
     afterOwn?.title === own.title && afterOwn?.color === own.color && afterOwn?.cover === own.cover && afterOwn?.sourceUid === own.sourceUid,
     JSON.stringify(afterOwn));
-  await pushOwn(alice, [P1, P2, C1].map((event) => row("calendarEvent", { id: event.id, deletedAt: iso(60_000) }, true)));
+  await pushOwn(alice, [P1, P2, C1, D1, OFFICIAL, L2].map((event) => row("calendarEvent", { id: event.id, deletedAt: iso(60_000) }, true)));
 
   // Tentativi vietati.
   const { data: viewOnly } = await pushShared(alice, bob, [row("calendarEvent", { ...B1, title: "no", updatedAt: iso(5_000) })]);

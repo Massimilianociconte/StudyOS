@@ -187,6 +187,23 @@ export const hostOf = (url: string | undefined) => {
   }
 };
 
+/**
+ * Testo di un link di un appello: «ufficiale UniMi» solo se porta davvero a unimi.it (o a un suo
+ * sottodominio); gli altri mostrano dove portano, così un link cambiato non si spaccia per l'ateneo.
+ */
+export const eventLinkLabel = (href: string | undefined) => {
+  let url: URL;
+  try {
+    url = new URL(href ?? "");
+  } catch {
+    return "Apri il link";
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return "Apri il link";
+  const host = url.hostname.toLowerCase();
+  if (host === "unimi.it" || host.endsWith(".unimi.it")) return "Apri la pagina ufficiale UniMi";
+  return `Apri la pagina · ${hostOf(href)}`;
+};
+
 // ——— Condivisione ———
 
 export const SHARE_SCOPE_LABEL: Record<ShareScope, string> = {

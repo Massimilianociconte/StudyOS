@@ -443,12 +443,15 @@ function PersonalExamsView() {
                     />
                   </Field>
 
-                  {draftCover ? (
+                  {/* Anche una copertina che non si mostra (non è un'immagine caricata qui) si può togliere. */}
+                  {draft.cover ? (
                     <div className="quiet-panel flex items-center gap-3 p-3">
-                      <img src={draftCover} alt="" className="h-16 w-16 rounded-[18px] object-cover" />
+                      {draftCover ? <img src={draftCover} alt="" className="h-16 w-16 rounded-[18px] object-cover" /> : null}
                       <div className="min-w-0 flex-1">
-                        <p className="font-black">Copertina scelta</p>
-                        <p className="text-sm text-[var(--muted)]">La vedi sulla scheda dell'esame.</p>
+                        <p className="font-black">{draftCover ? "Copertina scelta" : "Copertina non mostrata"}</p>
+                        <p className="text-sm text-[var(--muted)]">
+                          {draftCover ? "La vedi sulla scheda dell'esame." : "Non è un'immagine caricata dall'app, quindi non la apriamo. Rimuovila e scegline un'altra."}
+                        </p>
                       </div>
                       <Button variant="danger" icon="Trash2" onClick={() => setDraft((value) => ({ ...value, cover: undefined }))}>
                         Rimuovi copertina
