@@ -324,6 +324,34 @@ const main = async () => {
   check("Update diretto: copertina e UID restano quelli di Alice",
     !directError && afterDirect?.title === "Diretto" && afterDirect?.cover === P1.cover && afterDirect?.sourceUid === P1.sourceUid,
     directError?.message ?? JSON.stringify(afterDirect));
+
+  // Cronologia leggera: le modifiche non ripetono copertine, file e UID (chi riceve non li cambia);
+  // le eliminazioni li conservano, perché il ripristino deve ridare ad Alice l'elemento intero.
+  const { data: p1Revisions } = await alice.client.from("studyos_item_revisions")
+    .select("change, payload").eq("entity_id", P1.id).order("id");
+  check("Revisioni di modifica senza copertina e UID",
+    p1Revisions?.length >= 3 && p1Revisions.every((rev) => rev.change === "update" && !("cover" in rev.payload) && !("sourceUid" in rev.payload))
+      && p1Revisions[0].payload.title === P1.title,
+    JSON.stringify(p1Revisions?.map((rev) => [rev.change, Object.keys(rev.payload).sort().join(",")])));
+  const F1 = entity(`event-f1-${run}`, {
+    title: "Con file", subjectId: S1, start: iso(), end: iso(3_600_000), cover: "data:image/png;base64,BBBB", sourceUid: `ics-f-${run}`, tags: []
+  });
+  await pushOwn(alice, [row("calendarEvent", F1)]);
+  const { data: f1Delete } = await pushShared(bob, alice, [row("calendarEvent", { id: F1.id, deletedAt: iso(1_000) }, true)]);
+  const { data: f1Revisions } = await alice.client.from("studyos_item_revisions")
+    .select("change, payload").eq("entity_id", F1.id).order("id");
+  check("Revisione di eliminazione con copertina e UID",
+    f1Delete?.[0]?.accepted === true && f1Revisions?.length === 1 && f1Revisions[0].change === "delete"
+      && f1Revisions[0].payload.cover === F1.cover && f1Revisions[0].payload.sourceUid === F1.sourceUid,
+    JSON.stringify({ f1Delete, f1Revisions }));
+  // Elenco della cronologia nel client: solo id e titolo dal payload, mai il file.
+  const { data: light, error: lightError } = await alice.client.from("studyos_item_revisions")
+    .select("id, change, title:payload->>title, name:payload->>name, payload_id:payload->>id").eq("entity_id", F1.id);
+  check("Elenco leggero della cronologia (titolo e id dal payload)",
+    !lightError && light?.[0]?.title === F1.title && light[0].payload_id === F1.id && light[0].name === null && !("payload" in light[0]),
+    lightError?.message ?? JSON.stringify(light));
+  await pushOwn(alice, [row("calendarEvent", { id: F1.id, deletedAt: iso(2_000) }, true)]);
+
   const D1 = fullEvent(`event-d1-${run}`, { title: "Inserito diretto", subjectId: S1, sourceUid: "barb-exam-z", cover: tracker });
   const { error: insertError } = await bob.client.from("studyos_items")
     .insert({ user_id: alice.id, entity_type: "calendarEvent", entity_id: D1.id, payload: D1, deleted: false, encrypted: false }).select().single();

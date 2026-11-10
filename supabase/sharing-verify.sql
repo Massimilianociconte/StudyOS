@@ -1,7 +1,8 @@
 -- Controllo in sola lettura dopo aver eseguito sharing.sql nel SQL Editor.
 -- Atteso: ogni colonna *_ready è true, shared_item_policies vale 3 e own_item_policies vale 4.
 -- token_hidden_ready, claim_private_ready, anon_rpc_closed_ready e anon_tables_closed_ready
--- controllano i privilegi che i valori predefiniti del progetto possono riaprire.
+-- controllano i privilegi che i valori predefiniti del progetto possono riaprire; light_history_ready
+-- che la cronologia tenga copertine, file e sourceUid solo nelle eliminazioni.
 select
   to_regclass('public.studyos_shares') is not null
     and to_regclass('public.studyos_share_invites') is not null
@@ -52,5 +53,13 @@ select
   -- Valori scritti da chi riceve (chiavi protette, colori e link sicuri): funzione e trigger.
   to_regprocedure('public.studyos_recipient_payload(text,jsonb,jsonb)') is not null
     and exists (select 1 from pg_trigger where tgname = 'studyos_items_recipient_values') as recipient_values_ready,
+  -- Cronologia leggera: copertine, file e sourceUid restano solo nelle eliminazioni.
+  to_regprocedure('public.studyos_without_protected(jsonb)') is not null
+    and not exists (
+      select 1 from public.studyos_item_revisions as revision, jsonb_object_keys(
+        case when jsonb_typeof(revision.payload) = 'object' then revision.payload else '{}'::jsonb end
+      ) as field (key)
+      where revision.change <> 'delete' and field.key ~ '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
+    ) as light_history_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
     and schemaname = 'public' and tablename = 'studyos_shares') as realtime_ready;

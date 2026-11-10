@@ -562,8 +562,28 @@ create trigger studyos_items_recipient_values
 before insert or update on public.studyos_items
 for each row execute function public.studyos_items_recipient_values();
 
+-- Payload senza le chiavi protette (copertine, file incorporati, sourceUid): stessa espressione di
+-- v_protected in studyos_recipient_payload e di PROTECTED_KEY in src/lib/sharing.ts.
+create or replace function public.studyos_without_protected(p_payload jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select case when jsonb_typeof(p_payload) = 'object' then (
+    select coalesce(jsonb_object_agg(field.key, field.value), '{}'::jsonb)
+    from jsonb_each(p_payload) as field
+    where field.key !~ '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
+  ) else p_payload end
+$$;
+
+revoke all on function public.studyos_without_protected(jsonb) from public, anon, authenticated;
+
 -- Cronologia delle modifiche fatte da altri: creazione (riga nuova), modifica ed eliminazione
 -- (riga precedente). Il proprietario la legge e ripristina con la sync normale.
+-- Le chiavi protette restano solo nelle eliminazioni: chi riceve non le può cambiare, quindi in una
+-- modifica sono ancora quelle della riga e il ripristino le riprende dalla copia del proprietario.
+-- Così la cronologia non ripete a ogni modifica i file incorporati (fino a 600 KiB ciascuno).
 create or replace function public.studyos_items_revision()
 returns trigger
 language plpgsql
@@ -572,22 +592,24 @@ set search_path = public
 as $$
 declare
   v_actor uuid := auth.uid();
+  v_change text;
 begin
   if tg_op = 'INSERT' then
     if v_actor is null or v_actor = new.user_id then
       return null;
     end if;
     insert into public.studyos_item_revisions (owner_id, entity_type, entity_id, payload, deleted, change, changed_by)
-    values (new.user_id, new.entity_type, new.entity_id, new.payload, new.deleted, 'create', v_actor);
+    values (new.user_id, new.entity_type, new.entity_id, public.studyos_without_protected(new.payload), new.deleted, 'create', v_actor);
   else
     if v_actor is null or v_actor = old.user_id then
       return null;
     end if;
+    v_change := case when new.deleted and not old.deleted then 'delete' else 'update' end;
     insert into public.studyos_item_revisions (owner_id, entity_type, entity_id, payload, deleted, change, changed_by)
     values (
-      old.user_id, old.entity_type, old.entity_id, old.payload, old.deleted,
-      case when new.deleted and not old.deleted then 'delete' else 'update' end,
-      v_actor
+      old.user_id, old.entity_type, old.entity_id,
+      case when v_change = 'delete' then old.payload else public.studyos_without_protected(old.payload) end,
+      old.deleted, v_change, v_actor
     );
   end if;
   delete from public.studyos_item_revisions
@@ -602,6 +624,17 @@ drop trigger if exists studyos_items_revision on public.studyos_items;
 create trigger studyos_items_revision
 after insert or update on public.studyos_items
 for each row execute function public.studyos_items_revision();
+
+-- Revisioni salvate prima di questa regola: via le chiavi protette da creazioni e modifiche (una
+-- volta sola: rieseguendo lo script non trova più nulla da cambiare).
+update public.studyos_item_revisions as revision
+set payload = public.studyos_without_protected(revision.payload)
+where revision.change <> 'delete'
+  and jsonb_typeof(revision.payload) = 'object'
+  and exists (
+    select 1 from jsonb_object_keys(revision.payload) as field (key)
+    where field.key ~ '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
+  );
 
 -- ─── RLS delle nuove tabelle ────────────────────────────────────────────────
 
