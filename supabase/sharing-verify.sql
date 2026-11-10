@@ -41,8 +41,14 @@ select
   (select count(*) from pg_policies where schemaname = 'public' and tablename = 'studyos_items'
     and policyname in ('studyos_select_own_items', 'studyos_insert_own_items',
       'studyos_update_own_items', 'studyos_delete_own_items')) as own_item_policies,
-  exists (select 1 from pg_trigger where tgname = 'studyos_items_revision') and
-    exists (select 1 from pg_trigger where tgname = 'studyos_items_guard') as triggers_ready,
+  -- Trigger della condivisione sulle loro tabelle, più quello di schema.sql che riscrive updated_at e
+  -- version in ogni modifica (anche di chi riceve).
+  coalesce((select count(distinct t.tgname) = 6 from pg_trigger t where not t.tgisinternal and (
+    (t.tgrelid = to_regclass('public.studyos_items') and t.tgname in (
+      'studyos_items_revision', 'studyos_items_guard', 'studyos_items_recipient_values', 'studyos_items_updated_at'))
+    or (t.tgrelid = to_regclass('public.studyos_shares') and t.tgname = 'studyos_shares_guard')
+    or (t.tgrelid = to_regclass('public.studyos_group_members') and t.tgname = 'studyos_group_member_left'))), false)
+    as triggers_ready,
   -- Valori scritti da chi riceve (chiavi protette, colori e link sicuri): funzione e trigger.
   to_regprocedure('public.studyos_recipient_payload(text,jsonb,jsonb)') is not null
     and exists (select 1 from pg_trigger where tgname = 'studyos_items_recipient_values') as recipient_values_ready,

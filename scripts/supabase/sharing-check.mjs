@@ -54,6 +54,33 @@ const summary = () => {
 const run = Date.now().toString(36);
 const iso = (offsetMs = 0) => new Date(Date.now() + offsetMs).toISOString();
 const entity = (id, extra = {}) => ({ id, createdAt: iso(), updatedAt: iso(), archived: false, tags: [], ...extra });
+// Elementi completi come li scrive l'app (src/types.ts): una creazione di chi riceve deve avere i campi
+// che le viste del proprietario leggono (testi, date, liste).
+const fullEvent = (id, extra = {}) => entity(id, {
+  title: "Evento", description: "", category: "study", color: "#7CF7C8", priority: "medium", start: iso(), end: iso(3_600_000),
+  status: "planned", checklist: [], attachmentIds: [], notes: "", links: [], ...extra
+});
+const fullTask = (id, extra = {}) => entity(id, {
+  title: "Attività", description: "", priority: "medium", status: "todo", subtasks: [], attachmentIds: [], notes: "",
+  estimatedMinutes: 45, energy: "medium", difficulty: 2, importance: 3, ...extra
+});
+const fullSession = (id, extra = {}) => entity(id, {
+  title: "Sessione", template: "review", plannedMinutes: 60, actualMinutes: 0, start: iso(), end: iso(3_600_000), topics: [],
+  perceivedDifficulty: 3, focusLevel: 3, notes: "", attachmentIds: [], status: "planned", ...extra
+});
+const fullTopic = (id, extra = {}) => entity(id, {
+  title: "Argomento", firstStudiedAt: iso(), comprehension: 3, memorization: 3, difficulty: 3, nextReviewDate: iso(86_400_000),
+  completedReviews: 0, notes: "", attachmentIds: [], questions: [], ...extra
+});
+const fullExam = (id, extra = {}) => entity(id, {
+  date: iso(30 * 86_400_000), program: [], preparation: 0, targetGrade: 28, status: "planning", simulations: 0, frequentQuestions: [], ...extra
+});
+const fullAttachment = (id, extra = {}) => entity(id, { name: "File", mimeType: "application/pdf", size: 4, addedAt: iso(), description: "", ...extra });
+const fullNote = (id, extra = {}) => entity(id, { title: "Nota", body: "", ...extra });
+const fullGoal = (id, extra = {}) => entity(id, {
+  title: "Obiettivo", description: "", category: "study", startDate: iso(), progress: 0, metric: "%", linkedTaskIds: [],
+  linkedSessionIds: [], status: "active", notes: "", ...extra
+});
 const row = (entityType, payload, deleted = false) => ({ entity_type: entityType, entity_id: payload.id, payload, deleted });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -209,7 +236,7 @@ const main = async () => {
   check("Bob modifica un evento di Alice", updateResult?.[0]?.accepted === true);
   const { data: staleResult } = await pushShared(bob, alice, [row("calendarEvent", { ...E1, title: "vecchia", updatedAt: iso(-60_000) })]);
   check("Una versione vecchia torna stale", staleResult?.[0]?.accepted === false && staleResult?.[0]?.reason === "stale");
-  const E4 = entity(`event-e4-${run}`, { title: "Aggiunto da Bob", subjectId: S1, start: iso(), end: iso(3_600_000) });
+  const E4 = fullEvent(`event-e4-${run}`, { title: "Aggiunto da Bob", subjectId: S1 });
   const { data: createResult } = await pushShared(bob, alice, [row("calendarEvent", E4)]);
   check("Bob aggiunge un evento nel calendario di Alice", createResult?.[0]?.accepted === true);
   const { data: deleteResult } = await pushShared(bob, alice, [row("calendarEvent", { id: E2.id, deletedAt: iso(2_000), title: "dati nascosti" }, true)]);
@@ -281,9 +308,7 @@ const main = async () => {
     replaced?.[0]?.accepted === true && afterReplace?.title === "Lezione (Bob 2)" && afterReplace?.cover === P1.cover
       && afterReplace?.sourceUid === P1.sourceUid && !("dataUrl" in (afterReplace ?? {})),
     JSON.stringify({ replaced, afterReplace }));
-  const C1 = entity(`event-c1-${run}`, {
-    title: "Finto appello", subjectId: S1, start: iso(), end: iso(3_600_000), color: "#7CF7C8", sourceUid: "barb-exam-x", cover: tracker, links: [], tags: []
-  });
+  const C1 = fullEvent(`event-c1-${run}`, { title: "Finto appello", subjectId: S1, sourceUid: "barb-exam-x", cover: tracker });
   const { data: created } = await pushShared(bob, alice, [row("calendarEvent", C1)]);
   const c1 = await stored(C1.id);
   check("Creazione con UID d'appello e copertina: salvata senza", created?.[0]?.accepted === true && c1?.title === C1.title && !("sourceUid" in (c1 ?? { sourceUid: 1 })) && !("cover" in (c1 ?? { cover: 1 })),
@@ -299,9 +324,7 @@ const main = async () => {
   check("Update diretto: copertina e UID restano quelli di Alice",
     !directError && afterDirect?.title === "Diretto" && afterDirect?.cover === P1.cover && afterDirect?.sourceUid === P1.sourceUid,
     directError?.message ?? JSON.stringify(afterDirect));
-  const D1 = entity(`event-d1-${run}`, {
-    title: "Inserito diretto", subjectId: S1, start: iso(), end: iso(3_600_000), color: "#7CF7C8", links: [], tags: [], sourceUid: "barb-exam-z", cover: tracker
-  });
+  const D1 = fullEvent(`event-d1-${run}`, { title: "Inserito diretto", subjectId: S1, sourceUid: "barb-exam-z", cover: tracker });
   const { error: insertError } = await bob.client.from("studyos_items")
     .insert({ user_id: alice.id, entity_type: "calendarEvent", entity_id: D1.id, payload: D1, deleted: false, encrypted: false }).select().single();
   const d1 = await stored(D1.id);
@@ -329,7 +352,7 @@ const main = async () => {
   const afterAdd = await stored(OFFICIAL.id);
   check("Link aggiunto all'appello ufficiale da chi riceve: restano quelli di Alice",
     linkAdd?.[0]?.accepted === true && afterAdd?.title === "Appello (Bob 2)" && officialLinks(afterAdd), JSON.stringify({ linkAdd, afterAdd }));
-  const L1 = entity(`event-l1-${run}`, { title: "Con link", subjectId: S1, start: iso(), end: iso(3_600_000), color: "#7CF7C8", links: ["https://phish.example/"], tags: [] });
+  const L1 = fullEvent(`event-l1-${run}`, { title: "Con link", subjectId: S1, links: ["https://phish.example/"] });
   const { data: linkCreate } = await pushShared(bob, alice, [row("calendarEvent", L1)]);
   check("Evento nuovo di chi riceve con un link: rifiutato", linkCreate?.[0]?.reason === "denied" && !(await stored(L1.id)), JSON.stringify(linkCreate));
   const { links: _links, ...L2 } = { ...L1, id: `event-l2-${run}`, title: "Senza link" };
@@ -358,6 +381,152 @@ const main = async () => {
   const restored = await storedRow(L2.id);
   check("Dopo un tombstone nel futuro Alice ripristina l'evento", aliceRestore?.accepted === true && restored?.deleted === false && restored?.payload.title === "Ripristinato da Alice",
     JSON.stringify(aliceRestore));
+
+  // Colonne della riga: con una scrittura diretta sulla tabella chi riceve non sceglie updated_at (il
+  // cursore del pull di Alice), created_at, version, encrypted, id né un client_id di Alice.
+  const rowColumns = "id, updated_at, created_at, version, encrypted, client_id, payload, deleted";
+  const aliceRow = async (type, id) => (await alice.client.from("studyos_items").select(rowColumns)
+    .eq("user_id", alice.id).eq("entity_type", type).eq("entity_id", id).maybeSingle()).data;
+  const nearNow = (value) => typeof value === "string" && Math.abs(Date.parse(value) - Date.now()) < 120_000;
+  const byBob = (value) => typeof value === "string" && value.startsWith(`r:${bob.id}:`);
+  const R1 = fullEvent(`event-r1-${run}`, { title: "Inserito con colonne scelte", subjectId: S1 });
+  const chosenId = crypto.randomUUID();
+  const { error: columnsInsertError } = await bob.client.from("studyos_items").insert({
+    id: chosenId, user_id: alice.id, entity_type: "calendarEvent", entity_id: R1.id, payload: R1, deleted: false,
+    updated_at: "2100-01-01T00:00:00Z", created_at: "1990-01-01T00:00:00Z", version: 999, encrypted: true, client_id: "check-alice"
+  });
+  const r1 = await aliceRow("calendarEvent", R1.id);
+  check("Insert diretto di chi riceve: updated_at, created_at, version, encrypted e id li sceglie il server",
+    !columnsInsertError && nearNow(r1?.updated_at) && nearNow(r1?.created_at) && r1?.version === 1 && r1?.encrypted === false && r1?.id !== chosenId,
+    columnsInsertError?.message ?? JSON.stringify(r1 && { ...r1, payload: undefined }));
+  check("Insert diretto di chi riceve: client_id di chi scrive, mai quello di un dispositivo di Alice", byBob(r1?.client_id), String(r1?.client_id));
+  const { error: columnsUpdateError } = await bob.client.from("studyos_items")
+    .update({
+      payload: { ...r1?.payload, title: "Aggiornato diretto", updatedAt: FAR }, id: crypto.randomUUID(),
+      updated_at: "2100-01-01T00:00:00Z", created_at: "1990-01-01T00:00:00Z", version: 999, encrypted: true, client_id: "check-alice"
+    })
+    .eq("user_id", alice.id).eq("entity_type", "calendarEvent").eq("entity_id", R1.id);
+  const r1u = await aliceRow("calendarEvent", R1.id);
+  check("Update diretto con stamp nel futuro: salvato con lo stamp di adesso",
+    !columnsUpdateError && r1u?.payload.title === "Aggiornato diretto" && notFuture(r1u?.payload.updatedAt),
+    columnsUpdateError?.message ?? String(r1u?.payload.updatedAt));
+  check("Update diretto: updated_at adesso, version +1, created_at, encrypted e id invariati, client_id di chi scrive",
+    nearNow(r1u?.updated_at) && r1u?.version === (r1?.version ?? 0) + 1 && r1u?.created_at === r1?.created_at && r1u?.encrypted === r1?.encrypted
+      && r1u?.id === r1?.id && byBob(r1u?.client_id),
+    JSON.stringify(r1u && { ...r1u, payload: undefined }));
+  const { error: farTombError } = await bob.client.from("studyos_items")
+    .update({ deleted: true, payload: { id: R1.id, deletedAt: FAR } })
+    .eq("user_id", alice.id).eq("entity_type", "calendarEvent").eq("entity_id", R1.id);
+  const r1t = await aliceRow("calendarEvent", R1.id);
+  check("Tombstone diretto con stamp nel futuro: salvato con lo stamp di adesso",
+    !farTombError && r1t?.deleted === true && Object.keys(r1t.payload).sort().join(",") === "deletedAt,id" && notFuture(r1t.payload.deletedAt),
+    farTombError?.message ?? JSON.stringify(r1t?.payload));
+  const R2 = fullEvent(`event-r2-${run}`, { title: "Con il link di Alice", subjectId: S1, links: ["https://www.unimi.it/r2"] });
+  await pushOwn(alice, [row("calendarEvent", R2)]);
+  const { error: linksDirectError } = await bob.client.from("studyos_items")
+    .update({ payload: { ...R2, title: "Link diretto", links: ["https://phish.example/"], updatedAt: iso(1_000) } })
+    .eq("user_id", alice.id).eq("entity_type", "calendarEvent").eq("entity_id", R2.id);
+  const r2 = await aliceRow("calendarEvent", R2.id);
+  check("Update diretto dei link di un evento: restano quelli di Alice",
+    !linksDirectError && r2?.payload.title === "Link diretto" && JSON.stringify(r2?.payload.links) === JSON.stringify(R2.links),
+    linksDirectError?.message ?? JSON.stringify(r2?.payload.links));
+
+  // Tipi dei campi: un valore del tipo sbagliato manderebbe in errore le viste di Alice (Home, Calendario,
+  // Attività…). Rifiutato con l'RPC e con le scritture dirette; le modifiche dell'app passano per ogni tipo.
+  const typeScopes = ["tasks", "study", "progress", "materials", "goals"];
+  const { data: typeShares, error: typeShareError } = await alice.client.from("studyos_shares").insert(typeScopes.map((scope) => ({
+    owner_id: alice.id, owner_name: "Alice", scope, permission: "edit", grantee_user_id: bob.id, grantee_name: "Bob"
+  }))).select("id");
+  need("Alice dà a Bob «Può modificare» su attività, studio, progressi, materiali e obiettivi",
+    !typeShareError && typeShares?.length === typeScopes.length, typeShareError?.message);
+  const TT = fullTask(`task-tt-${run}`, { title: "Relazione", subjectId: S1, dueDate: iso(86_400_000) });
+  const SS = fullSession(`session-ss-${run}`, { title: "Ripasso", subjectId: S1 });
+  const TP = fullTopic(`topic-tp-${run}`, { title: "Glicolisi", subjectId: S1 });
+  const XX = fullExam(`exam-xx-${run}`, { subjectId: S1, preparation: 30 });
+  const AT = fullAttachment(`attachment-at-${run}`, {
+    name: "Dispensa.pdf", dataUrl: "data:application/pdf;base64,AAAA", linkedEntityType: "subject", linkedEntityId: S1
+  });
+  const NT = fullNote(`note-nt-${run}`, { title: "Appunti", body: "Testo", linkedEntityType: "subject", linkedEntityId: S1 });
+  const GL = fullGoal(`goal-gl-${run}`, { title: "Media 29", progress: 10 });
+  await pushOwn(alice, [
+    row("task", TT), row("studySession", SS), row("studyTopic", TP), row("exam", XX), row("attachment", AT), row("note", NT), row("goal", GL)
+  ]);
+  const storedOf = async (type, id) => (await aliceRow(type, id))?.payload;
+  const storedR2 = await storedOf("calendarEvent", R2.id);
+  // Come le scrive l'app: l'elemento intero rimandato con i campi cambiati; il file del materiale non
+  // viaggia (le chiavi protette restano quelle salvate).
+  const { dataUrl: _dataUrl, ...atWithoutFile } = AT;
+  const at = iso(5_000);
+  const legit = [
+    ["calendarEvent", { ...storedR2, title: "Lezione (Bob, tipi)", start: iso(7_200_000), end: iso(10_800_000), allDay: false, updatedAt: at }],
+    ["task", { ...TT, status: "done", completedAt: iso(), actualMinutes: 30, timerAccumulatedSeconds: 1_800, updatedAt: at }],
+    ["studySession", { ...SS, start: iso(3_600_000), end: iso(7_200_000), plannedMinutes: 90, status: "completed", updatedAt: at }],
+    ["studyTopic", { ...TP, nextReviewDate: iso(2 * 86_400_000), notes: "Rivedere", updatedAt: at }],
+    ["exam", { ...XX, date: iso(31 * 86_400_000), status: "studying", preparation: 50, updatedAt: at }],
+    ["attachment", { ...atWithoutFile, name: "Dispensa (Bob).pdf", description: "Capitolo 3", updatedAt: at }],
+    ["note", { ...NT, title: "Appunti (Bob)", body: "Testo nuovo", updatedAt: at }],
+    ["goal", { ...GL, progress: 40, deadline: iso(60 * 86_400_000), notes: "Quasi", updatedAt: at }]
+  ];
+  const { data: legitResult, error: legitError } = await pushShared(bob, alice, legit.map(([type, payload]) => row(type, payload)));
+  check("Modifiche legittime di ogni tipo (come le scrive l'app): accettate",
+    !legitError && legitResult?.length === legit.length && legitResult.every((result) => result.accepted === true),
+    legitError?.message ?? JSON.stringify(legitResult));
+  const storedAttachment = await storedOf("attachment", AT.id);
+  check("Materiale modificato senza il file: il file di Alice resta",
+    storedAttachment?.name === "Dispensa (Bob).pdf" && storedAttachment?.dataUrl === AT.dataUrl, JSON.stringify(storedAttachment?.name));
+  const BT = fullTask(`task-bt-${run}`, { title: "Aggiunta da Bob", subjectId: S1 });
+  const { data: taskCreate } = await pushShared(bob, alice, [row("task", BT)]);
+  check("Attività nuova di chi riceve, completa come la scrive l'app: accettata", taskCreate?.[0]?.accepted === true, JSON.stringify(taskCreate));
+
+  const typedEvent = await storedOf("calendarEvent", R2.id);
+  const typedTask = await storedOf("task", TT.id);
+  const sameTyped = async () => {
+    const [event, task] = [await storedOf("calendarEvent", R2.id), await storedOf("task", TT.id)];
+    return event?.title === typedEvent?.title && event?.start === typedEvent?.start && Array.isArray(event?.checklist)
+      && task?.title === typedTask?.title && Array.isArray(task?.subtasks);
+  };
+  const typeAttacks = [
+    ["titolo oggetto", "calendarEvent", { ...typedEvent, title: { x: 1 } }],
+    ["inizio numerico", "calendarEvent", { ...typedEvent, start: 42 }],
+    ["checklist testo", "calendarEvent", { ...typedEvent, checklist: "x" }],
+    ["passaggi testo", "task", { ...typedTask, subtasks: "x" }],
+    ["inizio null", "calendarEvent", { ...typedEvent, start: null }],
+    ["passaggi null", "task", { ...typedTask, subtasks: null }]
+  ];
+  for (const [label, type, payload] of typeAttacks) {
+    const { data: rpcResult } = await pushShared(bob, alice, [row(type, { ...payload, updatedAt: iso(9_000) })]);
+    check(`Tipo sbagliato (${label}) con l'RPC: rifiutato, riga invariata`, rpcResult?.[0]?.reason === "denied" && (await sameTyped()), JSON.stringify(rpcResult));
+    const { error: directTypeError } = await bob.client.from("studyos_items")
+      .update({ payload: { ...payload, updatedAt: iso(9_500) } })
+      .eq("user_id", alice.id).eq("entity_type", type).eq("entity_id", payload.id);
+    check(`Tipo sbagliato (${label}) con un update diretto: rifiutato, riga invariata`, Boolean(directTypeError) && (await sameTyped()),
+      directTypeError ? "" : "nessun errore");
+  }
+  const createAttacks = [
+    ["evento con titolo oggetto", "calendarEvent", fullEvent(`event-bad-title-${run}`, { subjectId: S1, title: { x: 1 } })],
+    ["evento con inizio numerico", "calendarEvent", fullEvent(`event-bad-start-${run}`, { subjectId: S1, start: 42 })],
+    ["evento senza inizio", "calendarEvent", (({ start: _start, ...rest }) => rest)(fullEvent(`event-no-start-${run}`, { subjectId: S1 }))],
+    ["evento con checklist testo", "calendarEvent", fullEvent(`event-bad-list-${run}`, { subjectId: S1, checklist: "x" })],
+    ["attività con passaggi testo", "task", fullTask(`task-bad-list-${run}`, { subjectId: S1, subtasks: "x" })]
+  ];
+  for (const [label, type, payload] of createAttacks) {
+    const { data: rpcResult } = await pushShared(bob, alice, [row(type, payload)]);
+    check(`Creazione: ${label} con l'RPC: rifiutata`, rpcResult?.[0]?.reason === "denied" && !(await aliceRow(type, payload.id)), JSON.stringify(rpcResult));
+  }
+  const { error: directCreateError } = await bob.client.from("studyos_items").insert({
+    user_id: alice.id, entity_type: "calendarEvent", entity_id: `event-direct-bad-${run}`, deleted: false,
+    payload: fullEvent(`event-direct-bad-${run}`, { subjectId: S1, start: 42 })
+  });
+  check("Creazione: evento con inizio numerico con un insert diretto: rifiutata",
+    Boolean(directCreateError) && !(await aliceRow("calendarEvent", `event-direct-bad-${run}`)), directCreateError ? "" : "nessun errore");
+
+  // Pulizia del blocco: i conteggi successivi (Carla, progressi, obiettivi) non cambiano.
+  await pushOwn(alice, [
+    ["calendarEvent", R1.id], ["calendarEvent", R2.id], ["task", TT.id], ["task", BT.id], ["studySession", SS.id], ["studyTopic", TP.id],
+    ["exam", XX.id], ["attachment", AT.id], ["note", NT.id], ["goal", GL.id]
+  ].map(([type, id]) => row(type, { id, deletedAt: iso(60_000) }, true)));
+  const { error: typeShareCleanup } = await alice.client.from("studyos_shares").delete().in("id", typeShares.map((item) => item.id));
+  need("Alice toglie le condivisioni temporanee del blocco", !typeShareCleanup, typeShareCleanup?.message);
 
   // La sync personale di Alice non cambia: i suoi dati restano come li scrive.
   const own = { ...P1, title: "Di Alice", color: "hsl(0 0% 50%)", cover: "data:image/png;base64,BBBB", sourceUid: `ics-own-${run}`, updatedAt: iso(30_000) };

@@ -332,6 +332,12 @@ for each row execute function public.studyos_items_guard();
 -- - link di un evento (la pagina ufficiale di un appello importato): li scrive solo il proprietario.
 --   In una modifica restano quelli salvati, in una creazione l'evento nasce senza (lista vuota).
 --   Nessun editor di chi riceve li cambia (modulo dell'evento, dettaglio, agente).
+-- - tipi dei campi: le viste del proprietario leggono titoli, date e liste senza controlli (un titolo
+--   oggetto, un inizio numerico o una checklist di testo le manderebbero in errore). In una modifica
+--   un campo già salvato non cambia tipo (null da e verso un valore va bene). Per i tipi condivisibili
+--   (src/types.ts) i testi obbligatori e le liste ci devono essere e avere il loro tipo (in una
+--   modifica, quando cambiano); i testi facoltativi possono mancare o essere null. Gli altri campi
+--   (numeri, sì/no, chiavi sconosciute) seguono solo la regola del tipo che non cambia.
 -- Un valore uguale a quello salvato passa sempre: è del proprietario (es. il colore di riserva o un
 -- link mailto che la sua app salva), e chi modifica rimanda l'elemento intero.
 -- Restituisce il payload da salvare, o null se la riga va rifiutata.
@@ -344,14 +350,29 @@ set search_path = pg_catalog
 as $$
 declare
   v_old jsonb := case when jsonb_typeof(p_current) = 'object' then p_current else '{}'::jsonb end;
+  v_create boolean := jsonb_typeof(p_current) is distinct from 'object';
   v_links jsonb;
   v_result jsonb;
+  v_text text[];
+  v_optional text[];
+  v_lists text[];
   v_hex constant text := '^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$';
   v_web constant text := '^[hH][tT][tT][pP][sS]?://[^[:space:][:cntrl:]]+$';
   -- Come NEVER_KEYS in src/agent/shared.ts, tranne il cronometro (lo chiude un cambio di stato).
   v_protected constant text := '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$';
 begin
   if jsonb_typeof(p_new) is distinct from 'object' then
+    return null;
+  end if;
+  -- Un campo già salvato non cambia tipo; null da e verso un valore va bene.
+  if not v_create and exists (
+    select 1
+    from jsonb_each(p_new) as field
+    where field.key !~ v_protected
+      and jsonb_typeof(field.value) <> 'null'
+      and coalesce(jsonb_typeof(v_old->field.key), 'null') <> 'null'
+      and jsonb_typeof(field.value) <> jsonb_typeof(v_old->field.key)
+  ) then
     return null;
   end if;
   if coalesce(p_new->'color', 'null'::jsonb) <> 'null'::jsonb
@@ -408,6 +429,52 @@ begin
   if v_links is not null then
     v_result := v_result || jsonb_build_object('links', v_links);
   end if;
+  -- Campi per tipo, da src/types.ts (colore, link esterno e chiavi protette hanno le regole sopra).
+  v_text := array['id', 'createdAt', 'updatedAt'] || case p_type
+    when 'calendarEvent' then array['title', 'description', 'category', 'priority', 'start', 'end', 'status', 'notes']
+    when 'task' then array['title', 'description', 'priority', 'status', 'notes', 'energy']
+    when 'studySession' then array['title', 'template', 'start', 'status', 'notes']
+    when 'studyTopic' then array['subjectId', 'title', 'firstStudiedAt', 'nextReviewDate', 'notes']
+    when 'exam' then array['subjectId', 'date', 'status']
+    when 'attachment' then array['name', 'mimeType', 'addedAt', 'description']
+    when 'note' then array['title', 'body']
+    when 'goal' then array['title', 'description', 'category', 'startDate', 'metric', 'status', 'notes']
+    else array[]::text[]
+  end;
+  v_optional := case p_type
+    when 'calendarEvent' then array['subjectId', 'goalId', 'recurrence', 'recurrenceUntil']
+    when 'task' then array['subjectId', 'dueDate', 'completedAt', 'timerStartedAt', 'timerLastReminderAt']
+    when 'studySession' then array['subjectId', 'end']
+    when 'studyTopic' then array['lastReviewedAt']
+    when 'attachment' then array['linkedEntityType', 'linkedEntityId']
+    when 'note' then array['linkedEntityType', 'linkedEntityId']
+    when 'goal' then array['deadline']
+    else array[]::text[]
+  end;
+  v_lists := array['tags'] || case p_type
+    when 'calendarEvent' then array['checklist', 'attachmentIds', 'links']
+    when 'task' then array['subtasks', 'attachmentIds']
+    when 'studySession' then array['topics', 'attachmentIds']
+    when 'studyTopic' then array['attachmentIds', 'questions']
+    when 'exam' then array['program', 'frequentQuestions']
+    when 'goal' then array['linkedTaskIds', 'linkedSessionIds']
+    else array[]::text[]
+  end;
+  if exists (
+    select 1 from unnest(v_text) as field (key)
+    where (v_create or (v_result->field.key) is distinct from (v_old->field.key))
+      and coalesce(jsonb_typeof(v_result->field.key), 'missing') <> 'string'
+  ) or exists (
+    select 1 from unnest(v_optional) as field (key)
+    where (v_result->field.key) is distinct from (v_old->field.key)
+      and coalesce(jsonb_typeof(v_result->field.key), 'null') not in ('string', 'null')
+  ) or exists (
+    select 1 from unnest(v_lists) as field (key)
+    where (v_create or (v_result->field.key) is distinct from (v_old->field.key))
+      and coalesce(jsonb_typeof(v_result->field.key), 'missing') <> 'array'
+  ) then
+    return null;
+  end if;
   return v_result;
 end;
 $$;
@@ -420,6 +487,7 @@ grant execute on function public.studyos_recipient_payload(text, jsonb, jsonb) t
 -- push_shared_rows manda qui solo righe già controllate: le altre tornano "denied" senza errori.
 -- Uno stamp nel futuro (orologio avanti o scelto apposta) si salva come adesso, tombstone compresi:
 -- altrimenti ogni modifica successiva del proprietario perderebbe il confronto LWW.
+-- Le colonne della riga le sceglie il server, mai chi riceve (vedi sotto).
 create or replace function public.studyos_items_recipient_values()
 returns trigger
 language plpgsql
@@ -428,11 +496,38 @@ as $$
 declare
   v_current jsonb;
   v_payload jsonb;
+  v_writer text;
 begin
   -- La sync del proprietario e le scritture senza utente (SQL Editor) non passano di qui.
   if auth.uid() is null or auth.uid() = new.user_id then
     return new;
   end if;
+  -- updated_at è il cursore del pull del proprietario e di chi riceve: uno nel futuro fermerebbe la
+  -- sua sync tra dispositivi. In una creazione le colonne hanno i valori di una riga nuova (come
+  -- push_studyos_rows: version 1, encrypted false); in una modifica restano quelle salvate.
+  -- updated_at e version di una modifica li riscrive studyos_items_updated_at (schema.sql), che parte
+  -- dopo questo trigger: i trigger BEFORE partono in ordine di nome.
+  if tg_op = 'INSERT' then
+    new.id := gen_random_uuid();
+    new.created_at := now();
+    new.updated_at := now();
+    new.version := 1;
+    new.encrypted := false;
+  else
+    new.id := old.id;
+    new.created_at := old.created_at;
+    new.encrypted := old.encrypted;
+  end if;
+  -- client_id con l'id di chi scrive: mai uguale a quello di un dispositivo del proprietario o di
+  -- un'altra persona (il loro pull e il loro Realtime salterebbero la modifica come propria).
+  v_writer := 'r:' || auth.uid()::text || ':';
+  new.client_id := v_writer || left(
+    case when starts_with(coalesce(new.client_id, ''), v_writer)
+      then substr(new.client_id, char_length(v_writer) + 1)
+      else coalesce(new.client_id, '')
+    end,
+    64
+  );
   if jsonb_typeof(new.payload) = 'object'
      and public.studyos_item_stamp(new.payload, new.deleted, now()) > now() then
     -- Stesso formato del client: ISO UTC con millisecondi.
@@ -1003,7 +1098,7 @@ begin
     where i.user_id = p_owner_id and i.entity_type = v_type and i.entity_id = v_id;
     v_exists := found;
     if not v_deleted then
-      -- Chiavi protette dalla riga salvata, colori e link sicuri; null = riga rifiutata.
+      -- Chiavi protette dalla riga salvata, colori e link sicuri, tipi dei campi; null = riga rifiutata.
       v_payload := public.studyos_recipient_payload(v_type, v_payload, case when v_exists and not v_current.deleted then v_current.payload end);
     end if;
 
