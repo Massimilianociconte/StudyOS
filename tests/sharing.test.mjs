@@ -1,0 +1,147 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  dropUnshared,
+  grantFromRow,
+  initialsOf,
+  inviteFromRow,
+  itemAccess,
+  mergeSharedRows,
+  ownerColor,
+  ownerEntityTypes,
+  prepareSharedWrite,
+  reconcileOwner,
+  scopeCovers,
+  shareTokenFromText,
+  sharedKey,
+  typeAccess,
+  urlWithoutShare
+} from "../src/lib/sharing.ts";
+import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../src/lib/labels.ts";
+
+// Stessi casi provati in SQL da scripts/supabase/sharing-check.mjs (studyos_scope_covers).
+const COVER_CASES = [
+  ["calendar", "calendarEvent", { subjectId: "s1" }, [], true],
+  ["calendar", "task", { subjectId: "s1" }, [], false],
+  ["calendar", "calendarEvent", { subjectId: "s2" }, ["s1"], false],
+  ["calendar", "calendarEvent", {}, ["s1"], false],
+  ["barb_exams", "calendarEvent", { sourceUid: "barb-exam-unimi-1" }, [], true],
+  ["barb_exams", "calendarEvent", { sourceUid: "ics-123" }, [], false],
+  ["barb_exams", "calendarEvent", {}, [], false],
+  ["tasks", "task", {}, [], true],
+  ["study", "studySession", { subjectId: "s1" }, ["s1"], true],
+  ["study", "studyTopic", { subjectId: "s1" }, [], true],
+  ["progress", "exam", { subjectId: "s1" }, [], true],
+  ["progress", "exam", { grade: 28 }, [], false],
+  ["progress", "exam", { grade: null }, [], true],
+  ["progress", "exam", { passFail: true }, [], false],
+  ["materials", "attachment", { linkedEntityType: "subject", linkedEntityId: "s1" }, ["s1"], true],
+  ["materials", "note", { linkedEntityType: "task", linkedEntityId: "s1" }, ["s1"], false],
+  ["materials", "note", {}, [], true],
+  ["goals", "goal", {}, [], true],
+  ["goals", "preferences", {}, [], false]
+];
+
+test("copertura: specchio di studyos_scope_covers", () => {
+  for (const [scope, type, payload, subjects, expected] of COVER_CASES) {
+    assert.equal(scopeCovers(scope, type, payload, subjects), expected, `${scope} ${type} ${JSON.stringify(payload)} ${subjects}`);
+  }
+});
+
+const grant = (extra) => ({
+  id: "g", ownerId: "alice", ownerName: "Alice", scope: "calendar", subjectIds: [], permission: "view",
+  granteeUserId: "bob", granteeGroupId: null, granteeName: "Bob", granteeEmail: null, createdAt: "", updatedAt: "", ...extra
+});
+
+test("permessi: edit vince, i filtri contano, il tipo ignora i filtri", () => {
+  const received = [grant({ id: "1" }), grant({ id: "2", granteeUserId: null, granteeGroupId: "grp", permission: "edit", subjectIds: ["s1"] })];
+  assert.equal(itemAccess(received, "alice", "calendarEvent", { subjectId: "s1" }), "edit");
+  assert.equal(itemAccess(received, "alice", "calendarEvent", { subjectId: "s2" }), "view");
+  assert.equal(itemAccess(received, "alice", "task", {}), null);
+  assert.equal(itemAccess(received, "carla", "calendarEvent", {}), null);
+  assert.equal(typeAccess(received, "alice", "calendarEvent"), "edit");
+  assert.deepEqual([...ownerEntityTypes(received)], [["alice", ["calendarEvent"]]]);
+});
+
+const item = (ownerId, entityType, entityId, entity) => ({
+  key: sharedKey(ownerId, entityType, entityId), ownerId, entityType, entityId, entity: { id: entityId, updatedAt: "2026-11-10T10:00:00.000Z", ...entity }, serverUpdatedAt: "2026-11-10T10:00:00.000Z"
+});
+
+test("merge: LWW, tombstone rimuove, una modifica locale più recente in coda vince", () => {
+  const start = [item("alice", "calendarEvent", "e1", { title: "A" }), item("alice", "calendarEvent", "e2", { title: "B", updatedAt: "2026-11-10T12:00:00.000Z" })];
+  const pending = new Set([sharedKey("alice", "calendarEvent", "e2")]);
+  const merged = mergeSharedRows(start, "alice", [
+    { entity_type: "calendarEvent", entity_id: "e1", payload: { id: "e1", title: "A2", updatedAt: "2026-11-10T11:00:00.000Z" }, deleted: false, updated_at: "2026-11-10T11:00:01Z" },
+    { entity_type: "calendarEvent", entity_id: "e2", payload: { id: "e2", title: "remote", updatedAt: "2026-11-10T11:00:00.000Z" }, deleted: false, updated_at: "2026-11-10T11:00:01Z" },
+    { entity_type: "calendarEvent", entity_id: "e3", payload: { id: "e3", title: "C", updatedAt: "2026-11-10T11:00:00.000Z" }, deleted: false, updated_at: "2026-11-10T11:00:01Z" }
+  ], pending);
+  assert.deepEqual(merged.map((entry) => entry.entity.title).sort(), ["A2", "B", "C"]);
+  const afterDelete = mergeSharedRows(merged, "alice", [{ entity_type: "calendarEvent", entity_id: "e1", payload: { id: "e1", deletedAt: "x" }, deleted: true, updated_at: "z" }], new Set());
+  assert.ok(!afterDelete.some((entry) => entry.entityId === "e1"));
+});
+
+test("merge: il tombstone ridotto a id e deletedAt si confronta con la modifica in coda", () => {
+  const start = [item("alice", "calendarEvent", "e2", { title: "B", updatedAt: "2026-11-10T12:00:00.000Z" })];
+  const pending = new Set([sharedKey("alice", "calendarEvent", "e2")]);
+  const tombstone = (deletedAt) => [{ entity_type: "calendarEvent", entity_id: "e2", payload: { id: "e2", deletedAt }, deleted: true, updated_at: "z" }];
+  // Eliminato prima della mia modifica in coda: la modifica vince e l'elemento resta.
+  assert.equal(mergeSharedRows(start, "alice", tombstone("2026-11-10T11:00:00.000Z"), pending).length, 1);
+  // Eliminato dopo: l'elemento sparisce anche se in coda c'è una modifica più vecchia.
+  assert.equal(mergeSharedRows(start, "alice", tombstone("2026-11-10T13:00:00.000Z"), pending).length, 0);
+});
+
+test("riconciliazione: revoche e filtri tolgono, le scritture in coda restano", () => {
+  const items = [item("alice", "calendarEvent", "e1"), item("alice", "calendarEvent", "e2"), item("alice", "task", "t1"), item("dario", "goal", "g1")];
+  const pending = new Set([sharedKey("alice", "calendarEvent", "e2")]);
+  const kept = reconcileOwner(items, "alice", ["calendarEvent"], new Set(["calendarEvent:e1"]), pending);
+  assert.deepEqual(kept.map((entry) => entry.entityId).sort(), ["e1", "e2", "g1", "t1"]);
+  const shared = dropUnshared(items, [grant({ scope: "calendar" })], new Set());
+  assert.deepEqual(shared.map((entry) => entry.entityId).sort(), ["e1", "e2"]);
+});
+
+test("scrittura su dati altrui: i collegamenti del proprietario non cambiano", () => {
+  const previous = { id: "e1", title: "A", attachmentIds: ["att-alice"], goalId: "goal-alice" };
+  const next = prepareSharedWrite(previous, { ...previous, title: "B", attachmentIds: ["att-bob"], goalId: "goal-bob" }, "2026-11-10T12:00:00.000Z");
+  assert.deepEqual(next.attachmentIds, ["att-alice"]);
+  assert.equal(next.goalId, "goal-alice");
+  assert.equal(next.updatedAt, "2026-11-10T12:00:00.000Z");
+  const created = prepareSharedWrite(undefined, { id: "e9", title: "Nuovo", attachmentIds: ["att-bob"], goalId: "goal-bob" }, "2026-11-10T12:00:00.000Z");
+  assert.deepEqual(created.attachmentIds, []);
+  assert.equal(created.goalId, undefined);
+  // Un elemento del proprietario senza collegamenti non ne acquista da chi lo modifica.
+  const bare = { id: "e2", title: "A" };
+  const edited = prepareSharedWrite(bare, { ...bare, attachmentIds: ["att-bob"], goalId: "goal-bob" }, "2026-11-10T12:00:00.000Z");
+  assert.ok(!("attachmentIds" in edited) && !("goalId" in edited));
+});
+
+test("link di condivisione: token solo esadecimale da 64 caratteri, nel frammento", () => {
+  const token = "a".repeat(64);
+  assert.equal(shareTokenFromText(token), token);
+  assert.equal(shareTokenFromText(`https://x.github.io/StudyOS/#condividi=${token}`), token);
+  assert.equal(shareTokenFromText(`https://x.github.io/StudyOS/?condividi=${token}`), token);
+  assert.equal(shareTokenFromText(`https://x.github.io/StudyOS/#condividi=${"g".repeat(64)}`), null);
+  assert.equal(shareTokenFromText("GRP-AB12-CD34"), null);
+  assert.equal(urlWithoutShare(`https://x.github.io/StudyOS/?a=1#condividi=${token}&access_token=t`), "/StudyOS/?a=1#access_token=t");
+});
+
+test("righe del server: conversione e nomi leggibili", () => {
+  const share = grantFromRow({
+    id: "s1", owner_id: "alice", owner_name: "Alice", scope: "calendar", subject_ids: ["x"], permission: "edit",
+    grantee_user_id: "bob", grantee_group_id: null, grantee_name: "Bob", grantee_email: "bob@x.it", created_at: "c", updated_at: "u"
+  });
+  assert.equal(share.permission, "edit");
+  assert.deepEqual(share.subjectIds, ["x"]);
+  assert.equal(grantFromRow({ ...share, scope: "segreta" }), null);
+  const invite = inviteFromRow({
+    id: "i1", owner_id: "alice", owner_name: "Alice", status: "pending", expires_at: "2000-01-01T00:00:00Z", created_at: "c", recipient_email: null,
+    offers: [{ scope: "calendar", permission: "edit", subject_ids: [], subject_names: [] }, { scope: "nope" }], requests: [{ scope: "calendar", permission: "view" }]
+  });
+  assert.equal(invite.status, "expired");
+  assert.equal(invite.offers.length, 1);
+  assert.equal(SHARE_SCOPE_LABEL.barb_exams, "Appelli BARB");
+  assert.equal(SHARE_PERMISSION_LABEL.edit, "Può modificare");
+  assert.equal(scopesSummary(invite.offers), "Calendario (Può modificare)");
+  assert.equal(initialsOf("giulia rossi"), "GR");
+  assert.equal(initialsOf("  "), "?");
+  assert.equal(ownerColor("alice"), ownerColor("alice"));
+});

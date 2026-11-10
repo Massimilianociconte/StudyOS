@@ -9,6 +9,7 @@ import { Icon } from "./Icon";
 const KIND_ICON: Record<AppNotification["kind"], string> = {
   invite: "Mail",
   group: "Users",
+  share: "Share2",
   system: "Info"
 };
 

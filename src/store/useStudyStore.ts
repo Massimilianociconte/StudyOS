@@ -250,6 +250,7 @@ const APP_VIEWS: Record<AppView, true> = {
   stats: true,
   barb: true,
   groups: true,
+  sharing: true,
   settings: true
 };
 

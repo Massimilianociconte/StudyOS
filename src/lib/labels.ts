@@ -1,5 +1,6 @@
 // Etichette italiane per i valori enum salvati nei dati: la UI non mostra mai i codici interni.
 import type { Attachment, CalendarEvent, Exam, Goal, StudySession, Subject, Task } from "../types";
+import type { ItemRevision, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
 
 export const PRIORITY_LABEL: Record<Task["priority"], string> = {
   low: "Bassa",
@@ -182,3 +183,47 @@ export const hostOf = (url: string | undefined) => {
     return "";
   }
 };
+
+// ——— Condivisione ———
+
+export const SHARE_SCOPE_LABEL: Record<ShareScope, string> = {
+  calendar: "Calendario",
+  barb_exams: "Appelli BARB",
+  tasks: "Attività",
+  study: "Studio",
+  progress: "Progressi",
+  materials: "Materiali",
+  goals: "Obiettivi"
+};
+
+export const SHARE_SCOPE_HINT: Record<ShareScope, string> = {
+  calendar: "Eventi e lezioni, compresi gli appelli che hai aggiunto",
+  barb_exams: "Solo gli appelli ufficiali che hai scelto (in sola lettura)",
+  tasks: "Le cose da fare, con scadenza",
+  study: "Sessioni di studio e argomenti da ripassare",
+  progress: "Esami ancora da sostenere e preparazione, mai i voti",
+  materials: "File, link e note",
+  goals: "I tuoi traguardi"
+};
+
+export const SHARE_PERMISSION_LABEL: Record<SharePermission, string> = {
+  view: "Può vedere",
+  edit: "Può modificare"
+};
+
+export const SHARE_INVITE_STATUS_LABEL: Record<ShareInviteStatus, string> = {
+  pending: "In attesa",
+  accepted: "Accettato",
+  declined: "Rifiutato",
+  expired: "Scaduto"
+};
+
+export const REVISION_CHANGE_LABEL: Record<ItemRevision["change"], string> = {
+  create: "ha aggiunto",
+  update: "ha modificato",
+  delete: "ha eliminato"
+};
+
+/** "Calendario (Può modificare), Attività (Può vedere)". */
+export const scopesSummary = (offers: ReadonlyArray<{ scope: ShareScope; permission: SharePermission }>) =>
+  offers.map((offer) => `${SHARE_SCOPE_LABEL[offer.scope]} (${SHARE_PERMISSION_LABEL[offer.permission]})`).join(", ");

@@ -72,6 +72,7 @@ export type AppView =
   | "stats"
   | "barb"
   | "groups"
+  | "sharing"
   | "settings";
 
 export interface Subject extends BaseEntity {
@@ -312,7 +313,7 @@ export interface Preferences extends BaseEntity {
 
 /** Notifica dell'account: segue l'utente su ogni dispositivo (collezione sincronizzata). */
 export interface AppNotification extends BaseEntity {
-  kind: "invite" | "group" | "system";
+  kind: "invite" | "group" | "share" | "system";
   title: string;
   body: string;
   /** Vista da aprire toccando la notifica. */

@@ -73,6 +73,8 @@ const views: Record<AppView, ReactNode> = {
   stats: <StatsView />,
   barb: <BarbView />,
   groups: <GroupsView />,
+  // Provvisorio: la vista Condivisione arriva al Task 8.
+  sharing: <GroupsView />,
   settings: <SettingsView />
 };
 

@@ -21,7 +21,7 @@ export const normalizeInviteCode = (value: string) => value.trim().toUpperCase()
 
 export const isInviteCodeShape = (value: string) => /^GRP-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalizeInviteCode(value));
 
-const inviteLinkBase = () => {
+export const inviteLinkBase = () => {
   if (typeof window === "undefined") return "";
   return `${window.location.origin}${window.location.pathname}`;
 };
