@@ -164,16 +164,23 @@
   `sharing.sql`.
 - Un elemento che esce da un filtro (materia cambiata, voto registrato) non genera un evento
   Realtime per chi lo vedeva: sparisce al controllo successivo (al più 5 minuti). Il confronto
-  con gli id visibili (`visibleKeys`) parte solo dal timer dei 5 minuti (`recheckDue`), quando
-  cambia la firma dei permessi di un proprietario o dopo un DELETE vero via Realtime: non
-  rimetterlo in ogni passata.
+  con gli id visibili (`visibleKeys`) parte solo dal timer dei 5 minuti, dal ritorno sulla
+  scheda se l'ultimo controllo completo è più vecchio, o quando cambia la firma dei permessi di
+  un proprietario (`src/lib/shareRecheck.ts`, con test): non rimetterlo in ogni passata. Un
+  `DELETE` vero non arriva mai sul canale filtrato `user_id=in.(…)` (la riga vecchia ha solo
+  l'id); arriva, con il solo id, a chi si iscrive senza filtro, anche senza accesso.
 - Chi guarda e la generazione vivono in `src/lib/shareViewer.ts` (senza supabase-js, provato in
   `tests/sharedStore.test.mjs`): ogni attesa in `shareSync.ts` è seguita da `still(gen)`.
 - Cronologia: le revisioni di creazione e modifica non hanno chiavi protette
   (`studyos_without_protected` in `sharing.sql`), quelle di eliminazione sì. Il ripristino
-  (`restoreEntities`) tiene sempre copertine, file e UID della copia locale del proprietario;
-  senza copia locale li prende dall'eliminazione successiva (`withProtectedFrom`). L'elenco
-  legge `REVISION_LIST_COLUMNS` (niente payload): la versione intera si scarica per id.
+  (`restoreEntities` → `restoredPayload`) tiene sempre copertine, file e UID della copia locale
+  del proprietario; senza copia li prende dall'eliminazione successiva (`protectedFrom`), e
+  rifiuta la versione di una modifica di un tipo in `PROTECTED_ENTITY_TYPES` che non ha né
+  l'una né l'altra: lo decide al momento di scrivere, perché la sync può eliminare l'elemento
+  mentre si scaricano le versioni. Un campo protetto nuovo in `src/types.ts` va aggiunto a
+  `PROTECTED_ENTITY_TYPES` (un test lo controlla). L'elenco legge `REVISION_LIST_COLUMNS`
+  (niente payload): la versione intera si scarica per id. Pianificazione dell'annullamento in
+  `src/lib/shareHistory.ts` (caricato con `import()`); i testi restano in `labels.ts`.
 - Il cursore di pull per proprietario include la firma dei permessi (`grantSignature`):
   un filtro allargato riparte da zero, altrimenti gli elementi già esistenti non
   arriverebbero mai.

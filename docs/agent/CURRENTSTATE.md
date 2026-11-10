@@ -214,5 +214,18 @@ altri" si annullano in un colpo le modifiche di una persona da un giorno. Il cic
 è in `src/lib/shareViewer.ts`, con test per la generazione e la ricarica dopo il reset locale.
 Verifiche: 239 test, lint, build, `sharing.sql` eseguito due volte e `sharing-verify.sql` (12
 colonne pronte) sullo stack locale, `sharing-check.mjs` (117 controlli), prova nel browser
-dell'annullamento e del ripristino di un allegato eliminato. Sul progetto reale: rieseguire
+dell'annullamento e del ripristino di un allegato eliminato. Sul progetto reale: eseguire
 `supabase/sharing.sql` e poi `supabase/sharing-verify.sql`.
+
+Seconda revisione dei seguiti (11 novembre 2026): il negozio rifiuta, al momento di scrivere, la
+versione di una modifica senza copia né eliminazione da cui prendere il file (`restoredPayload`);
+sessioni, argomenti, obiettivi e note si ripristinano anche se eliminati. L'annullamento di una
+persona riconosce le modifiche e le eliminazioni successive del proprietario (ora del server della
+riga), permette di lasciarle com'erano, esegue solo il controllo confermato e conta ciò che non
+ha ripristinato; le persone vengono da tutti i 90 giorni. Pianificazione in
+`src/lib/shareHistory.ts` (caricato con `import()`), cadenza del ricontrollo in
+`src/lib/shareRecheck.ts` (anche al ritorno sulla scheda). `light_history_ready` controlla anche il
+corpo del trigger. Provato sullo stack locale: un `DELETE` vero non arriva mai sul canale Realtime
+filtrato per proprietario. Verifiche: 249 test, lint, build, SQL due volte e verifica, 121 controlli,
+prova nel browser dell'annullamento (riepilogo cambiato tra controllo e conferma, elementi lasciati
+com'erano) e del ripristino di un obiettivo eliminato.

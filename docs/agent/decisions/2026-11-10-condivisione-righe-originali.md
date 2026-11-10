@@ -45,7 +45,8 @@ revoca immediata e nessuna duplicazione.
    da un giorno, con lo stesso ripristino.
 5. **Revoca = cancellare la condivisione.** L'accesso cade subito via RLS; la cache
    di chi riceveva si riallinea confrontando gli id visibili quando cambiano i
-   permessi e al controllo dei 5 minuti (non a ogni segnale Realtime).
+   permessi, al controllo dei 5 minuti e al ritorno sulla scheda se l'ultimo
+   controllo è più vecchio (non a ogni segnale Realtime).
 6. **Agente MCP.** Legge e modifica i dati condivisi rispettando i permessi e
    gestisce le condivisioni esistenti. Inviti e accettazioni restano nell'app,
    così email e token non arrivano mai agli agenti.
