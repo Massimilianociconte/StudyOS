@@ -86,7 +86,7 @@ export function SharingView() {
   const session = useCloudSession();
   const me = session?.user.id ?? "";
   const pending = usePendingShare();
-  const { given, received, invites, items, hiddenOwners, availability, notice, syncError } = useSharedStore(
+  const { given, received, invites, items, hiddenOwners, availability, syncError } = useSharedStore(
     useShallow((state) => ({
       given: state.given,
       received: state.received,
@@ -94,7 +94,6 @@ export function SharingView() {
       items: state.items,
       hiddenOwners: state.hiddenOwners,
       availability: state.availability,
-      notice: state.notice,
       syncError: state.syncError
     }))
   );
@@ -243,15 +242,7 @@ export function SharingView() {
   return (
     <div>
       {header}
-      {notice ? (
-        <div role="alert" className={`mb-4 ${alertClass}`}>
-          <Icon name="AlertTriangle" className="mt-0.5 h-4 w-4 shrink-0" />
-          <span className="min-w-0 flex-1">{notice}</span>
-          <button type="button" className="font-black underline" onClick={() => useSharedStore.getState().setNotice(null)}>
-            Ok
-          </button>
-        </div>
-      ) : null}
+      {/* L'avviso della condivisione (permesso tolto) lo mostra AppShell, in ogni sezione. */}
       {message ? (
         <p role={message.tone === "info" ? "status" : "alert"} className={`mb-4 ${message.tone === "info" ? infoClass : alertClass}`}>
           <Icon name={message.tone === "info" ? "Info" : "AlertTriangle"} className={`mt-0.5 h-4 w-4 shrink-0 ${message.tone === "info" ? "text-[var(--accent-ink)]" : ""}`} />
@@ -745,9 +736,13 @@ function InviteAnswer({
           icon="X"
           onCancel={() => setDeclining(false)}
           onConfirm={async () => {
+            // Anche se rifiutare non riesce si torna ai pulsanti, con l'errore sopra: si può riprovare,
+            // accettare o (invito da link) chiudere l'invito.
+            setError("");
             const failure = await onDecline();
-            if (!failure) setDeclining(false);
-            return failure;
+            setDeclining(false);
+            if (failure) setError(failure);
+            return null;
           }}
         />
       ) : (

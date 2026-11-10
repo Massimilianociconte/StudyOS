@@ -5,7 +5,7 @@
 import { timestampOf, type SyncableEntity } from "./collections";
 import { fromDatetimeLocal, toDatetimeLocal } from "./dates";
 import { inviteLinkBase } from "./groups";
-import { SHARE_ACTION_FAILED, UNKNOWN_PERSON, UNKNOWN_PERSON_IN_SENTENCE, scopesSummary } from "./labels";
+import { SHARE_ACTION_FAILED, SHARE_GONE_TEXT, UNKNOWN_PERSON, UNKNOWN_PERSON_IN_SENTENCE, scopesSummary } from "./labels";
 import { normalizeExternalUrl } from "./safeUrl";
 import { taskStatusTransitionPatch } from "./taskTimer";
 import type { Task } from "../types";
@@ -328,6 +328,22 @@ export const sharedWriteError = (
   return null;
 };
 
+/**
+ * Chiavi che chi riceve non cambia mai: copertine, file incorporati (`dataUrl`, fino a ~900 KB), UID
+ * di import. Specchio di v_protected in studyos_recipient_payload (supabase/sharing.sql): il server
+ * tiene quelle salvate anche se mancano, quindi non serve inviarle.
+ */
+const PROTECTED_KEY = /^(?:cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$/;
+
+/** Copia senza le chiavi protette, per la riga da inviare: la copia nella cache resta intera. */
+export const withoutProtectedKeys = (payload: Payload): Payload =>
+  Object.fromEntries(Object.entries(payload).filter(([key]) => !PROTECTED_KEY.test(key)));
+
+/** Una modifica o revoca che non ha toccato nessuna riga: la condivisione non c'è più. */
+export const requireAffectedShare = (rows: readonly unknown[] | null | undefined) => {
+  if (!rows?.length) throw new ShareUserError(SHARE_GONE_TEXT);
+};
+
 /** Lotti per proprietario (al massimo `maxRows` righe, come push_shared_rows). */
 export const sharedPushBatches = (outbox: readonly SharedOutboxEntry[], items: readonly SharedItem[], maxRows = 200) => {
   const byKey = new Map(items.map((entry) => [entry.key, entry]));
@@ -350,7 +366,7 @@ export const sharedPushBatches = (outbox: readonly SharedOutboxEntry[], items: r
     batch.rows.push({
       entity_type: entry.entityType,
       entity_id: entry.entityId,
-      payload: entry.deleted ? { id: entry.entityId, deletedAt: entry.deletedAt ?? entry.queuedAt } : (cached as SharedItem).entity,
+      payload: entry.deleted ? { id: entry.entityId, deletedAt: entry.deletedAt ?? entry.queuedAt } : withoutProtectedKeys((cached as SharedItem).entity),
       deleted: entry.deleted
     });
   }

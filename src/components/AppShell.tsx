@@ -4,6 +4,9 @@ import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
 import type { AppView } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
+// Già nel bundle iniziale (lo importa useStudyStore): solo lo stato, mai shareSync o supabase.
+import { useSharedStore } from "../store/useSharedStore";
+import { SHARE_NOTICE_TEXT } from "../lib/labels";
 import { Icon } from "./Icon";
 import { Button, Drawer, IconButton } from "./ui";
 import { NotificationsBell } from "./NotificationsBell";
@@ -92,6 +95,7 @@ export function AppShell({ children }: PropsWithChildren) {
   );
 
   const preferences = useStudyStore(selectPreferences);
+  const shareNotice = useSharedStore((state) => state.notice);
   const todayLabel = format(new Date(), "EEEE d MMMM", { locale: it });
   const displayName = preferences.displayName.trim();
   // La sezione BARB si può nascondere dalle impostazioni (preferenza sincronizzata).
@@ -294,6 +298,20 @@ export function AppShell({ children }: PropsWithChildren) {
               </Button>
             </div>
           ) : null}
+
+          {/* Avviso della condivisione (permesso tolto, modifica non salvata): in ogni sezione, così chi ha
+              modificato un evento dal Calendario lo vede lì. La regione resta montata per gli screen reader. */}
+          <div role="status" aria-live="polite" className="mx-auto max-w-[1380px]">
+            {shareNotice ? (
+              <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface-soft)] p-3 text-sm font-bold">
+                <Icon name="AlertTriangle" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+                <span className="min-w-0 flex-1">{shareNotice}</span>
+                <Button variant="soft" title={SHARE_NOTICE_TEXT.dismissTitle} onClick={() => useSharedStore.getState().setNotice(null)}>
+                  {SHARE_NOTICE_TEXT.dismiss}
+                </Button>
+              </div>
+            ) : null}
+          </div>
 
           <div className="mx-auto max-w-[1380px]">{children}</div>
 

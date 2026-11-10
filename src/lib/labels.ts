@@ -290,7 +290,19 @@ export const SHARE_TEXT = {
   opening: "Apro…",
   loadFailed: "Non riesco ad aprire Condividi: controlla la connessione e riprova. Se succede ancora, ricarica la pagina.",
   done: "Fatto",
-  linkOnce: "Il link non si può rivedere dopo aver chiuso questa finestra: se lo perdi, crea un nuovo invito."
+  linkOnce: "Il link non si può rivedere dopo aver chiuso questa finestra: se lo perdi, crea un nuovo invito.",
+  /** Dopo il nome di un gruppo tra i destinatari: il codice del gruppo non scade, chi entra dopo vede anche lui. */
+  groupTarget: "tutto il gruppo, anche chi entrerà dopo"
+} as const;
+
+/** Una condivisione da cambiare o togliere che sul server non c'è più (tolta altrove, o non più tua). */
+export const SHARE_GONE_TEXT = "Questa condivisione non c'è più.";
+
+/** Avviso della condivisione mostrato in ogni sezione (AppShell), lì dove si è fatta la modifica. */
+export const SHARE_NOTICE_TEXT = {
+  denied: (owner: string) => `Non hai più il permesso di modificare i dati di ${owner || "questa persona"}: la modifica non è stata salvata.`,
+  dismiss: "Ok",
+  dismissTitle: "Chiudi l'avviso sulla condivisione"
 } as const;
 
 export const REVISION_CHANGE_LABEL: Record<ItemRevision["change"], string> = {

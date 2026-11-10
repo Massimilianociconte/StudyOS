@@ -243,7 +243,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
                 <optgroup label="Gruppi">
                   {groups.map((group) => (
                     <option key={group.id} value={`group:${group.id}`}>
-                      {group.name} (tutto il gruppo)
+                      {group.name} ({SHARE_TEXT.groupTarget})
                     </option>
                   ))}
                 </optgroup>

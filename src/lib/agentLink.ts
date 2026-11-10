@@ -226,8 +226,10 @@ const policyFor = (tool: AgentTool) => decideToolAction(readStoredPolicy(), tool
 const handleCall = async (job: { id: string; name: string; args: Record<string, unknown>; actorName: string }) => {
   const tool = findAgentTool(job.name);
   const summary = await describeAgentCall(job.name, job.args);
+  // Il registro resta sul dispositivo (localStorage, anche col vault): senza titoli e nomi di altre persone.
+  const auditSummary = await describeAgentCall(job.name, job.args, { audit: true });
   const finish = async (result: AgentCallResult, decision: PolicyChoice) => {
-    record({ tool: job.name, risk: tool?.risk ?? "write", decision, status: outcome(result), summary, actor: job.actorName });
+    record({ tool: job.name, risk: tool?.risk ?? "write", decision, status: outcome(result), summary: auditSummary, actor: job.actorName });
     await deliver(job.id, result);
   };
   if (!tool) {

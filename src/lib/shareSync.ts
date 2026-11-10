@@ -13,7 +13,7 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { db, getMeta, setMeta } from "./db";
-import { SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
+import { SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
 import {
   SHARING_UNAVAILABLE_TEXT,
   grantFromRow,
@@ -23,6 +23,7 @@ import {
   offerToRow,
   ownerEntityTypes,
   planShareWrites,
+  requireAffectedShare,
   revisionFromRow,
   safeCssColor,
   shareErrorText,
@@ -344,8 +345,9 @@ const pushOutbox = async (gen: number) => {
     }
     if (denied) {
       still(gen);
-      const owner = useSharedStore.getState().received.find((grant) => grant.ownerId === batch.ownerId)?.ownerName || "questa persona";
-      useSharedStore.getState().setNotice(`Non hai più il permesso di modificare i dati di ${owner}: la modifica non è stata salvata.`);
+      // Mostrato in ogni sezione (AppShell): chi ha modificato dal Calendario lo vede lì.
+      const owner = useSharedStore.getState().received.find((grant) => grant.ownerId === batch.ownerId)?.ownerName ?? "";
+      useSharedStore.getState().setNotice(SHARE_NOTICE_TEXT.denied(owner));
     }
   }
 };
@@ -426,7 +428,8 @@ const ensureRealtime = async (me: string, owners: string[], gen: number) => {
       { event: "*", schema: "public", table: "studyos_items", filter: `user_id=in.(${watched.join(",")})` },
       (payload) => {
         const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
-        if (row?.client_id && row.client_id === clientId) return;
+        // Il server antepone a client_id di chi riceve "r:<id utente>:" (studyos_items_recipient_values).
+        if (row?.client_id && (row.client_id === clientId || row.client_id === `r:${me}:${clientId}`)) return;
         schedule();
       }
     );
@@ -682,11 +685,14 @@ export const shareWith = async (target: ShareTarget, offers: ShareOffer[]) => {
     }
     for (const { id, offer } of update) {
       const row = offerToRow(offer);
-      const { error } = await client()
+      const { data, error } = await client()
         .from("studyos_shares")
         .update({ permission: row.permission, subject_ids: row.subject_ids, owner_name: myName() })
-        .eq("id", id);
+        .eq("id", id)
+        .select("id");
       fail(error);
+      // Nessuna riga: tolta nel frattempo (anche da un altro dispositivo). La rilettura qui sotto la toglie dall'elenco.
+      requireAffectedShare(data);
       saved.push(offer.scope);
     }
   } catch (cause) {
@@ -701,21 +707,37 @@ export const shareWith = async (target: ShareTarget, offers: ShareOffer[]) => {
   }
 };
 
+/**
+ * Zero righe toccate (condivisione tolta altrove, o una che la RLS non lascia cambiare): non è un
+ * successo. Prima si rilegge, così l'elenco non la mostra più, poi l'errore arriva all'app e all'agente.
+ */
+const requireAffected = async (rows: readonly unknown[] | null) => {
+  try {
+    requireAffectedShare(rows);
+  } catch (error) {
+    await syncSharedNow().catch(() => undefined);
+    throw error;
+  }
+};
+
 export const updateShare = async (id: string, patch: { permission: SharePermission; subjectIds: string[] }) => {
   await requireSharing();
-  const { error } = await client()
+  const { data, error } = await client()
     .from("studyos_shares")
     .update({ permission: patch.permission, subject_ids: patch.subjectIds })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   fail(error);
+  await requireAffected(data);
   await syncSharedNow();
 };
 
 /** Il proprietario smette di condividere; chi riceve esce da una condivisione diretta. */
 export const revokeShare = async (id: string) => {
   await requireSharing();
-  const { error } = await client().from("studyos_shares").delete().eq("id", id);
+  const { data, error } = await client().from("studyos_shares").delete().eq("id", id).select("id");
   fail(error);
+  await requireAffected(data);
   await syncSharedNow();
 };
 

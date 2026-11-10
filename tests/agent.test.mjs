@@ -739,6 +739,10 @@ test("strumenti condivisi: elenco, permessi e conferma con il nome di chi condiv
   assert.equal(await describeAgentCall("studyos_update_shared_item", { id: handle, status: "done" }), "Modificare un elemento condiviso con te: «Relazione di Alice»");
   assert.equal(await describeAgentCall("studyos_share_with", { personId: alice, scopes: ["calendar"] }), "Condividere Calendario: «Alice»");
   assert.equal(await describeAgentCall("studyos_revoke_share", { id: "s1", confirm: true }), "Togliere una condivisione: «Attività · Alice»");
+  // Il registro salvato sul dispositivo (anche col vault) non tiene titoli o nomi di altre persone.
+  assert.equal(await describeAgentCall("studyos_update_shared_item", { id: handle, status: "done" }, { audit: true }), "Modificare un elemento condiviso con te");
+  assert.equal(await describeAgentCall("studyos_share_with", { personId: alice, scopes: ["calendar"] }, { audit: true }), "Condividere Calendario");
+  assert.equal(await describeAgentCall("studyos_revoke_share", { id: "s1", confirm: true }, { audit: true }), "Togliere una condivisione");
 
   const denied = await executeAgentTool("studyos_update_shared_item", { id: handle, status: "done" });
   assert.deepEqual(denied, { ok: false, code: "denied", error: "Puoi solo vedere questo elemento." });
@@ -855,6 +859,14 @@ test("strumenti condivisi: mai errori grezzi, solo testi in italiano", async () 
     assert.deepEqual(await shareWithAlice(), { ok: false, code: "failed", error: "Condivisione non salvata. Questa persona non riceve più condivisioni." });
     shareSyncLoader.load = serverWith(new TypeError("Failed to fetch"));
     assert.match((await shareWithAlice()).error, /^Condivisione non salvata\. Server cloud non raggiungibile/);
+    // La condivisione non c'è più (tolta altrove): il server non tocca nessuna riga e l'agente non dice ok.
+    shareSyncLoader.load = serverWith(new ShareUserError("Questa condivisione non c'è più."));
+    assert.deepEqual(await executeAgentTool("studyos_update_share", { id: "g1", permission: "edit" }), {
+      ok: false, code: "failed", error: "Permessi non aggiornati. Questa condivisione non c'è più."
+    });
+    assert.deepEqual(await executeAgentTool("studyos_revoke_share", { id: "g1", confirm: true }), {
+      ok: false, code: "failed", error: "Condivisione non tolta. Questa condivisione non c'è più."
+    });
     // Il modulo non si carica (offline, chunk mancante): errore generico, mai il messaggio tecnico.
     shareSyncLoader.load = async () => { throw new TypeError("Failed to fetch dynamically imported module: /assets/shareSync.js"); };
     const offline = await shareWithAlice();

@@ -28,6 +28,8 @@ import {
   sharedKey,
   sharedPushBatches,
   sharedWriteError,
+  withoutProtectedKeys,
+  requireAffectedShare,
   typeAccess,
   urlWithoutShare,
   withoutSupersededRows,
@@ -214,6 +216,51 @@ test("coda: lotti per proprietario, tombstone ridotti, voci orfane scartate", ()
   assert.deepEqual(batches.map((batch) => [batch.ownerId, batch.rows.length]), [["alice", 1], ["alice", 1], ["dario", 1]]);
   assert.deepEqual(batches[1].rows[0], { entity_type: "calendarEvent", entity_id: "e2", payload: { id: "e2", deletedAt: "2026-11-10T12:00:00.000Z" }, deleted: true });
   assert.equal(batches[0].rows[0].payload.title, "A");
+});
+
+test("coda: copertine, file e UID di import non viaggiano verso il server (restano quelli salvati)", () => {
+  const entity = {
+    id: "a1",
+    name: "Dispensa",
+    dataUrl: "data:application/pdf;base64,AAAA",
+    previewDataUrl: "data:image/png;base64,CC",
+    cover: "data:image/png;base64,BB",
+    sourceUid: "barb-exam-1",
+    externalUrl: "https://www.unimi.it/",
+    timerStartedAt: "2026-11-10T10:00:00.000Z",
+    tags: ["pdf"]
+  };
+  assert.deepEqual(withoutProtectedKeys(entity), {
+    id: "a1",
+    name: "Dispensa",
+    externalUrl: "https://www.unimi.it/",
+    timerStartedAt: "2026-11-10T10:00:00.000Z",
+    tags: ["pdf"]
+  });
+  const parsed = JSON.parse('{"id":"x","__proto__":{"polluted":true},"title":"T"}');
+  assert.deepEqual(Object.keys(withoutProtectedKeys(parsed)), ["id", "title"]);
+
+  const items = [item("alice", "attachment", "a1", entity)];
+  const outbox = [{ key: sharedKey("alice", "attachment", "a1"), ownerId: "alice", entityType: "attachment", entityId: "a1", deleted: false, queuedAt: "1" }];
+  const { batches } = sharedPushBatches(outbox, items);
+  const sent = batches[0].rows[0].payload;
+  for (const key of ["dataUrl", "previewDataUrl", "cover", "sourceUid"]) assert.equal(key in sent, false, key);
+  assert.deepEqual(sent, withoutProtectedKeys(items[0].entity));
+  assert.equal(sent.name, "Dispensa");
+  // Solo la riga da inviare: la copia nella cache resta intera.
+  assert.equal(items[0].entity.dataUrl, entity.dataUrl);
+  assert.equal(items[0].entity.cover, entity.cover);
+});
+
+test("condivisione modificata o tolta: zero righe toccate vuol dire che non c'è più", () => {
+  assert.doesNotThrow(() => requireAffectedShare([{ id: "s1" }]));
+  for (const rows of [[], null, undefined]) {
+    assert.throws(
+      () => requireAffectedShare(rows),
+      (error) => error instanceof ShareUserError && error.message === "Questa condivisione non c'è più."
+    );
+  }
+  assert.equal(shareActionErrorTextSafe("update", new ShareUserError("Questa condivisione non c'è più.")), "Permessi non aggiornati. Questa condivisione non c'è più.");
 });
 
 test("righe del server: una eliminazione in coda scarta le righe più vecchie, non le più nuove né i tombstone", () => {

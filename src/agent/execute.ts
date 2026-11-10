@@ -258,11 +258,14 @@ const entityLabel = (id: string): string | undefined => {
 /**
  * Riassunto per la conferma: «Eliminare una task: «Ripassare il cap. 3»» invece di un id. Un id che non
  * è tra i dati personali si cerca tra quelli condivisi (modulo pigro), mai il contrario.
+ * Con `audit` (il registro salvato sul dispositivo, in chiaro anche col vault) titoli e nomi di altre
+ * persone restano fuori: solo la frase dello strumento, che dice già che l'elemento è condiviso.
  */
-export const describeAgentCall = async (name: string, args: Args) => {
+export const describeAgentCall = async (name: string, args: Args, options: { audit?: boolean } = {}) => {
   const base = toolSummary(name, args);
   const id = typeof args.id === "string" ? args.id : typeof args.groupId === "string" ? args.groupId : typeof args.personId === "string" ? args.personId : "";
   let target = id ? entityLabel(id) : undefined;
+  if (id && !target && options.audit) return base.slice(0, 240);
   if (id && !target) {
     try {
       target = (await import("./sharedTools")).sharedLabel(id);
