@@ -7,6 +7,11 @@
 -- recapito immediato via realtime.
 --
 -- Gli id sono text (stesso spazio degli id locali) per non dover rimappare nulla.
+--
+-- Si può rieseguire: tabelle e righe esistenti restano, policy, trigger e funzioni si
+-- aggiornano. Rieseguilo dopo la revisione del 10/11/2026 (accettare o rifiutare un invito
+-- nominale richiede un'email presente, uguale e confermata); se usi la condivisione dei dati,
+-- poi riesegui sharing.sql e sharing-verify.sql, in quest'ordine.
 
 -- ─── Tabelle ────────────────────────────────────────────────────────────────
 
@@ -290,7 +295,15 @@ begin
   if v_invite.status <> 'pending' then
     raise exception 'Invito già gestito';
   end if;
-  if v_invite.recipient_email is null or lower(v_invite.recipient_email) <> v_email then
+  -- is distinct from: con il claim email mancante (null) non si passa mai. L'email deve essere anche
+  -- confermata (auth.users): il claim del JWT da solo non lo dice. Da qui si entra nel gruppo, e un
+  -- gruppo può ricevere condivisioni di dati personali.
+  if v_invite.recipient_email is null
+     or lower(v_invite.recipient_email) is distinct from v_email
+     or not exists (
+       select 1 from auth.users u
+       where u.id = auth.uid() and u.email_confirmed_at is not null and lower(u.email) = lower(v_invite.recipient_email)
+     ) then
     raise exception 'Invito destinato a un altro account';
   end if;
   insert into public.studyos_group_members (group_id, user_id, email, display_name, role)
@@ -328,7 +341,13 @@ begin
   if v_invite.status <> 'pending' then
     raise exception 'Invito già gestito';
   end if;
-  if v_invite.recipient_email is null or lower(v_invite.recipient_email) <> lower(auth.jwt() ->> 'email') then
+  -- Come accept_group_invite: email presente, uguale e confermata.
+  if v_invite.recipient_email is null
+     or lower(v_invite.recipient_email) is distinct from lower(auth.jwt() ->> 'email')
+     or not exists (
+       select 1 from auth.users u
+       where u.id = auth.uid() and u.email_confirmed_at is not null and lower(u.email) = lower(v_invite.recipient_email)
+     ) then
     raise exception 'Invito destinato a un altro account';
   end if;
   update public.studyos_group_invites
