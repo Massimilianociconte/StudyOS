@@ -41,7 +41,8 @@ import {
   SHARED_ENTITY_TYPES,
   REVISION_LIST_LIMIT,
   actorInSentence,
-  restoredUpdatedAt
+  restoredUpdatedAt,
+  sharedBarbExams
 } from "../src/lib/sharing.ts";
 import {
   SHARED_ENTITY_LABEL,
@@ -593,4 +594,23 @@ test("ripristino: l'updatedAt non è mai più vecchio della copia locale (orolog
   // L'altra persona ha l'orologio avanti: un millisecondo dopo la sua modifica.
   assert.equal(restoredUpdatedAt(now, "2026-11-10T18:30:15.250Z"), "2026-11-10T18:30:15.251Z");
   assert.ok(Date.parse(restoredUpdatedAt(now, "2026-11-10T18:30:15.250Z")) > Date.parse("2026-11-10T18:30:15.250Z"));
+});
+
+test("appelli condivisi: solo barb-exam-*, uniti per appello, con il segno 'anche tu'", () => {
+  const exam = (owner, id, uid, start) => item(owner, "calendarEvent", id, { title: `Appello ${uid}`, sourceUid: uid, start, links: ["https://unimi.it/x"] });
+  const rows = sharedBarbExams(
+    [
+      exam("alice", "a1", "barb-exam-unimi-2", "2026-12-10T00:00"),
+      exam("dario", "d1", "barb-exam-unimi-2", "2026-12-10T00:00"),
+      exam("alice", "a2", "barb-exam-unimi-1", "2026-11-20T00:00"),
+      item("alice", "calendarEvent", "a3", { title: "Lezione", sourceUid: "ics-1", start: "2026-11-11T09:00" }),
+      item("alice", "task", "t1", { title: "x", sourceUid: "barb-exam-unimi-9" })
+    ],
+    new Set(["barb-exam-unimi-2"])
+  );
+  assert.deepEqual(rows.map((row) => [row.sourceUid, row.ownerIds, row.mine]), [
+    ["barb-exam-unimi-1", ["alice"], false],
+    ["barb-exam-unimi-2", ["alice", "dario"], true]
+  ]);
+  assert.equal(rows[0].link, "https://unimi.it/x");
 });

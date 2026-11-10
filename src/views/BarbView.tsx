@@ -11,10 +11,13 @@ import { useShallow } from "zustand/react/shallow";
 import { BARB_META, useBarbStore } from "../store/useBarbStore";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { useStudyStore } from "../store/useStudyStore";
+import { useSharedStore } from "../store/useSharedStore";
 import { Button, Drawer, EmptyState, Panel, Pill, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CourseIcon } from "../components/CourseIcon";
 import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
+import { SharedBarbExams } from "../components/SharedBarbExams";
+import { ShareButton } from "../components/ShareButton";
 import { courseColor } from "../lib/barbCourseVisuals";
 import { SEMESTER_LABEL, SEMESTER_SHORT, SEMESTER_TONE, SEMESTER_IDS } from "../lib/semesters";
 import { resolveBarbCourse } from "../lib/university/examSessions";
@@ -23,7 +26,7 @@ import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels";
 import type { BarbCourse, BarbSemesterInfo, BarbTeacher } from "../lib/university/types";
 
-type Tab = "corsi" | "calendario" | "docenti" | "aule" | "fonti";
+type Tab = "corsi" | "calendario" | "docenti" | "aule" | "fonti" | "condivisi";
 type SemesterFilter = "tutti" | BarbCourse["semester"];
 type DetailTab = "panoramica" | "programma" | "esame";
 
@@ -99,7 +102,7 @@ function LinkButton({ href, icon, children }: { href: string; icon: string; chil
 }
 
 export function BarbView() {
-  const [tab, setTab] = useUiState<Tab>("barb.tab", "corsi", { validate: oneOf("corsi", "calendario", "docenti", "aule", "fonti") });
+  const [tab, setTab] = useUiState<Tab>("barb.tab", "corsi", { validate: oneOf("corsi", "calendario", "docenti", "aule", "fonti", "condivisi") });
   const { ready, courses, teachers, semesters, syncLogs, init } = useBarbStore(
     useShallow((state) => ({
       ready: state.ready,
@@ -110,6 +113,8 @@ export function BarbView() {
       init: state.init
     }))
   );
+  const hasShared = useSharedStore((state) => state.received.some((grant) => grant.scope === "barb_exams" || grant.scope === "calendar"));
+  const activeTab: Tab = tab === "condivisi" && !hasShared ? "corsi" : tab;
 
   useEffect(() => {
     void init();
@@ -129,7 +134,8 @@ export function BarbView() {
     { id: "calendario" as const, label: "Orario lezioni" },
     { id: "docenti" as const, label: "Docenti e contatti", count: teachers.length },
     { id: "aule" as const, label: "Aule e sedi" },
-    { id: "fonti" as const, label: "Fonti ufficiali" }
+    { id: "fonti" as const, label: "Fonti ufficiali" },
+    ...(hasShared ? [{ id: "condivisi" as const, label: "Appelli condivisi" }] : [])
   ];
 
   return (
@@ -138,9 +144,12 @@ export function BarbView() {
         title="Corso di laurea BARB"
         subtitle="L'elenco ufficiale degli insegnamenti: scegli quelli del tuo piano di studi e aggiungili alle tue materie."
         action={
-          <a href="https://barb.cdl.unimi.it/it/insegnamenti/piano-didattico" target="_blank" rel="noreferrer">
-            <Button icon="GraduationCap" variant="soft">Piano didattico ufficiale</Button>
-          </a>
+          <div className="flex flex-wrap gap-2">
+            <a href="https://barb.cdl.unimi.it/it/insegnamenti/piano-didattico" target="_blank" rel="noreferrer">
+              <Button icon="GraduationCap" variant="soft">Piano didattico ufficiale</Button>
+            </a>
+            <ShareButton scopes={["barb_exams"]} />
+          </div>
         }
       />
       <p className="safe-text mb-4 text-xs font-bold text-[var(--muted)]">
@@ -157,14 +166,15 @@ export function BarbView() {
       </div>
 
       <div className="mb-4">
-        <Segmented label="Sezioni del corso di laurea" value={tab} options={tabs} onChange={setTab} />
+        <Segmented label="Sezioni del corso di laurea" value={activeTab} options={tabs} onChange={setTab} />
       </div>
 
-      {tab === "corsi" ? <CoursesTab courses={courses} teachersById={teachersById} /> : null}
-      {tab === "calendario" ? <WeeklySchedule courses={courses} semesters={semesters} /> : null}
-      {tab === "docenti" ? <TeachersTab teachers={teachers} courses={courses} /> : null}
-      {tab === "aule" ? <RoomsTab courses={courses} /> : null}
-      {tab === "fonti" ? <SourcesTab syncLogs={syncLogs} /> : null}
+      {activeTab === "corsi" ? <CoursesTab courses={courses} teachersById={teachersById} /> : null}
+      {activeTab === "calendario" ? <WeeklySchedule courses={courses} semesters={semesters} /> : null}
+      {activeTab === "docenti" ? <TeachersTab teachers={teachers} courses={courses} /> : null}
+      {activeTab === "aule" ? <RoomsTab courses={courses} /> : null}
+      {activeTab === "fonti" ? <SourcesTab syncLogs={syncLogs} /> : null}
+      {activeTab === "condivisi" ? <SharedBarbExams /> : null}
     </div>
   );
 }

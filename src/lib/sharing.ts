@@ -771,3 +771,38 @@ export const revisionActorName = (
 
 /** Il nome di `revisionActorName` in mezzo a una frase ("prima che un'altra persona…"): solo il nome sconosciuto cambia. */
 export const actorInSentence = (name: string) => (name === UNKNOWN_PERSON ? UNKNOWN_PERSON_IN_SENTENCE : name);
+
+export interface SharedBarbExam {
+  sourceUid: string;
+  title: string;
+  start: string;
+  link?: string;
+  ownerIds: string[];
+  /** Lo stesso appello è anche nel mio calendario. */
+  mine: boolean;
+}
+
+/** Appelli ufficiali scelti da chi condivide con me (calendario o appelli), uno per appello. */
+export const sharedBarbExams = (items: readonly SharedItem[], mine: ReadonlySet<string>): SharedBarbExam[] => {
+  const byUid = new Map<string, SharedBarbExam>();
+  for (const entry of items) {
+    if (entry.entityType !== "calendarEvent") continue;
+    const uid = str(entry.entity.sourceUid);
+    if (!uid?.startsWith("barb-exam-")) continue;
+    const current = byUid.get(uid);
+    if (current) {
+      if (!current.ownerIds.includes(entry.ownerId)) current.ownerIds.push(entry.ownerId);
+      continue;
+    }
+    const links = Array.isArray(entry.entity.links) ? entry.entity.links.filter((link): link is string => typeof link === "string") : [];
+    byUid.set(uid, {
+      sourceUid: uid,
+      title: str(entry.entity.title) || "Appello",
+      start: str(entry.entity.start) ?? "",
+      link: links[0],
+      ownerIds: [entry.ownerId],
+      mine: mine.has(uid)
+    });
+  }
+  return [...byUid.values()].sort((a, b) => a.start.localeCompare(b.start));
+};
