@@ -38,9 +38,14 @@ revoca immediata e nessuna duplicazione.
 4. **Cronologia sul server.** Un trigger salva la versione precedente di ogni
    riga modificata da una persona diversa dal proprietario
    (`studyos_item_revisions`, 90 giorni); il ripristino è una nuova versione
-   scritta dal proprietario con la sync normale.
+   scritta dal proprietario con la sync normale. Copertine, file e `sourceUid`
+   restano solo nelle eliminazioni: chi riceve non li cambia, quindi il ripristino
+   di una modifica li riprende dalla copia del proprietario (o dall'eliminazione
+   successiva). Si può annullare in un colpo tutto ciò che una persona ha cambiato
+   da un giorno, con lo stesso ripristino.
 5. **Revoca = cancellare la condivisione.** L'accesso cade subito via RLS; la cache
-   di chi riceveva si riallinea confrontando gli id visibili a ogni pull.
+   di chi riceveva si riallinea confrontando gli id visibili quando cambiano i
+   permessi e al controllo dei 5 minuti (non a ogni segnale Realtime).
 6. **Agente MCP.** Legge e modifica i dati condivisi rispettando i permessi e
    gestisce le condivisioni esistenti. Inviti e accettazioni restano nell'app,
    così email e token non arrivano mai agli agenti.

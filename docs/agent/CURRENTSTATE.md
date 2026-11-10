@@ -204,3 +204,15 @@ origini. Da fare sul progetto reale, in quest'ordine nel SQL Editor: rieseguire
 `supabase/groups.sql`, poi `supabase/sharing.sql` (un unico script), poi
 `supabase/sharing-verify.sql`; quindi deploy del Worker `studyos-agent` e push su `main`.
 Dexie è alla versione 6: non tornare a una build precedente.
+
+Condivisione, seguiti della revisione finale (10 novembre 2026): cronologia più leggera
+(copertine, file e `sourceUid` solo nelle eliminazioni; rieseguendo `sharing.sql` le revisioni
+già salvate si alleggeriscono) con l'elenco che scarica solo titoli; il ripristino riprende
+copertine e file dalla copia del proprietario o dall'eliminazione successiva. Chi riceve
+confronta gli id visibili solo ogni 5 minuti e quando cambiano i permessi. In "Modifiche di
+altri" si annullano in un colpo le modifiche di una persona da un giorno. Il ciclo di chi guarda
+è in `src/lib/shareViewer.ts`, con test per la generazione e la ricarica dopo il reset locale.
+Verifiche: 239 test, lint, build, `sharing.sql` eseguito due volte e `sharing-verify.sql` (12
+colonne pronte) sullo stack locale, `sharing-check.mjs` (117 controlli), prova nel browser
+dell'annullamento e del ripristino di un allegato eliminato. Sul progetto reale: rieseguire
+`supabase/sharing.sql` e poi `supabase/sharing-verify.sql`.

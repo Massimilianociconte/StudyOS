@@ -196,6 +196,17 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
 - **Cronologia**: ogni modifica fatta da altri salva la versione precedente in
   `studyos_item_revisions` per 90 giorni. Il proprietario la vede in "Modifiche di altri"
   (le ultime 100) e la ripristina: il ripristino è una nuova versione scritta da lui.
+  Copertine, file incorporati e `sourceUid` restano solo nelle eliminazioni
+  (`studyos_without_protected`): chi riceve non li può cambiare, quindi il ripristino di una
+  modifica li riprende dalla copia del proprietario o, se l'elemento è stato poi eliminato da
+  altri, dall'eliminazione salvata. Se l'ha eliminato il proprietario, quella versione non si
+  ripristina più. L'elenco scarica solo titoli e id; la versione intera arriva al ripristino.
+- **Annulla le modifiche di una persona** ("Modifiche di altri"): scelti la persona e il
+  giorno, ogni elemento che ha modificato o eliminato torna alla versione prima della sua
+  prima modifica da quel giorno, tutto in un salvataggio. Prima un controllo dice quanti
+  elementi tornano, quanti aggiunti da lei restano (si eliminano a mano), quanti hai eliminato
+  tu (restano eliminati) e su quanti hanno cambiato qualcosa anche altre persone dopo (quelle
+  modifiche si perdono, come le tue successive).
 - **Appelli condivisi** (Corso di laurea → "Appelli condivisi"): una riga per esame e per
   giorno; "Anche tu" compare solo se la data è la stessa; i link mostrano il dominio.
 - **Inviti**: `create_share_invite` restituisce un token di 64 caratteri esadecimali; sul
@@ -208,7 +219,9 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   una condivisione attiva in uno dei due sensi (`studyos_knows_user`).
 - **Aggiornamenti**: Realtime su `studyos_shares`, `studyos_share_invites` e sulle righe dei
   proprietari (fino a 100 persone per canale), più un controllo ogni 5 minuti e al ritorno
-  sulla scheda. Un elemento che esce da un filtro sparisce al controllo successivo.
+  sulla scheda. Il confronto con tutti gli id visibili si fa solo al controllo dei 5 minuti e
+  quando cambiano i permessi di un proprietario: un segnale Realtime scarica solo le righe
+  cambiate. Un elemento che esce da un filtro sparisce al controllo successivo.
 - **Agenti MCP**: leggono e modificano i dati condivisi secondo i permessi e gestiscono le
   condivisioni esistenti; inviti e accettazioni restano nell'app. `studyos_share_with` e
   `studyos_update_share` chiedono sempre conferma, anche in una sessione con «Modifiche senza
@@ -230,7 +243,8 @@ girare fuori da localhost.
   "nuova condivisione"; il token di invito viaggia in `?condividi=` nel reindirizzamento
   della conferma email (scelta di design) e può finire nei log di autenticazione o proxy e
   nella cronologia del browser, ma è monouso e scade dopo 14 giorni; la cronologia mostra al
-  più le ultime 100 modifiche degli ultimi 90 giorni; ripristinare un elemento eliminato da
+  più le ultime 100 modifiche degli ultimi 90 giorni (l'annullamento delle modifiche di una
+  persona ne legge fino a 5000 dal giorno scelto); ripristinare un elemento eliminato da
   un'altra persona usa l'orologio del proprietario (raro caso in cui una modifica più recente va persa se
   l'orologio dell'altra persona era avanti, ora limitato dal controllo del server sulle date future); un lotto di chi riceve
   può fallire con un errore invece di `denied` in una rara corsa, se il proprietario cambia
