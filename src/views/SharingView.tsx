@@ -50,7 +50,8 @@ type ShareSync = typeof import("../lib/shareSync");
 type Perform = (kind: ShareAction, action: (sync: ShareSync) => Promise<unknown>) => Promise<string | null>;
 type Answer = (reciprocal: ShareOffer[]) => Promise<string | null>;
 
-type Message = { tone: "info" | "error"; text: string } | null;
+/** info: esito riuscito (sparisce da solo); warning: invito che non si può accettare; error: azione non riuscita. */
+type Message = { tone: "info" | "warning" | "error"; text: string } | null;
 
 const INFO_MESSAGE_MS = 10_000;
 
@@ -100,8 +101,9 @@ export function SharingView() {
   const [login, setLogin] = useState<LoginReason | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState<Message>(null);
-  // Invito aperto da link già mostrato nella sua scheda: non si ripete tra gli inviti arrivati per email.
-  const [openedInviteId, setOpenedInviteId] = useState<string | null>(null);
+  // Invito aperto da link: id dell'invito (null se non si è aperto). Serve a non ripeterlo tra gli inviti
+  // arrivati per email; è legato al token, quindi un invito vecchio non conta per uno nuovo.
+  const [opened, setOpened] = useState<{ token: string; id: string | null } | null>(null);
 
   // Un invito nuovo da link (anche con la sezione già aperta) porta alla scheda Inviti.
   const pendingToken = pending?.token;
@@ -112,20 +114,25 @@ export function SharingView() {
   }, [pendingToken, setTab]);
 
   // L'esito di un'azione riuscita non resta a lungo: i permessi possono cambiare (anche da un'altra persona).
-  // Gli errori restano finché non si fa altro.
-  const infoText = message?.tone === "info" ? message.text : null;
+  // Avvisi ed errori restano finché non si fa altro. Dipende dall'oggetto, non dal testo: lo stesso
+  // testo detto di nuovo riparte da capo.
   useEffect(() => {
-    if (!infoText) return;
+    if (message?.tone !== "info") return;
     const timer = setTimeout(() => setMessage(null), INFO_MESSAGE_MS);
     return () => clearTimeout(timer);
-  }, [infoText]);
+  }, [message]);
 
   // Dopo l'accesso il pannello di login non resta "aperto" nello stato: al logout non deve riaprirsi da solo.
   useEffect(() => {
     if (session) setLogin(null);
   }, [session]);
 
-  const incoming = invites.filter((invite) => invite.ownerId !== me && invite.status === "pending" && !(pending && invite.id === openedInviteId));
+  const openedId = pending && opened?.token === pending.token ? opened.id : undefined;
+  // Finché l'anteprima si carica non si sa quale invito per email sia lo stesso: compaiono dopo, senza doppioni.
+  const waitingForLink = Boolean(pending) && openedId === undefined;
+  const incoming = waitingForLink
+    ? []
+    : invites.filter((invite) => invite.ownerId !== me && invite.status === "pending" && !(pending && invite.id === openedId));
   const sent = invites.filter((invite) => invite.ownerId === me);
   const connecting = availability !== "ready" && availability !== "missing";
 
@@ -140,6 +147,7 @@ export function SharingView() {
   };
 
   const say = (text: string) => setMessage({ tone: "info", text });
+  const warn = (text: string) => setMessage({ tone: "warning", text });
 
   const changeTab = (next: SharingTab) => {
     setMessage(null);
@@ -243,8 +251,8 @@ export function SharingView() {
         </div>
       ) : null}
       {message ? (
-        <p role={message.tone === "error" ? "alert" : "status"} className={`mb-4 ${message.tone === "error" ? alertClass : infoClass}`}>
-          <Icon name={message.tone === "error" ? "AlertTriangle" : "Info"} className={`mt-0.5 h-4 w-4 shrink-0 ${message.tone === "error" ? "" : "text-[var(--accent-ink)]"}`} />
+        <p role={message.tone === "info" ? "status" : "alert"} className={`mb-4 ${message.tone === "info" ? infoClass : alertClass}`}>
+          <Icon name={message.tone === "info" ? "Info" : "AlertTriangle"} className={`mt-0.5 h-4 w-4 shrink-0 ${message.tone === "info" ? "text-[var(--accent-ink)]" : ""}`} />
           <span className="min-w-0 flex-1">{message.text}</span>
         </p>
       ) : null}
@@ -279,8 +287,8 @@ export function SharingView() {
               key={`${me}:${pending.token}`}
               token={pending.token}
               perform={perform}
-              onOpened={setOpenedInviteId}
-              onBlocked={say}
+              onOpened={(id) => setOpened(id === undefined ? null : { token: pending.token, id })}
+              onBlocked={warn}
               onDone={(text, accepted) => {
                 say(text);
                 // Dopo aver accettato si va a vedere cosa si riceve; dopo un rifiuto si resta tra gli inviti.
@@ -424,10 +432,15 @@ function MineTab({
                     <Tag>{SHARE_PERMISSION_LABEL[grant.permission]}</Tag>
                     {subjectSummary(grant, subjects) ? <Tag>{subjectSummary(grant, subjects)}</Tag> : null}
                     <span className="ml-auto flex flex-wrap gap-2">
-                      <Button variant="ghost" onClick={() => setEditing(grant)}>
+                      <Button variant="ghost" aria-label={`Modifica ${SHARE_SCOPE_LABEL[grant.scope]} condiviso con ${name}`} onClick={() => setEditing(grant)}>
                         Modifica
                       </Button>
-                      <Button variant="ghost" icon="X" onClick={() => setConfirmId(grant.id)}>
+                      <Button
+                        variant="ghost"
+                        icon="X"
+                        aria-label={`Smetti di condividere ${SHARE_SCOPE_LABEL[grant.scope]} con ${name}`}
+                        onClick={() => setConfirmId(grant.id)}
+                      >
                         Smetti
                       </Button>
                     </span>
@@ -623,10 +636,11 @@ function ReceivedTab({
                 <h3 className="safe-text text-lg font-black">{name}</h3>
                 <p className="text-xs font-bold text-[var(--muted)]">{count === 1 ? "1 elemento" : `${count} elementi`}</p>
               </div>
+              {/* Il testo dice lo stato attuale: niente aria-pressed (si annuncerebbe due volte), il nome dice cosa succede al tocco. */}
               <Button
                 variant="soft"
                 icon={hidden ? "EyeOff" : "Eye"}
-                aria-pressed={!hidden}
+                aria-label={`${hidden ? "Nascosto" : "Visibile"}: ${hidden ? "mostra" : "nascondi"} i dati di ${name} nelle tue viste`}
                 onClick={() => useSharedStore.getState().toggleOwner(ownerId)}
                 title="Mostra o nascondi i suoi dati nelle tue viste (solo su questo dispositivo)"
               >
@@ -643,7 +657,13 @@ function ReceivedTab({
                       <Tag>{SHARE_PERMISSION_LABEL[grant.permission]}</Tag>
                       {viaGroup ? <Tag>Con il gruppo {viaGroup}</Tag> : null}
                       {grant.granteeUserId === me ? (
-                        <Button variant="ghost" icon="LogOut" className="ml-auto" onClick={() => setConfirmId(grant.id)}>
+                        <Button
+                          variant="ghost"
+                          icon="LogOut"
+                          className="ml-auto"
+                          aria-label={`Esci da ${SHARE_SCOPE_LABEL[grant.scope]} di ${name}`}
+                          onClick={() => setConfirmId(grant.id)}
+                        >
                           Esci
                         </Button>
                       ) : null}
@@ -696,6 +716,8 @@ function InviteAnswer({
   const [back, setBack] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Rifiutare è definitivo (il link non si usa più): prima una conferma, come per smettere di condividere.
+  const [declining, setDeclining] = useState(false);
   const name = ownerName || "Qualcuno";
 
   const answer = async (action: () => Promise<string | null>) => {
@@ -749,32 +771,47 @@ function InviteAnswer({
           {error}
         </p>
       ) : null}
-      <div className="mt-4 flex flex-wrap justify-end gap-2">
-        {error && onDismiss ? (
-          <Button variant="ghost" disabled={busy} onClick={onDismiss}>
-            Chiudi l'invito
+      {declining ? (
+        <ConfirmWithError
+          text={`Rifiuti l'invito di ${name}? Il link non si potrà più usare: se cambi idea, ${name} dovrà invitarti di nuovo.`}
+          confirmLabel="Rifiuta l'invito"
+          icon="X"
+          onCancel={() => setDeclining(false)}
+          onConfirm={async () => {
+            const failure = await onDecline();
+            if (!failure) setDeclining(false);
+            return failure;
+          }}
+        />
+      ) : (
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {error && onDismiss ? (
+            <Button variant="ghost" disabled={busy} onClick={onDismiss}>
+              Chiudi l'invito
+            </Button>
+          ) : null}
+          <Button variant="soft" disabled={busy} aria-label={`Rifiuta l'invito di ${name}`} onClick={() => setDeclining(true)}>
+            Rifiuta
           </Button>
-        ) : null}
-        <Button variant="soft" disabled={busy} onClick={() => void answer(onDecline)}>
-          Rifiuta
-        </Button>
-        <Button
-          variant="primary"
-          icon="Check"
-          disabled={busy}
-          onClick={() =>
-            void answer(() =>
-              onAccept(
-                requests
-                  .filter((request) => back.includes(request.scope))
-                  .map((request) => ({ scope: request.scope, permission: request.permission, subjectIds: [], subjectNames: [] }))
+          <Button
+            variant="primary"
+            icon="Check"
+            disabled={busy}
+            aria-label={`Accetta l'invito di ${name}`}
+            onClick={() =>
+              void answer(() =>
+                onAccept(
+                  requests
+                    .filter((request) => back.includes(request.scope))
+                    .map((request) => ({ scope: request.scope, permission: request.permission, subjectIds: [], subjectNames: [] }))
+                )
               )
-            )
-          }
-        >
-          Accetta
-        </Button>
-      </div>
+            }
+          >
+            Accetta
+          </Button>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -795,7 +832,7 @@ function PendingShareCard({
 }: {
   token: string;
   perform: Perform;
-  onOpened: (inviteId: string | null) => void;
+  onOpened: (inviteId: string | null | undefined) => void;
   onBlocked: (text: string) => void;
   onDone: (text: string, accepted: boolean) => void;
 }) {
@@ -805,7 +842,7 @@ function PendingShareCard({
   useEffect(() => {
     let alive = true;
     setState({ kind: "loading" });
-    onOpened(null);
+    onOpened(undefined);
     void import("../lib/shareSync")
       .then((sync) => sync.previewShareInvite(token))
       .then((preview) => {
@@ -820,7 +857,9 @@ function PendingShareCard({
         setState({ kind: "ready", preview });
       })
       .catch((cause) => {
-        if (alive) setState({ kind: "failed", text: shareActionErrorText("open", cause) });
+        if (!alive) return;
+        onOpened(null);
+        setState({ kind: "failed", text: shareActionErrorText("open", cause) });
       });
     return () => {
       alive = false;
@@ -879,18 +918,9 @@ function PendingShareCard({
 }
 
 function SentInvites({ invites, onCancel }: { invites: ShareInviteSummary[]; onCancel: (id: string) => Promise<string | null> }) {
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [failure, setFailure] = useState<{ id: string; text: string } | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   if (!invites.length) return null;
-
-  const cancel = async (id: string) => {
-    setBusyId(id);
-    setFailure(null);
-    const text = await onCancel(id);
-    setBusyId(null);
-    if (text) setFailure({ id, text });
-  };
 
   return (
     <Panel>
@@ -909,14 +939,29 @@ function SentInvites({ invites, onCancel }: { invites: ShareInviteSummary[]; onC
               </span>
             </span>
             {invite.status === "pending" ? (
-              <Button variant="ghost" icon="X" disabled={busyId === invite.id} onClick={() => void cancel(invite.id)}>
-                Annulla
+              <Button
+                variant="ghost"
+                icon="X"
+                aria-label={`Annulla l'invito: ${scopesSummary(invite.offers)}, ${invite.recipientEmail ?? "con link"}`}
+                onClick={() => setConfirmId(invite.id)}
+              >
+                Annulla l'invito
               </Button>
             ) : null}
-            {failure?.id === invite.id ? (
-              <p role="alert" className={`basis-full ${errorClass}`}>
-                {failure.text}
-              </p>
+            {confirmId === invite.id ? (
+              <div className="basis-full">
+                <ConfirmWithError
+                  text="Il link di questo invito smette di funzionare e non si può rivedere: per condividere con quella persona dovrai crearne uno nuovo."
+                  confirmLabel="Sì, annulla l'invito"
+                  icon="X"
+                  onCancel={() => setConfirmId(null)}
+                  onConfirm={async () => {
+                    const failure = await onCancel(invite.id);
+                    if (!failure) setConfirmId(null);
+                    return failure;
+                  }}
+                />
+              </div>
             ) : null}
           </li>
         ))}

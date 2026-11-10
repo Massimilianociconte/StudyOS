@@ -237,6 +237,26 @@ test("errori del server in italiano: rete, migrazione mancante, permessi", () =>
   assert.equal(isMissingSharingObject(null), false);
 });
 
+test("errori del server sconosciuti: mai inglese grezzo, passano solo i testi italiani nostri", () => {
+  const generic = "Il server ha risposto con un errore. Riprova tra poco.";
+  // Eccezioni di sharing.sql (P0001, in italiano): passano così come sono.
+  assert.equal(shareErrorText({ code: "P0001", message: "Sezione ripetuta: tasks" }), "Sezione ripetuta: tasks");
+  // Qualunque altro errore sconosciuto (infrastruttura, bug) diventa una frase generica in italiano.
+  assert.equal(shareErrorText({ code: "PGRST301", message: "JWT expired" }), generic);
+  assert.equal(shareErrorText({ code: "XX000", message: "internal error" }), generic);
+  assert.equal(shareErrorText({ code: "", message: "permission denied for table studyos_shares" }), generic);
+  assert.equal(shareErrorText({ message: "Cannot read properties of undefined (reading 'id')" }), generic);
+  // Un testo già reso italiano (fail() lo avvolge in un Error e il ciclo lo ripassa da qui) non cambia.
+  const network = shareErrorText({ message: "TypeError: Failed to fetch" });
+  assert.equal(shareErrorText({ message: network }), network);
+  const own = shareErrorText({ code: "P0001", message: "Invito scaduto: chiedine uno nuovo" });
+  assert.equal(shareErrorText({ message: own }), own);
+  assert.equal(shareErrorText({ message: shareErrorText({ code: "XX000", message: "internal error" }) }), generic);
+  // Gli altri casi mappati restano come prima.
+  assert.match(shareErrorText({ code: "23505", message: "duplicate key value violates unique constraint" }), /già condivisa/);
+  assert.match(shareErrorText({ code: "42501", message: "new row violates row-level security policy" }), /permesso/);
+});
+
 test("notifiche: solo novità; il silenzio dopo un'accettazione finisce quando la condivisione arriva davvero", () => {
   const pending = (id, owner, status = "pending") => inviteFromRow({ id, owner_id: owner, owner_name: owner, status, expires_at: "2999-01-01T00:00:00Z", offers: [] });
   const received = [grant({ id: "g1" }), grant({ id: "g2", scope: "tasks" }), grant({ id: "g3", ownerId: "dario", ownerName: "Dario" })];
