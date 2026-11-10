@@ -1,5 +1,7 @@
 -- Controllo in sola lettura dopo aver eseguito sharing.sql nel SQL Editor.
 -- Atteso: ogni colonna *_ready è true, shared_item_policies vale 3 e own_item_policies vale 4.
+-- token_hidden_ready, claim_private_ready, anon_rpc_closed_ready e anon_tables_closed_ready
+-- controllano i privilegi che i valori predefiniti del progetto possono riaprire.
 select
   to_regclass('public.studyos_shares') is not null
     and to_regclass('public.studyos_share_invites') is not null
@@ -17,6 +19,22 @@ select
     to_regprocedure('public.push_shared_rows(uuid,text,jsonb)'), 'EXECUTE'), false) as authenticated_rpc_ready,
   not coalesce(has_column_privilege('authenticated', to_regclass('public.studyos_share_invites'), 'token_hash', 'SELECT'), true)
     as token_hidden_ready,
+  -- Privilegi fragili: i valori mancanti (funzione o tabella assente) contano come "non pronto".
+  not coalesce(has_function_privilege('authenticated',
+    to_regprocedure('public.studyos_claim_share_invite(uuid,text)'), 'EXECUTE'), true) as claim_private_ready,
+  not coalesce(
+    has_function_privilege('anon', to_regprocedure('public.create_share_invite(text,jsonb,jsonb,text)'), 'EXECUTE')
+    or has_function_privilege('anon', to_regprocedure('public.preview_share_invite(text)'), 'EXECUTE')
+    or has_function_privilege('anon', to_regprocedure('public.accept_share_invite(uuid,text,text,jsonb)'), 'EXECUTE')
+    or has_function_privilege('anon', to_regprocedure('public.decline_share_invite(uuid,text)'), 'EXECUTE')
+    or has_function_privilege('anon', to_regprocedure('public.push_shared_rows(uuid,text,jsonb)'), 'EXECUTE')
+    or has_function_privilege('anon', to_regprocedure('public.shared_subject_labels()'), 'EXECUTE'),
+    true) as anon_rpc_closed_ready,
+  not coalesce(
+    has_any_column_privilege('anon', to_regclass('public.studyos_shares'), 'SELECT')
+    or has_any_column_privilege('anon', to_regclass('public.studyos_share_invites'), 'SELECT')
+    or has_any_column_privilege('anon', to_regclass('public.studyos_item_revisions'), 'SELECT'),
+    true) as anon_tables_closed_ready,
   (select count(*) from pg_policies where schemaname = 'public' and tablename = 'studyos_items'
     and policyname in ('studyos_select_shared_items', 'studyos_insert_shared_items', 'studyos_update_shared_items'))
     as shared_item_policies,

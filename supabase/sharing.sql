@@ -50,8 +50,12 @@ alter table public.studyos_shares drop constraint if exists studyos_shares_names
 alter table public.studyos_shares add constraint studyos_shares_names_check
   check (char_length(owner_name) <= 120 and char_length(grantee_name) <= 120);
 
-create unique index if not exists studyos_shares_target_key
-  on public.studyos_shares (owner_id, scope, (coalesce(grantee_user_id::text, grantee_group_id)));
+-- Utenti e gruppi hanno spazi di id diversi (l'id di un gruppo lo sceglie il client): il prefisso
+-- evita che un gruppo con id uguale a un uuid utente collida con una condivisione diretta.
+-- Stessa espressione negli ON CONFLICT di accept_share_invite.
+create unique index if not exists studyos_shares_grantee_key
+  on public.studyos_shares (owner_id, scope, (coalesce('u:' || grantee_user_id::text, 'g:' || grantee_group_id)));
+drop index if exists public.studyos_shares_target_key;
 create index if not exists studyos_shares_grantee_user_idx
   on public.studyos_shares (grantee_user_id) where grantee_user_id is not null;
 create index if not exists studyos_shares_grantee_group_idx
@@ -228,16 +232,33 @@ as $$
   )
 $$;
 
+-- Email verificata dell'account che chiama (null se manca o non è confermata). È la fonte per gli
+-- inviti nominali: il claim email del JWT può mancare e non dice se l'email è confermata, e un
+-- confronto con null non fallirebbe mai in modo chiuso.
+create or replace function public.studyos_account_email()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select lower(u.email)
+  from auth.users u
+  where u.id = auth.uid() and u.email_confirmed_at is not null
+$$;
+
 revoke all on function public.studyos_received_shares(uuid) from public;
 revoke all on function public.studyos_item_access(uuid, text, jsonb) from public;
 revoke all on function public.studyos_type_access(uuid, text) from public;
 revoke all on function public.studyos_knows_user(uuid) from public;
+revoke all on function public.studyos_account_email() from public;
 grant execute on function public.studyos_scope_types(text) to authenticated;
 grant execute on function public.studyos_scope_covers(text, text, jsonb, text[]) to authenticated;
 grant execute on function public.studyos_received_shares(uuid) to authenticated;
 grant execute on function public.studyos_item_access(uuid, text, jsonb) to authenticated;
 grant execute on function public.studyos_type_access(uuid, text) to authenticated;
 grant execute on function public.studyos_knows_user(uuid) to authenticated;
+grant execute on function public.studyos_account_email() to authenticated;
 
 -- ─── RLS aggiuntiva su studyos_items ────────────────────────────────────────
 -- Le quattro policy "own" di schema.sql restano invariate. In ogni espressione il confronto col
@@ -249,7 +270,10 @@ for select to authenticated
 using (
   user_id <> (select auth.uid())
   and case
-    when deleted then public.studyos_type_access(user_id, entity_type) is not null
+    -- Il tombstone minimo (solo id e deletedAt) segue l'accesso al tipo; con altri campi nel payload
+    -- (la sync personale non normalizza) vale lo stesso filtro delle righe vive.
+    when deleted and jsonb_typeof(payload) = 'object' and (payload - 'id' - 'deletedAt') = '{}'::jsonb
+      then public.studyos_type_access(user_id, entity_type) is not null
     else public.studyos_item_access(user_id, entity_type, payload) is not null
   end
 );
@@ -443,7 +467,7 @@ using (
   or (
     status = 'pending'
     and recipient_email is not null
-    and recipient_email = lower((select auth.jwt()) ->> 'email')
+    and recipient_email = (select public.studyos_account_email())
   )
 );
 
@@ -520,13 +544,15 @@ begin
 end;
 $$;
 
-create or replace function public.studyos_share_name(p_display_name text, p_email text)
+-- Nome mostrato a chi riceve: mai l'email (l'anteprima di un invito non la deve rivelare).
+drop function if exists public.studyos_share_name(text, text);
+create or replace function public.studyos_share_name(p_display_name text)
 returns text
 language sql
 immutable
 set search_path = pg_catalog
 as $$
-  select left(coalesce(nullif(btrim(p_display_name), ''), nullif(split_part(p_email, '@', 1), ''), 'Studente'), 80)
+  select left(coalesce(nullif(btrim(p_display_name), ''), 'Studente'), 80)
 $$;
 
 create or replace function public.create_share_invite(
@@ -553,7 +579,10 @@ begin
   if v_email is not null and v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
     raise exception 'Email non valida';
   end if;
-  if v_email is not null and v_email = lower(auth.jwt() ->> 'email') then
+  -- Confronto sull'email dell'account (anche non confermata) con exists: un valore mancante non salta il controllo.
+  if v_email is not null and exists (
+    select 1 from auth.users u where u.id = auth.uid() and lower(u.email) = v_email
+  ) then
     raise exception 'Non puoi invitare te stesso';
   end if;
   if (
@@ -565,7 +594,7 @@ begin
   insert into public.studyos_share_invites (owner_id, owner_name, offers, requests, recipient_email, token_hash)
   values (
     auth.uid(),
-    public.studyos_share_name(p_owner_name, auth.jwt() ->> 'email'),
+    public.studyos_share_name(p_owner_name),
     p_offers,
     coalesce(p_requests, '[]'::jsonb),
     v_email,
@@ -599,7 +628,7 @@ as $$
     i.requests,
     i.expires_at,
     case when i.status = 'pending' and i.expires_at <= now() then 'expired' else i.status end,
-    i.recipient_email is not null and i.recipient_email <> lower(auth.jwt() ->> 'email'),
+    i.recipient_email is not null and i.recipient_email is distinct from public.studyos_account_email(),
     i.owner_id = auth.uid()
   from public.studyos_share_invites i
   where auth.uid() is not null
@@ -634,7 +663,8 @@ begin
     raise exception 'Invito scaduto: chiedine uno nuovo';
   end if;
   if v_invite.recipient_email is not null then
-    if v_invite.recipient_email <> lower(auth.jwt() ->> 'email') then
+    -- is distinct from: con email mancante o non confermata non si passa mai (null <> x non solleva nulla).
+    if v_invite.recipient_email is distinct from public.studyos_account_email() then
       raise exception 'Invito destinato a un altro account';
     end if;
   elsif p_token is null or v_invite.token_hash <> sha256(convert_to(p_token, 'UTF8')) then
@@ -657,8 +687,8 @@ set search_path = public
 as $$
 declare
   v_invite public.studyos_share_invites%rowtype;
-  v_email text := lower(auth.jwt() ->> 'email');
-  v_name text := public.studyos_share_name(p_display_name, lower(auth.jwt() ->> 'email'));
+  v_email text := public.studyos_account_email();
+  v_name text := public.studyos_share_name(p_display_name);
   v_item jsonb;
   v_request jsonb;
   v_granted integer := 0;
@@ -680,7 +710,7 @@ begin
       v_name,
       v_email
     )
-    on conflict (owner_id, scope, (coalesce(grantee_user_id::text, grantee_group_id))) do update set
+    on conflict (owner_id, scope, (coalesce('u:' || grantee_user_id::text, 'g:' || grantee_group_id))) do update set
       permission = excluded.permission,
       subject_ids = excluded.subject_ids,
       owner_name = excluded.owner_name,
@@ -711,7 +741,7 @@ begin
       v_invite.owner_id,
       v_invite.owner_name
     )
-    on conflict (owner_id, scope, (coalesce(grantee_user_id::text, grantee_group_id))) do update set
+    on conflict (owner_id, scope, (coalesce('u:' || grantee_user_id::text, 'g:' || grantee_group_id))) do update set
       permission = excluded.permission,
       subject_ids = excluded.subject_ids,
       owner_name = excluded.owner_name,
@@ -755,21 +785,32 @@ stable
 security definer
 set search_path = public
 as $$
+  -- Si parte dalle condivisioni ricevute (dirette o tramite gruppo, escluse le proprie) e si
+  -- leggono solo le materie di quei proprietari: l'accesso a studyos_items passa dall'indice
+  -- che inizia con user_id, senza scorrere le materie di tutti.
+  with mine as (
+    select s.owner_id as src_owner, s.subject_ids as src_subjects
+    from public.studyos_shares s
+    where s.scope <> 'goals' and s.owner_id <> auth.uid() and s.grantee_user_id = auth.uid()
+    union all
+    select s.owner_id, s.subject_ids
+    from public.studyos_shares s
+    join public.studyos_group_members m on m.group_id = s.grantee_group_id
+    where s.scope <> 'goals' and s.owner_id <> auth.uid() and m.user_id = auth.uid()::text
+  )
   select
     i.user_id,
     i.entity_id,
     left(coalesce(i.payload->>'name', ''), 120),
     left(coalesce(i.payload->>'color', ''), 40),
     left(coalesce(i.payload->>'icon', ''), 40)
-  from public.studyos_items i
-  where auth.uid() is not null
-    and i.entity_type = 'subject'
-    and i.deleted = false
-    and i.user_id <> auth.uid()
+  from (select distinct mine.src_owner from mine) o
+  join public.studyos_items i on i.user_id = o.src_owner and i.entity_type = 'subject'
+  where i.deleted = false
     and exists (
-      select 1 from public.studyos_received_shares(i.user_id) s
-      where s.scope <> 'goals'
-        and (cardinality(s.subject_ids) = 0 or i.entity_id = any (s.subject_ids))
+      select 1 from mine
+      where mine.src_owner = i.user_id
+        and (cardinality(mine.src_subjects) = 0 or i.entity_id = any (mine.src_subjects))
     )
 $$;
 
@@ -861,7 +902,11 @@ begin
       on conflict (user_id, entity_type, entity_id) do nothing
       returning true into v_applied;
       if not coalesce(v_applied, false) then
-        v_reason := 'stale';
+        -- La riga esiste già. Se per chi scrive è visibile (RLS) è un inserimento concorrente: "stale";
+        -- altrimenti non si rivela che esiste: "denied".
+        perform 1 from public.studyos_items i
+        where i.user_id = p_owner_id and i.entity_type = v_type and i.entity_id = v_id;
+        v_reason := case when found then 'stale' else 'denied' end;
       end if;
     end if;
 
@@ -875,7 +920,7 @@ end;
 $$;
 
 revoke all on function public.studyos_validate_share_items(jsonb, boolean) from public;
-revoke all on function public.studyos_share_name(text, text) from public;
+revoke all on function public.studyos_share_name(text) from public;
 revoke all on function public.create_share_invite(text, jsonb, jsonb, text) from public;
 revoke all on function public.preview_share_invite(text) from public;
 revoke all on function public.studyos_claim_share_invite(uuid, text) from public;
@@ -884,7 +929,7 @@ revoke all on function public.decline_share_invite(uuid, text) from public;
 revoke all on function public.shared_subject_labels() from public;
 revoke all on function public.push_shared_rows(uuid, text, jsonb) from public;
 grant execute on function public.studyos_validate_share_items(jsonb, boolean) to authenticated;
-grant execute on function public.studyos_share_name(text, text) to authenticated;
+grant execute on function public.studyos_share_name(text) to authenticated;
 grant execute on function public.create_share_invite(text, jsonb, jsonb, text) to authenticated;
 grant execute on function public.preview_share_invite(text) to authenticated;
 grant execute on function public.accept_share_invite(uuid, text, text, jsonb) to authenticated;
@@ -901,8 +946,9 @@ revoke all on function public.studyos_received_shares(uuid) from anon;
 revoke all on function public.studyos_item_access(uuid, text, jsonb) from anon;
 revoke all on function public.studyos_type_access(uuid, text) from anon;
 revoke all on function public.studyos_knows_user(uuid) from anon;
+revoke all on function public.studyos_account_email() from anon;
 revoke all on function public.studyos_validate_share_items(jsonb, boolean) from anon;
-revoke all on function public.studyos_share_name(text, text) from anon;
+revoke all on function public.studyos_share_name(text) from anon;
 revoke all on function public.create_share_invite(text, jsonb, jsonb, text) from anon;
 revoke all on function public.preview_share_invite(text) from anon;
 revoke all on function public.accept_share_invite(uuid, text, text, jsonb) from anon;
