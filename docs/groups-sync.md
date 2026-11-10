@@ -234,7 +234,7 @@ girare fuori da localhost.
   un'altra persona usa l'orologio del proprietario (raro caso in cui una modifica più recente va persa se
   l'orologio dell'altra persona era avanti, ora limitato dal controllo del server sulle date future); un lotto di chi riceve
   può fallire con un errore invece di `denied` in una rara corsa, se il proprietario cambia
-  un colore non esadecimale nello stesso istante.
+  nello stesso istante un colore non esadecimale o il tipo di un campo.
 - Chi riceve una sezione vede l'id e l'ora di eliminazione degli elementi eliminati di quel
   tipo anche fuori dal suo filtro per materie: l'elemento eliminato conserva solo id e data,
   quindi la materia non si può più controllare. Titoli e contenuti non arrivano.
