@@ -195,8 +195,12 @@ condivisione in cambio. I dati altrui compaiono nelle viste con il segno della p
 (calendario sovrapposto e filtrabile, "Appelli condivisi" nel Corso di laurea, "Condivisi con
 te" nelle altre sezioni) e stanno in una cache separata (`useSharedStore`, Dexie v6). Le
 modifiche di altri hanno una cronologia di 90 giorni con ripristino e sono controllate dal
-server (colori, link e campi protetti). Server MCP 1.2.0 con 8 strumenti per i dati
-condivisi. Verifiche: 226 test, lint, build, `barb:validate`, `sharing-check.mjs` (85
-controlli) sullo stack locale, prova su due origini. Da fare sul progetto reale: eseguire
-`supabase/sharing.sql` (un unico script) e poi `supabase/sharing-verify.sql` nel SQL Editor,
-deploy del Worker `studyos-agent` e push su `main`.
+server (colori, link, campi protetti, colonne della riga e tipi dei campi, anche per le
+scritture dirette sulla tabella). L'avviso di permesso negato compare in ogni sezione e si
+chiude con "Ok". Accettare o rifiutare un invito di gruppo richiede un'email confermata.
+Server MCP 1.2.0 con 8 strumenti per i dati condivisi. Verifiche dopo la revisione finale:
+228 test, lint, build, `sharing-check.mjs` (114 controlli) sullo stack locale, prova su due
+origini. Da fare sul progetto reale, in quest'ordine nel SQL Editor: rieseguire
+`supabase/groups.sql`, poi `supabase/sharing.sql` (un unico script), poi
+`supabase/sharing-verify.sql`; quindi deploy del Worker `studyos-agent` e push su `main`.
+Dexie è alla versione 6: non tornare a una build precedente.

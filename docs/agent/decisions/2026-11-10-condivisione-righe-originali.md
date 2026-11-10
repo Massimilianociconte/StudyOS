@@ -20,8 +20,14 @@ revoca immediata e nessuna duplicazione.
 1. **Una sola copia sul server.** Chi riceve legge e scrive le righe originali del
    proprietario in `studyos_items`. Nuove policy RLS, che si aggiungono a quelle
    del proprietario, consultano `studyos_shares` (sezione, materie, permesso,
-   persona o gruppo). Le scritture di altri passano da `push_shared_rows`, con la
-   stessa regola LWW della sync personale.
+   persona o gruppo). Il client di chi riceve scrive solo con `push_shared_rows`, con la
+   stessa regola LWW della sync personale; il server accetta anche le scritture dirette
+   sulla tabella che la RLS consente, ripulite dallo stesso trigger
+   (`studyos_items_recipient_values`). Il trigger fissa le colonne della riga (`id`,
+   `created_at`, `updated_at`, `version`, `encrypted`, `client_id` con prefisso di chi
+   scrive), toglie o conserva i campi protetti e controlla i tipi dei campi, così chi
+   riceve non può nascondere una modifica al proprietario né lasciargli un valore che le sue
+   viste non sanno leggere.
 2. **Dati altrui separati nel client.** Una cache dedicata (`useSharedStore`,
    Dexie `sharedItems` e `sharedOutbox`) fuori da `COLLECTIONS`, dalla coda di
    sync personale e dai backup. Con il vault attivo resta solo in memoria.
@@ -66,6 +72,12 @@ revoca immediata e nessuna duplicazione.
 - Il JSON sul server resta in chiaro (limite già noto). Chi riceve vede il
   payload completo delle righe coperte, compresi gli allegati incorporati.
 - Sia chi condivide sia chi riceve devono avere un account con la sync attiva.
+- Un elemento eliminato conserva solo id e data di eliminazione, quindi chi riceve una
+  sezione vede questi due dati anche per gli elementi fuori dal suo filtro per materie.
+- La cache separata porta Dexie alla versione 6: tornare a una build con la versione 5 non
+  è possibile senza perdere l'accesso al database locale.
+- Il controllo dei tipi in `studyos_recipient_payload` ripete i campi di `src/types.ts`:
+  un campo obbligatorio nuovo in un tipo condivisibile va aggiunto anche lì.
 
 ## Componenti interessati
 

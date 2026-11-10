@@ -14,6 +14,12 @@ proprietario non risultava membro, quindi niente elenco membri né inviti
 nominali lato server). Aggiorna policy, trigger, indice e le RPC (compresa
 l'anteprima degli inviti); le righe esistenti restano.
 
+**Rieseguilo anche dopo la revisione del 10/11/2026**: accettare o rifiutare un invito
+nominale ora richiede che l'account abbia un'email, uguale a quella dell'invito e
+confermata. Ordine: `groups.sql`, poi `sharing.sql` (se usi la condivisione dei dati), poi
+`sharing-verify.sql`. Rieseguire `groups.sql` due volte di fila non cambia nulla (provato
+sullo stack locale).
+
 ## Inviti con link, QR e codice
 
 - Pannello **Invita** (pulsante su ogni gruppo e in cima al dettaglio): link
@@ -70,7 +76,10 @@ alcun errore.
   il gruppo). Codici di invito univoci (`upper(invite_code)`), generati con
   `crypto.getRandomValues`.
 - Gli inviti per email valgono quanto la verifica dell'email del progetto:
-  tieni attiva la conferma email in Supabase Auth.
+  tieni attiva la conferma email in Supabase Auth. `accept_group_invite` e
+  `decline_group_invite` rifiutano anche da sole un account senza email nel token, con
+  un'email diversa o non ancora confermata (`auth.users.email_confirmed_at`): entrare in un
+  gruppo dà accesso alle condivisioni fatte a quel gruppo.
 - Scritture delicate solo via RPC `SECURITY DEFINER`:
   `accept_group_invite(p_invite_id, p_display_name)`, `decline_group_invite`,
   `join_group_by_code(p_code, p_display_name)` (verifica destinatario/codice,
@@ -144,8 +153,10 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   solo chi l'ha data. Chi esce da un gruppo (o ne viene rimosso) perde le condivisioni che
   aveva dato a quel gruppo; eliminare il gruppo le cancella tutte.
 - **Una sola copia**: chi riceve legge le righe originali di `studyos_items` tramite RLS
-  (`studyos_shares`) e scrive con l'RPC `push_shared_rows` (stessa regola LWW della sync
-  personale, al massimo 200 righe, esiti `stale` e `denied`). Nel client i dati altrui
+  (`studyos_shares`). Il client scrive solo con l'RPC `push_shared_rows` (stessa regola LWW
+  della sync personale, al massimo 200 righe, esiti `stale` e `denied`); il server accetta
+  anche le scritture dirette sulla tabella che la RLS consente, ripulite dallo stesso trigger
+  (vedi sotto). Nel client i dati altrui
   vivono in `useSharedStore` e nelle tabelle Dexie `sharedItems` e `sharedOutbox`, mai
   nelle collezioni personali, nei backup o nei conteggi; con la password dell'app attiva
   restano solo in memoria.
@@ -159,6 +170,26 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   data di aggiornamento o eliminazione nel futuro (`updatedAt`, `deletedAt`) viene ridotta
   all'ora del server. Una riga rifiutata esce come `denied`. Anche le viste del proprietario
   ripuliscono colori, immagini e link (`safeCssColor`, `safeImageDataUrl`, `safeHref`).
+- **Colonne della riga**: per chi riceve le decide il server, anche nelle scritture dirette.
+  In creazione `id` nuovo, `created_at` e `updated_at` all'ora del server, `version` 1,
+  `encrypted` falso; in modifica `id`, `created_at` ed `encrypted` restano quelli salvati,
+  mentre `updated_at` e `version` li aggiorna il trigger di `schema.sql`. `client_id` riceve
+  sempre il prefisso `r:` seguito dall'id di chi scrive e da `:`, così nessuno può far passare
+  la propria modifica per una del proprietario (il pull e Realtime del proprietario saltano
+  il suo `client_id`).
+- **Tipi dei campi**: in modifica un campo già presente non può cambiare tipo JSON (un
+  titolo resta testo, una lista resta lista); `null` resta ammesso, tranne per i testi
+  obbligatori e le liste. In creazione la funzione conosce i campi di ogni tipo (`src/types.ts`): i
+  testi obbligatori (per esempio titolo, inizio e fine di un evento) devono essere testo e
+  le liste (`tags`, `checklist`, `subtasks`, `program`…) devono essere liste. Un testo
+  obbligatorio o una lista non possono diventare `null` né sparire, perché le viste del
+  proprietario li leggono senza controlli. I campi sconosciuti restano liberi. Il client
+  toglie già prima dell'invio `cover`, `dataUrl`, gli altri `*DataUrl` e `sourceUid`: il
+  server, senza la chiave, tiene il valore salvato.
+- **Avvisi a chi riceve**: un rifiuto (`denied`) mostra "Non hai più il permesso di
+  modificare i dati di …" in cima a ogni sezione, con il pulsante "Ok" per chiuderlo. Se
+  una condivisione è sparita mentre la si cambiava o toglieva, l'app lo dice ("Questa
+  condivisione non c'è più.") e ricarica l'elenco.
 - **Cronometro**: se chi ha "Può modificare" cambia lo stato di un'attività condivisa, il
   cronometro del proprietario si chiude come nella sua app (`taskStatusTransitionPatch`); su
   un'attività altrui non si può impostare "In corso".
@@ -204,3 +235,11 @@ girare fuori da localhost.
   l'orologio dell'altra persona era avanti, ora limitato dal controllo del server sulle date future); un lotto di chi riceve
   può fallire con un errore invece di `denied` in una rara corsa, se il proprietario cambia
   un colore non esadecimale nello stesso istante.
+- Chi riceve una sezione vede l'id e l'ora di eliminazione degli elementi eliminati di quel
+  tipo anche fuori dal suo filtro per materie: l'elemento eliminato conserva solo id e data,
+  quindi la materia non si può più controllare. Titoli e contenuti non arrivano.
+- L'avviso "Non hai più il permesso…" compare anche quando il server rifiuta un valore
+  (colore, link, tipo di un campo) con il permesso ancora attivo.
+- Le cache dei dati altrui hanno portato il database locale (Dexie) alla versione 6. Non
+  tornare mai a una build con la versione 5: il browser rifiuta di aprire un database più
+  recente, quindi quella build non caricherebbe i dati locali del dispositivo.

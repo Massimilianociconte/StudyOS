@@ -129,14 +129,39 @@
 - `studyos_scope_covers` (`supabase/sharing.sql`) e `scopeCovers` (`src/lib/sharing.ts`)
   sono specchi: una sezione nuova o cambiata va aggiornata in entrambi, nei casi di
   `tests/sharing.test.mjs` e in `scripts/supabase/sharing-check.mjs`.
-- Le scritture su righe altrui passano solo da `push_shared_rows`; un esito `denied` scarta
-  la voce in coda e mostra un avviso ("Non hai più il permesso…", che copre anche un
-  rifiuto per valore). Il ripristino dalla cronologia è una nuova versione del proprietario,
-  non una scrittura sulla tabella delle revisioni.
+- Il client scrive su righe altrui solo con `push_shared_rows`; il server accetta anche le
+  scritture dirette sulla tabella che la RLS consente, ripulite dallo stesso trigger. Un
+  esito `denied` scarta la voce in coda e mostra un avviso in AppShell, in ogni sezione
+  ("Non hai più il permesso…", che copre anche un rifiuto per valore o per tipo). Il
+  ripristino dalla cronologia è una nuova versione del proprietario, non una scrittura sulla
+  tabella delle revisioni.
 - I valori scritti da chi riceve li ripulisce il server: `studyos_recipient_payload` e il
   trigger `studyos_items_recipient_values` (anche per le scritture dirette consentite dalla
   RLS). Un campo nuovo mostrato come immagine, colore o link nelle viste del proprietario va
   aggiunto lì e passato dai filtri client (`safeCssColor`, `safeImageDataUrl`, `safeHref`).
+- Lo stesso trigger fissa le colonne della riga di chi riceve (`id`, `created_at`,
+  `updated_at`, `version`, `encrypted`; `client_id` con prefisso `r:<id utente>:`): il
+  cursore di pull del proprietario è `max(updated_at)` e il suo pull salta il proprio
+  `client_id`, quindi lasciarli al client farebbe sparire modifiche. Il controllo dell'eco
+  Realtime di chi riceve confronta anche `r:<proprio id>:<clientId>`.
+- `studyos_recipient_payload` conosce i campi di ogni tipo (testi obbligatori, testi
+  facoltativi, liste) copiati da `src/types.ts`: un campo obbligatorio nuovo in un tipo
+  condivisibile va aggiunto anche lì e in `scripts/supabase/sharing-check.mjs` (`full*`),
+  altrimenti le creazioni di chi riceve vengono rifiutate o restano senza controllo.
+  Un campo esistente non può cambiare tipo JSON in modifica.
+- `withoutProtectedKeys` (`src/lib/sharing.ts`) toglie `cover`, `dataUrl`, `*DataUrl` e
+  `sourceUid` dalle righe di chi riceve prima dell'invio: il server, senza la chiave, tiene
+  il valore salvato. Non rimandarle "per completezza".
+- Chi riceve una sezione vede id e ora di eliminazione degli elementi eliminati di quel tipo
+  anche fuori dal filtro per materie (il tombstone non ha più la materia).
+- Dexie è alla versione 6 (tabelle `sharedItems` e `sharedOutbox`): mai tornare a una build
+  con la versione 5, non aprirebbe il database locale.
+- `updateShare` e `revokeShare` chiedono le righe toccate (`.select("id")`): zero righe
+  diventa "Questa condivisione non c'è più." e un aggiornamento dell'elenco, anche per gli
+  strumenti MCP, che rispondono con un errore.
+- Ordine degli script SQL sul progetto: `schema.sql`, `groups.sql`, `sharing.sql`,
+  `sharing-verify.sql`. `groups.sql` si può rieseguire; dopo averlo rieseguito riesegui anche
+  `sharing.sql`.
 - Un elemento che esce da un filtro (materia cambiata, voto registrato) non genera un evento
   Realtime per chi lo vedeva: sparisce al controllo successivo (al più 5 minuti).
 - Il cursore di pull per proprietario include la firma dei permessi (`grantSignature`):

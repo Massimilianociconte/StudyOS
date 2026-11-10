@@ -29,12 +29,24 @@ avevi già applicato, **rieseguilo dopo la revisione dell'08/10/2026** (vedi
 passano dalla conferma email, tra i Redirect URLs aggiungi anche
 `https://massimilianociconte.github.io/StudyOS/**`.
 
+**Rieseguilo anche dopo la revisione del 10/11/2026**: accettare o rifiutare un invito
+nominale richiede ora un'email presente, uguale a quella dell'invito e confermata.
+`groups.sql` si può rieseguire senza perdere righe.
+
+Ordine esatto nel SQL Editor, una query alla volta:
+
+1. `schema.sql` (la prima volta o dopo una sua revisione);
+2. `groups.sql`;
+3. `sharing.sql`;
+4. `sharing-verify.sql`.
+
 `sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
 dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha
 una transazione che lo avvolge) e premi Run; si può rieseguire. Poi incolla
 [sharing-verify.sql](sharing-verify.sql) in una nuova query: tutte le 11 colonne `*_ready`
-devono essere `true` (compreso `recipient_values_ready`, la regola sui valori scritti da chi
-riceve), `shared_item_policies` deve valere `3` e `own_item_policies` `4`. Sul progetto
+devono essere `true` (compresi `recipient_values_ready`, la regola sui valori scritti da chi
+riceve, e `triggers_ready`, che controlla anche i trigger su condivisioni e membri dei
+gruppi), `shared_item_policies` deve valere `3` e `own_item_policies` `4`. Sul progetto
 reale `sharing.sql` non è mai stato eseguito: non serve alcuna pulizia di valori vecchi.
 Senza questa migrazione la sezione Condivisione spiega che la funzione non è attiva e il
 resto dell'app non cambia. I link di invito usano `#condividi=` (e `?condividi=` dopo la
