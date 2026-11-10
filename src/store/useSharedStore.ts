@@ -4,8 +4,7 @@
 // Con il vault attivo (`persistent: false`) tutto resta in memoria.
 
 import { create } from "zustand";
-import { timestampOf } from "../lib/collections";
-import { db, deleteMeta, getMeta, setMeta } from "../lib/db";
+import { db, getMeta, setMeta } from "../lib/db";
 import {
   dropUnshared,
   mergeSharedRows,
@@ -19,7 +18,8 @@ import {
   type SharedEntity,
   type SharedItem,
   type SharedOutboxEntry,
-  type SharedSubjectLabel
+  type SharedSubjectLabel,
+  withoutSupersededRows
 } from "../lib/sharing";
 import { readUiState, writeUiState } from "../lib/uiState";
 
@@ -29,6 +29,7 @@ export type SharingAvailability = "unknown" | "off" | "missing" | "ready";
 const VIEWER_META = "share:viewer";
 const GRANTS_META = "share:grants";
 const HIDDEN_KEY = "sharing.hiddenOwners";
+const STORAGE_ERROR = "Non riesco a salvare su questo dispositivo i dati condivisi: restano in memoria finché l'app è aperta.";
 
 interface GrantsSnapshot {
   viewerId: string;
@@ -75,21 +76,6 @@ const readHidden = () => {
 
 const pendingKeys = (outbox: readonly SharedOutboxEntry[]) => new Set(outbox.map((entry) => entry.key));
 
-/**
- * Una mia eliminazione in coda non lascia l'elemento in cache, quindi mergeSharedRows non la
- * riconosce: una riga del server più vecchia dell'eliminazione la riporterebbe in vita.
- */
-const withoutSupersededRows = (rows: readonly RemoteSharedRow[], ownerId: string, outbox: readonly SharedOutboxEntry[]) => {
-  const tombstones = new Map(outbox.filter((entry) => entry.deleted).map((entry) => [entry.key, entry]));
-  if (!tombstones.size) return rows;
-  return rows.filter((row) => {
-    const tombstone = row.deleted ? undefined : tombstones.get(sharedKey(ownerId, row.entity_type, row.entity_id));
-    if (!tombstone) return true;
-    const remoteAt = typeof row.payload.updatedAt === "string" ? row.payload.updatedAt : undefined;
-    return timestampOf(remoteAt) > timestampOf(tombstone.deletedAt ?? tombstone.queuedAt);
-  });
-};
-
 const diffItems = (before: readonly SharedItem[], after: readonly SharedItem[]) => {
   const previous = new Map(before.map((entry) => [entry.key, entry]));
   const next = new Set(after.map((entry) => entry.key));
@@ -120,6 +106,19 @@ const EMPTY = {
 } satisfies Partial<SharedState>;
 
 export const useSharedStore = create<SharedState>((set, get) => {
+  /**
+   * Scrive su disco, se si può. Se l'archivio non risponde (quota, blocco, navigazione privata) la
+   * cache passa alla sola memoria, come col vault: l'operazione, già applicata in memoria, non fallisce.
+   */
+  const toDisk = async (operation: () => Promise<unknown>) => {
+    if (!get().persistent) return;
+    try {
+      await operation();
+    } catch {
+      set({ persistent: false, syncError: STORAGE_ERROR });
+    }
+  };
+
   /** Applica un nuovo elenco di elementi (e di voci in coda) in memoria e, se si può, su disco. */
   const writeItems = async (items: SharedItem[], outbox?: SharedOutboxEntry[]) => {
     const before = get().items;
@@ -130,12 +129,14 @@ export const useSharedStore = create<SharedState>((set, get) => {
     const outboxPut = outbox ? outbox.filter((entry) => !beforeOutbox.includes(entry)) : [];
     const outboxRemove = outbox ? beforeOutbox.filter((entry) => !outbox.some((next) => next.key === entry.key)).map((entry) => entry.key) : [];
     if (!put.length && !remove.length && !outboxPut.length && !outboxRemove.length) return;
-    await db.transaction("rw", [db.sharedItems, db.sharedOutbox], async () => {
-      if (put.length) await db.sharedItems.bulkPut(put);
-      if (remove.length) await db.sharedItems.bulkDelete(remove);
-      if (outboxPut.length) await db.sharedOutbox.bulkPut(outboxPut);
-      if (outboxRemove.length) await db.sharedOutbox.bulkDelete(outboxRemove);
-    });
+    await toDisk(() =>
+      db.transaction("rw", [db.sharedItems, db.sharedOutbox], async () => {
+        if (put.length) await db.sharedItems.bulkPut(put);
+        if (remove.length) await db.sharedItems.bulkDelete(remove);
+        if (outboxPut.length) await db.sharedOutbox.bulkPut(outboxPut);
+        if (outboxRemove.length) await db.sharedOutbox.bulkDelete(outboxRemove);
+      })
+    );
   };
 
   return {
@@ -147,42 +148,62 @@ export const useSharedStore = create<SharedState>((set, get) => {
     setAvailability: (availability) => set({ availability }),
 
     hydrate: async (viewerId, persistent) => {
-      const cachedViewer = await getMeta<string>(VIEWER_META).catch(() => undefined);
+      // Un errore dell'archivio non blocca l'avvio: si lavora in memoria e lo si segnala.
+      let storageFailed = false;
+      const failed = () => {
+        storageFailed = true;
+        return undefined;
+      };
+      const cachedViewer = await getMeta<string>(VIEWER_META).catch(failed);
       const reuse = persistent && cachedViewer === viewerId;
-      if (!reuse) await clearTables().catch(() => undefined);
-      if (persistent) await setMeta(VIEWER_META, viewerId).catch(() => undefined);
-      const [items, outbox, grants] = reuse
-        ? await Promise.all([db.sharedItems.toArray(), db.sharedOutbox.toArray(), getMeta<GrantsSnapshot>(GRANTS_META)])
-        : [[], [], undefined];
+      if (!reuse) await clearTables().catch(failed);
+      if (persistent) await setMeta(VIEWER_META, viewerId).catch(failed);
+      let items: SharedItem[] = [];
+      let outbox: SharedOutboxEntry[] = [];
+      let grants: GrantsSnapshot | undefined;
+      if (reuse) {
+        try {
+          [items, outbox, grants] = await Promise.all([db.sharedItems.toArray(), db.sharedOutbox.toArray(), getMeta<GrantsSnapshot>(GRANTS_META)]);
+        } catch {
+          storageFailed = true;
+        }
+      }
+      // Col vault (persistent: false) un errore nel pulire il disco non cambia nulla: resta tutto in memoria.
+      const degraded = persistent && storageFailed;
       set({
         ...EMPTY,
         viewerId,
-        persistent,
+        persistent: persistent && !degraded,
         items,
         outbox,
         given: grants?.viewerId === viewerId ? grants.given : [],
-        received: grants?.viewerId === viewerId ? grants.received : []
+        received: grants?.viewerId === viewerId ? grants.received : [],
+        syncError: degraded ? STORAGE_ERROR : null
       });
     },
 
+    // Senza `viewerId` (logout, cambio account, vault bloccato) una risposta in ritardo non fa nulla:
+    // non deve rimettere in memoria, né scrivere su disco, dati altrui.
     setShares: async (given, received, invites) => {
+      const viewerId = get().viewerId;
+      if (!viewerId) return;
       const items = dropUnshared(get().items, received, pendingKeys(get().outbox));
       set({ given, received, invites });
       await writeItems(items);
-      const viewerId = get().viewerId;
-      if (get().persistent && viewerId) {
-        await setMeta(GRANTS_META, { viewerId, given, received } satisfies GrantsSnapshot).catch(() => undefined);
-      }
+      if (get().viewerId !== viewerId) return;
+      await toDisk(() => setMeta(GRANTS_META, { viewerId, given, received } satisfies GrantsSnapshot));
     },
 
     setLabels: (labels) => set({ labels }),
 
     applyRows: async (ownerId, rows) => {
+      if (!get().viewerId) return;
       const outbox = get().outbox;
       await writeItems(mergeSharedRows(get().items, ownerId, withoutSupersededRows(rows, ownerId, outbox), pendingKeys(outbox)));
     },
 
     reconcile: async (ownerId, types, visible) => {
+      if (!get().viewerId) return;
       await writeItems(reconcileOwner(get().items, ownerId, types, visible, pendingKeys(get().outbox)));
     },
 
@@ -216,17 +237,19 @@ export const useSharedStore = create<SharedState>((set, get) => {
       const error = sharedWriteError(state.received, ownerId, entityType, previous.entity, null);
       if (error) throw new Error(error);
       const now = new Date().toISOString();
-      const entry: SharedOutboxEntry = { key, ownerId, entityType, entityId, deleted: true, deletedAt: now, queuedAt: now };
-      await writeItems(
-        state.items.filter((candidate) => candidate.key !== key),
-        [...state.outbox.filter((candidate) => candidate.key !== key), entry]
-      );
+      // Creato qui e ancora in coda, senza versione sul server: non c'è nulla da eliminare lassù.
+      const neverReachedServer = previous.serverUpdatedAt === "" && state.outbox.some((candidate) => candidate.key === key && !candidate.deleted);
+      const outbox = state.outbox.filter((candidate) => candidate.key !== key);
+      if (!neverReachedServer) outbox.push({ key, ownerId, entityType, entityId, deleted: true, deletedAt: now, queuedAt: now });
+      await writeItems(state.items.filter((candidate) => candidate.key !== key), outbox);
     },
 
     settleOutbox: async (entries) => {
       // Una modifica fatta durante l'invio ha un queuedAt diverso: resta in coda.
       const done = new Set(entries.map((entry) => `${entry.key}|${entry.queuedAt}`));
-      await writeItems(get().items, get().outbox.filter((entry) => !done.has(`${entry.key}|${entry.queuedAt}`)));
+      const outbox = get().outbox.filter((entry) => !done.has(`${entry.key}|${entry.queuedAt}`));
+      // Un elemento tenuto solo per la scrittura in coda, con la condivisione ormai revocata, esce ora.
+      await writeItems(dropUnshared(get().items, get().received, pendingKeys(outbox)), outbox);
     },
 
     toggleOwner: (ownerId) => {
@@ -242,9 +265,10 @@ export const useSharedStore = create<SharedState>((set, get) => {
     forgetMemory: () => set({ ...EMPTY }),
 
     clear: async () => {
-      set({ ...EMPTY, availability: get().availability === "missing" ? "missing" : "off" });
+      // Le persone nascoste sono una scelta di questo account: un reset o un altro accesso non le eredita.
+      set({ ...EMPTY, hiddenOwners: [], availability: get().availability === "missing" ? "missing" : "off" });
+      writeUiState(HIDDEN_KEY, [], "device");
       await clearTables().catch(() => undefined);
-      await deleteMeta(VIEWER_META).catch(() => undefined);
     }
   };
 });

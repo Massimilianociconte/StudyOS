@@ -1,6 +1,7 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { sharedKey, sharedPushBatches } from "../src/lib/sharing.ts";
+import { readUiState } from "../src/lib/uiState.ts";
 import { sharedOfTypes, useSharedStore } from "../src/store/useSharedStore.ts";
 
 // Solo memoria (`persistent: false`, come col vault attivo): niente IndexedDB in Node.
@@ -87,6 +88,10 @@ test("revoca: via gli elementi non più condivisi, restano quelli con scritture 
   await store.getState().saveSharedItem("alice", "calendarEvent", { id: "e2", title: "in coda", updatedAt: "x" });
   await store.getState().setShares([], [], []);
   assert.deepEqual(store.getState().items.map((entry) => entry.entityId), ["e2"]);
+  // Inviata la scrittura (rifiutata dal server), l'elemento non più condiviso sparisce anche dalla cache.
+  await store.getState().settleOutbox(store.getState().outbox);
+  assert.equal(store.getState().outbox.length, 0);
+  assert.equal(store.getState().items.length, 0);
 });
 
 test("viste: gli elementi delle persone nascoste non compaiono", async () => {
@@ -108,4 +113,85 @@ test("vault bloccato: la memoria si svuota, disponibilità e persone nascoste re
   assert.equal(store.getState().viewerId, null);
   assert.equal(store.getState().availability, "ready");
   assert.deepEqual(store.getState().hiddenOwners, ["dario"]);
+});
+
+test("eliminare un elemento mai arrivato al server: via cache e coda, nessun tombstone", async () => {
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "nuovo", title: "Creato offline", updatedAt: "x" });
+  assert.equal(store.getState().outbox.length, 1);
+  await store.getState().deleteSharedItem("alice", "calendarEvent", "nuovo");
+  assert.equal(store.getState().items.length, 0);
+  assert.equal(store.getState().outbox.length, 0);
+  // Un elemento che il server conosce (anche con una modifica in coda) si elimina con un tombstone.
+  await store.getState().applyRows("alice", [row("e1")]);
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "e1", title: "modificato", updatedAt: "x" });
+  await store.getState().deleteSharedItem("alice", "calendarEvent", "e1");
+  assert.deepEqual(store.getState().outbox.map((entry) => [entry.entityId, entry.deleted]), [["e1", true]]);
+  // Creato e già inviato (coda svuotata, non ancora riletto dal server): serve il tombstone.
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "inviato", title: "x", updatedAt: "x" });
+  await store.getState().settleOutbox(store.getState().outbox.filter((entry) => entry.entityId === "inviato"));
+  await store.getState().deleteSharedItem("alice", "calendarEvent", "inviato");
+  assert.ok(store.getState().outbox.some((entry) => entry.entityId === "inviato" && entry.deleted));
+});
+
+test("dopo logout o blocco del vault, le risposte in ritardo non riempiono la memoria", async () => {
+  await store.getState().applyRows("alice", [row("e1")]);
+  store.getState().forgetMemory();
+  assert.equal(store.getState().viewerId, null);
+  await store.getState().applyRows("alice", [row("e1")]);
+  await store.getState().reconcile("alice", ["calendarEvent"], new Set());
+  await store.getState().setShares([], [grant()], []);
+  assert.equal(store.getState().items.length, 0);
+  assert.equal(store.getState().received.length, 0);
+  await store.getState().clear();
+  assert.equal(store.getState().viewerId, null);
+  await store.getState().applyRows("alice", [row("e1")]);
+  await store.getState().setShares([], [grant()], []);
+  assert.equal(store.getState().items.length, 0);
+  assert.equal(store.getState().received.length, 0);
+});
+
+test("reset: clear() azzera anche le persone nascoste, in memoria e nel dispositivo", async () => {
+  store.getState().toggleOwner("dario");
+  assert.deepEqual(readUiState("sharing.hiddenOwners", "device"), ["dario"]);
+  await store.getState().clear();
+  assert.deepEqual(store.getState().hiddenOwners, []);
+  assert.deepEqual(readUiState("sharing.hiddenOwners", "device"), []);
+  assert.equal(store.getState().availability, "off");
+});
+
+// Node non ha IndexedDB: con `persistent: true` ogni accesso a Dexie fallisce, come quota piena o archivio bloccato.
+test("archivio non disponibile: le scritture riescono in memoria e la cache passa alla sola memoria", async () => {
+  store.setState({ persistent: true });
+  await store.getState().saveSharedItem("alice", "calendarEvent", { id: "n1", title: "Nuovo", updatedAt: "x" });
+  assert.equal(store.getState().items.length, 1);
+  assert.equal(store.getState().outbox.length, 1);
+  assert.equal(store.getState().persistent, false);
+  assert.match(store.getState().syncError, /memoria/);
+
+  store.setState({ persistent: true, syncError: null });
+  await store.getState().applyRows("alice", [row("e1")]);
+  assert.equal(store.getState().items.length, 2);
+  assert.equal(store.getState().persistent, false);
+  assert.ok(store.getState().syncError);
+
+  store.setState({ persistent: true, syncError: null });
+  await store.getState().deleteSharedItem("alice", "calendarEvent", "e1");
+  assert.ok(store.getState().outbox.some((entry) => entry.entityId === "e1" && entry.deleted));
+  assert.equal(store.getState().persistent, false);
+
+  store.setState({ persistent: true, syncError: null });
+  await store.getState().setShares([], [grant()], []);
+  assert.equal(store.getState().received.length, 1);
+  assert.equal(store.getState().persistent, false);
+  assert.ok(store.getState().syncError);
+});
+
+test("archivio non disponibile all'avvio: hydrate resta in memoria e lo segnala, senza il vault no", async () => {
+  await store.getState().hydrate("bob", true);
+  assert.equal(store.getState().viewerId, "bob");
+  assert.equal(store.getState().persistent, false);
+  assert.match(store.getState().syncError, /memoria/);
+  await store.getState().hydrate("bob", false);
+  assert.equal(store.getState().persistent, false);
+  assert.equal(store.getState().syncError, null);
 });

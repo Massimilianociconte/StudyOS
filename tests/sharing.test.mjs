@@ -17,7 +17,8 @@ import {
   sharedPushBatches,
   sharedWriteError,
   typeAccess,
-  urlWithoutShare
+  urlWithoutShare,
+  withoutSupersededRows
 } from "../src/lib/sharing.ts";
 import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../src/lib/labels.ts";
 
@@ -172,4 +173,26 @@ test("coda: lotti per proprietario, tombstone ridotti, voci orfane scartate", ()
   assert.deepEqual(batches.map((batch) => [batch.ownerId, batch.rows.length]), [["alice", 1], ["alice", 1], ["dario", 1]]);
   assert.deepEqual(batches[1].rows[0], { entity_type: "calendarEvent", entity_id: "e2", payload: { id: "e2", deletedAt: "2026-11-10T12:00:00.000Z" }, deleted: true });
   assert.equal(batches[0].rows[0].payload.title, "A");
+});
+
+test("righe del server: una eliminazione in coda scarta le righe più vecchie, non le più nuove né i tombstone", () => {
+  const tombstone = { key: sharedKey("alice", "calendarEvent", "e1"), ownerId: "alice", entityType: "calendarEvent", entityId: "e1", deleted: true, deletedAt: "2026-11-10T12:00:00.000Z", queuedAt: "2026-11-10T12:00:00.000Z" };
+  const edit = { key: sharedKey("alice", "calendarEvent", "e2"), ownerId: "alice", entityType: "calendarEvent", entityId: "e2", deleted: false, queuedAt: "2026-11-10T12:00:00.000Z" };
+  const live = (id, updatedAt) => ({ entity_type: "calendarEvent", entity_id: id, payload: { id, updatedAt }, deleted: false, updated_at: "z" });
+  const rows = [
+    live("e1", "2026-11-10T11:00:00.000Z"),
+    live("e1", "2026-11-10T13:00:00.000Z"),
+    { entity_type: "calendarEvent", entity_id: "e1", payload: { id: "e1", deletedAt: "2026-11-10T11:00:00.000Z" }, deleted: true, updated_at: "z" },
+    live("e2", "2026-11-10T11:00:00.000Z"),
+    { entity_type: "calendarEvent", entity_id: "e1", payload: { id: "e1" }, deleted: false, updated_at: "z" }
+  ];
+  const kept = withoutSupersededRows(rows, "alice", [tombstone, edit]);
+  assert.deepEqual(kept.map((row) => [row.entity_id, row.payload.updatedAt ?? row.payload.deletedAt ?? null]), [
+    ["e1", "2026-11-10T13:00:00.000Z"],
+    ["e1", "2026-11-10T11:00:00.000Z"],
+    ["e2", "2026-11-10T11:00:00.000Z"]
+  ]);
+  // Un'eliminazione in coda per un altro proprietario non tocca queste righe; senza tombstone nulla cambia.
+  assert.equal(withoutSupersededRows(rows, "dario", [tombstone]).length, rows.length);
+  assert.equal(withoutSupersededRows(rows, "alice", [edit]).length, rows.length);
 });

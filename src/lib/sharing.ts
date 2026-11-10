@@ -201,6 +201,21 @@ export const mergeSharedRows = (
 };
 
 /**
+ * Una mia eliminazione in coda non lascia l'elemento in cache, quindi mergeSharedRows non la
+ * riconosce: una riga del server non più recente dell'eliminazione lo riporterebbe in vita.
+ * Toglie quelle righe (i tombstone e le modifiche del proprietario successive restano).
+ */
+export const withoutSupersededRows = (rows: readonly RemoteSharedRow[], ownerId: string, outbox: readonly SharedOutboxEntry[]) => {
+  const tombstones = new Map(outbox.filter((entry) => entry.deleted).map((entry) => [entry.key, entry]));
+  if (!tombstones.size) return rows;
+  return rows.filter((row) => {
+    const tombstone = row.deleted ? undefined : tombstones.get(sharedKey(ownerId, row.entity_type, row.entity_id));
+    if (!tombstone) return true;
+    return timestampOf(str(row.payload.updatedAt)) > timestampOf(tombstone.deletedAt ?? tombstone.queuedAt);
+  });
+};
+
+/**
  * Toglie gli elementi di `ownerId` che il server non mostra più (revoca, filtro cambiato,
  * materia esclusa, voto registrato). `visible` contiene le chiavi `${tipo}:${id}` vive.
  */
@@ -307,7 +322,7 @@ export const sharedPushBatches = (outbox: readonly SharedOutboxEntry[], items: r
   return { batches, orphans };
 };
 
-const stringList =(value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []);
+const stringList = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []);
 
 export const grantFromRow = (row: Record<string, unknown>): ShareGrant | null => {
   if (!isShareScope(row.scope) || !isPermission(row.permission)) return null;
