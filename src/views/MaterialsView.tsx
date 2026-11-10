@@ -3,7 +3,7 @@ import type { Attachment } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, attachmentKind, hostOf, type AttachmentKind } from "../lib/labels";
-import { Button, Field, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { Button, EmptyState, Field, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { normalizeExternalUrl, safeDataUrl, safeHref } from "../lib/safeUrl";
 import { oneOf, useUiState } from "../lib/uiState";
@@ -22,6 +22,8 @@ const formatBytes = (bytes: number) => {
 
 type KindFilter = "all" | AttachmentKind;
 
+const INVALID_LINK = "Link non valido: incolla l'indirizzo completo (Es. https://…).";
+
 export function MaterialsView() {
   const [query, setQuery] = useUiState("materials.query", "", { scope: "tab" });
   const [kind, setKind] = useUiState<KindFilter>("materials.kind", "all", { validate: oneOf("all", "pdf", "image", "video", "doc", "link", "file") });
@@ -36,9 +38,9 @@ export function MaterialsView() {
   const linkedName = (type?: string, id?: string) => {
     if (!type || !id) return null;
     if (type === "subject") return subjectName(subjects, id);
-    if (type === "task") return tasks.find((task) => task.id === id)?.title ?? "Task";
+    if (type === "task") return tasks.find((task) => task.id === id)?.title ?? "Attività";
     if (type === "calendarEvent") return events.find((event) => event.id === id)?.title ?? "Evento";
-    if (type === "studySession") return sessions.find((session) => session.id === id)?.title ?? "Sessione";
+    if (type === "studySession") return sessions.find((session) => session.id === id)?.title ?? "Sessione di studio";
     if (type === "exam") return `Esame · ${subjectName(subjects, exams.find((exam) => exam.id === id)?.subjectId)}`;
     return "Elemento";
   };
@@ -74,7 +76,7 @@ export function MaterialsView() {
     if (!editingAttachment || !draft.name.trim()) return;
     const externalUrl = editingAttachment.externalUrl ? normalizeExternalUrl(draft.externalUrl) : editingAttachment.externalUrl;
     if (editingAttachment.externalUrl && !externalUrl) {
-      setUploadError("Link non valido: usa un indirizzo http(s) completo.");
+      setUploadError(INVALID_LINK);
       return;
     }
     setUploadError("");
@@ -98,8 +100,8 @@ export function MaterialsView() {
   };
 
   const deleteWithConfirm = async (attachment: Attachment) => {
-    const label = attachment.name.length > 80 ? `${attachment.name.slice(0, 77)}...` : attachment.name;
-    if (!window.confirm(`Eliminare "${label}" dai materiali locali? L'azione rimuove anche i riferimenti collegati.`)) return;
+    const label = attachment.name.length > 80 ? `${attachment.name.slice(0, 79)}…` : attachment.name;
+    if (!window.confirm(`Eliminare "${label}"? Sparisce dai materiali e da attività, eventi o esami a cui è collegato. Non si può annullare.`)) return;
     await deleteAttachment(attachment.id);
     if (editingAttachment?.id === attachment.id) setEditingAttachment(null);
   };
@@ -110,7 +112,7 @@ export function MaterialsView() {
 
   return (
     <div>
-      <SectionTitle title="Materiali" subtitle="PDF, immagini, documenti e link salvati sul dispositivo (o nel vault cifrato). Collegali a una materia per ritrovarli subito." />
+      <SectionTitle title="Materiali" subtitle="Dispense, appunti e link utili in un solo posto. Collegali a una materia per ritrovarli subito." />
 
       <AddBar
         onFile={async (file) => {
@@ -118,13 +120,13 @@ export function MaterialsView() {
           try {
             await addAttachment(file, subjectFilter ? { type: "subject", id: subjectFilter } : undefined);
           } catch (error) {
-            setUploadError(error instanceof Error ? error.message : "File non importato.");
+            setUploadError(error instanceof Error ? error.message : "File non caricato: riprova o scegli un altro file.");
           }
         }}
         onLink={async (rawUrl, name) => {
           const safe = normalizeExternalUrl(rawUrl);
           if (!safe) {
-            setUploadError("Link non valido: usa un indirizzo http(s) completo.");
+            setUploadError(INVALID_LINK);
             return false;
           }
           setUploadError("");
@@ -142,9 +144,9 @@ export function MaterialsView() {
         <label className="relative block min-w-0 lg:w-72">
           <span className="sr-only">Cerca nei materiali</span>
           <Icon name="Search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
-          <input className={`${inputClass} pl-10`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca nome, tag o link" />
+          <input className={`${inputClass} pl-10`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca per nome, etichetta o link" />
         </label>
-        <Segmented label="Tipo" size="sm" value={kind} onChange={setKind} options={kindOptions} />
+        <Segmented label="Tipo di materiale" size="sm" value={kind} onChange={setKind} options={kindOptions} />
         <select
           className="min-h-9 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black lg:ml-auto"
           value={subjectFilter}
@@ -200,8 +202,8 @@ export function MaterialsView() {
                       href={href}
                       target="_blank"
                       rel="noreferrer"
-                      aria-label={`Apri ${attachment.name}`}
-                      title="Apri"
+                      aria-label={`Apri il link ${attachment.name}`}
+                      title="Apri il link"
                       className="relative grid grid-cols-1 h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-[#10131d] after:absolute after:-inset-1.5 after:rounded-full after:content-['']"
                     >
                       <Icon name="ExternalLink" className="h-4 w-4" />
@@ -211,7 +213,7 @@ export function MaterialsView() {
                       href={download}
                       download={attachment.name}
                       aria-label={`Scarica ${attachment.name}`}
-                      title="Scarica"
+                      title="Scarica il file"
                       className="relative grid grid-cols-1 h-8 w-8 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-1.5 after:rounded-full after:content-['']"
                     >
                       <Icon name="Download" className="h-4 w-4" />
@@ -237,9 +239,27 @@ export function MaterialsView() {
           })}
         </div>
       ) : (
-        <div className="quiet-panel p-8 text-center text-sm font-bold text-[var(--muted)]">
-          {attachments.length ? "Nessun materiale con questi filtri." : "Nessun materiale ancora salvato. Carica un file o incolla un link qui sopra."}
-        </div>
+        attachments.length ? (
+          <EmptyState
+            icon="Search"
+            title="Nessun materiale trovato"
+            body="Nessun materiale corrisponde alla ricerca o ai filtri scelti."
+            action={
+              <Button
+                variant="soft"
+                onClick={() => {
+                  setQuery("");
+                  setKind("all");
+                  setSubjectFilter("");
+                }}
+              >
+                Mostra tutti i materiali
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState icon="Paperclip" title="Ancora nessun materiale" body="Qui ritrovi dispense, appunti e link: carica un file o salva un link qui sopra." />
+        )
       )}
 
       {editingAttachment ? (
@@ -269,14 +289,14 @@ export function MaterialsView() {
                 <input className={inputClass} value={draft.name} onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} autoFocus />
               </Field>
               {editingAttachment.externalUrl ? (
-                <Field label="URL">
+                <Field label="Indirizzo del link (https://…)">
                   <input className={inputClass} value={draft.externalUrl} onChange={(event) => setDraft((value) => ({ ...value, externalUrl: event.target.value }))} />
                 </Field>
               ) : null}
               {!editingAttachment.linkedEntityType || editingAttachment.linkedEntityType === "subject" ? (
                 <Field label="Materia">
                   <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-                    <option value="">Nessuna (archivio generale)</option>
+                    <option value="">Nessuna materia</option>
                     {selectableSubjects(subjects, draft.subjectId).map((subject) => (
                       <option key={subject.id} value={subject.id}>
                         {subject.name}
@@ -289,11 +309,11 @@ export function MaterialsView() {
                   Collegato a: <span className="font-black">{linkedName(editingAttachment.linkedEntityType, editingAttachment.linkedEntityId)}</span>
                 </p>
               )}
-              <Field label="Descrizione">
+              <Field label="Descrizione (facoltativa)">
                 <textarea className={`${inputClass} min-h-20 py-3`} value={draft.description} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} />
               </Field>
-              <Field label="Tag separati da virgola">
-                <input className={inputClass} value={draft.tags} onChange={(event) => setDraft((value) => ({ ...value, tags: event.target.value }))} placeholder="esame, pdf, appunti" />
+              <Field label="Etichette, separate da virgola (facoltative)">
+                <input className={inputClass} value={draft.tags} onChange={(event) => setDraft((value) => ({ ...value, tags: event.target.value }))} placeholder="Es. appunti, esame" />
               </Field>
 
               {uploadError ? (
@@ -304,14 +324,14 @@ export function MaterialsView() {
 
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button variant="danger" icon="Trash2" onClick={() => deleteWithConfirm(editingAttachment)}>
-                  Elimina
+                  Elimina materiale
                 </Button>
                 <span className="flex-1" />
                 <Button variant="soft" onClick={() => setEditingAttachment(null)}>
                   Annulla
                 </Button>
                 <Button variant="primary" icon="Check" onClick={saveEditor} disabled={!draft.name.trim()}>
-                  Salva
+                  Salva modifiche
                 </Button>
               </div>
             </div>
@@ -337,7 +357,7 @@ function AddBar({ onFile, onLink }: { onFile: (file: File) => Promise<void>; onL
     <div className="soft-panel mb-4 flex flex-col gap-2 p-2.5 xl:flex-row xl:items-center">
       <label className="motion-safe inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)] sm:self-start xl:self-auto">
         <Icon name="Upload" className="h-4 w-4" />
-        Carica file
+        Carica un file
         <input
           type="file"
           className="sr-only"
@@ -351,17 +371,17 @@ function AddBar({ onFile, onLink }: { onFile: (file: File) => Promise<void>; onL
       <span className="hidden text-xs font-black uppercase text-[var(--faint)] xl:inline">oppure</span>
       <form onSubmit={submit} className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
         <label className="relative block min-w-0 flex-[2]">
-          <span className="sr-only">URL del link</span>
+          <span className="sr-only">Indirizzo del link (https://…)</span>
           <Icon name="Link" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
-          <input className={`${inputClass} pl-10`} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Incolla un link (https://…)" inputMode="url" />
+          <input className={`${inputClass} pl-10`} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Indirizzo del link (https://…)" inputMode="url" />
         </label>
-        <input className={`${inputClass} min-w-0 flex-1`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome (opzionale)" aria-label="Nome del link" />
+        <input className={`${inputClass} min-w-0 flex-1`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome (facoltativo)" aria-label="Nome del link (facoltativo)" />
         <button
           type="submit"
           disabled={!url.trim()}
           className="motion-safe inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)] disabled:opacity-50"
         >
-          <Icon name="Plus" className="h-4 w-4" /> Salva link
+          <Icon name="Plus" className="h-4 w-4" /> Salva un link
         </button>
       </form>
     </div>

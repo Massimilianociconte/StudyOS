@@ -33,7 +33,7 @@ const inviteLinkBase = () => {
 export const groupInviteLink = (code: string) => `${inviteLinkBase()}#invito=${encodeURIComponent(normalizeInviteCode(code))}`;
 
 export const groupInviteMessage = (groupName: string, inviter: string, code: string) =>
-  `${inviter} ti invita nel gruppo di studio "${groupName}" su StudyOS.\n\nEntra da qui: ${groupInviteLink(code)}\n\nOppure apri Gruppi → Unisciti con codice e inserisci ${normalizeInviteCode(code)}`;
+  `${inviter} ti invita nel gruppo di studio "${groupName}" su StudyOS.\n\nEntra da qui: ${groupInviteLink(code)}\n\nOppure apri Gruppi → Entra con un codice e scrivi ${normalizeInviteCode(code)}`;
 
 export interface SharedSnapshot {
   groups: StudyGroup[];

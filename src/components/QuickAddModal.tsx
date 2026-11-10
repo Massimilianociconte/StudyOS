@@ -9,18 +9,28 @@ import { fromDatetimeLocal, nextHalfHour, toDatetimeLocal } from "../lib/dates";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
+export type QuickAddMode = Mode;
 type TaskCreateMode = "normal" | "timer" | "completed";
 
-const modes: { id: Mode; label: string; title: string }[] = [
-  { id: "task", label: "Task", title: "Task con scadenza, priorità e cronometro" },
-  { id: "event", label: "Evento", title: "Evento nel calendario" },
-  { id: "session", label: "Blocco studio", title: "Blocco di studio nel calendario" },
-  { id: "subject", label: "Materia", title: "Nuova materia" },
-  { id: "material", label: "Materiale", title: "Link o file nei materiali" }
+// `hint`: una frase che dice cosa si sta creando, mostrata sotto i tipi.
+const modes: { id: Mode; label: string; icon: string; hint: string }[] = [
+  { id: "task", label: "Attività", icon: "Check", hint: "Una cosa da fare entro una data: un esercizio, una consegna, un capitolo." },
+  { id: "event", label: "Evento", icon: "CalendarDays", hint: "Un impegno con data e ora: lezione, ricevimento, appuntamento." },
+  { id: "session", label: "Studio pianificato", icon: "Timer", hint: "Tempo che ti riservi per studiare, segnato nel calendario." },
+  { id: "subject", label: "Materia", icon: "BookOpen", hint: "Un corso che stai seguendo. Potrai aggiungere CFU e docente dopo." },
+  { id: "material", label: "Materiale", icon: "Paperclip", hint: "Un link o un file (PDF, slide, appunti) da ritrovare in fretta." }
 ];
 
-export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [mode, setMode] = useState<Mode>("task");
+const titleField: Record<Mode, { label: string; placeholder: string }> = {
+  task: { label: "Cosa devi fare?", placeholder: "Es. Ripassare il capitolo 3 di Patologia" },
+  event: { label: "Nome dell'evento", placeholder: "Es. Lezione di Anatomia" },
+  session: { label: "Cosa studierai?", placeholder: "Es. Esercizi di Biostatistica" },
+  subject: { label: "Nome della materia", placeholder: "Es. Farmacologia speciale" },
+  material: { label: "Nome (facoltativo)", placeholder: "Es. Slide lezione 4" }
+};
+
+export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: boolean; onClose: () => void; initialMode?: Mode }) {
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [title, setTitle] = useState("");
   const [subjectId, setSubjectId] = useState("");
   // Prima: new Date().toISOString() -> ora UTC mostrata come locale (eventi creati 1-2h prima).
@@ -34,13 +44,14 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
   const titleId = useId();
   const { subjects, addTask, addEvent, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
-  // Il modale resta montato: a ogni apertura la data proposta torna "adesso".
+  // Il modale resta montato: a ogni apertura la data proposta torna "adesso" e il tipo è quello richiesto.
   useEffect(() => {
     if (open) {
       setDate(toDatetimeLocal(nextHalfHour()));
+      setMode(initialMode);
       setError("");
     }
-  }, [open]);
+  }, [open, initialMode]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -53,15 +64,17 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
 
   const submitLabel = useMemo(() => {
     if (mode === "task") {
-      if (taskCreateMode === "timer") return "Crea e avvia";
-      if (taskCreateMode === "completed") return "Registra completata";
-      return "Crea task";
+      if (taskCreateMode === "timer") return "Crea e avvia il cronometro";
+      if (taskCreateMode === "completed") return "Salva come fatta";
+      return "Crea attività";
     }
-    if (mode === "event") return "Crea evento";
-    if (mode === "session") return "Pianifica nel calendario";
+    if (mode === "event") return "Aggiungi al calendario";
+    if (mode === "session") return "Aggiungi al calendario";
     if (mode === "subject") return "Crea materia";
-    return "Salva materiale";
+    return "Salva link";
   }, [mode, taskCreateMode]);
+  const currentMode = modes.find((item) => item.id === mode) ?? modes[0];
+  const canSubmit = !busy && (mode === "material" ? Boolean(url.trim()) : Boolean(title.trim()));
 
   const reset = () => {
     setTitle("");
@@ -80,7 +93,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
     }
     const start = fromDatetimeLocal(date) ?? (mode === "subject" || mode === "material" ? new Date().toISOString() : null);
     if (!start) {
-      setError("Data e ora non valide.");
+      setError("Data o ora non valida: controlla il campo e riprova.");
       return;
     }
     setBusy(true);
@@ -132,13 +145,13 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
       }
       if (mode === "material" && url.trim()) {
         const safe = normalizeExternalUrl(url);
-        if (!safe) throw new Error("Link non valido: usa un indirizzo http(s) completo.");
+        if (!safe) throw new Error("Questo link non funziona: copia l'indirizzo completo, che inizia con https://");
         await addExternalAttachment(safe, title.trim() || "Link rapido");
       }
       reset();
       onClose();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Salvataggio non riuscito.");
+      setError(submitError instanceof Error ? submitError.message : "Non è stato possibile salvare. Riprova tra un momento.");
     } finally {
       setBusy(false);
     }
@@ -164,27 +177,39 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
           >
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <h2 id={titleId} className="text-2xl font-black">Aggiunta rapida</h2>
-                <p className="text-sm text-[var(--muted)]">Crea un elemento senza lasciare la pagina.</p>
+                <h2 id={titleId} className="text-2xl font-black">Cosa vuoi aggiungere?</h2>
+                <p className="text-sm text-[var(--muted)]">Scegli il tipo, scrivi il nome e salva. I dettagli puoi aggiungerli dopo.</p>
               </div>
-              <IconButton icon="X" label="Chiudi" onClick={onClose} />
+              <IconButton icon="X" label="Chiudi senza salvare" onClick={onClose} />
             </div>
 
-            <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Tipo di elemento">
+            <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Tipo di elemento da aggiungere">
               {modes.map((item) => (
-                <button key={item.id} type="button" onClick={() => setMode(item.id)} aria-pressed={mode === item.id} title={item.title}>
-                  <Pill active={mode === item.id}>{item.label}</Pill>
+                <button key={item.id} type="button" onClick={() => setMode(item.id)} aria-pressed={mode === item.id} title={item.hint}>
+                  <Pill active={mode === item.id}>
+                    <Icon name={item.icon} className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                    {item.label}
+                  </Pill>
                 </button>
               ))}
             </div>
+            <p className="mb-4 text-xs font-bold text-[var(--muted)]" aria-live="polite">
+              {currentMode.hint}
+            </p>
 
-            <div className="grid grid-cols-1 gap-3">
+            <form
+              className="grid grid-cols-1 gap-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (canSubmit) void submit();
+              }}
+            >
               {mode === "task" ? (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label="Tipo di task">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="group" aria-label="Quando la fai?">
                   {([
-                    { id: "normal", label: "Task normale", icon: "Check" },
-                    { id: "timer", label: "Con cronometro", icon: "Timer" },
-                    { id: "completed", label: "Già completata", icon: "Archive" }
+                    { id: "normal", label: "Da fare", hint: "Più avanti", icon: "Check" },
+                    { id: "timer", label: "Inizio ora", hint: "Parte il timer", icon: "Timer" },
+                    { id: "completed", label: "Già fatta", hint: "Da segnare", icon: "Archive" }
                   ] as const).map((item) => (
                     <button
                       key={item.id}
@@ -202,37 +227,40 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       </span>
                       <span className="min-w-0">
                         <span className="one-line-safe block text-sm font-black">{item.label}</span>
-                        <span className="one-line-safe block text-xs font-bold opacity-70">
-                          {item.id === "timer" ? "Parte subito" : item.id === "completed" ? "Storico manuale" : "Da completare"}
-                        </span>
+                        <span className="one-line-safe block text-xs font-bold opacity-70">{item.hint}</span>
                       </span>
                     </button>
                   ))}
                 </div>
               ) : null}
 
-              <Field label={mode === "material" ? "Nome o titolo" : "Titolo"}>
+              {mode === "material" ? (
+                <Field label="Indirizzo del link">
+                  <input
+                    className={inputClass}
+                    type="url"
+                    inputMode="url"
+                    autoFocus
+                    value={url}
+                    onChange={(event) => setUrl(event.target.value)}
+                    placeholder="Es. https://ariel.unimi.it/…"
+                  />
+                </Field>
+              ) : null}
+
+              <Field label={titleField[mode].label}>
                 <input
                   className={inputClass}
+                  autoFocus={mode !== "material"}
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
-                  placeholder="Es. Ripasso orale economia"
+                  placeholder={titleField[mode].placeholder}
                 />
               </Field>
 
               {mode !== "subject" && mode !== "material" ? (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="Materia">
-                    <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
-                      <option value="">Nessuna</option>
-                      {selectableSubjects(subjects, subjectId).map((subject) => (
-                        <option value={subject.id} key={subject.id}>
-                          {subject.name}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Data e ora">
+                  <Field label={mode === "task" ? (taskCreateMode === "completed" ? "Quando l'hai fatta" : "Entro quando?") : "Quando inizia?"}>
                     <input
                       className={inputClass}
                       type="datetime-local"
@@ -240,46 +268,59 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                       onChange={(event) => setDate(event.target.value)}
                     />
                   </Field>
+                  <Field label="Materia (facoltativa)">
+                    <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
+                      <option value="">Nessuna materia</option>
+                      {selectableSubjects(subjects, subjectId).map((subject) => (
+                        <option value={subject.id} key={subject.id}>
+                          {subject.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
                 </div>
               ) : null}
 
+              {mode === "event" || mode === "session" ? (
+                <p className="-mt-1 text-xs font-bold text-[var(--muted)]">
+                  {mode === "event" ? "Dura un'ora" : "Dura 50 minuti"}: puoi cambiare durata e ripetizione aprendolo dal Calendario.
+                </p>
+              ) : null}
+
               {mode === "task" ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="Durata stimata">
+                <div className={`grid grid-cols-1 gap-3 ${taskCreateMode === "completed" ? "sm:grid-cols-2" : ""}`}>
+                  <Field label="Quanto pensi di metterci? (minuti)">
                     <input
                       className={inputClass}
                       type="number"
+                      inputMode="numeric"
                       min={0}
                       step={5}
                       value={estimatedMinutes}
                       onChange={(event) => setEstimatedMinutes(event.target.value)}
                     />
                   </Field>
-                  <Field label="Durata effettiva">
-                    <input
-                      className={inputClass}
-                      type="number"
-                      min={0}
-                      step={5}
-                      value={actualMinutes}
-                      onChange={(event) => setActualMinutes(event.target.value)}
-                      placeholder={taskCreateMode === "completed" ? "Es. 75" : "Opzionale"}
-                    />
-                  </Field>
+                  {/* Il tempo impiegato serve solo per le attività già fatte: il cronometro lo misura da sé. */}
+                  {taskCreateMode === "completed" ? (
+                    <Field label="Quanto ci hai messo? (minuti)">
+                      <input
+                        className={inputClass}
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        step={5}
+                        value={actualMinutes}
+                        onChange={(event) => setActualMinutes(event.target.value)}
+                        placeholder="Es. 75"
+                      />
+                    </Field>
+                  ) : null}
                 </div>
               ) : null}
 
               {mode === "material" ? (
                 <div className="grid grid-cols-1 gap-3">
-                  <Field label="Link esterno">
-                    <input
-                      className={inputClass}
-                      value={url}
-                      onChange={(event) => setUrl(event.target.value)}
-                      placeholder="https://..."
-                    />
-                  </Field>
-                  <Field label="File locale">
+                  <Field label="Oppure carica un file dal dispositivo">
                     <input
                       className={fileInputClass}
                       type="file"
@@ -294,7 +335,7 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
                           reset();
                           onClose();
                         } catch (fileError) {
-                          setError(fileError instanceof Error ? fileError.message : "File non importato.");
+                          setError(fileError instanceof Error ? fileError.message : "Non è stato possibile caricare il file. Riprova o scegline un altro.");
                         } finally {
                           setBusy(false);
                         }
@@ -312,16 +353,11 @@ export function QuickAddModal({ open, onClose }: { open: boolean; onClose: () =>
 
               <div className="mt-2 flex justify-end gap-2">
                 <Button onClick={onClose}>Annulla</Button>
-                <Button
-                  variant="primary"
-                  icon="Plus"
-                  onClick={submit}
-                  disabled={busy || (!title.trim() && mode !== "material") || (mode === "material" && !url.trim())}
-                >
+                <Button variant="primary" icon="Plus" type="submit" disabled={!canSubmit}>
                   {submitLabel}
                 </Button>
               </div>
-            </div>
+            </form>
           </m.div>
         </m.div>
       ) : null}

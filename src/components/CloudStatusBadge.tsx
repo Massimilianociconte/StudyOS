@@ -23,23 +23,23 @@ export function CloudStatusBadge({ onClick, compact = false }: { onClick?: () =>
     : "border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]";
 
   const label = !session
-    ? "Solo locale"
+    ? "Salvato solo qui"
     : sync.status === "syncing"
-    ? "Sync..."
+    ? "Sincronizzazione…"
     : sync.status === "offline"
-    ? "Offline"
+    ? "Sei offline"
     : sync.status === "error"
-    ? "Errore sync"
+    ? "Sincronizzazione non riuscita"
     : sync.pendingChanges
-    ? `${sync.pendingCount} in coda`
-    : "Cloud attivo";
+    ? `${sync.pendingCount} ${sync.pendingCount === 1 ? "modifica da inviare" : "modifiche da inviare"}`
+    : "Sincronizzato";
 
   const subtitle = !session
     ? "Accedi per sincronizzare"
     : sync.status === "error"
-    ? sync.error ?? "Riprovo a breve"
+    ? sync.error ?? "Riprovo tra poco da solo"
     : sync.status === "offline"
-    ? "Modifiche salvate, invio al ritorno online"
+    ? "Le modifiche sono salvate e partono appena torni online"
     : session.user.email ?? "";
 
   if (compact) {
@@ -61,8 +61,8 @@ export function CloudStatusBadge({ onClick, compact = false }: { onClick?: () =>
     <button
       type="button"
       onClick={onClick}
-      title="Stato cloud — apri le impostazioni"
-      aria-label={`${label}: ${subtitle}. Apri le impostazioni.`}
+      title="Stato dell'account: apri le impostazioni dell'account"
+      aria-label={`${label}: ${subtitle}. Apri le impostazioni dell'account.`}
       className={`mt-3 flex w-full items-center gap-3 rounded-[22px] border p-3 text-left ${tone}`}
     >
       <span className="grid grid-cols-1 h-9 w-9 shrink-0 place-items-center rounded-full bg-black/20">

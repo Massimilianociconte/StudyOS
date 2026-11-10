@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { Goal } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL } from "../lib/labels";
-import { Button, Drawer, Field, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { Button, Drawer, EmptyState, Field, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { isNullableString, useUiState } from "../lib/uiState";
 
@@ -28,7 +28,8 @@ const deadlineLabel = (deadline?: string) => {
   const days = differenceInCalendarDays(date, new Date());
   if (days < 0) return { text: `Scaduto il ${format(date, "d MMM", { locale: it })}`, late: true };
   if (days === 0) return { text: "Scade oggi", late: false };
-  return { text: `${days} ${days === 1 ? "giorno" : "giorni"} · ${format(date, "d MMM", { locale: it })}`, late: false };
+  if (days === 1) return { text: "Scade domani", late: false };
+  return { text: `Scade tra ${days} giorni · ${format(date, "d MMM", { locale: it })}`, late: false };
 };
 
 export function GoalsView() {
@@ -41,7 +42,7 @@ export function GoalsView() {
 
   return (
     <div>
-      <SectionTitle title="Obiettivi" subtitle="Traguardi di studio e personali. Aggiorna il progresso con + e −, clicca un obiettivo per modificarlo." />
+      <SectionTitle title="Obiettivi" subtitle="Fissa i tuoi traguardi e segna a che punto sei: ogni + o − sposta il progresso del 5%." />
 
       <NewGoalBar onAdd={(title, category) => addGoal({ title, category, progress: 0, metric: "%" })} />
 
@@ -52,7 +53,11 @@ export function GoalsView() {
           ))}
         </div>
       ) : (
-        <div className="quiet-panel p-8 text-center text-sm font-bold text-[var(--muted)]">Nessun obiettivo attivo. Creane uno qui sopra.</div>
+        <EmptyState
+          icon="Target"
+          title={closed.length ? "Nessun obiettivo in corso" : "Ancora nessun obiettivo"}
+          body="Scrivi un traguardo nel campo qui sopra, scegli la categoria e premi «Crea obiettivo»."
+        />
       )}
 
       {closed.length ? (
@@ -93,15 +98,15 @@ function NewGoalBar({ onAdd }: { onAdd: (title: string, category: Goal["category
   return (
     <form onSubmit={submit} className="soft-panel mb-4 flex flex-col gap-2 p-2.5 sm:flex-row sm:items-center">
       <label className="relative block min-w-0 flex-1">
-        <span className="sr-only">Nuovo obiettivo</span>
+        <span className="sr-only">Titolo del nuovo obiettivo</span>
         <Icon name="Target" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nuovo obiettivo (es. Finire il programma di Patologia)" />
+        <input className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Es. Finire il programma di Patologia" />
       </label>
       <select
         className="min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold"
         value={category}
         onChange={(event) => setCategory(event.target.value as Goal["category"])}
-        aria-label="Categoria"
+        aria-label="Categoria dell'obiettivo"
       >
         {categories.map((id) => (
           <option key={id} value={id}>
@@ -114,7 +119,7 @@ function NewGoalBar({ onAdd }: { onAdd: (title: string, category: Goal["category
         disabled={!title.trim()}
         className="motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
       >
-        <Icon name="Plus" className="h-4 w-4" /> Crea
+        <Icon name="Plus" className="h-4 w-4" /> Crea obiettivo
       </button>
     </form>
   );
@@ -128,7 +133,7 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
         <span className="grid grid-cols-1 h-10 w-10 shrink-0 place-items-center rounded-super bg-[color-mix(in_srgb,var(--accent)_22%,transparent)] text-[var(--accent-ink)]">
           <Icon name={CATEGORY_ICON[goal.category]} className="h-5 w-5" />
         </span>
-        <button type="button" onClick={onOpen} aria-haspopup="dialog" className="min-w-0 flex-1 text-left">
+        <button type="button" onClick={onOpen} aria-haspopup="dialog" title="Apri per modificare" className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-base font-black leading-snug">{goal.title}</h3>
           <p className="one-line-safe text-xs font-bold text-[var(--muted)]">
             {GOAL_CATEGORY_LABEL[goal.category]}
@@ -146,7 +151,8 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
           <span className="flex items-center gap-1">
             <button
               type="button"
-              aria-label="Riduci progresso del 5%"
+              aria-label={`Togli 5% al progresso di "${goal.title}"`}
+              title="Togli 5%"
               onClick={() => onProgress(Math.max(0, goal.progress - 5))}
               className="relative grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)] after:absolute after:-inset-2.5 after:rounded-full after:content-['']"
             >
@@ -155,7 +161,8 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
             <span className="w-10 text-center tabular-nums">{goal.progress}%</span>
             <button
               type="button"
-              aria-label="Aumenta progresso del 5%"
+              aria-label={`Aggiungi 5% al progresso di "${goal.title}"`}
+              title="Aggiungi 5%"
               onClick={() => onProgress(Math.min(100, goal.progress + 5))}
               className="relative grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)] after:absolute after:-inset-2.5 after:rounded-full after:content-['']"
             >
@@ -163,7 +170,7 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
             </button>
           </span>
         </div>
-        <ProgressBar value={goal.progress} color={goal.status === "done" ? "var(--ok)" : undefined} />
+        <ProgressBar value={goal.progress} color={goal.status === "done" ? "var(--ok)" : undefined} label={`Progresso di "${goal.title}"`} />
       </div>
     </article>
   );
@@ -205,6 +212,7 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
     <Drawer
       open={Boolean(goal)}
       onClose={onClose}
+      eyebrow="Obiettivo"
       title={goal?.title ?? ""}
       width="max-w-[520px]"
       footer={
@@ -217,11 +225,11 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
               void onSave({ status: goal.status === "archived" ? "active" : "archived" }).then(onClose);
             }}
           >
-            {goal?.status === "archived" ? "Ripristina" : "Archivia"}
+            {goal?.status === "archived" ? "Ripristina obiettivo" : "Archivia obiettivo"}
           </Button>
           <span className="flex-1" />
           <Button variant="primary" icon="Check" onClick={() => void save()} disabled={!draft.title.trim()}>
-            Salva
+            Salva modifiche
           </Button>
         </div>
       }
@@ -230,7 +238,7 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
         <Field label="Titolo">
           <input className={inputClass} value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} />
         </Field>
-        <Field label="Descrizione">
+        <Field label="Descrizione (facoltativa)">
           <input className={inputClass} value={draft.description} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} />
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -252,14 +260,14 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
               ))}
             </select>
           </Field>
-          <Field label="Scadenza">
+          <Field label="Scadenza (facoltativa)">
             <input className={inputClass} type="date" value={draft.deadline} onChange={(event) => setDraft((value) => ({ ...value, deadline: event.target.value }))} />
           </Field>
-          <Field label="Metrica">
-            <input className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="Es. ore/settimana" />
+          <Field label="Come lo misuri (facoltativo)">
+            <input className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="Es. ore a settimana" />
           </Field>
         </div>
-        <Field label={`Progresso · ${draft.progress}%`}>
+        <Field label={`A che punto sei · ${draft.progress}%`}>
           <input
             type="range"
             min={0}
@@ -270,7 +278,7 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
             className="w-full accent-[var(--accent)]"
           />
         </Field>
-        <Field label="Note">
+        <Field label="Note (facoltative)">
           <textarea className={`${inputClass} min-h-20 py-3`} value={draft.notes} onChange={(event) => setDraft((value) => ({ ...value, notes: event.target.value }))} />
         </Field>
       </div>

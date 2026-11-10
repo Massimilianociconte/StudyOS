@@ -70,7 +70,7 @@ export function GradeDrawer({
     const grade = Number(draft.grade);
     if (!draft.passFail && !isValidGrade(grade)) return setError(`Scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
     const date = new Date(`${draft.date}T12:00`);
-    if (Number.isNaN(date.getTime())) return setError("Data non valida.");
+    if (Number.isNaN(date.getTime())) return setError("Data non valida: scegli il giorno dell'esame.");
     const result = {
       status: "done" as const,
       date: date.toISOString(),
@@ -91,12 +91,12 @@ export function GradeDrawer({
     let name = subjectName;
     if (creating) {
       const cfu = Number(draft.newCfu.replace(",", "."));
-      if (!draft.newName.trim()) return setError("Scrivi il nome dell'insegnamento.");
-      if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) return setError("CFU non validi (0–60).");
+      if (!draft.newName.trim()) return setError("Scrivi il nome della materia.");
+      if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) return setError("CFU non validi: scrivi un numero da 0 a 60.");
       name = draft.newName.trim();
       subjectId = await addSubject({ name, cfu, status: "completed", semester: "" });
     }
-    if (!subjectId) return setError("Scegli la materia.");
+    if (!subjectId) return setError("Scegli la materia dell'esame.");
     const pendingExam = exams
       .filter((item) => item.subjectId === subjectId && item.status !== "done")
       .sort((a, b) => a.date.localeCompare(b.date))[0];
@@ -109,7 +109,7 @@ export function GradeDrawer({
 
   const remove = async () => {
     if (!exam) return;
-    if (!window.confirm(`Eliminare il voto di "${subjectName}" dal libretto? L'esame viene cancellato.`)) return;
+    if (!window.confirm(`Eliminare il voto di "${subjectName}"? L'esame viene tolto dal libretto e le medie si aggiornano. Non si può annullare.`)) return;
     await deleteExam(exam.id);
     onSaved(`${subjectName}: voto eliminato dal libretto.`);
   };
@@ -119,13 +119,13 @@ export function GradeDrawer({
       open={open}
       onClose={onClose}
       eyebrow="Libretto"
-      title={editing ? subjectName || "Modifica voto" : "Registra un esame superato"}
+      title={editing ? subjectName || "Modifica voto" : "Registra un voto"}
       width="max-w-[480px]"
       footer={
         <div className="flex items-center gap-2">
           {editing ? (
             <Button variant="danger" icon="Trash2" onClick={() => void remove()}>
-              Elimina
+              Elimina voto
             </Button>
           ) : null}
           <span className="flex-1" />
@@ -133,29 +133,29 @@ export function GradeDrawer({
             Annulla
           </Button>
           <Button variant="primary" icon="Check" onClick={() => void save()}>
-            {editing ? "Salva" : "Registra"}
+            {editing ? "Salva voto" : "Registra voto"}
           </Button>
         </div>
       }
     >
       <div className="grid grid-cols-1 gap-3">
         {editing ? null : (
-          <Field label="Insegnamento">
+          <Field label="Materia">
             <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-              <option value="">Seleziona</option>
+              <option value="">Scegli la materia</option>
               {available.map((subject) => (
                 <option key={subject.id} value={subject.id}>
                   {subject.name} · {subject.cfu} CFU
                 </option>
               ))}
-              <option value="__new">+ Nuovo insegnamento (Es. di un anno precedente)</option>
+              <option value="__new">+ Materia non in elenco (Es. di un anno precedente)</option>
             </select>
           </Field>
         )}
         {creating ? (
           <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
-            <Field label="Nome">
-              <input className={inputClass} value={draft.newName} onChange={(event) => setDraft((value) => ({ ...value, newName: event.target.value }))} autoFocus />
+            <Field label="Nome della materia">
+              <input className={inputClass} value={draft.newName} onChange={(event) => setDraft((value) => ({ ...value, newName: event.target.value }))} placeholder="Es. Chimica generale" autoFocus />
             </Field>
             <Field label="CFU">
               <input className={inputClass} inputMode="numeric" value={draft.newCfu} onChange={(event) => setDraft((value) => ({ ...value, newCfu: event.target.value }))} />
@@ -163,9 +163,6 @@ export function GradeDrawer({
           </div>
         ) : null}
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Data">
-            <input className={inputClass} type="date" value={draft.date} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
-          </Field>
           <Field label="Voto">
             <select
               className={inputClass}
@@ -173,13 +170,16 @@ export function GradeDrawer({
               disabled={draft.passFail}
               onChange={(event) => setDraft((value) => ({ ...value, grade: event.target.value, honors: event.target.value === String(MAX_GRADE) && value.honors }))}
             >
-              <option value="">{draft.passFail ? "Senza voto" : "Scegli"}</option>
+              <option value="">{draft.passFail ? "Senza voto" : "Scegli il voto"}</option>
               {GRADES.map((grade) => (
                 <option key={grade} value={grade}>
                   {grade}
                 </option>
               ))}
             </select>
+          </Field>
+          <Field label="Data dell'esame">
+            <input className={inputClass} type="date" value={draft.date} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
           </Field>
         </div>
         <div className="flex flex-wrap gap-4">
@@ -191,7 +191,7 @@ export function GradeDrawer({
               disabled={draft.passFail || draft.grade !== String(MAX_GRADE)}
               onChange={(event) => setDraft((value) => ({ ...value, honors: event.target.checked }))}
             />
-            Lode
+            Lode (solo con 30)
           </label>
           <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
             <input
@@ -205,7 +205,7 @@ export function GradeDrawer({
         </div>
         {editing && exam ? (
           <p className="text-xs font-bold text-[var(--muted)]">
-            CFU: {subjects.find((subject) => subject.id === exam.subjectId)?.cfu ?? 0} (Si modificano dalla scheda della materia).
+            Vale {subjects.find((subject) => subject.id === exam.subjectId)?.cfu ?? 0} CFU. Per cambiarli apri la materia in Materie.
           </p>
         ) : null}
         {error ? (

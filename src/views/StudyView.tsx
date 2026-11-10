@@ -9,11 +9,20 @@ import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, type R
 import { Button, Drawer, Field, IconButton, Panel, ProgressBar, ProgressRing, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TopicManager, reviewDueLabel } from "../components/TopicManager";
+import { TIMER_PRESET_NAME } from "../components/StudyTimerWatcher";
 import { useNow } from "../hooks/useNow";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
-import { TIMER_DURATIONS, TIMER_LABELS, timerElapsedSeconds, timerRemainingSeconds, type TimerMode } from "../lib/studyTimer";
+import { TIMER_DURATIONS, timerElapsedSeconds, timerRemainingSeconds, type TimerMode } from "../lib/studyTimer";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
+
+/** Durate dalla più breve alla più lunga, con una frase che spiega a cosa servono. */
+const TIMER_PRESETS: TimerMode[] = ["pomodoro", "classic", "deep-focus"];
+const TIMER_PRESET_HINT: Record<TimerMode, string> = {
+  pomodoro: "25 minuti di studio, poi fai 5 minuti di pausa.",
+  classic: "45 minuti di fila, come una lezione.",
+  "deep-focus": "90 minuti senza interruzioni, per gli argomenti più impegnativi."
+};
 
 export function StudyView() {
   const store = useStudyStore();
@@ -54,7 +63,7 @@ export function StudyView() {
   // Cambiare durata prepara il timer (senza avviarlo); a timer attivo chiede conferma.
   const selectMode = (mode: TimerMode) => {
     if (mode === timer.mode) return;
-    if (timerElapsedSeconds(timer, Date.now()) >= 60 && !window.confirm("Cambiare durata azzera il timer in corso senza registrare la sessione. Continuare?")) return;
+    if (timerElapsedSeconds(timer, Date.now()) >= 60 && !window.confirm("Cambiare durata? Il timer riparte da capo e i minuti fatti finora non vengono salvati.")) return;
     setNotice("");
     resetStudyTimer(mode);
   };
@@ -62,7 +71,7 @@ export function StudyView() {
   const finishSession = async () => {
     const elapsed = timerElapsedSeconds(timer, Date.now());
     if (elapsed < 60) {
-      setNotice("Sessione troppo breve per essere registrata (meno di 1 minuto).");
+      setNotice("Studia almeno 1 minuto per poter salvare la sessione.");
       return;
     }
     const actualMinutes = Math.max(1, Math.round(elapsed / 60));
@@ -77,56 +86,118 @@ export function StudyView() {
       end: new Date().toISOString(),
       focusLevel: 4
     });
-    resetStudyTimer("pomodoro");
-    setNotice(`Sessione registrata: ${formatMinutes(actualMinutes)}.`);
+    // Dopo il salvataggio il timer riparte pronto con la stessa durata scelta dallo studente.
+    resetStudyTimer(timer.mode);
+    setNotice(`Sessione salvata: ${formatMinutes(actualMinutes)}.`);
   };
 
   const idle = !timer.running && remainingSeconds === timer.durationSeconds;
+  const finished = !timer.running && remainingSeconds === 0;
+  const resetTimer = () => {
+    if (elapsedSeconds >= 60 && !window.confirm("Azzerare il timer? I minuti fatti finora non vengono salvati.")) return;
+    setNotice("");
+    resetStudyTimer(timer.mode);
+  };
+  const toggleTimer = () => {
+    // A tempo scaduto "Ricomincia" riparte da capo: avvisa se la sessione appena finita non è stata salvata.
+    if (finished && elapsedSeconds >= 60 && !window.confirm("Ricominciare? La sessione appena finita non è ancora salvata e andrà persa.")) return;
+    if (finished) setNotice("");
+    toggleStudyTimer();
+  };
 
   return (
     <div>
-      <SectionTitle title="Studio" subtitle="Timer, sessioni registrate e ripassi a intervalli. Scegli materia e tipo di sessione, poi avvia." />
+      <SectionTitle title="Studio" subtitle="Cronometra lo studio, tieni il conto delle ore e ripassa ogni argomento al momento giusto." />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="grid grid-cols-1 min-w-0 content-start gap-4">
           <Panel>
             <div className="grid grid-cols-1 items-center gap-5 md:grid-cols-[200px_minmax(0,1fr)] md:gap-7">
               <div className="mx-auto w-full max-w-[180px] md:max-w-[200px]">
-                <ProgressRing value={timer.durationSeconds > 0 ? (remainingSeconds / timer.durationSeconds) * 100 : 0} label={timer.label} color="var(--accent)" />
+                <ProgressRing value={timer.durationSeconds > 0 ? (remainingSeconds / timer.durationSeconds) * 100 : 0} label={TIMER_PRESET_NAME[timer.mode] ?? timer.label} color="var(--accent)" />
               </div>
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-5xl font-black tabular-nums sm:text-6xl">
-                    {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
+                <div className="text-5xl font-black tabular-nums sm:text-6xl">
+                  {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
+                </div>
+                <p className="mt-1 text-xs font-bold text-[var(--muted)]">
+                  {timer.running
+                    ? `In corso · ${formatMinutes(Math.floor(elapsedSeconds / 60))} di studio`
+                    : finished
+                      ? "Tempo scaduto: salva la sessione"
+                      : idle
+                        ? "Scegli materia e durata, poi avvia il timer"
+                        : `In pausa · ${formatMinutes(Math.floor(elapsedSeconds / 60))} di studio`}
+                </p>
+
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field label="Materia">
+                    <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
+                      <option value="">Nessuna materia</option>
+                      {selectableSubjects(subjects, subjectId).map((subject) => (
+                        <option key={subject.id} value={subject.id}>
+                          {subject.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Titolo (facoltativo)">
+                    <input className={inputClass} value={sessionTitle} onChange={(event) => setSessionTitle(event.target.value)} placeholder="Es. Capitolo 4, infiammazione" />
+                  </Field>
+                </div>
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm font-extrabold">
+                    Altre opzioni <span className="font-bold text-[var(--muted)]">· Tipo di sessione: {SESSION_TEMPLATE_LABEL[template]}</span>
+                  </summary>
+                  <div className="mt-2">
+                    <span className="mb-1.5 block text-xs font-bold text-[var(--muted)]">Facoltativo: lo vedrai accanto alla sessione salvata.</span>
+                    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Tipo di sessione">
+                      {TEMPLATES.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          role="radio"
+                          aria-checked={template === id}
+                          onClick={() => setTemplate(id)}
+                          className={`min-h-8 rounded-full px-3 text-xs font-black ${
+                            template === id ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)] hover:text-[var(--text)]"
+                          }`}
+                        >
+                          {SESSION_TEMPLATE_LABEL[id]}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                </details>
+
+                <div className="mt-4">
+                  <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">Durata</span>
                   <Segmented
-                    label="Durata timer"
+                    label="Durata del timer"
                     size="sm"
                     value={timer.mode}
                     onChange={selectMode}
-                    options={(Object.keys(TIMER_LABELS) as TimerMode[]).map((mode) => ({ id: mode, label: `${TIMER_LABELS[mode]} · ${TIMER_DURATIONS[mode] / 60}′` }))}
+                    options={TIMER_PRESETS.map((mode) => ({ id: mode, label: `${TIMER_PRESET_NAME[mode]} · ${TIMER_DURATIONS[mode] / 60} min`, title: TIMER_PRESET_HINT[mode] }))}
                   />
+                  <p className="mt-1 text-xs font-bold text-[var(--muted)]">{TIMER_PRESET_HINT[timer.mode]}</p>
                 </div>
-                <p className="mt-1 text-xs font-bold text-[var(--muted)]">
-                  {timer.running ? `In corso · ${formatMinutes(Math.floor(elapsedSeconds / 60))} trascorsi` : idle ? "Pronto a partire" : "In pausa"}
-                </p>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button variant={timer.running ? "soft" : "primary"} icon={timer.running ? "Pause" : "Zap"} onClick={toggleStudyTimer} className="min-w-[120px]">
-                    {timer.running ? "Pausa" : idle ? "Avvia" : "Riprendi"}
+                  {finished ? (
+                    <Button variant="primary" icon="Check" onClick={finishSession} className="min-w-[120px]">
+                      Salva sessione
+                    </Button>
+                  ) : null}
+                  <Button variant={timer.running || finished ? "soft" : "primary"} icon={timer.running ? "Pause" : finished ? "RotateCcw" : "Zap"} onClick={toggleTimer} className="min-w-[120px]">
+                    {timer.running ? "Pausa" : finished ? "Ricomincia" : idle ? "Avvia timer" : "Riprendi"}
                   </Button>
-                  <Button variant="soft" icon="Check" onClick={finishSession} disabled={elapsedSeconds < 60}>
-                    Registra sessione
-                  </Button>
+                  {!idle && !finished ? (
+                    <Button variant="soft" icon="Check" onClick={finishSession} disabled={elapsedSeconds < 60} title={elapsedSeconds < 60 ? "Disponibile dopo almeno 1 minuto di studio" : "Ferma il timer e salva il tempo studiato"}>
+                      Termina e salva
+                    </Button>
+                  ) : null}
                   {!idle ? (
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        if (elapsedSeconds >= 60 && !window.confirm("Azzera il timer in corso senza registrare la sessione. Continuare?")) return;
-                        setNotice("");
-                        resetStudyTimer(timer.mode);
-                      }}
-                    >
+                    <Button variant="ghost" onClick={resetTimer} title="Riporta il timer all'inizio senza salvare">
                       Azzera
                     </Button>
                   ) : null}
@@ -136,46 +207,6 @@ export function StudyView() {
                     {notice}
                   </p>
                 ) : null}
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <Field label="Materia">
-                    <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
-                      <option value="">Nessuna</option>
-                      {selectableSubjects(subjects, subjectId).map((subject) => (
-                        <option key={subject.id} value={subject.id}>
-                          {subject.name}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Titolo (opzionale)">
-                    <input
-                      className={inputClass}
-                      value={sessionTitle}
-                      onChange={(event) => setSessionTitle(event.target.value)}
-                      placeholder={`${SESSION_TEMPLATE_LABEL[template]}${subjectId ? ` · ${subjectName(subjects, subjectId)}` : ""}`}
-                    />
-                  </Field>
-                </div>
-                <div className="mt-3">
-                  <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">Tipo di sessione</span>
-                  <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Tipo di sessione">
-                    {TEMPLATES.map((id) => (
-                      <button
-                        key={id}
-                        type="button"
-                        role="radio"
-                        aria-checked={template === id}
-                        onClick={() => setTemplate(id)}
-                        className={`min-h-8 rounded-full px-3 text-xs font-black ${
-                          template === id ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)] hover:text-[var(--text)]"
-                        }`}
-                      >
-                        {SESSION_TEMPLATE_LABEL[id]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
             </div>
           </Panel>
@@ -193,10 +224,10 @@ export function StudyView() {
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <h3 className="text-lg font-black">Sessioni recenti</h3>
-                  <p className="text-xs font-bold text-[var(--muted)]">Oggi {formatMinutes(todayMinutes)}</p>
+                  <p className="text-xs font-bold text-[var(--muted)]">{todayMinutes ? `Oggi hai studiato ${formatMinutes(todayMinutes)}` : "Oggi non hai ancora studiato"}</p>
                 </div>
-                <Button variant="soft" icon="Plus" onClick={() => setLogOpen(true)}>
-                  Registra a mano
+                <Button variant="soft" icon="Plus" onClick={() => setLogOpen(true)} title="Per lo studio fatto senza timer: biblioteca, lezione, gruppo">
+                  Aggiungi studio fatto
                 </Button>
               </div>
               {history.length ? (
@@ -218,7 +249,7 @@ export function StudyView() {
                         label={`Elimina la sessione "${session.title}"`}
                         className="h-8 w-8 bg-transparent text-[var(--danger-text)] transition-opacity hover:bg-[var(--danger-bg)] can-hover:opacity-0 can-hover:group-focus-within:opacity-100 can-hover:group-hover:opacity-100"
                         onClick={() => {
-                          if (window.confirm(`Eliminare la sessione "${session.title}" (${formatMinutes(session.actualMinutes)})? Le statistiche verranno ricalcolate.`)) void deleteSession(session.id);
+                          if (window.confirm(`Eliminare la sessione "${session.title}" (${formatMinutes(session.actualMinutes)})? Le ore verranno tolte dalle statistiche. L'operazione non si può annullare.`)) void deleteSession(session.id);
                         }}
                       />
                     </li>
@@ -226,7 +257,7 @@ export function StudyView() {
                 </ul>
               ) : (
                 <p className="rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
-                  Ancora nessuna sessione. Avvia il timer o registra a mano lo studio fatto altrove.
+                  Ancora nessuna sessione. Qui trovi lo studio salvato con il timer o aggiunto con «Aggiungi studio fatto».
                 </p>
               )}
             </Panel>
@@ -238,7 +269,7 @@ export function StudyView() {
             <h3 className="text-xs font-black uppercase text-[var(--faint)]">Questa settimana</h3>
             <p className="mt-1 text-4xl font-black">{formatHours(weeklyMinutes)} h</p>
             <p className="text-xs font-bold text-[var(--muted)]">
-              su {formatHours(weeklyTarget)} h di obiettivo · streak {streak} {streak === 1 ? "giorno" : "giorni"}
+              su {formatHours(weeklyTarget)} h di obiettivo{streak ? ` · ${streak} ${streak === 1 ? "giorno" : "giorni"} di fila` : ""}
             </p>
             <div className="mt-3">
               <ProgressBar value={(weeklyMinutes / weeklyTarget) * 100} />
@@ -249,7 +280,7 @@ export function StudyView() {
             <div className="mb-3 flex items-center justify-between gap-2">
               <h3 className="text-lg font-black">Prossimi ripassi</h3>
               <button type="button" onClick={() => setTopicsOpen(true)} className="text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-                Argomenti
+                Vedi tutti
               </button>
             </div>
             {upcomingReviews.length ? (
@@ -265,13 +296,14 @@ export function StudyView() {
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Nessun ripasso pianificato.</p>
+              <p className="text-sm text-[var(--muted)]">{topics.some((topic) => !topic.archived) ? "Nessun altro ripasso in programma." : "Qui vedrai quando ripassare ogni argomento."}</p>
             )}
           </Panel>
         </aside>
       </div>
 
-      <Drawer open={topicsOpen} onClose={() => setTopicsOpen(false)} eyebrow="Ripasso attivo" title="Argomenti da ripassare" width="max-w-[560px]">
+      <Drawer open={topicsOpen} onClose={() => setTopicsOpen(false)} eyebrow="Ripasso" title="Argomenti da ripassare" width="max-w-[560px]">
+        <p className="mb-3 text-sm text-[var(--muted)]">Ti ricordiamo quando ripassare ogni argomento: all'inizio spesso, poi sempre più di rado man mano che lo ricordi.</p>
         <TopicManager subjects={subjects} />
       </Drawer>
 
@@ -283,7 +315,7 @@ export function StudyView() {
         onSave={async (session) => {
           await addSession(session);
           setLogOpen(false);
-          setNotice(`Sessione registrata: ${formatMinutes(session.actualMinutes ?? 0)}.`);
+          setNotice(`Studio aggiunto: ${formatMinutes(session.actualMinutes ?? 0)}.`);
         }}
       />
     </div>
@@ -316,13 +348,17 @@ function ReviewPanel({
     <Panel>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-lg font-black">Ripasso attivo</h3>
+          <h3 className="text-lg font-black">Ripasso</h3>
           <p className="text-xs font-bold text-[var(--muted)]">
-            {due.length ? `${due.length} ${due.length === 1 ? "argomento" : "argomenti"} da ripassare oggi` : `${totalTopics} ${totalTopics === 1 ? "argomento" : "argomenti"} in programma`}
+            {due.length
+              ? `${due.length} ${due.length === 1 ? "argomento" : "argomenti"} da ripassare oggi`
+              : totalTopics
+                ? `${totalTopics} ${totalTopics === 1 ? "argomento" : "argomenti"} in programma`
+                : "Ti ricordiamo quando ripassare ogni argomento"}
           </p>
         </div>
-        <Button variant="soft" icon="Brain" onClick={onManage}>
-          Argomenti
+        <Button variant="soft" icon={totalTopics ? "Brain" : "Plus"} onClick={onManage}>
+          {totalTopics ? "Gestisci argomenti" : "Aggiungi argomenti"}
         </Button>
       </div>
 
@@ -352,10 +388,11 @@ function ReviewPanel({
               </button>
             )
           ) : (
-            <p className="mt-3 text-xs font-bold text-[var(--muted)]">Ripeti l'argomento a voce o per iscritto senza guardare gli appunti, poi valuta quanto ricordavi.</p>
+            <p className="mt-3 text-xs font-bold text-[var(--muted)]">Ripeti l'argomento a voce o per iscritto, senza guardare gli appunti.</p>
           )}
 
-          <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+          <p className="mt-3 text-xs font-black text-[var(--text)]">Quanto ricordavi? Da questo dipende il prossimo ripasso.</p>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4" role="group" aria-label="Quanto ricordavi">
             {REVIEW_RATINGS.map((rating) => (
               <button
                 key={rating}
@@ -370,7 +407,7 @@ function ReviewPanel({
                 }`}
               >
                 <span>{REVIEW_RATING_LABEL[rating]}</span>
-                <span className="text-[10px] font-bold opacity-75">{previewInterval(current, rating)}</span>
+                <span className="text-[10px] font-bold opacity-75">tra {previewInterval(current, rating)}</span>
               </button>
             ))}
           </div>
@@ -378,8 +415,8 @@ function ReviewPanel({
       ) : (
         <p className="rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
           {totalTopics
-            ? "Nessun ripasso in scadenza oggi."
-            : "Aggiungi gli argomenti che vuoi fissare (o importa il programma di un esame): StudyOS te li ripropone a intervalli crescenti."}
+            ? "Nessun ripasso per oggi: i prossimi li trovi in «Prossimi ripassi»."
+            : "Aggiungi gli argomenti che vuoi ricordare: te li riproponiamo al momento giusto, sempre più distanziati."}
         </p>
       )}
 
@@ -408,7 +445,7 @@ function ReviewPanel({
   );
 }
 
-/** Registra una sessione fatta senza timer (biblioteca, lezione, studio di gruppo). */
+/** "Aggiungi studio fatto": registra una sessione fatta senza timer (biblioteca, lezione, studio di gruppo). */
 function ManualSessionDrawer({
   open,
   subjects,
@@ -437,9 +474,9 @@ function ManualSessionDrawer({
   const save = async () => {
     const minutes = Math.round(Number(draft.minutes.replace(",", ".")));
     const start = new Date(`${draft.date}T${draft.time || "09:00"}`);
-    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 16 * 60) return setError("Durata non valida (da 1 minuto a 16 ore).");
-    if (Number.isNaN(start.getTime())) return setError("Data o ora non valida.");
-    if (start.getTime() > Date.now()) return setError("La sessione non può iniziare nel futuro.");
+    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 16 * 60) return setError("Scrivi una durata tra 1 e 960 minuti (16 ore).");
+    if (Number.isNaN(start.getTime())) return setError("Controlla il giorno e l'ora di inizio.");
+    if (start.getTime() > Date.now()) return setError("L'ora di inizio è nel futuro: scegli un momento già passato.");
     await onSave({
       title: draft.title.trim() || `${SESSION_TEMPLATE_LABEL[draft.template]}${draft.subjectId ? ` · ${subjectName(subjects, draft.subjectId)}` : ""}`,
       subjectId: draft.subjectId || undefined,
@@ -458,7 +495,7 @@ function ManualSessionDrawer({
       open={open}
       onClose={onClose}
       eyebrow="Studio"
-      title="Registra una sessione"
+      title="Aggiungi studio fatto"
       width="max-w-[480px]"
       footer={
         <div className="flex items-center justify-end gap-2">
@@ -466,27 +503,19 @@ function ManualSessionDrawer({
             Annulla
           </Button>
           <Button variant="primary" icon="Check" onClick={() => void save()}>
-            Registra
+            Salva sessione
           </Button>
         </div>
       }
     >
       <div className="grid grid-cols-1 gap-3">
+        <p className="text-sm text-[var(--muted)]">Hai studiato senza timer, in biblioteca, a lezione o in gruppo? Aggiungilo qui: conterà nelle tue ore.</p>
         <Field label="Materia">
           <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-            <option value="">Nessuna</option>
+            <option value="">Nessuna materia</option>
             {selectableSubjects(subjects, draft.subjectId).map((subject) => (
               <option key={subject.id} value={subject.id}>
                 {subject.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Tipo">
-          <select className={inputClass} value={draft.template} onChange={(event) => setDraft((value) => ({ ...value, template: event.target.value as StudySession["template"] }))}>
-            {TEMPLATES.map((id) => (
-              <option key={id} value={id}>
-                {SESSION_TEMPLATE_LABEL[id]}
               </option>
             ))}
           </select>
@@ -495,15 +524,24 @@ function ManualSessionDrawer({
           <Field label="Giorno">
             <input className={inputClass} type="date" value={draft.date} max={format(new Date(), "yyyy-MM-dd")} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
           </Field>
-          <Field label="Inizio">
+          <Field label="Ora di inizio">
             <input className={inputClass} type="time" value={draft.time} onChange={(event) => setDraft((value) => ({ ...value, time: event.target.value }))} />
           </Field>
-          <Field label="Minuti">
-            <input className={inputClass} inputMode="numeric" value={draft.minutes} onChange={(event) => setDraft((value) => ({ ...value, minutes: event.target.value }))} />
+          <Field label="Durata (minuti)">
+            <input className={inputClass} inputMode="numeric" placeholder="Es. 60" value={draft.minutes} onChange={(event) => setDraft((value) => ({ ...value, minutes: event.target.value }))} />
           </Field>
         </div>
-        <Field label="Titolo (opzionale)">
+        <Field label="Titolo (facoltativo)">
           <input className={inputClass} value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} placeholder="Es. Ripasso in biblioteca" />
+        </Field>
+        <Field label="Tipo di sessione">
+          <select className={inputClass} value={draft.template} onChange={(event) => setDraft((value) => ({ ...value, template: event.target.value as StudySession["template"] }))}>
+            {TEMPLATES.map((id) => (
+              <option key={id} value={id}>
+                {SESSION_TEMPLATE_LABEL[id]}
+              </option>
+            ))}
+          </select>
         </Field>
         {error ? (
           <p role="alert" className="text-sm font-bold text-[var(--danger-text)]">

@@ -105,16 +105,33 @@ const shareLinkClass =
 type Reach = "no-cloud" | "login" | "device-only" | "publishing" | "ready" | "pending";
 
 const REACH_TEXT: Record<Reach, { tone: "ok" | "warn"; text: string }> = {
-  ready: { tone: "ok", text: "Link, QR e codice sono attivi: chi li apre entra nel gruppo con il proprio account." },
-  publishing: { tone: "ok", text: "Preparo il gruppo per la condivisione…" },
-  pending: { tone: "warn", text: "Il gruppo non è ancora sul cloud: riapri questa schermata tra poco o premi Aggiorna in Gruppi." },
-  login: { tone: "warn", text: "Accedi al cloud per invitare altre persone: senza accesso link e codice valgono solo su questo dispositivo." },
-  "device-only": { tone: "warn", text: "Questo gruppo è stato creato senza account e resta su questo dispositivo. Per invitare altre persone crea un nuovo gruppo dopo aver effettuato l'accesso." },
-  "no-cloud": { tone: "warn", text: "Il cloud non è configurato: link, QR e codice funzionano solo su questo dispositivo." }
+  ready: { tone: "ok", text: "Gli inviti sono attivi: chi apre il link o il QR entra nel gruppo con il proprio account." },
+  publishing: { tone: "ok", text: "Sto preparando il gruppo per gli inviti…" },
+  pending: { tone: "warn", text: "Il gruppo non è ancora online, quindi gli inviti potrebbero non funzionare. Controlla la connessione e riapri questa finestra tra poco." },
+  login: { tone: "warn", text: "Per invitare altre persone devi accedere al tuo account: finché non accedi, link, QR e codice non funzionano per gli altri." },
+  "device-only": { tone: "warn", text: "Questo gruppo è stato creato senza account, quindi non si può condividere. Per invitare altre persone accedi e crea un nuovo gruppo." },
+  "no-cloud": { tone: "warn", text: "Gli account non sono attivi in questa versione dell'app: link, QR e codice funzionano solo su questo dispositivo." }
 };
 
+/** Conferma sul posto: dice cosa succede e il pulsante ripete l'azione (niente "OK" generico). */
+export function InlineConfirm({ text, confirmLabel, icon, onConfirm, onCancel, busy }: { text: string; confirmLabel: string; icon: string; onConfirm: () => void; onCancel: () => void; busy?: boolean }) {
+  return (
+    <div role="group" aria-label={confirmLabel} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
+      <p className="safe-text text-sm font-bold">{text}</p>
+      <div className="mt-2 flex flex-wrap justify-end gap-2">
+        <Button variant="soft" onClick={onCancel} disabled={busy} autoFocus>
+          Annulla
+        </Button>
+        <Button variant="danger" icon={icon} onClick={onConfirm} disabled={busy}>
+          {confirmLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Tutti i modi per invitare: link (WhatsApp, Telegram, email, condivisione di sistema), QR, codice, account. */
-export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyGroup; actor: Actor; onClose: () => void; onNotice: (text: string) => void }) {
+export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { group: StudyGroup; actor: Actor; onClose: () => void; onNotice: (text: string) => void; onLogin?: () => void }) {
   const session = useCloudSession();
   const loggedIn = Boolean(session);
   const myRole = group.members.find((member) => member.userId === actor.userId)?.role;
@@ -125,6 +142,7 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [publishing, setPublishing] = useState(false);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const code = group.inviteCode;
   const link = groupInviteLink(code);
   const message = groupInviteMessage(group.name, actor.displayName, code);
@@ -150,18 +168,21 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
     // Solo all'apertura o quando cambia lo stato di condivisione (non a ogni modifica del gruppo).
   }, [loggedIn, group.id, group.sharedAt]);
 
+  // Un gruppo creato senza account non si può condividere neanche dopo l'accesso: lo si dice
+  // subito, invece di chiedere un accesso che non basterebbe.
   const reach: Reach = !cloudConfigured
     ? "no-cloud"
-    : !loggedIn
-      ? "login"
-      : group.sharedAt
-        ? "ready"
-        : deviceOnly
-          ? "device-only"
+    : deviceOnly && !group.sharedAt
+      ? "device-only"
+      : !loggedIn
+        ? "login"
+        : group.sharedAt
+          ? "ready"
           : publishing
             ? "publishing"
             : "pending";
   const reachInfo = REACH_TEXT[reach];
+  const showLogin = Boolean(onLogin) && cloudConfigured && !loggedIn && (reach === "login" || reach === "device-only");
 
   const copy = async (text: string, done: string) => {
     setError("");
@@ -198,7 +219,7 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       setStatus("QR scaricato: puoi stamparlo o inviarlo come immagine.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Download non riuscito.");
+      setError(cause instanceof Error ? cause.message : "Non è stato possibile scaricare il QR. Riprova.");
     }
   };
 
@@ -216,14 +237,14 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
   };
 
   const regenerate = async () => {
-    if (!window.confirm("Generare un nuovo codice? Link e QR già inviati smetteranno di funzionare.")) return;
+    setConfirmRegenerate(false);
     setError("");
     setBusy(true);
     try {
       await regenerateInviteCode(group.id);
-      setStatus("Nuovo codice attivo: i link e i QR precedenti non funzionano più.");
+      setStatus("Fatto: i vecchi inviti non funzionano più. Manda il nuovo link a chi deve ancora entrare.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Codice non aggiornato.");
+      setError(cause instanceof Error ? cause.message : "Non è stato possibile disattivare i vecchi inviti. Riprova.");
     } finally {
       setBusy(false);
     }
@@ -233,7 +254,7 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
     if (busy) return;
     const recipient = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-      setError("Inserisci un indirizzo email valido.");
+      setError("Controlla l'indirizzo email: sembra incompleto (es. nome@esempio.it).");
       return;
     }
     setError("");
@@ -256,7 +277,7 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
       onNotice(`Invito inviato a ${recipient}: lo trova nella campanella e in Gruppi al prossimo accesso.`);
       setStatus(`Invito inviato a ${recipient}.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Invito non riuscito.");
+      setError(cause instanceof Error ? cause.message : "Non è stato possibile inviare l'invito. Riprova.");
     } finally {
       setBusy(false);
     }
@@ -270,12 +291,12 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
       onClose={() => {
         if (!busy) onClose();
       }}
-      eyebrow={<span className="text-xs font-black uppercase text-[var(--faint)]">Invita · {group.name}</span>}
-      title="Porta qualcuno nel gruppo"
+      eyebrow={<span className="text-xs font-black uppercase text-[var(--faint)]">{group.name}</span>}
+      title="Invita i tuoi compagni"
       width="max-w-[560px]"
     >
       <div className="grid grid-cols-1 gap-5">
-        <p
+        <div
           className={`flex items-start gap-2 rounded-[18px] border p-3 text-sm font-bold ${
             reachInfo.tone === "ok"
               ? "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-text)]"
@@ -283,17 +304,39 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
           }`}
         >
           <Icon name={reachInfo.tone === "ok" ? "ShieldCheck" : "AlertTriangle"} className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{reachInfo.text}</span>
-        </p>
+          <span className="min-w-0 flex-1">
+            {reachInfo.text}
+            {showLogin ? (
+              <span className="mt-2 block">
+                <Button variant="soft" icon="LogIn" onClick={onLogin}>
+                  Accedi
+                </Button>
+              </span>
+            ) : null}
+          </span>
+        </div>
+
+        {/* Esito vicino alle azioni più usate (link e QR), non in fondo al pannello. */}
+        {status ? (
+          <p role="status" className="rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--success-text)]">
+            {status}
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
+            {error}
+          </p>
+        ) : null}
 
         <section aria-labelledby="invite-link-title">
-          <h3 id="invite-link-title" className="text-sm font-black">Condividi il link</h3>
-          <p className="mt-0.5 text-xs text-[var(--muted)]">Chi lo apre arriva all'ingresso del gruppo; se non ha ancora fatto l'accesso, entra appena accede o si registra.</p>
+          <h3 id="invite-link-title" className="text-sm font-black">Manda il link di invito</h3>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">È il modo più semplice: chi lo apre arriva al gruppo. Se non ha ancora un account può crearlo, poi entra da solo.</p>
           <button
             type="button"
-            onClick={() => void copy(link, "Link copiato.")}
+            onClick={() => void copy(link, "Link copiato: incollalo in una chat o in un'email.")}
             className="mt-2 flex w-full min-w-0 items-center gap-2 rounded-[16px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2.5 text-left"
-            title="Copia il link"
+            title="Copia il link di invito"
+            aria-label="Copia il link di invito"
           >
             <Icon name="Link" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
             <span className="one-line-safe min-w-0 flex-1 font-mono text-xs font-bold">{link}</span>
@@ -305,6 +348,12 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
                 Condividi
               </Button>
             ) : null}
+            <Button variant={canShare ? "soft" : "primary"} icon="Copy" onClick={() => void copy(link, "Link copiato: incollalo in una chat o in un'email.")}>
+              Copia link di invito
+            </Button>
+          </div>
+          <p className="mt-3 text-xs font-bold text-[var(--muted)]">Oppure mandalo con</p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
             <a className={shareLinkClass} href={whatsappShareUrl(message)} target="_blank" rel="noopener noreferrer">
               <Icon name="MessageCircle" className="h-4 w-4" /> WhatsApp
             </a>
@@ -325,15 +374,15 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
             <InviteQr value={link} label={`QR code per entrare nel gruppo ${group.name}`} />
           </div>
           <div className="min-w-0">
-            <h3 id="invite-qr-title" className="text-sm font-black">QR code</h3>
-            <p className="mt-0.5 text-xs text-[var(--muted)]">Da far inquadrare con la fotocamera del telefono: si apre StudyOS sull'ingresso in questo gruppo. Utile in aula o stampato.</p>
+            <h3 id="invite-qr-title" className="text-sm font-black">Oppure mostra il QR code</h3>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">Fallo inquadrare con la fotocamera del telefono: si apre l'invito al gruppo. Comodo in aula o da stampare.</p>
             <div className="mt-2 flex flex-wrap gap-2">
               <Button variant="soft" icon="Download" onClick={() => void downloadQr()}>
-                Scarica QR
+                Scarica il QR
               </Button>
               {canShare ? (
                 <Button variant="soft" icon="Share2" onClick={() => void shareQr()}>
-                  Invia QR
+                  Invia il QR
                 </Button>
               ) : null}
             </div>
@@ -341,66 +390,92 @@ export function InviteSheet({ group, actor, onClose, onNotice }: { group: StudyG
         </section>
 
         <section aria-labelledby="invite-code-title" className="quiet-panel p-3">
-          <h3 id="invite-code-title" className="text-xs font-black uppercase text-[var(--faint)]">Codice del gruppo</h3>
+          <h3 id="invite-code-title" className="text-xs font-black uppercase text-[var(--faint)]">Oppure usa il codice del gruppo</h3>
           <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
             <p className="font-mono text-2xl font-black tracking-widest">{code}</p>
             <Button variant="soft" icon="Copy" onClick={() => void copy(code, "Codice copiato.")}>
               Copia codice
             </Button>
           </div>
-          <p className="mt-1 text-xs text-[var(--muted)]">Si inserisce in Gruppi → Unisciti con codice.</p>
-          {isOwner ? (
-            <button type="button" onClick={() => void regenerate()} disabled={busy} className="mt-2 inline-flex min-h-9 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--danger-text)]">
-              <Icon name="RefreshCw" className="h-3.5 w-3.5" /> Genera un nuovo codice (disattiva link e QR inviati)
-            </button>
-          ) : null}
+          <p className="mt-1 text-xs text-[var(--muted)]">Chi lo riceve lo inserisce in Gruppi → Entra con un codice.</p>
         </section>
 
         <section aria-labelledby="invite-email-title">
-          <h3 id="invite-email-title" className="text-sm font-black">Invita un account StudyOS</h3>
+          <h3 id="invite-email-title" className="text-sm font-black">Invita per email</h3>
           {canInviteByEmail ? (
             <>
-              <p className="mt-0.5 text-xs text-[var(--muted)]">L'invito compare nella sua app (campanella e Gruppi) con Accetta e Rifiuta.</p>
-              <Field label="Email dell'account" className="mt-2">
+              <p className="mt-0.5 text-xs text-[var(--muted)]">Per chi ha già un account StudyOS: l'invito gli compare nell'app (nella campanella e in Gruppi) e può accettarlo con un tocco.</p>
+              <Field label="Email del tuo compagno" className="mt-2">
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nome@esempio.it" inputMode="email" autoComplete="off" />
-                  <Button variant="soft" icon="Send" onClick={() => void sendEmailInvite()} disabled={busy || !loggedIn}>
+                  <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Es. nome@esempio.it" inputMode="email" autoComplete="off" />
+                  <Button variant="soft" icon="Send" onClick={() => void sendEmailInvite()} disabled={busy || !loggedIn} title={loggedIn ? undefined : "Accedi al tuo account per invitare per email"}>
                     {busy ? "Invio…" : "Invia invito"}
                   </Button>
                 </div>
               </Field>
             </>
           ) : (
-            <p className="mt-0.5 text-xs text-[var(--muted)]">Gli inviti per email li mandano proprietario e amministratori; tu puoi condividere link, QR o codice.</p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">Solo il proprietario e gli amministratori possono invitare per email. Tu puoi mandare il link, il QR o il codice.</p>
           )}
         </section>
 
-        {status ? (
-          <p role="status" className="rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--success-text)]">
-            {status}
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
-            {error}
-          </p>
+        {isOwner ? (
+          <details className="quiet-panel p-3">
+            <summary className="cursor-pointer text-sm font-extrabold">Altre opzioni: disattiva i vecchi inviti</summary>
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              Utile se un link è finito alla persona sbagliata. Crea un nuovo codice: link, QR e codice mandati finora smettono di funzionare. Chi è già nel gruppo resta dentro.
+            </p>
+            <div className="mt-2">
+              {confirmRegenerate ? (
+                <InlineConfirm
+                  text="Disattivare i vecchi inviti? Link, QR e codice mandati finora non funzioneranno più e dovrai mandare quelli nuovi a chi deve ancora entrare."
+                  confirmLabel="Disattiva i vecchi inviti"
+                  icon="RefreshCw"
+                  busy={busy}
+                  onConfirm={() => void regenerate()}
+                  onCancel={() => setConfirmRegenerate(false)}
+                />
+              ) : (
+                <Button variant="soft" icon="RefreshCw" onClick={() => setConfirmRegenerate(true)} disabled={busy}>
+                  Disattiva i vecchi inviti
+                </Button>
+              )}
+            </div>
+          </details>
         ) : null}
       </div>
     </Drawer>
   );
 }
 
-/** Accesso/registrazione senza lasciare l'invito: si chiude da solo quando arriva la sessione. */
-export function InviteLoginDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** Perché si chiede l'accesso: entrare con un invito oppure poter invitare/condividere. */
+export type LoginReason = "join" | "share";
+
+const LOGIN_COPY: Record<LoginReason, { eyebrow: string; title: string; text: string }> = {
+  join: {
+    eyebrow: "Invito a un gruppo",
+    title: "Accedi o registrati per entrare",
+    text: "L'invito resta salvato: appena accedi (o confermi l'email di registrazione su questo dispositivo) entri nel gruppo."
+  },
+  share: {
+    eyebrow: "Gruppi",
+    title: "Accedi al tuo account",
+    text: "Con l'account puoi invitare i tuoi compagni nei tuoi gruppi ed entrare nei loro."
+  }
+};
+
+/** Accesso/registrazione senza lasciare Gruppi: si chiude da solo quando arriva la sessione. */
+export function InviteLoginDrawer({ open, onClose, reason = "join" }: { open: boolean; onClose: () => void; reason?: LoginReason }) {
   const session = useCloudSession();
+  const copy = LOGIN_COPY[reason];
   useEffect(() => {
     if (open && session) onClose();
   }, [open, session, onClose]);
   return (
-    <Drawer open={open} onClose={onClose} eyebrow={<span className="text-xs font-black uppercase text-[var(--faint)]">Invito a un gruppo</span>} title="Accedi o registrati per entrare" width="max-w-[560px]">
+    <Drawer open={open} onClose={onClose} eyebrow={<span className="text-xs font-black uppercase text-[var(--faint)]">{copy.eyebrow}</span>} title={copy.title} width="max-w-[560px]">
       <p className="mb-4 flex items-start gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
         <Icon name="UserPlus" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
-        <span>L'invito resta salvato: appena accedi (o confermi l'email della registrazione su questo dispositivo) entri nel gruppo con quell'account.</span>
+        <span>{copy.text}</span>
       </p>
       <CloudPanel />
     </Drawer>
@@ -455,7 +530,7 @@ export function PendingInviteCard({ onJoined, onLogin }: { onJoined: (groupId: s
       const name = useStudyStore.getState().studyGroups.find((group) => group.id === groupId)?.name ?? details?.name ?? "il gruppo";
       onJoined(groupId, name);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Ingresso non riuscito. Riprova.");
+      setError(cause instanceof Error ? cause.message : "Non è stato possibile entrare nel gruppo. Riprova.");
     } finally {
       setBusy(false);
     }
@@ -485,17 +560,17 @@ export function PendingInviteCard({ onJoined, onLogin }: { onJoined: (groupId: s
           )}
           {details?.description ? <p className="two-line-safe mt-1 text-sm text-[var(--muted)]">{details.description}</p> : null}
           {invalid ? (
-            <p className="mt-2 text-sm font-bold text-[var(--danger-text)]">Questo invito non è più valido (codice cambiato o gruppo eliminato). Chiedi un nuovo link.</p>
+            <p className="mt-2 text-sm font-bold text-[var(--danger-text)]">Questo invito non funziona più: il codice è stato cambiato o il gruppo eliminato. Chiedi un nuovo link a chi ti ha invitato.</p>
           ) : details?.isMember ? (
             <p className="mt-2 text-sm font-bold text-[var(--muted)]">Fai già parte di questo gruppo.</p>
           ) : needsLogin ? (
             <p className="mt-2 text-sm font-bold text-[var(--muted)]">
               {pending.confirmed
-                ? "Appena accedi o completi la registrazione entri nel gruppo da solo."
-                : "Accedi o crea un account: entrerai nel gruppo con quell'account. Entrando, nome ed email sono visibili agli altri membri."}
+                ? "Appena accedi o completi la registrazione, entri nel gruppo in automatico."
+                : "Per entrare devi accedere o creare un account. Gli altri membri vedranno il tuo nome e la tua email."}
             </p>
           ) : (
-            <p className="mt-2 text-xs text-[var(--faint)]">Entrando, il tuo nome e la tua email sono visibili agli altri membri.</p>
+            <p className="mt-2 text-xs text-[var(--faint)]">Gli altri membri vedranno il tuo nome e la tua email.</p>
           )}
           {error ? (
             <p role="alert" className="mt-2 text-sm font-bold text-[var(--danger-text)]">

@@ -29,12 +29,12 @@ const isOpen = (task: Task) => task.status !== "done" && task.status !== "archiv
 
 const isOverdue = (task: Task) => (task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && isOpen(task) : false);
 
-const dueLabel = (date: string) => {
+const dueLabel = (date: string, overdue = false) => {
   const days = daysUntil(date);
   if (days === 0) return "Oggi";
   if (days === 1) return "Domani";
-  if (days === -1) return "Ieri";
-  if (days < -1) return `${-days} giorni fa`;
+  if (days === -1) return overdue ? "Scaduta ieri" : "Ieri";
+  if (days < -1) return overdue ? `Scaduta da ${-days} giorni` : `${-days} giorni fa`;
   if (days < 7) return capitalizeFirst(format(parseISO(date), "EEEE d", { locale: it }));
   return format(parseISO(date), "d MMM", { locale: it });
 };
@@ -44,12 +44,21 @@ const DUE_BUCKETS: { id: string; title: string; test: (task: Task) => boolean }[
   { id: "overdue", title: "In ritardo", test: (task) => isOverdue(task) },
   { id: "today", title: "Oggi", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) === 0 },
   { id: "tomorrow", title: "Domani", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) === 1 },
-  { id: "week", title: "Prossimi 7 giorni", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) > 1 && daysUntil(task.dueDate!) <= 7 },
+  { id: "week", title: "Entro una settimana", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) > 1 && daysUntil(task.dueDate!) <= 7 },
   { id: "later", title: "Più avanti", test: (task) => Boolean(task.dueDate) && daysUntil(task.dueDate!) > 7 },
   { id: "nodate", title: "Senza scadenza", test: (task) => !task.dueDate }
 ];
 
 const byDue = (a: Task, b: Task) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999");
+
+/** "Priorità media" invece di "Media": fuori da un campo etichettato il valore da solo non si capisce. */
+const priorityText = (priority: Task["priority"]) =>
+  priority === "urgent" ? PRIORITY_LABEL.urgent : `Priorità ${PRIORITY_LABEL[priority].toLowerCase()}`;
+
+const stepsText = (task: Task) => {
+  const done = task.subtasks.filter((subtask) => subtask.done).length;
+  return `${done}/${task.subtasks.length} passaggi`;
+};
 
 export function TasksView() {
   const [mode, setMode] = useUiState<TaskMode>("tasks.mode", "list", { validate: oneOf("list", "kanban", "matrix", "subject", "focus") });
@@ -64,8 +73,9 @@ export function TasksView() {
   const open = visible.filter(isOpen);
 
   const confirmDelete = async (task: Task) => {
-    const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
-    if (!window.confirm(`Eliminare la task "${label}"?`)) return false;
+    const label = task.title.length > 80 ? `${task.title.slice(0, 77)}…` : task.title;
+    const steps = task.subtasks.length ? ` e ${task.subtasks.length === 1 ? "il suo passaggio" : `i suoi ${task.subtasks.length} passaggi`}` : "";
+    if (!window.confirm(`Eliminare l'attività «${label}»${steps}? Non potrai recuperarla.`)) return false;
     await deleteTask(task.id);
     return true;
   };
@@ -79,21 +89,21 @@ export function TasksView() {
   };
 
   const stats = [
-    { label: "Aperte", value: String(open.length), tone: "var(--accent)" },
+    { label: "Da fare", value: String(open.length), tone: "var(--accent)" },
     { label: "In ritardo", value: String(open.filter(isOverdue).length), tone: "var(--accent-3)" },
     { label: "Urgenti", value: String(open.filter((task) => task.priority === "urgent").length), tone: "var(--warning)" },
-    { label: "Lavoro stimato", value: formatMinutes(open.reduce((sum, task) => sum + (task.estimatedMinutes || 0), 0)), tone: "var(--accent-2)" }
+    { label: "Tempo previsto", value: formatMinutes(open.reduce((sum, task) => sum + (task.estimatedMinutes || 0), 0)), tone: "var(--accent-2)" }
   ];
 
   return (
     <div>
       <SectionTitle
-        title="Task"
-        subtitle="Scadenze, priorità e sottotask in un colpo d'occhio. Clicca una task per modificarla."
+        title="Attività"
+        subtitle="Segna cosa devi fare, con scadenza e priorità, e spunta ogni attività quando l'hai finita."
         action={
           hasAnyTask ? (
             <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
-              Nuova task
+              Nuova attività
             </Button>
           ) : undefined
         }
@@ -105,10 +115,10 @@ export function TasksView() {
             <span className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-super bg-[var(--surface-strong)]">
               <Icon name="Check" className="h-7 w-7 text-[var(--accent-ink)]" />
             </span>
-            <h3 className="text-2xl font-black">Nessuna task aperta</h3>
-            <p className="mt-2 text-sm text-[var(--muted)]">Aggiungine una: titolo, materia, priorità e scadenza.</p>
+            <h3 className="text-2xl font-black">Ancora nessuna attività</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">Qui annoti compiti, consegne e cose da studiare, ognuna con la sua scadenza.</p>
             <Button className="mt-5" icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
-              Nuova task
+              Nuova attività
             </Button>
           </div>
         </Panel>
@@ -130,28 +140,28 @@ export function TasksView() {
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <Segmented
-              label="Vista task"
+              label="Come vedere le attività"
               value={mode}
               onChange={setMode}
               options={[
-                { id: "list", label: "Lista", icon: "List" },
-                { id: "kanban", label: "Kanban", icon: "LayoutGrid" },
-                { id: "matrix", label: "Eisenhower", icon: "Grid2X2" },
-                { id: "subject", label: "Per materia", icon: "BookOpen" },
-                { id: "focus", label: "Focus oggi", icon: "Zap" }
+                { id: "list", label: "Lista", icon: "List", title: "Tutte le attività, raggruppate per scadenza" },
+                { id: "focus", label: "Piano di oggi", icon: "Zap", title: "Solo le 6 attività più urgenti" },
+                { id: "subject", label: "Per materia", icon: "BookOpen", title: "Le attività da fare divise per materia" },
+                { id: "kanban", label: "Per stato", icon: "LayoutGrid", title: "Colonne Da fare, In corso, Completata…: sposta le attività da una all'altra" },
+                { id: "matrix", label: "Urgenza e importanza", icon: "Grid2X2", title: "Quattro riquadri: cosa fare subito, pianificare, ridurre o rimandare" }
               ]}
             />
             {mode === "list" ? (
               <label className="flex items-center gap-2 text-xs font-black text-[var(--muted)]">
-                Ordina
+                Ordina per
                 <select
                   className="min-h-11 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--text)]"
                   value={sort}
                   onChange={(event) => setSort(event.target.value as SortMode)}
                 >
-                  <option value="deadline">Per scadenza</option>
-                  <option value="priority">Per priorità</option>
-                  <option value="recent">Più recenti</option>
+                  <option value="deadline">Scadenza</option>
+                  <option value="priority">Priorità</option>
+                  <option value="recent">Aggiunte di recente</option>
                 </select>
               </label>
             ) : null}
@@ -162,7 +172,7 @@ export function TasksView() {
             <Panel>
               <div className="mb-3 flex items-baseline justify-between gap-2">
                 <h3 className="text-xl font-black">Piano di oggi</h3>
-                <span className="text-xs font-bold text-[var(--muted)]">Le 6 task con scadenza e priorità più pressanti</span>
+                <span className="text-xs font-bold text-[var(--muted)]">Le 6 attività più urgenti, per scadenza e priorità</span>
               </div>
               <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />
             </Panel>
@@ -217,18 +227,18 @@ function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnTy
       <p className="mb-1.5 px-1 text-xs font-black uppercase text-[var(--faint)]">Aggiunta rapida</p>
       <form onSubmit={submit} className="soft-panel grid grid-cols-1 gap-2 p-2.5 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] xl:items-center">
       <label className="relative block min-w-0">
-        <span className="sr-only">Nuova task</span>
+        <span className="sr-only">Cosa devi fare</span>
         <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
         <input
           id="quick-task-title"
           className={`${inputClass} pl-10`}
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="Aggiungi una task e premi Invio"
+          placeholder="Es. Consegnare la relazione di laboratorio, poi Invio"
         />
       </label>
       <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] xl:contents">
-        <select className={`${selectClass} min-w-0 xl:max-w-[200px]`} value={subjectId} onChange={(event) => setSubjectId(event.target.value)} aria-label="Materia">
+        <select className={`${selectClass} min-w-0 xl:max-w-[200px]`} value={subjectId} onChange={(event) => setSubjectId(event.target.value)} aria-label="Materia (facoltativa)">
           <option value="">Nessuna materia</option>
           {selectableSubjects(subjects, subjectId).map((subject) => (
             <option value={subject.id} key={subject.id}>
@@ -239,18 +249,22 @@ function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnTy
         <select className={`${selectClass} min-w-0`} value={priority} onChange={(event) => setPriority(event.target.value as Task["priority"])} aria-label="Priorità">
           {(Object.keys(PRIORITY_LABEL) as Task["priority"][]).map((key) => (
             <option key={key} value={key}>
-              {PRIORITY_LABEL[key]}
+              {priorityText(key)}
             </option>
           ))}
         </select>
-        <input className={`${selectClass} min-w-0`} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} aria-label="Scadenza" />
-        <button
-          type="submit"
-          disabled={!title.trim()}
-          className="motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50 min-[480px]:col-span-3 sm:col-span-1"
-        >
-          <Icon name="Plus" className="h-4 w-4" /> Aggiungi
-        </button>
+        <input
+          className={`${selectClass} min-w-0`}
+          type="date"
+          value={dueDate}
+          onChange={(event) => setDueDate(event.target.value)}
+          aria-label="Scadenza (facoltativa)"
+          title="Scadenza (facoltativa)"
+        />
+        {/* Il primario della pagina è "Nuova attività": qui l'aggiunta veloce resta secondaria. */}
+        <Button type="submit" variant="soft" icon="Plus" disabled={!title.trim()} className="min-[480px]:col-span-3 sm:col-span-1">
+          Aggiungi
+        </Button>
       </div>
     </form>
     </div>
@@ -272,13 +286,13 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
-  const subtasksDone = task.subtasks.filter((subtask) => subtask.done).length;
 
   return (
     <li className={`group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)] ${done ? "opacity-60" : ""}`}>
       <button
         type="button"
-        aria-label={done ? `Segna "${task.title}" da fare` : `Completa "${task.title}"`}
+        aria-label={done ? `Segna «${task.title}» come da fare` : `Segna «${task.title}» come fatta`}
+        title={done ? "Segna come da fare" : "Segna come fatta"}
         onClick={() => actions.onToggle(task.id)}
         className={`motion-safe relative grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-2.5 after:content-[""] ${
           done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
@@ -294,9 +308,9 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
         </span>
         <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs font-bold text-[var(--muted)]">
           {task.dueDate ? (
-            <span className={`inline-flex items-center gap-1 ${overdue ? "text-[var(--danger-text)]" : ""}`}>
+            <span className={`inline-flex items-center gap-1 ${overdue ? "text-[var(--danger-text)]" : ""}`} title="Scadenza">
               <Icon name="CalendarDays" className="h-3 w-3" />
-              {dueLabel(task.dueDate)}
+              {dueLabel(task.dueDate, overdue)}
             </span>
           ) : null}
           {task.subjectId ? (
@@ -305,15 +319,15 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
               <span className="truncate">{subjectName(actions.subjects, task.subjectId)}</span>
             </span>
           ) : null}
-          {task.estimatedMinutes ? <span>{formatMinutes(task.estimatedMinutes)}</span> : null}
+          {task.estimatedMinutes ? <span>{formatMinutes(task.estimatedMinutes)} previsti</span> : null}
           {task.subtasks.length ? (
             <span className="inline-flex items-center gap-1">
               <Icon name="Check" className="h-3 w-3" />
-              {subtasksDone}/{task.subtasks.length}
+              {stepsText(task)}
             </span>
           ) : null}
           {timerRunning ? (
-            <span className="inline-flex items-center gap-1 text-[var(--accent-ink)]">
+            <span className="inline-flex items-center gap-1 text-[var(--accent-ink)]" title="Timer in corso">
               <Icon name="Timer" className="h-3 w-3" /> {formatElapsedSeconds(elapsedSeconds)}
             </span>
           ) : null}
@@ -327,7 +341,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
       {!done ? (
         <span className="hidden shrink-0 items-center gap-1.5 text-xs font-black text-[var(--muted)] sm:inline-flex">
           <span className="h-2 w-2 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
-          {PRIORITY_LABEL[task.priority]}
+          {priorityText(task.priority)}
         </span>
       ) : null}
 
@@ -385,7 +399,7 @@ function GroupedList({ tasks, sort, actions, onNew }: { tasks: Task[]; sort: Sor
       : [
           {
             id: sort,
-            title: sort === "priority" ? "Per priorità" : "Più recenti",
+            title: sort === "priority" ? "Dalla più urgente" : "Aggiunte di recente",
             items: sort === "priority" ? urgentTasks(open, open.length) : [...open].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
           }
         ];
@@ -395,25 +409,25 @@ function GroupedList({ tasks, sort, actions, onNew }: { tasks: Task[]; sort: Sor
       {open.length === 0 ? (
         <EmptyState
           icon="Check"
-          title="Nessuna task aperta"
-          body="Le completate restano qui sotto. Aprine una nuova quando vuoi."
+          title="Hai fatto tutto"
+          body={done.length ? "Non ti resta nessuna attività da fare. Quelle completate sono qui sotto." : "Non ti resta nessuna attività da fare."}
           action={
-            <Button variant="primary" icon="Plus" onClick={onNew}>
-              Nuova task
+            <Button variant="soft" icon="Plus" onClick={onNew}>
+              Nuova attività
             </Button>
           }
         />
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {groups.map((group) => (
-            <section key={group.id} aria-label={group.title}>
+            <section key={group.id} aria-label={`${group.title}: ${group.items.length} da fare`}>
               <h3
                 className={`mb-1 flex items-center gap-2 px-2.5 text-xs font-black uppercase ${
                   group.id === "overdue" ? "text-[var(--danger-text)]" : "text-[var(--faint)]"
                 }`}
               >
                 {group.title}
-                <span className="rounded-full bg-[var(--surface-strong)] px-1.5 text-[11px] text-[var(--muted)]">{group.items.length}</span>
+                <span className="rounded-full bg-[var(--surface-strong)] px-1.5 text-[11px] text-[var(--muted)]" title={`${group.items.length} da fare`}>{group.items.length}</span>
               </h3>
               <RowList tasks={group.items} actions={actions} />
             </section>
@@ -429,7 +443,7 @@ function GroupedList({ tasks, sort, actions, onNew }: { tasks: Task[]; sort: Sor
             className="flex min-h-11 w-full items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-left text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
           >
             <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${showDone ? "rotate-90" : ""}`} />
-            Completate
+            {showDone ? "Nascondi le completate" : "Mostra le completate"}
             <span className="rounded-full bg-[var(--surface-strong)] px-1.5 text-[11px] text-[var(--muted)]">{done.length}</span>
           </button>
           {showDone ? <RowList tasks={done} actions={actions} /> : null}
@@ -486,7 +500,7 @@ function Kanban({
             >
               <div className="mb-2.5 flex items-center justify-between gap-2 px-1.5 pt-1">
                 <h3 className="text-sm font-black uppercase text-[var(--muted)]">{status.label}</h3>
-                <span className="rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black">{items.length}</span>
+                <span className="rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black" title={`${items.length} attività`}>{items.length}</span>
               </div>
               <div className="grid grid-cols-1 content-start gap-2">
                 {items.map((task) => (
@@ -503,7 +517,7 @@ function Kanban({
                   />
                 ))}
                 {items.length === 0 ? (
-                  <div className="rounded-[18px] border border-dashed border-[var(--border)] p-4 text-center text-xs font-bold text-[var(--faint)]">Trascina o sposta qui una task</div>
+                  <div className="rounded-[18px] border border-dashed border-[var(--border)] p-4 text-center text-xs font-bold text-[var(--faint)]">Trascina qui un'attività o cambiane lo stato dal menu</div>
                 ) : null}
               </div>
             </section>
@@ -533,7 +547,6 @@ function KanbanTaskCard({
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
-  const subtasksDone = task.subtasks.filter((subtask) => subtask.done).length;
 
   return (
     <article
@@ -553,7 +566,8 @@ function KanbanTaskCard({
       <div className="flex items-start gap-2">
         <button
           type="button"
-          aria-label={done ? `Riapri "${task.title}"` : `Completa "${task.title}"`}
+          aria-label={done ? `Segna «${task.title}» come da fare` : `Segna «${task.title}» come fatta`}
+          title={done ? "Segna come da fare" : "Segna come fatta"}
           onClick={() => actions.onToggle(task.id)}
           className={`relative mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-3 after:content-[""] ${
             done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
@@ -567,21 +581,17 @@ function KanbanTaskCard({
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 pl-7 text-[11px] font-bold text-[var(--muted)]">
         {task.subjectId ? <Tag color={color}>{subjectName(actions.subjects, task.subjectId)}</Tag> : null}
-        {task.dueDate ? <span className={overdue ? "text-[var(--danger-text)]" : ""}>{dueLabel(task.dueDate)}</span> : null}
+        {task.dueDate ? <span className={overdue ? "text-[var(--danger-text)]" : ""} title="Scadenza">{dueLabel(task.dueDate, overdue)}</span> : null}
         {!done ? (
           <span className="inline-flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
-            {PRIORITY_LABEL[task.priority]}
+            {priorityText(task.priority)}
           </span>
         ) : null}
-        {task.estimatedMinutes ? <span>{formatMinutes(task.estimatedMinutes)}</span> : null}
-        {task.subtasks.length ? (
-          <span>
-            {subtasksDone}/{task.subtasks.length}
-          </span>
-        ) : null}
+        {task.estimatedMinutes ? <span>{formatMinutes(task.estimatedMinutes)} previsti</span> : null}
+        {task.subtasks.length ? <span>{stepsText(task)}</span> : null}
         {timerRunning ? (
-          <span className="inline-flex items-center gap-1 text-[var(--accent-ink)]">
+          <span className="inline-flex items-center gap-1 text-[var(--accent-ink)]" title="Timer in corso">
             <Icon name="Timer" className="h-3 w-3" /> {formatElapsedSeconds(elapsedSeconds)}
           </span>
         ) : null}
@@ -629,21 +639,26 @@ function Matrix({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
     { title: "Rimanda", hint: "Né urgente né importante", tone: "var(--faint)", test: (task: Task) => task.importance < 4 && !urgent(task) }
   ];
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-      {quadrants.map((quadrant) => {
-        const items = tasks.filter(quadrant.test).sort(byDue);
-        return (
-          <section className="soft-panel min-h-[220px] p-3" key={quadrant.title} aria-label={quadrant.title}>
-            <div className="mb-2 flex items-baseline gap-2 px-2.5">
-              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: quadrant.tone }} />
-              <h3 className="text-base font-black">{quadrant.title}</h3>
-              <span className="text-xs font-bold text-[var(--faint)]">{quadrant.hint}</span>
-              <span className="ml-auto rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black">{items.length}</span>
-            </div>
-            <RowList tasks={items} actions={actions} compact empty="Nessuna task" />
-          </section>
-        );
-      })}
+    <div>
+      <p className="mb-3 px-1 text-xs font-bold text-[var(--muted)]">
+        Urgente = priorità alta o urgente. Importante = importanza 4 o 5 su 5 (la trovi in «Altre opzioni» quando apri un'attività).
+      </p>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {quadrants.map((quadrant) => {
+          const items = tasks.filter(quadrant.test).sort(byDue);
+          return (
+            <section className="soft-panel min-h-[220px] p-3" key={quadrant.title} aria-label={quadrant.title}>
+              <div className="mb-2 flex items-baseline gap-2 px-2.5">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: quadrant.tone }} />
+                <h3 className="text-base font-black">{quadrant.title}</h3>
+                <span className="text-xs font-bold text-[var(--faint)]">{quadrant.hint}</span>
+                <span className="ml-auto rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black" title={`${items.length} da fare`}>{items.length}</span>
+              </div>
+              <RowList tasks={items} actions={actions} compact empty="Nessuna attività qui" />
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -660,7 +675,7 @@ function BySubject({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
     }
   ].filter((group) => group.items.length);
 
-  if (!groups.length) return <Panel><p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Nessuna task aperta.</p></Panel>;
+  if (!groups.length) return <Panel><p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Non hai attività da fare.</p></Panel>;
 
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -669,7 +684,7 @@ function BySubject({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
           <div className="mb-2 flex items-center gap-2 px-2.5">
             <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: group.color }} />
             <h3 className="one-line-safe text-base font-black">{group.name}</h3>
-            <span className="ml-auto rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black">{group.items.length}</span>
+            <span className="ml-auto rounded-full bg-[var(--surface-strong)] px-2 text-xs font-black" title={`${group.items.length} da fare`}>{group.items.length}</span>
           </div>
           <RowList tasks={group.items.sort(byDue)} actions={actions} compact />
         </section>

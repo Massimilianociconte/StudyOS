@@ -64,21 +64,21 @@ export function TopicManager({ subjects, subjectId }: { subjects: Subject[]; sub
             ) : (
               <li key={topic.id} className="group flex min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 hover:bg-[var(--surface-soft)]">
                 <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: subjectColor(subjects, topic.subjectId) }} />
-                <button type="button" onClick={() => setEditingId(topic.id)} className="min-w-0 flex-1 text-left">
+                <button type="button" onClick={() => setEditingId(topic.id)} title="Modifica argomento e domande guida" className="min-w-0 flex-1 text-left">
                   <span className="one-line-safe block text-sm font-extrabold">{topic.title}</span>
                   <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
                     {subjectId ? "" : `${subjectName(subjects, topic.subjectId)} · `}
                     ripasso {reviewDueLabel(topic.nextReviewDate)}
-                    {topic.completedReviews ? ` · ${topic.completedReviews} ${topic.completedReviews === 1 ? "ripasso fatto" : "ripassi fatti"}` : " · nuovo"}
-                    {topic.questions.length ? ` · ${topic.questions.length} domande` : ""}
+                    {topic.completedReviews ? ` · ${topic.completedReviews} ${topic.completedReviews === 1 ? "ripasso fatto" : "ripassi fatti"}` : " · mai ripassato"}
+                    {topic.questions.length ? ` · ${topic.questions.length} ${topic.questions.length === 1 ? "domanda guida" : "domande guida"}` : ""}
                   </span>
                 </button>
                 <IconButton
                   icon="Trash2"
-                  label={`Elimina "${topic.title}"`}
+                  label={`Elimina l'argomento "${topic.title}"`}
                   className="h-8 w-8 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
                   onClick={() => {
-                    if (window.confirm(`Eliminare l'argomento "${topic.title}" e la sua cronologia di ripasso?`)) void deleteTopic(topic.id);
+                    if (window.confirm(`Eliminare l'argomento "${topic.title}"? Perderai anche i ripassi fatti e le domande guida. L'operazione non si può annullare.`)) void deleteTopic(topic.id);
                   }}
                 />
               </li>
@@ -87,7 +87,7 @@ export function TopicManager({ subjects, subjectId }: { subjects: Subject[]; sub
         </ul>
       ) : (
         <p className="rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
-          Nessun argomento. Aggiungine uno qui sopra, oppure importa il programma di un esame dalla sezione Esami.
+          Ancora nessun argomento. Scrivine uno qui sopra oppure importa il programma di un esame dalla sezione Esami.
         </p>
       )}
     </div>
@@ -111,14 +111,14 @@ function NewTopicForm({
   const target = fixedSubjectId ?? (chosen || defaultSubjectId || subjects[0]?.id || "");
 
   if (!subjects.length && !fixedSubjectId) {
-    return <p className="text-sm font-bold text-[var(--muted)]">Crea prima una materia: ogni argomento appartiene a una materia.</p>;
+    return <p className="text-sm font-bold text-[var(--muted)]">Per aggiungere argomenti serve almeno una materia: creala nella sezione Materie.</p>;
   }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim() || !target) return;
     const added = await onAdd(title.trim(), target);
-    setMessage(added ? "" : "Questo argomento esiste già per la materia.");
+    setMessage(added ? "" : "Questo argomento c'è già per questa materia.");
     if (added) setTitle("");
   };
 
@@ -126,9 +126,9 @@ function NewTopicForm({
     <form onSubmit={submit} className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
       <div className={`grid grid-cols-1 gap-2 ${fixedSubjectId ? "" : "sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]"}`}>
         <label className="relative block min-w-0">
-          <span className="sr-only">Nuovo argomento</span>
+          <span className="sr-only">Nuovo argomento da ripassare</span>
           <Icon name="Brain" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-          <input className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nuovo argomento da ripassare" />
+          <input className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Es. Infiammazione acuta" />
         </label>
         {fixedSubjectId ? null : (
           <select className={`${inputClass} min-w-0`} value={target} onChange={(event) => setChosen(event.target.value)} aria-label="Materia dell'argomento">
@@ -145,7 +145,7 @@ function NewTopicForm({
         disabled={!title.trim()}
         className="motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
       >
-        <Icon name="Plus" className="h-4 w-4" /> Aggiungi
+        <Icon name="Plus" className="h-4 w-4" /> Aggiungi argomento
       </button>
       {message ? (
         <p role="alert" className="text-xs font-bold text-[var(--warning-text)] sm:col-span-2">
@@ -165,7 +165,7 @@ function TopicEditor({ topic, onSave, onCancel }: { topic: StudyTopic; onSave: (
       <Field label="Argomento">
         <input className={inputClass} value={title} onChange={(event) => setTitle(event.target.value)} autoFocus />
       </Field>
-      <Field label="Domande guida (una per riga)">
+      <Field label="Domande guida (facoltative, una per riga)">
         <textarea
           className={`${inputClass} min-h-24 py-2.5`}
           value={questions}
@@ -173,7 +173,7 @@ function TopicEditor({ topic, onSave, onCancel }: { topic: StudyTopic; onSave: (
           placeholder={"Es. Quali sono le fasi dell'infiammazione acuta?\nChe ruolo hanno i neutrofili?"}
         />
       </Field>
-      <Field label="Note">
+      <Field label="Note (facoltative)">
         <textarea className={`${inputClass} min-h-16 py-2.5`} value={notes} onChange={(event) => setNotes(event.target.value)} />
       </Field>
       <div className="flex justify-end gap-2">
@@ -195,7 +195,7 @@ function TopicEditor({ topic, onSave, onCancel }: { topic: StudyTopic; onSave: (
           }
           className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[var(--accent)] px-4 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
         >
-          <Icon name="Check" className="h-4 w-4" /> Salva
+          <Icon name="Check" className="h-4 w-4" /> Salva modifiche
         </button>
       </div>
     </li>

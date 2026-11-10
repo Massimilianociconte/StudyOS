@@ -28,7 +28,7 @@ const RISK_LABEL: Record<AgentRisk, string> = {
 
 const CHOICE_LABEL: Record<PolicyChoice, string> = {
   allow: "Consenti",
-  ask: "Chiedi",
+  ask: "Chiedi prima",
   deny: "Blocca"
 };
 
@@ -90,10 +90,10 @@ export function AgentDock() {
         <section role="dialog" aria-labelledby="agent-consent-title" className="soft-panel border border-[var(--border)] p-4 shadow-soft">
           <p className="text-xs font-black uppercase text-[var(--faint)]">Nuovo collegamento{consent.redirectHost ? ` · ${consent.redirectHost}` : ""}</p>
           <h2 id="agent-consent-title" className="mt-1 text-xl font-black">{consent.clientName}</h2>
-          <p className="mt-1 text-sm font-bold text-[var(--muted)]">Vuole usare il tuo studio. Le modifiche e le eliminazioni restano soggette alla policy qui sotto.</p>
+          <p className="mt-1 text-sm font-bold text-[var(--muted)]">Vuole accedere ai tuoi dati di studio. Modifiche ed eliminazioni seguiranno i permessi scelti in Impostazioni › Agenti AI.</p>
           <label className="mt-3 flex min-h-11 items-center gap-2 text-sm font-bold">
             <input type="checkbox" checked disabled />
-            Lettura di materie, task, esami e del resto dello studio
+            Leggere materie, attività, esami e il resto dei tuoi dati
           </label>
           <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
             <input type="checkbox" checked={write} onChange={(event) => setWrite(event.target.checked)} />
@@ -116,7 +116,7 @@ export function AgentDock() {
           }}
         >
           <Icon name="AlertTriangle" className="h-4 w-4 shrink-0 text-[var(--danger-text)]" />
-          <span>{window.location.hostname === "massimilianociconte.github.io" ? "Agenti: riapri StudyOS per ricollegarti" : "Agenti: il programma locale non risponde"}</span>
+          <span>{window.location.hostname === "massimilianociconte.github.io" ? "Agenti AI: riapri StudyOS per ricollegarli" : "Agenti AI: il programma sul computer non risponde"}</span>
         </button>
       ) : null}
     </div>
@@ -152,10 +152,10 @@ export function AgentSettings() {
     <div className="grid grid-cols-1 gap-4">
       <div className="flex flex-wrap items-center gap-2 text-sm font-black">
         <span className={`inline-flex min-h-8 items-center rounded-full px-3 ${link.hub === "up" ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)]"}`}>
-          {link.hub === "up" ? "Programma attivo" : link.hub === "down" ? "Programma spento" : "Controllo in corso"}
+          {link.hub === "up" ? "Collegamento attivo" : link.hub === "down" ? "Collegamento non raggiungibile" : "Controllo in corso…"}
         </span>
         <span className="inline-flex min-h-8 items-center rounded-full bg-[var(--surface-soft)] px-3 text-[var(--muted)]">
-          {link.paired ? "Browser collegato" : "Browser non collegato"}
+          {link.paired ? "Questo browser è collegato" : "Questo browser non è collegato"}
         </span>
       </div>
 
@@ -174,7 +174,7 @@ export function AgentSettings() {
             className={inputClass}
             value={code}
             onChange={(event) => setCode(localPage ? event.target.value.toUpperCase() : event.target.value)}
-            placeholder={localPage ? "ABCD-EFGH" : "Incolla la chiave"}
+            placeholder={localPage ? "Es. ABCD-EFGH" : "Incolla qui la chiave"}
             autoComplete="off"
             spellCheck={false}
             inputMode="text"
@@ -182,49 +182,28 @@ export function AgentSettings() {
           />
         </Field>
         <Button type="submit" variant="primary" icon="Link" disabled={busy || !pairReady}>
-          Collega
+          Collega questo browser
         </Button>
       </form>
       <p id="agent-pair-help" className="text-sm font-bold text-[var(--muted)]">
         {localPage
-          ? <>Nella cartella di StudyOS avvia <code className="font-black">npm run agent</code>. Il codice compare nel terminale, vale 15 minuti e si usa una volta sola.</>
-          : "Incolla la chiave una volta. Resta in questo browser, anche sul telefono. Non serve avere il computer acceso né la versione localhost aperta."}
-      </p>
-      <p className="text-sm font-bold text-[var(--muted)]">
-        {published
-          ? "ChatGPT modifica i dati di questo sito pubblicato. La finestra di localhost resta una copia a parte e riceve le modifiche solo se questa scheda è chiusa."
-          : "ChatGPT modifica i dati di questa finestra. Con il sito pubblicato aperto e collegato, le modifiche vanno lì."}
+          ? <>Il codice compare nel terminale quando avvii <code className="font-black">npm run agent</code> nella cartella di StudyOS. Vale 15 minuti e si usa una volta sola.</>
+          : "Incolla la chiave una sola volta: resta salvata in questo browser, anche sul telefono, e non serve tenere acceso il computer."}
       </p>
       {hostedHub ? (
         <p className="text-sm font-bold text-[var(--muted)]">
-          In ChatGPT aggiungi un server MCP personalizzato a questo indirizzo, poi autorizza da questa pagina:
+          Per usarlo con ChatGPT, aggiungi in ChatGPT un connettore personalizzato (server MCP) con questo indirizzo. La richiesta di accesso comparirà qui, da confermare:
           <code className="mt-2 block overflow-x-auto rounded-[14px] bg-[var(--surface-soft)] p-3 text-xs font-black text-[var(--text)]">{hostedHub}/mcp</code>
         </p>
       ) : null}
-      {localPage || hostedHub ? null : (
-        <form
-          className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveAgentHubAddress(hubAddress);
-          }}
-        >
-          <Field label="Indirizzo https del programma, se il collegamento diretto non risponde">
-            <input
-              className={inputClass}
-              value={hubAddress}
-              onChange={(event) => setHubAddress(event.target.value)}
-              placeholder="https://nome.trycloudflare.com"
-              autoComplete="off"
-              spellCheck={false}
-              inputMode="url"
-            />
-          </Field>
-          <Button type="submit" variant="soft" icon="Link">Salva</Button>
-        </form>
-      )}
       {link.paired ? <Button variant="soft" icon="LogOut" onClick={() => disconnectAgent()}>Scollega questo browser</Button> : null}
 
+      <div>
+        <h4 className="text-sm font-black">Cosa può fare un assistente</h4>
+        <p className="mt-1 text-sm font-bold text-[var(--muted)]">
+          All'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero.
+        </p>
+      </div>
       <div className="grid grid-cols-1 gap-3">
         {(Object.keys(RISK_LABEL) as AgentRisk[]).map((risk) => (
           <fieldset key={risk} className="min-w-0">
@@ -248,14 +227,11 @@ export function AgentSettings() {
           </fieldset>
         ))}
       </div>
-      <p className="text-sm font-bold text-[var(--muted)]">
-        Di base le letture passano e tutto il resto chiede conferma. Un agente non può allentare queste regole. «Consenti» sulle eliminazioni le esegue senza chiederti nulla: tienilo solo se lo vuoi davvero.
-      </p>
       <div className="flex flex-wrap gap-2">
         <Button variant="soft" icon="Clock" onClick={() => allowWritesFor15Minutes()} disabled={link.policy.write === "deny"}>
           Consenti le modifiche per 15 minuti
         </Button>
-        {trusted ? <Button variant="ghost" onClick={() => clearTrustedWrites()}>Torna a chiedere</Button> : null}
+        {trusted ? <Button variant="ghost" onClick={() => clearTrustedWrites()}>Torna a chiedere conferma</Button> : null}
       </div>
       {trusted && link.policy.trustedWritesUntil ? (
         <p className="text-sm font-bold text-[var(--muted)]">Modifiche senza conferma fino alle {when(link.policy.trustedWritesUntil)}. Le eliminazioni chiedono ancora conferma.</p>
@@ -263,11 +239,11 @@ export function AgentSettings() {
 
       <div className="flex flex-wrap gap-2">
         <Button variant="danger" icon="Shield" onClick={() => void revokeAgentAccess()}>
-          Revoca ChatGPT e gli altri accessi
+          Revoca l'accesso agli assistenti
         </Button>
       </div>
       <p className="text-sm font-bold text-[var(--muted)]">
-        Revoca i token OAuth. Il collegamento di questo browser, usato solo per portarti le richieste, resta. Gli agenti dovranno autorizzarsi di nuovo.
+        Gli assistenti autorizzati perdono subito l'accesso e dovranno chiederlo di nuovo. Questo browser resta collegato, perché serve solo a portarti le loro richieste.
       </p>
 
       <div>
@@ -284,23 +260,50 @@ export function AgentSettings() {
             ))}
           </ul>
         ) : (
-          <p className="mt-1 text-sm font-bold text-[var(--muted)]">Ancora nessuna azione. Il registro resta solo su questo browser.</p>
+          <p className="mt-1 text-sm font-bold text-[var(--muted)]">Ancora nessuna azione. Qui vedrai cosa fanno gli assistenti; l'elenco resta solo in questo browser.</p>
         )}
       </div>
 
-      <div className="rounded-[20px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
-        <p className="font-black text-[var(--text)]">Come collegare un agente</p>
-        <p className="mt-2">Claude, Cursor e gli altri client locali usano, con la cartella di StudyOS come directory di lavoro:</p>
+      <details className="rounded-[20px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
+        <summary className="cursor-pointer font-black text-[var(--text)]">Istruzioni tecniche</summary>
+        <p className="mt-3">
+          {published
+            ? "ChatGPT modifica i dati di questo sito pubblicato. La finestra di localhost resta una copia a parte e riceve le modifiche solo se questa scheda è chiusa."
+            : "ChatGPT modifica i dati di questa finestra. Con il sito pubblicato aperto e collegato, le modifiche vanno lì."}
+        </p>
+        {localPage || hostedHub ? null : (
+          <form
+            className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveAgentHubAddress(hubAddress);
+            }}
+          >
+            <Field label="Indirizzo https del programma, se il collegamento diretto non risponde">
+              <input
+                className={inputClass}
+                value={hubAddress}
+                onChange={(event) => setHubAddress(event.target.value)}
+                placeholder="Es. https://nome.trycloudflare.com"
+                autoComplete="off"
+                spellCheck={false}
+                inputMode="url"
+              />
+            </Field>
+            <Button type="submit" variant="soft" icon="Link">Salva indirizzo</Button>
+          </form>
+        )}
+        <p className="mt-3">Claude, Cursor e gli altri programmi sul computer si collegano con questo comando, lanciato dalla cartella di StudyOS:</p>
         <code className="mt-2 block overflow-x-auto rounded-[14px] bg-[var(--surface)] p-3 text-xs font-black text-[var(--text)]">node --import ./scripts/lib/register-ts.mjs ./scripts/agent.ts --stdio</code>
         <p className="mt-3">
           {hostedHub
-            ? "ChatGPT, sul web e nell’app per Mac, usa l’indirizzo MCP qui sopra. L’accesso è OAuth e la conferma compare in questa schermata. Tieni aperta questa pagina, anche dal telefono: i dati restano in questo browser."
-            : "ChatGPT sul web parla con il sito pubblicato, non con questa finestra di sviluppo. Qui colleghi solo i client locali, con il codice del terminale."}
+            ? "ChatGPT, sul web e nell’app per Mac, usa l’indirizzo MCP qui sopra. L’accesso passa da OAuth e la conferma compare in questa schermata. Tieni aperta questa pagina, anche dal telefono: i dati restano in questo browser."
+            : "ChatGPT sul web parla con il sito pubblicato, non con questa finestra di sviluppo. Qui colleghi solo i programmi sul computer, con il codice del terminale."}
         </p>
         <p className="mt-3">
           La finestra aperta con <code className="font-black">npm run dev</code> è una copia a parte e parla solo con <code className="font-black">npm run agent</code> sul computer.
         </p>
-      </div>
+      </details>
     </div>
   );
 }

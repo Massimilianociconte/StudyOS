@@ -23,22 +23,22 @@ const formatRelative = (iso: string | null) => {
   if (!iso) return "mai";
   const diffMs = Date.now() - new Date(iso).getTime();
   const sec = Math.round(diffMs / 1000);
-  if (sec < 5) return "ora";
-  if (sec < 60) return `${sec}s fa`;
+  if (sec < 5) return "adesso";
+  if (sec < 60) return "pochi secondi fa";
   const min = Math.round(sec / 60);
-  if (min < 60) return `${min} min fa`;
+  if (min < 60) return min === 1 ? "1 minuto fa" : `${min} minuti fa`;
   const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h fa`;
-  return new Date(iso).toLocaleString();
+  if (hr < 24) return hr === 1 ? "1 ora fa" : `${hr} ore fa`;
+  return new Date(iso).toLocaleString("it-IT", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 };
 
 const statusLabel = (sync: CloudSyncState) => {
-  if (!sync.session) return sync.status === "off" ? "Non configurato" : "Non connesso";
-  if (sync.status === "offline") return "Offline";
-  if (sync.status === "syncing") return "Sync in corso";
-  if (sync.status === "error") return "Errore";
-  if (sync.pendingChanges) return `${sync.pendingCount} in coda`;
-  return "Auto-sync attivo";
+  if (!sync.session) return sync.status === "off" ? "Non disponibile" : "Non connesso";
+  if (sync.status === "offline") return "Senza connessione";
+  if (sync.status === "syncing") return "Sincronizzazione…";
+  if (sync.status === "error") return "Da controllare";
+  if (sync.pendingChanges) return sync.pendingCount === 1 ? "1 modifica da inviare" : `${sync.pendingCount} modifiche da inviare`;
+  return "Sincronizzato";
 };
 
 type Mode = "signin" | "signup";
@@ -71,9 +71,12 @@ export function CloudPanel() {
   if (!configured) {
     return (
       <Panel>
-        <h3 className="mb-2 text-2xl font-black">Cloud sync</h3>
+        <h3 className="mb-2 text-2xl font-black">Account non disponibile</h3>
         <p className="text-sm text-[var(--muted)]">
-          Variabili VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY non configurate. Aggiungile in .env per attivare la sync multi-dispositivo.
+          In questa versione di StudyOS l'accesso con account non è attivo: i tuoi dati restano solo in questo browser.
+        </p>
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          Per chi gestisce l'app: servono VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY nel file .env.
         </p>
       </Panel>
     );
@@ -81,7 +84,7 @@ export function CloudPanel() {
 
   const handleSignIn = async () => {
     if (!email.trim() || !password) {
-      setInfo({ kind: "err", text: "Inserisci email e password." });
+      setInfo({ kind: "err", text: "Scrivi email e password per accedere." });
       return;
     }
     setBusy(true);
@@ -89,20 +92,20 @@ export function CloudPanel() {
     try {
       await signIn(email.trim(), password);
       setPassword("");
-      setInfo({ kind: "ok", text: "Accesso effettuato. Sync automatica attiva." });
+      setInfo({ kind: "ok", text: "Accesso fatto. Da ora i tuoi dati si sincronizzano da soli su tutti i dispositivi." });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Login fallito.";
+      const msg = error instanceof Error ? error.message : "Accesso non riuscito. Riprova.";
       if (/email not confirmed/i.test(msg)) {
         localStorage.setItem(PENDING_EMAIL_KEY, email.trim());
         setPendingEmail(email.trim());
         setInfo({
           kind: "pending",
-          text: "Email non ancora confermata. Apri il link che hai ricevuto, poi torna qui e accedi di nuovo."
+          text: "Email non ancora confermata. Apri il link che ti abbiamo inviato, poi torna qui e accedi di nuovo."
         });
       } else if (/invalid login credentials/i.test(msg)) {
         setInfo({
           kind: "err",
-          text: "Credenziali non valide. Se non hai ancora un account, passa a Crea account."
+          text: "Email o password sbagliate. Se non hai ancora un account, scegli «Sono nuovo»."
         });
       } else {
         setInfo({ kind: "err", text: msg });
@@ -114,7 +117,7 @@ export function CloudPanel() {
 
   const handleSignUp = async () => {
     if (!email.trim() || password.length < 8) {
-      setInfo({ kind: "err", text: "Email valida e password di almeno 8 caratteri." });
+      setInfo({ kind: "err", text: "Scrivi un'email valida e una password di almeno 8 caratteri." });
       return;
     }
     setBusy(true);
@@ -123,20 +126,20 @@ export function CloudPanel() {
       const data = await signUp(email.trim(), password);
       setPassword("");
       if (data.session) {
-        setInfo({ kind: "ok", text: "Account creato. Sync attiva." });
+        setInfo({ kind: "ok", text: "Account creato. Da ora i tuoi dati si sincronizzano da soli su tutti i dispositivi." });
       } else {
         localStorage.setItem(PENDING_EMAIL_KEY, email.trim());
         setPendingEmail(email.trim());
         setInfo({
           kind: "pending",
-          text: `Account registrato su Supabase. Ti abbiamo mandato un'email a ${email.trim()}: clicca il link per confermare. Solo dopo la conferma il login funzionerà davvero (e i dati saranno sincronizzati nel cloud).`
+          text: `Quasi fatto: ti abbiamo mandato un'email a ${email.trim()}. Apri il link per confermare l'account, poi torna qui e accedi. Fino ad allora i dati restano solo in questo browser.`
         });
         setMode("signin");
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Registrazione fallita.";
+      const msg = error instanceof Error ? error.message : "Registrazione non riuscita. Riprova.";
       if (/already registered|already exists|user exists/i.test(msg)) {
-        setInfo({ kind: "err", text: "Email già registrata. Usa Accedi." });
+        setInfo({ kind: "err", text: "Esiste già un account con questa email: accedi con la tua password." });
         setMode("signin");
       } else {
         setInfo({ kind: "err", text: msg });
@@ -154,12 +157,12 @@ export function CloudPanel() {
       await resendConfirmation(pendingEmail);
       setInfo({
         kind: "pending",
-        text: `Nuova email di conferma inviata a ${pendingEmail}.`
+        text: `Nuova email di conferma inviata a ${pendingEmail}. Controlla anche lo spam.`
       });
     } catch (error) {
       setInfo({
         kind: "err",
-        text: error instanceof Error ? error.message : "Reinvio fallito."
+        text: error instanceof Error ? error.message : "Invio non riuscito. Riprova tra qualche minuto."
       });
     } finally {
       setBusy(false);
@@ -173,20 +176,20 @@ export function CloudPanel() {
   };
 
   const handleSignOut = async () => {
-    if (!window.confirm("Disconnettersi? I dati locali restano sul dispositivo, ma non saranno più sincronizzati.")) return;
+    if (!window.confirm("Uscire dall'account?\n\nI dati restano su questo dispositivo, ma le nuove modifiche non arriveranno più agli altri dispositivi.")) return;
     setBusy(true);
     setInfo(null);
     try {
       const result = await signOut();
       if (result.localOnly) {
-        setInfo({ kind: "pending", text: "Server non raggiungibile: sessione chiusa su questo dispositivo. Ricarico..." });
+        setInfo({ kind: "pending", text: "Server non raggiungibile: sei uscito solo su questo dispositivo. Ricarico la pagina…" });
         await whenPersisted().catch(() => undefined);
         window.location.reload();
         return;
       }
-      setInfo({ kind: "ok", text: "Disconnesso." });
+      setInfo({ kind: "ok", text: "Sei uscito dall'account. I dati restano su questo dispositivo." });
     } catch (error) {
-      setInfo({ kind: "err", text: error instanceof Error ? error.message : "Disconnessione non riuscita." });
+      setInfo({ kind: "err", text: error instanceof Error ? error.message : "Uscita non riuscita. Riprova." });
     } finally {
       setBusy(false);
     }
@@ -195,7 +198,7 @@ export function CloudPanel() {
   const handleForcePull = async () => {
     if (
       !window.confirm(
-        "Forzare il download dal cloud: per ogni elemento presente nel cloud la versione remota sostituisce quella locale. Gli elementi solo locali restano. Continuare?"
+        "Riscaricare tutto dall'account?\n\nPer ogni elemento salvato nell'account, la versione dell'account sostituisce quella di questo dispositivo. Gli elementi che esistono solo qui restano."
       )
     )
       return;
@@ -239,12 +242,14 @@ export function CloudPanel() {
     <Panel>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-2xl font-black">Cloud sync</h3>
+          <h3 className="text-2xl font-black">{session ? "Sei connesso" : "Accedi o crea un account"}</h3>
           <p className="text-sm text-[var(--muted)]">
-            Account Supabase con email + password. Ogni modifica viene salvata subito sul dispositivo e inviata al cloud appena sei online (anche dopo periodi offline).
+            {session
+              ? "Ogni modifica si salva subito su questo dispositivo e arriva all'account appena sei online, anche dopo un periodo senza rete."
+              : "Con un account ritrovi gli stessi dati su ogni dispositivo. Ti servono solo un'email e una password."}
           </p>
           <p className="mt-2 text-xs font-bold text-[var(--warning-text)]">
-            Il vault cifra solo i dati locali: la sync attuale invia JSON non cifrato a Supabase.
+            Nell'account i dati sono salvati senza cifratura: la protezione con password di StudyOS vale solo su questo dispositivo.
           </p>
         </div>
         <Pill active={sync.status === "idle" && !!session} className="shrink-0">
@@ -255,13 +260,13 @@ export function CloudPanel() {
       {session ? (
         <div className="grid grid-cols-1 gap-3">
           <div className="quiet-panel p-4">
-            <p className="text-xs font-black uppercase text-[var(--faint)]">Connesso come</p>
+            <p className="text-xs font-black uppercase text-[var(--faint)]">Il tuo account</p>
             <p className="font-black">{session.user.email}</p>
             <p className="mt-1 text-xs text-[var(--muted)]">
-              Email confermata: {session.user.email_confirmed_at ? "sì" : "no"} · Ultima sync: {formatRelative(sync.lastSync)}
+              {session.user.email_confirmed_at ? "Email confermata" : "Email non ancora confermata"} · Ultima sincronizzazione: {formatRelative(sync.lastSync)}
             </p>
             <p className="mt-1 text-xs text-[var(--muted)]">
-              Modifiche in coda: {sync.pendingCount} · Aggiornamenti live: {sync.realtime ? "attivi" : "non attivi (controllo periodico)"}
+              Modifiche da inviare: {sync.pendingCount} · Aggiornamento in tempo reale: {sync.realtime ? "attivo" : "no, controllo ogni tanto"}
             </p>
           </div>
 
@@ -282,24 +287,24 @@ export function CloudPanel() {
               Sincronizza ora
             </Button>
             <Button icon="LogOut" variant="danger" onClick={handleSignOut} disabled={busy}>
-              Disconnetti
+              Esci dall'account
             </Button>
-            <Button icon="Settings" variant="ghost" onClick={() => setShowAdvanced((value) => !value)}>
-              {showAdvanced ? "Nascondi avanzate" : "Avanzate"}
+            <Button icon="Settings" variant="ghost" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>
+              {showAdvanced ? "Nascondi altre opzioni" : "Altre opzioni"}
             </Button>
           </div>
 
           {showAdvanced ? (
-            <div className="quiet-panel grid gap-2 p-4">
+            <div className="quiet-panel grid grid-cols-1 gap-2 p-4">
               <p className="text-xs font-bold text-[var(--muted)]">
-                Override manuali. Usali solo per recupero o test: la sync automatica copre tutti i casi normali.
+                Servono solo se qualcosa non torna tra i dispositivi: di solito la sincronizzazione automatica basta.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button icon="Upload" variant="soft" onClick={handleForcePush} disabled={busy}>
-                  Forza push
+                  Invia di nuovo tutto all'account
                 </Button>
                 <Button icon="Download" variant="soft" onClick={handleForcePull} disabled={busy}>
-                  Forza pull
+                  Riscarica tutto dall'account
                 </Button>
               </div>
             </div>
@@ -308,12 +313,13 @@ export function CloudPanel() {
       ) : (
         <div className="grid grid-cols-1 gap-3">
           <div className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-xs font-bold text-[var(--warning-text)]">
-            Senza login i dati sono salvati solo in questo browser. Per sincronizzarli su altri dispositivi servono account + login confermato.
+            Per ora i tuoi dati sono solo in questo browser. Accedi (dopo aver confermato l'email) per ritrovarli anche sugli altri dispositivi.
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
+              aria-pressed={mode === "signin"}
               onClick={() => {
                 setMode("signin");
                 setInfo(null);
@@ -324,10 +330,11 @@ export function CloudPanel() {
                   : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)]"
               }`}
             >
-              Accedi
+              Ho già un account
             </button>
             <button
               type="button"
+              aria-pressed={mode === "signup"}
               onClick={() => {
                 setMode("signup");
                 setInfo(null);
@@ -338,21 +345,21 @@ export function CloudPanel() {
                   : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)]"
               }`}
             >
-              Crea account
+              Sono nuovo
             </button>
           </div>
 
           {pendingEmail && mode === "signin" ? (
             <div className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
               <p>
-                Conferma in sospeso per <span className="font-black">{pendingEmail}</span>. Apri il link nell'email, poi torna qui e accedi.
+                Manca la conferma di <span className="font-black">{pendingEmail}</span>: apri il link che ti abbiamo inviato, poi torna qui e accedi.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button icon="Upload" variant="soft" onClick={handleResend} disabled={busy}>
-                  Reinvia email
+                <Button icon="Mail" variant="soft" onClick={handleResend} disabled={busy}>
+                  Invia di nuovo l'email
                 </Button>
-                <Button icon="Trash2" variant="ghost" onClick={handleClearPending} disabled={busy}>
-                  Annulla
+                <Button icon="X" variant="ghost" onClick={handleClearPending} disabled={busy}>
+                  Usa un'altra email
                 </Button>
               </div>
             </div>
@@ -365,9 +372,10 @@ export function CloudPanel() {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              placeholder="Es. nome@esempio.it"
             />
           </Field>
-          <Field label={mode === "signup" ? "Password (min 8 caratteri)" : "Password"}>
+          <Field label={mode === "signup" ? "Scegli una password (almeno 8 caratteri)" : "Password"}>
             <input
               className={inputClass}
               type="password"
@@ -379,11 +387,11 @@ export function CloudPanel() {
 
           {mode === "signin" ? (
             <Button icon="LogIn" variant="primary" onClick={handleSignIn} disabled={busy}>
-              Accedi al cloud
+              Accedi
             </Button>
           ) : (
             <Button icon="UserPlus" variant="primary" onClick={handleSignUp} disabled={busy}>
-              Registra account
+              Crea account
             </Button>
           )}
         </div>

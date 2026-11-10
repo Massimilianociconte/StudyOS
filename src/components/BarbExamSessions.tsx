@@ -20,17 +20,17 @@ const examSlotKey = (session: BarbExamSession): string =>
 
 export function BarbExamAvailability({ course }: { course: BarbCourse }) {
   const count = new Set(BARB_EXAM_SESSIONS.filter(session => session.courseId === course.id).map(examSlotKey)).size;
-  return <p className={`mt-2 text-xs font-bold ${count ? "text-[var(--accent-ink)]" : "text-[var(--faint)]"}`}>{count ? `${count} ${count === 1 ? "appello verificato" : "appelli verificati"}` : "Nessun appello verificato"}</p>;
+  return <p className={`mt-2 text-xs font-bold ${count ? "text-[var(--accent-ink)]" : "text-[var(--faint)]"}`}>{count ? `${count} ${count === 1 ? "appello ufficiale" : "appelli ufficiali"}` : "Nessun appello ufficiale trovato"}</p>;
 }
 
 export function BarbExamSessionDetail({ session, course, onClose, inline = false }: { session: BarbExamSession; course: BarbCourse; onClose: () => void; inline?: boolean }) {
   const fields = [
     ["Data", barbSessionDate(session.date)],
     ["Tipo di prova", barbSessionType(session.type)],
-    ...(session.component ? [["Componente / prova", session.component]] : []),
+    ...(session.component ? [["Parte dell'esame", session.component]] : []),
     ...(session.commission ? [["Commissione", session.commission]] : []),
     ["Orario", session.time ?? "Orario non pubblicato"],
-    ["Sede / aula", session.location ?? "Sede e aula non pubblicate"],
+    ["Sede e aula", session.location ?? "Sede e aula non pubblicate"],
     ["Apertura iscrizioni", session.registrationOpens ? barbSessionDate(session.registrationOpens) : "Non pubblicata"],
     ["Chiusura iscrizioni", session.registrationCloses ? barbSessionDate(session.registrationCloses) : "Non pubblicata"]
   ];
@@ -38,11 +38,11 @@ export function BarbExamSessionDetail({ session, course, onClose, inline = false
   const content = <div className="space-y-5">
       <Tag color={courseColor(course)}>{legacy ? "Precedente ordinamento F92" : `${course.cfu} CFU`}</Tag>{legacy && <p className="text-xs text-[var(--muted)]">Appello del precedente ordinamento F92: questo insegnamento non è nel piano BARB attuale.</p>}
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label} className="quiet-panel p-3"><dt className="text-xs font-bold text-[var(--muted)]">{label}</dt><dd className="safe-text mt-1 text-sm font-extrabold">{value}</dd></div>)}</dl>
-      <p className="text-sm text-[var(--muted)]">Promemoria sulla data; consulta l'orario ufficiale nei dettagli. La durata della prova non è pubblicata.</p>
+      <p className="text-sm text-[var(--muted)]">La durata della prova non è pubblicata: se aggiungi l'appello al tuo calendario, compare come promemoria per tutta la giornata.</p>
       <div><h3 className="text-sm font-black">Note ufficiali</h3><p className="safe-text mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{session.notes ?? "Nessuna nota pubblicata."}</p></div>
       {session.sourceReferences && session.sourceReferences.length > 1 && <div><h3 className="mb-2 text-sm font-black">Iscrizioni per ordinamento</h3><ul className="grid grid-cols-1 gap-2">{session.sourceReferences.map((reference, index) => <li key={`${reference.sourceUrl}-${reference.officialId ?? index}`} className="quiet-panel p-3"><a href={safeHref(reference.sourceUrl)} target="_blank" rel="noreferrer" className="text-sm font-extrabold text-[var(--accent-ink)] underline">Fonte {reference.degreeCode ?? index + 1}</a><p className="safe-text mt-1 text-xs text-[var(--muted)]">{reference.sourceCourseName}</p><p className="mt-1 text-xs">Apertura: {reference.registrationOpens ? barbSessionDate(reference.registrationOpens) : "Non pubblicata"}<br />Chiusura: {reference.registrationCloses ? barbSessionDate(reference.registrationCloses) : "Non pubblicata"}</p></li>)}</ul></div>}
       <div className="quiet-panel p-4"><a href={safeHref(session.provenance.sourceUrl)} target="_blank" rel="noreferrer" className="text-sm font-extrabold text-[var(--accent-ink)] underline">Apri la fonte ufficiale UNIMI</a>
-        <p className="safe-text mt-2 text-xs text-[var(--muted)]">Verificata il {barbSessionDate(session.provenance.lastVerifiedAt.slice(0, 10))}{session.provenance.sourcePage ? ` · pagina ${session.provenance.sourcePage}` : ""}. Date e iscrizioni possono cambiare: controlla la fonte prima di prenotare.</p>
+        <p className="safe-text mt-2 text-xs text-[var(--muted)]">Verificata il {barbSessionDate(session.provenance.lastVerifiedAt.slice(0, 10))}{session.provenance.sourcePage ? ` · pagina ${session.provenance.sourcePage}` : ""}. Date e iscrizioni possono cambiare: controlla la fonte prima di iscriverti.</p>
       </div>
     </div>;
   if (inline) return <section className="quiet-panel mt-4 p-4" aria-label="Dettagli dell'appello"><div className="mb-4 flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-black">Dettagli dell'appello</h4><Button icon="X" onClick={onClose}>Chiudi dettagli</Button></div>{content}</section>;
@@ -72,8 +72,8 @@ export function BarbExamSessions({ course }: { course: BarbCourse }) {
       <div className="min-w-0">
         <h3 className="safe-text text-lg font-black">{course.name}</h3>
         <p className="text-xs font-bold text-[var(--muted)]">
-          Tutti gli appelli pubblicati · {groups.size}
-          {sessions.length > groups.size && <span> · {sessions.length} registrazioni ufficiali</span>}
+          {groups.size === 0 ? "Nessun appello pubblicato" : groups.size === 1 ? "1 appello pubblicato (compresi i passati)" : `${groups.size} appelli pubblicati (compresi i passati)`}
+          {sessions.length > groups.size && <span> · {sessions.length} voci negli elenchi ufficiali</span>}
         </p>
       </div>
     </div>
@@ -95,7 +95,7 @@ export function BarbExamSessions({ course }: { course: BarbCourse }) {
               <div className="text-sm font-extrabold">{barbSessionDate(session.date)}</div>
               <div className="safe-text mt-1 text-xs text-[var(--muted)]">
                 {barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}
-                {group.length > 1 ? ` · ${group.length} registrazioni` : ""}
+                {group.length > 1 ? ` · ${group.length} voci ufficiali: tocca per sceglierne una` : ""}
               </div>
             </div>
             <Tag color={status === "prossimo" ? "var(--accent)" : undefined}>
@@ -107,15 +107,15 @@ export function BarbExamSessions({ course }: { course: BarbCourse }) {
               onClick={() => setSelected(variant)}
               className="quiet-panel flex min-w-0 flex-wrap items-center gap-2 p-2 text-left text-xs hover:bg-[var(--surface)]">
               <span className="min-w-0 flex-1 font-bold">
-                {variant.sourceCourseCode ?? `Registrazione ${index + 1}`}
+                {variant.sourceCourseCode ?? `Voce ${index + 1}`}
                 {variant.commission ? ` · ${variant.commission}` : ""}
               </span>
-              <span className="text-[var(--accent-ink)]">Dettagli</span>
+              <span className="text-[var(--accent-ink)]">Vedi dettagli</span>
             </button>)}
           </div>}
         </li>;
       })}
-    </ul> : <EmptyState icon="CalendarDays" title="Nessun appello verificato" body="Nelle fonti consultate non risultano date verificate per questo insegnamento. Non significa che non siano previsti esami." />}
+    </ul> : <EmptyState icon="CalendarDays" title="Nessun appello ufficiale trovato" body="Le fonti ufficiali non riportano date per questo insegnamento: non vuol dire che non ci siano esami." />}
     {selected && selected.courseId === course.id && <BarbExamSessionDetail inline session={selected} course={course} onClose={() => setSelected(null)} />}
   </div>;
 }

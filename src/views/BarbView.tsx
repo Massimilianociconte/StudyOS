@@ -20,6 +20,7 @@ import { SEMESTER_LABEL, SEMESTER_SHORT, SEMESTER_TONE, SEMESTER_IDS } from "../
 import { resolveBarbCourse } from "../lib/university/examSessions";
 import { weekdayLabel } from "../lib/university/normalize";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
+import { UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels";
 import type { BarbCourse, BarbSemesterInfo, BarbTeacher } from "../lib/university/types";
 
 type Tab = "corsi" | "calendario" | "docenti" | "aule" | "fonti";
@@ -34,19 +35,19 @@ const CHARACTER_LABEL: Record<BarbCourse["character"], string> = {
   "scelta-libera": "Scelta libera",
   lingua: "Lingua",
   "altre-conoscenze": "Altre conoscenze",
-  "tirocinio-tesi": "Tirocinio / Tesi"
+  "tirocinio-tesi": "Tirocinio e tesi"
 };
 
 /** Struttura del piano di studi: ogni gruppo porta con sé la propria regola di scelta. */
 const PLAN_GROUPS: { id: string; title: string; rule: string; match: (course: BarbCourse) => boolean }[] = [
-  { id: "obbligatori", title: "Obbligatori", rule: "tutti · 36 CFU", match: (c) => c.character === "obbligatorio" },
-  { id: "gruppo-1", title: "Gruppo 1", rule: "scegli 1 · 6 CFU", match: (c) => c.choiceGroup === "gruppo-1" },
-  { id: "gruppo-2", title: "Gruppo 2", rule: "scegli 2 · 12 CFU", match: (c) => c.choiceGroup === "gruppo-2" },
-  { id: "gruppo-3", title: "Gruppo 3", rule: "scegli 2 · 12 CFU", match: (c) => c.choiceGroup === "gruppo-3" },
+  { id: "obbligatori", title: "Obbligatori", rule: "Da sostenere tutti (36 CFU)", match: (c) => c.character === "obbligatorio" },
+  { id: "gruppo-1", title: "Gruppo 1", rule: "A scelta: 1 insegnamento (6 CFU)", match: (c) => c.choiceGroup === "gruppo-1" },
+  { id: "gruppo-2", title: "Gruppo 2", rule: "A scelta: 2 insegnamenti (12 CFU)", match: (c) => c.choiceGroup === "gruppo-2" },
+  { id: "gruppo-3", title: "Gruppo 3", rule: "A scelta: 2 insegnamenti (12 CFU)", match: (c) => c.choiceGroup === "gruppo-3" },
   {
     id: "altre",
-    title: "Lingua, scelta libera e altre attività",
-    rule: "12 CFU liberi · 3 CFU inglese B2 · 3 CFU altre conoscenze",
+    title: "Lingua, scelta libera e altre conoscenze",
+    rule: "12 CFU a scelta libera · 3 CFU inglese B2 · 3 CFU altre conoscenze",
     match: (c) =>
       !c.choiceGroup && (c.character === "lingua" || c.character === "altre-conoscenze" || c.character === "scelta-libera" || c.character === "opzionale-scelta-guidata")
   },
@@ -117,7 +118,7 @@ export function BarbView() {
   const teachersById = useMemo(() => new Map(teachers.map((teacher) => [teacher.id, teacher])), [teachers]);
 
   if (!ready) {
-    return <div className="soft-panel min-h-[240px] p-8 text-lg font-black">Caricamento dati BARB verificati...</div>;
+    return <div className="soft-panel min-h-[240px] p-8 text-lg font-black">Caricamento del corso di laurea…</div>;
   }
 
   const verified = BARB_META.syncedAt ?? BARB_META.exportedAt;
@@ -125,34 +126,38 @@ export function BarbView() {
 
   const tabs = [
     { id: "corsi" as const, label: "Insegnamenti", count: courses.length },
-    { id: "calendario" as const, label: "Calendario" },
+    { id: "calendario" as const, label: "Orario lezioni" },
     { id: "docenti" as const, label: "Docenti e contatti", count: teachers.length },
     { id: "aule" as const, label: "Aule e sedi" },
-    { id: "fonti" as const, label: "Fonti e sync" }
+    { id: "fonti" as const, label: "Fonti ufficiali" }
   ];
 
   return (
     <div>
       <SectionTitle
-        title={BARB_META.degreeName}
-        subtitle={`${BARB_META.degreeClass} · ${BARB_META.degreeCode} · A.A. ${BARB_META.academicYear} · solo fonti ufficiali UNIMI, verificate il ${formatDate(verified)}`}
+        title="Corso di laurea BARB"
+        subtitle="L'elenco ufficiale degli insegnamenti: scegli quelli del tuo piano di studi e aggiungili alle tue materie."
         action={
           <a href="https://barb.cdl.unimi.it/it/insegnamenti/piano-didattico" target="_blank" rel="noreferrer">
-            <Button icon="GraduationCap" variant="primary">Piano ufficiale</Button>
+            <Button icon="GraduationCap" variant="soft">Piano didattico ufficiale</Button>
           </a>
         }
       />
+      <p className="safe-text mb-4 text-xs font-bold text-[var(--muted)]">
+        <span className="font-black text-[var(--text)]">{BARB_META.degreeName}</span> · {BARB_META.degreeClass} · {BARB_META.degreeCode} · A.A.{" "}
+        {BARB_META.academicYear} · dati dalle fonti ufficiali UNIMI, verificati il {formatDate(verified)}
+      </p>
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {semesters.map((semester) => (
           <SemesterTile key={semester.id} semester={semester} count={courses.filter((course) => course.semester === semester.id).length} />
         ))}
-        <StatTile icon="BookOpen" label="Insegnamenti" value={String(courses.length)} detail={`${offered} erogati quest'anno`} />
+        <StatTile icon="BookOpen" label="Insegnamenti" value={String(courses.length)} detail={`${offered} attivi quest'anno`} />
         <StatTile icon="Users" label="Docenti" value={String(teachers.length)} detail={`${BARB_META.contacts.length} contatti ufficiali`} />
       </div>
 
       <div className="mb-4">
-        <Segmented label="Sezioni BARB" value={tab} options={tabs} onChange={setTab} />
+        <Segmented label="Sezioni del corso di laurea" value={tab} options={tabs} onChange={setTab} />
       </div>
 
       {tab === "corsi" ? <CoursesTab courses={courses} teachersById={teachersById} /> : null}
@@ -175,9 +180,11 @@ function SemesterTile({ semester, count }: { semester: BarbSemesterInfo; count: 
       <p className="mt-1 text-lg font-black leading-tight">
         {semester.startDate && semester.endDate ? `${formatShortDate(semester.startDate)} → ${formatShortDate(semester.endDate)}` : "Date da definire"}
       </p>
-      <p className="mt-1 flex items-center gap-1.5 text-xs font-bold text-[var(--muted)]">
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: published ? "var(--accent)" : "var(--warning)" }} />
-        <span className="truncate">{published ? "Orario pubblicato" : "Orario in attesa"} · {count} attività</span>
+      <p className="mt-1 flex items-start gap-1.5 text-xs font-bold text-[var(--muted)]">
+        <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: published ? "var(--accent)" : "var(--warning)" }} />
+        <span className="min-w-0">
+          {published ? "Orario pubblicato" : "Orario non ancora pubblicato"} · {count} {count === 1 ? "insegnamento" : "insegnamenti"}
+        </span>
       </p>
     </div>
   );
@@ -231,7 +238,7 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
       return { ...group, items };
     });
     const rest = filtered.filter((course) => !assigned.has(course.id));
-    if (rest.length) result.push({ id: "altro", title: "Altre attività", rule: "", match: () => true, items: rest });
+    if (rest.length) result.push({ id: "altro", title: "Altri insegnamenti", rule: "", match: () => true, items: rest });
     return result.filter((group) => group.items.length);
   }, [filtered]);
 
@@ -239,6 +246,14 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
   const ordered = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const openIndex = ordered.findIndex((course) => course.id === openId);
   const openCourse = openIndex >= 0 ? ordered[openIndex] : courses.find((course) => course.id === openId) ?? null;
+
+  const resetFilters = () => {
+    setQuery("");
+    setSemester("tutti");
+    setMyPlanOnly(false);
+    setHideNotOffered(false);
+  };
+  const onlyMineEmpty = myPlanOnly && inSubjects.size === 0;
 
   const semesterOptions = [
     { id: "tutti" as const, label: "Tutti", count: courses.length },
@@ -252,13 +267,13 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
     <div>
       <div className="soft-panel mb-4 flex flex-col gap-3 p-3 lg:flex-row lg:items-center">
         <label className="relative block min-w-0 flex-1">
-          <span className="sr-only">Cerca corso, SSD o docente</span>
+          <span className="sr-only">Cerca insegnamento, docente o settore (SSD)</span>
           <Icon name="Search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
           <input
             className={`${inputClass} pl-10`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Cerca corso, SSD o docente"
+            placeholder="Cerca insegnamento, docente o settore (SSD)"
           />
         </label>
         <div className="flex flex-wrap items-center gap-2">
@@ -271,25 +286,48 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
           />
           <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
             <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={myPlanOnly} onChange={(event) => setMyPlanOnly(event.target.checked)} />
-            Solo il mio piano ({inSubjects.size})
+            Solo le mie materie ({inSubjects.size})
           </label>
           {notOffered.length ? (
             <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
               <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={hideNotOffered} onChange={(e) => setHideNotOffered(e.target.checked)} />
-              Nascondi non erogati ({notOffered.length})
+              Nascondi i non attivi quest'anno ({notOffered.length})
             </label>
           ) : null}
         </div>
       </div>
 
-      {inSubjects.size > 0 ? <div className="mb-5 flex flex-wrap items-center gap-2 text-xs" aria-label="Semestri del mio piano">
-        <span className="mr-1 font-black">Il mio piano · periodi ufficiali</span>
+      {inSubjects.size > 0 ? <div className="mb-5 flex flex-wrap items-center gap-2 text-xs" aria-label="Nelle tue materie, per semestre">
+        <span className="mr-1 font-black">Nelle tue materie</span>
         {SEMESTER_IDS.map((id) => {
           const selected = courses.filter((course) => inSubjects.has(course.id) && course.semester === id);
-          return selected.length ? <Tag key={id} color={SEMESTER_TONE[id]}>{SEMESTER_LABEL[id]} · {selected.length} attività · {selected.reduce((sum, course) => sum + course.cfu, 0)} CFU</Tag> : null;
+          return selected.length ? <Tag key={id} color={SEMESTER_TONE[id]}>{SEMESTER_LABEL[id]} · {selected.length} {selected.length === 1 ? "insegnamento" : "insegnamenti"} · {selected.reduce((sum, course) => sum + course.cfu, 0)} CFU</Tag> : null;
         })}
-      </div> : null}
-      {groups.length === 0 ? <EmptyState icon="Search" title="Nessun corso" body="Prova a cambiare filtri o ricerca." /> : null}
+      </div> : !onlyMineEmpty ? (
+        <p className="mb-5 flex items-start gap-2 px-1 text-sm text-[var(--muted)]">
+          <Icon name="Info" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+          <span>
+            <span className="font-black text-[var(--text)]">Come iniziare:</span> apri un insegnamento del tuo piano di studi e tocca «Aggiungi alle mie materie». Lo ritrovi poi in Materie.
+          </span>
+        </p>
+      ) : null}
+      {groups.length === 0 ? (
+        onlyMineEmpty ? (
+          <EmptyState
+            icon="BookOpen"
+            title="Ancora nessun insegnamento nelle tue materie"
+            body="Apri un insegnamento del tuo piano e tocca «Aggiungi alle mie materie»: comparirà qui."
+            action={<Button variant="soft" onClick={() => setMyPlanOnly(false)}>Mostra tutti gli insegnamenti</Button>}
+          />
+        ) : (
+          <EmptyState
+            icon="Search"
+            title="Nessun insegnamento trovato"
+            body="Prova un'altra ricerca o togli qualche filtro."
+            action={<Button variant="soft" onClick={resetFilters}>Togli ricerca e filtri</Button>}
+          />
+        )
+      ) : null}
 
       <div className="grid grid-cols-1 gap-6">
         {groups.map((group) => {
@@ -302,7 +340,7 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
                 </h3>
                 {group.rule ? <span className="text-xs font-black uppercase text-[var(--accent-ink)]">{group.rule}</span> : null}
                 <span className="text-xs font-bold text-[var(--faint)]">
-                  {group.items.length} attività · {cfu} CFU in elenco
+                  {group.items.length} {group.items.length === 1 ? "insegnamento" : "insegnamenti"} in elenco · {cfu} CFU in totale
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr))]">
@@ -324,9 +362,9 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
       <p className="mt-6 flex items-start gap-2 px-1 text-xs text-[var(--muted)]">
         <Icon name="Info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>
-          <span className="font-black text-[var(--text)]">Non disponibile</span> = campo non pubblicato nella fonte ufficiale (mai inventato). Ogni scheda riporta fonte e data
-          di verifica.
-          {notOffered.length ? ` Non erogati nell'A.A. ${BARB_META.academicYear}: ${notOffered.map((course) => course.name).join(", ")}.` : ""}
+          <span className="font-black text-[var(--text)]">«Non disponibile»</span> vuol dire che la fonte ufficiale non lo pubblica: non inventiamo dati. Ogni scheda indica la fonte e
+          la data di verifica.
+          {notOffered.length ? ` Non attivi nell'A.A. ${BARB_META.academicYear}: ${notOffered.map((course) => course.name).join(", ")}.` : ""}
         </span>
       </p>
 
@@ -368,9 +406,14 @@ function CourseCard({
         <Tag className="shrink-0">{course.cfu} CFU</Tag>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {added ? (
-            <span className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--accent)] text-[#10131d]" title="Già in Materie">
+            <span className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--accent)] text-[#10131d]" title="Già nelle tue materie">
               <Icon name="Check" className="h-3.5 w-3.5" />
-              <span className="sr-only">Già in Materie</span>
+              <span className="sr-only">Già nelle tue materie</span>
+            </span>
+          ) : !notOffered ? (
+            <span className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--muted)]" title="Apri per aggiungerlo alle tue materie">
+              <Icon name="Plus" className="h-3.5 w-3.5" />
+              <span className="sr-only">Non ancora nelle tue materie: apri per aggiungerlo</span>
             </span>
           ) : null}
           <Icon name="ChevronRight" className="hidden h-4 w-4 text-[var(--faint)] transition-transform group-hover:translate-x-0.5 sm:block" />
@@ -383,7 +426,7 @@ function CourseCard({
       <BarbExamAvailability course={course} />
       <div className="mt-auto pt-2">
         {notOffered ? (
-          <p className="text-xs font-black text-[var(--warning-text)]">Non erogato {BARB_META.academicYear}</p>
+          <p className="text-xs font-black text-[var(--warning-text)]" title={`Non attivo nell'A.A. ${BARB_META.academicYear}`}>Non attivo quest'anno</p>
         ) : (
           <p className="one-line-safe text-xs font-bold text-[var(--muted)]">
             {responsible ? responsible.displayName : course.teacherIds.length ? `${course.teacherIds.length} docenti` : "Docente non pubblicato"}
@@ -396,14 +439,21 @@ function CourseCard({
 }
 
 function AddToSubjects({ course, teacher }: { course: BarbCourse; teacher: BarbTeacher | null }) {
-  const { subjects, addSubject } = useStudyStore(useShallow((state) => ({ subjects: state.subjects, addSubject: state.addSubject })));
+  const { subjects, addSubject, setActiveView } = useStudyStore(
+    useShallow((state) => ({ subjects: state.subjects, addSubject: state.addSubject, setActiveView: state.setActiveView }))
+  );
   const [busy, setBusy] = useState(false);
   const exists = subjects.some((subject) => resolveBarbCourse(subject, BARB_DATASET.courses)?.id === course.id);
   if (exists) {
     return (
-      <span className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--success-bg)] px-4 text-sm font-extrabold text-[var(--success-text)]">
-        <Icon name="Check" className="h-4 w-4" /> Già in Materie
-      </span>
+      <>
+        <span className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--success-bg)] px-4 text-sm font-extrabold text-[var(--success-text)]">
+          <Icon name="Check" className="h-4 w-4" /> Già nelle tue materie
+        </span>
+        <Button icon="BookOpen" variant="ghost" onClick={() => setActiveView("subjects")}>
+          Apri Materie
+        </Button>
+      </>
     );
   }
   return (
@@ -438,7 +488,7 @@ function AddToSubjects({ course, teacher }: { course: BarbCourse; teacher: BarbT
         }
       }}
     >
-      Aggiungi a Materie
+      {busy ? "Aggiunta in corso…" : "Aggiungi alle mie materie"}
     </Button>
   );
 }
@@ -523,8 +573,11 @@ function CourseDrawer({
             {course.choiceGroup ? <Pill>{PLAN_GROUPS.find((group) => group.id === course.choiceGroup)?.title ?? course.choiceGroup}</Pill> : null}
             <Pill>{course.cfu} CFU</Pill>
             {course.offered === false ? (
-              <span className="inline-flex min-h-8 items-center rounded-full border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 text-xs font-black text-[var(--warning-text)]">
-                Non erogato {BARB_META.academicYear}
+              <span
+                className="inline-flex min-h-8 items-center rounded-full border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 text-xs font-black text-[var(--warning-text)]"
+                title={`Non attivo nell'A.A. ${BARB_META.academicYear}`}
+              >
+                Non attivo quest&rsquo;anno
               </span>
             ) : null}
           </>
@@ -573,7 +626,7 @@ function CourseDrawer({
                 <Fact label="Periodo">{SEMESTER_LABEL[course.semester]}{course.year ? ` · ${course.year}° anno` : ""}</Fact>
                 <Fact label="Ore">{course.totalHours ? `${course.totalHours} ore` : <Missing />}</Fact>
                 <Fact label="Lingua">{course.language ?? <Missing />}</Fact>
-                <Fact label="SSD">{course.ssd.length ? course.ssd.join(", ") : <Missing />}</Fact>
+                <Fact label="Settore (SSD)">{course.ssd.length ? course.ssd.join(", ") : <Missing />}</Fact>
                 <Fact label="Esame">{course.examMode ?? <Missing />}</Fact>
                 <Fact label="Valutazione">{course.grading ?? <Missing />}</Fact>
               </dl>
@@ -622,7 +675,7 @@ function CourseDrawer({
                   </ul>
                 ) : (
                   <p className="text-sm">
-                    <Missing label={course.offered === false ? "Nessun docente (non erogato)" : "Non pubblicati sulla scheda"} />
+                    <Missing label={course.offered === false ? "Nessun docente: non attivo quest'anno" : "Non indicati nella scheda ufficiale"} />
                   </p>
                 )}
               </section>
@@ -633,7 +686,7 @@ function CourseDrawer({
                   <ScheduleList course={course} />
                 ) : (
                   <p className="text-sm text-[var(--muted)]">
-                    Non ancora pubblicato sul portale ufficiale. <ExternalLink href={course.scheduleUrl ?? ORARI_URL}>Apri Agenda web</ExternalLink>
+                    Non ancora pubblicato dall&rsquo;università. <ExternalLink href={course.scheduleUrl ?? ORARI_URL}>Controlla l&rsquo;orario ufficiale</ExternalLink>
                   </p>
                 )}
               </section>
@@ -650,7 +703,7 @@ function CourseDrawer({
 
               <div className="flex flex-wrap gap-2">
                 {course.officialPageUrl ? <LinkButton href={course.officialPageUrl} icon="ExternalLink">Scheda ufficiale</LinkButton> : null}
-                {course.arielUrl ? <LinkButton href={course.arielUrl} icon="Globe">Ariel</LinkButton> : null}
+                {course.arielUrl ? <LinkButton href={course.arielUrl} icon="Globe">Materiali su Ariel</LinkButton> : null}
                 {!course.officialPageUrl && !course.arielUrl ? <Missing label="Nessun link ufficiale" /> : null}
               </div>
             </>
@@ -678,9 +731,9 @@ function CourseDrawer({
           ) : null}
 
           <p className="rounded-[16px] bg-[var(--surface-soft)] p-3 text-xs text-[var(--muted)]">
-            Fonte: <ExternalLink href={course.provenance.sourceUrl}>{course.provenance.sourceUrl}</ExternalLink>
+            Fonte ufficiale: <ExternalLink href={course.provenance.sourceUrl}>{course.provenance.sourceUrl}</ExternalLink>
             <br />
-            Verificata il {formatDate(course.provenance.lastVerifiedAt)} · confidenza {Math.round(course.provenance.confidence * 100)}%
+            Verificata il {formatDate(course.provenance.lastVerifiedAt)} · affidabilità dei dati {Math.round(course.provenance.confidence * 100)}%
           </p>
         </div>
       ) : null}
@@ -693,14 +746,14 @@ function ScheduleList({ course }: { course: BarbCourse }) {
     <ul className="grid grid-cols-1 gap-1">
       {course.schedule.map((rule) => (
         <li key={rule.id} className="text-sm">
-          <span className="font-black">{weekdayLabel(rule.weekday)}</span> {rule.startTime}–{rule.endTime} · {rule.room ?? "aula n.d."}
+          <span className="font-black">{weekdayLabel(rule.weekday)}</span> {rule.startTime}–{rule.endTime} · {rule.room ?? "aula non indicata"}
           {rule.building ? ` · ${rule.building}` : ""}
           {rule.validFrom && rule.validTo ? <span className="text-[var(--muted)]"> ({formatDate(rule.validFrom)} → {formatDate(rule.validTo)})</span> : null}
         </li>
       ))}
       {course.exceptions.map((exception) => (
         <li key={exception.id} className="text-sm text-[var(--warning-text)]">
-          {exception.kind === "cancellazione" ? "Annullata" : "Lezione"} {formatDate(exception.date)}
+          {exception.kind === "cancellazione" ? "Lezione annullata" : "Lezione"} {formatDate(exception.date)}
           {exception.startTime && exception.endTime ? ` · ${exception.startTime}–${exception.endTime}` : ""}
           {exception.room ? ` · ${exception.room}` : ""}
           {exception.note ? ` · ${exception.note}` : ""}
@@ -730,20 +783,26 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
             Docenti <span className="text-[var(--faint)]">({filtered.length})</span>
           </h3>
           <label className="relative block w-full sm:w-80">
-            <span className="sr-only">Cerca docente o corso</span>
+            <span className="sr-only">Cerca docente o insegnamento</span>
             <Icon name="Search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
-            <input className={`${inputClass} pl-10`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cerca docente o corso" />
+            <input className={`${inputClass} pl-10`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cerca docente o insegnamento" />
           </label>
         </div>
         {teachers.length === 0 ? (
           <div className="quiet-panel p-6 text-sm">
-            <p className="font-black">Docenti non ancora importati.</p>
-            <p className="mt-1 text-[var(--muted)]">
-              Esegui <span className="font-mono">npm run barb:sync:teachers -- --apply</span> (Firecrawl locale). Nessun nominativo ipotizzato.
+            <p className="font-black">Elenco dei docenti non ancora disponibile</p>
+            <p className="mt-1 text-[var(--muted)]">I nomi compaiono qui appena vengono letti dalle pagine ufficiali UNIMI: non ne inseriamo mai di ipotetici.</p>
+            <p className="mt-2 text-xs text-[var(--faint)]">
+              Per chi gestisce l&rsquo;app: <span className="font-mono">npm run barb:sync:teachers -- --apply</span>
             </p>
           </div>
         ) : filtered.length === 0 ? (
-          <EmptyState icon="Search" title="Nessun docente" body="Nessun risultato per questa ricerca." />
+          <EmptyState
+            icon="Search"
+            title="Nessun docente trovato"
+            body="Prova con un altro nome o insegnamento."
+            action={<Button variant="soft" onClick={() => setQuery("")}>Cancella la ricerca</Button>}
+          />
         ) : (
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
             {filtered.map((teacher) => (
@@ -755,7 +814,7 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
                     {teacher.department ? ` · ${teacher.department}` : ""}
                   </p>
                 ) : null}
-                <div className="mt-2 grid gap-1 text-xs">
+                <div className="mt-2 grid grid-cols-1 gap-1 text-xs">
                   {teacher.email ? (
                     <a className="flex min-w-0 items-center gap-1.5 hover:text-[var(--accent-ink)]" href={`mailto:${teacher.email}`}>
                       <Icon name="Mail" className="h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
@@ -809,7 +868,7 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
                 <p className="break-words text-xs text-[var(--muted)]">{contact.value}</p>
                 {contact.url ? (
                   <a className="mt-1 inline-flex items-center gap-1 text-xs font-black text-[var(--accent-ink)]" href={contact.url} target="_blank" rel="noreferrer">
-                    Apri <Icon name="ExternalLink" className="h-3 w-3" />
+                    Apri il sito <Icon name="ExternalLink" className="h-3 w-3" />
                   </a>
                 ) : null}
               </li>
@@ -855,11 +914,11 @@ function RoomsTab({ courses }: { courses: BarbCourse[] }) {
       {rooms.length === 0 ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
           <div className="text-sm">
-            <p className="font-black">Aule non ancora pubblicate.</p>
+            <p className="font-black">Aule non ancora pubblicate</p>
             <p className="mt-1 text-[var(--muted)]">
-              Le aule arrivano dal portale orari ufficiale appena l&rsquo;orario viene pubblicato (<span className="font-mono">npm run barb:sync:schedule -- --apply</span>).
+              Compariranno qui quando l&rsquo;università pubblicherà l&rsquo;orario delle lezioni. Intanto, ecco le sedi del corso:
             </p>
-            <ul className="mt-3 grid gap-2 sm:grid-cols-3">
+            <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
               {["Via Celoria 26 · Edifici Biologici", "Via Celoria 20 · Settore Didattico", "Via Golgi 19 · Edificio Golgi"].map((place) => (
                 <li key={place} className="flex items-center gap-2 rounded-[16px] bg-[var(--surface-soft)] p-3 font-bold">
                   <Icon name="MapPin" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
@@ -867,9 +926,12 @@ function RoomsTab({ courses }: { courses: BarbCourse[] }) {
                 </li>
               ))}
             </ul>
+            <p className="mt-3 text-xs text-[var(--faint)]">
+              Per chi gestisce l&rsquo;app: <span className="font-mono">npm run barb:sync:schedule -- --apply</span>
+            </p>
           </div>
           <a href={ORARI_URL} target="_blank" rel="noreferrer">
-            <Button icon="MapPin" variant="soft">Portale orari EasyAcademy</Button>
+            <Button icon="MapPin" variant="soft">Apri l&rsquo;orario ufficiale</Button>
           </a>
         </div>
       ) : (
@@ -893,20 +955,21 @@ function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.get
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Panel>
-        <h3 className="mb-3 text-xl font-black">Fonti ufficiali</h3>
+        <h3 className="mb-1 text-xl font-black">Pagine ufficiali consultate</h3>
+        <p className="mb-3 text-sm text-[var(--muted)]">Tutti i dati di questa sezione vengono da qui: niente è inventato o dedotto.</p>
         <div className="grid grid-cols-1 gap-2">
           {BARB_META.sources.map((source) => (
             <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="quiet-panel flex items-center gap-2 p-3 text-sm hover:bg-[var(--surface)]">
               <Icon name="Globe" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
               <span className="min-w-0 flex-1 truncate font-bold">{source.label}</span>
-              <Tag>{source.kind}</Tag>
+              <Tag>{UNIVERSITY_SOURCE_KIND_LABEL[source.kind] ?? source.kind}</Tag>
             </a>
           ))}
         </div>
         {states.length ? (
           <details className="mt-4">
-            <summary className="cursor-pointer text-sm font-black">{states.length} pagine verificate all&rsquo;ultima sincronizzazione</summary>
-            <ul className="scrollbar-soft mt-2 grid max-h-72 gap-1 overflow-y-auto text-xs text-[var(--muted)]">
+            <summary className="cursor-pointer text-sm font-black">{states.length} pagine controllate all&rsquo;ultimo aggiornamento</summary>
+            <ul className="scrollbar-soft mt-2 grid max-h-72 grid-cols-1 gap-1 overflow-y-auto text-xs text-[var(--muted)]">
               {states.map((state) => (
                 <li key={state.url} className="break-all">
                   {formatDateTime(state.fetchedAt)} · {state.statusCode ?? "?"} · <ExternalLink href={state.url}>{state.title ?? state.url}</ExternalLink>
@@ -917,56 +980,60 @@ function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.get
         ) : null}
       </Panel>
       <Panel>
-        <h3 className="mb-2 text-xl font-black">Sincronizzazione locale</h3>
-        <p className="text-sm text-[var(--muted)]">
-          Firecrawl OSS self-hosted (<span className="font-mono">http://localhost:3002</span>, docker in <span className="font-mono">~/firecrawl-oss</span>). Nessun cloud, nessun credito.
-          Ogni sync produce un report in <span className="font-mono">.cache/ai/university/runs/</span>; i dati cambiano solo con <span className="font-mono">--apply</span> o
-          <span className="font-mono"> barb:apply</span>, dopo la validazione.
-        </p>
-        <div className="mt-3 grid gap-1.5 font-mono text-xs sm:grid-cols-2">
-          {[
-            "npm run barb:check-updates",
-            "npm run barb:sync",
-            "npm run barb:sync:schedule",
-            "npm run barb:apply",
-            "npm run barb:status",
-            "npm run barb:sync:teachers -- --course \"Anatomia dell'uomo\""
-          ].map((command) => (
-            <code key={command} className="quiet-panel truncate p-2" title={command}>
-              {command}
-            </code>
-          ))}
-        </div>
-        <dl className="mt-4 grid gap-3 text-sm">
+        <h3 className="mb-2 text-xl font-black">Stato dei dati</h3>
+        <dl className="grid grid-cols-1 gap-3 text-sm">
           <div>
-            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Stato orari</dt>
+            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Orario delle lezioni</dt>
             <dd>
               {timetable ? (
                 <>
-                  <span className="font-black">{timetable.status === "pubblicato" ? "Pubblicato" : timetable.status === "non-pubblicato" ? "Non ancora pubblicato" : "Non verificato"}</span>
-                  {timetable.checkedAt ? <span className="text-[var(--muted)]"> · controllato {formatDateTime(timetable.checkedAt)}</span> : null}
+                  <span className="font-black">{timetable.status === "pubblicato" ? "Pubblicato" : timetable.status === "non-pubblicato" ? "Non ancora pubblicato" : "Non ancora controllato"}</span>
+                  {timetable.checkedAt ? <span className="text-[var(--muted)]"> · controllato il {formatDateTime(timetable.checkedAt)}</span> : null}
                   {timetable.note ? <span className="block text-[var(--muted)]">{timetable.note}</span> : null}
                 </>
               ) : (
-                <Missing label="Non ancora verificato" />
+                <Missing label="Non ancora controllato" />
               )}
             </dd>
           </div>
           <div>
-            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Ultima sincronizzazione applicata</dt>
+            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Ultimo aggiornamento dei dati</dt>
             <dd>
               {syncLogs.length === 0 ? (
-                <span className="text-[var(--muted)]">Nessuna sincronizzazione applicata: dati dal seed verificato a mano.</span>
+                <span className="text-[var(--muted)]">Nessun aggiornamento automatico finora: i dati sono stati verificati a mano sulle fonti ufficiali.</span>
               ) : (
                 syncLogs.map((log) => (
                   <p key={log.id} className="mt-1 rounded-[14px] bg-[var(--surface-soft)] p-2 text-xs">
-                    {formatDateTime(log.finishedAt ?? log.startedAt)} · scope {log.scope} · {log.recordsChanged} modifiche · {log.notes}
+                    {formatDateTime(log.finishedAt ?? log.startedAt)} · ambito {log.scope} · {log.recordsChanged} modifiche · {log.notes}
                   </p>
                 ))
               )}
             </dd>
           </div>
         </dl>
+        <details className="mt-4">
+          <summary className="cursor-pointer text-sm font-black">Come si aggiornano i dati (per chi gestisce l&rsquo;app)</summary>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            L&rsquo;aggiornamento gira sul computer di chi gestisce l&rsquo;app, con Firecrawl in locale (<span className="font-mono">http://localhost:3002</span>, docker in{" "}
+            <span className="font-mono">~/firecrawl-oss</span>): nessun servizio online, nessun credito. Ogni aggiornamento salva un report in{" "}
+            <span className="font-mono">.cache/ai/university/runs/</span>; i dati cambiano solo con <span className="font-mono">--apply</span> o
+            <span className="font-mono"> barb:apply</span>, dopo la verifica.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-1.5 font-mono text-xs sm:grid-cols-2">
+            {[
+              "npm run barb:check-updates",
+              "npm run barb:sync",
+              "npm run barb:sync:schedule",
+              "npm run barb:apply",
+              "npm run barb:status",
+              "npm run barb:sync:teachers -- --course \"Anatomia dell'uomo\""
+            ].map((command) => (
+              <code key={command} className="quiet-panel truncate p-2" title={command}>
+                {command}
+              </code>
+            ))}
+          </div>
+        </details>
       </Panel>
     </div>
   );
@@ -979,23 +1046,23 @@ function WeeklySchedule({ courses, semesters }: { courses: BarbCourse[]; semeste
   return (
     <Panel>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-xl font-black">Calendario lezioni</h3>
+        <h3 className="text-xl font-black">Orario delle lezioni</h3>
         {withSchedule.length ? (
           <Segmented
-            label="Modalità calendario"
+            label="Come mostrare l'orario"
             size="sm"
             value={mode}
             onChange={setMode}
             options={[
-              { id: "settimana", label: "Settimanale" },
-              { id: "per-corso", label: "Per corso" }
+              { id: "settimana", label: "Per settimana" },
+              { id: "per-corso", label: "Per insegnamento" }
             ]}
           />
         ) : null}
       </div>
       {withSchedule.length === 0 ? (
         <div className="grid grid-cols-1 gap-4">
-          <p className="text-sm font-black">Orario delle lezioni non ancora pubblicato: nessuna regola ricorrente importata (nessun orario ipotizzato).</p>
+          <p className="text-sm font-black">L&rsquo;università non ha ancora pubblicato l&rsquo;orario delle lezioni: appena esce, lo trovi qui. Non mostriamo orari ipotetici.</p>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {semesters.map((semester) => (
               <div key={semester.id} className="quiet-panel p-3.5 text-sm">
@@ -1012,7 +1079,7 @@ function WeeklySchedule({ courses, semesters }: { courses: BarbCourse[]; semeste
               <Button icon="CalendarDays" variant="soft">Calendari e orari BARB</Button>
             </a>
             <a href={ORARI_URL} target="_blank" rel="noreferrer">
-              <Button icon="Clock" variant="soft">Agenda web EasyAcademy</Button>
+              <Button icon="Clock" variant="soft">Orario ufficiale (Agenda web)</Button>
             </a>
           </div>
         </div>
@@ -1054,7 +1121,7 @@ function WeekGrid({ courses }: { courses: BarbCourse[] }) {
                       {rule.startTime}–{rule.endTime}
                     </p>
                     <p className="two-line-safe">{course.name}</p>
-                    <p className="text-[var(--muted)]">{rule.room ?? "Aula n.d."}</p>
+                    <p className="text-[var(--muted)]">{rule.room ?? "Aula non indicata"}</p>
                   </div>
                 ))
               )}

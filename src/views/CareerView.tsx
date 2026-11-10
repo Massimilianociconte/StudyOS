@@ -49,24 +49,41 @@ export function CareerView() {
     <div>
       <SectionTitle
         title="Libretto e laurea"
-        subtitle={`Media ponderata calcolata in automatico dagli esami registrati e proiezione del voto di laurea per ${DEGREE_PROGRAMS[program].name}.`}
+        subtitle="Registra i voti degli esami: medie e voto di laurea previsto si calcolano da soli."
         action={
-          <Button icon="Award" variant="primary" onClick={() => openEditor(null)}>
-            Registra voto
+          // Con il libretto vuoto l'invito principale è nel riquadro sotto: qui resta secondario.
+          <Button icon="Award" variant={entries.length ? "primary" : "soft"} onClick={() => openEditor(null)}>
+            Registra un voto
           </Button>
         }
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label="Media ponderata" value={formatAverage(stats.weighted)} detail={stats.graded ? `${stats.graded} ${stats.graded === 1 ? "voto" : "voti"} pesati sui CFU` : "Nessun voto ancora"} />
-        <Tile label="Media aritmetica" value={formatAverage(stats.arithmetic)} detail={stats.passed ? `${stats.passed} ${stats.passed === 1 ? "esame superato" : "esami superati"}` : "Registra il primo voto"} />
+        <Tile
+          label="Media ponderata"
+          value={formatAverage(stats.weighted)}
+          detail={stats.graded ? "Pesata sui CFU" : "Ancora nessun voto"}
+          hint="Media dei voti in cui gli esami con più CFU contano di più. La lode vale 30."
+        />
+        <Tile
+          label="Media aritmetica"
+          value={formatAverage(stats.arithmetic)}
+          detail={stats.passed ? `${stats.passed} ${stats.passed === 1 ? "esame superato" : "esami superati"}` : "Registra il primo voto"}
+          hint="Media semplice dei voti, senza tenere conto dei CFU."
+        />
         <Tile
           label="CFU acquisiti"
           value={`${stats.cfuEarned}`}
           detail={`Su ${preferences.degreeCfu} del corso`}
+          hint="Crediti degli esami superati, idoneità comprese."
           progress={(stats.cfuEarned / Math.max(1, preferences.degreeCfu)) * 100}
         />
-        <Tile label="Voto di base" value={formatAverage(stats.base110)} detail="Media × 110 / 30" />
+        <Tile
+          label="Voto di partenza"
+          value={formatAverage(stats.base110)}
+          detail="Media × 110 / 30"
+          hint="Voto di partenza per la laurea: la media ponderata portata in centodecimi (media × 110 / 30)."
+        />
       </div>
 
       {notice ? (
@@ -78,7 +95,7 @@ export function CareerView() {
       {!subjects.length ? (
         <Panel className="mb-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm font-bold text-[var(--muted)]">Nessuna materia ancora: aggiungile da Materie oppure crea l'insegnamento quando registri il voto.</p>
+            <p className="text-sm font-bold text-[var(--muted)]">Non hai ancora materie: aggiungile in Materie oppure creale mentre registri un voto.</p>
             <Button icon="BookOpen" variant="soft" onClick={() => setActiveView("subjects")}>
               Vai a Materie
             </Button>
@@ -105,7 +122,7 @@ export function CareerView() {
           <LibrettoList entries={entries} subjects={subjects} onOpen={(examId) => openEditor(exams.find((exam) => exam.id === examId) ?? null)} onAdd={() => openEditor(null)} />
           {missing.length ? (
             <div>
-              <h3 className="mb-2 px-1 text-xs font-black uppercase text-[var(--warning-text)]">Superati senza voto registrato · {missing.length}</h3>
+              <h3 className="mb-2 px-1 text-xs font-black uppercase text-[var(--warning-text)]">Esami superati senza voto · {missing.length}</h3>
               <ul className="soft-panel grid grid-cols-1 gap-0.5 p-2">
                 {missing.map((exam) => (
                   <li key={exam.id}>
@@ -137,9 +154,9 @@ export function CareerView() {
   );
 }
 
-function Tile({ label, value, detail, progress }: { label: string; value: string; detail: string; progress?: number }) {
+function Tile({ label, value, detail, hint, progress }: { label: string; value: string; detail: string; hint?: string; progress?: number }) {
   return (
-    <div className="quiet-panel min-w-0 p-3.5">
+    <div className="quiet-panel min-w-0 p-3.5" title={hint}>
       <p className="truncate text-[11px] font-black uppercase text-[var(--faint)]">{label}</p>
       <p className="mt-1 truncate text-2xl font-black tabular-nums">{value}</p>
       <p className="truncate text-xs font-bold text-[var(--muted)]">{detail}</p>
@@ -203,9 +220,9 @@ function GraduationPanel({
     <Panel>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-xl font-black">Proiezione voto di laurea</h3>
+          <h3 className="text-xl font-black">Voto di laurea previsto</h3>
           <p className="text-xs font-bold text-[var(--muted)]">
-            {info.level} · {info.totalCfu} CFU · regole ufficiali UNIMI
+            {info.level} · {info.totalCfu} CFU · calcolato con le regole ufficiali UNIMI
           </p>
         </div>
       </div>
@@ -219,47 +236,12 @@ function GraduationPanel({
         options={DEGREE_PROGRAM_IDS.map((id) => ({ id, label: DEGREE_PROGRAMS[id].shortName }))}
       />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {program === "scienze-biologiche" ? (
-          <Field label="Voto previsto della prova finale">
-            <select className={inputClass} value={sbThesisGrade} onChange={(event) => onScenario({ sbThesisGrade: Number(event.target.value) })}>
-              {Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MAX_GRADE - index).map((grade) => (
-                <option key={grade} value={grade}>
-                  {grade === MAX_GRADE ? "30 o 30 e lode" : grade} → +{sbThesisPoints(grade)} punti
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : (
-          <Field label="Giudizio previsto sulla tesi">
-            <select className={inputClass} value={barbThesisPoints} onChange={(event) => onScenario({ barbThesisPoints: Number(event.target.value) })}>
-              {BARB_THESIS_LEVELS.map((level) => (
-                <option key={level.points} value={level.points}>
-                  {level.points} {level.points === 1 ? "punto" : "punti"} · {level.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-        <Field label="Media usata">
-          <select className={inputClass} value={useTargets ? "targets" : "registered"} onChange={(event) => setBasis(event.target.value as "registered" | "targets")}>
-            <option value="registered">Solo voti registrati ({formatAverage(weighted)})</option>
-            {targetsWeighted !== null ? <option value="targets">Con i voti obiettivo degli esami in programma ({formatAverage(targetsWeighted)})</option> : null}
-          </select>
-        </Field>
-      </div>
-      <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-3 rounded-[16px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
-        <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={abroad} onChange={(event) => onScenario({ abroad: event.target.checked })} />
-        <span className="min-w-0 flex-1">
-          {program === "scienze-biologiche" ? "Programma Erasmus svolto almeno al 70%" : "Tesi svolta all'estero o almeno 3 esami superati all'estero"}
-        </span>
-      </label>
-
+      {/* Prima il risultato, poi le ipotesi che lo cambiano. */}
       {projection ? (
         <>
           <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-1 rounded-[22px] bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] p-4">
             <div>
-              <p className="text-xs font-black uppercase text-[var(--faint)]">Voto di laurea previsto</p>
+              <p className="text-xs font-black uppercase text-[var(--faint)]">Con le ipotesi qui sotto</p>
               <p className="text-4xl font-black tabular-nums">
                 {points(projection.capped)}
                 {projection.cappedMax > projection.capped ? <span className="text-2xl"> – {points(projection.cappedMax)}</span> : null}
@@ -268,14 +250,14 @@ function GraduationPanel({
             </div>
             {projection.totalMax > 110 ? (
               <p className="pb-1 text-xs font-bold text-[var(--muted)]">
-                Punteggio calcolato {points(projection.total)}
-                {projection.totalMax > projection.total ? `–${points(projection.totalMax)}` : ""}: oltre 110 la lode la decide la commissione.
+                Il calcolo dà {points(projection.total)}
+                {projection.totalMax > projection.total ? `–${points(projection.totalMax)}` : ""}: sopra 110 la lode la decide la commissione.
               </p>
             ) : null}
           </div>
 
           <dl className="mt-3 grid grid-cols-1 gap-1 text-sm">
-            <Row label={`Voto di base (media ${formatAverage(average)} × 110 / 30)`} value={points(projection.base)} strong />
+            <Row label={`Voto di partenza (media ${formatAverage(average)} × 110 / 30)`} value={points(projection.base)} strong />
             {projection.parts.map((part) => (
               <Row key={part.label} label={part.label} value={part.upTo ? `Fino a +${points(part.upTo)}` : `+${points(part.points)}`} />
             ))}
@@ -286,41 +268,82 @@ function GraduationPanel({
           {needed !== null ? (
             <p className="mt-3 rounded-[16px] border border-[var(--border)] p-3 text-sm font-bold">
               {projection.total >= 110
-                ? "Con questo scenario raggiungi 110."
-                : `Per 110 con questo scenario serve una media ponderata di almeno ${formatAverage(needed)}.`}
+                ? "Con queste ipotesi arrivi a 110."
+                : `Per arrivare a 110 ti serve una media ponderata di almeno ${formatAverage(needed)}.`}
               {projection.total < 110 && neededOnPlanned !== null ? (
                 <span className="mt-1 block text-xs text-[var(--muted)]">
                   {neededOnPlanned > MAX_GRADE
-                    ? `Con i soli esami in programma (${plannedCfu} CFU) non basta: servirebbe una media di ${formatAverage(neededOnPlanned)}.`
+                    ? `Gli esami in programma (${plannedCfu} CFU) da soli non bastano: servirebbe una media di ${formatAverage(neededOnPlanned)}.`
                     : neededOnPlanned <= MIN_GRADE
-                      ? `Negli esami in programma (${plannedCfu} CFU) basta superarli.`
-                      : `Negli esami in programma (${plannedCfu} CFU) serve una media di ${formatAverage(neededOnPlanned)}.`}
+                      ? `Negli esami in programma (${plannedCfu} CFU) ti basta passarli.`
+                      : `Negli esami in programma (${plannedCfu} CFU) ti serve una media di ${formatAverage(neededOnPlanned)}.`}
                 </span>
               ) : null}
             </p>
           ) : null}
-
-          <ul className="mt-3 grid grid-cols-1 gap-1 text-xs font-bold text-[var(--muted)]">
-            {projection.notes.map((note) => (
-              <li key={note} className="flex gap-2">
-                <Icon name="Info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{note}</span>
-              </li>
-            ))}
-            <li className="flex gap-2">
-              <Icon name="Info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>È una stima: voto finale, eventuali arrotondamenti e lode sono decisi dalla commissione di laurea.</span>
-            </li>
-          </ul>
         </>
       ) : (
         <p className="mt-4 rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm font-bold text-[var(--muted)]">
-          Registra almeno un voto (o inserisci i voti obiettivo degli esami in programma) per vedere la proiezione.
+          Registra almeno un voto, o metti un voto obiettivo agli esami in programma, per vedere la stima.
         </p>
       )}
 
       <div className="mt-4 border-t border-[var(--border)] pt-3">
-        <p className="mb-1 text-[11px] font-black uppercase text-[var(--faint)]">Fonti ufficiali</p>
+        <p className="mb-2 text-[11px] font-black uppercase text-[var(--faint)]">Le tue ipotesi</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {program === "scienze-biologiche" ? (
+            <Field label="Voto che prevedi per la prova finale">
+              <select className={inputClass} value={sbThesisGrade} onChange={(event) => onScenario({ sbThesisGrade: Number(event.target.value) })}>
+                {Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MAX_GRADE - index).map((grade) => (
+                  <option key={grade} value={grade}>
+                    {grade === MAX_GRADE ? "30 o 30 e lode" : grade} → +{sbThesisPoints(grade)} punti
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : (
+            <Field label="Punti che prevedi per la tesi">
+              <select className={inputClass} value={barbThesisPoints} onChange={(event) => onScenario({ barbThesisPoints: Number(event.target.value) })}>
+                {BARB_THESIS_LEVELS.map((level) => (
+                  <option key={level.points} value={level.points}>
+                    {level.points} {level.points === 1 ? "punto" : "punti"} · {level.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field label="Media da usare">
+            <select className={inputClass} value={useTargets ? "targets" : "registered"} onChange={(event) => setBasis(event.target.value as "registered" | "targets")}>
+              <option value="registered">Solo i voti già registrati ({formatAverage(weighted)})</option>
+              {targetsWeighted !== null ? <option value="targets">Anche i voti obiettivo degli esami in programma ({formatAverage(targetsWeighted)})</option> : null}
+            </select>
+          </Field>
+        </div>
+        <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-3 rounded-[16px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
+          <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={abroad} onChange={(event) => onScenario({ abroad: event.target.checked })} />
+          <span className="min-w-0 flex-1">
+            {program === "scienze-biologiche" ? "Programma Erasmus svolto almeno al 70%" : "Tesi svolta all'estero o almeno 3 esami superati all'estero"}
+          </span>
+        </label>
+      </div>
+
+      {projection ? (
+        <ul className="mt-3 grid grid-cols-1 gap-1 text-xs font-bold text-[var(--muted)]">
+          {projection.notes.map((note) => (
+            <li key={note} className="flex gap-2">
+              <Icon name="Info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{note}</span>
+            </li>
+          ))}
+          <li className="flex gap-2">
+            <Icon name="Info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>È una stima: voto finale, eventuali arrotondamenti e lode li decide la commissione di laurea.</span>
+          </li>
+        </ul>
+      ) : null}
+
+      <div className="mt-4 border-t border-[var(--border)] pt-3">
+        <p className="mb-1 text-[11px] font-black uppercase text-[var(--faint)]">Fonti ufficiali delle regole</p>
         <ul className="grid grid-cols-1 gap-1">
           {info.sources.map((source) => (
             <li key={source.url}>
@@ -363,12 +386,12 @@ function LibrettoList({
       <Panel>
         <div className="text-center">
           <Icon name="Award" className="mx-auto mb-3 h-10 w-10 text-[var(--accent-ink)]" />
-          <h3 className="text-xl font-black">Libretto vuoto</h3>
+          <h3 className="text-xl font-black">Ancora nessun voto nel libretto</h3>
           <p className="mx-auto mt-1 max-w-md text-sm text-[var(--muted)]">
-            Registra i voti degli esami superati: media aritmetica, media ponderata sui CFU e proiezione del voto di laurea si aggiornano da sole.
+            Registra i voti degli esami che hai superato: medie e voto di laurea previsto si aggiornano da soli.
           </p>
           <Button className="mt-4" icon="Award" variant="primary" onClick={onAdd}>
-            Registra voto
+            Registra un voto
           </Button>
         </div>
       </Panel>
@@ -376,13 +399,14 @@ function LibrettoList({
   }
   return (
     <div>
-      <h3 className="mb-2 px-1 text-xs font-black uppercase text-[var(--faint)]">Esami registrati · {entries.length}</h3>
+      <h3 className="mb-2 px-1 text-xs font-black uppercase text-[var(--faint)]">Esami superati · {entries.length}</h3>
       <ul className="soft-panel grid grid-cols-1 gap-0.5 p-2">
         {entries.map((entry) => (
           <li key={entry.examId}>
             <button type="button" onClick={() => onOpen(entry.examId)} className="flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2.5 py-2 text-left hover:bg-[var(--surface-soft)]">
               <span
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-[14px] text-sm font-black tabular-nums"
+                className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center rounded-[14px] text-sm font-black tabular-nums"
+                title={formatGrade(entry)}
                 style={{ background: `color-mix(in srgb, ${subjectColor(subjects, entry.subjectId)} 24%, transparent)` }}
               >
                 {entry.passFail ? "ID" : entry.honors ? "30L" : entry.grade}
@@ -399,7 +423,7 @@ function LibrettoList({
         ))}
       </ul>
       <p className="mt-2 px-1 text-xs font-bold text-[var(--faint)]">
-        La lode vale 30 nella media. Gli esami con idoneità contano nei CFU ma non nella media. La media è pesata sui CFU della materia.
+        La lode vale 30 nella media. Le idoneità danno CFU ma non entrano nella media. Gli esami con più CFU pesano di più.
       </p>
     </div>
   );

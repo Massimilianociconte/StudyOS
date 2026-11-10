@@ -1,4 +1,4 @@
-import { useState, type PropsWithChildren } from "react";
+import { useEffect, useState, type PropsWithChildren } from "react";
 import { format } from "date-fns";
 import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
@@ -8,37 +8,76 @@ import { Icon } from "./Icon";
 import { Button, Drawer, IconButton } from "./ui";
 import { NotificationsBell } from "./NotificationsBell";
 import { NotificationsPanel } from "./NotificationsPanel";
-import { QuickAddModal } from "./QuickAddModal";
+import { QuickAddModal, type QuickAddMode } from "./QuickAddModal";
 import { CloudStatusBadge } from "./CloudStatusBadge";
 import { GlobalSearch } from "./GlobalSearch";
 import { TaskTimerReminder } from "./TaskTimerReminder";
 import { AgentDock } from "./AgentDesk";
 import { StudyTimerWatcher } from "./StudyTimerWatcher";
+import { requestSettingsSection } from "../lib/settingsJump";
+import { QUICK_ADD_EVENT } from "../lib/quickAdd";
 
 // `short`: etichetta per la barra compatta dei tablet e per la barra in basso su telefono.
-const navItems: { view: AppView; label: string; short: string; icon: string }[] = [
-  { view: "dashboard", label: "Dashboard", short: "Dashboard", icon: "LayoutDashboard" },
-  { view: "calendar", label: "Calendario personale", short: "Personale", icon: "CalendarDays" },
-  { view: "tasks", label: "Task", short: "Task", icon: "Check" },
-  { view: "study", label: "Studio", short: "Studio", icon: "Timer" },
-  { view: "subjects", label: "Materie", short: "Materie", icon: "BookOpen" },
-  { view: "barb", label: "BARB · UNIMI", short: "BARB", icon: "Landmark" },
-  { view: "groups", label: "Gruppi", short: "Gruppi", icon: "Users" },
-  { view: "exams", label: "Esami", short: "Esami", icon: "GraduationCap" },
-  { view: "career", label: "Libretto e laurea", short: "Libretto", icon: "Award" },
-  { view: "materials", label: "Materiali", short: "Materiali", icon: "Paperclip" },
-  { view: "goals", label: "Obiettivi", short: "Obiettivi", icon: "Target" },
-  { view: "stats", label: "Statistiche", short: "Statistiche", icon: "BarChart3" },
-  { view: "settings", label: "Impostazioni", short: "Impostazioni", icon: "Settings" }
+// `hint`: cosa si trova nella sezione, in parole semplici (tooltip e foglio "Altro" su telefono).
+type NavItem = { view: AppView; label: string; short: string; icon: string; hint: string };
+
+// Sezioni raggruppate per uso: chi apre l'app la prima volta trova subito le quattro di ogni giorno.
+const navGroups: { title: string; items: NavItem[] }[] = [
+  {
+    title: "Ogni giorno",
+    items: [
+      { view: "dashboard", label: "Home", short: "Home", icon: "LayoutDashboard", hint: "Il riepilogo di oggi" },
+      { view: "calendar", label: "Calendario", short: "Calendario", icon: "CalendarDays", hint: "Lezioni, impegni e scadenze" },
+      { view: "tasks", label: "Attività", short: "Attività", icon: "Check", hint: "Le cose da fare, con scadenza" },
+      { view: "study", label: "Studio", short: "Studio", icon: "Timer", hint: "Timer, sessioni e ripassi" }
+    ]
+  },
+  {
+    title: "Università",
+    items: [
+      { view: "subjects", label: "Materie", short: "Materie", icon: "BookOpen", hint: "I corsi che stai seguendo" },
+      { view: "exams", label: "Esami", short: "Esami", icon: "GraduationCap", hint: "Date e preparazione" },
+      { view: "career", label: "Libretto e laurea", short: "Libretto", icon: "Award", hint: "Voti, media e voto di laurea" },
+      { view: "barb", label: "Corso di laurea", short: "Corso", icon: "Landmark", hint: "Insegnamenti e appelli ufficiali BARB" }
+    ]
+  },
+  {
+    title: "Strumenti",
+    items: [
+      { view: "materials", label: "Materiali", short: "Materiali", icon: "Paperclip", hint: "File, PDF e link" },
+      { view: "goals", label: "Obiettivi", short: "Obiettivi", icon: "Target", hint: "Traguardi da raggiungere" },
+      { view: "stats", label: "Statistiche", short: "Statistiche", icon: "BarChart3", hint: "Quanto e come studi" },
+      { view: "groups", label: "Gruppi", short: "Gruppi", icon: "Users", hint: "Studia con i compagni" }
+    ]
+  }
 ];
 
+const settingsItem: NavItem = { view: "settings", label: "Impostazioni", short: "Impostazioni", icon: "Settings", hint: "Profilo, account e copie di sicurezza" };
+
 const MOBILE_PRIMARY: AppView[] = ["dashboard", "calendar", "tasks", "study"];
-const mobileItems = navItems.filter((item) => MOBILE_PRIMARY.includes(item.view));
+const mobileItems = navGroups[0].items.filter((item) => MOBILE_PRIMARY.includes(item.view));
 
 export function AppShell({ children }: PropsWithChildren) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddMode, setQuickAddMode] = useState<QuickAddMode>("task");
   const [moreOpen, setMoreOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+  // Le viste (es. i primi passi della Home) aprono l'aggiunta rapida già sul tipo giusto.
+  useEffect(() => {
+    const onRequest = (event: Event) => {
+      const mode = (event as CustomEvent<QuickAddMode | undefined>).detail;
+      setQuickAddMode(mode ?? "task");
+      setQuickAddOpen(true);
+    };
+    window.addEventListener(QUICK_ADD_EVENT, onRequest);
+    return () => window.removeEventListener(QUICK_ADD_EVENT, onRequest);
+  }, []);
+
+  const openQuickAdd = () => {
+    setQuickAddMode("task");
+    setQuickAddOpen(true);
+  };
   const { activeView, setActiveView, settings, updateSettings, lockVault, persistError, retryPersist } = useStudyStore(
     useShallow((state) => ({
       activeView: state.activeView,
@@ -55,9 +94,60 @@ export function AppShell({ children }: PropsWithChildren) {
   const todayLabel = format(new Date(), "EEEE d MMMM", { locale: it });
   const displayName = preferences.displayName.trim();
   // La sezione BARB si può nascondere dalle impostazioni (preferenza sincronizzata).
-  const visibleItems = preferences.showBarb ? navItems : navItems.filter((item) => item.view !== "barb");
+  const visibleGroups = navGroups.map((group) => ({
+    ...group,
+    items: preferences.showBarb ? group.items : group.items.filter((item) => item.view !== "barb")
+  }));
   // Tutte le altre sezioni restano raggiungibili da mobile tramite il foglio "Altro".
-  const moreItems = visibleItems.filter((item) => !MOBILE_PRIMARY.includes(item.view));
+  const moreGroups = [
+    ...visibleGroups.map((group) => ({ ...group, items: group.items.filter((item) => !MOBILE_PRIMARY.includes(item.view)) })),
+    { title: "Account", items: [settingsItem] }
+  ].filter((group) => group.items.length);
+  const openSettings = (section: Parameters<typeof requestSettingsSection>[0]) => {
+    requestSettingsSection(section);
+    setActiveView("settings");
+  };
+
+  const compactItem = (item: NavItem) => {
+    const active = activeView === item.view;
+    return (
+      <button
+        key={item.view}
+        type="button"
+        onClick={() => setActiveView(item.view)}
+        aria-current={active ? "page" : undefined}
+        aria-label={`${item.label}: ${item.hint}`}
+        title={`${item.label} · ${item.hint}`}
+        className={`motion-safe flex min-h-[52px] w-full shrink-0 flex-col items-center justify-center gap-0.5 rounded-[18px] px-0.5 text-[10px] font-black leading-tight [@media(max-height:860px)]:min-h-[46px] [@media(max-height:800px)]:!min-h-[42px] ${
+          active ? "bg-[var(--accent)] text-[#10131d]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        }`}
+      >
+        <Icon name={item.icon} className="h-[18px] w-[18px] shrink-0" />
+        <span className="w-full truncate text-center">{item.short}</span>
+      </button>
+    );
+  };
+
+  const fullItem = (item: NavItem) => {
+    const active = activeView === item.view;
+    return (
+      <button
+        key={item.view}
+        type="button"
+        onClick={() => setActiveView(item.view)}
+        aria-current={active ? "page" : undefined}
+        title={item.hint}
+        className={`motion-safe flex min-h-11 w-full items-center gap-3 rounded-[20px] px-3 text-left text-sm font-black [@media(max-height:920px)]:min-h-10 ${
+          active
+            ? "bg-[var(--accent)] text-[#10131d]"
+            : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
+        }`}
+      >
+        <Icon name={item.icon} className="h-4.5 w-4.5 shrink-0" />
+        <span className="min-w-0 truncate">{item.label}</span>
+      </button>
+    );
+  };
 
   return (
     // Layout per larghezza: telefono (<640) barra in basso; tablet e finestre medie (640–1279)
@@ -69,38 +159,27 @@ export function AppShell({ children }: PropsWithChildren) {
             <button
               type="button"
               onClick={() => setActiveView("dashboard")}
-              aria-label="StudyOS, vai alla dashboard"
-              title="StudyOS"
+              aria-label="StudyOS, vai alla Home"
+              title="StudyOS · Home"
               className="mb-2 grid h-12 w-12 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]"
             >
               <Icon name="Sparkles" className="h-5 w-5" />
             </button>
             <nav className="no-scrollbar flex w-full flex-1 flex-col gap-0.5 overflow-y-auto py-1" aria-label="Sezioni principali">
-              {visibleItems.map((item) => {
-                const active = activeView === item.view;
-                return (
-                  <button
-                    key={item.view}
-                    type="button"
-                    onClick={() => setActiveView(item.view)}
-                    aria-current={active ? "page" : undefined}
-                    aria-label={item.view === "barb" ? "BARB · UNIMI — Piano del corso" : item.label}
-                    title={item.view === "barb" ? "BARB · UNIMI — Piano del corso" : item.label}
-                    className={`motion-safe flex min-h-[52px] w-full shrink-0 flex-col items-center justify-center gap-0.5 rounded-[18px] px-0.5 text-[10px] font-black leading-tight [@media(max-height:860px)]:min-h-[46px] ${
-                      active ? "bg-[var(--accent)] text-[#10131d]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
-                    }`}
-                  >
-                    <Icon name={item.icon} className="h-[18px] w-[18px] shrink-0" />
-                    <span className="w-full truncate text-center">{item.short}</span>
-                  </button>
-                );
-              })}
+              {visibleGroups.map((group, index) => (
+                <div key={group.title} role="group" aria-label={group.title} className="flex flex-col gap-0.5">
+                  {index ? <span aria-hidden="true" className="mx-3 my-0.5 h-px shrink-0 bg-[var(--border)]" /> : null}
+                  {group.items.map(compactItem)}
+                </div>
+              ))}
+              <span aria-hidden="true" className="mx-3 my-0.5 h-px shrink-0 bg-[var(--border)]" />
+              {compactItem(settingsItem)}
             </nav>
             <div className="mt-2 flex shrink-0 flex-col items-center gap-2">
               {settings.security.mode === "vault" ? (
-                <IconButton icon="Lock" label="Blocca il vault" onClick={() => void lockVault().catch(() => undefined)} />
+                <IconButton icon="Lock" label="Blocca StudyOS (servirà la password per riaprirlo)" onClick={() => void lockVault().catch(() => undefined)} />
               ) : null}
-              <CloudStatusBadge compact onClick={() => setActiveView("settings")} />
+              <CloudStatusBadge compact onClick={() => openSettings("account")} />
             </div>
           </div>
 
@@ -108,6 +187,7 @@ export function AppShell({ children }: PropsWithChildren) {
             <button
               type="button"
               onClick={() => setActiveView("dashboard")}
+              title="Vai alla Home"
               className="mb-4 flex w-full min-w-0 items-center gap-3 rounded-[26px] p-2 text-left"
             >
               <span className="grid grid-cols-1 h-14 w-14 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
@@ -115,52 +195,47 @@ export function AppShell({ children }: PropsWithChildren) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="one-line-safe block text-2xl font-black">StudyOS</span>
-                <span className="one-line-safe block text-xs font-bold text-[var(--muted)]" title={displayName || "Local-first workspace"}>
-                  {displayName || "Local-first workspace"}
+                <span className="one-line-safe block text-xs font-bold text-[var(--muted)]" title={displayName || "Lo studio, in ordine"}>
+                  {displayName || "Lo studio, in ordine"}
                 </span>
               </span>
             </button>
 
-            <nav className="scrollbar-soft flex-1 space-y-1 overflow-y-auto pr-1" aria-label="Sezioni principali">
-              {visibleItems.map((item) => {
-                const active = activeView === item.view;
-                return (
-                  <button
-                    key={item.view}
-                    type="button"
-                    onClick={() => setActiveView(item.view)}
-                    aria-current={active ? "page" : undefined}
-                    title={item.view === "barb" ? "Piano del corso BARB (UNIMI)" : item.label}
-                    className={`motion-safe flex min-h-11 w-full items-center gap-3 rounded-[20px] px-3 text-left text-sm font-black [@media(max-height:860px)]:min-h-10 ${
-                      active
-                        ? "bg-[var(--accent)] text-[#10131d]"
-                        : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
-                    }`}
-                  >
-                    <Icon name={item.icon} className="h-4.5 w-4.5 shrink-0" />
-                    <span className="min-w-0 truncate">{item.label}</span>
-                  </button>
-                );
-              })}
+            <nav className="scrollbar-soft flex-1 space-y-3 overflow-y-auto pr-1 [@media(max-height:920px)]:space-y-2" aria-label="Sezioni principali">
+              {visibleGroups.map((group) => (
+                <div key={group.title} role="group" aria-label={group.title} className="space-y-1">
+                  <p aria-hidden="true" className="px-3 text-[11px] font-black uppercase text-[var(--faint)] [@media(max-height:760px)]:sr-only">
+                    {group.title}
+                  </p>
+                  {group.items.map(fullItem)}
+                </div>
+              ))}
+              <div className="border-t border-[var(--border)] pt-3 [@media(max-height:920px)]:pt-2">{fullItem(settingsItem)}</div>
             </nav>
 
             <div className="mt-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-soft)] p-3.5 [@media(max-height:900px)]:border-0 [@media(max-height:900px)]:bg-transparent [@media(max-height:900px)]:p-0">
-              {/* Su schermi bassi (tablet in orizzontale, 800 px) resta solo lo stato cloud: tutte le voci restano visibili. */}
+              {/* Su schermi bassi (tablet in orizzontale, 800 px) resta solo lo stato dell'account: tutte le voci restano visibili. */}
               <div className="[@media(max-height:900px)]:hidden">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs font-black uppercase text-[var(--faint)]">Privacy</span>
+                  <span className="text-xs font-black uppercase text-[var(--faint)]">I tuoi dati</span>
                   <Icon name={settings.security.mode === "vault" ? "Lock" : "Shield"} className="h-4 w-4 text-[var(--accent-ink)]" />
                 </div>
                 <p className="text-sm font-extrabold">
-                  {settings.security.mode === "vault" ? "Vault cifrato attivo" : "Dati locali nel browser"}
+                  {settings.security.mode === "vault" ? "Protetti da password" : "Salvati su questo dispositivo"}
                 </p>
               </div>
               {settings.security.mode === "vault" ? (
-                <Button icon="Lock" variant="soft" className="mt-3 w-full" onClick={() => void lockVault().catch(() => undefined)}>
-                  Blocca
+                <Button
+                  icon="Lock"
+                  variant="soft"
+                  className="mt-3 w-full"
+                  title="Chiude StudyOS: per riaprirlo servirà la password"
+                  onClick={() => void lockVault().catch(() => undefined)}
+                >
+                  Blocca StudyOS
                 </Button>
               ) : null}
-              <CloudStatusBadge onClick={() => setActiveView("settings")} />
+              <CloudStatusBadge onClick={() => openSettings("account")} />
             </div>
           </div>
         </aside>
@@ -183,9 +258,9 @@ export function AppShell({ children }: PropsWithChildren) {
               <NotificationsBell onOpen={() => setNotificationsOpen(true)} />
               <button
                 type="button"
-                aria-label="Profilo e impostazioni"
-                title="Profilo e impostazioni"
-                onClick={() => setActiveView("settings")}
+                aria-label="Il tuo profilo"
+                title="Il tuo profilo"
+                onClick={() => openSettings("profilo")}
                 className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
               >
                 {preferences.avatarDataUrl ? (
@@ -194,7 +269,13 @@ export function AppShell({ children }: PropsWithChildren) {
                   <Icon name="User" className="h-4.5 w-4.5" />
                 )}
               </button>
-              <Button icon="Plus" variant="primary" className="hidden shrink-0 sm:inline-flex" onClick={() => setQuickAddOpen(true)}>
+              <Button
+                icon="Plus"
+                variant="primary"
+                className="hidden shrink-0 sm:inline-flex"
+                title="Aggiungi un'attività, un evento, una materia o un materiale"
+                onClick={openQuickAdd}
+              >
                 Aggiungi
               </Button>
             </div>
@@ -206,9 +287,9 @@ export function AppShell({ children }: PropsWithChildren) {
               className="mx-auto mb-4 flex max-w-[1380px] flex-wrap items-center gap-3 rounded-[22px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]"
             >
               <Icon name="Shield" className="h-4 w-4 shrink-0" />
-              <span className="min-w-0 flex-1">{persistError} Le modifiche restano in memoria finché il salvataggio non riesce.</span>
+              <span className="min-w-0 flex-1">{persistError} Non chiudere la pagina: le modifiche sono ancora qui e verranno salvate appena possibile.</span>
               <Button variant="soft" onClick={() => void retryPersist()}>
-                Riprova
+                Riprova a salvare
               </Button>
             </div>
           ) : null}
@@ -233,8 +314,8 @@ export function AppShell({ children }: PropsWithChildren) {
 
       <button
         type="button"
-        onClick={() => setQuickAddOpen(true)}
-        aria-label="Aggiungi rapidamente"
+        onClick={openQuickAdd}
+        aria-label="Aggiungi un'attività, un evento, una materia o un materiale"
         style={{ bottom: "calc(6.5rem + env(safe-area-inset-bottom))" }}
         className="fixed right-5 z-40 grid h-16 w-16 place-items-center rounded-super bg-[var(--accent)] text-[#10131d] shadow-soft sm:hidden"
       >
@@ -267,43 +348,53 @@ export function AppShell({ children }: PropsWithChildren) {
           type="button"
           onClick={() => setMoreOpen(true)}
           aria-haspopup="dialog"
-          aria-label="Tutte le sezioni"
+          aria-label="Altre sezioni"
           className={`grid min-h-14 min-w-0 place-items-center rounded-[22px] text-[10.5px] font-black tracking-tight ${
             MOBILE_PRIMARY.includes(activeView) ? "text-[var(--muted)]" : "bg-[var(--accent)] text-[#10131d]"
           }`}
         >
           <Icon name="Menu" className="h-5 w-5" />
-          <span className="one-line-safe px-0.5 text-center">Sezioni</span>
+          <span className="one-line-safe px-0.5 text-center">Altro</span>
         </button>
       </nav>
 
-      <Drawer open={moreOpen} onClose={() => setMoreOpen(false)} title="Tutte le sezioni" width="max-w-[420px]">
-        <div className="grid grid-cols-2 gap-2">
-          {moreItems.map((item) => {
-            const active = activeView === item.view;
-            return (
-              <button
-                key={item.view}
-                type="button"
-                onClick={() => {
-                  setActiveView(item.view);
-                  setMoreOpen(false);
-                }}
-                aria-current={active ? "page" : undefined}
-                className={`motion-safe flex min-h-14 min-w-0 items-center gap-3 rounded-[20px] px-3 text-left text-sm font-black ${
-                  active ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] hover:bg-[var(--surface)]"
-                }`}
-              >
-                <Icon name={item.icon} className="h-5 w-5 shrink-0" />
-                <span className="min-w-0 truncate">{item.label}</span>
-              </button>
-            );
-          })}
+      <Drawer open={moreOpen} onClose={() => setMoreOpen(false)} title="Altre sezioni" width="max-w-[420px]">
+        <div className="grid grid-cols-1 gap-4">
+          {moreGroups.map((group) => (
+            <section key={group.title} aria-label={group.title}>
+              <p className="mb-2 px-1 text-[11px] font-black uppercase text-[var(--faint)]">{group.title}</p>
+              <div className="grid grid-cols-2 gap-2">
+                {group.items.map((item) => {
+                  const active = activeView === item.view;
+                  return (
+                    <button
+                      key={item.view}
+                      type="button"
+                      onClick={() => {
+                        setActiveView(item.view);
+                        setMoreOpen(false);
+                      }}
+                      aria-current={active ? "page" : undefined}
+                      className={`motion-safe flex min-h-14 min-w-0 items-center gap-3 rounded-[20px] px-3 py-2 text-left text-sm font-black ${
+                        active ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] hover:bg-[var(--surface)]"
+                      }`}
+                    >
+                      <Icon name={item.icon} className="h-5 w-5 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block truncate">{item.label}</span>
+                        <span className={`two-line-safe block text-[11px] font-bold leading-tight ${active ? "opacity-75" : "text-[var(--muted)]"}`}>{item.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
         <div className="mt-4">
           <CloudStatusBadge
             onClick={() => {
-              setActiveView("settings");
+              openSettings("account");
               setMoreOpen(false);
             }}
           />
@@ -313,7 +404,7 @@ export function AppShell({ children }: PropsWithChildren) {
       <TaskTimerReminder />
       <AgentDock />
       <StudyTimerWatcher />
-      <QuickAddModal open={quickAddOpen} onClose={() => setQuickAddOpen(false)} />
+      <QuickAddModal open={quickAddOpen} initialMode={quickAddMode} onClose={() => setQuickAddOpen(false)} />
       {notificationsOpen ? <NotificationsPanel onClose={() => setNotificationsOpen(false)} /> : null}
     </main>
   );

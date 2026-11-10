@@ -160,3 +160,18 @@ radice accettati, `/revoke`, loopback con porta variabile e `cursor://`. Stdio
 riscritto in JSON per riga. Verifiche: 132 test, lint, build, dry-run del Worker,
 stdio reale, strumenti eseguiti nell'app in sviluppo e conferma end-to-end con
 l'hub locale. Da fare: deploy del Worker e push su `main`.
+
+Semplificazione UX per chi apre l'app la prima volta (10 novembre 2026): solo parole,
+gerarchia, flussi e pulsanti; aspetto grafico, dati, logica e server MCP invariati.
+Navigazione in tre gruppi (Ogni giorno, Università, Strumenti) con Impostazioni in fondo
+e una frase di aiuto per sezione; nomi nuovi: Home (era Dashboard), Calendario (era
+Calendario personale), Attività (era Task), Corso di laurea (era BARB · UNIMI); su
+telefono "Altro" apre le sezioni raggruppate. La Home ha la guida "Per iniziare" a quattro
+passi che si spuntano da soli (materie, lezioni, prima attività, profilo) e si può
+nascondere su questo dispositivo. "Aggiungi" chiede "Cosa vuoi aggiungere?", spiega ogni
+tipo, invia con Invio e si apre dalle viste già sul tipo giusto (`src/lib/quickAdd.ts`).
+Badge account e profilo aprono Impostazioni sulla categoria giusta
+(`src/lib/settingsJump.ts`). In ogni vista un solo pulsante principale con verbo + oggetto,
+campi rari in "Altre opzioni", stati vuoti con un'azione, conferme che dicono cosa si perde.
+Esami apre "I miei esami" se ne esiste almeno uno. Verifiche: 132 test, lint, build e
+giro nel browser di tutte le sezioni a 1440×900, 1024×768 e 375 px senza overflow.

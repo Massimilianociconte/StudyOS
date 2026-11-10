@@ -120,7 +120,7 @@ export default function App() {
         <div className="soft-panel w-full max-w-sm p-8 text-center">
           <div className="mx-auto mb-5 h-20 w-20 animate-pulse rounded-super bg-[var(--accent)]" />
           <h1 className="text-3xl font-black">StudyOS</h1>
-          <p className="mt-2 text-sm text-[var(--muted)]">Preparazione del workspace locale...</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">Sto aprendo i tuoi dati…</p>
         </div>
       </main>
     );
@@ -140,7 +140,7 @@ export default function App() {
           transition={{ duration: 0.24, ease: "easeOut" }}
         >
           <ViewErrorBoundary key={activeView}>
-            <Suspense fallback={<div className="soft-panel min-h-[240px] p-8 text-lg font-black">Caricamento vista...</div>}>
+            <Suspense fallback={<div className="soft-panel min-h-[240px] p-8 text-lg font-black">Caricamento…</div>}>
               {views[activeView]}
             </Suspense>
           </ViewErrorBoundary>

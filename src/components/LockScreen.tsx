@@ -3,6 +3,14 @@ import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, inputClass } from "./ui";
 import { Icon } from "./Icon";
 
+/** Il messaggio della logica parla di "passphrase": qui diventa una frase semplice con il passo successivo. */
+const unlockErrorText = (error: unknown) => {
+  const text = error instanceof Error ? error.message : "";
+  if (/passphrase non valida/i.test(text)) return "Password sbagliata. Controlla maiuscole e minuscole e riprova.";
+  if (/vault corrotto/i.test(text)) return "La password è giusta, ma i dati salvati su questo dispositivo sono danneggiati e non si possono aprire.";
+  return text || "Non è stato possibile aprire StudyOS. Riprova.";
+};
+
 export function LockScreen() {
   const [passphrase, setPassphrase] = useState("");
   const [error, setError] = useState("");
@@ -16,7 +24,7 @@ export function LockScreen() {
     try {
       await unlockVault(passphrase);
     } catch (unlockError) {
-      setError(unlockError instanceof Error ? unlockError.message : "Impossibile aprire il vault.");
+      setError(unlockErrorText(unlockError));
     } finally {
       setBusy(false);
     }
@@ -29,18 +37,19 @@ export function LockScreen() {
           <Icon name="Lock" className="h-10 w-10" />
         </div>
         <h1 className="text-4xl font-black">StudyOS</h1>
-        <p className="mt-2 text-sm text-[var(--muted)]">Vault locale cifrato con AES-GCM. La passphrase resta solo in memoria.</p>
+        <p className="mt-2 text-sm text-[var(--muted)]">Inserisci la password per aprire StudyOS. I tuoi dati su questo dispositivo sono protetti.</p>
         {settings.security.passphraseHint ? (
           <p className="mt-3 rounded-full bg-[var(--surface)] px-4 py-2 text-xs font-bold text-[var(--muted)]">
-            Suggerimento: {settings.security.passphraseHint}
+            Promemoria: {settings.security.passphraseHint}
           </p>
         ) : null}
 
         <div className="mt-6 text-left">
-          <Field label="Passphrase">
+          <Field label="Password">
             <input
               className={inputClass}
               type="password"
+              autoComplete="current-password"
               value={passphrase}
               onChange={(event) => setPassphrase(event.target.value)}
               onKeyDown={(event) => {
@@ -49,9 +58,9 @@ export function LockScreen() {
               autoFocus
             />
           </Field>
-          {error ? <p className="mt-2 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+          {error ? <p role="alert" className="mt-2 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
           <Button className="mt-4 w-full" variant="primary" icon="Lock" disabled={busy || !passphrase} onClick={unlock}>
-            Sblocca workspace
+            {busy ? "Apertura…" : "Apri StudyOS"}
           </Button>
         </div>
       </section>

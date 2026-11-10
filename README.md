@@ -1,6 +1,6 @@
 # StudyOS
 
-StudyOS è una PWA local-first per organizzare lo studio universitario: dashboard, calendario (con import/export .ics), task, timer e sessioni di studio, ripasso attivo a intervalli, materie, esami, libretto con media ponderata e proiezione del voto di laurea (Scienze biologiche e BARB, UNIMI), materiali, obiettivi, statistiche e backup. L'interfaccia si adatta a telefono, tablet (iPad, Galaxy Tab) e desktop.
+StudyOS è una PWA local-first per organizzare lo studio universitario: home con i primi passi, calendario (con import/export .ics), attività, timer e sessioni di studio, ripasso attivo a intervalli, materie, esami, libretto con media ponderata e proiezione del voto di laurea (Scienze biologiche e BARB, UNIMI), materiali, obiettivi, statistiche e backup. L'interfaccia si adatta a telefono, tablet (iPad, Galaxy Tab) e desktop.
 
 ## Avvio locale
 
@@ -45,16 +45,16 @@ docenti, contatti o orari tramite Firecrawl OSS locale, segui
 [`docs/barb-sync.md`](docs/barb-sync.md). La sincronizzazione è su richiesta:
 il browser non esegue scraping.
 
-Il **Calendario Esami BARB** è generale e indipendente dalle materie personali.
-Gli appelli verificati si possono scegliere per insegnamento o singola data e
-importare nel **Calendario personale**, evitando duplicati. Corsi e materie
+Gli **appelli ufficiali BARB** (Esami → Date ufficiali) sono generali e indipendenti
+dalle materie personali. Gli appelli verificati si possono scegliere per insegnamento
+o singola data e aggiungere al **Calendario**, evitando duplicati. Corsi e materie
 mostrano semestri distinti e icone scientifiche. Copertura, fonti e aggiornamento
 degli appelli: [`docs/barb-exams.md`](docs/barb-exams.md).
 
 ## Agenti
 
 ChatGPT usa il sito pubblicato, anche dal telefono: la chiave si incolla in
-**Impostazioni → Agenti** e non serve il programma sul computer. Claude, Cursor
+**Impostazioni → Agenti AI** e non serve il programma sul computer. Claude, Cursor
 e la finestra di sviluppo usano ancora `npm run agent`. Dettagli:
 [`docs/agent-mcp.md`](docs/agent-mcp.md).
 

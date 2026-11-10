@@ -34,9 +34,9 @@ export const SUBJECT_STATUS_LABEL: Record<Subject["status"], string> = {
 
 export const EXAM_STATUS_LABEL: Record<Exam["status"], string> = {
   planning: "Da pianificare",
-  studying: "In studio",
-  reviewing: "Ripasso",
-  ready: "Pronto",
+  studying: "In preparazione",
+  reviewing: "In ripasso",
+  ready: "Pronto per l'esame",
   done: "Sostenuto"
 };
 
@@ -154,6 +154,16 @@ export const formatMinutes = (minutes: number) => {
 };
 
 export const formatNumber = (value: number) => decimal.format(value);
+
+/** Tipo di pagina ufficiale da cui arrivano i dati del corso (sezione Fonti). */
+export const UNIVERSITY_SOURCE_KIND_LABEL: Record<string, string> = {
+  "calendario-didattico": "Calendario delle lezioni",
+  "contatti-ufficiali": "Contatti",
+  "elenco-insegnamenti": "Elenco insegnamenti",
+  "manifesto-pdf": "Manifesto (PDF)",
+  "piano-didattico": "Piano didattico",
+  "scheda-corso": "Scheda del corso"
+};
 
 /** Etichetta degli eventi senza orario, che occupano l'intera giornata. */
 export const ALL_DAY_LABEL = "Tutto il giorno";

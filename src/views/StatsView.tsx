@@ -51,23 +51,34 @@ export function StatsView() {
   const streak = studyStreak(sessions);
   const fortnightMinutes = dailyData.reduce((sum, day) => sum + day.ore * 60, 0);
 
+  const doneTasks = visibleTasks.filter((task) => task.status === "done").length;
+  const reviewsDone = topics.reduce((sum, topic) => sum + topic.completedReviews, 0);
   const kpis = [
     { label: "Questa settimana", value: `${formatHours(weeklyMinutes)} h`, detail: `su ${formatHours(weeklyTarget)} h di obiettivo`, progress: (weeklyMinutes / weeklyTarget) * 100 },
-    { label: "Task completate", value: `${taskRate}%`, detail: `${visibleTasks.filter((task) => task.status === "done").length} su ${visibleTasks.length}`, progress: taskRate },
-    { label: "Streak", value: `${streak}`, detail: streak === 1 ? "giorno consecutivo" : "giorni consecutivi" },
-    { label: "Ripassi fatti", value: `${topics.reduce((sum, topic) => sum + topic.completedReviews, 0)}`, detail: `${topics.length} argomenti tracciati` }
+    {
+      label: "Attività fatte",
+      value: visibleTasks.length ? `${taskRate}%` : "—",
+      detail: visibleTasks.length ? `${doneTasks} su ${visibleTasks.length}` : "Aggiungile in Attività",
+      progress: visibleTasks.length ? taskRate : undefined
+    },
+    { label: "Giorni di fila", value: `${streak}`, detail: streak ? (streak === 1 ? "giorno di studio" : "giorni consecutivi") : "Studia oggi per iniziare" },
+    {
+      label: "Ripassi fatti",
+      value: `${reviewsDone}`,
+      detail: topics.length ? `su ${topics.length} ${topics.length === 1 ? "argomento" : "argomenti"}` : "Aggiungi argomenti in Studio"
+    }
   ];
 
   return (
     <div>
-      <SectionTitle title="Statistiche" subtitle="Ore di studio, distribuzione per materia, preparazione esami e segnali da tenere d'occhio." />
+      <SectionTitle title="Statistiche" subtitle="Quanto studi, su quali materie e quanto sei pronto per gli esami." />
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {kpis.map((kpi) => (
           <div key={kpi.label} className="quiet-panel min-w-0 p-3.5">
             <p className="truncate text-[11px] font-black uppercase text-[var(--faint)]">{kpi.label}</p>
             <p className="mt-1 text-2xl font-black">{kpi.value}</p>
-            <p className="truncate text-xs font-bold text-[var(--muted)]">{kpi.detail}</p>
+            <p className="safe-text text-xs font-bold text-[var(--muted)]">{kpi.detail}</p>
             {kpi.progress !== undefined ? (
               <div className="mt-2">
                 <ProgressBar value={kpi.progress} />
@@ -80,9 +91,10 @@ export function StatsView() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel>
           <div className="mb-3 flex items-baseline justify-between gap-2">
-            <h3 className="text-lg font-black">Ore per giorno</h3>
-            <span className="text-xs font-bold text-[var(--muted)]">Ultimi 14 giorni · {formatHours(fortnightMinutes)} h totali</span>
+            <h3 className="text-lg font-black">Ore al giorno</h3>
+            <span className="text-xs font-bold text-[var(--muted)]">Ultimi 14 giorni · {formatHours(fortnightMinutes)} h in tutto</span>
           </div>
+          {fortnightMinutes ? (
           <div className="h-64" role="img" aria-label={`Ore di studio degli ultimi 14 giorni, totale ${formatHours(fortnightMinutes)} ore`}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dailyData} margin={{ left: -18, right: 4, top: 4 }}>
@@ -99,12 +111,15 @@ export function StatsView() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+          ) : (
+            <p className="text-sm text-[var(--muted)]">Ancora nessuna ora negli ultimi 14 giorni. Usa il timer in Studio o aggiungi lo studio fatto: le ore compariranno qui.</p>
+          )}
         </Panel>
 
         <Panel>
           <div className="mb-3 flex items-baseline justify-between gap-2">
             <h3 className="text-lg font-black">Preparazione esami</h3>
-            <span className="text-xs font-bold text-[var(--muted)]">In ordine di data</span>
+            <span className="text-xs font-bold text-[var(--muted)]">Dal più vicino</span>
           </div>
           {examData.length ? (
             <ul className="grid grid-cols-1 gap-3">
@@ -113,7 +128,7 @@ export function StatsView() {
                   <div className="mb-1 flex items-center justify-between gap-3 text-sm">
                     <span className="one-line-safe min-w-0 font-bold">{exam.name}</span>
                     <span className="shrink-0 text-xs font-black">
-                      {exam.prep}% <span className="text-[var(--muted)]">· tra {exam.days} {exam.days === 1 ? "giorno" : "giorni"}</span>
+                      {exam.prep}% pronto <span className="text-[var(--muted)]">· {exam.days === 0 ? "oggi" : exam.days === 1 ? "domani" : `tra ${exam.days} giorni`}</span>
                     </span>
                   </div>
                   <ProgressBar value={exam.prep} color={exam.color} />
@@ -121,7 +136,7 @@ export function StatsView() {
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-[var(--muted)]">Nessun esame in arrivo.</p>
+            <p className="text-sm text-[var(--muted)]">Nessun esame in programma. Aggiungi la data di un esame nella sezione Esami per seguire qui quanto sei pronto.</p>
           )}
         </Panel>
 
@@ -155,17 +170,17 @@ export function StatsView() {
               </ul>
             </div>
           ) : (
-            <p className="text-sm text-[var(--muted)]">Registra sessioni di studio collegate a una materia per vedere la distribuzione.</p>
+            <p className="text-sm text-[var(--muted)]">Quando salvi una sessione di studio scegliendo la materia, qui vedrai come dividi le ore.</p>
           )}
         </Panel>
 
         <Panel>
-          <h3 className="mb-3 text-lg font-black">Segnali</h3>
+          <h3 className="mb-3 text-lg font-black">Da tenere d'occhio</h3>
           <div className="grid grid-cols-2 gap-2">
-            <Signal label="Task in ritardo" value={visibleTasks.filter((task) => task.status !== "done" && task.dueDate && isBefore(parseISO(task.dueDate), startOfDay(new Date()))).length} tone="var(--accent-3)" />
-            <Signal label="Task bloccate" value={visibleTasks.filter((task) => task.status === "blocked").length} tone="var(--warning)" />
-            <Signal label="Task rimandate" value={visibleTasks.filter((task) => task.status === "postponed").length} tone="var(--accent-2)" />
-            <Signal label="Sessioni completate" value={sessions.filter((session) => session.status === "completed").length} tone="var(--accent)" />
+            <Signal label="Attività in ritardo" value={visibleTasks.filter((task) => task.status !== "done" && task.dueDate && isBefore(parseISO(task.dueDate), startOfDay(new Date()))).length} tone="var(--accent-3)" />
+            <Signal label="Attività bloccate" value={visibleTasks.filter((task) => task.status === "blocked").length} tone="var(--warning)" />
+            <Signal label="Attività rimandate" value={visibleTasks.filter((task) => task.status === "postponed").length} tone="var(--accent-2)" />
+            <Signal label="Sessioni di studio salvate" value={sessions.filter((session) => session.status === "completed").length} tone="var(--accent)" />
           </div>
         </Panel>
       </div>
@@ -179,7 +194,7 @@ function Signal({ value, label, tone }: { value: number; label: string; tone: st
       <span className="h-8 w-1.5 shrink-0 rounded-full" style={{ background: tone }} />
       <div className="min-w-0">
         <div className="text-2xl font-black leading-tight">{value}</div>
-        <div className="truncate text-xs font-bold text-[var(--muted)]">{label}</div>
+        <div className="safe-text text-xs font-bold text-[var(--muted)]">{label}</div>
       </div>
     </div>
   );

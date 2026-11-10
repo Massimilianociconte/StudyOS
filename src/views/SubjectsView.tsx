@@ -15,6 +15,18 @@ import { TopicManager } from "../components/TopicManager";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
+// Nomi leggibili dei colori per i lettori di schermo (i codici esadecimali non dicono nulla).
+const SWATCH_NAMES: Record<string, string> = {
+  "#7CF7C8": "verde acqua",
+  "#9FB7FF": "blu",
+  "#F7A8C4": "rosa",
+  "#FFD37C": "giallo",
+  "#C8A2FF": "lilla",
+  "#7FE3F5": "azzurro",
+  "#FFAE7C": "arancione",
+  "#A6E3A1": "verde"
+};
+const swatchLabel = (swatch: string) => `Colore ${SWATCH_NAMES[swatch] ?? swatch}`;
 
 type StoreState = ReturnType<typeof useStudyStore.getState>;
 
@@ -82,7 +94,23 @@ export function SubjectsView() {
 
   return (
     <div>
-      <SectionTitle title="Materie" subtitle={`${active.length} ${active.length === 1 ? "materia in corso" : "materie in corso"} · ${totalCfu} CFU. Clicca una materia per modificarla, gestirne materiali e argomenti.`} />
+      <SectionTitle
+        title="Materie"
+        subtitle={
+          active.length
+            ? `${active.length} ${active.length === 1 ? "materia in corso" : "materie in corso"} · ${totalCfu} CFU. Apri una materia per vederne esami, materiali e argomenti.`
+            : "Aggiungi le materie che segui: ognuna raccoglie esami, attività, materiali e ore di studio."
+        }
+        action={
+          // Secondo modo per aggiungere materie: sceglierle dal piano del corso. Quando l'elenco è
+          // vuoto lo stesso invito è nel riquadro sotto, per non mostrarlo due volte.
+          showBarb && active.length ? (
+            <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
+              Scegli dal corso di laurea
+            </Button>
+          ) : undefined
+        }
+      />
 
       <NewSubjectBar onAdd={async (name, color) => void (await addSubject({ name, color, status: "active", icon: "BookOpen" }))} />
 
@@ -96,28 +124,27 @@ export function SubjectsView() {
         })}
       </div> : null}
       {active.length > 0 ? <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Filtra materie per semestre">
-        {[{ id: "tutti" as const, label: "Tutti" }, ...SEMESTER_IDS.map((id) => ({ id, label: id === "annuale" ? "Annuali" : SEMESTER_LABEL[id] }))].map((item) => <button key={item.id} type="button" aria-pressed={semester === item.id} onClick={() => setSemester(item.id)} className={`min-h-9 rounded-full px-3 text-xs font-black ${semester === item.id ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)]"}`}>{item.label}</button>)}
+        {[{ id: "tutti" as const, label: "Tutte" }, ...SEMESTER_IDS.map((id) => ({ id, label: id === "annuale" ? "Annuali" : SEMESTER_LABEL[id] }))].map((item) => <button key={item.id} type="button" aria-pressed={semester === item.id} onClick={() => setSemester(item.id)} className={`min-h-9 rounded-full px-3 text-xs font-black ${semester === item.id ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)]"}`}>{item.label}</button>)}
       </div> : null}
 
       {active.length === 0 ? (
         <EmptyState
           icon="BookOpen"
-          title="Nessuna materia"
-          body="Aggiungine una qui sopra, oppure importa i corsi dalla sezione BARB · UNIMI."
+          title="Ancora nessuna materia"
+          body={
+            showBarb
+              ? "Scrivi il nome qui sopra e premi «Aggiungi materia», oppure scegli le materie dal piano del corso di laurea."
+              : "Scrivi il nome qui sopra e premi «Aggiungi materia»: qui vedrai CFU, esami e ore di studio."
+          }
           action={
-            <>
-              <Button variant="primary" icon="Plus" onClick={() => document.getElementById("new-subject-name")?.focus()}>
-                Aggiungi materia
+            showBarb ? (
+              <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
+                Scegli dal corso di laurea
               </Button>
-              {showBarb ? (
-                <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
-                  Vai al corso BARB
-                </Button>
-              ) : null}
-            </>
+            ) : undefined
           }
         />
-      ) : visible.length === 0 ? <EmptyState icon="CalendarDays" title="Nessuna materia in questo periodo" body="Scegli un altro semestre oppure torna a tutte le materie." action={<Button variant="soft" onClick={() => setSemester("tutti")}>Tutte le materie</Button>} /> : (
+      ) : visible.length === 0 ? <EmptyState icon="CalendarDays" title="Nessuna materia in questo periodo" body="Scegli un altro semestre oppure torna a tutte le materie." action={<Button variant="soft" onClick={() => setSemester("tutti")}>Mostra tutte le materie</Button>} /> : (
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
           {visible.map((subject) => (
             <SubjectCard
@@ -152,18 +179,19 @@ function NewSubjectBar({ onAdd }: { onAdd: (name: string, color: string) => Prom
   return (
     <form onSubmit={submit} className="soft-panel mb-4 flex flex-col gap-2 p-2.5 md:flex-row md:items-center">
       <label className="relative block min-w-0 flex-1">
-        <span className="sr-only">Nome nuova materia</span>
+        <span className="sr-only">Nome della nuova materia</span>
         <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input id="new-subject-name" className={`${inputClass} pl-10`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nuova materia (Es. Biochimica)" />
+        <input id="new-subject-name" className={`${inputClass} pl-10`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome della materia (Es. Biochimica)" />
       </label>
-      <div className="flex items-center gap-1.5 px-1" role="radiogroup" aria-label="Colore">
+      <div className="flex items-center gap-1.5 px-1" role="radiogroup" aria-label="Colore della materia">
         {SWATCHES.map((swatch) => (
           <button
             key={swatch}
             type="button"
             role="radio"
             aria-checked={color === swatch}
-            aria-label={`Colore ${swatch}`}
+            aria-label={swatchLabel(swatch)}
+            title={swatchLabel(swatch)}
             onClick={() => setColor(swatch)}
             className={`h-7 w-7 rounded-full border-2 ${color === swatch ? "border-[var(--text)]" : "border-transparent"}`}
             style={{ background: swatch }}
@@ -175,7 +203,7 @@ function NewSubjectBar({ onAdd }: { onAdd: (name: string, color: string) => Prom
         disabled={!name.trim()}
         className="motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
       >
-        <Icon name="Plus" className="h-4 w-4" /> Aggiungi
+        <Icon name="Plus" className="h-4 w-4" /> Aggiungi materia
       </button>
     </form>
   );
@@ -202,17 +230,17 @@ function SubjectCard({
         </span>
         <button type="button" onClick={onOpen} aria-haspopup="dialog" className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-base font-black leading-snug">{subject.name}</h3>
-          <p className="one-line-safe text-xs font-bold text-[var(--muted)]">{subject.teacher || "Docente non impostato"}</p>
+          <p className="one-line-safe text-xs font-bold text-[var(--muted)]">{subject.teacher || "Docente non indicato"}</p>
         </button>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold text-[var(--muted)]">
         <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag>
         <span>{subject.cfu} CFU</span>
-        <span>{stats.openTasks.length} task aperte</span>
-        <span>{formatHours(stats.studyMinutes)} h studio</span>
+        <span>{stats.openTasks.length} attività da fare</span>
+        <span>{formatHours(stats.studyMinutes)} h di studio</span>
         {stats.materials.length ? (
-          <span className="inline-flex items-center gap-1">
+          <span className="inline-flex items-center gap-1" title={`${stats.materials.length} ${stats.materials.length === 1 ? "materiale" : "materiali"}`}>
             <Icon name="Paperclip" className="h-3 w-3" />
             {stats.materials.length}
           </span>
@@ -222,7 +250,7 @@ function SubjectCard({
       {course ? <BarbExamAvailability course={course} /> : null}
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between text-[11px] font-black">
-          <span className="text-[var(--faint)] uppercase">{stats.exam ? "Preparazione esame" : "Avanzamento task"}</span>
+          <span className="text-[var(--faint)] uppercase">{stats.exam ? "Preparazione all'esame" : "Attività completate"}</span>
           <span>{stats.progress}%</span>
         </div>
         <ProgressBar value={stats.progress} color={subject.color} />
@@ -247,8 +275,8 @@ function SubjectCard({
             {shortDate(stats.exam.date)} · {studyDaysUntil(stats.exam.date)} gg
           </Tag>
         ) : null}
-        <button type="button" onClick={onOpen} className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-          Dettagli <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+        <button type="button" onClick={onOpen} aria-label={`Apri ${subject.name}`} className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
+          Apri <Icon name="ChevronRight" className="h-3.5 w-3.5" />
         </button>
       </div>
     </article>
@@ -284,17 +312,17 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
   const save = async () => {
     if (!subject) return;
     if (!draft.name.trim()) {
-      fail("Il nome non può essere vuoto.");
+      fail("Scrivi il nome della materia.");
       return;
     }
     const cfu = Number(draft.cfu);
     const targetGrade = draft.targetGrade.trim() ? Number(draft.targetGrade) : undefined;
     if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) {
-      fail("CFU non validi (0–60).");
+      fail("CFU non validi: scrivi un numero da 0 a 60.");
       return;
     }
     if (targetGrade !== undefined && (!Number.isFinite(targetGrade) || targetGrade < 18 || targetGrade > 31)) {
-      fail("Voto obiettivo tra 18 e 30 (31 = 30 e lode).");
+      fail("Voto obiettivo non valido: da 18 a 30 (31 = 30 e lode).");
       return;
     }
     await updateSubject(subject.id, {
@@ -308,7 +336,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
       color: draft.color,
       notes: draft.notes
     });
-    ok("Salvato.");
+    ok("Modifiche salvate.");
   };
 
   const archived = subject?.status === "archived";
@@ -335,11 +363,11 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
               variant={archived ? "soft" : "danger"}
               icon="Archive"
               onClick={() => {
-                if (!archived && !window.confirm(`Archiviare "${subject.name}"? Task, esami e materiali restano collegati.`)) return;
+                if (!archived && !window.confirm(`Archiviare "${subject.name}"? Sparisce dall'elenco, ma attività, esami e materiali restano collegati. Puoi ripristinarla quando vuoi.`)) return;
                 void updateSubject(subject.id, { status: archived ? "active" : "archived" });
               }}
             >
-              {archived ? "Ripristina" : "Archivia"}
+              {archived ? "Ripristina materia" : "Archivia materia"}
             </Button>
             <span className="flex-1" />
             {feedback ? (
@@ -348,7 +376,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
               </span>
             ) : null}
             <Button variant="primary" icon="Check" onClick={() => void save()}>
-              Salva
+              Salva modifiche
             </Button>
           </div>
         ) : null
@@ -358,15 +386,15 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
         <div className="grid grid-cols-1 gap-5">
           <dl className="grid grid-cols-3 gap-2">
             <div className="rounded-[16px] bg-[var(--surface-soft)] p-3">
-              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Studio</dt>
+              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Ore di studio</dt>
               <dd className="text-lg font-black">{formatHours(stats.studyMinutes)} h</dd>
             </div>
             <div className="rounded-[16px] bg-[var(--surface-soft)] p-3">
-              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Task aperte</dt>
+              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Da fare</dt>
               <dd className="text-lg font-black">{stats.openTasks.length}</dd>
             </div>
             <div className="rounded-[16px] bg-[var(--surface-soft)] p-3">
-              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Esame</dt>
+              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Esame tra</dt>
               <dd className="text-lg font-black">{stats.exam ? `${studyDaysUntil(stats.exam.date)} gg` : "—"}</dd>
             </div>
           </dl>
@@ -379,20 +407,20 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
               <input className={inputClass} value={draft.name} onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} />
             </Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Docente">
-                <input className={inputClass} value={draft.teacher} onChange={(event) => setDraft((value) => ({ ...value, teacher: event.target.value }))} />
+              <Field label="Docente (facoltativo)">
+                <input className={inputClass} value={draft.teacher} onChange={(event) => setDraft((value) => ({ ...value, teacher: event.target.value }))} placeholder="Es. Mario Rossi" />
               </Field>
               <Field label="Semestre">
                 <select className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))}>
                   <option value="ufficiale">{course ? `Dal piano ufficiale: ${SEMESTER_LABEL[course.semester]}` : `Periodo attuale: ${SEMESTER_LABEL[subjectSemester(subject)]}`}</option>
                   {SEMESTER_IDS.map((id) => <option key={id} value={id}>{SEMESTER_LABEL[id]}</option>)}
                 </select>
-                {course ? <p className="mt-1 text-xs text-[var(--faint)]">Puoi scegliere un periodo personale per il tuo piano.</p> : null}
+                {course ? <p className="mt-1 text-xs text-[var(--faint)]">Se la segui in un altro periodo, sceglilo qui.</p> : null}
               </Field>
               <Field label="CFU">
                 <input className={inputClass} type="number" min={0} max={60} value={draft.cfu} onChange={(event) => setDraft((value) => ({ ...value, cfu: event.target.value }))} />
               </Field>
-              <Field label="Voto obiettivo">
+              <Field label="Voto obiettivo (facoltativo)">
                 <input
                   className={inputClass}
                   type="number"
@@ -410,7 +438,8 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                   <button
                     key={swatch}
                     type="button"
-                    aria-label={`Colore ${swatch}`}
+                    aria-label={swatchLabel(swatch)}
+                    title={swatchLabel(swatch)}
                     aria-pressed={draft.color === swatch}
                     onClick={() => setDraft((value) => ({ ...value, color: swatch }))}
                     className={`h-8 w-8 rounded-full border-2 ${draft.color.toLowerCase() === swatch.toLowerCase() ? "border-[var(--text)]" : "border-transparent"}`}
@@ -426,8 +455,8 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                 />
               </div>
             </Field>
-            <Field label="Note">
-              <textarea className={`${inputClass} min-h-20 py-3`} value={draft.notes} onChange={(event) => setDraft((value) => ({ ...value, notes: event.target.value }))} />
+            <Field label="Note (facoltative)">
+              <textarea className={`${inputClass} min-h-20 py-3`} value={draft.notes} onChange={(event) => setDraft((value) => ({ ...value, notes: event.target.value }))} placeholder="Es. Ricevimento il martedì alle 14" />
             </Field>
           </section>
 
@@ -436,7 +465,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
               <h4 className="text-xs font-black uppercase text-[var(--faint)]">Materiali · {stats.materials.length}</h4>
               <div className="flex flex-wrap justify-end gap-1.5">
                 <label className="motion-safe inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]">
-                  <Icon name="Upload" className="h-3.5 w-3.5" /> Allegato
+                  <Icon name="Upload" className="h-3.5 w-3.5" /> Carica un file
                   <input
                     type="file"
                     className="sr-only"
@@ -448,13 +477,13 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                       try {
                         await addAttachment(file, { type: "subject", id: subject.id });
                       } catch (error) {
-                        fail(error instanceof Error ? error.message : "Allegato non importato.");
+                        fail(error instanceof Error ? error.message : "File non caricato: riprova o scegli un altro file.");
                       }
                     }}
                   />
                 </label>
                 <label className="motion-safe inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]">
-                  <Icon name="Image" className="h-3.5 w-3.5" /> Copertina
+                  <Icon name="Image" className="h-3.5 w-3.5" /> {subject.cover ? "Cambia copertina" : "Copertina"}
                   <input
                     type="file"
                     accept="image/*"
@@ -464,7 +493,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                         const cover = await readImageFile(event.target.files?.[0]);
                         if (cover) await updateSubject(subject.id, { cover });
                       } catch (error) {
-                        fail(error instanceof Error ? error.message : "Immagine non valida.");
+                        fail(error instanceof Error ? error.message : "Immagine non valida: scegli un altro file.");
                       } finally {
                         event.target.value = "";
                       }
@@ -506,8 +535,8 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                         label={`Elimina ${attachment.name}`}
                         className="h-8 w-8 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
                         onClick={() => {
-                          const label = attachment.name.length > 80 ? `${attachment.name.slice(0, 77)}...` : attachment.name;
-                          if (window.confirm(`Eliminare "${label}" dai materiali della materia?`)) void deleteAttachment(attachment.id);
+                          const label = attachment.name.length > 80 ? `${attachment.name.slice(0, 79)}…` : attachment.name;
+                          if (window.confirm(`Eliminare "${label}"? Il materiale viene tolto dall'app e non si può recuperare.`)) void deleteAttachment(attachment.id);
                         }}
                       />
                     </li>
@@ -515,15 +544,15 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                 )}
               </ul>
             ) : (
-              <p className="rounded-[14px] border border-dashed border-[var(--border)] p-3 text-sm text-[var(--muted)]">Nessun materiale collegato.</p>
+              <p className="rounded-[14px] border border-dashed border-[var(--border)] p-3 text-sm text-[var(--muted)]">Ancora nessun materiale: carica qui dispense, appunti o slide di questa materia.</p>
             )}
           </section>
 
           <section>
             <div className="mb-2 flex items-center justify-between gap-2">
-              <h4 className="text-xs font-black uppercase text-[var(--faint)]">Task aperte · {stats.openTasks.length}</h4>
+              <h4 className="text-xs font-black uppercase text-[var(--faint)]">Attività da fare · {stats.openTasks.length}</h4>
               <button type="button" onClick={() => setActiveView("tasks")} className="text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-                Vai alle task
+                Vai alle attività
               </button>
             </div>
             {stats.openTasks.length ? (
@@ -537,7 +566,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Nessuna task aperta.</p>
+              <p className="text-sm text-[var(--muted)]">Nessuna attività da fare per questa materia.</p>
             )}
           </section>
 
@@ -565,9 +594,9 @@ function AttachmentInlineEditor({
   const [tags, setTags] = useState(attachment.tags.join(", "));
   return (
     <div className="grid grid-cols-1 gap-2 rounded-[16px] bg-[var(--surface-soft)] p-3">
-      <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} aria-label="Nome allegato" />
-      <input className={inputClass} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Descrizione" aria-label="Descrizione" />
-      <input className={inputClass} value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Tag separati da virgola" aria-label="Tag" />
+      <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} aria-label="Nome del materiale" />
+      <input className={inputClass} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Descrizione (facoltativa)" aria-label="Descrizione (facoltativa)" />
+      <input className={inputClass} value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Etichette separate da virgola (Es. appunti, esame)" aria-label="Etichette separate da virgola (facoltative)" />
       <div className="flex justify-end gap-2">
         <Button variant="soft" onClick={onCancel} className="min-h-9">
           Annulla
@@ -588,7 +617,7 @@ function AttachmentInlineEditor({
             })
           }
         >
-          Salva
+          Salva modifiche
         </Button>
       </div>
     </div>

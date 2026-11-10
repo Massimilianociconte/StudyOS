@@ -20,7 +20,7 @@ import {
 import { it } from "date-fns/locale";
 import { useStudyStore } from "../store/useStudyStore";
 import type { CalendarEvent, EventCategory, Exam, Task } from "../types";
-import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { Button, EmptyState, Field, IconButton, Panel, ProgressBar, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
@@ -51,14 +51,15 @@ import { resolveBarbCourse } from "../lib/university/examSessions";
 type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
 type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
 
+// Le viste di uso comune vengono prima; gli id restano quelli salvati in "calendar.mode".
 const modes: { id: CalendarMode; label: string; title: string }[] = [
-  { id: "day", label: "Giorno", title: "Un solo giorno, ora per ora" },
-  { id: "week", label: "Settimana", title: "Griglia oraria di 7 giorni (elenco su telefono)" },
-  { id: "month", label: "Mese", title: "Panoramica del mese, un riquadro al giorno" },
-  { id: "agenda", label: "Agenda", title: "Elenco di eventi, scadenze ed esami dei prossimi 14 giorni" },
-  { id: "exam", label: "Sessione", title: "Conto alla rovescia degli esami in arrivo" },
-  { id: "semester", label: "Semestre", title: "Panoramica delle materie con conteggio eventi" },
-  { id: "focus", label: "Focus", title: "Giornata concentrata 8–19, senza distrazioni" }
+  { id: "day", label: "Giorno", title: "Un giorno, ora per ora" },
+  { id: "week", label: "Settimana", title: "Sette giorni con gli orari (sul telefono, un elenco giorno per giorno)" },
+  { id: "month", label: "Mese", title: "Tutto il mese, un riquadro per giorno" },
+  { id: "agenda", label: "Agenda", title: "Elenco di eventi, scadenze ed esami delle prossime due settimane" },
+  { id: "exam", label: "Esami", title: "Quanti giorni mancano a ogni esame e a che punto è la preparazione" },
+  { id: "semester", label: "Per materia", title: "Le tue materie, con quanti eventi hai in calendario per ognuna" },
+  { id: "focus", label: "Giornata di studio", title: "Un giorno dalle 8 alle 19, con le ore più grandi" }
 ];
 
 const categories = (Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => ({ id, label: EVENT_CATEGORY_LABEL[id] }));
@@ -179,7 +180,7 @@ export function CalendarView() {
     // Spostare un'occorrenza sposta l'intera serie dello stesso scarto (niente eccezioni per singola data).
     const delta = nextStart.getTime() - parseISO(item.start).getTime();
     if (!delta) return;
-    if (item.recurring && !window.confirm(`"${series.title}" è un evento ripetuto: spostare tutta la serie?`)) return;
+    if (item.recurring && !window.confirm(`"${series.title}" si ripete: spostando questa data si spostano allo stesso modo anche tutte le altre. Continuare?`)) return;
     const start = new Date(parseISO(series.start).getTime() + delta);
     const end = new Date(parseISO(series.end).getTime() + delta);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
@@ -206,25 +207,41 @@ export function CalendarView() {
   return (
     <div>
       <SectionTitle
-        title="Calendario personale"
-        subtitle="I tuoi eventi, scadenze ed esami. Gli appelli BARB compaiono qui quando scegli di importarli."
+        title="Calendario"
+        subtitle="Lezioni, studio, scadenze ed esami in un'unica vista: clicca un giorno o un orario per aggiungere un evento."
         action={
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <CalendarTransfer />
-            <Button icon="CalendarPlus" variant="soft" onClick={() => setBarbImportOpen(true)}>
-              Importa appelli BARB
-            </Button>
-            <Button icon="Plus" variant="primary" onClick={() => setCreator({ at: defaultStartFor(new Date()), kind: "event" })}>
-              Nuovo
-            </Button>
+          // Azione principale per prima; sotto, più discrete, le azioni che si usano di rado.
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button icon="Plus" variant="primary" onClick={() => setCreator({ at: defaultStartFor(new Date()), kind: "event" })}>
+                Nuovo evento
+              </Button>
+              <Button
+                icon="CalendarPlus"
+                variant="soft"
+                onClick={() => setBarbImportOpen(true)}
+                title="Scegli le date d'esame ufficiali delle tue materie e aggiungile al calendario"
+              >
+                Aggiungi appelli ufficiali
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-1">
+              <Button
+                variant="ghost"
+                icon="Landmark"
+                title="Apri le date ufficiali degli appelli in Esami"
+                onClick={() => {
+                  writeUiState("exams.tab", "barb", "device");
+                  setActiveView("exams");
+                }}
+              >
+                Vedi appelli ufficiali
+              </Button>
+              <CalendarTransfer />
+            </div>
           </div>
         }
       />
-
-      <div className="quiet-panel mb-4 flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
-        <span className="font-bold text-[var(--muted)]">Calendario dello studente · appelli selezionati e impegni personali</span>
-        <Button variant="ghost" icon="Landmark" onClick={() => { writeUiState("exams.tab", "barb", "device"); setActiveView("exams"); }}>Calendario Esami BARB</Button>
-      </div>
       {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -244,7 +261,7 @@ export function CalendarView() {
           </div>
         ) : (
           <p className="min-h-11 content-center text-sm font-black text-[var(--muted)] sm:ml-auto">
-            {mode === "exam" ? "Tutti gli esami" : "Panoramica materie"}
+            {mode === "exam" ? "Giorni che mancano agli esami" : "Eventi per materia"}
           </p>
         )}
       </div>
@@ -294,7 +311,7 @@ export function CalendarView() {
 
         {mode === "agenda" ? <Agenda from={range.from} to={range.to} occurrences={occurrences} tasks={calendarTasks} exams={exams} handlers={handlers} /> : null}
         {mode === "exam" ? <ExamSession exams={exams} subjects={subjects} onGoExams={() => setActiveView("exams")} /> : null}
-        {mode === "semester" ? <SemesterMap events={events} subjects={subjects} /> : null}
+        {mode === "semester" ? <SemesterMap events={events} subjects={subjects} onGoSubjects={() => setActiveView("subjects")} /> : null}
       </Panel>
 
       {editingEvent ? (
@@ -307,9 +324,9 @@ export function CalendarView() {
             setEditingEventId(null);
           }}
           onDelete={async () => {
-            const label = editingEvent.title.length > 80 ? `${editingEvent.title.slice(0, 77)}...` : editingEvent.title;
-            const series = editingEvent.recurrence && editingEvent.recurrence !== "none" ? " (tutta la serie)" : "";
-            if (!window.confirm(`Eliminare l'evento "${label}"${series}?`)) return;
+            const label = editingEvent.title.length > 80 ? `${editingEvent.title.slice(0, 77)}…` : editingEvent.title;
+            const series = editingEvent.recurrence && editingEvent.recurrence !== "none" ? " Si ripete: verranno eliminate tutte le sue date." : "";
+            if (!window.confirm(`Eliminare l'evento "${label}"?${series} Non si può annullare.`)) return;
             await deleteEvent(editingEvent.id);
             setEditingEventId(null);
           }}
@@ -356,8 +373,8 @@ export function CalendarView() {
           onClose={() => setEditingTaskId(null)}
           onSave={updateTask}
           onDelete={async (task) => {
-            const label = task.title.length > 80 ? `${task.title.slice(0, 77)}...` : task.title;
-            if (!window.confirm(`Eliminare la task "${label}"?`)) return;
+            const label = task.title.length > 80 ? `${task.title.slice(0, 77)}…` : task.title;
+            if (!window.confirm(`Eliminare l'attività "${label}"? Sparirà anche dalla sezione Attività e non si può annullare.`)) return;
             await deleteTask(task.id);
             setEditingTaskId(null);
             setPreview(null);
@@ -538,12 +555,12 @@ function TimeGrid({
         })}
       </div>
 
-      {/* riga "tutto il giorno": eventi senza orario, esami e task in scadenza */}
+      {/* riga "tutto il giorno": eventi senza orario, esami e attività in scadenza */}
       {hasAllDay ? (
         <div className="mt-1.5 grid gap-x-1.5 border-b border-[var(--border)] pb-1.5" style={{ gridTemplateColumns: columns }}>
           <span
             className="pt-1 text-right text-[10px] font-black uppercase leading-tight text-[var(--faint)]"
-            title="Eventi di tutto il giorno, esami e scadenze"
+            title="Eventi senza orario, esami e attività in scadenza"
           >
             Tutto il giorno
           </span>
@@ -570,7 +587,7 @@ function TimeGrid({
                     onClick={() => (days.length > 1 ? onPickDay?.(entry.day) : setExpandedDays((value) => [...value, dayKey]))}
                     className="flex min-h-11 items-center text-left text-[11px] font-black text-[var(--muted)] hover:text-[var(--text)]"
                   >
-                    +{hidden} altre
+                    +{hidden} {hidden === 1 ? "altra" : "altre"}
                   </button>
                 ) : expanded && days.length === 1 && entry.tasks.length > base ? (
                   <button
@@ -593,7 +610,7 @@ function TimeGrid({
           onClick={onExpandHours}
           className="mt-1.5 w-full rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-center text-xs font-black text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
         >
-          {hiddenBefore} {hiddenBefore === 1 ? "evento prima" : "eventi prima"} delle {String(hourStart).padStart(2, "0")}:00 · mostra tutto
+          {hiddenBefore} {hiddenBefore === 1 ? "evento prima" : "eventi prima"} delle {String(hourStart).padStart(2, "0")}:00 · mostra tutte le ore
         </button>
       ) : null}
 
@@ -618,7 +635,7 @@ function TimeGrid({
             <div
               key={key}
               role="presentation"
-              title="Clicca per creare un evento qui"
+              title="Clicca su un orario libero per aggiungere un evento"
               className={`relative cursor-copy overflow-hidden rounded-[14px] ${dropTarget === key ? "bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]" : today ? "bg-[var(--surface-soft)]" : ""}`}
               style={{
                 height: gridHeight,
@@ -708,7 +725,7 @@ function TimeGrid({
                       style={{ display: "-webkit-box", WebkitLineClamp: titleLines, WebkitBoxOrient: "vertical", overflow: "hidden" }}
                     >
                       {placed.item.recurring ? (
-                        <span role="img" aria-label="Ripetuto">
+                        <span role="img" aria-label="Si ripete">
                           ↻{" "}
                         </span>
                       ) : null}
@@ -736,7 +753,7 @@ function TimeGrid({
           onClick={onExpandHours}
           className="mt-1.5 w-full rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-center text-xs font-black text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
         >
-          {hiddenAfter} {hiddenAfter === 1 ? "evento dopo" : "eventi dopo"} le {String(hourEnd).padStart(2, "0")}:00 · mostra tutto
+          {hiddenAfter} {hiddenAfter === 1 ? "evento dopo" : "eventi dopo"} le {String(hourEnd).padStart(2, "0")}:00 · mostra tutte le ore
         </button>
       ) : null}
     </div>
@@ -753,7 +770,7 @@ function TaskChip({ task, handlers }: { task: Task; handlers: Handlers }) {
     >
       <button
         type="button"
-        aria-label={done ? `Riapri "${task.title}"` : `Completa "${task.title}"`}
+        aria-label={done ? `Segna "${task.title}" come da fare` : `Segna "${task.title}" come fatta`}
         onClick={(event) => {
           event.stopPropagation();
           handlers.onToggleTask(task.id);
@@ -772,7 +789,7 @@ function TaskChip({ task, handlers }: { task: Task; handlers: Handlers }) {
         onMouseEnter={(event) => handlers.onPreviewTask(task, pointerPoint(event))}
         onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
         onMouseLeave={handlers.onPreviewHide}
-        aria-label={`Modifica "${task.title}"`}
+        aria-label={`Apri l'attività "${task.title}"`}
         className={`min-w-0 flex-1 truncate text-left ${done ? "line-through" : ""} ${overdue ? "text-[var(--danger-text)]" : ""}`}
       >
         {task.title}
@@ -802,7 +819,7 @@ function AllDayChip({ item, handlers }: { item: EventOccurrence; handlers: Handl
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
       <span className="min-w-0 truncate">
         {item.recurring ? (
-          <span role="img" aria-label="Ripetuto">
+          <span role="img" aria-label="Si ripete">
             ↻{" "}
           </span>
         ) : null}
@@ -818,7 +835,7 @@ function ExamChip({ exam, subjects }: { exam: Exam; subjects: Subjects }) {
     <div
       className="flex min-w-0 cursor-default items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-[11px] font-black"
       style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))` }}
-      title={`Esame · ${subjectName(subjects, exam.subjectId)} · preparazione ${exam.preparation}%`}
+      title={`Esame di ${subjectName(subjects, exam.subjectId)} · preparazione al ${exam.preparation}%`}
       // Nella cella del mese il click crea un evento: cliccare un esame non deve farlo.
       onClick={(event) => event.stopPropagation()}
     >
@@ -860,14 +877,14 @@ function DayList({
                 type="button"
                 onClick={() => handlers.onCreate(defaultStartFor(day))}
                 className="grid h-11 min-w-11 place-items-center rounded-full bg-[var(--surface-soft)] px-2.5"
-                aria-label={`Aggiungi il ${format(day, "d MMMM", { locale: it })}`}
-                title={`Aggiungi il ${format(day, "d MMMM", { locale: it })}`}
+                aria-label={`Aggiungi un evento il ${format(day, "d MMMM", { locale: it })}`}
+                title={`Aggiungi un evento il ${format(day, "d MMMM", { locale: it })}`}
               >
                 <Icon name="Plus" className="h-4 w-4" />
               </button>
             </div>
             {empty ? (
-              <p className="rounded-[14px] border border-dashed border-[var(--border)] px-3 py-2 text-xs font-bold text-[var(--faint)]">Libero</p>
+              <p className="rounded-[14px] border border-dashed border-[var(--border)] px-3 py-2 text-xs font-bold text-[var(--faint)]">Nessun impegno</p>
             ) : (
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                 {dayExams.map((exam) => (
@@ -917,7 +934,7 @@ function EventRow({ item, handlers }: { item: EventOccurrence; handlers: Handler
       <span className="min-w-0 flex-1">
         <span className="one-line-safe block text-sm font-extrabold">
           {item.recurring ? (
-            <span role="img" aria-label="Ripetuto">
+            <span role="img" aria-label="Si ripete">
               ↻{" "}
             </span>
           ) : null}
@@ -977,7 +994,7 @@ function MonthGrid({
           <div
             key={key}
             role="presentation"
-            title="Clicca per creare un evento"
+            title="Clicca per aggiungere un evento in questo giorno"
             onClick={() => handlers.onCreate(defaultStartFor(day))}
             onDragOver={(event) => {
               event.preventDefault();
@@ -1113,7 +1130,18 @@ function Agenda({
     .filter((section) => section.events.length || section.tasks.length || section.exams.length);
 
   if (!sections.length && !overdue.length) {
-    return <p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Niente in programma nelle prossime due settimane.</p>;
+    return (
+      <EmptyState
+        icon="CalendarDays"
+        title="Niente in programma"
+        body="In queste due settimane non hai eventi, scadenze o esami: quello che aggiungi comparirà qui, giorno per giorno."
+        action={
+          <Button variant="primary" icon="Plus" onClick={() => handlers.onCreate(defaultStartFor(from))}>
+            Nuovo evento
+          </Button>
+        }
+      />
+    );
   }
 
   const dayTitle = (day: Date) => {
@@ -1125,7 +1153,7 @@ function Agenda({
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
       {overdue.length && isSameDay(from, startOfDay(new Date())) ? (
-        <section aria-label="Task in ritardo">
+        <section aria-label="Attività in ritardo">
           <h3 className="mb-1.5 text-xs font-black uppercase text-[var(--danger-text)]">In ritardo · {overdue.length}</h3>
           <ul className="grid grid-cols-[minmax(0,1fr)] gap-1 sm:grid-cols-2">
             {overdue.map((task) => (
@@ -1188,7 +1216,7 @@ function CalendarHoverPreview({ preview, subjects }: { preview: CalendarPreviewS
         <span className="mt-1 h-9 w-1.5 shrink-0 rounded-full" style={{ background: accent }} />
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-black uppercase text-[var(--faint)]">
-            {preview.kind === "event" ? EVENT_CATEGORY_LABEL[preview.event.category] : "Task"}
+            {preview.kind === "event" ? EVENT_CATEGORY_LABEL[preview.event.category] : "Attività"}
           </p>
           <h4 className="two-line-safe text-base font-black">{preview.kind === "event" ? preview.event.title : preview.task.title}</h4>
         </div>
@@ -1318,18 +1346,18 @@ function EventEditorModal({
 
   const save = async () => {
     if (!draft.title.trim()) {
-      setError("Inserisci un titolo.");
+      setError("Scrivi un titolo per l'evento.");
       return;
     }
     const day = draft.start.slice(0, 10);
     if (recurring && draft.recurrenceUntil && draft.recurrenceUntil < day) {
-      setError("La data di fine ripetizione deve essere successiva all'inizio.");
+      setError("La data in «Fino al» deve venire dopo il giorno dell'evento.");
       return;
     }
     if (draft.allDay) {
       const at = new Date(`${day}T00:00`);
       if (!day || Number.isNaN(at.getTime())) {
-        setError("Seleziona un giorno valido.");
+        setError("Scegli il giorno dell'evento.");
         return;
       }
       const range = allDayRange(at);
@@ -1352,7 +1380,7 @@ function EventEditorModal({
     const start = new Date(draft.start);
     const end = new Date(draft.end);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
-      setError("La fine deve essere successiva all'inizio.");
+      setError("L'orario di fine deve venire dopo l'inizio: correggi «Fine».");
       return;
     }
     await onSave({
@@ -1374,21 +1402,21 @@ function EventEditorModal({
   return (
     <ModalShell
       title="Modifica evento"
-      subtitle={recurring ? "Evento ripetuto: le modifiche valgono per tutta la serie." : "Sposta, aggiorna o elimina il blocco calendario."}
+      subtitle={recurring ? "Si ripete: le modifiche valgono per tutte le sue date." : "Cambia orario e dettagli, oppure elimina l'evento."}
       onClose={onClose}
     >
       <div className="grid grid-cols-1 gap-3">
         {event.tags?.includes("appello-importato") ? (
           <Panel className="p-3">
-            <h4 className="font-black">Appello scelto dal Calendario Esami BARB</h4>
+            <h4 className="font-black">Appello ufficiale aggiunto al tuo calendario</h4>
             <p className="mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{event.description}</p>
             <p className="mt-2 whitespace-pre-line text-xs text-[var(--muted)]">{event.notes}</p>
-            {event.links.map((url) => <a key={url} href={safeHref(url)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-bold text-[var(--accent-ink)] underline">Fonte ufficiale UniMi</a>)}
-            <p className="mt-2 text-xs text-[var(--muted)]">Le modifiche valgono per il tuo promemoria personale. La data ufficiale resta consultabile nel calendario generale.</p>
+            {event.links.map((url) => <a key={url} href={safeHref(url)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-bold text-[var(--accent-ink)] underline">Apri la pagina ufficiale UniMi</a>)}
+            <p className="mt-2 text-xs text-[var(--muted)]">Qui modifichi solo il tuo promemoria: la data ufficiale resta visibile in Esami › Date ufficiali.</p>
           </Panel>
         ) : null}
         <Field label="Titolo">
-          <input className={inputClass} value={draft.title} onChange={(e) => setDraft((v) => ({ ...v, title: e.target.value }))} />
+          <input className={inputClass} value={draft.title} placeholder="Es. Lezione di Anatomia" onChange={(e) => setDraft((v) => ({ ...v, title: e.target.value }))} />
         </Field>
         <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 py-2 text-sm font-bold">
           <input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" checked={draft.allDay} onChange={(e) => setAllDay(e.target.checked)} />
@@ -1430,27 +1458,11 @@ function EventEditorModal({
             <Field label="Fine">
               <input className={inputClass} type="datetime-local" value={draft.end} onChange={(e) => setDraft((v) => ({ ...v, end: e.target.value }))} />
             </Field>
-            <p className="-mt-1 text-xs font-bold text-[var(--muted)] sm:col-span-2">Spostando l'inizio, la fine segue per mantenere la durata.</p>
+            <p className="-mt-1 text-xs font-bold text-[var(--muted)] sm:col-span-2">Se cambi l'inizio, la fine si sposta e la durata resta la stessa.</p>
           </div>
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Ripetizione">
-            <select className={inputClass} value={draft.recurrence} onChange={(e) => setDraft((v) => ({ ...v, recurrence: e.target.value as NonNullable<CalendarEvent["recurrence"]> }))}>
-              {(Object.keys(RECURRENCE_LABEL) as NonNullable<CalendarEvent["recurrence"]>[]).map((key) => (
-                <option key={key} value={key}>
-                  {RECURRENCE_LABEL[key]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {recurring ? (
-            <Field label="Fino al (opzionale)">
-              <input className={inputClass} type="date" value={draft.recurrenceUntil} onChange={(e) => setDraft((v) => ({ ...v, recurrenceUntil: e.target.value }))} />
-            </Field>
-          ) : null}
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Materia">
+          <Field label="Materia (facoltativa)">
             <select
               className={inputClass}
               value={draft.subjectId}
@@ -1464,7 +1476,7 @@ function EventEditorModal({
               ))}
             </select>
           </Field>
-          <Field label="Categoria">
+          <Field label="Tipo di evento">
             <select className={inputClass} value={draft.category} onChange={(e) => setDraft((v) => ({ ...v, category: e.target.value as EventCategory }))}>
               {categories.map((category) => (
                 <option key={category.id} value={category.id}>
@@ -1474,37 +1486,63 @@ function EventEditorModal({
             </select>
           </Field>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Priorità">
-            <select className={inputClass} value={draft.priority} onChange={(e) => setDraft((v) => ({ ...v, priority: e.target.value as CalendarEvent["priority"] }))}>
-              {(Object.keys(PRIORITY_LABEL) as CalendarEvent["priority"][]).map((key) => (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Ripetizione">
+            <select className={inputClass} value={draft.recurrence} onChange={(e) => setDraft((v) => ({ ...v, recurrence: e.target.value as NonNullable<CalendarEvent["recurrence"]> }))}>
+              {(Object.keys(RECURRENCE_LABEL) as NonNullable<CalendarEvent["recurrence"]>[]).map((key) => (
                 <option key={key} value={key}>
-                  {PRIORITY_LABEL[key]}
+                  {RECURRENCE_LABEL[key]}
                 </option>
               ))}
             </select>
           </Field>
-          <Field label="Stato">
-            <select className={inputClass} value={draft.status} onChange={(e) => setDraft((v) => ({ ...v, status: e.target.value as CalendarEvent["status"] }))}>
-              {(Object.keys(EVENT_STATUS_LABEL) as CalendarEvent["status"][]).map((key) => (
-                <option key={key} value={key}>
-                  {EVENT_STATUS_LABEL[key]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Colore">
-            <input
-              className="h-11 w-full rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-1"
-              type="color"
-              value={draft.color.startsWith("#") ? draft.color : "#7CF7C8"}
-              onChange={(e) => setDraft((v) => ({ ...v, color: e.target.value }))}
-            />
-          </Field>
+          {recurring ? (
+            <Field label="Fino al (facoltativo)">
+              <input className={inputClass} type="date" value={draft.recurrenceUntil} onChange={(e) => setDraft((v) => ({ ...v, recurrenceUntil: e.target.value }))} />
+            </Field>
+          ) : null}
         </div>
-        <Field label="Descrizione">
-          <textarea className={`${inputClass} min-h-20 py-3`} value={draft.description} onChange={(e) => setDraft((v) => ({ ...v, description: e.target.value }))} />
+        <Field label="Descrizione (facoltativa)">
+          <textarea
+            className={`${inputClass} min-h-20 py-3`}
+            value={draft.description}
+            placeholder="Es. Aula 3, portare gli appunti del capitolo 2"
+            onChange={(e) => setDraft((v) => ({ ...v, description: e.target.value }))}
+          />
         </Field>
+        <details className="quiet-panel p-4">
+          <summary className="cursor-pointer text-sm font-extrabold">
+            Altre opzioni <span className="font-bold text-[var(--muted)]">· priorità, stato, colore</span>
+          </summary>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Priorità">
+              <select className={inputClass} value={draft.priority} onChange={(e) => setDraft((v) => ({ ...v, priority: e.target.value as CalendarEvent["priority"] }))}>
+                {(Object.keys(PRIORITY_LABEL) as CalendarEvent["priority"][]).map((key) => (
+                  <option key={key} value={key}>
+                    {PRIORITY_LABEL[key]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Stato">
+              <select className={inputClass} value={draft.status} onChange={(e) => setDraft((v) => ({ ...v, status: e.target.value as CalendarEvent["status"] }))}>
+                {(Object.keys(EVENT_STATUS_LABEL) as CalendarEvent["status"][]).map((key) => (
+                  <option key={key} value={key}>
+                    {EVENT_STATUS_LABEL[key]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Colore">
+              <input
+                className="h-11 w-full rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-1"
+                type="color"
+                value={draft.color.startsWith("#") ? draft.color : "#7CF7C8"}
+                onChange={(e) => setDraft((v) => ({ ...v, color: e.target.value }))}
+              />
+            </Field>
+          </div>
+        </details>
         {error ? (
           <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
             {error}
@@ -1512,14 +1550,14 @@ function EventEditorModal({
         ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Button variant="danger" icon="Trash2" onClick={onDelete}>
-            Elimina
+            Elimina evento
           </Button>
           <span className="flex-1" />
           <Button variant="soft" onClick={onClose}>
             Annulla
           </Button>
           <Button variant="primary" icon="Check" onClick={save}>
-            Salva
+            Salva modifiche
           </Button>
         </div>
       </div>
@@ -1567,8 +1605,25 @@ function CreateModal({
     await onSubmit({ kind, title: title.trim(), subjectId, start, duration: typeof duration === "number" ? duration : 60, allDay, priority, category, recurrence });
   };
 
+  const subjectField = (
+    <Field label="Materia (facoltativa)">
+      <select className={inputClass} value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+        <option value="">Nessuna</option>
+        {selectableSubjects(subjects, subjectId).map((subject) => (
+          <option key={subject.id} value={subject.id}>
+            {subject.name}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+
   return (
-    <ModalShell title={`Nuovo · ${format(Number.isNaN(start.getTime()) ? initial.at : start, "EEEE d MMMM", { locale: it })}`} onClose={onClose}>
+    <ModalShell
+      title={`${kind === "event" ? "Nuovo evento" : "Nuova attività"} · ${format(Number.isNaN(start.getTime()) ? initial.at : start, "EEEE d MMMM", { locale: it })}`}
+      subtitle={kind === "task" ? "Comparirà nel calendario il giorno della scadenza e nella sezione Attività." : undefined}
+      onClose={onClose}
+    >
       <form
         className="grid grid-cols-1 gap-3"
         onSubmit={(event) => {
@@ -1577,17 +1632,23 @@ function CreateModal({
         }}
       >
         <Segmented
-          label="Tipo"
+          label="Cosa vuoi aggiungere"
           value={kind}
           onChange={setKind}
           className="justify-self-start"
           options={[
-            { id: "event", label: "Evento", icon: "CalendarDays" },
-            { id: "task", label: "Task con scadenza", icon: "Check" }
+            { id: "event", label: "Evento", icon: "CalendarDays", title: "Un impegno con giorno e orario: lezione, studio, laboratorio…" },
+            { id: "task", label: "Attività con scadenza", icon: "Check", title: "Una cosa da fare entro una data, da spuntare quando è fatta" }
           ]}
         />
         <Field label="Titolo">
-          <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} autoFocus placeholder={kind === "event" ? "Es. Lezione di Anatomia" : "Es. Consegnare relazione"} />
+          <input
+            className={inputClass}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            autoFocus
+            placeholder={kind === "event" ? "Es. Lezione di Anatomia" : "Es. Consegnare la relazione di laboratorio"}
+          />
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label={allDay ? "Giorno" : kind === "event" ? "Inizio" : "Scadenza"}>
@@ -1618,60 +1679,58 @@ function CreateModal({
               </select>
             </Field>
           ) : (
-            <Field label="Priorità">
-              <select className={inputClass} value={priority} onChange={(e) => setPriority(e.target.value as Task["priority"])}>
-                {(Object.keys(PRIORITY_LABEL) as Task["priority"][]).map((key) => (
-                  <option key={key} value={key}>
-                    {PRIORITY_LABEL[key]}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            subjectField
           )}
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Materia">
-            <select className={inputClass} value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-              <option value="">Nessuna</option>
-              {selectableSubjects(subjects, subjectId).map((subject) => (
-                <option key={subject.id} value={subject.id}>
-                  {subject.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {kind === "event" ? (
-            <Field label="Categoria">
-              <select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value as EventCategory)}>
-                {categories.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : null}
-        </div>
-        {kind === "event" ? (
-          <Field label="Ripetizione">
-            <select className={inputClass} value={recurrence} onChange={(e) => setRecurrence(e.target.value as NonNullable<CalendarEvent["recurrence"]>)}>
-              {(Object.keys(RECURRENCE_LABEL) as NonNullable<CalendarEvent["recurrence"]>[]).map((key) => (
-                <option key={key} value={key}>
-                  {RECURRENCE_LABEL[key]}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : null}
+        {kind === "event" ? subjectField : null}
+        <details className="quiet-panel p-4">
+          <summary className="cursor-pointer text-sm font-extrabold">
+            Altre opzioni <span className="font-bold text-[var(--muted)]">· {kind === "event" ? "tipo di evento, ripetizione" : "priorità"}</span>
+          </summary>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {kind === "event" ? (
+              <>
+                <Field label="Tipo di evento">
+                  <select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value as EventCategory)}>
+                    {categories.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Ripetizione">
+                  <select className={inputClass} value={recurrence} onChange={(e) => setRecurrence(e.target.value as NonNullable<CalendarEvent["recurrence"]>)}>
+                    {(Object.keys(RECURRENCE_LABEL) as NonNullable<CalendarEvent["recurrence"]>[]).map((key) => (
+                      <option key={key} value={key}>
+                        {RECURRENCE_LABEL[key]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </>
+            ) : (
+              <Field label="Priorità">
+                <select className={inputClass} value={priority} onChange={(e) => setPriority(e.target.value as Task["priority"])}>
+                  {(Object.keys(PRIORITY_LABEL) as Task["priority"][]).map((key) => (
+                    <option key={key} value={key}>
+                      {PRIORITY_LABEL[key]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+          </div>
+        </details>
         {!valid ? (
-          <p className="text-xs font-bold text-[var(--muted)]">{!title.trim() ? "Inserisci un titolo per continuare." : "Controlla la data inserita."}</p>
+          <p className="text-xs font-bold text-[var(--muted)]">{!title.trim() ? "Scrivi un titolo per continuare." : "Scegli una data valida."}</p>
         ) : null}
         <div className="mt-2 flex justify-end gap-2">
           <Button variant="soft" onClick={onClose}>
             Annulla
           </Button>
           <Button variant="primary" icon="Plus" type="submit" disabled={!valid}>
-            Crea {kind === "event" ? "evento" : "task"}
+            {kind === "event" ? "Aggiungi evento" : "Aggiungi attività"}
           </Button>
         </div>
       </form>
@@ -1689,15 +1748,20 @@ function ExamSession({ exams, subjects, onGoExams }: { exams: Exam[]; subjects: 
   const past = exams.filter((exam) => !upcoming.includes(exam)).sort((a, b) => b.date.localeCompare(a.date));
   if (!exams.length)
     return (
-      <div className="grid place-items-center gap-3 p-6 text-center">
-        <p className="text-sm font-bold text-[var(--muted)]">Nessun esame pianificato.</p>
-        <Button variant="primary" icon="GraduationCap" onClick={onGoExams}>
-          Vai a Esami
-        </Button>
-      </div>
+      <EmptyState
+        icon="GraduationCap"
+        title="Ancora nessun esame"
+        body="Aggiungi i tuoi esami nella sezione Esami: qui vedrai quanti giorni mancano e a che punto è la preparazione."
+        action={
+          <Button variant="primary" icon="GraduationCap" onClick={onGoExams}>
+            Vai a Esami
+          </Button>
+        }
+      />
     );
   return (
     <div className="grid grid-cols-1 gap-5">
+      {!upcoming.length ? <p className="text-sm font-bold text-[var(--muted)]">Nessun esame in arrivo.</p> : null}
       <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr))]">
         {upcoming.map((exam) => {
           const color = subjectColor(subjects, exam.subjectId);
@@ -1708,19 +1772,19 @@ function ExamSession({ exams, subjects, onGoExams }: { exams: Exam[]; subjects: 
                 <p className="text-3xl font-black tabular-nums">{days}</p>
                 <Tag>{EXAM_STATUS_LABEL[exam.status]}</Tag>
               </div>
-              <p className="text-xs font-bold text-[var(--muted)]">{days === 1 ? "giorno" : "giorni"} · {format(parseISO(exam.date), "EEEE d MMMM", { locale: it })}</p>
+              <p className="text-xs font-bold text-[var(--muted)]">{days === 1 ? "giorno" : "giorni"} all'esame · {format(parseISO(exam.date), "EEEE d MMMM", { locale: it })}</p>
               <h4 className="two-line-safe mt-2 font-black">{subjectName(subjects, exam.subjectId)}</h4>
               <div className="mt-3">
                 <ProgressBar value={exam.preparation} color={color} />
               </div>
-              <p className="mt-1.5 text-xs font-bold text-[var(--muted)]">{exam.preparation}% preparazione · obiettivo {exam.targetGrade}</p>
+              <p className="mt-1.5 text-xs font-bold text-[var(--muted)]">Preparazione al {exam.preparation}% · voto obiettivo {exam.targetGrade}</p>
             </div>
           );
         })}
       </div>
       {past.length ? (
         <div>
-          <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">Sostenuti o passati</h4>
+          <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">Già sostenuti o con data passata</h4>
           <ul className="grid grid-cols-1 gap-1">
             {past.map((exam) => (
               <li key={exam.id} className="flex items-center gap-2 text-sm text-[var(--muted)]">
@@ -1735,8 +1799,20 @@ function ExamSession({ exams, subjects, onGoExams }: { exams: Exam[]; subjects: 
   );
 }
 
-function SemesterMap({ events, subjects }: { events: CalendarEvent[]; subjects: Subjects }) {
-  if (!subjects.length) return <p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Aggiungi le materie per vedere la mappa del semestre.</p>;
+function SemesterMap({ events, subjects, onGoSubjects }: { events: CalendarEvent[]; subjects: Subjects; onGoSubjects: () => void }) {
+  if (!subjects.length)
+    return (
+      <EmptyState
+        icon="BookOpen"
+        title="Ancora nessuna materia"
+        body="Aggiungi le tue materie: qui vedrai quanti eventi hai in calendario per ognuna, divisi per semestre."
+        action={
+          <Button variant="primary" icon="Plus" onClick={onGoSubjects}>
+            Vai a Materie
+          </Button>
+        }
+      />
+    );
   return (
     <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))]">
       {subjects.map((subject) => {
@@ -1752,7 +1828,7 @@ function SemesterMap({ events, subjects }: { events: CalendarEvent[]; subjects: 
               <h4 className="two-line-safe font-black leading-tight">{subject.name}</h4>
               <p className="text-xs font-bold text-[var(--muted)]">
                 {count} {count === 1 ? "evento" : "eventi"}
-                {weekly ? ` · ${weekly} settimanali` : ""}
+                {weekly ? ` · ${weekly} ogni settimana` : ""}
               </p>
               <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag>
             </div>

@@ -5,6 +5,15 @@ import { Field, inputClass } from "./ui";
 export type { DurationUnit };
 export { DURATION_UNITS, durationToMinutes };
 
+/** Giorni, settimane e mesi sono giornate di studio (vedi lib/duration): lo diciamo accanto al totale. */
+const STUDY_DAY_NOTE: Record<DurationUnit, string> = {
+  minutes: "",
+  hours: "",
+  days: " (giornate di studio da 8 ore)",
+  weeks: " (5 giornate da 8 ore a settimana)",
+  months: " (20 giornate da 8 ore al mese)"
+};
+
 export function DurationField({
   label,
   value,
@@ -31,13 +40,13 @@ export function DurationField({
           value={value}
           onChange={(event) => onChange(event.target.value, unit)}
           placeholder="Es. 2"
-          aria-label={`${label}, valore`}
+          aria-label={`${label}: quantità`}
         />
         <select
           className={inputClass}
           value={unit}
           onChange={(event) => onChange(value, event.target.value as DurationUnit)}
-          aria-label={`${label}, unità di tempo`}
+          aria-label={`${label}: unità di tempo`}
         >
           {DURATION_UNITS.map((item) => (
             <option key={item.id} value={item.id}>
@@ -48,7 +57,7 @@ export function DurationField({
       </div>
       {hint ? (
         <p className="mt-1 text-xs font-bold text-[var(--faint)]">
-          {valid ? `≈ ${formatMinutes(minutes)} di lavoro stimato` : "Valore non valido: usa 0 o più."}
+          {valid ? `Circa ${formatMinutes(minutes)} di lavoro${STUDY_DAY_NOTE[unit]}` : "Scrivi un numero da 0 in su, es. 2."}
         </p>
       ) : null}
     </Field>

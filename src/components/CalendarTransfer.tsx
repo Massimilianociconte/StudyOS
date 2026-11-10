@@ -14,8 +14,8 @@ import { Icon } from "./Icon";
 const MAX_ICS_BYTES = 5 * 1024 * 1024;
 
 /**
- * Pulsanti Importa/Esporta .ics del calendario. L'import mostra un'anteprima prima di
- * scrivere: categoria predefinita, abbinamento automatico alle materie, avvisi del parser.
+ * Pulsanti Importa/Esporta .ics del calendario (Google, Apple, orario delle lezioni). L'import
+ * mostra un'anteprima prima di scrivere: tipo predefinito, abbinamento alle materie, avvisi.
  */
 export function CalendarTransfer() {
   const { events, exams, tasks, subjects, importEvents } = useStudyStore();
@@ -38,6 +38,8 @@ export function CalendarTransfer() {
   const exportIcs = () => {
     const text = buildIcs({ events, exams, tasks, subjects, categoryLabel: (value) => EVENT_CATEGORY_LABEL[value] });
     downloadBlob(`studyos-calendario-${format(new Date(), "yyyy-MM-dd")}.ics`, new Blob([text], { type: "text/calendar;charset=utf-8" }));
+    setError("");
+    setResult("File del calendario scaricato: aprilo con Google Calendar o Apple Calendario per aggiungere eventi, esami e scadenze.");
   };
 
   const readFile = async (file?: File) => {
@@ -45,12 +47,21 @@ export function CalendarTransfer() {
     setResult("");
     if (!file) return;
     if (file.size > MAX_ICS_BYTES) {
-      setError("File troppo grande (massimo 5 MB).");
+      setError("Il file è troppo grande (massimo 5 MB). Esporta un periodo più breve dal tuo calendario e riprova.");
       return;
     }
-    const outcome = parseIcs(await file.text());
+    let text = "";
+    try {
+      text = await file.text();
+    } catch {
+      setError("Non è stato possibile leggere il file. Riprova o scegli un altro file .ics.");
+      return;
+    }
+    const outcome = parseIcs(text);
     if (!outcome.events.length) {
-      setError(outcome.warnings[0] ?? "Nessun evento trovato nel file.");
+      setError(
+        `Nel file non ci sono eventi da importare.${outcome.warnings[0] ? ` ${outcome.warnings[0]}` : ""} Scegli un file .ics esportato da Google Calendar, Apple Calendario o dall'orario delle lezioni.`
+      );
       return;
     }
     setParsed({ ...outcome, fileName: file.name });
@@ -92,21 +103,25 @@ export function CalendarTransfer() {
     const { added, updated } = await importEvents(payload);
     setParsed(null);
     const parts = [
-      added ? `${added} ${added === 1 ? "evento importato" : "eventi importati"}` : "",
+      added ? `${added} ${added === 1 ? "evento aggiunto" : "eventi aggiunti"}` : "",
       updated ? `${updated} ${updated === 1 ? "evento aggiornato" : "eventi aggiornati"}` : ""
     ].filter(Boolean);
-    setResult(`${parts.join(", ") || "Nessuna modifica"}. Gli eventi importati si modificano come gli altri.`);
+    setResult(
+      parts.length
+        ? `Fatto: ${parts.join(", ")} nel calendario. Puoi modificarli o eliminarli come gli altri.`
+        : "Nessuna novità: gli eventi di questo file erano già tutti nel calendario."
+    );
   };
 
   return (
     <>
       <label
-        className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)]"
-        title="Importa un calendario .ics (orario delle lezioni, Google Calendar, Apple Calendario)"
+        className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-transparent px-4 text-sm font-extrabold text-[var(--text)] hover:bg-[var(--surface)] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)]"
+        title="Scegli un file .ics esportato da Google Calendar, Apple Calendario o dall'orario delle lezioni: prima di aggiungere vedrai un'anteprima"
       >
         <Icon name="Import" className="h-4 w-4" />
-        <span className="hidden sm:inline">Importa</span>
-        <span className="sr-only sm:hidden">Importa calendario .ics</span>
+        <span className="hidden sm:inline">Importa da Google/Apple</span>
+        <span className="sr-only sm:hidden">Importa da Google o Apple (file .ics)</span>
         <input
           type="file"
           accept=".ics,text/calendar"
@@ -118,7 +133,13 @@ export function CalendarTransfer() {
           }}
         />
       </label>
-      <Button variant="soft" icon="Download" onClick={exportIcs} title="Esporta eventi, esami e scadenze in un file .ics" aria-label="Esporta calendario .ics">
+      <Button
+        variant="ghost"
+        icon="Download"
+        onClick={exportIcs}
+        title="Scarica eventi, esami e scadenze in un file .ics da aprire in Google Calendar o Apple Calendario"
+        aria-label="Esporta il calendario in un file .ics"
+      >
         <span className="hidden sm:inline">Esporta</span>
       </Button>
 
@@ -148,7 +169,7 @@ export function CalendarTransfer() {
       <Drawer
         open={Boolean(parsed)}
         onClose={() => setParsed(null)}
-        eyebrow="Importa calendario"
+        eyebrow="Importa da Google/Apple"
         title={parsed?.fileName ?? ""}
         width="max-w-[560px]"
         footer={
@@ -157,7 +178,7 @@ export function CalendarTransfer() {
               Annulla
             </Button>
             <Button variant="primary" icon="Check" onClick={() => void confirmImport()}>
-              Importa {parsed?.events.length ?? 0} eventi
+              {parsed?.events.length === 1 ? "Aggiungi 1 evento al calendario" : `Aggiungi ${parsed?.events.length ?? 0} eventi al calendario`}
             </Button>
           </div>
         }
@@ -165,14 +186,15 @@ export function CalendarTransfer() {
         {parsed && preview ? (
           <div className="grid grid-cols-1 gap-4">
             <p className="text-sm font-bold text-[var(--muted)]">
-              {parsed.events.length} eventi{preview.recurring ? `, di cui ${preview.recurring} ripetuti` : ""}
-              {preview.first ? ` · dal ${format(parseISO(preview.first), "d MMM yyyy", { locale: it })}` : ""}
-              {preview.last && preview.last !== preview.first ? ` al ${format(parseISO(preview.last), "d MMM yyyy", { locale: it })}` : ""}. Reimportando lo stesso
-              file gli eventi vengono aggiornati, non duplicati.
+              Nel file ci sono {parsed.events.length === 1 ? "1 evento" : `${parsed.events.length} eventi`}
+              {preview.recurring ? ` (${preview.recurring} si ripetono)` : ""}
+              {preview.first ? `, dal ${format(parseISO(preview.first), "d MMM yyyy", { locale: it })}` : ""}
+              {preview.last && preview.last !== preview.first ? ` al ${format(parseISO(preview.last), "d MMM yyyy", { locale: it })}` : ""}. Controlla l'anteprima e
+              aggiungili al calendario: se importi di nuovo lo stesso file, gli eventi già presenti vengono aggiornati, non duplicati.
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <Field label="Categoria predefinita">
+                <Field label="Tipo di evento">
                   <select className={inputClass} value={category} onChange={(event) => setCategory(event.target.value as EventCategory)}>
                     {(Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => (
                       <option key={id} value={id}>
@@ -181,11 +203,11 @@ export function CalendarTransfer() {
                     ))}
                   </select>
                 </Field>
-                <p className="mt-1 text-xs font-bold text-[var(--muted)]">Usata se il titolo non suggerisce un'altra categoria.</p>
+                <p className="mt-1 text-xs font-bold text-[var(--muted)]">Usato quando il titolo non fa capire il tipo (es. «Esame», «Laboratorio»).</p>
               </div>
               <label className="flex min-h-11 items-center gap-2 self-end text-sm font-bold">
                 <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={matchSubjects} onChange={(event) => setMatchSubjects(event.target.checked)} />
-                Collega alle materie ({preview.matched} collegabili)
+                Collega alle mie materie in base al titolo ({preview.matched} {preview.matched === 1 ? "riconosciuto" : "riconosciuti"})
               </label>
             </div>
             <ul className="grid grid-cols-1 gap-1 rounded-[18px] bg-[var(--surface-soft)] p-2">
@@ -199,7 +221,7 @@ export function CalendarTransfer() {
                 </li>
               ))}
               {parsed.events.length > preview.sample.length ? (
-                <li className="px-1.5 text-xs font-bold text-[var(--faint)]">E altri {parsed.events.length - preview.sample.length}</li>
+                <li className="px-1.5 text-xs font-bold text-[var(--faint)]">…e altri {parsed.events.length - preview.sample.length}</li>
               ) : null}
             </ul>
             {parsed.warnings.length ? (

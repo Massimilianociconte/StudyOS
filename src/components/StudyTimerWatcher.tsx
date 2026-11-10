@@ -2,11 +2,21 @@ import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../store/useStudyStore";
 import { useNow } from "../hooks/useNow";
-import { timerRemainingSeconds } from "../lib/studyTimer";
+import { timerRemainingSeconds, type TimerMode } from "../lib/studyTimer";
 import { Button } from "./ui";
 import { Icon } from "./Icon";
 
 const BASE_TITLE = "StudyOS";
+
+/**
+ * Nomi delle durate mostrati all'utente. `timer.label` (salvato con il timer) resta quello di
+ * lib/studyTimer: qui si traduce solo la parola, in base a `timer.mode`.
+ */
+export const TIMER_PRESET_NAME: Record<TimerMode, string> = {
+  pomodoro: "Pomodoro",
+  classic: "Classico",
+  "deep-focus": "Concentrazione lunga"
+};
 
 const formatClock = (seconds: number) =>
   `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
@@ -27,17 +37,18 @@ export function StudyTimerWatcher() {
   const now = useNow(1000, timer.running);
   const [finishedLabel, setFinishedLabel] = useState<string | null>(null);
   const remaining = timerRemainingSeconds(timer, now.getTime());
+  const presetName = TIMER_PRESET_NAME[timer.mode] ?? timer.label;
 
   useEffect(() => {
     if (timer.running && remaining <= 0) {
       settleStudyTimer();
-      setFinishedLabel(timer.label);
+      setFinishedLabel(presetName);
     }
-  }, [remaining, timer.running, timer.label, settleStudyTimer]);
+  }, [remaining, timer.running, presetName, settleStudyTimer]);
 
   useEffect(() => {
-    document.title = timer.running ? `${formatClock(remaining)} · ${timer.label} · ${BASE_TITLE}` : BASE_TITLE;
-  }, [remaining, timer.running, timer.label]);
+    document.title = timer.running ? `${formatClock(remaining)} · ${presetName} · ${BASE_TITLE}` : BASE_TITLE;
+  }, [remaining, timer.running, presetName]);
 
   useEffect(() => () => {
     document.title = BASE_TITLE;
@@ -56,9 +67,9 @@ export function StudyTimerWatcher() {
           <Icon name="Timer" className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-black uppercase text-[var(--faint)]">Timer completato</p>
-          <p className="font-black">{finishedLabel}: tempo scaduto.</p>
-          <p className="text-sm text-[var(--muted)]">Registra la sessione nella vista Studio o fai una pausa.</p>
+          <p className="text-xs font-black uppercase text-[var(--faint)]">Tempo scaduto · {finishedLabel}</p>
+          <p className="font-black">Sessione conclusa: ottimo lavoro!</p>
+          <p className="text-sm text-[var(--muted)]">Premi «Salva sessione» in Studio per tenerne traccia, poi fai una pausa.</p>
         </div>
       </div>
       <div className="mt-3 flex justify-end gap-2">

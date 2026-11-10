@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GroupMember, GroupResource, StudyGroup } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Drawer, EmptyState, Field, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { Button, Drawer, Field, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { formatNotificationTime } from "../components/NotificationsPanel";
-import { InviteLoginDrawer, InviteSheet, PendingInviteCard, useCloudSession } from "../components/GroupInvite";
+import { InlineConfirm, InviteLoginDrawer, InviteSheet, PendingInviteCard, useCloudSession, usePendingInvite, type LoginReason } from "../components/GroupInvite";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { GROUP_JOINED_EVENT, confirmPendingInvite, inviteCodeFromText, savePendingInvite } from "../lib/groupInvite";
 import {
@@ -60,9 +60,14 @@ export function GroupsView() {
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [loginReason, setLoginReason] = useState<LoginReason>("join");
   const [inviteGroupId, setInviteGroupId] = useState<string | null>(null);
+  const joinInputRef = useRef<HTMLInputElement>(null);
   const session = useCloudSession();
+  const pendingInvite = usePendingInvite();
   const sessionUserId = session?.user.id;
+  // Senza accesso i gruppi restano tuoi: per invitare o entrare in quelli degli altri serve l'account.
+  const needsAccount = cloudConfigured && !session;
 
   // Identità e cassetta postale condivisa; si rileggono a ogni accesso o cambio di account.
   // I link/QR di invito li legge l'app all'avvio (useGroupInviteLinks), qualunque sia la sezione.
@@ -84,6 +89,10 @@ export function GroupsView() {
   }, [setOpenId]);
 
   const closeLogin = useCallback(() => setLoginOpen(false), []);
+  const openLogin = useCallback((reason: LoginReason) => {
+    setLoginReason(reason);
+    setLoginOpen(true);
+  }, []);
 
   const myId = actor?.userId;
   const received = groupInvites
@@ -106,7 +115,7 @@ export function GroupsView() {
     // Vale il codice, il link o anche l'intero messaggio d'invito incollato.
     const code = inviteCodeFromText(joinCode);
     if (!code) {
-      setNotice("Codice non valido: incolla il link ricevuto o un codice come GRP-AB12-CD34.");
+      setNotice("Non riconosco questo codice. Incolla il link che hai ricevuto o un codice come GRP-AB12-CD34.");
       return;
     }
     if (cloudConfigured && !session) {
@@ -114,7 +123,7 @@ export function GroupsView() {
       savePendingInvite(code);
       confirmPendingInvite();
       setJoinCode("");
-      setLoginOpen(true);
+      openLogin("join");
       return;
     }
     setJoinBusy(true);
@@ -122,9 +131,9 @@ export function GroupsView() {
       const groupId = await joinGroupWithCode(code, actor);
       setJoinCode("");
       setOpenId(groupId);
-      setNotice("Ti sei unito al gruppo.");
+      setNotice("Sei entrato nel gruppo.");
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : "Unione non riuscita.");
+      setNotice(cause instanceof Error ? cause.message : "Non è stato possibile entrare nel gruppo. Controlla il codice e riprova.");
     } finally {
       setJoinBusy(false);
     }
@@ -134,16 +143,24 @@ export function GroupsView() {
     <div>
       <SectionTitle
         title="Gruppi"
-        subtitle="Studia insieme: bacheca condivisa, membri, inviti e attività. Funziona offline; la condivisione tra account richiede il cloud."
+        subtitle="Studia con i tuoi compagni: condividete appunti, link e file."
         action={
-          <div className="flex flex-wrap gap-2">
-            <Button icon="RotateCcw" variant="soft" onClick={() => void refresh()} disabled={refreshing}>
-              {refreshing ? "Aggiorno…" : "Aggiorna"}
-            </Button>
-            <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
-              Nuovo gruppo
-            </Button>
-          </div>
+          session || studyGroups.length ? (
+            <div className="flex flex-wrap gap-2">
+              {/* Aggiornare serve solo con l'account (senza, non c'è niente da scaricare). */}
+              {session ? (
+                <Button icon="RotateCcw" variant="ghost" onClick={() => void refresh()} disabled={refreshing} title="Scarica le ultime novità dei tuoi gruppi">
+                  {refreshing ? "Aggiorno…" : "Aggiorna"}
+                </Button>
+              ) : null}
+              {/* Senza gruppi la scelta "crea o entra" è già al centro della pagina. */}
+              {studyGroups.length ? (
+                <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
+                  Nuovo gruppo
+                </Button>
+              ) : null}
+            </div>
+          ) : undefined
         }
       />
 
@@ -153,8 +170,17 @@ export function GroupsView() {
         </p>
       ) : null}
 
+      {needsAccount && !pendingInvite ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+          <p className="min-w-0 flex-1 text-sm font-bold text-[var(--muted)]">Per invitare altre persone o entrare nei loro gruppi devi accedere al tuo account.</p>
+          <Button variant="soft" icon="LogIn" onClick={() => openLogin("share")}>
+            Accedi
+          </Button>
+        </div>
+      ) : null}
+
       <PendingInviteCard
-        onLogin={() => setLoginOpen(true)}
+        onLogin={() => openLogin("join")}
         onJoined={(groupId, name) => {
           setOpenId(groupId);
           setNotice(`Benvenuto in "${name}".`);
@@ -178,13 +204,17 @@ export function GroupsView() {
             <span className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-super bg-[var(--surface-strong)]">
               <Icon name="Users" className="h-7 w-7 text-[var(--accent-ink)]" />
             </span>
-            <h3 className="text-2xl font-black">Nessun gruppo</h3>
-            <p className="mt-2 text-sm text-[var(--muted)]">Crea il tuo primo gruppo o unisciti con un codice di invito.</p>
+            <h3 className="text-2xl font-black">Ancora nessun gruppo</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">Crea un gruppo e invita i tuoi compagni, oppure entra nel gruppo di qualcun altro.</p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
               <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
-                Nuovo gruppo
+                Crea un gruppo
+              </Button>
+              <Button icon="LogIn" variant="soft" onClick={() => joinInputRef.current?.focus()}>
+                Entra con un codice
               </Button>
             </div>
+            <p className="mt-3 text-xs text-[var(--muted)]">Hai ricevuto un link o un QR? Aprilo e ti porteremo direttamente al gruppo.</p>
           </div>
         </Panel>
       ) : (
@@ -203,35 +233,51 @@ export function GroupsView() {
       )}
 
       <Panel className="mt-5">
-        <h3 className="text-lg font-black">Unisciti con codice</h3>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Incolla il codice (es. GRP-AB12-CD34) o il link ricevuto. Hai un link o un QR? Aprilo direttamente: StudyOS ti porta all'ingresso del gruppo.
-        </p>
+        <h3 className="text-lg font-black">Entra con un codice</h3>
+        <p className="mt-1 text-sm text-[var(--muted)]">Incolla il codice o il link di invito che ti hanno mandato.</p>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <input
+            ref={joinInputRef}
             className={inputClass}
             value={joinCode}
             onChange={(event) => setJoinCode(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") void join();
             }}
-            placeholder="Codice o link di invito"
+            placeholder="Es. GRP-AB12-CD34"
             aria-label="Codice o link di invito"
             autoCapitalize="characters"
             autoComplete="off"
           />
-          <Button icon="LogIn" variant="primary" onClick={() => void join()} disabled={joinBusy || !actor}>
-            {joinBusy ? "Controllo…" : "Unisciti"}
+          <Button icon="LogIn" variant="soft" onClick={() => void join()} disabled={joinBusy || !actor}>
+            {joinBusy ? "Controllo…" : "Entra nel gruppo"}
           </Button>
         </div>
       </Panel>
 
-      {createOpen && actor ? <CreateGroupModal actor={actor} onClose={() => setCreateOpen(false)} onCreated={setOpenId} /> : null}
-      {open ? <GroupDetail group={open} actor={actor} onClose={() => setOpenId(null)} onNotice={setNotice} /> : null}
-      {inviteGroupId && actor && studyGroups.some((group) => group.id === inviteGroupId) ? (
-        <InviteSheet group={studyGroups.find((group) => group.id === inviteGroupId)!} actor={actor} onClose={() => setInviteGroupId(null)} onNotice={setNotice} />
+      {createOpen && actor ? (
+        <CreateGroupModal
+          actor={actor}
+          needsAccount={needsAccount}
+          onLogin={() => {
+            setCreateOpen(false);
+            openLogin("share");
+          }}
+          onClose={() => setCreateOpen(false)}
+          onCreated={setOpenId}
+        />
       ) : null}
-      <InviteLoginDrawer open={loginOpen} onClose={closeLogin} />
+      {open ? <GroupDetail group={open} actor={actor} onClose={() => setOpenId(null)} onNotice={setNotice} onLogin={() => openLogin("share")} /> : null}
+      {inviteGroupId && actor && studyGroups.some((group) => group.id === inviteGroupId) ? (
+        <InviteSheet
+          group={studyGroups.find((group) => group.id === inviteGroupId)!}
+          actor={actor}
+          onClose={() => setInviteGroupId(null)}
+          onNotice={setNotice}
+          onLogin={() => openLogin("share")}
+        />
+      ) : null}
+      <InviteLoginDrawer open={loginOpen} onClose={closeLogin} reason={loginReason} />
     </div>
   );
 }
@@ -249,7 +295,8 @@ function GroupCard({ group, myId, resources, onOpen, onInvite }: { group: StudyG
           <span className="min-w-0 flex-1">
             <span className="two-line-safe block text-base font-black leading-snug">{group.name}</span>
             <span className="mt-0.5 block text-xs font-bold text-[var(--muted)]">
-              {group.members.length} {group.members.length === 1 ? "membro" : "membri"} · {pinned} fissati
+              {group.members.length} {group.members.length === 1 ? "membro" : "membri"}
+              {pinned ? ` · ${pinned} ${pinned === 1 ? "fissato" : "fissati"} in bacheca` : ""}
             </span>
           </span>
           {role ? <Tag>{ROLE_LABEL[role]}</Tag> : null}
@@ -285,7 +332,7 @@ function InviteCard({ inviteId, actor, onDone }: { inviteId: string; actor: Acto
       if (!remote) await useStudyStore.getState().logGroupActivity(invite.groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
       onDone(`Benvenuto in "${invite.groupName}".`);
     } catch (cause) {
-      onDone(cause instanceof Error ? cause.message : "Accettazione non riuscita.");
+      onDone(cause instanceof Error ? cause.message : "Non è stato possibile accettare l'invito. Riprova.");
     } finally {
       setBusy(false);
     }
@@ -299,7 +346,7 @@ function InviteCard({ inviteId, actor, onDone }: { inviteId: string; actor: Acto
       await declineGroupInvite(invite.id);
       onDone("Invito rifiutato.");
     } catch (cause) {
-      onDone(cause instanceof Error ? cause.message : "Operazione non riuscita.");
+      onDone(cause instanceof Error ? cause.message : "Non è stato possibile rifiutare l'invito. Riprova.");
     } finally {
       setBusy(false);
     }
@@ -329,7 +376,7 @@ function InviteCard({ inviteId, actor, onDone }: { inviteId: string; actor: Acto
   );
 }
 
-function CreateGroupModal({ actor, onClose, onCreated }: { actor: Actor; onClose: () => void; onCreated: (id: string) => void }) {
+function CreateGroupModal({ actor, needsAccount, onLogin, onClose, onCreated }: { actor: Actor; needsAccount: boolean; onLogin: () => void; onClose: () => void; onCreated: (id: string) => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
@@ -354,25 +401,36 @@ function CreateGroupModal({ actor, onClose, onCreated }: { actor: Actor; onClose
       onCreated(id);
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Creazione non riuscita.");
+      setError(cause instanceof Error ? cause.message : "Non è stato possibile creare il gruppo. Riprova.");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true" aria-label="Nuovo gruppo"
+    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true" aria-label="Crea un gruppo"
       onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
       onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
       <section className="soft-panel w-full max-w-lg p-4 sm:p-5">
         <p className="text-xs font-black uppercase text-[var(--faint)]">Nuovo gruppo</p>
         <h3 className="text-2xl font-black">Con chi studi?</h3>
         <div className="mt-4 grid grid-cols-1 gap-3">
+          {/* Un gruppo creato senza account non si potrà mai condividere: lo si dice prima. */}
+          {needsAccount ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+              <p className="min-w-0 flex-1 text-sm font-bold text-[var(--muted)]">
+                Non hai fatto l'accesso: potrai usare il gruppo solo tu e non potrai invitare nessuno, nemmeno accedendo dopo.
+              </p>
+              <Button variant="soft" icon="LogIn" onClick={onLogin} disabled={busy}>
+                Accedi prima
+              </Button>
+            </div>
+          ) : null}
           <Field label="Nome del gruppo">
             <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Es. Fisiologia — sessione estiva" autoFocus />
           </Field>
-          <Field label="Descrizione">
-            <textarea className={`${inputClass} min-h-20 py-3`} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Corso, obiettivi, regole (opzionale)" />
+          <Field label="Descrizione (facoltativa)">
+            <textarea className={`${inputClass} min-h-20 py-3`} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Es. Corso, obiettivi, regole del gruppo" />
           </Field>
           {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
           <div className="flex flex-wrap justify-end gap-2">
@@ -385,7 +443,7 @@ function CreateGroupModal({ actor, onClose, onCreated }: { actor: Actor; onClose
   );
 }
 
-function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; actor: Actor | null; onClose: () => void; onNotice: (text: string) => void }) {
+function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: StudyGroup; actor: Actor | null; onClose: () => void; onNotice: (text: string) => void; onLogin: () => void }) {
   const { groupResources, groupActivities, groupInvites } = useStudyStore();
   const [tab, setTab] = useUiState<DetailTab>("groups.detailTab", "bacheca", { scope: "tab", validate: oneOf("bacheca", "membri", "attivita") });
   const [resourceOpen, setResourceOpen] = useState(false);
@@ -422,25 +480,26 @@ function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; a
       {actor ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[20px] bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] p-3">
           <p className="min-w-0 text-sm font-bold">
-            Invita compagni di corso
-            <span className="block text-xs font-bold text-[var(--muted)]">Link per WhatsApp e altre app, QR code o codice del gruppo.</span>
+            Invita i tuoi compagni
+            <span className="block text-xs font-bold text-[var(--muted)]">Manda un link su WhatsApp, mostra un QR o comunica il codice.</span>
           </p>
           <Button variant="primary" icon="UserPlus" onClick={() => setInviteOpen(true)}>
             Invita
           </Button>
         </div>
       ) : null}
+      {/* L'id "attivita" resta per lo stato salvato; l'etichetta è "Cronologia" per non confonderla con le attività da fare. */}
       <Segmented label="Sezioni del gruppo" size="sm" className="justify-self-start" value={tab} onChange={setTab}
-        options={[{ id: "bacheca", label: "Bacheca" }, { id: "membri", label: "Membri" }, { id: "attivita", label: "Attività" }]} />
+        options={[{ id: "bacheca", label: "Bacheca" }, { id: "membri", label: "Membri" }, { id: "attivita", label: "Cronologia" }]} />
 
       {tab === "bacheca" ? (
         <div className="mt-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h4 className="text-sm font-black">Fissati in alto, resto sotto</h4>
-            <Button variant="soft" icon="Plus" onClick={() => setResourceOpen(true)} disabled={!actor}>Aggiungi</Button>
+            <h4 className="text-sm font-black">Visibile a tutti i membri</h4>
+            <Button variant="soft" icon="Plus" onClick={() => setResourceOpen(true)} disabled={!actor} aria-label="Aggiungi alla bacheca">Aggiungi</Button>
           </div>
           {resources.length === 0 ? (
-            <p className="rounded-[14px] border border-dashed border-[var(--border)] p-4 text-center text-sm text-[var(--muted)]">Bacheca vuota: link, appunti, file e attività condivise.</p>
+            <p className="rounded-[14px] border border-dashed border-[var(--border)] p-4 text-center text-sm text-[var(--muted)]">La bacheca è vuota. Aggiungi un link, una nota o un file da condividere con il gruppo.</p>
           ) : (
             <ul className="grid grid-cols-1 gap-2">
               {resources.map((resource) => (
@@ -462,9 +521,17 @@ function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; a
               <MemberRow key={member.userId} group={group} member={member} isOwner={isOwner} myId={actor?.userId} onClose={onClose} onNotice={onNotice} />
             ))}
           </ul>
+          <details className="quiet-panel mt-3 p-3">
+            <summary className="cursor-pointer text-sm font-extrabold">Cosa può fare ogni ruolo?</summary>
+            <ul className="mt-2 grid grid-cols-1 gap-1.5 text-xs text-[var(--muted)]">
+              <li><strong>Proprietario</strong>: ha creato il gruppo. Sceglie i ruoli, può togliere persone e contenuti dalla bacheca ed eliminare il gruppo.</li>
+              <li><strong>Amministratore</strong>: come un membro, ma può anche invitare persone per email.</li>
+              <li><strong>Membro</strong>: aggiunge link, note e file in bacheca e invita altri con link, QR o codice.</li>
+            </ul>
+          </details>
           {sentInvites.length ? (
             <div className="mt-4">
-              <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">Inviti in attesa · {sentInvites.length}</h4>
+              <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">Inviti in attesa di risposta · {sentInvites.length}</h4>
               <ul className="grid grid-cols-1 gap-1.5">
                 {sentInvites.map((invite) => (
                   <li key={invite.id} className="flex min-w-0 items-center gap-2 rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-xs">
@@ -482,7 +549,7 @@ function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; a
       {tab === "attivita" ? (
         <ul className="mt-4 grid grid-cols-1 gap-1.5">
           {activities.length === 0 ? (
-            <li className="rounded-[14px] border border-dashed border-[var(--border)] p-4 text-center text-sm text-[var(--muted)]">Ancora nessuna attività.</li>
+            <li className="rounded-[14px] border border-dashed border-[var(--border)] p-4 text-center text-sm text-[var(--muted)]">Cronologia vuota: qui vedrai chi entra nel gruppo e cosa viene aggiunto in bacheca.</li>
           ) : activities.map((activity) => (
             <li key={activity.id} className="flex min-w-0 items-start gap-2 rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-xs">
               <Icon name="History" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
@@ -495,41 +562,58 @@ function GroupDetail({ group, actor, onClose, onNotice }: { group: StudyGroup; a
       ) : null}
 
       {resourceOpen && actor ? <ResourceModal group={group} actor={actor} onClose={() => setResourceOpen(false)} /> : null}
-      {inviteOpen && actor ? <InviteSheet group={group} actor={actor} onClose={() => setInviteOpen(false)} onNotice={onNotice} /> : null}
+      {inviteOpen && actor ? <InviteSheet group={group} actor={actor} onClose={() => setInviteOpen(false)} onNotice={onNotice} onLogin={onLogin} /> : null}
     </Drawer>
   );
 }
 
 function ResourceRow({ resource, canManage }: { resource: GroupResource; canManage: boolean }) {
   const store = useStudyStore();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   return (
-    <li className={`quiet-panel flex min-w-0 items-start gap-3 p-3 ${resource.pinned ? "ring-1 ring-[var(--accent)]" : ""}`}>
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--surface-strong)]">
-        <Icon name={RESOURCE_ICON[resource.kind]} className="h-4 w-4 text-[var(--accent-ink)]" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="safe-text text-sm font-extrabold">
-          {resource.pinned ? <Icon name="Pin" className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-[var(--accent-ink)]" /> : null}
-          {resource.title}
-        </p>
-        {resource.url ? (
-          <a href={safeHref(resource.url)} target="_blank" rel="noreferrer" className="block truncate text-xs font-bold text-[var(--accent-ink)] underline">
-            {resource.url}
-          </a>
-        ) : null}
-        {resource.body ? <p className="safe-text mt-0.5 whitespace-pre-line text-xs text-[var(--muted)]">{resource.body}</p> : null}
-        <p className="mt-1 text-[11px] font-bold text-[var(--faint)]">{RESOURCE_LABEL[resource.kind]} · {resource.addedByDisplayName}</p>
-      </div>
-      {canManage ? (
-        <span className="flex shrink-0 gap-1">
-          <button type="button" onClick={() => void store.toggleResourcePin(resource.id).then(() => pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
-            className={`grid h-8 w-8 place-items-center rounded-full ${resource.pinned ? "bg-[var(--accent)] text-[#10131d]" : "hover:bg-[var(--surface-strong)]"}`}>
-            <Icon name="Pin" className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={() => { if (window.confirm(`Eliminare "${resource.title}" dalla bacheca?`)) void store.deleteGroupResource(resource.id).then(() => deleteSharedResource(resource.id)); }} aria-label="Elimina risorsa" className="grid h-8 w-8 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
-            <Icon name="Trash2" className="h-4 w-4" />
-          </button>
+    <li className={`quiet-panel min-w-0 p-3 ${resource.pinned ? "ring-1 ring-[var(--accent)]" : ""}`}>
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--surface-strong)]">
+          <Icon name={RESOURCE_ICON[resource.kind]} className="h-4 w-4 text-[var(--accent-ink)]" />
         </span>
+        <div className="min-w-0 flex-1">
+          <p className="safe-text text-sm font-extrabold">
+            {resource.pinned ? <Icon name="Pin" className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-[var(--accent-ink)]" /> : null}
+            {resource.title}
+          </p>
+          {resource.url ? (
+            <a href={safeHref(resource.url)} target="_blank" rel="noreferrer" className="block truncate text-xs font-bold text-[var(--accent-ink)] underline">
+              {resource.url}
+            </a>
+          ) : null}
+          {resource.body ? <p className="safe-text mt-0.5 whitespace-pre-line text-xs text-[var(--muted)]">{resource.body}</p> : null}
+          <p className="mt-1 text-[11px] font-bold text-[var(--faint)]">{RESOURCE_LABEL[resource.kind]} · aggiunto da {resource.addedByDisplayName}</p>
+        </div>
+        {canManage ? (
+          <span className="flex shrink-0 gap-1">
+            <button type="button" onClick={() => void store.toggleResourcePin(resource.id).then(() => pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
+              className={`grid h-8 w-8 place-items-center rounded-full ${resource.pinned ? "bg-[var(--accent)] text-[#10131d]" : "hover:bg-[var(--surface-strong)]"}`}>
+              <Icon name="Pin" className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => setConfirmDelete(true)} aria-label={`Elimina "${resource.title}" dalla bacheca`} title="Elimina dalla bacheca" className="grid h-8 w-8 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
+              <Icon name="Trash2" className="h-4 w-4" />
+            </button>
+          </span>
+        ) : null}
+      </div>
+      {confirmDelete ? (
+        <div className="mt-3">
+          <InlineConfirm
+            text={`Eliminare "${resource.title}" dalla bacheca? Sparirà per tutti i membri e non si può annullare.`}
+            confirmLabel="Elimina dalla bacheca"
+            icon="Trash2"
+            onCancel={() => setConfirmDelete(false)}
+            onConfirm={() => {
+              setConfirmDelete(false);
+              void store.deleteGroupResource(resource.id).then(() => deleteSharedResource(resource.id));
+            }}
+          />
+        </div>
       ) : null}
     </li>
   );
@@ -549,21 +633,27 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
     }
   };
 
+  const [confirm, setConfirm] = useState<"remove" | "leave" | null>(null);
+
   const remove = async () => {
-    if (!window.confirm(`Rimuovere ${member.displayName} dal gruppo?`)) return;
+    setConfirm(null);
     await store.updateStudyGroup(group.id, { members: group.members.filter((m) => m.userId !== member.userId) });
     await removeSharedMember(group.id, member.userId);
-    onNotice(`${member.displayName} rimosso dal gruppo.`);
+    onNotice(`${member.displayName} non fa più parte del gruppo.`);
   };
 
-  const leave = async () => {
+  const askLeave = () => {
     if (member.role === "owner") {
       if (group.members.length > 1) {
-        onNotice("Sei il proprietario: elimina il gruppo oppure trasferisci la proprietà prima di uscire.");
+        onNotice("Sei il proprietario: puoi eliminare il gruppo quando sei l'unico membro rimasto.");
         return;
       }
     }
-    if (!window.confirm("Uscire dal gruppo?")) return;
+    setConfirm("leave");
+  };
+
+  const leave = async () => {
+    setConfirm(null);
     const storeState = useStudyStore.getState();
     if (group.members.length === 1) {
       await storeState.deleteStudyGroup(group.id);
@@ -577,67 +667,141 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
     await removeSharedMember(group.id, member.userId);
     // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
     await storeState.deleteStudyGroup(group.id);
-    onNotice("Hai lasciato il gruppo.");
+    onNotice(`Hai lasciato il gruppo "${group.name}".`);
     onClose();
   };
 
   return (
-    <li className="quiet-panel flex min-w-0 items-center gap-3 p-3">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-xs font-black">
-        {member.displayName.split(" ").slice(0, 2).map((part) => part[0]).join("") || "?"}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="one-line-safe block text-sm font-extrabold">{member.displayName}{isSelf ? " (tu)" : ""}</span>
-        <span className="one-line-safe block text-xs text-[var(--muted)]">{ROLE_LABEL[member.role]}</span>
-      </span>
-      {isOwner && !isSelf ? (
-        <select
-          className="min-h-8 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-xs font-black"
-          value={member.role}
-          onChange={(event) => void changeRole(event.target.value as GroupMember["role"])}
-          aria-label={`Ruolo di ${member.displayName}`}
-        >
-          <option value="member">Membro</option>
-          <option value="admin">Amministratore</option>
-        </select>
+    <li className="quiet-panel min-w-0 p-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-xs font-black">
+          {member.displayName.split(" ").slice(0, 2).map((part) => part[0]).join("") || "?"}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="one-line-safe block text-sm font-extrabold">{member.displayName}{isSelf ? " (tu)" : ""}</span>
+          <span className="one-line-safe block text-xs text-[var(--muted)]">{ROLE_LABEL[member.role]}</span>
+        </span>
+        {isOwner && !isSelf ? (
+          <select
+            className="min-h-8 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-xs font-black"
+            value={member.role}
+            onChange={(event) => void changeRole(event.target.value as GroupMember["role"])}
+            aria-label={`Ruolo di ${member.displayName}`}
+            title="Cambia ruolo"
+          >
+            <option value="member">Membro</option>
+            <option value="admin">Amministratore</option>
+          </select>
+        ) : null}
+        {canRemove ? (
+          <button type="button" onClick={() => setConfirm("remove")} aria-label={`Togli ${member.displayName} dal gruppo`} title="Togli dal gruppo" className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
+            <Icon name="X" className="h-4 w-4" />
+          </button>
+        ) : null}
+        {isSelf && !isOwner ? (
+          <button type="button" onClick={askLeave} className="shrink-0 rounded-full px-3 text-xs font-black text-[var(--muted)] hover:text-[var(--danger-text)]">
+            Esci
+          </button>
+        ) : null}
+      </div>
+      {confirm === "remove" ? (
+        <div className="mt-3">
+          <InlineConfirm
+            text={`Togliere ${member.displayName} dal gruppo? Non vedrà più bacheca e cronologia. Con un vecchio link potrebbe rientrare: per impedirlo, in Invita usa "Disattiva i vecchi inviti".`}
+            confirmLabel="Togli dal gruppo"
+            icon="X"
+            onCancel={() => setConfirm(null)}
+            onConfirm={() => void remove()}
+          />
+        </div>
       ) : null}
-      {canRemove ? (
-        <button type="button" onClick={() => void remove()} aria-label={`Rimuovi ${member.displayName}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
-          <Icon name="X" className="h-4 w-4" />
-        </button>
-      ) : null}
-      {isSelf && !isOwner ? (
-        <button type="button" onClick={() => void leave()} className="shrink-0 rounded-full px-3 text-xs font-black text-[var(--muted)] hover:text-[var(--danger-text)]">
-          Esci
-        </button>
+      {confirm === "leave" ? (
+        <div className="mt-3">
+          <InlineConfirm
+            text={leaveConfirmText(group)}
+            confirmLabel={group.members.length === 1 ? "Esci ed elimina il gruppo" : "Esci dal gruppo"}
+            icon="LogOut"
+            onCancel={() => setConfirm(null)}
+            onConfirm={() => void leave()}
+          />
+        </div>
       ) : null}
     </li>
   );
 }
 
+/** Cosa succede uscendo: chi esce perde bacheca e cronologia; l'ultimo membro elimina il gruppo. */
+const leaveConfirmText = (group: StudyGroup) =>
+  group.members.length === 1
+    ? `Sei l'ultimo membro: uscendo, "${group.name}" verrà eliminato con bacheca e cronologia. Non si può annullare.`
+    : `Uscire da "${group.name}"? Non vedrai più bacheca e cronologia del gruppo. Per rientrare ti servirà di nuovo un invito.`;
+
 function GroupDetailFooter({ group, actor, isOwner, onClose, onNotice }: { group: StudyGroup; actor: Actor | null; isOwner: boolean; onClose: () => void; onNotice: (text: string) => void }) {
-  const leave = async () => {
+  // "blocked": il proprietario non può eliminare un gruppo con altri membri (la regola resta,
+  // ma la si spiega qui invece che in un avviso nascosto sotto il pannello).
+  const [step, setStep] = useState<"idle" | "confirm" | "blocked">("idle");
+  const [busy, setBusy] = useState(false);
+
+  const ask = () => {
     if (!actor) return;
-    const store = useStudyStore.getState();
-    if (isOwner && group.members.length > 1) {
-      onNotice("Sei il proprietario: elimina il gruppo per chiuderlo.");
-      return;
-    }
-    if (!window.confirm(isOwner ? "Eliminare definitivamente il gruppo?" : "Uscire dal gruppo?")) return;
-    if (isOwner) {
-      await store.deleteStudyGroup(group.id);
-      await deleteSharedGroup(group.id);
-    } else {
-      await logSharedActivity(group.id, actor.displayName, "ha lasciato il gruppo").catch(() => undefined);
-      await removeSharedMember(group.id, actor.userId);
-      // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
-      await store.deleteStudyGroup(group.id);
-    }
-    onClose();
+    setStep(isOwner && group.members.length > 1 ? "blocked" : "confirm");
   };
+
+  const leave = async () => {
+    if (!actor || busy) return;
+    setBusy(true);
+    const store = useStudyStore.getState();
+    try {
+      if (isOwner) {
+        await store.deleteStudyGroup(group.id);
+        await deleteSharedGroup(group.id);
+        onNotice(`Gruppo "${group.name}" eliminato.`);
+      } else {
+        await logSharedActivity(group.id, actor.displayName, "ha lasciato il gruppo").catch(() => undefined);
+        await removeSharedMember(group.id, actor.userId);
+        // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
+        await store.deleteStudyGroup(group.id);
+        onNotice(`Hai lasciato il gruppo "${group.name}".`);
+      }
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (step === "confirm") {
+    return (
+      <InlineConfirm
+        text={
+          isOwner
+            ? `Eliminare "${group.name}"? Verranno cancellati anche bacheca e cronologia. Non si può annullare.`
+            : `Uscire da "${group.name}"? Non vedrai più bacheca e cronologia del gruppo. Per rientrare ti servirà di nuovo un invito.`
+        }
+        confirmLabel={isOwner ? "Elimina gruppo" : "Esci dal gruppo"}
+        icon={isOwner ? "Trash2" : "LogOut"}
+        busy={busy}
+        onCancel={() => setStep("idle")}
+        onConfirm={() => void leave()}
+      />
+    );
+  }
+
+  if (step === "blocked") {
+    return (
+      <div className="rounded-[18px] bg-[var(--surface-soft)] p-3">
+        <p className="text-sm font-bold">Puoi eliminare il gruppo solo quando sei l'unico membro rimasto. Prima togli gli altri dalla scheda Membri.</p>
+        <div className="mt-2 flex justify-end">
+          <Button variant="soft" onClick={() => setStep("idle")} autoFocus>
+            Ho capito
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button variant={isOwner ? "danger" : "soft"} icon={isOwner ? "Trash2" : "LogOut"} onClick={() => void leave()} disabled={!actor}>
+      <Button variant={isOwner ? "danger" : "soft"} icon={isOwner ? "Trash2" : "LogOut"} onClick={ask} disabled={!actor}>
         {isOwner ? "Elimina gruppo" : "Esci dal gruppo"}
       </Button>
     </div>
@@ -657,7 +821,7 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
   const save = async () => {
     if (busy) return;
     if (!title.trim()) {
-      setError("Dai un titolo alla risorsa.");
+      setError("Scrivi un titolo per continuare.");
       return;
     }
     if (kind === "link" && !url.trim()) {
@@ -682,21 +846,27 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
       await logSharedActivity(group.id, actor.displayName, `ha aggiunto "${title.trim()}"`).catch(() => undefined);
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Salvataggio non riuscito.");
+      setError(cause instanceof Error ? cause.message : "Non è stato possibile aggiungere alla bacheca. Riprova.");
     } finally {
       setBusy(false);
     }
   };
 
+  const bodyField: Record<Exclude<GroupResource["kind"], "link">, { label: string; placeholder: string }> = {
+    note: { label: "Testo", placeholder: "Es. Domande uscite all'ultimo appello" },
+    file: { label: "Nota (facoltativa)", placeholder: "Es. Slide della lezione 3, aggiornate" },
+    task: { label: "Dettagli (facoltativi)", placeholder: "Es. Ripassare il capitolo 4 entro venerdì" }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true" aria-label="Nuova risorsa"
+    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true" aria-label="Aggiungi alla bacheca"
       onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
       onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
       <section className="soft-panel w-full max-w-lg p-4 sm:p-5">
         <p className="text-xs font-black uppercase text-[var(--faint)]">Bacheca · {group.name}</p>
-        <h3 className="text-2xl font-black">Nuova risorsa</h3>
+        <h3 className="text-2xl font-black">Cosa vuoi condividere?</h3>
         <div className="mt-3">
-          <Segmented label="Tipo di risorsa" size="sm" value={kind} onChange={setKind}
+          <Segmented label="Cosa aggiungi" size="sm" value={kind} onChange={setKind}
             options={[{ id: "link", label: "Link", icon: "Globe" }, { id: "note", label: "Nota", icon: "FileText" }, { id: "file", label: "File", icon: "Paperclip" }, { id: "task", label: "Attività", icon: "Check" }]} />
         </div>
         <div className="mt-3 grid grid-cols-1 gap-3">
@@ -704,19 +874,19 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
             <input className={inputClass} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Es. Appunti capitolo 4" autoFocus />
           </Field>
           {kind === "link" ? (
-            <Field label="URL">
-              <input className={inputClass} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://…" inputMode="url" />
+            <Field label="Link">
+              <input className={inputClass} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Es. https://drive.google.com/…" inputMode="url" />
             </Field>
           ) : null}
           {kind === "file" ? (
-            <Field label="File di riferimento">
+            <Field label="File">
               <input className={inputClass} type="file" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? "")} />
-              <p className="mt-1 text-xs text-[var(--faint)]">Viene condiviso il nome come riferimento: il file resta sul tuo dispositivo.</p>
+              <p className="mt-1 text-xs text-[var(--faint)]">Gli altri vedranno solo il nome del file, che resta sul tuo dispositivo. Per farlo scaricare, aggiungi invece un link (es. Google Drive).</p>
             </Field>
           ) : null}
           {kind !== "link" ? (
-            <Field label={kind === "task" ? "Dettagli" : "Testo"}>
-              <textarea className={`${inputClass} min-h-20 py-3`} value={body} onChange={(event) => setBody(event.target.value)} placeholder="Contenuto condiviso con il gruppo" />
+            <Field label={bodyField[kind].label}>
+              <textarea className={`${inputClass} min-h-20 py-3`} value={body} onChange={(event) => setBody(event.target.value)} placeholder={bodyField[kind].placeholder} />
             </Field>
           ) : null}
           <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
@@ -726,7 +896,7 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
           {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="soft" onClick={onClose} disabled={busy}>Annulla</Button>
-            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>{busy ? "Salvataggio…" : "Condividi"}</Button>
+            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>{busy ? "Aggiungo…" : "Aggiungi alla bacheca"}</Button>
           </div>
         </div>
       </section>

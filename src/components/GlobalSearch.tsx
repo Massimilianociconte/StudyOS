@@ -36,7 +36,7 @@ interface SearchResult {
 }
 
 const labels: Record<ResultKind, string> = {
-  task: "Task",
+  task: "Attività",
   event: "Evento",
   subject: "Materia",
   exam: "Esame",
@@ -368,8 +368,8 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
         onFocus={() => setOpen(true)}
         onKeyDown={handleKey}
         className={`${inputClass} pl-10 pr-10`}
-        placeholder="Cerca task, eventi, materie, materiali, ripassi..."
-        aria-label="Ricerca globale"
+        placeholder="Cerca in StudyOS: attività, eventi, materie, file…"
+        aria-label="Cerca in tutta l'app"
         autoComplete="off"
         spellCheck={false}
       />
@@ -398,15 +398,15 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
             className="scrollbar-soft absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-[min(70dvh,520px)] overflow-y-auto rounded-[24px] border border-[var(--border)] bg-[var(--bg-2)] p-2 shadow-soft"
           >
             <div className="flex items-center justify-between px-3 pb-2 pt-1 text-[10px] font-black uppercase tracking-wider text-[var(--faint)]">
-              <span>{results.length} risultati</span>
-              <span>↑ ↓ Enter</span>
+              <span>{results.length} {results.length === 1 ? "risultato" : "risultati"}</span>
+              <span>↑ ↓ per scegliere · Invio per aprire</span>
             </div>
 
             {results.length === 0 ? (
               <div className="grid grid-cols-1 place-items-center gap-2 px-4 py-6 text-center">
                 <Icon name="Search" className="h-6 w-6 text-[var(--faint)]" />
                 <p className="text-sm font-extrabold">Nessun risultato per "{trimmed}"</p>
-                <p className="text-xs font-bold text-[var(--muted)]">Prova un termine più corto o aggiungi nuovi dati.</p>
+                <p className="text-xs font-bold text-[var(--muted)]">Prova con una parola più corta o controlla come è scritta.</p>
               </div>
             ) : (
               <ul role="listbox" className="grid grid-cols-1 gap-1">

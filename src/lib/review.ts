@@ -84,7 +84,10 @@ export const dueTopics = <T extends Pick<StudyTopic, "nextReviewDate" | "archive
 /** Anteprima dell'intervallo per il pulsante di valutazione (es. "3 g"). */
 export const previewInterval = (topic: ReviewInput, rating: ReviewRating) => {
   const days = scheduleReview(topic, rating).intervalDays;
-  if (days < 30) return `${days} g`;
-  if (days < 365) return `${Math.round(days / 30)} mesi`;
+  if (days < 30) return `${days} ${days === 1 ? "giorno" : "giorni"}`;
+  if (days < 365) {
+    const months = Math.round(days / 30);
+    return `${months} ${months === 1 ? "mese" : "mesi"}`;
+  }
   return "1 anno";
 };

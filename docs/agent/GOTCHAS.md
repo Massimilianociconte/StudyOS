@@ -108,4 +108,9 @@
   (`useGroupInviteLinks`, anche su `hashchange`), mai in GroupsView. L'invito in sospeso vive
   in `lib/groupInvite.ts` (localStorage, 14 giorni); l'ingresso automatico dopo il login avviene
   solo se l'utente l'aveva confermato.
-
+- Lessico dell'interfaccia: sezioni "Home", "Calendario", "Attività" (mai "task"; i
+  sotto-elementi sono "passaggi"), "Studio", "Corso di laurea" (vista `barb`), cronologia
+  dei gruppi (mai "attività"), "appelli ufficiali" per le date UNIMI, "password" e non
+  passphrase/vault. Etichette dei campi facoltativi accordate al nome ("Materia
+  (facoltativa)"). I messaggi del server MCP (`src/agent/`) citano "Impostazioni → Agenti":
+  la categoria si chiama "Agenti AI" per restare riconoscibile.

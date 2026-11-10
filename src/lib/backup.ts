@@ -92,7 +92,7 @@ const COLLECTION_LABEL: Record<(typeof COLLECTIONS)[number], string> = {
   subjects: "materie",
   exams: "esami",
   events: "eventi",
-  tasks: "task",
+  tasks: "attività",
   sessions: "sessioni",
   topics: "argomenti",
   attachments: "materiali",
@@ -106,7 +106,7 @@ const COLLECTION_LABEL: Record<(typeof COLLECTIONS)[number], string> = {
   studyGroups: "gruppi",
   groupInvites: "inviti",
   groupResources: "risorse condivise",
-  groupActivities: "attività dei gruppi"
+  groupActivities: "voci di cronologia dei gruppi"
 };
 
 export const backupSummary = (snapshot: StudySnapshot) => {

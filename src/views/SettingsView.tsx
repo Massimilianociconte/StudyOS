@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { PaletteName, ThemeMode, UserSettings } from "../types";
 import {
   backupSummary,
@@ -12,6 +12,7 @@ import { selectPreferences, useStudyStore, snapshotFromState } from "../store/us
 import { whenPersisted } from "../lib/persistence";
 import { getCloudSyncState, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
 import { resizeImageFile } from "../lib/files";
+import { takeSettingsSection, type SettingsSection } from "../lib/settingsJump";
 import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
 import { Button, Field, Panel, Pill, SectionTitle, fileInputClass, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
@@ -19,16 +20,33 @@ import { CloudPanel } from "../components/CloudPanel";
 import { AgentSettings } from "../components/AgentDesk";
 
 const palettes: { id: PaletteName; label: string; colors: string[] }[] = [
-  { id: "aurora", label: "Aurora Dark", colors: ["#7CF7C8", "#8B7CFF", "#FF7A8A"] },
-  { id: "milk", label: "Milk White", colors: ["#4361EE", "#F4A261", "#2A9D8F"] },
-  { id: "space", label: "Deep Space", colors: ["#B8F7FF", "#C084FC", "#FF8FAB"] },
-  { id: "university", label: "University Focus", colors: ["#38BDF8", "#F97316", "#22C55E"] },
-  { id: "forest", label: "Forest Calm", colors: ["#8BD8BD", "#C6C267", "#FF8F70"] },
-  { id: "sunset", label: "Sunset Study", colors: ["#FF9F6E", "#FF6F91", "#7DD3FC"] },
-  { id: "graphite", label: "Minimal Graphite", colors: ["#E5E7EB", "#9CA3AF", "#FCA5A5"] }
+  { id: "aurora", label: "Aurora scuro", colors: ["#7CF7C8", "#8B7CFF", "#FF7A8A"] },
+  { id: "milk", label: "Bianco latte", colors: ["#4361EE", "#F4A261", "#2A9D8F"] },
+  { id: "space", label: "Spazio profondo", colors: ["#B8F7FF", "#C084FC", "#FF8FAB"] },
+  { id: "university", label: "Università", colors: ["#38BDF8", "#F97316", "#22C55E"] },
+  { id: "forest", label: "Bosco calmo", colors: ["#8BD8BD", "#C6C267", "#FF8F70"] },
+  { id: "sunset", label: "Tramonto", colors: ["#FF9F6E", "#FF6F91", "#7DD3FC"] },
+  { id: "graphite", label: "Grafite essenziale", colors: ["#E5E7EB", "#9CA3AF", "#FCA5A5"] }
 ];
 
 const THEME_LABEL: Record<ThemeMode, string> = { dark: "Scuro", light: "Chiaro", focus: "Focus" };
+
+/** Gli errori di password e copie arrivano dalla logica con termini tecnici: qui diventano frasi semplici. */
+const plainError = (error: unknown, fallback: string) => {
+  const text = error instanceof Error ? error.message : "";
+  if (/passphrase richiesta/i.test(text)) return "Questa copia è protetta: scrivi la sua password qui sopra e scegli di nuovo il file.";
+  if (/passphrase del backup non valida/i.test(text)) return "Password della copia sbagliata: correggila e scegli di nuovo il file.";
+  if (/serve la passphrase/i.test(text)) return "Scrivi la password attuale per togliere la protezione.";
+  if (/passphrase non valida/i.test(text)) return "Password sbagliata. Controlla maiuscole e minuscole e riprova.";
+  if (/json valido|backup studyos non valido/i.test(text)) return "Questo file non è una copia di StudyOS. Scegli il file .json scaricato da qui.";
+  if (/backup cifrato incompleto|backup senza dati/i.test(text)) return "Il file della copia è incompleto o danneggiato.";
+  return text || fallback;
+};
+
+const formatDay = (iso: string) => {
+  const date = new Date(iso);
+  return Number.isFinite(date.getTime()) ? date.toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" }) : iso.slice(0, 10);
+};
 
 export function SettingsView() {
   const store = useStudyStore();
@@ -56,11 +74,25 @@ export function SettingsView() {
   const [importPassphrase, setImportPassphrase] = useState("");
   const [message, setMessage] = useState("");
   const displayName = settings.profile?.displayName?.trim();
+  // undefined = ancora da leggere. Il ref sopravvive al doppio effetto di StrictMode,
+  // mentre takeSettingsSection consuma la richiesta alla prima lettura.
+  const jumpRef = useRef<SettingsSection | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (jumpRef.current === undefined) jumpRef.current = takeSettingsSection();
+    const target = jumpRef.current;
+    if (!target) return;
+    const frame = window.requestAnimationFrame(() => {
+      jumpRef.current = null;
+      document.getElementById(`settings-${target}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   const exportBackup = async (scope: "full" | "tasks" | "calendar" | "subjects" = "full") => {
     setMessage("");
     if (exportEncrypted && backupPassphrase.length < 8) {
-      setMessage("Per un backup cifrato usa almeno 8 caratteri.");
+      setMessage("Per proteggere la copia scegli una password di almeno 8 caratteri.");
       return;
     }
 
@@ -91,9 +123,9 @@ export function SettingsView() {
       };
       const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined, scope);
       downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
-      setMessage("Backup esportato.");
+      setMessage("Copia scaricata: la trovi nella cartella dei download. Conservala in un posto sicuro.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Esportazione non riuscita.");
+      setMessage(plainError(error, "Download della copia non riuscito. Riprova."));
     }
   };
 
@@ -107,30 +139,35 @@ export function SettingsView() {
       const summary = backupSummary(snapshot);
       if (scope === "full") {
         const ok = window.confirm(
-          `Backup completo del ${backup.exportedAt.slice(0, 10)} (${summary.text}).\n\nSostituire TUTTI i dati attuali con il contenuto del backup?${
-            isSignedIn() ? "\nLe modifiche verranno sincronizzate anche sul cloud." : ""
+          `Copia completa del ${formatDay(backup.exportedAt)} (${summary.text}).\n\nSostituire TUTTI i dati attuali con quelli della copia? I dati attuali verranno cancellati e non si potrà annullare.${
+            isSignedIn() ? "\nLa sostituzione arriverà anche al tuo account e agli altri dispositivi collegati." : ""
           }`
         );
         if (!ok) return;
         await replaceAllData(snapshot);
-        setMessage(`Backup importato: ${summary.text}.`);
+        setMessage(`Copia ripristinata: ${summary.text}.`);
       } else {
         const result = await mergeData(snapshot);
-        const scopeLabel = scope === "tasks" ? "task" : scope === "calendar" ? "calendario" : scope === "subjects" ? "materie" : scope;
-        setMessage(`Backup parziale (${scopeLabel}) unito ai dati esistenti: ${result.added} nuovi, ${result.updated} aggiornati.`);
+        const scopeLabel = scope === "tasks" ? "attività" : scope === "calendar" ? "calendario" : scope === "subjects" ? "materie" : scope;
+        setMessage(`Copia parziale (${scopeLabel}) aggiunta ai tuoi dati: ${result.added} elementi nuovi, ${result.updated} aggiornati.`);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Import non riuscito.");
+      setMessage(plainError(error, "Ripristino non riuscito. Controlla di aver scelto il file giusto e riprova."));
     }
   };
 
   const resetData = async () => {
-    if (!window.confirm("Resettare tutti i dati locali e ripartire da un workspace vuoto?")) return;
+    if (
+      !window.confirm(
+        "Cancellare tutti i dati di StudyOS da questo dispositivo?\n\nMaterie, esami, attività, eventi, allegati, profilo e tutto il resto verranno eliminati (restano solo le scelte di aspetto) e la protezione con password verrà tolta. Non si può annullare: se non hai una copia di sicurezza, premi Annulla e scaricala prima."
+      )
+    )
+      return;
     setMessage("");
     try {
       if (isSignedIn()) {
         const alsoCloud = window.confirm(
-          "Sei collegato al cloud.\n\nOK = elimina i dati anche dal cloud e da tutti i dispositivi sincronizzati.\nAnnulla = svuota solo questo dispositivo e riscarica i dati dal cloud."
+          "Sei collegato al tuo account.\n\nOK = cancella i dati anche dall'account e da tutti i dispositivi collegati (non si può annullare).\nAnnulla = svuota solo questo dispositivo e riscarica i dati dall'account."
         );
         await resetAllData({ propagate: alsoCloud });
         if (alsoCloud) await requestSync();
@@ -138,17 +175,17 @@ export function SettingsView() {
         const sync = getCloudSyncState();
         setMessage(alsoCloud
           ? sync.pendingChanges || sync.status === "error" || sync.status === "offline"
-            ? "Dati locali eliminati. Le cancellazioni cloud restano in coda e ripartiranno quando la sync sarà disponibile."
-            : "Dati locali eliminati e cancellazioni cloud sincronizzate."
+            ? "Dati cancellati da questo dispositivo. Verranno cancellati anche dall'account appena la sincronizzazione riprende."
+            : "Dati cancellati da questo dispositivo e dall'account."
           : sync.status === "error" || sync.status === "offline"
-            ? "Dispositivo svuotato. Il download dal cloud ripartirà quando la sync sarà disponibile."
-            : "Dispositivo svuotato e dati cloud riscaricati.");
+            ? "Dispositivo svuotato. I dati dell'account verranno riscaricati appena la sincronizzazione riprende."
+            : "Dispositivo svuotato e dati riscaricati dall'account.");
         return;
       }
       await resetAllData({ propagate: false });
-      setMessage("Workspace locale resettato.");
+      setMessage("Tutti i dati di questo dispositivo sono stati cancellati.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Reset non riuscito.");
+      setMessage(plainError(error, "Cancellazione non riuscita. Riprova."));
     }
   };
 
@@ -157,33 +194,33 @@ export function SettingsView() {
     try {
       await lockVault();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Impossibile bloccare: salvataggio non riuscito.");
+      setMessage(plainError(error, "Blocco non riuscito: le ultime modifiche non sono ancora salvate. Riprova tra poco."));
     }
   };
 
   const activateVault = async () => {
     setMessage("");
     if (vaultPassphrase.length < 10) {
-      setMessage("Per il vault usa almeno 10 caratteri.");
+      setMessage("La password deve avere almeno 10 caratteri.");
       return;
     }
     try {
       await enableVault(vaultPassphrase, vaultHint || undefined);
       setVaultPassphrase("");
       setVaultHint("");
-      setMessage("Vault cifrato attivato. Da ora i dati vengono salvati come snapshot cifrato.");
+      setMessage("Protezione attivata: da ora StudyOS ti chiede la password ogni volta che lo apri su questo dispositivo.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Attivazione vault non riuscita.");
+      setMessage(plainError(error, "Non è stato possibile attivare la protezione. Riprova."));
     }
   };
 
   const deactivateVault = async () => {
     try {
       await disableVault(vaultPassphrase || undefined);
-      setMessage("Vault disattivato. I dati restano locali in IndexedDB standard.");
+      setMessage("Protezione tolta: StudyOS si apre senza password. I dati restano su questo dispositivo.");
       setVaultPassphrase("");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Non riesco a disattivare il vault.");
+      setMessage(plainError(error, "Non è stato possibile togliere la protezione. Riprova."));
     }
   };
 
@@ -191,7 +228,7 @@ export function SettingsView() {
     <div>
       <SectionTitle
         title="Impostazioni"
-        subtitle="Profilo, aspetto, privacy, cloud, backup e agenti."
+        subtitle="Il tuo profilo, l'aspetto dell'app, l'account e la protezione dei tuoi dati."
       />
 
       {message ? (
@@ -220,7 +257,7 @@ export function SettingsView() {
           <SettingHeader
             section="profilo"
             title="Profilo e obiettivi"
-            description={`${displayName ? `Ciao, ${displayName}. ` : ""}Chi sei e quanto vuoi studiare. Questi dati seguono il tuo account: con il cloud attivo sono uguali su ogni dispositivo.`}
+            description={`${displayName ? `Ciao, ${displayName}. ` : ""}Il tuo nome, il tuo corso e quanto vuoi studiare. Se accedi con l'account li ritrovi su ogni dispositivo.`}
           />
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <div className="grid grid-cols-1 h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-super bg-[var(--surface-soft)]">
@@ -231,19 +268,19 @@ export function SettingsView() {
               )}
             </div>
             <div className="grid grid-cols-1 min-w-0 flex-1 gap-3">
-              <Field label="Nome visualizzato">
+              <Field label="Il tuo nome">
                 <input
                   className={inputClass}
                   value={preferences.displayName}
                   onChange={(event) => void updatePreferences({ displayName: event.target.value })}
-                  placeholder="Il tuo nome"
+                  placeholder="Es. Giulia"
                   autoComplete="given-name"
                 />
               </Field>
               <div className="flex flex-wrap gap-2">
                 <label className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)]">
                   <Icon name="Upload" className="h-4 w-4" />
-                  Foto profilo
+                  {preferences.avatarDataUrl ? "Cambia foto" : "Carica una foto"}
                   <input
                     type="file"
                     accept="image/*"
@@ -253,7 +290,7 @@ export function SettingsView() {
                         const avatarDataUrl = await resizeImageFile(event.target.files?.[0]);
                         if (avatarDataUrl) await updatePreferences({ avatarDataUrl });
                       } catch (error) {
-                        setMessage(error instanceof Error ? error.message : "Immagine non valida.");
+                        setMessage(error instanceof Error ? error.message : "Questa immagine non si può usare. Prova con una foto JPG o PNG.");
                       } finally {
                         event.target.value = "";
                       }
@@ -305,16 +342,16 @@ export function SettingsView() {
               checked={preferences.showBarb}
               onChange={(event) => void updatePreferences({ showBarb: event.target.checked })}
             />
-            <span className="min-w-0 flex-1">Mostra la sezione del corso BARB · UNIMI</span>
+            <span className="min-w-0 flex-1">Mostra la sezione Corso di laurea (BARB · UNIMI)</span>
           </label>
         </Panel>
         </section>
 
         <section id="settings-aspetto" aria-labelledby="settings-aspetto-title" className="scroll-mt-24">
         <Panel>
-          <SettingHeader section="aspetto" title="Aspetto" description="Tema, colori e densità. Cambiano solo come vedi l'app su questo dispositivo." />
+          <SettingHeader section="aspetto" title="Aspetto" description="Scegli tema e colori. Valgono solo su questo dispositivo." />
           <div className="grid grid-cols-1 gap-4">
-            <Field label="Modalità">
+            <Field label="Tema">
               <div className="grid grid-cols-3 gap-2">
                 {(["dark", "light", "focus"] as ThemeMode[]).map((mode) => (
                   <button
@@ -332,7 +369,7 @@ export function SettingsView() {
               </div>
             </Field>
 
-            <Field label="Palette">
+            <Field label="Colori">
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {palettes.map((palette) => (
                   <button
@@ -358,17 +395,17 @@ export function SettingsView() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Densità">
                 <select className={inputClass} value={settings.density} onChange={(event) => updateSettings({ density: event.target.value as "comfortable" | "compact" })}>
-                  <option value="comfortable">Comoda</option>
-                  <option value="compact">Compatta</option>
+                  <option value="comfortable">Comoda (più spazio)</option>
+                  <option value="compact">Compatta (più cose a schermo)</option>
                 </select>
               </Field>
-              <Field label="Vista iniziale">
+              <Field label="Sezione all'apertura">
                 <select className={inputClass} value={settings.initialView} onChange={(event) => updateSettings({ initialView: event.target.value as UserSettings["initialView"] })}>
-                  <option value="last">Ultima sezione aperta</option>
-                  <option value="dashboard">Dashboard</option>
+                  <option value="dashboard">Home</option>
                   <option value="calendar">Calendario</option>
-                  <option value="tasks">Task</option>
+                  <option value="tasks">Attività</option>
                   <option value="study">Studio</option>
+                  <option value="last">Ultima sezione aperta</option>
                 </select>
               </Field>
             </div>
@@ -377,7 +414,7 @@ export function SettingsView() {
         </section>
 
         <section id="settings-account" aria-labelledby="settings-account-title" className="scroll-mt-24">
-          <SettingHeader section="account" title="Account e sincronizzazione" description="Accedi per avere gli stessi dati su telefono e computer. Senza account tutto resta solo in questo browser." />
+          <SettingHeader section="account" title="Account" description="Accedi per avere i tuoi dati su telefono e computer." />
           <CloudPanel />
         </section>
 
@@ -385,9 +422,9 @@ export function SettingsView() {
         <Panel>
           <SettingHeader
             section="privacy"
-            title="Privacy e vault"
-            description="GitHub Pages ospita solo il codice. I dati sono nel browser: il vault li cifra con una passphrase che non viene mai salvata."
-            action={<Pill active={settings.security.mode === "vault"}>{settings.security.mode === "vault" ? "Vault cifrato" : "Standard"}</Pill>}
+            title="Privacy"
+            description="Puoi chiedere una password ogni volta che StudyOS si apre su questo dispositivo."
+            action={<Pill active={settings.security.mode === "vault"}>{settings.security.mode === "vault" ? "Protetto da password" : "Senza password"}</Pill>}
           />
 
           <div className="grid grid-cols-1 gap-3">
@@ -396,27 +433,53 @@ export function SettingsView() {
                 <Icon name={settings.security.mode === "vault" ? "Lock" : "Shield"} className="h-5 w-5" />
               </span>
               <div className="min-w-0">
-                <p className="font-black">{settings.security.mode === "vault" ? "Snapshot IndexedDB cifrato" : "IndexedDB local-first"}</p>
+                <p className="font-black">{settings.security.mode === "vault" ? "I dati su questo dispositivo sono protetti" : "Protezione non attiva"}</p>
                 <p className="text-sm text-[var(--muted)]">
                   {settings.security.mode === "vault"
-                    ? "La passphrase non viene salvata; serve a sbloccare la sessione."
-                    : "Puoi attivare il vault o esportare backup cifrati."}
+                    ? "Sono cifrati con la tua password, che non viene salvata da nessuna parte: serve ogni volta che apri StudyOS."
+                    : "Chi usa questo browser può aprire StudyOS e vedere i tuoi dati."}
                 </p>
               </div>
             </div>
 
-            <Field label="Passphrase vault">
-              <input className={inputClass} type="password" value={vaultPassphrase} onChange={(event) => setVaultPassphrase(event.target.value)} />
-            </Field>
             {settings.security.mode === "standard" ? (
-              <Field label="Suggerimento opzionale">
-                <input className={inputClass} value={vaultHint} onChange={(event) => setVaultHint(event.target.value)} />
+              <>
+                <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
+                  Se dimentichi la password, i dati di questo dispositivo non si possono più recuperare. Prima di attivarla scarica una copia di sicurezza.
+                </p>
+                <Field label="Scegli una password (almeno 10 caratteri)">
+                  <input
+                    className={inputClass}
+                    type="password"
+                    autoComplete="new-password"
+                    value={vaultPassphrase}
+                    onChange={(event) => setVaultPassphrase(event.target.value)}
+                  />
+                </Field>
+                <Field label="Promemoria della password (facoltativo, visibile a chi apre l'app)">
+                  <input
+                    className={inputClass}
+                    value={vaultHint}
+                    onChange={(event) => setVaultHint(event.target.value)}
+                    placeholder="Es. il titolo del mio libro preferito"
+                  />
+                </Field>
+              </>
+            ) : (
+              <Field label="Password attuale (serve solo per togliere la protezione)">
+                <input
+                  className={inputClass}
+                  type="password"
+                  autoComplete="current-password"
+                  value={vaultPassphrase}
+                  onChange={(event) => setVaultPassphrase(event.target.value)}
+                />
               </Field>
-            ) : null}
+            )}
             <div className="flex flex-wrap gap-2">
               {settings.security.mode === "standard" ? (
                 <Button icon="Lock" variant="primary" onClick={activateVault}>
-                  Attiva vault
+                  Proteggi con una password
                 </Button>
               ) : (
                 <>
@@ -424,7 +487,7 @@ export function SettingsView() {
                     Blocca ora
                   </Button>
                   <Button icon="Shield" variant="danger" onClick={deactivateVault}>
-                    Disattiva vault
+                    Togli la password
                   </Button>
                 </>
               )}
@@ -435,8 +498,9 @@ export function SettingsView() {
 
         <section id="settings-backup" aria-labelledby="settings-backup-title" className="scroll-mt-24">
         <Panel>
-          <SettingHeader section="backup" title="Backup e import" description="Scarica una copia dei tuoi dati o ripristina un backup precedente. Il backup cifrato richiede una passphrase." />
+          <SettingHeader section="backup" title="Copia di sicurezza" description="Salva tutti i tuoi dati in un file, per ripristinarli qui o su un altro dispositivo." />
           <div className="grid grid-cols-1 gap-4">
+            <h4 className="text-sm font-black">Scarica una copia</h4>
             <label className="flex items-center gap-3 rounded-[22px] bg-[var(--surface-soft)] p-3 text-sm font-black">
               <input
                 type="checkbox"
@@ -444,34 +508,57 @@ export function SettingsView() {
                 onChange={(event) => setExportEncrypted(event.target.checked)}
                 className="h-5 w-5 accent-[var(--accent)]"
               />
-              Backup cifrato AES-GCM
+              Proteggi la copia con una password
             </label>
 
             {exportEncrypted ? (
-              <Field label="Passphrase backup">
-                <input className={inputClass} type="password" value={backupPassphrase} onChange={(event) => setBackupPassphrase(event.target.value)} />
+              <Field label="Password della copia (almeno 8 caratteri, ti servirà per ripristinarla)">
+                <input
+                  className={inputClass}
+                  type="password"
+                  autoComplete="new-password"
+                  value={backupPassphrase}
+                  onChange={(event) => setBackupPassphrase(event.target.value)}
+                />
               </Field>
             ) : null}
 
             <div className="flex flex-wrap gap-2">
               <Button icon="Download" variant="primary" onClick={() => exportBackup("full")}>
-                Backup completo
-              </Button>
-              <Button icon="Download" variant="soft" onClick={() => exportBackup("calendar")}>
-                Calendario
-              </Button>
-              <Button icon="Download" variant="soft" onClick={() => exportBackup("tasks")}>
-                Task
-              </Button>
-              <Button icon="Download" variant="soft" onClick={() => exportBackup("subjects")}>
-                Materie
+                Scarica una copia di sicurezza
               </Button>
             </div>
+            <div>
+              <p className="text-xs font-bold text-[var(--muted)]">Oppure scarica solo una parte:</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button icon="Download" variant="soft" onClick={() => exportBackup("calendar")}>
+                  Solo calendario
+                </Button>
+                <Button icon="Download" variant="soft" onClick={() => exportBackup("tasks")}>
+                  Solo attività
+                </Button>
+                <Button icon="Download" variant="soft" onClick={() => exportBackup("subjects")}>
+                  Solo materie
+                </Button>
+              </div>
+            </div>
 
-            <Field label="Passphrase import cifrato">
-              <input className={inputClass} type="password" value={importPassphrase} onChange={(event) => setImportPassphrase(event.target.value)} />
+            <div>
+              <h4 className="text-sm font-black">Ripristina da una copia</h4>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Una copia completa sostituisce tutti i dati attuali (prima ti chiediamo conferma). Una copia parziale si aggiunge a quelli che hai già.
+              </p>
+            </div>
+            <Field label="Password della copia (solo se l'hai protetta)">
+              <input
+                className={inputClass}
+                type="password"
+                autoComplete="off"
+                value={importPassphrase}
+                onChange={(event) => setImportPassphrase(event.target.value)}
+              />
             </Field>
-            <Field label="Importa backup .json">
+            <Field label="Scegli il file della copia (.json)">
               <input
                 className={fileInputClass}
                 type="file"
@@ -491,8 +578,8 @@ export function SettingsView() {
         <Panel>
           <SettingHeader
             section="agenti"
-            title="Agenti"
-            description="Collega ChatGPT, Claude o un altro agente MCP. Le azioni passano da qui: puoi lasciar passare le letture e confermare il resto, una per una."
+            title="Agenti AI"
+            description="Collega ChatGPT, Claude o un altro assistente AI: potrà leggere il tuo studio e, se lo permetti, aggiornarlo con la tua conferma."
           />
           <AgentSettings />
         </Panel>
@@ -503,20 +590,22 @@ export function SettingsView() {
           <SettingHeader
             section="dati"
             title="Spazio e dati"
-            description="Quanto occupa il tuo workspace e, solo se serve davvero, il reset completo. Il reset è irreversibile senza backup."
+            description="Quanti elementi hai salvato su questo dispositivo e, solo se serve davvero, come ripartire da zero."
           />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <DataStat label="Materie" value={subjects.length} />
             <DataStat label="Esami" value={exams.length} />
-            <DataStat label="Task" value={tasks.length} />
+            <DataStat label="Attività" value={tasks.length} />
             <DataStat label="Eventi" value={events.length} />
             <DataStat label="Allegati" value={attachments.length} />
           </div>
           <div className="mt-5 rounded-[20px] border border-[var(--danger-border)] p-3">
-            <p className="text-sm font-black text-[var(--danger-text)]">Zona pericolosa</p>
-            <p className="mt-0.5 text-xs text-[var(--muted)]">Con il cloud attivo puoi scegliere se eliminare anche i dati sincronizzati.</p>
+            <p className="text-sm font-black text-[var(--danger-text)]">Cancella tutti i dati</p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">
+              Elimina materie, esami, attività, eventi, allegati e profilo da questo dispositivo. Non si può annullare: scarica prima una copia di sicurezza. Se hai un account, potrai scegliere se cancellarli anche lì.
+            </p>
             <Button className="mt-3" icon="Trash2" variant="danger" onClick={() => void resetData()}>
-              Reset dati locali
+              Cancella tutti i dati
             </Button>
           </div>
         </Panel>
@@ -526,13 +615,13 @@ export function SettingsView() {
   );
 }
 
-const SECTIONS: { id: string; label: string; icon: string }[] = [
+const SECTIONS: { id: SettingsSection; label: string; icon: string }[] = [
   { id: "profilo", label: "Profilo", icon: "User" },
   { id: "aspetto", label: "Aspetto", icon: "Palette" },
   { id: "account", label: "Account", icon: "LogIn" },
   { id: "privacy", label: "Privacy", icon: "Shield" },
-  { id: "backup", label: "Backup", icon: "Download" },
-  { id: "agenti", label: "Agenti", icon: "Sparkles" },
+  { id: "backup", label: "Copia di sicurezza", icon: "Download" },
+  { id: "agenti", label: "Agenti AI", icon: "Sparkles" },
   { id: "dati", label: "Dati", icon: "Trash2" }
 ];
 
