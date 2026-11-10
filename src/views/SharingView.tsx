@@ -274,7 +274,7 @@ export function SharingView() {
       ) : tab === "received" ? (
         <ReceivedTab me={me} received={received} items={items} hiddenOwners={hiddenOwners} groups={studyGroups} perform={perform} onDone={say} />
       ) : tab === "history" ? (
-        <ShareHistoryTab given={given} groups={studyGroups} onDone={say} />
+        <ShareHistoryTab me={me} given={given} groups={studyGroups} onDone={say} />
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {pending ? (

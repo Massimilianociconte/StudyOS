@@ -339,6 +339,16 @@ const PROTECTED_KEY = /^(?:cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$/
 export const withoutProtectedKeys = (payload: Payload): Payload =>
   Object.fromEntries(Object.entries(payload).filter(([key]) => !PROTECTED_KEY.test(key)));
 
+/**
+ * Versione da ripristinare con le chiavi protette di `source` (la copia attuale del proprietario, o
+ * l'ultima eliminazione salvata): la cronologia delle modifiche non le conserva (sharing.sql), e chi
+ * riceve non le cambia mai, quindi quelle giuste sono le più recenti del proprietario.
+ */
+export const withProtectedFrom = (payload: Payload, source: Payload): Payload => ({
+  ...withoutProtectedKeys(payload),
+  ...Object.fromEntries(Object.entries(source).filter(([key]) => key !== "__proto__" && PROTECTED_KEY.test(key)))
+});
+
 /** Una modifica o revoca che non ha toccato nessuna riga: la condivisione non c'è più. */
 export const requireAffectedShare = (rows: readonly unknown[] | null | undefined) => {
   if (!rows?.length) throw new ShareUserError(SHARE_GONE_TEXT);
@@ -432,11 +442,27 @@ export const inviteFromRow = (row: Record<string, unknown>, now: number = Date.n
   };
 };
 
+/**
+ * Colonne dell'elenco della cronologia: dal payload solo id, titolo, nome e il segno di tombstone. La
+ * versione intera (con i file delle eliminazioni) si scarica solo per ripristinarla.
+ */
+export const REVISION_LIST_COLUMNS =
+  "id, entity_type, entity_id, deleted, change, changed_by, changed_at, payload_id:payload->>id, title:payload->>title, name:payload->>name, deleted_at:payload->>deletedAt";
+
+/** Riassunto del payload da una riga leggera (REVISION_LIST_COLUMNS): basta per titolo e controlli. */
+const revisionSummary = (row: Record<string, unknown>): Payload => {
+  const summary: Payload = {};
+  for (const [key, column] of [["id", "payload_id"], ["title", "title"], ["name", "name"], ["deletedAt", "deleted_at"]] as const) {
+    if (typeof row[column] === "string") summary[key] = row[column];
+  }
+  return summary;
+};
+
 export const revisionFromRow = (row: Record<string, unknown>): ItemRevision => ({
   id: Number(row.id),
   entityType: String(row.entity_type),
   entityId: String(row.entity_id),
-  payload: (row.payload ?? {}) as Record<string, unknown>,
+  payload: typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload) ? (row.payload as Payload) : revisionSummary(row),
   deleted: row.deleted === true,
   change: row.change === "create" || row.change === "delete" ? row.change : "update",
   changedBy: (row.changed_by as string | null) ?? null,
@@ -471,6 +497,86 @@ export const canRestoreRevision = (revision: ItemRevision) =>
 
 /** Quante modifiche mostra la cronologia (le più recenti): l'intestazione lo dice quando la lista è piena. */
 export const REVISION_LIST_LIMIT = 100;
+
+/** Prima la più vecchia; a parità di ora (stessa transazione) vale l'ordine di inserimento. */
+const byChange = (a: ItemRevision, b: ItemRevision) => timestampOf(a.changedAt) - timestampOf(b.changedAt) || a.id - b.id;
+
+export interface RevertPlan {
+  /**
+   * Per ogni elemento, la versione prima della prima modifica della persona da quel giorno. Una
+   * versione di modifica non ha copertine e file: `deletedAfter` è l'eliminazione (successiva) che li
+   * conserva, quando il proprietario non ha più l'elemento.
+   */
+  restore: { revision: ItemRevision; deletedAfter: ItemRevision | null }[];
+  /** Elementi aggiunti dalla persona: non c'è una versione prima, restano. */
+  added: number;
+  /** Elementi che la persona ha modificato e il proprietario poi ha eliminato: restano eliminati. */
+  gone: number;
+  /** Elementi da ripristinare che dopo la persona ha cambiato anche qualcun altro. */
+  othersAfter: number;
+}
+
+/**
+ * Annulla tutte le modifiche di una persona da `since`: ogni elemento torna alla versione prima della
+ * sua prima modifica, con lo stesso ripristino di un elemento solo. `revisions` sono le revisioni di
+ * tutti da `since` (servono per le eliminazioni successive e per avvisare delle modifiche di altri);
+ * `hasLocal` dice se il proprietario ha ancora l'elemento tra i suoi dati.
+ */
+export const planRevert = (
+  revisions: readonly ItemRevision[],
+  actorId: string,
+  since: string,
+  hasLocal: (entityType: string, entityId: string) => boolean
+): RevertPlan => {
+  const from = timestampOf(since);
+  const byEntity = new Map<string, ItemRevision[]>();
+  for (const revision of revisions) {
+    if (timestampOf(revision.changedAt) < from) continue;
+    const key = `${revision.entityType}:${revision.entityId}`;
+    byEntity.set(key, [...(byEntity.get(key) ?? []), revision]);
+  }
+  const plan: RevertPlan = { restore: [], added: 0, gone: 0, othersAfter: 0 };
+  for (const list of byEntity.values()) {
+    list.sort(byChange);
+    const index = list.findIndex((revision) => revision.changedBy === actorId);
+    if (index < 0) continue;
+    const first = list[index];
+    const later = list.slice(index + 1);
+    // Creato dalla persona (anche rimettendo un elemento eliminato): prima non c'era nulla.
+    if (first.change === "create" || first.deleted) {
+      plan.added += 1;
+      continue;
+    }
+    if (!canRestoreRevision(first)) continue;
+    const deletedAfter = later.filter((revision) => revision.change === "delete").at(-1) ?? null;
+    const local = hasLocal(first.entityType, first.entityId);
+    // Senza copia locale né eliminazione salvata l'ha eliminato il proprietario: copertine e file non ci sono più.
+    if (first.change === "update" && !local && !deletedAfter) {
+      plan.gone += 1;
+      continue;
+    }
+    plan.restore.push({ revision: first, deletedAfter: first.change === "update" && !local ? deletedAfter : null });
+    if (later.some((revision) => revision.changedBy !== actorId)) plan.othersAfter += 1;
+  }
+  return plan;
+};
+
+/** Conteggi di un annullamento, per la conferma e per l'esito (`restored`: quanti riscritti davvero). */
+export interface RevertSummary {
+  toRestore: number;
+  added: number;
+  gone: number;
+  othersAfter: number;
+  restored: number;
+}
+
+export const revertSummary = (plan: RevertPlan): RevertSummary => ({
+  toRestore: plan.restore.length,
+  added: plan.added,
+  gone: plan.gone,
+  othersAfter: plan.othersAfter,
+  restored: 0
+});
 
 /**
  * `updatedAt` di una versione ripristinata. Di norma l'ora attuale, ma se la copia locale è più recente
@@ -543,7 +649,7 @@ export const shareErrorText = (error: NonNullable<ServerError>) => {
 };
 
 /** Azione dell'utente che può fallire: crea invito e condividi (pannello), poi quelle della sezione Condivisione. */
-export type ShareAction = "invite" | "share" | "accept" | "decline" | "cancel" | "update" | "revoke" | "leave" | "open" | "history" | "restore" | "save" | "delete";
+export type ShareAction = "invite" | "share" | "accept" | "decline" | "cancel" | "update" | "revoke" | "leave" | "open" | "history" | "restore" | "revertCheck" | "revert" | "save" | "delete";
 
 /**
  * Errore di un'azione che l'utente ha appena fatto (crea invito, condividi, accetta…): dice cosa non è
@@ -791,6 +897,36 @@ export const revisionActorName = (
 
 /** Il nome di `revisionActorName` in mezzo a una frase ("prima che un'altra persona…"): solo il nome sconosciuto cambia. */
 export const actorInSentence = (name: string) => (name === UNKNOWN_PERSON ? UNKNOWN_PERSON_IN_SENTENCE : name);
+
+/**
+ * Persone di cui si possono annullare le modifiche: chi compare nella cronologia e chi ha «Può
+ * modificare» (direttamente o da un gruppo), mai chi guarda. Nomi uguali (due persone sconosciute)
+ * prendono un numero nell'etichetta del menu (`label`); nelle frasi resta `name`.
+ */
+export const revertCandidates = (
+  revisions: readonly Pick<ItemRevision, "changedBy">[],
+  given: readonly ShareGrant[],
+  groups: readonly { id: string; members: readonly { userId: string; displayName: string }[] }[],
+  me: string
+) => {
+  const ids = new Set<string>();
+  for (const revision of revisions) if (revision.changedBy) ids.add(revision.changedBy);
+  for (const grant of given) {
+    if (grant.permission !== "edit") continue;
+    if (grant.granteeUserId) ids.add(grant.granteeUserId);
+    if (grant.granteeGroupId) for (const member of groups.find((group) => group.id === grant.granteeGroupId)?.members ?? []) ids.add(member.userId);
+  }
+  ids.delete(me);
+  const people = [...ids]
+    .map((id) => ({ id, name: revisionActorName(id, given, groups) }))
+    .sort((a, b) => a.name.localeCompare(b.name, "it") || a.id.localeCompare(b.id));
+  const seen = new Map<string, number>();
+  return people.map((person) => {
+    const count = (seen.get(person.name) ?? 0) + 1;
+    seen.set(person.name, count);
+    return { ...person, label: count > 1 ? `${person.name} (${count})` : person.name };
+  });
+};
 
 export interface SharedBarbExam {
   sourceUid: string;

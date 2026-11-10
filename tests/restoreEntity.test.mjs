@@ -96,3 +96,47 @@ test("ripristino: tipi non condivisibili, senza id o con un id diverso non scriv
   assert.equal(after.preferences, before.preferences);
   assert.equal(after.notifications, before.notifications);
 });
+
+test("ripristino: copertina, file e UID restano quelli attuali del proprietario (la cronologia delle modifiche non li ha)", async () => {
+  store.setState({
+    events: [{ id: "e1", title: "Dopo la modifica", start: OLD, end: OLD, updatedAt: OLD, cover: "data:image/png;base64,AAAA", sourceUid: "barb-exam-1" }],
+    attachments: [{ id: "a1", name: "Dopo", mimeType: "application/pdf", dataUrl: "data:application/pdf;base64,JVBERi0=", updatedAt: OLD }]
+  });
+  // Versioni di una modifica: senza chiavi protette (sharing.sql le toglie).
+  await store.getState().restoreEntity("calendarEvent", { id: "e1", title: "Prima della modifica", start: OLD, end: OLD, updatedAt: OLD }, "e1");
+  await store.getState().restoreEntity("attachment", { id: "a1", name: "Prima", mimeType: "application/pdf", updatedAt: OLD }, "a1");
+  const [event] = store.getState().events;
+  const [attachment] = store.getState().attachments;
+  assert.equal(event.title, "Prima della modifica");
+  assert.equal(event.cover, "data:image/png;base64,AAAA");
+  assert.equal(event.sourceUid, "barb-exam-1");
+  assert.equal(attachment.name, "Prima");
+  assert.equal(attachment.dataUrl, "data:application/pdf;base64,JVBERi0=");
+  // Una versione vecchia con le sue chiavi (salvata prima della regola) non riporta un file superato.
+  await store.getState().restoreEntity("attachment", { id: "a1", name: "Vecchia", mimeType: "application/pdf", dataUrl: "data:vecchio", updatedAt: OLD }, "a1");
+  assert.equal(store.getState().attachments[0].dataUrl, "data:application/pdf;base64,JVBERi0=");
+  // Eliminato da altri: nessuna copia locale, la versione (un'eliminazione) porta il suo file.
+  await store.getState().restoreEntity("attachment", { id: "a2", name: "Eliminato", mimeType: "application/pdf", dataUrl: "data:a2", updatedAt: OLD }, "a2");
+  assert.equal(store.getState().attachments.find((entry) => entry.id === "a2").dataUrl, "data:a2");
+});
+
+test("ripristino di più elementi insieme: un salvataggio solo, le versioni non valide si saltano", async () => {
+  let writes = 0;
+  const unsubscribe = store.subscribe((state, previous) => {
+    if (state.events !== previous.events || state.tasks !== previous.tasks) writes += 1;
+  });
+  const count = await store.getState().restoreEntities([
+    { entityType: "calendarEvent", payload: { id: "e1", title: "Prima", start: OLD, end: OLD, updatedAt: OLD }, entityId: "e1" },
+    { entityType: "task", payload: { id: "t2", title: "Eliminata da Bob", updatedAt: OLD }, entityId: "t2" },
+    { entityType: "task", payload: { id: "t1", title: "Punta altrove" }, entityId: "altro" },
+    { entityType: "preferences", payload: { id: "main", displayName: "Bob" }, entityId: "main" }
+  ]);
+  unsubscribe();
+  assert.equal(count, 2);
+  assert.equal(writes, 1);
+  assert.equal(store.getState().events[0].title, "Prima");
+  assert.deepEqual(store.getState().tasks.map((task) => task.id), ["t1", "t2"]);
+  assert.equal(store.getState().tasks[0].title, "Attività");
+  assert.equal(store.getState().preferences[0].displayName, "Alice");
+  assert.equal(await store.getState().restoreEntities([{ entityType: "preferences", payload: { id: "main" }, entityId: "main" }]), 0);
+});

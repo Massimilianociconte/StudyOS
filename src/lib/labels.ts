@@ -1,6 +1,6 @@
 // Etichette italiane per i valori enum salvati nei dati: la UI non mostra mai i codici interni.
 import type { Attachment, CalendarEvent, Exam, Goal, StudySession, Subject, Task } from "../types";
-import type { InviteBlock, ItemRevision, ShareAction, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
+import type { InviteBlock, ItemRevision, RevertSummary, ShareAction, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
 
 export const PRIORITY_LABEL: Record<Task["priority"], string> = {
   low: "Bassa",
@@ -251,6 +251,8 @@ export const SHARE_ACTION_FAILED: Record<ShareAction, string> = {
   open: "Invito non aperto.",
   history: "Cronologia non caricata.",
   restore: "Ripristino non riuscito.",
+  revertCheck: "Controllo non riuscito.",
+  revert: "Modifiche non annullate.",
   save: "Modifiche non salvate.",
   delete: "Elemento non eliminato."
 };
@@ -341,3 +343,53 @@ export const UNKNOWN_PERSON_IN_SENTENCE = "un'altra persona";
  */
 export const revisionListIntro = (shown: number, limit: number) =>
   `${shown >= limit ? `Ultime ${limit} modifiche degli ultimi 90 giorni (le più vecchie non compaiono).` : "Ultimi 90 giorni."} «Ripristina» riporta l'elemento alla versione prima della modifica.`;
+
+/** "1 elemento" / "3 elementi" con la frase accordata al numero. */
+const several = (count: number, one: string, many: (count: number) => string) => (count === 1 ? one : many(count));
+
+/**
+ * "Modifiche di altri" → annullare tutte le modifiche di una persona da un giorno. `who` è il nome già
+ * adatto a una frase (actorInSentence), `day` il giorno scelto ("3 nov").
+ */
+export const REVERT_TEXT = {
+  open: "Annulla le modifiche di una persona",
+  intro:
+    "Ogni elemento che ha modificato o eliminato torna com'era prima della sua prima modifica da quel giorno. Gli elementi che ha aggiunto restano.",
+  person: "Persona",
+  since: "Dal giorno",
+  noPeople: "Nessuno può modificare i tuoi dati: qui compaiono le persone con «Può modificare».",
+  check: "Controlla",
+  checking: "Controllo…",
+  close: "Chiudi",
+  /** Accanto ad "Annulla" (che chiude la conferma): non deve iniziare con la stessa parola. */
+  confirm: "Ripristina tutto",
+  tooMany: "Troppe modifiche da quel giorno: scegli un giorno più vicino.",
+  nothing: (who: string, day: string) => `Dal ${day} ${who} non ha cambiato nulla dei tuoi dati.`,
+  /** Cosa succede confermando: prima ciò che torna, poi ciò che resta com'è. */
+  plan: (who: string, day: string, summary: RevertSummary) =>
+    [
+      summary.toRestore
+        ? several(summary.toRestore, "1 elemento torna com'era", (n) => `${n} elementi tornano com'erano`) + ` prima delle modifiche di ${who} dal ${day}.`
+        : `Nessun elemento da riportare indietro: dal ${day} ${who} non ha modificato né eliminato nulla che hai ancora.`,
+      summary.added
+        ? several(summary.added, `1 elemento aggiunto da ${who} resta: eliminalo tu, se non ti serve.`, (n) => `${n} elementi aggiunti da ${who} restano: eliminali tu, se non ti servono.`)
+        : "",
+      summary.gone
+        ? several(summary.gone, "1 elemento che hai eliminato tu resta eliminato.", (n) => `${n} elementi che hai eliminato tu restano eliminati.`)
+        : "",
+      summary.othersAfter
+        ? several(
+            summary.othersAfter,
+            "Su 1 di questi elementi ha fatto modifiche anche un'altra persona, dopo: si perdono anche quelle.",
+            (n) => `Su ${n} di questi elementi hanno fatto modifiche anche altre persone, dopo: si perdono anche quelle.`
+          )
+        : "",
+      summary.toRestore ? "Anche le tue modifiche successive su questi elementi vengono sostituite." : ""
+    ]
+      .filter(Boolean)
+      .join(" "),
+  done: (who: string, restored: number) =>
+    restored
+      ? several(restored, `Fatto: 1 elemento è tornato com'era prima delle modifiche di ${who}.`, (n) => `Fatto: ${n} elementi sono tornati com'erano prima delle modifiche di ${who}.`)
+      : `Nessun elemento è cambiato: le modifiche di ${who} non c'erano più da annullare.`
+} as const;

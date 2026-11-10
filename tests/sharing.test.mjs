@@ -53,12 +53,18 @@ import {
   storedDayOf,
   sharedEditResult,
   sharedFieldInput,
-  parseSharedField
+  parseSharedField,
+  planRevert,
+  revertCandidates,
+  revertSummary,
+  revisionFromRow,
+  withProtectedFrom
 } from "../src/lib/sharing.ts";
 import {
   SHARED_ENTITY_LABEL,
   SHARE_PERMISSION_LABEL,
   SHARE_SCOPE_LABEL,
+  REVERT_TEXT,
   revisionListIntro,
   scopesSummary,
   sharedEntityLabel
@@ -879,4 +885,88 @@ test("modifica di un elemento altrui: un tipo sconosciuto o un nome di Object.pr
   const opened = { id: "x", title: "a" };
   assert.deepEqual(sharedEditResult("constructor", opened, { title: "b" }, opened), { id: "x", title: "b" });
   assert.deepEqual(sharedEditResult("sconosciuto", opened, { title: "b" }, opened), { id: "x", title: "b" });
+});
+
+// ——— Cronologia leggera e annullamento delle modifiche di una persona ———
+
+test("cronologia leggera: dalla riga solo id, titolo e nome; la riga intera resta com'è", () => {
+  const light = revisionFromRow({
+    id: 7, entity_type: "attachment", entity_id: "a1", deleted: false, change: "delete", changed_by: "bob", changed_at: "2026-11-10T10:00:00Z",
+    payload_id: "a1", title: null, name: "Appunti.pdf", deleted_at: null
+  });
+  assert.deepEqual(light.payload, { id: "a1", name: "Appunti.pdf" });
+  assert.equal(canRestoreRevision(light), true);
+  // Un payload con deletedAt (scritto da altri) resta non ripristinabile anche dal riassunto.
+  assert.equal(canRestoreRevision(revisionFromRow({ id: 8, entity_type: "task", entity_id: "t1", change: "update", payload_id: "t1", deleted_at: "x" })), false);
+  const full = revisionFromRow({ id: 9, entity_type: "task", entity_id: "t1", change: "update", payload: { id: "t1", title: "Tutto" } });
+  assert.deepEqual(full.payload, { id: "t1", title: "Tutto" });
+});
+
+test("ripristino senza chiavi protette nella versione: copertina, file e UID vengono dalla copia del proprietario", () => {
+  const version = { id: "e1", title: "Prima", cover: "vecchia" };
+  const current = { id: "e1", title: "Dopo", cover: "data:image/png;base64,AAAA", sourceUid: "barb-exam-1", dataUrl: "data:x", avatarDataUrl: "y", __proto__: null };
+  const merged = withProtectedFrom(version, current);
+  assert.deepEqual(merged, { id: "e1", title: "Prima", cover: current.cover, sourceUid: "barb-exam-1", dataUrl: "data:x", avatarDataUrl: "y" });
+  // La copia attuale senza copertina: la versione non la rimette (l'ha tolta il proprietario).
+  assert.deepEqual(withProtectedFrom(version, { id: "e1" }), { id: "e1", title: "Prima" });
+  assert.equal(Object.getPrototypeOf(withProtectedFrom(version, JSON.parse('{"__proto__": {"x": 1}}'))), Object.prototype);
+});
+
+const rev = (id, entityId, change, changedBy, changedAt, extra = {}) => ({
+  id, entityType: "calendarEvent", entityId, payload: { id: entityId, title: `${entityId} v${id}` }, deleted: false, change, changedBy, changedAt, ...extra
+});
+
+test("annulla le modifiche di una persona: versione prima della sua prima modifica, aggiunte e eliminazioni del proprietario restano", () => {
+  const since = "2026-11-03T00:00:00.000Z";
+  const revisions = [
+    rev(1, "vecchio", "update", "bob", "2026-11-01T10:00:00.000Z"), // prima del giorno scelto
+    rev(2, "e1", "update", "bob", "2026-11-04T10:00:00.000Z"),
+    rev(3, "e1", "update", "bob", "2026-11-05T10:00:00.000Z"),
+    rev(4, "e1", "update", "carla", "2026-11-06T10:00:00.000Z"), // dopo Bob: anche questa si perde
+    rev(5, "e2", "delete", "bob", "2026-11-04T11:00:00.000Z"),
+    rev(6, "e3", "create", "bob", "2026-11-04T12:00:00.000Z"),
+    rev(7, "e3", "update", "bob", "2026-11-04T13:00:00.000Z"),
+    rev(8, "e4", "update", "bob", "2026-11-04T14:00:00.000Z"), // poi eliminato dal proprietario
+    rev(9, "e5", "update", "bob", "2026-11-04T15:00:00.000Z"),
+    rev(10, "e5", "delete", "carla", "2026-11-05T15:00:00.000Z"), // eliminato da altri: ha ancora i file
+    rev(11, "e6", "update", "carla", "2026-11-04T16:00:00.000Z"), // di altri soltanto
+    rev(12, "e7", "update", "bob", "2026-11-04T17:00:00.000Z", { deleted: true, payload: { id: "e7", deletedAt: "x" } }) // rimesso da Bob
+  ];
+  const local = new Set(["e1", "e3", "e6"]);
+  const plan = planRevert(revisions, "bob", since, (_type, id) => local.has(id));
+  assert.deepEqual(plan.restore.map(({ revision, deletedAfter }) => [revision.id, deletedAfter?.id ?? null]), [[2, null], [5, null], [9, 10]]);
+  assert.equal(plan.added, 2);
+  assert.equal(plan.gone, 1);
+  assert.equal(plan.othersAfter, 2);
+  assert.deepEqual(revertSummary(plan), { toRestore: 3, added: 2, gone: 1, othersAfter: 2, restored: 0 });
+  // Stesso istante: vale l'ordine di inserimento.
+  const same = "2026-11-04T10:00:00.000Z";
+  const tied = planRevert([rev(21, "e9", "update", "bob", same), rev(20, "e9", "update", "bob", same)], "bob", since, () => true);
+  assert.equal(tied.restore[0].revision.id, 20);
+  assert.deepEqual(planRevert(revisions, "dario", since, () => true), { restore: [], added: 0, gone: 0, othersAfter: 0 });
+});
+
+test("annulla le modifiche: persone tra cui scegliere, senza chi guarda e con nomi distinguibili", () => {
+  const given = [
+    { id: "g1", ownerId: "me", ownerName: "Io", scope: "calendar", subjectIds: [], permission: "edit", granteeUserId: "bob", granteeGroupId: null, granteeName: "Bob", granteeEmail: null, createdAt: "", updatedAt: "" },
+    { id: "g2", ownerId: "me", ownerName: "Io", scope: "tasks", subjectIds: [], permission: "view", granteeUserId: "vera", granteeGroupId: null, granteeName: "Vera", granteeEmail: null, createdAt: "", updatedAt: "" },
+    { id: "g3", ownerId: "me", ownerName: "Io", scope: "goals", subjectIds: [], permission: "edit", granteeUserId: null, granteeGroupId: "grp", granteeName: "Gruppo", granteeEmail: null, createdAt: "", updatedAt: "" }
+  ];
+  const groups = [{ id: "grp", members: [{ userId: "me", displayName: "Io" }, { userId: "carla", displayName: "Carla" }] }];
+  const people = revertCandidates([{ changedBy: "ex1" }, { changedBy: "ex2" }, { changedBy: null }, { changedBy: "bob" }], given, groups, "me");
+  assert.deepEqual(people.map((person) => [person.id, person.label]), [
+    ["bob", "Bob"], ["carla", "Carla"], ["ex1", "Un'altra persona"], ["ex2", "Un'altra persona (2)"]
+  ]);
+  assert.equal(people[3].name, "Un'altra persona");
+});
+
+test("annulla le modifiche: testi della conferma e dell'esito in italiano semplice", () => {
+  const plan = REVERT_TEXT.plan("Bob", "3 nov", { toRestore: 1, added: 2, gone: 1, othersAfter: 1, restored: 0 });
+  assert.match(plan, /^1 elemento torna com'era prima delle modifiche di Bob dal 3 nov\./);
+  assert.match(plan, /2 elementi aggiunti da Bob restano/);
+  assert.match(plan, /1 elemento che hai eliminato tu resta eliminato\./);
+  assert.match(plan, /anche un'altra persona/);
+  assert.doesNotMatch(REVERT_TEXT.plan("Bob", "3 nov", { toRestore: 3, added: 0, gone: 0, othersAfter: 0, restored: 0 }), /aggiunt|eliminat|altre persone/);
+  assert.equal(REVERT_TEXT.done("Bob", 3), "Fatto: 3 elementi sono tornati com'erano prima delle modifiche di Bob.");
+  assert.notEqual(REVERT_TEXT.confirm.split(" ")[0], "Annulla");
 });

@@ -13,7 +13,8 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { db, getMeta, setMeta } from "./db";
-import { SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
+import { COLLECTION_BY_ENTITY_TYPE } from "./collections";
+import { REVERT_TEXT, SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
 import {
   SHARING_UNAVAILABLE_TEXT,
   grantFromRow,
@@ -24,7 +25,13 @@ import {
   ownerEntityTypes,
   planShareWrites,
   requireAffectedShare,
+  REVISION_LIST_COLUMNS,
+  SHARED_ENTITY_TYPES,
+  canRestoreRevision,
+  planRevert,
+  revertSummary,
   revisionFromRow,
+  revisionTitle,
   safeCssColor,
   shareErrorText,
   shareNotices,
@@ -32,6 +39,8 @@ import {
   sharedPushBatches,
   sharingProbeOutcome,
   ShareUserError,
+  withProtectedFrom,
+  type RevertSummary,
   type ItemRevision,
   type RemoteSharedRow,
   type ShareGrant,
@@ -741,14 +750,131 @@ export const revokeShare = async (id: string) => {
   await syncSharedNow();
 };
 
-/** Modifiche fatte da altre persone sui miei dati (ultimi 90 giorni). */
+// ——— Cronologia delle modifiche di altri ———
+
+const REVISIONS = "studyos_item_revisions";
+/** Revisioni lette per annullare le modifiche di una persona: oltre, si chiede una data più vicina. */
+const REVERT_SCAN_MAX = 5000;
+/** Versioni intere per richiesta: quelle delle eliminazioni possono avere file fino a 600 KiB. */
+const PAYLOAD_PAGE_SIZE = 20;
+
+/** Modifiche fatte da altre persone sui miei dati (ultimi 90 giorni): solo titoli, mai i file. */
 export const listRevisions = async (limit = 100): Promise<ItemRevision[]> => {
   await requireSharing();
   const { data, error } = await client()
-    .from("studyos_item_revisions")
-    .select("id, entity_type, entity_id, payload, deleted, change, changed_by, changed_at")
+    .from(REVISIONS)
+    .select(REVISION_LIST_COLUMNS)
     .order("changed_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(limit);
   fail(error);
-  return (data ?? []).map((row) => revisionFromRow(row));
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map((row) => revisionFromRow(row));
+};
+
+/** Versioni intere delle revisioni scelte (con i file delle eliminazioni), per id. */
+const loadRevisionPayloads = async (ids: readonly number[]) => {
+  const payloads = new Map<number, Record<string, unknown>>();
+  const unique = [...new Set(ids)];
+  for (let start = 0; start < unique.length; start += PAYLOAD_PAGE_SIZE) {
+    const { data, error } = await client()
+      .from(REVISIONS)
+      .select("id, payload")
+      .in("id", unique.slice(start, start + PAYLOAD_PAGE_SIZE));
+    fail(error);
+    for (const row of (data ?? []) as { id: number; payload: unknown }[]) {
+      if (typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload)) {
+        payloads.set(Number(row.id), row.payload as Record<string, unknown>);
+      }
+    }
+  }
+  return payloads;
+};
+
+/** Il proprietario ha ancora l'elemento tra i suoi dati (copertine e file attuali stanno lì). */
+const hasLocal = (entityType: string, entityId: string) => {
+  const collection = COLLECTION_BY_ENTITY_TYPE[entityType];
+  if (!collection || !SHARED_ENTITY_TYPES.has(entityType)) return false;
+  const entries = useStudyStore.getState()[collection] as unknown as readonly { id: string }[];
+  return entries.some((entry) => entry.id === entityId);
+};
+
+const GONE_TEXT = (title: string) => `«${title}» non c'è più tra i tuoi dati (l'hai eliminato tu): questa versione non si può ripristinare.`;
+
+/**
+ * Ripristina una versione della cronologia. Le versioni delle modifiche non hanno copertine, file e UID:
+ * li riprende il negozio dalla copia del proprietario o, se l'elemento è stato poi eliminato da altri,
+ * qui dall'eliminazione salvata (che li conserva).
+ */
+export const restoreRevision = async (revision: ItemRevision) => {
+  await requireSharing();
+  if (!canRestoreRevision(revision)) throw new ShareUserError("Questo elemento non si può ripristinare.");
+  const payloads = await loadRevisionPayloads([revision.id]);
+  let payload = payloads.get(revision.id);
+  if (!payload) throw new ShareUserError("Questa versione non c'è più nella cronologia: aggiorna l'elenco.");
+  if (revision.change === "update" && !hasLocal(revision.entityType, revision.entityId)) {
+    const { data, error } = await client()
+      .from(REVISIONS)
+      .select("payload")
+      .eq("entity_type", revision.entityType)
+      .eq("entity_id", revision.entityId)
+      .eq("change", "delete")
+      .gte("changed_at", revision.changedAt)
+      .order("changed_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    fail(error);
+    const deleted = (data as { payload: unknown } | null)?.payload;
+    if (typeof deleted !== "object" || deleted === null || Array.isArray(deleted)) throw new ShareUserError(GONE_TEXT(revisionTitle(revision)));
+    payload = withProtectedFrom(payload, deleted as Record<string, unknown>);
+  }
+  await useStudyStore.getState().restoreEntity(revision.entityType, payload, revision.entityId);
+};
+
+/** Revisioni di tutti da `since` (dalla più vecchia), solo titoli: servono a pianificare l'annullamento. */
+const revisionsSince = async (since: string) => {
+  const rows: ItemRevision[] = [];
+  for (let offset = 0; ; offset += ID_PAGE_SIZE) {
+    const { data, error } = await client()
+      .from(REVISIONS)
+      .select(REVISION_LIST_COLUMNS)
+      .gte("changed_at", since)
+      .order("changed_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + ID_PAGE_SIZE - 1);
+    fail(error);
+    const page = ((data ?? []) as unknown as Record<string, unknown>[]).map((row) => revisionFromRow(row));
+    rows.push(...page);
+    if (rows.length > REVERT_SCAN_MAX) throw new ShareUserError(REVERT_TEXT.tooMany);
+    if (page.length < ID_PAGE_SIZE) return rows;
+  }
+};
+
+/** Cosa farebbe l'annullamento delle modifiche di una persona da `since`, senza toccare nulla. */
+export const previewRevert = async (actorId: string, since: string): Promise<RevertSummary> => {
+  await requireSharing();
+  return revertSummary(planRevert(await revisionsSince(since), actorId, since, hasLocal));
+};
+
+/**
+ * Annulla tutte le modifiche di una persona da `since`: ogni elemento che ha modificato o eliminato
+ * torna alla versione prima della sua prima modifica (stesso ripristino di un elemento solo, tutto
+ * in un salvataggio). Gli elementi che ha aggiunto restano.
+ */
+export const revertPersonSince = async (actorId: string, since: string): Promise<RevertSummary> => {
+  await requireSharing();
+  const plan = planRevert(await revisionsSince(since), actorId, since, hasLocal);
+  const payloads = await loadRevisionPayloads(
+    plan.restore.flatMap(({ revision, deletedAfter }) => (deletedAfter ? [revision.id, deletedAfter.id] : [revision.id]))
+  );
+  const versions = plan.restore.flatMap(({ revision, deletedAfter }) => {
+    const payload = payloads.get(revision.id);
+    if (!payload) return [];
+    const source = deletedAfter ? payloads.get(deletedAfter.id) : undefined;
+    // Senza l'eliminazione intera mancherebbero copertine e file: meglio non ripristinare a metà.
+    if (deletedAfter && !source) return [];
+    return [{ entityType: revision.entityType, entityId: revision.entityId, payload: source ? withProtectedFrom(payload, source) : payload }];
+  });
+  const restored = versions.length ? await useStudyStore.getState().restoreEntities(versions) : 0;
+  return { ...revertSummary(plan), restored };
 };
