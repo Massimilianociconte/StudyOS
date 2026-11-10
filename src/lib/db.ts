@@ -24,6 +24,7 @@ import type {
 } from "../types";
 import type { BarbCourse, BarbTeacher, UniversitySyncLog } from "./university/types";
 import { COLLECTIONS, type CollectionKey, type SyncableEntity } from "./collections";
+import type { SharedItem, SharedOutboxEntry } from "./sharing";
 
 export interface BarbCourseRow extends BarbCourse {
   _key: string;
@@ -92,6 +93,8 @@ class StudyOSDatabase extends Dexie {
   barbSyncLogs!: Table<UniversitySyncLog, string>;
   syncOutbox!: Table<SyncOutboxRow, string>;
   meta!: Table<MetaRow, string>;
+  sharedItems!: Table<SharedItem, string>;
+  sharedOutbox!: Table<SharedOutboxEntry, string>;
 
   constructor() {
     super("studyos-local-db");
@@ -124,6 +127,13 @@ class StudyOSDatabase extends Dexie {
       groupInvites: "id, updatedAt, groupId, status, code",
       groupResources: "id, updatedAt, groupId, pinned",
       groupActivities: "id, updatedAt, groupId"
+    });
+
+    // v6: dati di altre persone (condivisione). Fuori da COLLECTIONS, dalla sync personale e dai
+    // backup: chiave `${ownerId}:${entityType}:${entityId}`.
+    this.version(6).stores({
+      sharedItems: "key, ownerId, entityType",
+      sharedOutbox: "key, queuedAt"
     });
   }
 }

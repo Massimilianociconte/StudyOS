@@ -256,14 +256,18 @@ export const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
 export const whenPersisted = () => chain.then(() => undefined);
 
 export const clearAllLocalData = async () => {
-  await db.transaction("rw", [db.vault, db.syncOutbox, db.meta, ...dataTables], async () => {
+  await db.transaction("rw", [db.vault, db.syncOutbox, db.meta, db.sharedItems, db.sharedOutbox, ...dataTables], async () => {
     await Promise.all(dataTables.map((table) => table.clear()));
     await db.vault.clear();
     await db.syncOutbox.clear();
+    await db.sharedItems.clear();
+    await db.sharedOutbox.clear();
     // Senza dati locali i cursori cloud non valgono più: al prossimo accesso (anche dopo un
     // logout) la sync riparte da zero e riscarica tutto invece di restare vuota.
     await db.meta
-      .filter((row) => row.key.startsWith("cloud:cursor:") || row.key.startsWith("cloud:migrated:"))
+      .filter(
+        (row) => row.key.startsWith("cloud:cursor:") || row.key.startsWith("cloud:migrated:") || row.key.startsWith("share:")
+      )
       .delete();
   });
 };

@@ -14,6 +14,8 @@ import {
   scopeCovers,
   shareTokenFromText,
   sharedKey,
+  sharedPushBatches,
+  sharedWriteError,
   typeAccess,
   urlWithoutShare
 } from "../src/lib/sharing.ts";
@@ -144,4 +146,30 @@ test("righe del server: conversione e nomi leggibili", () => {
   assert.equal(initialsOf("giulia rossi"), "GR");
   assert.equal(initialsOf("  "), "?");
   assert.equal(ownerColor("alice"), ownerColor("alice"));
+});
+
+test("scrittura su dati altrui: stessi controlli di push_shared_rows", () => {
+  const received = [grant({ permission: "edit", subjectIds: ["s1"] }), grant({ id: "t", scope: "tasks" })];
+  assert.equal(sharedWriteError(received, "alice", "calendarEvent", { subjectId: "s1" }, { subjectId: "s1", title: "x" }), null);
+  assert.equal(sharedWriteError(received, "alice", "calendarEvent", undefined, { subjectId: "s1" }), null);
+  assert.match(sharedWriteError(received, "alice", "calendarEvent", { subjectId: "s1" }, { subjectId: "s2" }), /uscirebbe/);
+  assert.match(sharedWriteError(received, "alice", "task", { title: "t" }, { title: "u" }), /solo vedere/);
+  assert.match(sharedWriteError(received, "alice", "goal", undefined, { title: "g" }), /Non puoi aggiungere/);
+  assert.match(sharedWriteError(received, "alice", "calendarEvent", undefined, { subjectId: "s2" }), /materia/);
+  assert.equal(sharedWriteError(received, "alice", "calendarEvent", { subjectId: "s1" }, null), null);
+});
+
+test("coda: lotti per proprietario, tombstone ridotti, voci orfane scartate", () => {
+  const items = [item("alice", "calendarEvent", "e1", { title: "A" }), item("dario", "task", "t1", { title: "T" })];
+  const outbox = [
+    { key: sharedKey("alice", "calendarEvent", "e1"), ownerId: "alice", entityType: "calendarEvent", entityId: "e1", deleted: false, queuedAt: "1" },
+    { key: sharedKey("alice", "calendarEvent", "e2"), ownerId: "alice", entityType: "calendarEvent", entityId: "e2", deleted: true, deletedAt: "2026-11-10T12:00:00.000Z", queuedAt: "2" },
+    { key: sharedKey("dario", "task", "t1"), ownerId: "dario", entityType: "task", entityId: "t1", deleted: false, queuedAt: "3" },
+    { key: sharedKey("alice", "calendarEvent", "gone"), ownerId: "alice", entityType: "calendarEvent", entityId: "gone", deleted: false, queuedAt: "4" }
+  ];
+  const { batches, orphans } = sharedPushBatches(outbox, items, 1);
+  assert.deepEqual(orphans.map((entry) => entry.entityId), ["gone"]);
+  assert.deepEqual(batches.map((batch) => [batch.ownerId, batch.rows.length]), [["alice", 1], ["alice", 1], ["dario", 1]]);
+  assert.deepEqual(batches[1].rows[0], { entity_type: "calendarEvent", entity_id: "e2", payload: { id: "e2", deletedAt: "2026-11-10T12:00:00.000Z" }, deleted: true });
+  assert.equal(batches[0].rows[0].payload.title, "A");
 });

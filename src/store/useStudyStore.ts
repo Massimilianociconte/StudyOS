@@ -64,6 +64,7 @@ import {
   type TimerMode,
   type TimerState
 } from "../lib/studyTimer";
+import { useSharedStore } from "./useSharedStore";
 
 let sessionPassphrase: string | undefined;
 
@@ -605,9 +606,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     addNotification: async (notification) => {
+      // Id stabile (es. notif-share-<id>): più dispositivi dello stesso account non la duplicano.
+      if (notification.id && get().notifications.some((entry) => entry.id === notification.id)) return notification.id;
       const now = nowIso();
       const created: AppNotification = {
-        id: createId("notification"),
+        id: notification.id ?? createId("notification"),
         createdAt: now,
         updatedAt: now,
         archived: false,
@@ -1379,6 +1382,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
         await commit();
         await runExclusive(async () => {
           await clearAllLocalData();
+          await useSharedStore.getState().clear();
           await db.settings.put(settings);
         });
         resetBaseline(empty, settings);

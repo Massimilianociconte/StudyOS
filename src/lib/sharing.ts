@@ -243,7 +243,71 @@ export const prepareSharedWrite = (previous: Payload | undefined, next: Payload,
   return result;
 };
 
-const stringList = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []);
+/** Voce della coda di scritture sui dati altrui: solo chiavi, il contenuto sta nella cache. */
+export interface SharedOutboxEntry {
+  key: string;
+  ownerId: string;
+  entityType: string;
+  entityId: string;
+  deleted: boolean;
+  deletedAt?: string;
+  queuedAt: string;
+}
+
+export interface SharedPushBatch {
+  ownerId: string;
+  entries: SharedOutboxEntry[];
+  rows: { entity_type: string; entity_id: string; payload: Payload; deleted: boolean }[];
+}
+
+/** Perché una scrittura su dati altrui non è consentita (null = consentita). Specchio di push_shared_rows. */
+export const sharedWriteError = (
+  received: readonly ShareGrant[],
+  ownerId: string,
+  entityType: string,
+  previous: Payload | undefined,
+  next: Payload | null
+): string | null => {
+  if (previous && itemAccess(received, ownerId, entityType, previous) !== "edit") return "Puoi solo vedere questo elemento.";
+  if (next && itemAccess(received, ownerId, entityType, next) !== "edit") {
+    if (previous) return "Con questa modifica l'elemento uscirebbe da ciò che ti è stato condiviso.";
+    return typeAccess(received, ownerId, entityType) === "edit"
+      ? "Questo elemento non rientra in ciò che ti è stato condiviso: controlla la materia."
+      : "Non puoi aggiungere elementi qui: ti serve il permesso \"Può modificare\".";
+  }
+  return null;
+};
+
+/** Lotti per proprietario (al massimo `maxRows` righe, come push_shared_rows). */
+export const sharedPushBatches = (outbox: readonly SharedOutboxEntry[], items: readonly SharedItem[], maxRows = 200) => {
+  const byKey = new Map(items.map((entry) => [entry.key, entry]));
+  const orphans: SharedOutboxEntry[] = [];
+  const batches: SharedPushBatch[] = [];
+  const open = new Map<string, SharedPushBatch>();
+  for (const entry of [...outbox].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt))) {
+    const cached = byKey.get(entry.key);
+    if (!entry.deleted && !cached) {
+      orphans.push(entry);
+      continue;
+    }
+    let batch = open.get(entry.ownerId);
+    if (!batch || batch.rows.length >= maxRows) {
+      batch = { ownerId: entry.ownerId, entries: [], rows: [] };
+      open.set(entry.ownerId, batch);
+      batches.push(batch);
+    }
+    batch.entries.push(entry);
+    batch.rows.push({
+      entity_type: entry.entityType,
+      entity_id: entry.entityId,
+      payload: entry.deleted ? { id: entry.entityId, deletedAt: entry.deletedAt ?? entry.queuedAt } : (cached as SharedItem).entity,
+      deleted: entry.deleted
+    });
+  }
+  return { batches, orphans };
+};
+
+const stringList =(value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []);
 
 export const grantFromRow = (row: Record<string, unknown>): ShareGrant | null => {
   if (!isShareScope(row.scope) || !isPermission(row.permission)) return null;
