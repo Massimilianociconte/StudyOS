@@ -190,8 +190,8 @@ function PersonalExamsView() {
         title="I miei esami"
         subtitle="Le date dei tuoi prossimi esami e quanto sei pronto. Voti e medie sono in Libretto e laurea."
         action={
-          // Con quattro pulsanti in fila il titolo resterebbe senza spazio: da sm vanno a capo, in riga sola da xl.
-          <div className="flex flex-wrap gap-2 sm:max-w-[26rem] xl:max-w-none">
+          // Con quattro pulsanti in fila il titolo resterebbe senza spazio: da sm vanno a capo, in riga sola da 2xl.
+          <div className="flex flex-wrap items-start gap-2 sm:max-w-[26rem] 2xl:max-w-none">
             <Button icon="Download" variant="ghost" onClick={() => setImportOpen(true)}>Importa appelli ufficiali</Button>
             <Button icon="Award" variant="soft" onClick={() => setGradeOpen(true)}>
               Registra un voto

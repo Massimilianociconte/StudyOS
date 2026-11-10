@@ -84,7 +84,7 @@ export function SectionTitle({
         <h2 className="min-w-0 text-balance text-2xl font-black leading-tight [overflow-wrap:break-word] md:text-3xl xl:text-4xl">{title}</h2>
         {subtitle ? <p className="safe-text mt-1 max-w-2xl text-sm font-medium text-[var(--muted)]">{subtitle}</p> : null}
       </div>
-      {action ? <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{action}</div> : null}
+      {action ? <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 empty:hidden">{action}</div> : null}
     </div>
   );
 }

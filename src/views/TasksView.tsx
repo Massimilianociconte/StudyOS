@@ -103,7 +103,7 @@ export function TasksView() {
         title="Attività"
         subtitle="Segna cosa devi fare, con scadenza e priorità, e spunta ogni attività quando l'hai finita."
         action={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-start gap-2">
             {hasAnyTask ? (
               <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
                 Nuova attività
