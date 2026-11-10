@@ -29,6 +29,9 @@
 - Griglie Tailwind: ogni `grid` senza colonne esplicite ha `grid-cols-1`
   (`minmax(0,1fr)`), altrimenti il testo `nowrap`/troncato allarga la traccia
   implicita e la pagina sfora in orizzontale su mobile.
+- Una riga flex con più `Tag` più un'icona fissa non si restringe (`min-width: auto`):
+  nelle schede a due colonne su mobile (~170 px) i tag vanno in un gruppo `flex-wrap`,
+  altrimenti l'icona esce dalla scheda e la colonna destra sfora la pagina.
 - Gli eventi ripetuti (`recurrence`, `recurrenceUntil`) restano un solo record: le
   occorrenze si calcolano con `expandEvents` (src/lib/recurrence.ts) e non si
   salvano. Spostare o modificare un'occorrenza agisce sull'intera serie.
