@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { encode } from "uqr";
+import { useEffect, useState } from "react";
 import type { StudyGroup } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
+import { cloudConfigured } from "../lib/cloudSyncState";
+import { useCloudSession } from "../hooks/useCloudSession";
 import { groupInviteLink, groupInviteMessage } from "../lib/groups";
 import {
   PENDING_INVITE_EVENT,
@@ -29,13 +29,10 @@ import {
 import { Button, Drawer, Field, inputClass } from "./ui";
 import { Icon } from "./Icon";
 import { CloudPanel } from "./CloudPanel";
+import { InviteQr, qrPngBlob } from "./InviteQr";
 
-/** Sessione cloud corrente (senza caricare supabase-js: lo stato arriva dal motore di sync). */
-export function useCloudSession() {
-  const [session, setSession] = useState(() => getCloudSyncState().session);
-  useEffect(() => subscribeCloudSync((state) => setSession(state.session)), []);
-  return session;
-}
+// Spostati in hooks/useCloudSession e components/InviteQr: i vecchi import da qui restano validi.
+export { useCloudSession, InviteQr };
 
 /** Invito ricevuto via link/QR in attesa (si aggiorna anche da altre schede). */
 export function usePendingInvite() {
@@ -51,53 +48,6 @@ export function usePendingInvite() {
   }, []);
   return pending;
 }
-
-const QR_OPTIONS = { ecc: "M", border: 2 } as const;
-
-/** Moduli scuri come righe orizzontali: un solo path, nitido a ogni scala. */
-const qrPath = (data: boolean[][]) => {
-  let path = "";
-  data.forEach((row, y) => {
-    let x = 0;
-    while (x < row.length) {
-      if (!row[x]) {
-        x += 1;
-        continue;
-      }
-      const start = x;
-      while (x < row.length && row[x]) x += 1;
-      path += `M${start} ${y}h${x - start}v1h-${x - start}z`;
-    }
-  });
-  return path;
-};
-
-/** QR sempre scuro su bianco (anche in tema scuro): è quello che le fotocamere leggono meglio. */
-export function InviteQr({ value, label }: { value: string; label: string }) {
-  const qr = useMemo(() => encode(value, QR_OPTIONS), [value]);
-  const path = useMemo(() => qrPath(qr.data), [qr]);
-  return (
-    <svg viewBox={`0 0 ${qr.size} ${qr.size}`} role="img" aria-label={label} shapeRendering="crispEdges" className="block h-full w-full">
-      <rect width={qr.size} height={qr.size} fill="#ffffff" />
-      <path d={path} fill="#10131d" />
-    </svg>
-  );
-}
-
-const qrPngBlob = (value: string, scale = 12) =>
-  new Promise<Blob>((resolve, reject) => {
-    const qr = encode(value, QR_OPTIONS);
-    const canvas = document.createElement("canvas");
-    canvas.width = qr.size * scale;
-    canvas.height = qr.size * scale;
-    const context = canvas.getContext("2d");
-    if (!context) return reject(new Error("Immagine non disponibile su questo browser."));
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = "#10131d";
-    qr.data.forEach((row, y) => row.forEach((dark, x) => dark && context.fillRect(x * scale, y * scale, scale, scale)));
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Immagine non disponibile su questo browser."))), "image/png");
-  });
 
 const shareLinkClass =
   "motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold text-[var(--text)] hover:bg-[var(--surface)]";
@@ -448,8 +398,8 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
   );
 }
 
-/** Perché si chiede l'accesso: entrare con un invito oppure poter invitare/condividere. */
-export type LoginReason = "join" | "share";
+/** Perché si chiede l'accesso: gruppi (entrare, invitare) o condivisione (condividere, rispondere a un invito). */
+export type LoginReason = "join" | "share" | "sharing" | "share-invite";
 
 const LOGIN_COPY: Record<LoginReason, { eyebrow: string; title: string; text: string }> = {
   join: {
@@ -461,6 +411,16 @@ const LOGIN_COPY: Record<LoginReason, { eyebrow: string; title: string; text: st
     eyebrow: "Gruppi",
     title: "Accedi al tuo account",
     text: "Con l'account puoi invitare i tuoi compagni nei tuoi gruppi ed entrare nei loro."
+  },
+  sharing: {
+    eyebrow: "Condivisione",
+    title: "Accedi per condividere",
+    text: "Con l'account scegli cosa mostrare ad altre persone e vedi ciò che condividono con te, sempre aggiornato."
+  },
+  "share-invite": {
+    eyebrow: "Invito a condividere",
+    title: "Accedi o registrati per vedere l'invito",
+    text: "L'invito resta salvato su questo dispositivo: dopo l'accesso vedi cosa ti viene condiviso e scegli se accettare."
   }
 };
 

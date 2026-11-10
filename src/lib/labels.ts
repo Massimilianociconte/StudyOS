@@ -1,6 +1,6 @@
 // Etichette italiane per i valori enum salvati nei dati: la UI non mostra mai i codici interni.
 import type { Attachment, CalendarEvent, Exam, Goal, StudySession, Subject, Task } from "../types";
-import type { ItemRevision, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
+import type { ItemRevision, ShareAction, ShareInviteStatus, SharePermission, ShareScope } from "./sharing";
 
 export const PRIORITY_LABEL: Record<Task["priority"], string> = {
   low: "Bassa",
@@ -216,6 +216,12 @@ export const SHARE_INVITE_STATUS_LABEL: Record<ShareInviteStatus, string> = {
   accepted: "Accettato",
   declined: "Rifiutato",
   expired: "Scaduto"
+};
+
+/** Cosa non è andato a buon fine quando fallisce un'azione appena fatta nel pannello Condividi. */
+export const SHARE_ACTION_FAILED: Record<ShareAction, string> = {
+  invite: "Invito non creato.",
+  share: "Condivisione non salvata."
 };
 
 export const REVISION_CHANGE_LABEL: Record<ItemRevision["change"], string> = {

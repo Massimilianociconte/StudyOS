@@ -8,6 +8,7 @@ import {
   inviteFromRow,
   isMissingSharingObject,
   itemAccess,
+  knownPeople,
   mergeSharedRows,
   missingVisibleKeys,
   ownerColor,
@@ -15,9 +16,11 @@ import {
   prepareSharedWrite,
   reconcileOwner,
   scopeCovers,
+  shareActionErrorText,
   shareErrorText,
   shareNotices,
   shareTokenFromText,
+  shareableGroups,
   sharedKey,
   sharedPushBatches,
   sharedWriteError,
@@ -249,3 +252,46 @@ test("notifiche: solo novità; il silenzio dopo un'accettazione finisce quando l
   assert.deepEqual(later.consumed, ["alice"]);
 });
 
+test("persone collegate: condivisioni nei due sensi e compagni di gruppo, senza duplicati", () => {
+  const given = [grant({ ownerId: "me", granteeUserId: "bob", granteeName: "Bob" })];
+  const received = [grant({ ownerId: "alice", ownerName: "Alice", granteeUserId: "me" })];
+  const groups = [{
+    members: [
+      { userId: "me", displayName: "Io" },
+      { userId: "bob", displayName: "Roberto" },
+      { userId: "carla", displayName: "Carla" },
+      { userId: "local-x", displayName: "Solo locale" }
+    ]
+  }];
+  assert.deepEqual(knownPeople("me", given, received, groups).map((person) => [person.userId, person.name, person.via]), [
+    ["alice", "Alice", "share"],
+    ["bob", "Bob", "share"],
+    ["carla", "Carla", "group"]
+  ]);
+  const online = { ownerId: "owner", sharedAt: "2026-11-01T00:00:00.000Z", members: [{ userId: "me" }] };
+  const candidates = [online, { ...online, sharedAt: undefined }, { ...online, ownerId: "local-1" }, { ...online, members: [{ userId: "bob" }] }];
+  assert.deepEqual(shareableGroups(candidates, "me"), [online]);
+});
+
+test("persone collegate: come studyos_knows_user, contano solo le condivisioni dirette", () => {
+  // Chi condivide con un gruppo di cui faccio parte non è "collegato" per questo: la regola del
+  // server guarda gli accessi diretti (grantee_user_id) e i gruppi in comune.
+  const viaGroup = grant({ ownerId: "dario", ownerName: "Dario", granteeUserId: null, granteeGroupId: "grp" });
+  const toGroup = grant({ ownerId: "me", granteeUserId: null, granteeGroupId: "grp", granteeName: "Gruppo" });
+  assert.deepEqual(knownPeople("me", [toGroup], [viaGroup], []), []);
+  // Revocata ogni condivisione, resta solo chi è nello stesso gruppo.
+  assert.deepEqual(
+    knownPeople("me", [], [], [{ members: [{ userId: "me", displayName: "Io" }, { userId: "carla", displayName: "" }] }]).map((person) => [person.userId, person.name]),
+    [["carla", "Compagno"]]
+  );
+});
+
+test("errori delle azioni dell'utente: dicono cosa non è stato salvato, senza promettere aggiornamenti automatici", () => {
+  const offlineText = shareErrorText({ message: "TypeError: Failed to fetch" });
+  assert.match(offlineText, /si aggiornano da soli/);
+  const offline = new Error(offlineText);
+  assert.equal(shareActionErrorText("invite", offline), "Invito non creato. Server cloud non raggiungibile: controlla la connessione. Riprova appena torna.");
+  assert.equal(shareActionErrorText("share", offline), "Condivisione non salvata. Server cloud non raggiungibile: controlla la connessione. Riprova appena torna.");
+  assert.equal(shareActionErrorText("share", new Error("Invito già usato")), "Condivisione non salvata. Invito già usato");
+  assert.equal(shareActionErrorText("invite", "non è un Error"), "Invito non creato. Riprova tra poco.");
+});

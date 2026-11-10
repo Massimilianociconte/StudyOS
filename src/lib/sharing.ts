@@ -4,7 +4,7 @@
 
 import { timestampOf, type SyncableEntity } from "./collections";
 import { inviteLinkBase } from "./groups";
-import { scopesSummary } from "./labels";
+import { SHARE_ACTION_FAILED, scopesSummary } from "./labels";
 
 export const SHARE_SCOPES = ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals"] as const;
 export type ShareScope = (typeof SHARE_SCOPES)[number];
@@ -430,6 +430,8 @@ export const SHARING_UNAVAILABLE_TEXT =
 
 type ServerError = { message: string; code?: string } | null;
 
+const SERVER_UNREACHABLE_TEXT = "Server cloud non raggiungibile: controlla la connessione.";
+
 /** Tabella o funzione assente: supabase/sharing.sql non è stato eseguito. */
 export const isMissingSharingObject = (error: ServerError) =>
   Boolean(error && /42P01|42883|PGRST202|PGRST205|does not exist|Could not find the (table|function)/i.test(`${error.code ?? ""} ${error.message}`));
@@ -439,12 +441,27 @@ export const shareErrorText = (error: NonNullable<ServerError>) => {
   if (isMissingSharingObject(error)) return SHARING_UNAVAILABLE_TEXT;
   // Stessi casi di errorMessage in cloudSync.ts.
   if (/failed to fetch|networkerror|load failed|network request failed|timed? ?out|timeout|aborted|err_connection/i.test(error.message)) {
-    return "Server cloud non raggiungibile: controlla la connessione. I dati condivisi si aggiornano da soli appena torna.";
+    return `${SERVER_UNREACHABLE_TEXT} I dati condivisi si aggiornano da soli appena torna.`;
   }
   if (error.code === "42501" || /row-level security/i.test(error.message)) {
     return "Non hai il permesso per questa operazione. Puoi condividere direttamente solo con persone che conosci (un gruppo in comune o una condivisione già attiva): per le altre crea un invito.";
   }
   return error.message;
+};
+
+export type ShareAction = "invite" | "share";
+
+/**
+ * Errore di un'azione che l'utente ha appena fatto (crea invito, condividi): dice cosa non è
+ * stato salvato. Il testo di rete di shareErrorText parla della sync in background ("si aggiornano
+ * da soli"), che per un invito non creato sarebbe fuorviante.
+ */
+export const shareActionErrorText = (action: ShareAction, cause: unknown) => {
+  const message = cause instanceof Error ? cause.message.trim() : "";
+  const reason = message.startsWith(SERVER_UNREACHABLE_TEXT)
+    ? `${SERVER_UNREACHABLE_TEXT} Riprova appena torna.`
+    : message || "Riprova tra poco.";
+  return `${SHARE_ACTION_FAILED[action]} ${reason}`;
 };
 
 /**
@@ -545,3 +562,48 @@ export const originOf = (received: readonly ShareGrant[], entry: SharedItem, lab
     subjectColor: label?.color || undefined
   };
 };
+
+// ——— Con chi si può condividere ———
+
+export interface ShareContact {
+  userId: string;
+  name: string;
+  via: "share" | "group";
+}
+
+/**
+ * Persone con cui si può condividere senza invito: stessa regola di studyos_knows_user (un gruppo
+ * in comune, o una condivisione diretta attiva in uno dei due sensi). Una condivisione ricevuta
+ * tramite un gruppo non conta: il server guarda grantee_user_id, non il gruppo. Per i compagni di
+ * gruppo passare solo i gruppi online di cui si è membri (`shareableGroups`).
+ */
+export const knownPeople = (
+  me: string,
+  given: readonly ShareGrant[],
+  received: readonly ShareGrant[],
+  groups: readonly { members: readonly { userId: string; displayName: string }[] }[]
+): ShareContact[] => {
+  const people = new Map<string, ShareContact>();
+  for (const grant of given) {
+    if (grant.granteeUserId && !people.has(grant.granteeUserId)) {
+      people.set(grant.granteeUserId, { userId: grant.granteeUserId, name: grant.granteeName || "Persona", via: "share" });
+    }
+  }
+  for (const grant of received) {
+    if (grant.granteeUserId !== me || people.has(grant.ownerId)) continue;
+    people.set(grant.ownerId, { userId: grant.ownerId, name: grant.ownerName || "Persona", via: "share" });
+  }
+  for (const group of groups) {
+    for (const member of group.members) {
+      if (member.userId === me || member.userId.startsWith("local-") || people.has(member.userId)) continue;
+      people.set(member.userId, { userId: member.userId, name: member.displayName || "Compagno", via: "group" });
+    }
+  }
+  return [...people.values()].sort((a, b) => a.name.localeCompare(b.name, "it"));
+};
+
+/** Gruppi a cui si può dare accesso: online (non solo su questo dispositivo) e di cui si è membri. */
+export const shareableGroups = <G extends { ownerId: string; sharedAt?: string; members: readonly { userId: string }[] }>(
+  groups: readonly G[],
+  me: string
+) => groups.filter((group) => Boolean(group.sharedAt) && !group.ownerId.startsWith("local-") && group.members.some((member) => member.userId === me));
