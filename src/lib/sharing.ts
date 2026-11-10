@@ -5,6 +5,7 @@
 import { timestampOf, type SyncableEntity } from "./collections";
 import { inviteLinkBase } from "./groups";
 import { SHARE_ACTION_FAILED, UNKNOWN_PERSON, UNKNOWN_PERSON_IN_SENTENCE, scopesSummary } from "./labels";
+import { normalizeExternalUrl } from "./safeUrl";
 
 export const SHARE_SCOPES = ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals"] as const;
 export type ShareScope = (typeof SHARE_SCOPES)[number];
@@ -782,27 +783,86 @@ export interface SharedBarbExam {
   mine: boolean;
 }
 
-/** Appelli ufficiali scelti da chi condivide con me (calendario o appelli), uno per appello. */
+/** Giorno locale (aaaa-mm-gg) di una data ISO senza fuso, com'è negli appelli; "" se manca o non è un giorno del calendario. */
+const localDayOf = (start: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(start);
+  if (!match) return "";
+  const [day, year, month, date] = [match[0], Number(match[1]), Number(match[2]), Number(match[3])];
+  const check = new Date(Date.UTC(year, month - 1, date));
+  return check.getUTCFullYear() === year && check.getUTCMonth() === month - 1 && check.getUTCDate() === date ? day : "";
+};
+
+/**
+ * Chiave di un appello: codice ufficiale e giorno. Chi sposta un appello importato tiene il codice
+ * ma cambia il giorno: è un'altra riga, e il segno "anche tu" vale solo per il mio stesso giorno.
+ */
+export const barbExamKey = (sourceUid: string, start: string) => `${sourceUid}|${localDayOf(start)}`;
+
+/** Il primo link che si può aprire senza rischi; chi condivide può mandare qualsiasi stringa. */
+const firstSafeLink = (value: unknown): string | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  for (const link of value) {
+    const safe = typeof link === "string" ? normalizeExternalUrl(link) : null;
+    if (safe) return safe;
+  }
+  return undefined;
+};
+
+/**
+ * Appelli ufficiali scelti da chi condivide con me (calendario o appelli), uno per appello e giorno.
+ * `mine` contiene le chiavi (`barbExamKey`) degli appelli che ho nel mio calendario. Senza data valida
+ * le righe vanno in coda.
+ */
 export const sharedBarbExams = (items: readonly SharedItem[], mine: ReadonlySet<string>): SharedBarbExam[] => {
-  const byUid = new Map<string, SharedBarbExam>();
+  const byKey = new Map<string, SharedBarbExam>();
   for (const entry of items) {
     if (entry.entityType !== "calendarEvent") continue;
     const uid = str(entry.entity.sourceUid);
     if (!uid?.startsWith("barb-exam-")) continue;
-    const current = byUid.get(uid);
+    const start = str(entry.entity.start) ?? "";
+    const key = barbExamKey(uid, start);
+    const current = byKey.get(key);
     if (current) {
       if (!current.ownerIds.includes(entry.ownerId)) current.ownerIds.push(entry.ownerId);
+      current.link ??= firstSafeLink(entry.entity.links);
       continue;
     }
-    const links = Array.isArray(entry.entity.links) ? entry.entity.links.filter((link): link is string => typeof link === "string") : [];
-    byUid.set(uid, {
+    byKey.set(key, {
       sourceUid: uid,
       title: str(entry.entity.title) || "Appello",
-      start: str(entry.entity.start) ?? "",
-      link: links[0],
+      start,
+      link: firstSafeLink(entry.entity.links),
       ownerIds: [entry.ownerId],
-      mine: mine.has(uid)
+      mine: mine.has(key)
     });
   }
-  return [...byUid.values()].sort((a, b) => a.start.localeCompare(b.start));
+  return [...byKey.values()].sort((a, b) => {
+    const dayA = localDayOf(a.start);
+    const dayB = localDayOf(b.start);
+    if (Boolean(dayA) !== Boolean(dayB)) return dayA ? -1 : 1;
+    return a.start.localeCompare(b.start) || a.sourceUid.localeCompare(b.sourceUid);
+  });
+};
+
+/**
+ * Divide per giorno locale (`today` = aaaa-mm-gg): chi è di oggi è ancora in arrivo, chi non ha una data
+ * valida resta tra gli in arrivo (non si sa che sia passato), i passati vanno dal più recente.
+ */
+export const splitSharedBarbExams = (rows: readonly SharedBarbExam[], today: string) => {
+  const upcoming: SharedBarbExam[] = [];
+  const past: SharedBarbExam[] = [];
+  for (const row of rows) {
+    const day = localDayOf(row.start);
+    (day && day < today ? past : upcoming).push(row);
+  }
+  return { upcoming, past: past.reverse() };
+};
+
+/** Dominio di un link, da mostrare com'è: chi condivide non può far passare un sito qualsiasi per quello ufficiale. */
+export const linkHostname = (href: string): string | undefined => {
+  try {
+    return new URL(href).hostname.replace(/^www\./, "") || undefined;
+  } catch {
+    return undefined;
+  }
 };

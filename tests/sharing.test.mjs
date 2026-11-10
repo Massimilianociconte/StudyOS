@@ -42,7 +42,10 @@ import {
   REVISION_LIST_LIMIT,
   actorInSentence,
   restoredUpdatedAt,
-  sharedBarbExams
+  barbExamKey,
+  linkHostname,
+  sharedBarbExams,
+  splitSharedBarbExams
 } from "../src/lib/sharing.ts";
 import {
   SHARED_ENTITY_LABEL,
@@ -596,7 +599,7 @@ test("ripristino: l'updatedAt non è mai più vecchio della copia locale (orolog
   assert.ok(Date.parse(restoredUpdatedAt(now, "2026-11-10T18:30:15.250Z")) > Date.parse("2026-11-10T18:30:15.250Z"));
 });
 
-test("appelli condivisi: solo barb-exam-*, uniti per appello, con il segno 'anche tu'", () => {
+test("appelli condivisi: solo barb-exam-*, uniti per appello e giorno, con il segno 'anche tu'", () => {
   const exam = (owner, id, uid, start) => item(owner, "calendarEvent", id, { title: `Appello ${uid}`, sourceUid: uid, start, links: ["https://unimi.it/x"] });
   const rows = sharedBarbExams(
     [
@@ -606,11 +609,78 @@ test("appelli condivisi: solo barb-exam-*, uniti per appello, con il segno 'anch
       item("alice", "calendarEvent", "a3", { title: "Lezione", sourceUid: "ics-1", start: "2026-11-11T09:00" }),
       item("alice", "task", "t1", { title: "x", sourceUid: "barb-exam-unimi-9" })
     ],
-    new Set(["barb-exam-unimi-2"])
+    new Set([barbExamKey("barb-exam-unimi-2", "2026-12-10T00:00:00")])
   );
   assert.deepEqual(rows.map((row) => [row.sourceUid, row.ownerIds, row.mine]), [
     ["barb-exam-unimi-1", ["alice"], false],
     ["barb-exam-unimi-2", ["alice", "dario"], true]
   ]);
   assert.equal(rows[0].link, "https://unimi.it/x");
+  assert.equal(barbExamKey("barb-exam-unimi-2", "2026-12-10T09:30:00"), "barb-exam-unimi-2|2026-12-10");
+});
+
+test("appelli condivisi: lo stesso appello spostato è una riga a parte e 'anche tu' vale solo per il mio giorno", () => {
+  const exam = (owner, id, start) => item(owner, "calendarEvent", id, { title: "Appello Anatomia", sourceUid: "barb-exam-unimi-7", start, links: ["https://unimi.it/a"] });
+  const items = [exam("dario", "d1", "2026-12-10T00:00:00"), exam("alice", "a1", "2026-12-15T00:00:00"), exam("carla", "c1", "2026-12-10T09:30:00")];
+  const mine = new Set(["barb-exam-unimi-7|2026-12-10"]);
+  const shape = (rows) => rows.map((row) => [row.start.slice(0, 10), [...row.ownerIds].sort(), row.mine]);
+  const expected = [
+    ["2026-12-10", ["carla", "dario"], true],
+    ["2026-12-15", ["alice"], false]
+  ];
+  assert.deepEqual(shape(sharedBarbExams(items, mine)), expected);
+  // L'ordine in cui arrivano gli elementi non decide quale data compare accanto a quale nome.
+  assert.deepEqual(shape(sharedBarbExams([...items].reverse(), mine)), expected);
+  // Se nel mio calendario c'è un altro giorno, nessuna riga porta il segno.
+  assert.deepEqual(sharedBarbExams(items, new Set(["barb-exam-unimi-7|2026-12-11"])).map((row) => row.mine), [false, false]);
+});
+
+test("appelli condivisi: stesso proprietario due volte, data mancante, link non validi, titolo mancante", () => {
+  const ev = (owner, id, entity) => item(owner, "calendarEvent", id, { sourceUid: "barb-exam-unimi-3", ...entity });
+  const rows = sharedBarbExams(
+    [
+      ev("alice", "a1", { title: "Appello A", start: "2026-12-01T00:00:00", links: [42, null, "javascript:alert(1)", {}] }),
+      ev("alice", "a2", { title: "Secondo", start: "2026-12-01T00:00:00" }),
+      ev("dario", "d1", { title: "Appello B", start: "2026-12-01T00:00:00", links: ["https://unimi.it/ok"] }),
+      ev("dario", "d2", { sourceUid: "barb-exam-unimi-4", title: "Senza data" }),
+      ev("carla", "c1", { sourceUid: "barb-exam-unimi-4", start: "non è una data" }),
+      ev("alice", "a3", { sourceUid: "barb-exam-unimi-5", start: 123, title: "" })
+    ],
+    new Set()
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.sourceUid, row.title, row.start, row.ownerIds, row.link]),
+    [
+      // Lo stesso proprietario due volte conta una sola volta; il primo link sicuro tra tutti vince.
+      ["barb-exam-unimi-3", "Appello A", "2026-12-01T00:00:00", ["alice", "dario"], "https://unimi.it/ok"],
+      // Senza data valida: in coda, e uniti tra loro.
+      ["barb-exam-unimi-4", "Senza data", "", ["dario", "carla"], undefined],
+      ["barb-exam-unimi-5", "Appello", "", ["alice"], undefined]
+    ]
+  );
+});
+
+test("appelli condivisi: in arrivo e passati dal giorno locale, senza data tra quelli in arrivo, passati dal più recente", () => {
+  const row = (uid, start) => ({ sourceUid: uid, title: "t", start, ownerIds: ["alice"], mine: false });
+  const { upcoming, past } = splitSharedBarbExams(
+    [
+      row("a", "2026-11-08T00:00:00"),
+      row("b", "2026-11-09T23:59:00"),
+      row("c", "2026-11-10T00:00:00"),
+      row("d", "2026-11-10T23:59:00"),
+      row("e", "2026-11-11T00:00:00"),
+      row("f", ""),
+      row("g", "2026-02-31T00:00:00")
+    ],
+    "2026-11-10"
+  );
+  assert.deepEqual(past.map((entry) => entry.sourceUid), ["b", "a"]);
+  assert.deepEqual(upcoming.map((entry) => entry.sourceUid), ["c", "d", "e", "f", "g"]);
+});
+
+test("link degli appelli: si mostra il dominio vero, mai un nome ufficiale scelto da chi condivide", () => {
+  assert.equal(linkHostname("https://www.unimi.it/ecm/x?y=1"), "unimi.it");
+  assert.equal(linkHostname("https://exam.evil.example/unimi.it"), "exam.evil.example");
+  assert.equal(linkHostname("mailto:a@b.it"), undefined);
+  assert.equal(linkHostname("non un url"), undefined);
 });
