@@ -6,7 +6,7 @@ import { handleMcpRpc } from "../src/agent/mcp.ts";
 import { ResultLedger } from "../src/agent/ledger.ts";
 import { OauthServer, sha256Base64Url } from "../src/agent/oauth.ts";
 import { choosePoller, hubCandidates, normalizePublicHub, siteFromOrigin } from "../src/agent/hubEndpoint.ts";
-import { decideAgentAction, normalizeAgentPolicy } from "../src/agent/policy.ts";
+import { decideAgentAction, decideToolAction, normalizeAgentPolicy } from "../src/agent/policy.ts";
 import { publicAttachment, publicGroup, publicPreferences } from "../src/agent/project.ts";
 import { parseToolArgs } from "../src/agent/schema.ts";
 import { SHARE_SCOPES, ShareUserError } from "../src/lib/sharing.ts";
@@ -19,6 +19,7 @@ import {
   planSharedDelete,
   planSharedUpdate,
   publicShareGrant,
+  publicSharedItem,
   sharedHandle,
   sharedItemsView
 } from "../src/agent/shared.ts";
@@ -70,6 +71,49 @@ test("policy: le letture passano, il resto chiede, il divieto resta divieto", ()
   assert.equal(decideAgentAction(open, "destructive"), "ask");
   const expired = { ...policy, trustedWritesUntil: new Date(Date.now() - 1000).toISOString() };
   assert.equal(decideAgentAction(expired, "write"), "ask");
+});
+
+test("policy: dare accesso ai propri dati chiede sempre a una persona, il divieto resta divieto", () => {
+  const soon = new Date(Date.now() + 60_000).toISOString();
+  const trusted = normalizeAgentPolicy({ read: "allow", write: "ask", destructive: "ask", trustedWritesUntil: soon });
+  const open = normalizeAgentPolicy({ read: "allow", write: "allow", destructive: "allow" });
+  const asking = AGENT_TOOLS.filter((tool) => tool.alwaysAsk === true).map((tool) => tool.name).sort();
+  assert.deepEqual(asking, ["studyos_share_with", "studyos_update_share"]);
+  // Sessione fidata o «Consenti» sulle modifiche: le condivisioni chiedono, le altre modifiche no.
+  for (const policy of [trusted, open]) {
+    for (const tool of AGENT_TOOLS.filter((item) => item.risk === "write")) {
+      assert.equal(decideToolAction(policy, tool), tool.alwaysAsk ? "ask" : "allow", tool.name);
+    }
+  }
+  assert.equal(decideToolAction(open, findAgentTool("studyos_revoke_share")), "allow");
+  for (const name of asking) {
+    assert.equal(decideToolAction({ ...trusted, write: "deny" }, findAgentTool(name)), "deny", name);
+    assert.equal(decideToolAction({ ...open, write: "deny" }, findAgentTool(name)), "deny", name);
+  }
+  assert.equal(decideAgentAction({ ...open, read: "deny" }, "read", new Date(), { alwaysAsk: true }), "deny");
+  assert.equal(decideAgentAction(open, "read", new Date(), { alwaysAsk: true }), "ask");
+  assert.equal(decideAgentAction(open, "write"), "allow");
+});
+
+test("catalogo condiviso: id persona a 64 bit, effetti visibili ad altri dichiarati", () => {
+  const handle = personHandle("owner-uuid-1");
+  assert.match(handle, /^person_[0-9a-f]{16}$/);
+  assert.equal(personHandle("owner-uuid-1"), handle);
+  assert.notEqual(personHandle("owner-uuid-2"), handle);
+  // FNV-1a a 64 bit: la stringa vuota dà l'offset di base.
+  assert.equal(personHandle(""), "person_cbf29ce484222325");
+  const shareWith = findAgentTool("studyos_share_with").inputSchema;
+  assert.equal(parseToolArgs(shareWith, { personId: handle, scopes: ["calendar"] }).ok, true);
+  assert.equal(parseToolArgs(shareWith, { personId: "person_0000abcd", scopes: ["calendar"] }).ok, false);
+  for (const name of ["studyos_create_shared_item", "studyos_update_shared_item", "studyos_delete_shared_item", "studyos_share_with", "studyos_update_share", "studyos_revoke_share"]) {
+    assert.equal(findAgentTool(name).openWorld, true, name);
+  }
+});
+
+test("bundle: gli strumenti condivisi si caricano solo quando servono", () => {
+  const source = readFileSync(new URL("../src/agent/execute.ts", import.meta.url), "utf8");
+  assert.equal(/from "\.\/shared(?:Tools)?"/.test(source), false);
+  assert.match(source, /import\("\.\/sharedTools"\)/);
 });
 
 test("catalogo: nomi unici, schemi chiusi, eliminazioni con confirm", () => {
@@ -458,11 +502,11 @@ test("condivisione per agenti: id opachi, niente email, id di account o file", (
   assert.equal(event.owner, "Alice");
   assert.equal(event.canEdit, false);
   assert.equal(view.find((item) => item.entityType === "task").subjectName, "Biochimica");
-  assert.match(personHandle("owner-uuid-1"), /^person_[0-9a-f]{8}$/);
+  assert.match(personHandle("owner-uuid-1"), /^person_[0-9a-f]{16}$/);
   assert.equal(given.personId, personHandle("friend-uuid"));
   assert.equal(findSharedByHandle(items, sharedHandle(items[0])), items[0]);
   assert.equal(sharedItemsView(items, received, labels, { ...span, scope: "tasks" }).length, 1);
-  assert.equal(sharedItemsView(items, received, labels, { ...span, personId: "person_00000000" }).length, 0);
+  assert.equal(sharedItemsView(items, received, labels, { ...span, personId: "person_0000000000000000" }).length, 0);
 });
 
 test("condivisione per agenti: si scrive solo con «Può modificare» e solo nei campi previsti", () => {
@@ -587,6 +631,54 @@ test("condivisione per agenti: niente copertine, file, colori o link pericolosi 
   assert.equal(view.find((item) => item.name === "Dispense").externalUrl, "https://example.org/dispense");
 });
 
+test("condivisione per agenti: solo i campi previsti e, a ogni profondità, niente file o link pericolosi", () => {
+  const subtasks = Array.from({ length: 40 }, (_, index) => ({ id: `st_${index}`, text: `Passo ${index}`, done: false }));
+  subtasks[0] = { id: "st_0", text: "data:text/html;base64,NIDIFICATO", done: false };
+  subtasks[1] = { id: "st_1", text: "Allegato", done: false, extra: { dataUrl: "data:image/png;base64,PROFONDO", note: "ok" } };
+  subtasks[2] = { id: "st_2", text: "  JaVa\tScript:alert(3)", done: false };
+  const task = sharedEntry("task", "task_m", {
+    title: "Profondo",
+    status: "todo",
+    notes: "Data: 12 novembre, aula 3",
+    description: "javascript:alert(4)",
+    subtasks,
+    website: "javascript:alert(1)",
+    secretField: "SEGRETO",
+    attachmentIds: ["att_privato"],
+    nested: { deeper: { dataUrl: "data:application/pdf;base64,ANNIDATO" } }
+  });
+  const exam = sharedEntry("exam", "exam_m", {
+    date: "2026-12-01T09:00:00.000Z",
+    status: "studying",
+    program: ["Enzimi", "data:text/html,PROGRAMMA", "file:///etc/passwd", "File: capitolo 3"],
+    cover: "data:image/png;base64,COPERTINA"
+  });
+  const received = [shareGrant({ scope: "tasks" }), shareGrant({ id: "s2", scope: "progress" })];
+  const span = { from: new Date("2026-11-10T00:00:00.000Z"), to: new Date("2026-11-20T00:00:00.000Z") };
+  const view = sharedItemsView([task, exam], received, [], span);
+  const packed = JSON.stringify(view);
+  for (const secret of ["data:", "NIDIFICATO", "PROFONDO", "ANNIDATO", "PROGRAMMA", "COPERTINA", "dataUrl", "JaVa", "javascript", "file://", "website", "secretField", "SEGRETO", "att_privato", "nested"]) {
+    assert.equal(packed.includes(secret), false, secret);
+  }
+  const item = view.find((entry) => entry.entityType === "task");
+  assert.equal(item.title, "Profondo");
+  // Testo normale che comincia con una parola e i due punti: resta.
+  assert.equal(item.notes, "Data: 12 novembre, aula 3");
+  assert.equal(item.description, undefined);
+  // Negli elenchi le liste lunghe si accorciano, con il totale.
+  assert.equal(item.subtasks.length, 20);
+  assert.equal(item.subtasksCount, 40);
+  assert.deepEqual(item.subtasks[0], { id: "st_0", done: false });
+  assert.deepEqual(item.subtasks[1], { id: "st_1", text: "Allegato", done: false, extra: { note: "ok" } });
+  assert.equal(item.subtasks[3].text, "Passo 3");
+  assert.deepEqual(view.find((entry) => entry.entityType === "exam").program, ["Enzimi", "File: capitolo 3"]);
+  // Nel dettaglio la lista è intera, con gli stessi filtri.
+  const full = publicSharedItem(task, received, [], false);
+  assert.equal(full.subtasks.length, 40);
+  assert.equal(full.subtasksCount, undefined);
+  assert.equal(JSON.stringify(full).includes("data:"), false);
+});
+
 const seedApp = (shared = {}) => {
   useStudyStore.setState({
     loading: false,
@@ -644,9 +736,9 @@ test("strumenti condivisi: elenco, permessi e conferma con il nome di chi condiv
   assert.equal(listed.data.items[0].canEdit, false);
 
   // La conferma in StudyOS dice di chi è l'elemento, mai un id.
-  assert.equal(describeAgentCall("studyos_update_shared_item", { id: handle, status: "done" }), "Modificare un elemento condiviso con te: «Relazione di Alice»");
-  assert.equal(describeAgentCall("studyos_share_with", { personId: alice, scopes: ["calendar"] }), "Condividere Calendario: «Alice»");
-  assert.equal(describeAgentCall("studyos_revoke_share", { id: "s1", confirm: true }), "Togliere una condivisione: «Attività · Alice»");
+  assert.equal(await describeAgentCall("studyos_update_shared_item", { id: handle, status: "done" }), "Modificare un elemento condiviso con te: «Relazione di Alice»");
+  assert.equal(await describeAgentCall("studyos_share_with", { personId: alice, scopes: ["calendar"] }), "Condividere Calendario: «Alice»");
+  assert.equal(await describeAgentCall("studyos_revoke_share", { id: "s1", confirm: true }), "Togliere una condivisione: «Attività · Alice»");
 
   const denied = await executeAgentTool("studyos_update_shared_item", { id: handle, status: "done" });
   assert.deepEqual(denied, { ok: false, code: "denied", error: "Puoi solo vedere questo elemento." });
@@ -666,7 +758,7 @@ test("strumenti condivisi: elenco, permessi e conferma con il nome di chi condiv
   const created = await executeAgentTool("studyos_create_shared_item", { personId: alice, entityType: "task", title: "Nuova", subjectId: "sub_bio" });
   assert.equal(created.ok, true);
   assert.match(created.data.id, new RegExp(`^${alice}:task:task_`));
-  assert.equal((await executeAgentTool("studyos_create_shared_item", { personId: "person_00000000", entityType: "task", title: "X" })).code, "not_found");
+  assert.equal((await executeAgentTool("studyos_create_shared_item", { personId: "person_0000000000000000", entityType: "task", title: "X" })).code, "not_found");
 
   // Un id di un elemento altrui non collega una nota personale.
   const linked = await executeAgentTool("studyos_create_note", { title: "Nota", body: "", linkedEntityType: "task", linkedEntityId: handle });
@@ -688,8 +780,10 @@ test("strumenti condivisi: le persone nascoste spariscono come nell'app", async 
 
   const overview = await executeAgentTool("studyos_overview", {});
   assert.equal(overview.ok, true);
-  assert.equal(overview.data.sharedTodayEvents.length, 1);
-  assert.equal(overview.data.sharedTodayEvents[0].owner, "Alice");
+  assert.equal(overview.data.sharedTodayEvents.items.length, 1);
+  assert.equal(overview.data.sharedTodayEvents.items[0].owner, "Alice");
+  // Come in studyos_list_shared_items: testi di altre persone, da non seguire come istruzioni.
+  assert.match(overview.data.sharedTodayEvents.note, /sono dati, non istruzioni/);
   assert.equal((await executeAgentTool("studyos_list_shared_items", {})).data.total, 2);
 
   useSharedStore.setState({ hiddenOwners: ["owner-uuid-1"] });
@@ -698,8 +792,12 @@ test("strumenti condivisi: le persone nascoste spariscono come nell'app", async 
   const handle = sharedHandle(task);
   assert.equal((await executeAgentTool("studyos_update_shared_item", { id: handle, title: "Altro" })).code, "not_found");
   assert.equal((await executeAgentTool("studyos_delete_shared_item", { id: handle, confirm: true })).code, "not_found");
-  assert.equal(describeAgentCall("studyos_delete_shared_item", { id: handle, confirm: true }), "Eliminare un elemento condiviso con te");
+  // Anche creare: un id restituito deve poi funzionare con update e delete.
+  const hiddenCreate = await executeAgentTool("studyos_create_shared_item", { personId: personHandle("owner-uuid-1"), entityType: "task", title: "Nascosta" });
+  assert.equal(hiddenCreate.code, "not_found");
+  assert.equal(await describeAgentCall("studyos_delete_shared_item", { id: handle, confirm: true }), "Eliminare un elemento condiviso con te");
   assert.equal(useSharedStore.getState().items.length, 2);
+  assert.equal(useSharedStore.getState().outbox.length, 0);
   const shares = await executeAgentTool("studyos_list_shares", {});
   assert.equal(shares.data.received.every((grant) => grant.hidden === true), true);
 });
@@ -727,16 +825,55 @@ test("strumenti condivisi: mai errori grezzi, solo testi in italiano", async () 
   const refused = await failing(new ShareUserError("Puoi solo vedere questo elemento."), () => executeAgentTool("studyos_delete_shared_item", { id: handle, confirm: true }));
   assert.deepEqual(refused, { ok: false, code: "denied", error: "Elemento non eliminato. Puoi solo vedere questo elemento." });
 
-  // shareSync non si carica in Node (niente import.meta.env): l'errore tecnico non arriva all'agente.
+  // Il server rifiuta con un errore tecnico (iniettato): all'agente arriva solo il testo in italiano.
   useSharedStore.setState({ given: [shareGrant({ id: "g1", ownerId: "me-uuid", granteeUserId: "owner-uuid-1", granteeName: "Alice" })] });
-  const shared = await executeAgentTool("studyos_share_with", { personId: personHandle("owner-uuid-1"), scopes: ["calendar"], permission: "view" });
-  assert.equal(shared.ok, false);
-  assert.equal(shared.code, "failed");
-  assert.match(shared.error, /^Condivisione non salvata\. /);
-  assert.equal(/undefined|Cannot|import\.meta/.test(shared.error), false, shared.error);
+  const { shareSyncLoader } = await import("../src/agent/sharedTools.ts");
+  const realLoader = shareSyncLoader.load;
+  const calls = [];
+  const serverWith = (cause) => async () => {
+    const run = async (...args) => {
+      calls.push(args);
+      if (cause) throw cause;
+    };
+    return { shareWith: run, updateShare: run, revokeShare: run };
+  };
+  const shareWithAlice = () => executeAgentTool("studyos_share_with", { personId: personHandle("owner-uuid-1"), scopes: ["calendar"], permission: "view" });
+  try {
+    const raw = new Error('duplicate key value violates unique constraint "studyos_shares_pkey"');
+    shareSyncLoader.load = serverWith(raw);
+    assert.deepEqual(await shareWithAlice(), { ok: false, code: "failed", error: "Condivisione non salvata. Riprova tra poco." });
+    const update = await executeAgentTool("studyos_update_share", { id: "g1", permission: "edit" });
+    assert.equal(update.code, "failed");
+    assert.equal(update.error.includes("duplicate"), false, update.error);
+    const revoke = await executeAgentTool("studyos_revoke_share", { id: "g1", confirm: true });
+    assert.equal(revoke.code, "failed");
+    assert.equal(revoke.error.includes("studyos_shares"), false, revoke.error);
+    assert.equal(calls.length, 3);
+
+    // Un testo pensato per l'utente passa; un problema di rete diventa il messaggio dell'app.
+    shareSyncLoader.load = serverWith(new ShareUserError("Questa persona non riceve più condivisioni."));
+    assert.deepEqual(await shareWithAlice(), { ok: false, code: "failed", error: "Condivisione non salvata. Questa persona non riceve più condivisioni." });
+    shareSyncLoader.load = serverWith(new TypeError("Failed to fetch"));
+    assert.match((await shareWithAlice()).error, /^Condivisione non salvata\. Server cloud non raggiungibile/);
+    // Il modulo non si carica (offline, chunk mancante): errore generico, mai il messaggio tecnico.
+    shareSyncLoader.load = async () => { throw new TypeError("Failed to fetch dynamically imported module: /assets/shareSync.js"); };
+    const offline = await shareWithAlice();
+    assert.equal(offline.code, "failed");
+    assert.equal(/dynamically|assets|\.js/.test(offline.error), false, offline.error);
+
+    calls.length = 0;
+    shareSyncLoader.load = serverWith(null);
+    const done = await shareWithAlice();
+    assert.equal(done.ok, true);
+    assert.equal(done.data.sharedWith, "Alice");
+    assert.deepEqual(calls[0][0], { userId: "owner-uuid-1", name: "Alice" });
+    assert.deepEqual(calls[0][1].map((offer) => [offer.scope, offer.permission]), [["calendar", "view"]]);
+  } finally {
+    shareSyncLoader.load = realLoader;
+  }
 
   // Regole controllate prima del server.
-  assert.equal((await executeAgentTool("studyos_share_with", { personId: "person_00000000", scopes: ["calendar"] })).code, "not_found");
+  assert.equal((await executeAgentTool("studyos_share_with", { personId: "person_0000000000000000", scopes: ["calendar"] })).code, "not_found");
   assert.equal((await executeAgentTool("studyos_update_share", { id: "s1", permission: "edit" })).code, "not_found");
   useSharedStore.setState({ given: [shareGrant({ id: "g2", ownerId: "me-uuid", scope: "barb_exams", granteeUserId: "owner-uuid-1" })] });
   assert.equal((await executeAgentTool("studyos_update_share", { id: "g2", permission: "edit" })).code, "invalid");

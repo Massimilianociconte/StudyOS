@@ -30,16 +30,22 @@ import {
 } from "../lib/sharing";
 import { taskStatusTransitionPatch } from "../lib/taskTimer";
 import type { CalendarEvent, Task } from "../types";
-import { publicEntity } from "./project";
 
-/** Id stabile di una persona per l'agente, senza l'id del suo account (FNV-1a a 32 bit). */
+const FNV64_OFFSET = 0xcbf29ce484222325n;
+const FNV64_PRIME = 0x100000001b3n;
+const MASK64 = 0xffffffffffffffffn;
+
+/**
+ * Id stabile di una persona per l'agente, senza l'id del suo account (FNV-1a a 64 bit): con 64 bit
+ * due persone tra i propri contatti non finiscono in pratica mai sullo stesso id.
+ */
 export const personHandle = (userId: string) => {
-  let hash = 0x811c9dc5;
+  let hash = FNV64_OFFSET;
   for (let index = 0; index < userId.length; index += 1) {
-    hash ^= userId.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+    hash ^= BigInt(userId.charCodeAt(index));
+    hash = (hash * FNV64_PRIME) & MASK64;
   }
-  return `person_${hash.toString(16).padStart(8, "0")}`;
+  return `person_${hash.toString(16).padStart(16, "0")}`;
 };
 
 /** Id di un elemento altrui per l'agente: persona, tipo e id dell'elemento. */
@@ -92,9 +98,68 @@ const safeLinks = (value: unknown) =>
     : undefined;
 
 /**
- * Un elemento altrui: niente copertine, file incorporati, cronometro né UID di import (gli stessi
- * campi nascosti delle proiezioni personali), colori solo esadecimali, link solo sicuri, id opaco
- * al posto della chiave interna.
+ * Campi di un elemento altrui che l'agente vede, per tipo: il JSON lo scrive un'altra persona, quindi
+ * tutto il resto (copertine, file, cronometro, UID di import, collegamenti interni, campi sconosciuti)
+ * resta fuori. Colore, link e indirizzo esterno passano a parte, già controllati.
+ */
+const SHARED_FIELDS: Record<string, readonly string[]> = {
+  calendarEvent: ["title", "description", "category", "priority", "start", "end", "allDay", "recurrence", "recurrenceUntil", "status", "checklist", "notes"],
+  task: ["title", "description", "priority", "dueDate", "status", "subtasks", "notes", "estimatedMinutes", "actualMinutes", "completedAt", "energy", "difficulty", "importance"],
+  studySession: ["title", "template", "plannedMinutes", "actualMinutes", "start", "end", "topics", "perceivedDifficulty", "focusLevel", "status", "notes"],
+  studyTopic: ["title", "firstStudiedAt", "comprehension", "memorization", "difficulty", "nextReviewDate", "completedReviews", "lastReviewedAt", "questions", "notes"],
+  exam: ["date", "program", "preparation", "targetGrade", "status", "simulations", "frequentQuestions", "grade", "honors", "passFail"],
+  attachment: ["name", "mimeType", "size", "addedAt", "description"],
+  note: ["title", "body"],
+  goal: ["title", "description", "category", "startDate", "deadline", "progress", "metric", "status", "notes"]
+};
+
+const COMMON_FIELDS = ["subjectId", "tags", "archived", "createdAt", "updatedAt"];
+
+/** Chiavi mai inviate a nessuna profondità: file incorporati, copertine, cronometro, UID di import. */
+const NEVER_KEYS = /^(?:cover|dataUrl|sourceUid|timer[A-Z]\w*|__proto__)$|DataUrl$/;
+
+/**
+ * Testi che un client aprirebbe come script o file (data:, javascript:, vbscript:, file://, blob:).
+ * Come i browser, si ignorano spazi iniziali e tab o a capo nello schema; «Data: 12 novembre» resta.
+ */
+const UNSAFE_TEXT = /^(?:(?:java|vb)script:|data:(?:[a-z]+\/[\w.+-]+)?[;,]|file:\/\/|blob:(?:https?:|null\/))/i;
+const unsafeText = (value: string) => UNSAFE_TEXT.test(value.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, ""));
+
+const BRIEF_TEXT = 300;
+const BRIEF_ITEMS = 20;
+const MAX_DEPTH = 4;
+
+/**
+ * Copia pulita di un valore altrui, a ogni profondità: via file, link pericolosi e chiavi nascoste;
+ * negli elenchi (`brief`) testi e liste lunghe si accorciano. Oltre MAX_DEPTH livelli non passa nulla.
+ */
+const scrub = (value: unknown, brief: boolean, depth: number): unknown => {
+  if (typeof value === "string") {
+    if (unsafeText(value)) return undefined;
+    return brief && value.length > BRIEF_TEXT ? `${value.slice(0, BRIEF_TEXT)}…` : value;
+  }
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "boolean" || value === null) return value;
+  if (depth >= MAX_DEPTH || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    return (brief ? value.slice(0, BRIEF_ITEMS) : value).flatMap((item) => {
+      const clean = scrub(item, brief, depth + 1);
+      return clean === undefined ? [] : [clean];
+    });
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (NEVER_KEYS.test(key)) continue;
+    const clean = scrub(item, brief, depth + 1);
+    if (clean !== undefined) output[key] = clean;
+  }
+  return output;
+};
+
+/**
+ * Un elemento altrui: solo i campi previsti per il suo tipo, ripuliti a ogni profondità, colori solo
+ * esadecimali, link solo sicuri, id opaco al posto della chiave interna. `brief` (elenchi) accorcia
+ * testi e liste lunghe e ne dà il totale (`<campo>Count`).
  */
 export const publicSharedItem = (
   entry: SharedItem,
@@ -104,23 +169,29 @@ export const publicSharedItem = (
 ) => {
   const origin = originOf(received, entry, labels);
   const entity = entry.entity;
+  const output: Record<string, unknown> = {};
+  for (const key of [...COMMON_FIELDS, ...listed(SHARED_FIELDS, entry.entityType)]) {
+    if (!Object.hasOwn(entity, key)) continue;
+    const value = entity[key];
+    const clean = scrub(value, brief, 1);
+    if (clean === undefined) continue;
+    output[key] = clean;
+    if (brief && Array.isArray(value) && value.length > BRIEF_ITEMS) output[`${key}Count`] = value.length;
+  }
   const externalUrl = typeof entity.externalUrl === "string" ? normalizeExternalUrl(entity.externalUrl) : null;
-  return publicEntity(
-    entity,
-    {
-      id: sharedHandle(entry),
-      entityType: entry.entityType,
-      owner: origin.ownerName,
-      personId: personHandle(entry.ownerId),
-      canEdit: origin.canEdit,
-      subjectName: origin.subjectName,
-      color: safeCssColor(entity.color) || undefined,
-      links: safeLinks(entity.links),
-      externalUrl: externalUrl ?? undefined,
-      ...(String(entity.sourceUid ?? "").startsWith("barb-exam-") ? { officialExam: true } : {})
-    },
-    brief ? ["description", "notes", "body"] : []
-  );
+  return {
+    ...output,
+    id: sharedHandle(entry),
+    entityType: entry.entityType,
+    owner: origin.ownerName,
+    personId: personHandle(entry.ownerId),
+    canEdit: origin.canEdit,
+    subjectName: origin.subjectName,
+    color: safeCssColor(entity.color) || undefined,
+    links: safeLinks(entity.links),
+    externalUrl: externalUrl ?? undefined,
+    ...(String(entity.sourceUid ?? "").startsWith("barb-exam-") ? { officialExam: true } : {})
+  };
 };
 
 export interface SharedItemsFilter {

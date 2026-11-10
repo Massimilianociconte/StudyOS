@@ -201,7 +201,7 @@ export function AgentSettings() {
       <div>
         <h4 className="text-sm font-black">Cosa può fare un assistente</h4>
         <p className="mt-1 text-sm font-bold text-[var(--muted)]">
-          All'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero.
+          All'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero. Condividere i tuoi dati con altre persone, o cambiare una condivisione, chiede sempre la tua conferma.
         </p>
       </div>
       <div className="grid grid-cols-1 gap-3">
@@ -234,7 +234,7 @@ export function AgentSettings() {
         {trusted ? <Button variant="ghost" onClick={() => clearTrustedWrites()}>Torna a chiedere conferma</Button> : null}
       </div>
       {trusted && link.policy.trustedWritesUntil ? (
-        <p className="text-sm font-bold text-[var(--muted)]">Modifiche senza conferma fino alle {when(link.policy.trustedWritesUntil)}. Le eliminazioni chiedono ancora conferma.</p>
+        <p className="text-sm font-bold text-[var(--muted)]">Modifiche senza conferma fino alle {when(link.policy.trustedWritesUntil)}. Le eliminazioni e le condivisioni chiedono ancora conferma.</p>
       ) : null}
 
       <div className="flex flex-wrap gap-2">

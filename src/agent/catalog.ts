@@ -12,7 +12,7 @@ const CONFIRM = { type: "boolean", enum: [true], description: "Deve essere true.
 const WHEN = "ISO 8601, es. 2026-11-10T14:30:00+01:00. Senza offset vale l'ora locale della persona (timeZone in studyos_status).";
 const DAY = "Giorno YYYY-MM-DD.";
 const MINE = " Solo dati tuoi: per quelli che altre persone condividono con te usa studyos_list_shared_items.";
-const PERSON = { type: "string", minLength: 1, maxLength: 20, pattern: "^person_[0-9a-f]{8}$", description: "personId restituito da studyos_list_shares." } as const satisfies JsonSchema;
+const PERSON = { type: "string", minLength: 1, maxLength: 23, pattern: "^person_[0-9a-f]{16}$", description: "personId restituito da studyos_list_shares." } as const satisfies JsonSchema;
 const SHARED_ID = { ...ID, description: "id di un elemento condiviso, restituito da studyos_list_shared_items." } as const satisfies JsonSchema;
 // Stesso ordine di SHARE_SCOPES in src/lib/sharing.ts (il test lo verifica): il catalogo resta senza import runtime del browser.
 const SHARE_SCOPE = {
@@ -49,6 +49,11 @@ export interface AgentTool {
   additive?: boolean;
   /** L'effetto è visibile ad altre persone, per esempio la bacheca di un gruppo (openWorldHint). */
   openWorld?: boolean;
+  /**
+   * Chiede sempre conferma in StudyOS, anche con «Consenti» o in sessione fidata (un divieto resta divieto):
+   * per gli strumenti che danno ad altre persone accesso ai dati.
+   */
+  alwaysAsk?: boolean;
   inputSchema: JsonSchema;
   summary: (args: Record<string, unknown>) => string;
 }
@@ -861,10 +866,11 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_share_with",
     title: "Condividi con una persona o un gruppo",
-    description: "Condivide sezioni dei tuoi dati con una persona già collegata (personId da people in studyos_list_shares) o con un gruppo online (groupId da groups). Indica uno solo dei due. Per una persona nuova serve un invito dall'app. Se una sezione è già condivisa con lo stesso destinatario ne aggiorna permesso e materie.",
+    description: "Condivide sezioni dei tuoi dati con una persona già collegata (personId da people in studyos_list_shares) o con un gruppo online (groupId da groups). Indica uno solo dei due. Per una persona nuova serve un invito dall'app. Se una sezione è già condivisa con lo stesso destinatario ne aggiorna permesso e materie. Chiede sempre conferma in StudyOS.",
     risk: "write",
     idempotent: true,
     openWorld: true,
+    alwaysAsk: true,
     inputSchema: objectSchema({
       personId: PERSON,
       groupId: ID,
@@ -877,9 +883,11 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_update_share",
     title: "Cambia una condivisione",
-    description: "Cambia permesso (view/edit) o materie di una condivisione che hai dato (id da given in studyos_list_shares). Sezione e destinatario non cambiano: per quelli revoca e condividi di nuovo.",
+    description: "Cambia permesso (view/edit) o materie di una condivisione che hai dato (id da given in studyos_list_shares). Sezione e destinatario non cambiano: per quelli revoca e condividi di nuovo. Chiede sempre conferma in StudyOS.",
     risk: "write",
     idempotent: true,
+    openWorld: true,
+    alwaysAsk: true,
     inputSchema: objectSchema({ id: ID, permission: PERMISSION, subjectIds: SUBJECT_IDS }, ["id"]),
     summary: () => "Cambiare una condivisione"
   }),
@@ -889,6 +897,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     description: "Toglie una condivisione che hai dato (id da given): l'altra persona perde subito l'accesso. Con l'id di una condivisione ricevuta direttamente (received con via=direct) smetti di riceverla. Richiede confirm=true e la conferma in StudyOS.",
     risk: "destructive",
     idempotent: true,
+    openWorld: true,
     inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
     summary: () => "Togliere una condivisione"
   }),

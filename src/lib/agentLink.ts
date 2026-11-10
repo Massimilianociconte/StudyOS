@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from "react";
-import { findAgentTool } from "../agent/catalog";
+import { findAgentTool, type AgentTool } from "../agent/catalog";
 import { describeAgentCall, executeAgentTool } from "../agent/execute";
 import { hubCandidates, isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
-import { decideAgentAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
+import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
 import type { AgentCallResult, AuditEntry } from "../agent/types";
 import { appendAudit, readAgentToken, readAudit, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
@@ -220,11 +220,12 @@ const askPerson = (call: PendingAgentCall) => new Promise<CallChoice>((resolve) 
   showQueues({ notice: "" });
 });
 
-const policyFor = (risk: AgentRisk) => decideAgentAction(readStoredPolicy(), risk);
+// Condividere (alwaysAsk) chiede sempre conferma, anche con «Consenti» o in sessione fidata.
+const policyFor = (tool: AgentTool) => decideToolAction(readStoredPolicy(), tool);
 
 const handleCall = async (job: { id: string; name: string; args: Record<string, unknown>; actorName: string }) => {
   const tool = findAgentTool(job.name);
-  const summary = describeAgentCall(job.name, job.args);
+  const summary = await describeAgentCall(job.name, job.args);
   const finish = async (result: AgentCallResult, decision: PolicyChoice) => {
     record({ tool: job.name, risk: tool?.risk ?? "write", decision, status: outcome(result), summary, actor: job.actorName });
     await deliver(job.id, result);
@@ -235,10 +236,10 @@ const handleCall = async (job: { id: string; name: string; args: Record<string, 
   }
   // Vault chiuso: l'esecuzione risponde «bloccato» senza toccare i dati e senza dialogo.
   if (vaultClosed()) {
-    await finish(await executeAgentTool(job.name, job.args), policyFor(tool.risk));
+    await finish(await executeAgentTool(job.name, job.args), policyFor(tool));
     return;
   }
-  const decision = policyFor(tool.risk);
+  const decision = policyFor(tool);
   if (decision === "deny") {
     await finish({ ok: false, code: "denied", error: "Bloccato dalla policy di StudyOS. Puoi cambiarla in Impostazioni → Agenti." }, "deny");
     return;

@@ -32,10 +32,19 @@ export const normalizeAgentPolicy = (value: unknown): AgentPolicy => {
 /**
  * Decide se eseguire subito, chiedere conferma nell'app o rifiutare.
  * La sessione fidata allenta solo le modifiche, mai le eliminazioni e mai un divieto esplicito.
+ * `alwaysAsk` (strumenti che danno accesso ai dati ad altre persone) chiede comunque, anche con
+ * «Consenti» o in sessione fidata: un testo letto dall'agente non deve poter condividere da solo.
  */
-export const decideAgentAction = (policy: AgentPolicy, risk: AgentRisk, now: Date = new Date()): PolicyChoice => {
+export const decideAgentAction = (
+  policy: AgentPolicy,
+  risk: AgentRisk,
+  now: Date = new Date(),
+  options: { alwaysAsk?: boolean } = {}
+): PolicyChoice => {
   const choice = policy[risk];
-  if (choice === "deny" || choice === "allow") return choice;
+  if (choice === "deny") return choice;
+  if (options.alwaysAsk === true) return "ask";
+  if (choice === "allow") return choice;
   if (risk === "write" && policy.trustedWritesUntil) {
     const until = Date.parse(policy.trustedWritesUntil);
     if (Number.isFinite(until) && until > now.getTime()) return "allow";
@@ -43,7 +52,11 @@ export const decideAgentAction = (policy: AgentPolicy, risk: AgentRisk, now: Dat
   return "ask";
 };
 
-export const trustedWritesActive = (policy: AgentPolicy, now: Date = new Date()) => {
+/** Decisione per uno strumento del catalogo: rischio più l'eventuale conferma obbligatoria. */
+export const decideToolAction = (policy: AgentPolicy, tool: { risk: AgentRisk; alwaysAsk?: boolean }, now: Date = new Date()) =>
+  decideAgentAction(policy, tool.risk, now, { alwaysAsk: tool.alwaysAsk === true });
+
+export const trustedWritesActive =(policy: AgentPolicy, now: Date = new Date()) => {
   if (!policy.trustedWritesUntil) return false;
   const until = Date.parse(policy.trustedWritesUntil);
   return Number.isFinite(until) && until > now.getTime();
