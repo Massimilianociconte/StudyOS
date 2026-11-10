@@ -20,6 +20,7 @@ import {
   formatMinutes,
   hostOf
 } from "../lib/labels";
+import { safeCssColor } from "../lib/sharing";
 
 type ResultKind = "task" | "event" | "subject" | "exam" | "material" | "session" | "topic" | "goal" | "note";
 
@@ -156,7 +157,8 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           view: "calendar",
           icon: kindIcon.event,
           score: s,
-          accent: event.color || subject?.color
+          // Il colore di un evento può averlo scritto chi riceve il calendario con modifica: solo esadecimale.
+          accent: safeCssColor(event.color) || subject?.color
         });
       }
     }

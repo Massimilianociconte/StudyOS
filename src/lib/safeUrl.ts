@@ -26,3 +26,10 @@ export const safeHref = (raw: string | null | undefined) => normalizeExternalUrl
 /** Allegati incorporati: solo data URL (mai javascript: o altri schemi). */
 export const safeDataUrl = (raw: string | null | undefined) =>
   typeof raw === "string" && /^data:[\w.+-]+\/[\w.+-]+[;,]/i.test(raw) ? raw : undefined;
+
+/**
+ * Copertine mostrate come immagine: solo immagini incorporate (data:image/…), come quelle caricate
+ * dall'app. Un indirizzo esterno farebbe scaricare l'immagine a chi guarda (IP e orario a terzi).
+ */
+export const safeImageDataUrl = (raw: unknown) =>
+  typeof raw === "string" && /^data:image\/[\w.+-]+[;,]/i.test(raw) ? raw : undefined;

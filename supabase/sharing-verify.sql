@@ -43,5 +43,8 @@ select
       'studyos_update_own_items', 'studyos_delete_own_items')) as own_item_policies,
   exists (select 1 from pg_trigger where tgname = 'studyos_items_revision') and
     exists (select 1 from pg_trigger where tgname = 'studyos_items_guard') as triggers_ready,
+  -- Valori scritti da chi riceve (chiavi protette, colori e link sicuri): funzione e trigger.
+  to_regprocedure('public.studyos_recipient_payload(jsonb,jsonb)') is not null
+    and exists (select 1 from pg_trigger where tgname = 'studyos_items_recipient_values') as recipient_values_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
     and schemaname = 'public' and tablename = 'studyos_shares') as realtime_ready;

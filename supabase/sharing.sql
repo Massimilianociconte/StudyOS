@@ -323,6 +323,115 @@ create trigger studyos_items_guard
 before update on public.studyos_items
 for each row execute function public.studyos_items_guard();
 
+-- Valori che chi riceve scrive nelle righe del proprietario. Le viste del proprietario mostrano quelle
+-- righe come dati propri (colori negli stili, copertine come immagini, link, file, appelli ufficiali):
+-- - chiavi protette (copertine, file incorporati, UID di import): in una modifica restano quelle
+--   salvate, anche se mancano; in una creazione si tolgono;
+-- - colore solo esadecimale, link e indirizzo esterno solo http(s), tag in lista e senza aggiungere
+--   o togliere il segno di appello ufficiale ("appello-importato").
+-- Un valore uguale a quello salvato passa sempre: è del proprietario (es. il colore di riserva o un
+-- link mailto che la sua app salva), e chi modifica rimanda l'elemento intero.
+-- Restituisce il payload da salvare, o null se la riga va rifiutata.
+create or replace function public.studyos_recipient_payload(p_new jsonb, p_current jsonb)
+returns jsonb
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v_old jsonb := case when jsonb_typeof(p_current) = 'object' then p_current else '{}'::jsonb end;
+  v_hex constant text := '^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$';
+  v_web constant text := '^[hH][tT][tT][pP][sS]?://[^[:space:][:cntrl:]]+$';
+  -- Come NEVER_KEYS in src/agent/shared.ts, tranne il cronometro (lo chiude un cambio di stato).
+  v_protected constant text := '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$';
+begin
+  if jsonb_typeof(p_new) is distinct from 'object' then
+    return null;
+  end if;
+  if coalesce(p_new->'color', 'null'::jsonb) <> 'null'::jsonb
+     and (p_new->'color') is distinct from (v_old->'color')
+     and not (jsonb_typeof(p_new->'color') = 'string' and (p_new->>'color') ~ v_hex) then
+    return null;
+  end if;
+  if coalesce(p_new->'externalUrl', 'null'::jsonb) <> 'null'::jsonb
+     and (p_new->'externalUrl') is distinct from (v_old->'externalUrl')
+     and not (jsonb_typeof(p_new->'externalUrl') = 'string' and (p_new->>'externalUrl') ~ v_web) then
+    return null;
+  end if;
+  -- Ogni link è http(s) o è già tra quelli salvati.
+  if coalesce(p_new->'links', 'null'::jsonb) <> 'null'::jsonb
+     and (p_new->'links') is distinct from (v_old->'links')
+     and (
+       jsonb_typeof(p_new->'links') <> 'array'
+       or exists (
+         select 1
+         from jsonb_array_elements(p_new->'links') as link (value)
+         where not coalesce(jsonb_typeof(link.value) = 'string' and (link.value #>> '{}') ~ v_web, false)
+           and not coalesce(jsonb_typeof(v_old->'links') = 'array' and (v_old->'links') @> jsonb_build_array(link.value), false)
+       )
+     ) then
+    return null;
+  end if;
+  if (p_new->'tags') is distinct from (v_old->'tags')
+     and (
+       (coalesce(p_new->'tags', 'null'::jsonb) <> 'null'::jsonb and jsonb_typeof(p_new->'tags') <> 'array')
+       or coalesce(jsonb_typeof(p_new->'tags') = 'array' and (p_new->'tags') ? 'appello-importato', false)
+         <> coalesce(jsonb_typeof(v_old->'tags') = 'array' and (v_old->'tags') ? 'appello-importato', false)
+     ) then
+    return null;
+  end if;
+  return (
+    select coalesce(jsonb_object_agg(field.key, field.value), '{}'::jsonb)
+    from jsonb_each(p_new) as field
+    where field.key !~ v_protected
+  ) || (
+    select coalesce(jsonb_object_agg(field.key, field.value), '{}'::jsonb)
+    from jsonb_each(v_old) as field
+    where field.key ~ v_protected
+  );
+end;
+$$;
+
+revoke all on function public.studyos_recipient_payload(jsonb, jsonb) from public;
+grant execute on function public.studyos_recipient_payload(jsonb, jsonb) to authenticated;
+
+-- Stessa regola per ogni scrittura di chi riceve, anche diretta sulla tabella (le policy "shared" la
+-- consentono): le chiavi protette tornano quelle salvate, un valore non sicuro fa fallire la scrittura.
+-- push_shared_rows manda qui solo righe già controllate: le altre tornano "denied" senza errori.
+create or replace function public.studyos_items_recipient_values()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+declare
+  v_current jsonb;
+  v_payload jsonb;
+begin
+  -- La sync del proprietario, le scritture senza utente (SQL Editor) e i tombstone (policy) non passano di qui.
+  if auth.uid() is null or auth.uid() = new.user_id or new.deleted then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    if not old.deleted then
+      v_current := old.payload;
+    end if;
+  end if;
+  v_payload := public.studyos_recipient_payload(new.payload, v_current);
+  if v_payload is null or (v_payload->>'id') is distinct from new.entity_id then
+    raise exception 'Valori non consentiti in un elemento di un''altra persona';
+  end if;
+  new.payload := v_payload;
+  return new;
+end;
+$$;
+
+revoke all on function public.studyos_items_recipient_values() from public;
+
+drop trigger if exists studyos_items_recipient_values on public.studyos_items;
+create trigger studyos_items_recipient_values
+before insert or update on public.studyos_items
+for each row execute function public.studyos_items_recipient_values();
+
 -- Cronologia delle modifiche fatte da altri: creazione (riga nuova), modifica ed eliminazione
 -- (riga precedente). Il proprietario la legge e ripristina con la sync normale.
 create or replace function public.studyos_items_revision()
@@ -858,6 +967,10 @@ begin
     select * into v_current from public.studyos_items i
     where i.user_id = p_owner_id and i.entity_type = v_type and i.entity_id = v_id;
     v_exists := found;
+    if not v_deleted then
+      -- Chiavi protette dalla riga salvata, colori e link sicuri; null = riga rifiutata.
+      v_payload := public.studyos_recipient_payload(v_payload, case when v_exists and not v_current.deleted then v_current.payload end);
+    end if;
 
     if v_deleted then
       v_payload := jsonb_build_object('id', v_id, 'deletedAt', coalesce(v_payload->>'deletedAt', v_payload->>'updatedAt'));
@@ -875,7 +988,8 @@ begin
           v_reason := 'stale';
         end if;
       end if;
-    elsif public.studyos_item_access(p_owner_id, v_type, v_payload) is distinct from 'edit'
+    elsif v_payload is null
+       or public.studyos_item_access(p_owner_id, v_type, v_payload) is distinct from 'edit'
        or (v_exists and (v_current.deleted
          or public.studyos_item_access(p_owner_id, v_type, v_current.payload) is distinct from 'edit')) then
       v_reason := 'denied';
@@ -947,6 +1061,7 @@ revoke all on function public.studyos_item_access(uuid, text, jsonb) from anon;
 revoke all on function public.studyos_type_access(uuid, text) from anon;
 revoke all on function public.studyos_knows_user(uuid) from anon;
 revoke all on function public.studyos_account_email() from anon;
+revoke all on function public.studyos_recipient_payload(jsonb, jsonb) from anon;
 revoke all on function public.studyos_validate_share_items(jsonb, boolean) from anon;
 revoke all on function public.studyos_share_name(text) from anon;
 revoke all on function public.create_share_invite(text, jsonb, jsonb, text) from anon;

@@ -226,6 +226,87 @@ const main = async () => {
   const bobRevisions = await count(bob, "studyos_item_revisions");
   check("Bob non legge la cronologia di Alice", !bobRevisions.error && bobRevisions.rows === 0, bobRevisions.error ?? `${bobRevisions.rows} righe`);
 
+  // Valori sicuri: le viste di Alice mostrano le sue righe come dati propri (colori negli stili,
+  // copertine, link, appelli ufficiali). Chi riceve non può piantarci valori pericolosi.
+  // Eventi propri di questo blocco: alla fine Alice li elimina, i conteggi successivi non cambiano.
+  const tracker = "https://tracker.example/pixel.png";
+  const P1 = entity(`event-p1-${run}`, {
+    title: "Lezione con copertina", subjectId: S1, start: iso(), end: iso(3_600_000), color: "#123456",
+    cover: "data:image/png;base64,AAAA", sourceUid: `ics-${run}`, links: ["https://www.unimi.it/"], tags: ["lezione"]
+  });
+  // Valori che l'app di Alice può salvare da sé (colore di riserva, link mailto): chi modifica li rimanda uguali.
+  const P2 = entity(`event-p2-${run}`, {
+    title: "Ricevimento", subjectId: S1, start: iso(), end: iso(3_600_000), color: "var(--accent)", links: ["mailto:prof@unimi.it"], tags: []
+  });
+  await pushOwn(alice, [row("calendarEvent", P1), row("calendarEvent", P2)]);
+  const stored = async (id) => (await items(alice, alice, "calendarEvent")).find((item) => item.entity_id === id)?.payload;
+  const unchanged = (payload) => payload?.title === P1.title && payload?.color === P1.color && payload?.links?.[0] === P1.links[0];
+
+  const { data: colourDenied } = await pushShared(bob, alice, [row("calendarEvent", { ...P1, title: "Spia", color: `url(${tracker})`, updatedAt: iso(1_000) })]);
+  check("Colore url() scritto da chi riceve: rifiutato, riga invariata", colourDenied?.[0]?.reason === "denied" && unchanged(await stored(P1.id)),
+    JSON.stringify(colourDenied));
+  const { data: linkDenied } = await pushShared(bob, alice, [row("calendarEvent", { ...P1, title: "Link", links: ["javascript:alert(1)"], updatedAt: iso(1_100) })]);
+  check("Link javascript: scritto da chi riceve: rifiutato, riga invariata", linkDenied?.[0]?.reason === "denied" && unchanged(await stored(P1.id)),
+    JSON.stringify(linkDenied));
+  const { data: urlDenied } = await pushShared(bob, alice, [row("calendarEvent", { ...P1, externalUrl: "javascript:alert(1)", updatedAt: iso(1_200) })]);
+  check("Indirizzo esterno non http(s): rifiutato", urlDenied?.[0]?.reason === "denied", JSON.stringify(urlDenied));
+  const { data: markerDenied } = await pushShared(bob, alice, [row("calendarEvent", { ...P1, tags: ["BARB", "appello-importato"], updatedAt: iso(1_300) })]);
+  check("Chi riceve non trasforma un evento in appello ufficiale (tag)", markerDenied?.[0]?.reason === "denied", JSON.stringify(markerDenied));
+
+  // Una riga rifiutata non ferma il lotto; la modifica legittima rimanda colore e link di Alice uguali.
+  const { data: mixed } = await pushShared(bob, alice, [
+    row("calendarEvent", { ...P1, color: `#123456; background-image: url(${tracker})`, updatedAt: iso(2_000) }),
+    row("calendarEvent", { ...P2, title: "Ricevimento (spostato da Bob)", start: iso(7_200_000), end: iso(10_800_000), updatedAt: iso(2_000) })
+  ]);
+  check("Lotto misto: la riga non sicura è rifiutata, quella legittima passa", mixed?.[0]?.reason === "denied" && mixed?.[1]?.accepted === true,
+    JSON.stringify(mixed));
+  const p2 = await stored(P2.id);
+  check("Modifica legittima (titolo e orari) con colore e link di Alice rimandati uguali",
+    p2?.title === "Ricevimento (spostato da Bob)" && p2?.color === "var(--accent)" && p2?.links?.[0] === "mailto:prof@unimi.it", JSON.stringify(p2));
+
+  // Chiavi protette: in una modifica restano quelle salvate (anche se mancano), in una creazione spariscono.
+  const { cover: _cover, sourceUid: _sourceUid, ...withoutProtected } = P1;
+  const { data: omitted } = await pushShared(bob, alice, [row("calendarEvent", { ...withoutProtected, title: "Lezione (Bob)", updatedAt: iso(3_000) })]);
+  const afterOmit = await stored(P1.id);
+  check("Modifica senza copertina e UID: restano quelli di Alice",
+    omitted?.[0]?.accepted === true && afterOmit?.title === "Lezione (Bob)" && afterOmit?.cover === P1.cover && afterOmit?.sourceUid === P1.sourceUid,
+    JSON.stringify({ omitted, afterOmit }));
+  const { data: replaced } = await pushShared(bob, alice, [row("calendarEvent", {
+    ...P1, title: "Lezione (Bob 2)", cover: tracker, sourceUid: "barb-exam-x", dataUrl: "data:text/html,<b>x</b>", updatedAt: iso(4_000)
+  })]);
+  const afterReplace = await stored(P1.id);
+  check("Copertina, UID e file cambiati da chi riceve: restano quelli di Alice",
+    replaced?.[0]?.accepted === true && afterReplace?.title === "Lezione (Bob 2)" && afterReplace?.cover === P1.cover
+      && afterReplace?.sourceUid === P1.sourceUid && !("dataUrl" in (afterReplace ?? {})),
+    JSON.stringify({ replaced, afterReplace }));
+  const C1 = entity(`event-c1-${run}`, {
+    title: "Finto appello", subjectId: S1, start: iso(), end: iso(3_600_000), color: "#7CF7C8", sourceUid: "barb-exam-x", cover: tracker, links: [], tags: []
+  });
+  const { data: created } = await pushShared(bob, alice, [row("calendarEvent", C1)]);
+  const c1 = await stored(C1.id);
+  check("Creazione con UID d'appello e copertina: salvata senza", created?.[0]?.accepted === true && c1?.title === C1.title && !("sourceUid" in (c1 ?? { sourceUid: 1 })) && !("cover" in (c1 ?? { cover: 1 })),
+    JSON.stringify({ created, c1 }));
+
+  // Le scritture dirette sulla tabella (RLS) seguono la stessa regola.
+  const p1Filter = (query) => query.eq("user_id", alice.id).eq("entity_type", "calendarEvent").eq("entity_id", P1.id);
+  await rejects("Update diretto con colore url() rifiutato",
+    p1Filter(bob.client.from("studyos_items").update({ payload: { ...afterReplace, color: `url(${tracker})`, updatedAt: iso(5_000) } })).select().single());
+  const { error: directError } = await p1Filter(bob.client.from("studyos_items")
+    .update({ payload: { ...afterReplace, title: "Diretto", cover: tracker, sourceUid: "barb-exam-y", updatedAt: iso(6_000) } })).select().single();
+  const afterDirect = await stored(P1.id);
+  check("Update diretto: copertina e UID restano quelli di Alice",
+    !directError && afterDirect?.title === "Diretto" && afterDirect?.cover === P1.cover && afterDirect?.sourceUid === P1.sourceUid,
+    directError?.message ?? JSON.stringify(afterDirect));
+
+  // La sync personale di Alice non cambia: i suoi dati restano come li scrive.
+  const own = { ...P1, title: "Di Alice", color: "hsl(0 0% 50%)", cover: "data:image/png;base64,BBBB", sourceUid: `ics-own-${run}`, updatedAt: iso(30_000) };
+  await pushOwn(alice, [row("calendarEvent", own)]);
+  const afterOwn = await stored(P1.id);
+  check("Le scritture di Alice sui propri dati restano invariate",
+    afterOwn?.title === own.title && afterOwn?.color === own.color && afterOwn?.cover === own.cover && afterOwn?.sourceUid === own.sourceUid,
+    JSON.stringify(afterOwn));
+  await pushOwn(alice, [P1, P2, C1].map((event) => row("calendarEvent", { id: event.id, deletedAt: iso(60_000) }, true)));
+
   // Tentativi vietati.
   const { data: viewOnly } = await pushShared(alice, bob, [row("calendarEvent", { ...B1, title: "no", updatedAt: iso(5_000) })]);
   check("Alice (solo lettura) non modifica Bob", viewOnly?.[0]?.accepted === false && viewOnly?.[0]?.reason === "denied");

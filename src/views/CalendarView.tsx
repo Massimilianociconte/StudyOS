@@ -187,10 +187,12 @@ interface Handlers {
   onPreviewHide: () => void;
 }
 
-// Evento di altri senza colore valido: quello della sua materia (dal proprietario), poi quello della persona;
-// mai di una delle mie materie.
+// Solo colori esadecimali, anche per i miei eventi: chi li modifica con "Può modificare" non deve poter
+// mettere nello stile un url() da scaricare. Evento di altri senza colore valido: quello della sua
+// materia (dal proprietario), poi quello della persona; mai di una delle mie materie.
 const eventColor = (event: ShownEvent, subjects: Subjects) =>
-  event.color || (event.sharedFrom ? event.sharedFrom.subjectColor || event.sharedFrom.color : subjectColor(subjects, event.subjectId));
+  safeCssColor(event.color) ||
+  (event.sharedFrom ? event.sharedFrom.subjectColor || event.sharedFrom.color : subjectColor(subjects, event.subjectId));
 const allDayEventLabel = (event: CalendarEvent) => event.tags?.includes("appello-importato") ? "Data appello" : ALL_DAY_LABEL;
 
 export function CalendarView() {

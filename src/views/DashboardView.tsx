@@ -42,6 +42,7 @@ import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters
 import { CourseIcon } from "../components/CourseIcon";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
+import { safeCssColor } from "../lib/sharing";
 
 
 function PanelHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
@@ -197,7 +198,7 @@ export function DashboardView() {
                         ) : (
                           <span className="w-11 shrink-0 text-xs font-black tabular-nums">{timeLabel(event.start)}</span>
                         )}
-                        <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: event.color || subjectColor(subjects, event.subjectId) }} />
+                        <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: safeCssColor(event.color) || subjectColor(subjects, event.subjectId) }} />
                         <span className="min-w-0 flex-1">
                           <span className="one-line-safe block text-sm font-extrabold">{event.title}</span>
                           <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
@@ -381,7 +382,7 @@ export function DashboardView() {
               <ul className="grid grid-cols-1 gap-2.5">
                 {nextEvents.map((event) => (
                   <li key={event.occurrenceKey} className="flex min-w-0 gap-3">
-                    <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: event.color || subjectColor(subjects, event.subjectId) }} />
+                    <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: safeCssColor(event.color) || subjectColor(subjects, event.subjectId) }} />
                     <div className="min-w-0 flex-1">
                       <p className="one-line-safe text-sm font-black">{event.title}</p>
                       <p className="text-xs font-bold text-[var(--muted)]">

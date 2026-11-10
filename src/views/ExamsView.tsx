@@ -7,6 +7,7 @@ import { selectableSubjects, studyDaysUntil, subjectColor, subjectName } from ".
 import { EXAM_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
 import { readImageFile } from "../lib/files";
+import { safeImageDataUrl } from "../lib/safeUrl";
 import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Tag, fileInputClass, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
@@ -105,6 +106,9 @@ function PersonalExamsView() {
   const toRecord = sorted.filter((exam) => exam.status !== "done" && isBefore(parseISO(exam.date), today)).reverse();
   const entries = useMemo(() => librettoEntries(exams, subjects), [exams, subjects]);
   const stats = gradeStats(entries);
+  // Copertina come immagine solo se incorporata (data:image/…): un indirizzo esterno, anche scritto da
+  // chi riceve gli esami con "Può modificare", farebbe scaricare l'immagine da terzi.
+  const draftCover = safeImageDataUrl(draft.cover);
 
   const importProgram = async (exam: Exam) => {
     const added = await addTopics(exam.program.map((title) => ({ title, subjectId: exam.subjectId })));
@@ -439,9 +443,9 @@ function PersonalExamsView() {
                     />
                   </Field>
 
-                  {draft.cover ? (
+                  {draftCover ? (
                     <div className="quiet-panel flex items-center gap-3 p-3">
-                      <img src={draft.cover} alt="" className="h-16 w-16 rounded-[18px] object-cover" />
+                      <img src={draftCover} alt="" className="h-16 w-16 rounded-[18px] object-cover" />
                       <div className="min-w-0 flex-1">
                         <p className="font-black">Copertina scelta</p>
                         <p className="text-sm text-[var(--muted)]">La vedi sulla scheda dell'esame.</p>
@@ -505,11 +509,12 @@ function ExamCard({
   const remaining = studyDaysUntil(exam.date);
   const risk = remaining < 10 && exam.preparation < 70 ? "alto" : remaining < 20 && exam.preparation < 55 ? "medio" : null;
   const program = exam.program.slice(0, 6);
+  const cover = safeImageDataUrl(exam.cover);
   return (
     <article className="quiet-panel flex min-w-0 flex-col p-4" style={{ boxShadow: `inset 0 3px 0 ${color}` }}>
       <div className="flex items-start gap-3">
-        {exam.cover ? (
-          <img src={exam.cover} alt="" className="h-14 w-14 shrink-0 rounded-[16px] object-cover" />
+        {cover ? (
+          <img src={cover} alt="" className="h-14 w-14 shrink-0 rounded-[16px] object-cover" />
         ) : (
           <div className="grid grid-cols-1 h-14 w-14 shrink-0 place-items-center rounded-[16px] text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
             <span className="text-xl font-black leading-none tabular-nums">{remaining}</span>
@@ -520,7 +525,7 @@ function ExamCard({
           <h3 className="two-line-safe text-lg font-black leading-tight">{name}</h3>
           <p className="text-xs font-bold text-[var(--muted)]">
             {capitalizeFirst(format(parseISO(exam.date), "EEEE d MMMM · HH:mm", { locale: it }))}
-            {exam.cover ? ` · ${remaining} ${remaining === 1 ? "giorno" : "giorni"}` : ""}
+            {cover ? ` · ${remaining} ${remaining === 1 ? "giorno" : "giorni"}` : ""}
           </p>
         </button>
         <IconButton icon="PenLine" label={`Modifica esame di ${name}`} className="h-9 w-9" onClick={onEdit} />
