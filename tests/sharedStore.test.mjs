@@ -1,6 +1,6 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { sharedKey, sharedPushBatches } from "../src/lib/sharing.ts";
+import { ShareUserError, sharedKey, sharedPushBatches } from "../src/lib/sharing.ts";
 import { readUiState } from "../src/lib/uiState.ts";
 import { sharedOfTypes, useSharedStore } from "../src/store/useSharedStore.ts";
 
@@ -44,8 +44,10 @@ test("salvataggio: cache aggiornata subito, voce in coda, collegamenti del propr
 test("scritture non consentite: errore e niente in cache né in coda", async () => {
   store.setState({ received: [grant({ permission: "view" })] });
   await store.getState().applyRows("alice", [row("e1")]);
-  await assert.rejects(store.getState().saveSharedItem("alice", "calendarEvent", { id: "e1", title: "x", updatedAt: "x" }), /solo vedere/);
-  await assert.rejects(store.getState().deleteSharedItem("alice", "calendarEvent", "e1"), /solo vedere/);
+  // Testo già pronto per l'utente (in italiano), marcato: le viste lo mostrano così com'è.
+  const refused = (cause) => cause instanceof ShareUserError && /solo vedere/.test(cause.message);
+  await assert.rejects(store.getState().saveSharedItem("alice", "calendarEvent", { id: "e1", title: "x", updatedAt: "x" }), refused);
+  await assert.rejects(store.getState().deleteSharedItem("alice", "calendarEvent", "e1"), refused);
   assert.equal(store.getState().items.length, 1);
   assert.equal(store.getState().items[0].entity.title, "e1");
   assert.equal(store.getState().outbox.length, 0);

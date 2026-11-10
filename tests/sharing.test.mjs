@@ -33,6 +33,7 @@ import {
   withoutSupersededRows
 } from "../src/lib/sharing.ts";
 import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../src/lib/labels.ts";
+import { expandEvents } from "../src/lib/recurrence.ts";
 
 // Stessi casi provati in SQL da scripts/supabase/sharing-check.mjs (studyos_scope_covers).
 const COVER_CASES = [
@@ -404,4 +405,15 @@ test("condividere con una persona: le sezioni nuove si creano insieme, quelle gi
   const forGroup = planShareWrites(given, { groupId: "grp" }, [offer("calendar"), offer("tasks")]);
   assert.deepEqual(forGroup.update.map((entry) => entry.id), ["g2"]);
   assert.deepEqual(forGroup.create.map((entry) => entry.scope), ["calendar"]);
+});
+
+test("expandEvents conserva i campi extra (sharedFrom) anche sulle occorrenze ripetute", () => {
+  const base = {
+    id: "e1", createdAt: "", updatedAt: "", archived: false, tags: [], title: "Lezione", description: "", category: "lecture",
+    color: "#fff", priority: "medium", start: "2026-11-09T09:00:00.000Z", end: "2026-11-09T10:00:00.000Z", recurrence: "daily",
+    status: "planned", checklist: [], attachmentIds: [], notes: "", links: []
+  };
+  const found = expandEvents([{ ...base, sharedFrom: { ownerId: "alice" } }], new Date("2026-11-10T00:00:00Z"), new Date("2026-11-12T00:00:00Z"));
+  assert.equal(found.length, 2);
+  assert.ok(found.every((item) => item.sharedFrom?.ownerId === "alice" && item.recurring));
 });

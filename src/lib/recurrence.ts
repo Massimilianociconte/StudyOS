@@ -14,7 +14,7 @@ const MAX_OCCURRENCES = 1000;
 
 const valid = (date: Date) => !Number.isNaN(date.getTime());
 
-const occurrence = (event: CalendarEvent, start: Date, durationMs: number, recurring: boolean): EventOccurrence => ({
+const occurrence = <T extends CalendarEvent>(event: T, start: Date, durationMs: number, recurring: boolean): T & EventOccurrence => ({
   ...event,
   start: start.toISOString(),
   end: new Date(start.getTime() + durationMs).toISOString(),
@@ -22,9 +22,9 @@ const occurrence = (event: CalendarEvent, start: Date, durationMs: number, recur
   recurring
 });
 
-/** Occorrenze che si sovrappongono a [from, to), ordinate per inizio. */
-export const expandEvents = (events: CalendarEvent[], from: Date, to: Date): EventOccurrence[] => {
-  const result: EventOccurrence[] = [];
+/** Occorrenze che si sovrappongono a [from, to), ordinate per inizio. I campi extra di T restano. */
+export const expandEvents = <T extends CalendarEvent>(events: readonly T[], from: Date, to: Date): (T & EventOccurrence)[] => {
+  const result: (T & EventOccurrence)[] = [];
   const fromMs = from.getTime();
   const toMs = to.getTime();
 

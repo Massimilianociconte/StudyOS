@@ -12,6 +12,7 @@ import {
   reconcileOwner,
   sharedKey,
   sharedWriteError,
+  ShareUserError,
   type RemoteSharedRow,
   type ShareGrant,
   type ShareInviteSummary,
@@ -217,7 +218,7 @@ export const useSharedStore = create<SharedState>((set, get) => {
       const key = sharedKey(ownerId, entityType, entity.id);
       const previous = state.items.find((entry) => entry.key === key);
       const error = sharedWriteError(state.received, ownerId, entityType, previous?.entity, entity);
-      if (error) throw new Error(error);
+      if (error) throw new ShareUserError(error);
       const now = new Date().toISOString();
       const next: SharedItem = {
         key,
@@ -240,7 +241,7 @@ export const useSharedStore = create<SharedState>((set, get) => {
       const previous = state.items.find((entry) => entry.key === key);
       if (!previous) return;
       const error = sharedWriteError(state.received, ownerId, entityType, previous.entity, null);
-      if (error) throw new Error(error);
+      if (error) throw new ShareUserError(error);
       const now = new Date().toISOString();
       // Creato qui e ancora in coda, senza versione sul server: non c'è nulla da eliminare lassù.
       const neverReachedServer = previous.serverUpdatedAt === "" && state.outbox.some((candidate) => candidate.key === key && !candidate.deleted);
