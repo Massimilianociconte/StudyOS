@@ -186,3 +186,17 @@ URL e chiave publishable come secret; verificati SQL su Postgres 17 locale, giro
 `--test-scheduled` contro il progetto reale e cron in produzione. Da fare sul progetto reale:
 eseguire `supabase/keepalive.sql` nel SQL Editor (finché manca i cron usano una lettura di
 ripiego e lo segnalano).
+
+Condivisione granulare tra account (10 novembre 2026): nuova sezione Condivisione
+(Strumenti) per dare e ricevere accesso a calendario, appelli ufficiali, attività, studio,
+progressi, materiali e obiettivi, con filtro per materie e permesso «Può vedere» o «Può
+modificare», modificabile e revocabile. Inviti con link, QR o email e richiesta di
+condivisione in cambio. I dati altrui compaiono nelle viste con il segno della persona
+(calendario sovrapposto e filtrabile, "Appelli condivisi" nel Corso di laurea, "Condivisi con
+te" nelle altre sezioni) e stanno in una cache separata (`useSharedStore`, Dexie v6). Le
+modifiche di altri hanno una cronologia di 90 giorni con ripristino e sono controllate dal
+server (colori, link e campi protetti). Server MCP 1.2.0 con 8 strumenti per i dati
+condivisi. Verifiche: 226 test, lint, build, `barb:validate`, `sharing-check.mjs` (85
+controlli) sullo stack locale, prova su due origini. Da fare sul progetto reale: eseguire
+`supabase/sharing.sql` (un unico script) e poi `supabase/sharing-verify.sql` nel SQL Editor,
+deploy del Worker `studyos-agent` e push su `main`.

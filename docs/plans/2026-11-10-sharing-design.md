@@ -71,7 +71,7 @@ manca, il file si ferma con un messaggio chiaro. Verifica in sola lettura:
   da `owner_id`.
 - `grantee_name text`, `grantee_email text` (solo da inviti accettati, visibile
   al proprietario), `created_at`, `updated_at`.
-- Unicità: `(owner_id, scope, coalesce(grantee_user_id::text, grantee_group_id))`.
+- Unicità: `(owner_id, scope, coalesce('u:'||grantee_user_id::text, 'g:'||grantee_group_id))`, indice `studyos_shares_grantee_key`.
 - Indici: `grantee_user_id`, `grantee_group_id`, `owner_id`.
 
 `studyos_share_invites`:

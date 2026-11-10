@@ -94,6 +94,14 @@ alcun errore.
 
 ## Verifiche eseguite
 
+10/11/2026, stack Supabase locale: `schema.sql`, `groups.sql`, `sharing.sql`
+eseguito due volte e `sharing-verify.sql` tutto `true` (`shared_item_policies` 3,
+`own_item_policies` 4). `sharing-check.mjs` con quattro account: 85 controlli superati,
+0 falliti. Nell'app su due origini: invito con reciprocità, calendari reciproci in tempo
+reale (circa 2 secondi), invito che compare in tempo reale (0,63 s), permesso cambiato e
+revocato, appelli condivisi, attività modificata e ripristinata dalla cronologia, uscita,
+logout che cancella la cache dei dati altrui.
+
 08/10/2026, stack locale con lo schema aggiornato da quello precedente: link
 aperto da un account non registrato → registrazione dal pannello dell'invito →
 ingresso automatico (membro col nome dall'email, una sola voce in cronologia);
@@ -119,6 +127,66 @@ creazione gruppo/membro/invito come proprietario, lettura invito come
 destinatario, accept via RPC, doppio accept rifiutato, join con codice
 (case-insensitive), codice errato rifiutato.
 
+## Condivisione dei propri dati (`sharing.sql`)
+
+Oltre ai gruppi, ognuno può dare accesso a parti dei propri dati a una persona o a un
+gruppo, dalla sezione **Condivisione** (gruppo Strumenti) o dal pulsante **Condividi**
+delle viste. Serve `supabase/sharing.sql`, eseguito dopo `schema.sql` e `groups.sql`.
+Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); design:
+[spec](plans/2026-11-10-sharing-design.md).
+
+- **Sezioni**: Calendario, Appelli ufficiali (solo lettura), Attività, Studio, Progressi
+  (esami ancora senza voto), Materiali e note, Obiettivi. Filtro facoltativo per materie,
+  tranne per gli obiettivi. La copertura è `studyos_scope_covers` in SQL e `scopeCovers` in
+  `src/lib/sharing.ts`, con gli stessi casi di prova.
+- **Permessi**: "Può vedere" o "Può modificare", modificabili e revocabili in ogni momento.
+  Chi riceve può uscire da una condivisione diretta; una condivisione di gruppo la toglie
+  solo chi l'ha data. Chi esce da un gruppo (o ne viene rimosso) perde le condivisioni che
+  aveva dato a quel gruppo; eliminare il gruppo le cancella tutte.
+- **Una sola copia**: chi riceve legge le righe originali di `studyos_items` tramite RLS
+  (`studyos_shares`) e scrive con l'RPC `push_shared_rows` (stessa regola LWW della sync
+  personale, al massimo 200 righe, esiti `stale` e `denied`). Nel client i dati altrui
+  vivono in `useSharedStore` e nelle tabelle Dexie `sharedItems` e `sharedOutbox`, mai
+  nelle collezioni personali, nei backup o nei conteggi; con la password dell'app attiva
+  restano solo in memoria.
+- **Valori scritti da chi riceve**: li controlla il server, non il client. La funzione
+  `studyos_recipient_payload` e il trigger `studyos_items_recipient_values` su
+  `studyos_items` valgono anche per le scritture dirette sulla tabella che la RLS
+  consentirebbe. Chi riceve non può impostare né cambiare `cover`, `dataUrl`, `avatarDataUrl`
+  e gli altri `*DataUrl`, `sourceUid`, l'etichetta `appello-importato` e i `links` di un
+  evento (restano quelli già salvati; in creazione `links` è `[]`). Il `color` deve essere
+  esadecimale (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`), i link devono essere http(s), e una
+  data di aggiornamento o eliminazione nel futuro (`updatedAt`, `deletedAt`) viene ridotta
+  all'ora del server. Una riga rifiutata esce come `denied`. Anche le viste del proprietario
+  ripuliscono colori, immagini e link (`safeCssColor`, `safeImageDataUrl`, `safeHref`).
+- **Cronometro**: se chi ha "Può modificare" cambia lo stato di un'attività condivisa, il
+  cronometro del proprietario si chiude come nella sua app (`taskStatusTransitionPatch`); su
+  un'attività altrui non si può impostare "In corso".
+- **Cronologia**: ogni modifica fatta da altri salva la versione precedente in
+  `studyos_item_revisions` per 90 giorni. Il proprietario la vede in "Modifiche di altri"
+  (le ultime 100) e la ripristina: il ripristino è una nuova versione scritta da lui.
+- **Appelli condivisi** (Corso di laurea → "Appelli condivisi"): una riga per esame e per
+  giorno; "Anche tu" compare solo se la data è la stessa; i link mostrano il dominio.
+- **Inviti**: `create_share_invite` restituisce un token di 64 caratteri esadecimali; sul
+  server resta solo il suo hash (`token_hash`, non leggibile dai client). Link
+  `…/StudyOS/#condividi=` seguito dal token, valido 14 giorni; l'invito aperto resta in sospeso in
+  `localStorage` (`studyos-pending-share`, 14 giorni) finché non si accede. Un invito con
+  email vale solo per quell'account. Chi accetta può condividere qualcosa in cambio, se
+  l'invito lo chiede.
+- **Senza invito** si può condividere solo con chi si conosce già: un gruppo in comune o
+  una condivisione attiva in uno dei due sensi (`studyos_knows_user`).
+- **Aggiornamenti**: Realtime su `studyos_shares`, `studyos_share_invites` e sulle righe dei
+  proprietari (fino a 100 persone per canale), più un controllo ogni 5 minuti e al ritorno
+  sulla scheda. Un elemento che esce da un filtro sparisce al controllo successivo.
+- **Agenti MCP**: leggono e modificano i dati condivisi secondo i permessi e gestiscono le
+  condivisioni esistenti; inviti e accettazioni restano nell'app. `studyos_share_with` e
+  `studyos_update_share` chiedono sempre conferma, anche in una sessione con «Modifiche senza
+  conferma». Vedi [agent-mcp.md](agent-mcp.md).
+
+Prova automatica sullo stack locale (porte 5542x, mai lo stack di altri progetti):
+`scripts/supabase/local-stack.md` e `scripts/supabase/sharing-check.mjs`, che si rifiuta di
+girare fuori da localhost.
+
 ## Limiti noti
 
 - I file condivisi sono riferimenti (nome come testo): nessun bucket Storage.
@@ -126,3 +194,13 @@ destinatario, accept via RPC, doppio accept rifiutato, join con codice
 - Le notifiche push/email non esistono: gli inviti arrivano nel pannello
   Notifiche all'apertura dell'app (realtime se aperta) e via link/email manuale.
 - Enforce MFA/SSO: invariato rispetto a `schema.sql`.
+- Condivisione, limiti noti: il logout scarta le modifiche a dati altrui non ancora inviate;
+  dopo lo sblocco con la password dell'app la prima sync non mostra le notifiche di
+  "nuova condivisione"; il token di invito viaggia in `?condividi=` nel reindirizzamento
+  della conferma email (scelta di design) e può finire nei log di autenticazione o proxy e
+  nella cronologia del browser, ma è monouso e scade dopo 14 giorni; la cronologia mostra al
+  più le ultime 100 modifiche degli ultimi 90 giorni; ripristinare un elemento eliminato da
+  un'altra persona usa l'orologio del proprietario (raro caso di LWW perso se quello
+  dell'altra persona era avanti, ora limitato dal clamp del server); un lotto di chi riceve
+  può fallire con un errore invece di `denied` in una rara corsa, se il proprietario cambia
+  un colore non esadecimale nello stesso istante.

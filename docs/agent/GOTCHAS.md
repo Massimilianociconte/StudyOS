@@ -121,3 +121,35 @@
   account e l'account ne usa già 4: più orari vanno in una sola espressione; GitHub Actions è solo la riserva perché
   spegne i cron dei repository pubblici dopo 60 giorni senza commit. Le chiavi
   `sb_publishable_` vanno solo nell'header `apikey`, non in `Authorization: Bearer`.
+- Dati di altre persone: solo in `useSharedStore` e nelle tabelle Dexie `sharedItems` e
+  `sharedOutbox`, mai in `COLLECTIONS`, nella coda di sync personale, nei backup o nei
+  selettori di Home, Statistiche, streak e promemoria. Con la password dell'app attiva
+  restano solo in memoria; il logout vero (non l'avvio senza sessione) li cancella, insieme
+  alle modifiche non ancora inviate.
+- `studyos_scope_covers` (`supabase/sharing.sql`) e `scopeCovers` (`src/lib/sharing.ts`)
+  sono specchi: una sezione nuova o cambiata va aggiornata in entrambi, nei casi di
+  `tests/sharing.test.mjs` e in `scripts/supabase/sharing-check.mjs`.
+- Le scritture su righe altrui passano solo da `push_shared_rows`; un esito `denied` scarta
+  la voce in coda e mostra un avviso ("Non hai più il permesso…", che copre anche un
+  rifiuto per valore). Il ripristino dalla cronologia è una nuova versione del proprietario,
+  non una scrittura sulla tabella delle revisioni.
+- I valori scritti da chi riceve li ripulisce il server: `studyos_recipient_payload` e il
+  trigger `studyos_items_recipient_values` (anche per le scritture dirette consentite dalla
+  RLS). Un campo nuovo mostrato come immagine, colore o link nelle viste del proprietario va
+  aggiunto lì e passato dai filtri client (`safeCssColor`, `safeImageDataUrl`, `safeHref`).
+- Un elemento che esce da un filtro (materia cambiata, voto registrato) non genera un evento
+  Realtime per chi lo vedeva: sparisce al controllo successivo (al più 5 minuti).
+- Il cursore di pull per proprietario include la firma dei permessi (`grantSignature`):
+  un filtro allargato riparte da zero, altrimenti gli elementi già esistenti non
+  arriverebbero mai.
+- Nel calendario le occorrenze condivise hanno la chiave con il prefisso del proprietario:
+  due persone possono avere eventi con lo stesso id.
+- Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
+  elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
+  distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`
+  chiedono sempre conferma, anche in una sessione fidata. Le proiezioni dei dati condivisi
+  sono a elenco consentito (niente file, copertine, cronometri, `sourceUid`, link non sicuri a
+  qualunque profondità) e gli elementi di persone nascoste sono invisibili anche agli agenti.
+- Realtime su `studyos_share_invites` funziona anche con il SELECT concesso per colonna
+  (`token_hash` escluso): verificato sullo stack locale il 10/11/2026 (0,63 s). Non
+  concedere il SELECT su tutta la tabella: esporrebbe l'hash del token.

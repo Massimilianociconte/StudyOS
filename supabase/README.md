@@ -29,6 +29,19 @@ avevi già applicato, **rieseguilo dopo la revisione dell'08/10/2026** (vedi
 passano dalla conferma email, tra i Redirect URLs aggiungi anche
 `https://massimilianociconte.github.io/StudyOS/**`.
 
+`sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
+dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha
+una transazione che lo avvolge) e premi Run; si può rieseguire. Poi incolla
+[sharing-verify.sql](sharing-verify.sql) in una nuova query: tutti i 13 campi `*_ready`
+devono essere `true` (compreso `recipient_values_ready`, la regola sui valori scritti da chi
+riceve), `shared_item_policies` deve valere `3` e `own_item_policies` `4`. Sul progetto
+reale `sharing.sql` non è mai stato eseguito: non serve alcuna pulizia di valori vecchi.
+Senza questa migrazione la sezione Condivisione spiega che la funzione non è attiva e il
+resto dell'app non cambia. I link di invito usano `#condividi=` (e `?condividi=` dopo la
+conferma email): la regola `https://massimilianociconte.github.io/StudyOS/**` tra i
+Redirect URLs copre anche questi. Dettagli in
+[docs/groups-sync.md](../docs/groups-sync.md#condivisione-dei-propri-dati-sharingsql).
+
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.
 

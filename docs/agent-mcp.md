@@ -34,11 +34,28 @@ conferma nell'app. Si può consentire le sole modifiche per 15 minuti. Le
 eliminazioni chiedono comunque conferma, e un agente non può cambiare queste
 regole.
 
+Con un account e `supabase/sharing.sql` attivo, l'agente vede anche i dati che altre
+persone condividono con te (`studyos_list_shares`, `studyos_list_shared_items`) e, solo
+dove hai «Può modificare», li aggiunge, modifica o elimina
+(`studyos_create_shared_item`, `studyos_update_shared_item`,
+`studyos_delete_shared_item`). Può condividere sezioni dei tuoi dati con persone già
+collegate o con un gruppo (`studyos_share_with`), cambiare o togliere una condivisione
+(`studyos_update_share`, `studyos_revoke_share`). `studyos_share_with` e
+`studyos_update_share` chiedono sempre conferma nell'app, anche con «Modifiche senza
+conferma»; le eliminazioni hanno solo `id` e `confirm`. Le persone compaiono con un
+`personId` opaco (`person_` più 16 cifre esadecimali), mai con email o id dell'account, e gli
+elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui dati
+condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
+`sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
+Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
+versione 1.2.0: dopo l'aggiornamento ricrea il connettore (vedi «Ripubblicare dopo una
+modifica»).
+
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
 salvo una policy impostata da te su «Consenti».
 
 Non sono esposti il vault, il reset, l'import di backup, l'ingresso nei gruppi,
-i codici di invito e il caricamento di file. Le risposte non includono file,
+i codici di invito, gli inviti alla condivisione (creazione, link, accettazione) e il caricamento di file. Le risposte non includono file,
 foto, email dei membri o passphrase. Le note si possono leggere e scrivere, ma
 non hanno ancora una schermata dedicata nell'app.
 
