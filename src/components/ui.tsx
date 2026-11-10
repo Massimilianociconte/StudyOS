@@ -184,6 +184,10 @@ export function Field({
 export const inputClass =
   "min-h-11 w-full rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)] placeholder:text-[var(--faint)]";
 
+/** Su un `fieldset disabled` (sola lettura): i campi si vedono attenuati e non invitano al clic. */
+export const DIMMED_DISABLED_FIELDS =
+  "[&_input:disabled]:cursor-not-allowed [&_input:disabled]:opacity-60 [&_select:disabled]:cursor-not-allowed [&_select:disabled]:opacity-60 [&_textarea:disabled]:cursor-not-allowed [&_textarea:disabled]:opacity-60";
+
 // Il pulsante "Scegli file" (h-8) resta centrato con lo stesso margine di 5px sopra, sotto e a
 // sinistra: 2px di bordo + 10px di padding + 32px = 44px, come gli altri campi.
 export const fileInputClass = `${inputClass} cursor-pointer py-[5px] pl-[5px] file:mr-3 file:h-8 file:cursor-pointer file:rounded-full file:border-0 file:bg-[var(--accent)] file:px-3 file:text-sm file:font-black file:text-[#10131d]`;

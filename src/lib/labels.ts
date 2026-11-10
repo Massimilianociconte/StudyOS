@@ -238,7 +238,10 @@ export const SHARE_ACTION_FAILED: Record<ShareAction, string> = {
   delete: "Elemento non eliminato."
 };
 
-/** Testi del dettaglio di un elemento di un'altra persona. `who` va in mezzo a una frase ("di Giulia", "di un'altra persona"). */
+/**
+ * Testi del dettaglio di un elemento di un'altra persona. `who` è il nome di chi condivide già adatto
+ * a una frase ("Giulia Rossi", "un'altra persona"; vedi actorInSentence): i testi aggiungono "Di", "a", "dai dati di".
+ */
 export const SHARED_ITEM_TEXT = {
   gone: "Questo elemento non è più condiviso con te.",
   invalidField: (label: string) => `Controlla «${label}»: serve un valore valido.`,
@@ -297,7 +300,7 @@ export const SHARED_ENTITY_LABEL: Record<string, string> = {
 
 /** Etichetta di un tipo che arriva dal server: i nomi di Object.prototype ("constructor"…) non sono tipi. */
 export const sharedEntityLabel = (type: string) =>
-  Object.prototype.hasOwnProperty.call(SHARED_ENTITY_LABEL, type) ? SHARED_ENTITY_LABEL[type] : "elemento";
+  Object.hasOwn(SHARED_ENTITY_LABEL, type) ? SHARED_ENTITY_LABEL[type] : "elemento";
 
 /** Chi ha fatto una modifica quando non si sa il nome: in testa a una frase, e in mezzo ("prima che un'altra persona…"). */
 export const UNKNOWN_PERSON = "Un'altra persona";

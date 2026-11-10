@@ -36,7 +36,7 @@ import { SharedMark } from "../components/SharedMark";
 import { ShareButton } from "../components/ShareButton";
 import { createId } from "../lib/id";
 import type { CalendarEvent, EventCategory, Exam, Task } from "../types";
-import { Button, EmptyState, Field, IconButton, Panel, ProgressBar, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { Button, DIMMED_DISABLED_FIELDS, EmptyState, Field, IconButton, Panel, ProgressBar, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
@@ -127,10 +127,6 @@ const LINKED_EVENT_FIELDS = [
   ["start", "end", "allDay"],
   ["recurrence", "recurrenceUntil"]
 ] as const;
-
-/** Sola lettura: i campi disattivati si vedono attenuati e non invitano al clic. */
-const DIMMED_DISABLED_FIELDS =
-  "[&_input:disabled]:cursor-not-allowed [&_input:disabled]:opacity-60 [&_select:disabled]:cursor-not-allowed [&_select:disabled]:opacity-60 [&_textarea:disabled]:cursor-not-allowed [&_textarea:disabled]:opacity-60";
 
 /** Errore di una scrittura sui dati altrui: il testo dello store (già in italiano) o quello di riserva. */
 const sharedFailure = (cause: unknown, fallback: string) => (cause instanceof ShareUserError ? cause.message : fallback);

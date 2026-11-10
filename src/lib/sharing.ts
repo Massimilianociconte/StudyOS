@@ -7,6 +7,8 @@ import { fromDatetimeLocal, toDatetimeLocal } from "./dates";
 import { inviteLinkBase } from "./groups";
 import { SHARE_ACTION_FAILED, UNKNOWN_PERSON, UNKNOWN_PERSON_IN_SENTENCE, scopesSummary } from "./labels";
 import { normalizeExternalUrl } from "./safeUrl";
+import { taskStatusTransitionPatch } from "./taskTimer";
+import type { Task } from "../types";
 
 export const SHARE_SCOPES = ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals"] as const;
 export type ShareScope = (typeof SHARE_SCOPES)[number];
@@ -971,7 +973,6 @@ export const parseSharedField = (rule: SharedFieldRule, input: string, original:
 
 /** Campi che viaggiano insieme in una modifica a un elemento altrui: se cambia uno, si mandano tutti. */
 const SHARED_EDIT_GROUPS: Record<string, readonly (readonly string[])[]> = {
-  task: [["status", "completedAt"]],
   studySession: [["start", "end"]]
 };
 
@@ -979,8 +980,10 @@ const SHARED_EDIT_GROUPS: Record<string, readonly (readonly string[])[]> = {
  * Elemento altrui da scrivere dopo una modifica, o null se non è cambiato nulla. `opened` è come era
  * quando si è aperto il dettaglio, `edits` solo i campi toccati, `latest` l'ultima versione nello
  * store: si invia solo ciò che è cambiato sopra `latest`, così le modifiche che il proprietario ha
- * fatto nel frattempo non tornano indietro. Il completamento di un'attività e la fine di una
- * sessione seguono stato e inizio.
+ * fatto nel frattempo non tornano indietro. La fine di una sessione segue l'inizio (stessa durata
+ * dell'ultima versione). Un cambio di stato di un'attività fa ciò che farebbe l'app del proprietario
+ * (cronometro chiuso e tempo salvato, completamento), calcolato sull'ultima versione: il tempo già
+ * contato non va perso, anche se il cronometro è partito dopo l'apertura del dettaglio.
  */
 export const sharedEditResult = (
   entityType: string,
@@ -990,9 +993,12 @@ export const sharedEditResult = (
   now: string = new Date().toISOString()
 ): SharedEntity | null => {
   const edited: Record<string, unknown> = { ...opened, ...edits };
-  if (entityType === "task" && "status" in edits) edited.completedAt = edits.status === "done" ? (typeof latest.completedAt === "string" ? latest.completedAt : now) : undefined;
-  if (entityType === "studySession" && typeof edits.start === "string") edited.end = shiftedEnd(opened, edits.start);
-  const groups = Object.prototype.hasOwnProperty.call(SHARED_EDIT_GROUPS, entityType) ? SHARED_EDIT_GROUPS[entityType] : [];
-  const patch = changedFields(opened, edited, groups);
+  if (entityType === "studySession" && typeof edits.start === "string") edited.end = shiftedEnd(latest, edits.start);
+  const groups = Object.hasOwn(SHARED_EDIT_GROUPS, entityType) ? SHARED_EDIT_GROUPS[entityType] : [];
+  const patch: Record<string, unknown> = changedFields(opened, edited, groups);
+  // Non passa dal confronto con `opened`: ciò che chiude il cronometro dipende da com'è ora, non da com'era.
+  if (entityType === "task" && typeof edits.status === "string") {
+    Object.assign(patch, taskStatusTransitionPatch(latest as unknown as Task, edits.status as Task["status"], new Date(now)));
+  }
   return Object.keys(patch).length ? { ...latest, ...patch } : null;
 };

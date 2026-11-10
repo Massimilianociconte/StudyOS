@@ -11,7 +11,7 @@ import { SharedItemDrawer } from "./SharedItemDrawer";
 // Tutto ciò che arriva da un'altra persona è testo non fidato: si legge solo se ha il tipo atteso.
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 const label = (labels: Record<string, string>, value: unknown) =>
-  typeof value === "string" && Object.prototype.hasOwnProperty.call(labels, value) ? labels[value] : "";
+  typeof value === "string" && Object.hasOwn(labels, value) ? labels[value] : "";
 const join = (...parts: string[]) => parts.filter(Boolean).join(" · ");
 const fallbackTitle = (type: string) => capitalizeFirst(sharedEntityLabel(type));
 

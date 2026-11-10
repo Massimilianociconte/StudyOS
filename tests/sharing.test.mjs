@@ -770,15 +770,46 @@ test("modifica di un elemento altrui: solo i campi cambiati, sopra l'ultima vers
 test("modifica di un'attività altrui: stato e completamento viaggiano insieme", () => {
   const todo = { id: "t1", title: "x", status: "todo" };
   const done = sharedEditResult("task", todo, { status: "done" }, todo, "2026-11-10T12:00:00.000Z");
-  assert.deepEqual(done, { ...todo, status: "done", completedAt: "2026-11-10T12:00:00.000Z" });
+  assert.deepEqual(done, { ...todo, status: "done", completedAt: "2026-11-10T12:00:00.000Z", timerStartedAt: undefined, timerLastReminderAt: undefined });
   // Già completata nel frattempo dal proprietario: il suo orario di completamento resta.
   const meanwhile = { ...todo, status: "done", completedAt: "2026-11-10T11:00:00.000Z" };
   assert.equal(sharedEditResult("task", todo, { status: "done" }, meanwhile, "2026-11-10T12:00:00.000Z").completedAt, "2026-11-10T11:00:00.000Z");
   // Riaperta: il completamento si toglie.
-  const reopened = sharedEditResult("task", meanwhile, { status: "doing" }, meanwhile);
-  assert.equal(reopened.status, "doing");
+  const reopened = sharedEditResult("task", meanwhile, { status: "todo" }, meanwhile);
+  assert.equal(reopened.status, "todo");
   assert.equal(reopened.completedAt, undefined);
   assert.ok("completedAt" in reopened);
+});
+
+test("modifica di un'attività altrui: lo stato chiude il cronometro del proprietario come nella sua app", () => {
+  const started = "2026-11-10T11:55:00.000Z";
+  const now = "2026-11-10T12:00:00.000Z";
+  // Cronometro in corso: 10 minuti già contati più 5 da quando è partito.
+  const running = { id: "t1", title: "x", status: "doing", timerStartedAt: started, timerAccumulatedSeconds: 600, timerLastReminderAt: started };
+  const done = sharedEditResult("task", running, { status: "done" }, running, now);
+  assert.equal(done.status, "done");
+  assert.equal(done.timerStartedAt, undefined);
+  assert.equal(done.timerAccumulatedSeconds, 900);
+  assert.equal(done.actualMinutes, 15);
+  assert.equal(done.timerLastReminderAt, undefined);
+  assert.equal(done.completedAt, now);
+  // Anche uscire da "in corso" verso un altro stato chiude il cronometro, senza completare.
+  for (const status of ["todo", "blocked"]) {
+    const left = sharedEditResult("task", running, { status }, running, now);
+    assert.equal(left.status, status);
+    assert.equal(left.timerStartedAt, undefined);
+    assert.equal(left.timerAccumulatedSeconds, 900);
+    assert.equal(left.actualMinutes, 15);
+    assert.equal(left.completedAt, undefined);
+  }
+  // Il cronometro si legge dall'ultima versione: partito dal proprietario dopo l'apertura del dettaglio.
+  const openedTodo = { id: "t1", title: "x", status: "todo" };
+  const lateStop = sharedEditResult("task", openedTodo, { status: "blocked" }, running, now);
+  assert.equal(lateStop.timerStartedAt, undefined);
+  assert.equal(lateStop.timerAccumulatedSeconds, 900);
+  // Una modifica che non tocca lo stato lascia il cronometro com'è.
+  const titleOnly = sharedEditResult("task", running, { title: "y" }, running, now);
+  assert.deepEqual(titleOnly, { ...running, title: "y" });
 });
 
 test("modifica di una sessione altrui: spostare l'inizio sposta la fine, stessa durata", () => {
@@ -786,10 +817,15 @@ test("modifica di una sessione altrui: spostare l'inizio sposta la fine, stessa 
   const result = sharedEditResult("studySession", opened, { start: "2026-11-11T08:00:00.000Z" }, opened);
   assert.equal(result.start, "2026-11-11T08:00:00.000Z");
   assert.equal(result.end, "2026-11-11T09:30:00.000Z");
+  // La durata è quella dell'ultima versione: il proprietario ha allungato la sessione nel frattempo.
+  const longer = { ...opened, end: "2026-11-10T11:00:00.000Z" };
+  const moved = sharedEditResult("studySession", opened, { start: "2026-11-11T08:00:00.000Z" }, longer);
+  assert.equal(moved.start, "2026-11-11T08:00:00.000Z");
+  assert.equal(moved.end, "2026-11-11T10:00:00.000Z");
   // Se cambiano solo le note, inizio e fine non si toccano: restano quelli del proprietario.
-  const moved = { ...opened, start: "2026-11-12T09:00:00.000Z", end: "2026-11-12T10:30:00.000Z" };
-  const notes = sharedEditResult("studySession", opened, { notes: "ok" }, moved);
-  assert.deepEqual([notes.start, notes.end, notes.notes], [moved.start, moved.end, "ok"]);
+  const elsewhere = { ...opened, start: "2026-11-12T09:00:00.000Z", end: "2026-11-12T10:30:00.000Z" };
+  const notes = sharedEditResult("studySession", opened, { notes: "ok" }, elsewhere);
+  assert.deepEqual([notes.start, notes.end, notes.notes], [elsewhere.start, elsewhere.end, "ok"]);
 });
 
 test("modifica di un elemento altrui: un tipo sconosciuto o un nome di Object.prototype non rompe nulla", () => {

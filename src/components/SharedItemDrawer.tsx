@@ -14,7 +14,7 @@ import {
 } from "../lib/sharing";
 import { safeDataUrl, safeHref } from "../lib/safeUrl";
 import { useSharedStore } from "../store/useSharedStore";
-import { Button, Drawer, Field, Tag, inputClass } from "./ui";
+import { Button, DIMMED_DISABLED_FIELDS, Drawer, Field, Tag, inputClass } from "./ui";
 import { InlineConfirm } from "./InlineConfirm";
 import { SharedMark } from "./SharedMark";
 
@@ -66,13 +66,14 @@ const FIELDS: Record<string, FieldSpec[]> = {
   ]
 };
 
-const fieldsOf = (entityType: string) => (Object.prototype.hasOwnProperty.call(FIELDS, entityType) ? FIELDS[entityType] : []);
+const fieldsOf = (entityType: string) => (Object.hasOwn(FIELDS, entityType) ? FIELDS[entityType] : []);
 
-const has = (options: Record<string, string>, value: string) => Object.prototype.hasOwnProperty.call(options, value);
-
-/** Sola lettura: i campi disattivati si vedono attenuati e non invitano al clic (come nel calendario). */
-const DIMMED_DISABLED_FIELDS =
-  "[&_input:disabled]:cursor-not-allowed [&_input:disabled]:opacity-60 [&_select:disabled]:cursor-not-allowed [&_select:disabled]:opacity-60 [&_textarea:disabled]:cursor-not-allowed [&_textarea:disabled]:opacity-60";
+/**
+ * Valori che il menu offre. Chi riceve non avvia il cronometro del proprietario: "In corso" di
+ * un'attività c'è solo se è già lo stato attuale (e si può lasciare, il che lo ferma).
+ */
+const offeredOptions = (entityType: string, field: FieldSpec, current: string) =>
+  Object.entries(field.options ?? {}).filter(([value]) => !(entityType === "task" && field.key === "status" && value === "doing" && current !== "doing"));
 
 const linkClass = "text-sm font-bold text-[var(--accent-ink)] underline";
 
@@ -111,6 +112,14 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
     }
   };
 
+  /** L'ultima versione nello store, non quella di quando si è aperto; se non c'è più (condivisione tolta, eliminato, persona nascosta) si ferma qui. */
+  const latestOrThrow = () => {
+    const state = useSharedStore.getState();
+    const latest = state.hiddenOwners.includes(entry.ownerId) ? undefined : state.items.find((item) => item.key === entry.key)?.entity;
+    if (!latest) throw new ShareUserError(SHARED_ITEM_TEXT.gone);
+    return latest;
+  };
+
   const save = () =>
     run("save", async () => {
       const edits: Record<string, unknown> = {};
@@ -121,16 +130,17 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
         if (!parsed) throw new ShareUserError(SHARED_ITEM_TEXT.invalidField(field.label));
         edits[field.key] = parsed.value;
       }
-      // L'ultima versione, non quella di quando si è aperto: ciò che il proprietario ha cambiato nel frattempo resta.
-      const state = useSharedStore.getState();
-      const latest = state.hiddenOwners.includes(entry.ownerId) ? undefined : state.items.find((item) => item.key === entry.key)?.entity;
-      if (!latest) throw new ShareUserError(SHARED_ITEM_TEXT.gone);
-      const next = sharedEditResult(entry.entityType, opened.entity, edits, latest);
+      // Ciò che il proprietario ha cambiato nel frattempo resta: si scrive solo il cambiato, sopra l'ultima versione.
+      const next = sharedEditResult(entry.entityType, opened.entity, edits, latestOrThrow());
       // Solo nello store dei dati altrui: mai tra i miei.
-      if (next) await state.saveSharedItem(entry.ownerId, entry.entityType, next);
+      if (next) await useSharedStore.getState().saveSharedItem(entry.ownerId, entry.entityType, next);
     });
 
-  const remove = () => run("delete", () => useSharedStore.getState().deleteSharedItem(entry.ownerId, entry.entityType, entry.entityId));
+  const remove = () =>
+    run("delete", async () => {
+      latestOrThrow();
+      await useSharedStore.getState().deleteSharedItem(entry.ownerId, entry.entityType, entry.entityId);
+    });
 
   const change = (key: string, value: string) => setDraft((current) => ({ ...current, [key]: value }));
 
@@ -194,6 +204,7 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
         <fieldset disabled={readOnly || busy} className={`m-0 grid min-w-0 grid-cols-1 gap-3 border-0 p-0 ${DIMMED_DISABLED_FIELDS}`}>
           {fields.map((field) => {
             const value = draft[field.key] ?? "";
+            const options = field.kind === "select" ? offeredOptions(entry.entityType, field, opened.draft[field.key] ?? "") : [];
             return (
               <Field key={field.key} label={field.label}>
                 {field.kind === "textarea" ? (
@@ -201,12 +212,12 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
                 ) : field.kind === "select" ? (
                   <select className={inputClass} value={value} onChange={(event) => change(field.key, event.target.value)}>
                     {/* Un valore che questa versione non conosce non si mostra come codice: resta com'è finché non lo si cambia. */}
-                    {has(field.options ?? {}, value) ? null : (
+                    {options.some(([optionValue]) => optionValue === value) ? null : (
                       <option value={value} disabled>
                         —
                       </option>
                     )}
-                    {Object.entries(field.options ?? {}).map(([optionValue, label]) => (
+                    {options.map(([optionValue, label]) => (
                       <option key={optionValue} value={optionValue}>
                         {label}
                       </option>
