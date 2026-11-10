@@ -233,8 +233,19 @@ export const SHARE_ACTION_FAILED: Record<ShareAction, string> = {
   leave: "Non sei uscito dalla condivisione.",
   open: "Invito non aperto.",
   history: "Cronologia non caricata.",
-  restore: "Ripristino non riuscito."
+  restore: "Ripristino non riuscito.",
+  save: "Modifiche non salvate.",
+  delete: "Elemento non eliminato."
 };
+
+/** Testi del dettaglio di un elemento di un'altra persona. `who` va in mezzo a una frase ("di Giulia", "di un'altra persona"). */
+export const SHARED_ITEM_TEXT = {
+  gone: "Questo elemento non è più condiviso con te.",
+  invalidField: (label: string) => `Controlla «${label}»: serve un valore valido.`,
+  readOnlyIntro: (who: string) => `Di ${who}: puoi solo vedere.`,
+  editIntro: (who: string) => `Di ${who}: le modifiche arrivano subito anche a ${who}, che può ripristinarle dalla cronologia.`,
+  deleteConfirm: (title: string, who: string) => `Eliminare «${title}» dai dati di ${who}? Resta nella sua cronologia e può ripristinarlo.`
+} as const;
 
 /** Perché un invito aperto da link non si può accettare (il link salvato su questo dispositivo si toglie). */
 export const SHARE_INVITE_BLOCKED: Record<InviteBlock, string> = {

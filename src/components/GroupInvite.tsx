@@ -30,9 +30,10 @@ import { Button, Drawer, Field, inputClass } from "./ui";
 import { Icon } from "./Icon";
 import { CloudPanel } from "./CloudPanel";
 import { InviteQr, qrPngBlob } from "./InviteQr";
+import { InlineConfirm } from "./InlineConfirm";
 
-// Spostati in hooks/useCloudSession e components/InviteQr: i vecchi import da qui restano validi.
-export { useCloudSession, InviteQr };
+// Spostati in hooks/useCloudSession, components/InviteQr e components/InlineConfirm: i vecchi import da qui restano validi.
+export { useCloudSession, InviteQr, InlineConfirm };
 
 /** Invito ricevuto via link/QR in attesa (si aggiorna anche da altre schede). */
 export function usePendingInvite() {
@@ -62,23 +63,6 @@ const REACH_TEXT: Record<Reach, { tone: "ok" | "warn"; text: string }> = {
   "device-only": { tone: "warn", text: "Questo gruppo è stato creato senza account, quindi non si può condividere. Per invitare altre persone accedi e crea un nuovo gruppo." },
   "no-cloud": { tone: "warn", text: "Gli account non sono attivi in questa versione dell'app: link, QR e codice funzionano solo su questo dispositivo." }
 };
-
-/** Conferma sul posto: dice cosa succede e il pulsante ripete l'azione (niente "OK" generico). */
-export function InlineConfirm({ text, confirmLabel, icon, onConfirm, onCancel, busy }: { text: string; confirmLabel: string; icon: string; onConfirm: () => void; onCancel: () => void; busy?: boolean }) {
-  return (
-    <div role="group" aria-label={confirmLabel} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
-      <p className="safe-text text-sm font-bold">{text}</p>
-      <div className="mt-2 flex flex-wrap justify-end gap-2">
-        <Button variant="soft" onClick={onCancel} disabled={busy} autoFocus>
-          Annulla
-        </Button>
-        <Button variant="danger" icon={icon} onClick={onConfirm} disabled={busy}>
-          {confirmLabel}
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 /** Tutti i modi per invitare: link (WhatsApp, Telegram, email, condivisione di sistema), QR, codice, account. */
 export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { group: StudyGroup; actor: Actor; onClose: () => void; onNotice: (text: string) => void; onLogin?: () => void }) {

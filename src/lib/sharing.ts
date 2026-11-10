@@ -3,6 +3,7 @@
 // Nessun import di Supabase o Dexie: la usano store, viste, agente MCP e test.
 
 import { timestampOf, type SyncableEntity } from "./collections";
+import { fromDatetimeLocal, toDatetimeLocal } from "./dates";
 import { inviteLinkBase } from "./groups";
 import { SHARE_ACTION_FAILED, UNKNOWN_PERSON, UNKNOWN_PERSON_IN_SENTENCE, scopesSummary } from "./labels";
 import { normalizeExternalUrl } from "./safeUrl";
@@ -524,7 +525,7 @@ export const shareErrorText = (error: NonNullable<ServerError>) => {
 };
 
 /** Azione dell'utente che può fallire: crea invito e condividi (pannello), poi quelle della sezione Condivisione. */
-export type ShareAction = "invite" | "share" | "accept" | "decline" | "cancel" | "update" | "revoke" | "leave" | "open" | "history" | "restore";
+export type ShareAction = "invite" | "share" | "accept" | "decline" | "cancel" | "update" | "revoke" | "leave" | "open" | "history" | "restore" | "save" | "delete";
 
 /**
  * Errore di un'azione che l'utente ha appena fatto (crea invito, condividi, accetta…): dice cosa non è
@@ -674,7 +675,7 @@ export const initialsOf = (name: string) =>
     .join("") || "?";
 
 export const originOf = (received: readonly ShareGrant[], entry: SharedItem, labels: readonly SharedSubjectLabel[]): SharedOrigin => {
-  const ownerName = received.find((grant) => grant.ownerId === entry.ownerId)?.ownerName || "Un'altra persona";
+  const ownerName = received.find((grant) => grant.ownerId === entry.ownerId)?.ownerName || UNKNOWN_PERSON;
   const subjectId = subjectOfPayload(entry.entityType, entry.entity);
   const label = subjectId ? labels.find((candidate) => candidate.ownerId === entry.ownerId && candidate.id === subjectId) : undefined;
   return {
@@ -865,4 +866,133 @@ export const linkHostname = (href: string): string | undefined => {
   } catch {
     return undefined;
   }
+};
+
+// ——— Modifica di un elemento altrui ———
+
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]/;
+
+/** Istante di un campo data altrui; null se non è una data ISO leggibile (chi condivide può mandare qualsiasi testo). */
+const storedInstant = (value: unknown): Date | null => {
+  if (typeof value !== "string" || !TIMESTAMP.test(value)) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+/**
+ * Giorno (aaaa-mm-gg) di un campo data altrui, per chi guarda: un giorno solo resta com'è, un istante
+ * (es. un esame con l'ora) si legge nel fuso locale, non con le prime cifre dell'UTC. "" se manca o non è una data.
+ */
+export const storedDayOf = (value: unknown) => {
+  if (typeof value === "string" && DAY_ONLY.test(value)) return localDayOf(value);
+  const date = storedInstant(value);
+  return date ? toDatetimeLocal(date).slice(0, 10) : "";
+};
+
+/**
+ * Nuovo giorno per un campo data altrui. Un giorno solo resta un giorno solo; un istante tiene l'ora
+ * locale (e secondi, millisecondi) sul nuovo giorno. Senza un valore precedente leggibile il risultato
+ * è il solo giorno; `undefined` se `nextDate` non è un giorno del calendario.
+ */
+export const replaceDatePart = (original: unknown, nextDate: string): string | undefined => {
+  if (!DAY_ONLY.test(nextDate) || localDayOf(nextDate) !== nextDate) return undefined;
+  const previous = storedInstant(original);
+  if (!previous) return nextDate;
+  const [year, month, day] = nextDate.split("-").map(Number);
+  previous.setFullYear(year, month - 1, day);
+  return previous.toISOString();
+};
+
+/** Fine di una sessione spostata: stessa durata. Senza una fine valida resta quella salvata. */
+export const shiftedEnd = (previous: Record<string, unknown>, nextStart: string): string | undefined => {
+  const kept = typeof previous.end === "string" ? previous.end : undefined;
+  const start = Date.parse(String(previous.start));
+  const end = Date.parse(String(previous.end));
+  const moved = Date.parse(nextStart);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(moved)) return kept;
+  const shifted = new Date(moved + (end - start));
+  return Number.isNaN(shifted.getTime()) ? kept : shifted.toISOString();
+};
+
+export type SharedFieldKind = "text" | "textarea" | "datetime" | "date" | "number" | "select";
+
+/** Come si legge e si scrive un campo del dettaglio di un elemento altrui. */
+export interface SharedFieldRule {
+  kind: SharedFieldKind;
+  /** Non può restare vuoto: un titolo o una data che l'elemento deve avere. */
+  required?: boolean;
+  min?: number;
+  max?: number;
+}
+
+/** Testo da mettere nel campo per il valore salvato: i dati altrui possono avere qualsiasi tipo. */
+export const sharedFieldInput = (kind: SharedFieldKind, value: unknown): string => {
+  if (kind === "datetime") {
+    const date = storedInstant(value);
+    return date ? toDatetimeLocal(date) : "";
+  }
+  if (kind === "date") return storedDayOf(value);
+  if (kind === "number") return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+  return typeof value === "string" ? value : "";
+};
+
+/**
+ * Valore da salvare per ciò che è scritto in un campo, o null se non è valido (un campo obbligatorio
+ * vuoto, una data o un numero illeggibili). Un campo facoltativo svuotato si toglie (`undefined`).
+ * `original` è il valore salvato: una data tiene la sua ora.
+ */
+export const parseSharedField = (rule: SharedFieldRule, input: string, original: unknown): { value: unknown } | null => {
+  const empty = () => (rule.required ? null : { value: undefined });
+  switch (rule.kind) {
+    case "text": {
+      const value = input.trim();
+      return value || !rule.required ? { value } : null;
+    }
+    case "datetime": {
+      if (!input) return empty();
+      const value = fromDatetimeLocal(input);
+      return value ? { value } : null;
+    }
+    case "date": {
+      if (!input) return empty();
+      const value = replaceDatePart(original, input);
+      return value ? { value } : null;
+    }
+    case "number": {
+      const value = Number(input);
+      if (!input.trim() || !Number.isFinite(value)) return null;
+      return { value: Math.min(rule.max ?? value, Math.max(rule.min ?? value, Math.round(value))) };
+    }
+    default:
+      return { value: input };
+  }
+};
+
+/** Campi che viaggiano insieme in una modifica a un elemento altrui: se cambia uno, si mandano tutti. */
+const SHARED_EDIT_GROUPS: Record<string, readonly (readonly string[])[]> = {
+  task: [["status", "completedAt"]],
+  studySession: [["start", "end"]]
+};
+
+/**
+ * Elemento altrui da scrivere dopo una modifica, o null se non è cambiato nulla. `opened` è come era
+ * quando si è aperto il dettaglio, `edits` solo i campi toccati, `latest` l'ultima versione nello
+ * store: si invia solo ciò che è cambiato sopra `latest`, così le modifiche che il proprietario ha
+ * fatto nel frattempo non tornano indietro. Il completamento di un'attività e la fine di una
+ * sessione seguono stato e inizio.
+ */
+export const sharedEditResult = (
+  entityType: string,
+  opened: Record<string, unknown>,
+  edits: Record<string, unknown>,
+  latest: SharedEntity,
+  now: string = new Date().toISOString()
+): SharedEntity | null => {
+  const edited: Record<string, unknown> = { ...opened, ...edits };
+  if (entityType === "task" && "status" in edits) edited.completedAt = edits.status === "done" ? (typeof latest.completedAt === "string" ? latest.completedAt : now) : undefined;
+  if (entityType === "studySession" && typeof edits.start === "string") edited.end = shiftedEnd(opened, edits.start);
+  const groups = Object.prototype.hasOwnProperty.call(SHARED_EDIT_GROUPS, entityType) ? SHARED_EDIT_GROUPS[entityType] : [];
+  const patch = changedFields(opened, edited, groups);
+  return Object.keys(patch).length ? { ...latest, ...patch } : null;
 };

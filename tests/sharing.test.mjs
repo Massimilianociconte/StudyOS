@@ -45,7 +45,13 @@ import {
   barbExamKey,
   linkHostname,
   sharedBarbExams,
-  splitSharedBarbExams
+  splitSharedBarbExams,
+  replaceDatePart,
+  shiftedEnd,
+  storedDayOf,
+  sharedEditResult,
+  sharedFieldInput,
+  parseSharedField
 } from "../src/lib/sharing.ts";
 import {
   SHARED_ENTITY_LABEL,
@@ -683,4 +689,111 @@ test("link degli appelli: si mostra il dominio vero, mai un nome ufficiale scelt
   assert.equal(linkHostname("https://exam.evil.example/unimi.it"), "exam.evil.example");
   assert.equal(linkHostname("mailto:a@b.it"), undefined);
   assert.equal(linkHostname("non un url"), undefined);
+});
+
+test("date nei dati altrui: si cambia il giorno, il formato originale resta", () => {
+  assert.equal(replaceDatePart("2026-11-10T09:00:00.000Z", "2026-12-01"), "2026-12-01T09:00:00.000Z");
+  assert.equal(replaceDatePart("2026-11-10", "2026-12-01"), "2026-12-01");
+  assert.equal(replaceDatePart(undefined, "2026-12-01"), "2026-12-01");
+  assert.equal(replaceDatePart("2026-11-10", ""), undefined);
+  const session = { start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:30:00.000Z" };
+  assert.equal(shiftedEnd(session, "2026-11-11T08:00:00.000Z"), "2026-11-11T09:30:00.000Z");
+  assert.equal(shiftedEnd({ start: "2026-11-10T09:00:00.000Z" }, "2026-11-11T08:00:00.000Z"), undefined);
+});
+
+test("date nei dati altrui: il giorno è quello locale e l'ora locale resta, in qualunque fuso", () => {
+  // Mezzanotte e mezza locale: in UTC è il giorno prima, ma per chi guarda è il 10.
+  const original = new Date(2026, 10, 10, 0, 30).toISOString();
+  assert.equal(storedDayOf(original), "2026-11-10");
+  const moved = new Date(replaceDatePart(original, "2026-12-01"));
+  assert.deepEqual([moved.getFullYear(), moved.getMonth(), moved.getDate(), moved.getHours(), moved.getMinutes()], [2026, 11, 1, 0, 30]);
+  // Un giorno solo (senza ora) è già il giorno; dati altrui illeggibili non producono date inventate.
+  assert.equal(storedDayOf("2026-11-10"), "2026-11-10");
+  assert.equal(storedDayOf(undefined), "");
+  assert.equal(storedDayOf("non una data"), "");
+  assert.equal(storedDayOf(12345), "");
+  assert.equal(replaceDatePart("non una data, ma lunga", "2026-12-01"), "2026-12-01");
+  assert.equal(replaceDatePart("2026-11-10T09:00:00.000Z", "2026-02-31"), undefined);
+  assert.equal(replaceDatePart("2026-11-10T09:00:00.000Z", "2026-13-01"), undefined);
+});
+
+test("campi del dettaglio altrui: i dati arrivano da chiunque, il modulo non si fida del tipo", () => {
+  assert.equal(sharedFieldInput("text", 42), "");
+  assert.equal(sharedFieldInput("text", "Ciao"), "Ciao");
+  assert.equal(sharedFieldInput("number", "7"), "");
+  assert.equal(sharedFieldInput("number", Number.NaN), "");
+  assert.equal(sharedFieldInput("number", 7), "7");
+  assert.equal(sharedFieldInput("date", "2026-11-10"), "2026-11-10");
+  assert.equal(sharedFieldInput("date", { toString: () => "2026-11-10" }), "");
+  // Un anno a cinque cifre o un testo qualunque non è una data da mostrare (e non rompe la vista).
+  assert.equal(sharedFieldInput("datetime", "275760-09-13T00:00:00Z"), "");
+  assert.equal(sharedFieldInput("datetime", "12345"), "");
+  const local = new Date(2026, 10, 10, 9, 5);
+  assert.equal(sharedFieldInput("datetime", local.toISOString()), "2026-11-10T09:05");
+  assert.equal(sharedFieldInput("date", local.toISOString()), "2026-11-10");
+});
+
+test("campi del dettaglio altrui: obbligatori non si svuotano, facoltativi si tolgono, numeri nei limiti", () => {
+  assert.deepEqual(parseSharedField({ kind: "text", required: true }, "  Titolo  ", ""), { value: "Titolo" });
+  assert.equal(parseSharedField({ kind: "text", required: true }, "   ", "Prima"), null);
+  assert.deepEqual(parseSharedField({ kind: "text" }, "   ", "Prima"), { value: "" });
+  assert.deepEqual(parseSharedField({ kind: "textarea" }, "  a\nb ", ""), { value: "  a\nb " });
+  assert.equal(parseSharedField({ kind: "datetime", required: true }, "", "2026-11-10T09:00:00.000Z"), null);
+  assert.deepEqual(parseSharedField({ kind: "datetime" }, "", "2026-11-10T09:00:00.000Z"), { value: undefined });
+  assert.equal(parseSharedField({ kind: "datetime" }, "non una data", undefined), null);
+  assert.deepEqual(parseSharedField({ kind: "datetime" }, "2026-11-10T09:00", undefined), { value: new Date("2026-11-10T09:00").toISOString() });
+  assert.equal(parseSharedField({ kind: "date", required: true }, "", "2026-11-10"), null);
+  assert.deepEqual(parseSharedField({ kind: "date" }, "", "2026-11-10"), { value: undefined });
+  assert.deepEqual(parseSharedField({ kind: "date" }, "2026-12-01", "2026-11-10"), { value: "2026-12-01" });
+  assert.equal(parseSharedField({ kind: "date" }, "2026-02-30", "2026-11-10"), null);
+  const percent = { kind: "number", min: 0, max: 100 };
+  assert.deepEqual(parseSharedField(percent, "150", 10), { value: 100 });
+  assert.deepEqual(parseSharedField(percent, "-5", 10), { value: 0 });
+  assert.deepEqual(parseSharedField(percent, "42.6", 10), { value: 43 });
+  assert.equal(parseSharedField(percent, "", 10), null);
+  assert.equal(parseSharedField(percent, "abc", 10), null);
+  assert.deepEqual(parseSharedField({ kind: "select" }, "done", "todo"), { value: "done" });
+});
+
+test("modifica di un elemento altrui: solo i campi cambiati, sopra l'ultima versione", () => {
+  const opened = { id: "t1", title: "Studiare", notes: "", status: "todo", dueDate: "2026-11-10T09:00:30.000Z", updatedAt: "a" };
+  // Nel frattempo il proprietario ha cambiato le note e l'orario di aggiornamento.
+  const latest = { ...opened, notes: "dal proprietario", updatedAt: "b" };
+  assert.deepEqual(sharedEditResult("task", opened, { title: "Studiare di più" }, latest), { ...latest, title: "Studiare di più" });
+  // Niente di cambiato: niente da scrivere.
+  assert.equal(sharedEditResult("task", opened, {}, latest), null);
+  assert.equal(sharedEditResult("task", opened, { title: "Studiare" }, latest), null);
+  // Un campo non toccato resta com'era anche se la conversione dal modulo lo avrebbe arrotondato.
+  assert.equal(sharedEditResult("task", opened, { notes: "mie" }, latest).dueDate, "2026-11-10T09:00:30.000Z");
+});
+
+test("modifica di un'attività altrui: stato e completamento viaggiano insieme", () => {
+  const todo = { id: "t1", title: "x", status: "todo" };
+  const done = sharedEditResult("task", todo, { status: "done" }, todo, "2026-11-10T12:00:00.000Z");
+  assert.deepEqual(done, { ...todo, status: "done", completedAt: "2026-11-10T12:00:00.000Z" });
+  // Già completata nel frattempo dal proprietario: il suo orario di completamento resta.
+  const meanwhile = { ...todo, status: "done", completedAt: "2026-11-10T11:00:00.000Z" };
+  assert.equal(sharedEditResult("task", todo, { status: "done" }, meanwhile, "2026-11-10T12:00:00.000Z").completedAt, "2026-11-10T11:00:00.000Z");
+  // Riaperta: il completamento si toglie.
+  const reopened = sharedEditResult("task", meanwhile, { status: "doing" }, meanwhile);
+  assert.equal(reopened.status, "doing");
+  assert.equal(reopened.completedAt, undefined);
+  assert.ok("completedAt" in reopened);
+});
+
+test("modifica di una sessione altrui: spostare l'inizio sposta la fine, stessa durata", () => {
+  const opened = { id: "s1", title: "x", start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:30:00.000Z", notes: "" };
+  const result = sharedEditResult("studySession", opened, { start: "2026-11-11T08:00:00.000Z" }, opened);
+  assert.equal(result.start, "2026-11-11T08:00:00.000Z");
+  assert.equal(result.end, "2026-11-11T09:30:00.000Z");
+  // Se cambiano solo le note, inizio e fine non si toccano: restano quelli del proprietario.
+  const moved = { ...opened, start: "2026-11-12T09:00:00.000Z", end: "2026-11-12T10:30:00.000Z" };
+  const notes = sharedEditResult("studySession", opened, { notes: "ok" }, moved);
+  assert.deepEqual([notes.start, notes.end, notes.notes], [moved.start, moved.end, "ok"]);
+});
+
+test("modifica di un elemento altrui: un tipo sconosciuto o un nome di Object.prototype non rompe nulla", () => {
+  const opened = { id: "x", title: "a" };
+  assert.deepEqual(sharedEditResult("constructor", opened, { title: "b" }, opened), { id: "x", title: "b" });
+  assert.deepEqual(sharedEditResult("sconosciuto", opened, { title: "b" }, opened), { id: "x", title: "b" });
 });

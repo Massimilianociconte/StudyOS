@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { InlineConfirm } from "./GroupInvite";
+import { InlineConfirm } from "./InlineConfirm";
 
 /** Conferma sul posto che resta aperta se l'azione fallisce, con l'errore accanto al pulsante. */
 export function ConfirmWithError({
