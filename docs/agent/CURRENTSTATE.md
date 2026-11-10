@@ -175,3 +175,14 @@ Badge account e profilo aprono Impostazioni sulla categoria giusta
 campi rari in "Altre opzioni", stati vuoti con un'azione, conferme che dicono cosa si perde.
 Esami apre "I miei esami" se ne esiste almeno uno. Verifiche: 132 test, lint, build e
 giro nel browser di tutte le sezioni a 1440×900, 1024×768 e 375 px senza overflow.
+
+Keep-alive Supabase (10 novembre 2026): il progetto Free non va più in pausa dopo 7 giorni
+senza uso. Worker Cloudflare `studyos-supabase-keepalive` (`worker/keepalive.ts`, config
+`worker/keepalive.jsonc`, nessun URL pubblico) con cron alle 03:17 e 15:17 UTC (una sola espressione `17 3,15 * * *`) che chiama
+l'RPC `studyos_keepalive` (`supabase/keepalive.sql`: una riga aggiornata a ogni battito).
+Riserva e controllo in `.github/workflows/supabase-keepalive.yml` (lun e gio): avvisa se il
+Worker tace da più di 2 giorni e fallisce se Supabase non risponde. Worker distribuito con
+URL e chiave publishable come secret; verificati SQL su Postgres 17 locale, giro
+`--test-scheduled` contro il progetto reale e cron in produzione. Da fare sul progetto reale:
+eseguire `supabase/keepalive.sql` nel SQL Editor (finché manca i cron usano una lettura di
+ripiego e lo segnalano).

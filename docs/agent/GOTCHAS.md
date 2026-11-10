@@ -114,3 +114,10 @@
   passphrase/vault. Etichette dei campi facoltativi accordate al nome ("Materia
   (facoltativa)"). I messaggi del server MCP (`src/agent/`) citano "Impostazioni → Agenti":
   la categoria si chiama "Agenti AI" per restare riconoscibile.
+- Keep-alive Supabase: la pausa del piano Free guarda l'attività del database, quindi i cron
+  devono eseguire una query (meglio una scrittura: RPC `studyos_keepalive`), non solo una
+  richiesta HTTP. Il cron principale è il Worker Cloudflare (`worker/keepalive.jsonc`, deploy
+  con `-c`, mai insieme all'hub `studyos-agent`). Workers Free ammette 5 cron per
+  account e l'account ne usa già 4: più orari vanno in una sola espressione; GitHub Actions è solo la riserva perché
+  spegne i cron dei repository pubblici dopo 60 giorni senza commit. Le chiavi
+  `sb_publishable_` vanno solo nell'header `apikey`, non in `Authorization: Bearer`.

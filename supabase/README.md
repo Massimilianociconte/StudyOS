@@ -32,8 +32,8 @@ passano dalla conferma email, tra i Redirect URLs aggiungi anche
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.
 
-Il piano Free può mettere in pausa i progetti inattivi; per i dati importanti
-mantieni un backup esportato dall'app. La sincronizzazione cloud attuale invia
+Il piano Free mette in pausa i progetti inattivi (vedi sotto); per i dati importanti
+mantieni comunque un backup esportato dall'app. La sincronizzazione cloud attuale invia
 JSON non cifrato: RLS limita l'accesso, ma il vault protegge solo la copia
 locale.
 
@@ -41,3 +41,37 @@ Gli allegati incorporati sono Base64 dentro `studyos_items.payload` e quindi
 consumano la quota del **database**, non la quota Supabase Storage. La PWA
 limita i nuovi file incorporati a 600 KiB; per quelli più grandi usa un link.
 Controlla sempre i [limiti aggiornati del piano Free](https://supabase.com/pricing).
+
+## Tenere attivo il progetto (piano Free)
+
+Supabase mette in pausa un progetto Free dopo 7 giorni senza attività del
+database. Due cron gratuiti lo impediscono con una vera scrittura in Postgres:
+
+- **Worker Cloudflare** `studyos-supabase-keepalive`
+  ([worker/keepalive.ts](../worker/keepalive.ts)): ogni giorno alle 03:17 e alle
+  15:17 UTC. È il cron principale: Cloudflare non lo spegne mai per inattività.
+- **GitHub Actions** [supabase-keepalive.yml](../.github/workflows/supabase-keepalive.yml):
+  lunedì e giovedì alle 06:41 UTC. È la riserva e il controllo: se l'ultimo
+  battito ha più di 2 giorni avvisa che il Worker si è fermato; se Supabase non
+  risponde il job fallisce e GitHub manda un'email. GitHub disattiva i cron dei
+  repository pubblici dopo 60 giorni senza commit: in quel caso riattivalo da
+  **Actions → Supabase keep-alive → Enable workflow**.
+
+Passo da fare una volta: nel **SQL Editor** incolla [keepalive.sql](keepalive.sql)
+e premi **Run** (si può rieseguire). Crea la tabella `studyos_keepalive` (una
+sola riga con l'orario dell'ultimo battito, invisibile ai client) e la funzione
+`studyos_keepalive()`. Finché manca, i cron ripiegano su una query di lettura e
+segnalano l'avviso nei log. Per controllare:
+
+```sql
+select pinged_at, source from public.studyos_keepalive;
+```
+
+Il Worker usa solo URL e chiave publishable del progetto, salvate come secret.
+Per ridistribuirlo o cambiare progetto:
+
+```bash
+npx wrangler secret put SUPABASE_URL -c worker/keepalive.jsonc
+npx wrangler secret put SUPABASE_PUBLISHABLE_KEY -c worker/keepalive.jsonc
+npx wrangler deploy -c worker/keepalive.jsonc
+```

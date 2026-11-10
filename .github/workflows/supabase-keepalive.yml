@@ -1,0 +1,73 @@
+name: Supabase keep-alive
+
+# Riserva del cron Cloudflare (worker/keepalive.ts): scrive un battito nel database due volte
+# a settimana e controlla che il Worker stia girando. Se il progetto non risponde il job fallisce
+# e GitHub manda un'email. Nota: GitHub spegne i cron dei repository pubblici dopo 60 giorni
+# senza commit su main; il Worker Cloudflare non ha questo limite.
+
+on:
+  schedule:
+    - cron: "41 6 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      SUPABASE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - name: Write a heartbeat in the database
+        run: |
+          set -euo pipefail
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in repository Actions variables."
+            exit 1
+          fi
+          base="${SUPABASE_URL%/}"
+
+          rpc() {
+            # Senza risposta curl stampa comunque "000" come codice HTTP.
+            curl -sS --retry 3 --retry-delay 10 --max-time 30 \
+              -o body.json -w "%{http_code}" \
+              -X POST "$base/rest/v1/rpc/studyos_keepalive" \
+              -H "apikey: $SUPABASE_KEY" -H "Content-Type: application/json" \
+              -d '{"p_source":"github"}' || true
+          }
+
+          status="$(rpc)"
+          if [ "$status" = "200" ]; then
+            jq . body.json
+            previous_at="$(jq -r '.previous_at // empty' body.json)"
+            previous_source="$(jq -r '.previous_source // empty' body.json)"
+            if [ -n "$previous_at" ]; then
+              age=$(( $(date -u +%s) - $(date -u -d "$previous_at" +%s) ))
+              # Il Worker scrive due volte al giorno: più di 2 giorni di silenzio vuol dire che si è fermato.
+              if [ "$age" -gt 172800 ]; then
+                echo "::warning::Last heartbeat was $((age / 3600)) h ago (from $previous_source): check the Cloudflare cron worker."
+              fi
+            fi
+            exit 0
+          fi
+
+          if [ "$status" = "404" ] && grep -q PGRST202 body.json; then
+            echo "::warning::studyos_keepalive() is missing: run supabase/keepalive.sql in the Supabase SQL Editor. Using a fallback query."
+            fstatus="$(curl -sS --max-time 30 -o fallback.json -w "%{http_code}" \
+              "$base/rest/v1/studyos_items?select=id&limit=1" -H "apikey: $SUPABASE_KEY" || true)"
+            if [ "$fstatus" = "200" ] || { [ "$fstatus" = "401" ] && grep -q 42501 fallback.json; }; then
+              exit 0
+            fi
+            echo "::error::Supabase fallback query answered $fstatus: $(head -c 300 fallback.json)"
+            exit 1
+          fi
+
+          echo "::error::Supabase answered $status: $(head -c 300 body.json 2>/dev/null). The project may be paused: restore it from the Supabase dashboard."
+          exit 1
