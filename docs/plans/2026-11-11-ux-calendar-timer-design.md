@@ -155,6 +155,76 @@ promemoria come calcolo) in parallelo agli altri filoni; (b) interfaccia (modulo
 "solo questa / successive / tutte", ricorrenze, festività, Attività, avvisi) dopo il filtro per materia;
 (c) `.ics` completo e guida all'importazione/esportazione; poi strumenti MCP.
 
+### 8. Modulo evento, selettori, sovrapposizioni, più giorni, colori per tipologia
+
+Richiesta dell'11/11 (punti 8, 9, 9.1, 9.2).
+
+**Selettore di data e ora** (`DateField` / `DateTimeField`, al posto di `datetime-local`, che sui
+telefoni apre le rotelle). Al tocco: un mese intero con i giorni della settimana in alto (lun → dom),
+oggi riconoscibile, la data scelta piena; frecce per i mesi e tocco sul titolo per scegliere mese e
+anno senza scorrere. Scelta la data, nello stesso pannello si sceglie l'ora: orari ogni 15 minuti
+attorno a quello attuale più un campo "hh:mm" da scrivere. Sul telefono è un pannello dal basso, sul
+computer un popover; tastiera completa (frecce, Pagina su/giù, Invio, Escape). Accanto al campo il
+testo mostra sempre giorno della settimana e data ("mar 12 nov, 10:00"). Lo usano il modulo evento e
+l'aggiunta rapida subito; le altre schermate (Attività, Esami, Obiettivi, voti, studio manuale) dopo.
+
+**Eventi contemporanei.** Nella griglia oraria gli eventi che si sovrappongono stanno affiancati in
+colonne proporzionate (gruppi di sovrapposizione, colonne assegnate in ordine di inizio, un evento si
+allarga verso destra se la colonna accanto è libera), posizione e altezza restano quelle dell'orario.
+Gli eventi non sovrapposti non si restringono. Su schermi stretti, oltre 2 colonne: le prime due più
+un "+N" che apre l'elenco di quella fascia.
+
+**Pop-up e scorrimento.** Con un pannello o una finestra aperta la pagina sotto non scorre; scorre
+solo il contenuto del pannello; alla chiusura la pagina resta dov'era (nessun salto); funziona con
+pannelli uno sopra l'altro (es. data dentro il modulo evento) e al tocco (iOS compreso). Focus
+dentro il pannello, Escape chiude solo quello in cima, il focus torna al pulsante che l'ha aperto.
+
+**Un solo modulo per creare e modificare un evento** (`Drawer`), con le stesse sezioni nei due casi:
+1. Principali: titolo, inizio, fine (oppure durata), tutto il giorno.
+2. Aspetto e collocazione: tipologia, colore (tavolozza con anteprima), materia.
+3. Altre opzioni (chiuse all'inizio): ripetizione e fine della ripetizione, promemoria, descrizione,
+   luogo o destinazione, collegamenti, il resto che esiste già.
+Salva e Annulla sempre visibili in fondo; la fine non può precedere l'inizio (messaggio chiaro, la
+fine si sposta con l'inizio mantenendo la durata); chiudere con modifiche non salvate chiede conferma.
+
+**Vacanza.** Nuova tipologia (`category: "vacation"`; le versioni vecchie mostrano solo un'etichetta
+vuota, nessun errore). Percorso semplice come le ricorrenze: nome, dal… al… con il selettore a
+calendario, durata in giorni calcolata (partenza e ritorno compresi), tutto il giorno automatico,
+colore giallo e icona valigia, destinazione, note, promemoria facoltativi. Un solo evento:
+modificarne le date lo allunga o accorcia, eliminarlo lo toglie tutto.
+
+**Eventi su più giorni** (qualsiasi tipologia). In Settimana e Mese una sola barra continua che
+copre i giorni interessati, nella fascia "tutto il giorno" in alto; nel Mese si spezza solo al cambio
+di riga (settimana), come Google; tocco ovunque sulla barra = stesso evento. In Giorno compare come
+striscia in alto con "giorno 2 di 3"; in Agenda una sola voce "ven 3 – dom 5".
+
+**Colori per tipologia.** Ogni tipologia ha un colore predefinito applicato subito alla scelta (con
+anteprima nel modulo): Esame rosso, Palestra bianco, Personale verde, Vacanza giallo, Compleanno viola,
+festività grigio chiaro; le altre tipologie hanno un colore proprio della tavolozza. Se l'utente sceglie
+un colore a mano quell'evento lo tiene (`colorCustom`), anche cambiando tipologia; altrimenti segue il
+colore della tipologia. Eventi già salvati: se il loro colore è quello che l'app assegnava in
+automatico seguono la tipologia, altrimenti è considerato scelto a mano. I colori predefiniti si
+cambiano da "Altre azioni › Colori delle tipologie" (preferenza sincronizzata). Leggibilità: colori
+chiari (bianco, giallo, grigio) resi con fondo tenue, bordo e testo scuri, sempre contrasto AA in
+chiaro e scuro; oltre al colore, una piccola icona per tipologia.
+
+## Timer: tre modalità e sessioni complete (richiesta dell'11/11, punto 10)
+
+Aggiunta al §4. **Pomodoro · Timer · Cronometro**:
+- Timer: conto alla rovescia con durata libera in ore e minuti (1 h 30, 2 h 15…); le durate pronte
+  restano come scorciatoie. Pausa, riprendi, termina prima.
+- Cronometro e Pomodoro come al §4.
+- Prima di avviare: materia (o "Nessuna materia") e, facoltativi, argomento (tra quelli della materia
+  o scritto libero: capitolo, lezione, breve descrizione).
+- Ogni sessione salva: materia, data, inizio e fine reali, durata senza pause, modalità, argomento,
+  note. Timer e Cronometro alla fine mostrano un riepilogo modificabile (materia, argomento, note,
+  minuti) con "Salva"; i blocchi Pomodoro si salvano da soli (scelta già presa) e si correggono dopo con
+  "Modifica" dalla notifica o dall'elenco delle sessioni (oggi manca: si aggiunge la modifica di una
+  sessione). Se il timer finisce ad app chiusa, alla riapertura compare il riepilogo con l'ora reale.
+- Ogni sessione conta una volta sola ovunque (Studio, Materie, Statistiche, calendario).
+- Pagina della materia: tempo totale, oggi, per giorno / settimana / mese, andamento, elenco delle
+  sessioni (data, durata, argomento), tempo per argomento. Statistiche generali: confronto tra materie.
+
 ## Fase 2 (dopo il merge di people-push)
 
 Menu laterale a gruppi (Oggi · Università · Con gli altri · Altro, nulla tolto); un solo
