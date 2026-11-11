@@ -279,3 +279,52 @@ test("hub: la conferma arriva con approval_status e le azioni mai ritirate scado
   assert.equal(dropped.code, "not_connected");
   clock.now = Date.now();
 });
+
+test("hub: /register e /authorize aperti a tutti non si riempiono per sempre", async () => {
+  clock.now = Date.now();
+  const agent = hub();
+  const register = (name = "x") => ask(agent, "/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["https://attacker.example/cb"], client_name: name })
+  });
+  for (let index = 0; index < 50; index += 1) assert.equal((await register()).status, 201);
+  // Il 51° prende il posto del client fermo più vecchio (prima: 400 per sempre).
+  const extra = await register();
+  assert.equal(extra.status, 201);
+  assert.equal(agent.exportState().oauth.clients.length, 50);
+
+  // Una pioggia di /authorize con lo stesso client: al massimo 5 consensi in coda, mai di più.
+  const clientId = (await extra.json()).client_id;
+  const authorize = (id) => ask(agent, `/authorize?${new URLSearchParams({
+    client_id: id, redirect_uri: "https://attacker.example/cb", response_type: "code", code_challenge: "x".repeat(43), code_challenge_method: "S256"
+  })}`);
+  const first = await authorize(clientId);
+  assert.equal(first.status, 200);
+  assert.match(first.headers.get("set-cookie") ?? "", /Max-Age=300;/);
+  for (let index = 0; index < 30; index += 1) assert.equal((await authorize(clientId)).status, 200);
+  assert.ok(agent.consents.length <= 5, `consensi in coda: ${agent.consents.length}`);
+
+  // In tutto al massimo 20 consensi aperti: oltre, 429 finché i vecchi non scadono.
+  const others = [];
+  for (let index = 0; index < 4; index += 1) others.push((await (await register()).json()).client_id);
+  for (const id of others) for (let index = 0; index < 5; index += 1) await authorize(id);
+  const refused = await authorize((await (await register()).json()).client_id);
+  assert.equal(refused.status, 429);
+  assert.match(await refused.text(), /Troppe richieste di accesso/);
+
+  const token = await pairBrowser(agent);
+  const delivered = [];
+  for (;;) {
+    const job = await (await ask(agent, "/bridge/poll", { method: "POST", headers: site, body: JSON.stringify({ token }) })).json();
+    if (job.type !== "consent") break;
+    delivered.push(job);
+  }
+  assert.equal(delivered.length, 20);
+
+  // «Revoca gli accessi» nell'app toglie anche i client registrati.
+  const revoked = await ask(agent, "/oauth/revoke", { method: "POST", headers: site, body: JSON.stringify({ token }) });
+  assert.equal(revoked.status, 200);
+  assert.equal(agent.exportState().oauth.clients.length, 0);
+  assert.equal((await register()).status, 201);
+});

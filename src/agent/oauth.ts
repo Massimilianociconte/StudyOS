@@ -6,6 +6,8 @@ export interface OAuthClient {
   clientName: string;
   redirectUris: string[];
   createdAt: string;
+  /** Primo token emesso. Una registrazione mai usata scade dopo `UNUSED_CLIENT_TTL_MS`. */
+  usedAt?: string;
 }
 
 /** Permesso cloud di un connettore remoto (`/u/<nome>/mcp`): segreto del grant e fuso del browser. */
@@ -57,7 +59,19 @@ export interface TokenActor {
 const CODE_TTL_MS = 60_000;
 const ACCESS_TTL_MS = 60 * 60 * 1000;
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const REQUEST_TTL_MS = 10 * 60 * 1000;
+/** Consenso in attesa: la pagina /authorize e il cookie durano altrettanto (httpHub). */
+export const REQUEST_TTL_MS = 5 * 60 * 1000;
+/**
+ * /register e /authorize sono aperti a chiunque: limiti perché non si riempiano per sempre.
+ * - Client registrati: al limite si tolgono quelli senza token, consensi o codici, dal più vecchio;
+ *   una registrazione mai usata scade dopo 24 ore.
+ * - Consensi in attesa: 5 per client (il sesto prende il posto del più vecchio), 20 in tutto (oltre,
+ *   /authorize risponde 429), così l'app non riceve una pioggia di richieste.
+ */
+const MAX_CLIENTS = 50;
+const UNUSED_CLIENT_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_REQUESTS_PER_CLIENT = 5;
+const MAX_PENDING_REQUESTS = 20;
 
 const bytesToBase64Url = (bytes: Uint8Array) => {
   let binary = "";
@@ -188,6 +202,11 @@ export class OauthServer {
     this.clients = new Map(state.clients.map((client) => [client.clientId, client]));
     this.access = new Map(state.access.map((item) => [item.hash, item.record]));
     this.refresh = new Map(state.refresh.map((item) => [item.hash, item.record]));
+    // Stati salvati prima di `usedAt`: un client con token è stato usato.
+    for (const record of [...this.access.values(), ...this.refresh.values()]) {
+      const client = this.clients.get(record.clientId);
+      if (client && !client.usedAt) this.clients.set(client.clientId, { ...client, usedAt: client.createdAt });
+    }
   }
 
   dump(): PersistedOauth {
@@ -201,7 +220,18 @@ export class OauthServer {
 
   register(body: unknown, now = this.now()): { ok: true; client: OAuthClient } | { ok: false; error: string; status: number } {
     this.prune(now);
-    if (this.clients.size >= 50) return { ok: false, status: 400, error: "Troppi client registrati. Revoca gli accessi da StudyOS." };
+    if (this.clients.size >= MAX_CLIENTS) {
+      // Si fa posto con i client fermi (nessun token, consenso o codice), dal più vecchio.
+      const busy = this.busyClients();
+      const idle = [...this.clients.values()]
+        .filter((client) => !busy.has(client.clientId))
+        .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      for (const client of idle) {
+        if (this.clients.size < MAX_CLIENTS) break;
+        this.clients.delete(client.clientId);
+      }
+    }
+    if (this.clients.size >= MAX_CLIENTS) return { ok: false, status: 400, error: "Troppi client registrati. Revoca gli accessi da StudyOS." };
     const source = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
     const redirects = Array.isArray(source.redirect_uris) ? source.redirect_uris : [];
     if (!redirects.length || redirects.length > 5) return { ok: false, status: 400, error: "Servono da 1 a 5 redirect_uris." };
@@ -224,10 +254,10 @@ export class OauthServer {
     return { ok: true, client };
   }
 
-  beginAuthorization(query: URLSearchParams, now = this.now()): { ok: true; requestId: string; clientName: string; scopes: AgentScope[]; redirectHost: string; resource: string } | { ok: false; error: string; description: string } {
+  beginAuthorization(query: URLSearchParams, now = this.now()): { ok: true; requestId: string; clientName: string; scopes: AgentScope[]; redirectHost: string; resource: string } | { ok: false; error: string; description: string; status?: number } {
     this.prune(now);
     const client = this.clients.get(query.get("client_id") ?? "");
-    if (!client) return { ok: false, error: "invalid_client", description: "Client non registrato." };
+    if (!client) return { ok: false, error: "invalid_client", description: "Client non registrato o rimosso (per esempio dopo «Revoca l'accesso agli assistenti» in StudyOS): scollega e ricollega il connettore nell'assistente." };
     const redirect = safeRedirectUri(query.get("redirect_uri") ?? "");
     if (!redirect || !redirectRegistered(client.redirectUris, redirect)) return { ok: false, error: "invalid_request", description: "redirect_uri non registrato." };
     if (query.get("response_type") !== "code") return { ok: false, error: "unsupported_response_type", description: "Solo response_type=code." };
@@ -238,6 +268,13 @@ export class OauthServer {
     const resource = this.resolveResource(query.get("resource"));
     if (!resource) return { ok: false, error: "invalid_target", description: "Il parametro resource non coincide con questo server." };
     const scopes = parseScopes(query.get("scope"));
+    // Pochi consensi aperti: per client il nuovo prende il posto del più vecchio (chi riprova vede
+    // l'ultimo), in tutto oltre il limite si rifiuta finché i vecchi non scadono.
+    const own = [...this.requests.entries()].filter(([, item]) => item.clientId === client.clientId);
+    for (const [id] of own.slice(0, Math.max(0, own.length - MAX_REQUESTS_PER_CLIENT + 1))) this.requests.delete(id);
+    if ([...this.requests.values()].filter((item) => !item.decision).length >= MAX_PENDING_REQUESTS) {
+      return { ok: false, error: "temporarily_unavailable", description: "Troppe richieste di accesso in attesa. Riprova tra qualche minuto.", status: 429 };
+    }
     const requestId = randomToken(18);
     this.requests.set(requestId, {
       clientId: client.clientId,
@@ -325,10 +362,13 @@ export class OauthServer {
     };
   }
 
+  /** «Revoca gli accessi» in StudyOS: token, consensi e client; ogni connettore si registra di nuovo. */
   revokeAll() {
     this.access.clear();
     this.refresh.clear();
     this.codes.clear();
+    this.requests.clear();
+    this.clients.clear();
   }
 
   /** RFC 7009: revoca un access o refresh token e il resto della stessa concessione. Esito sempre ok. */
@@ -385,6 +425,8 @@ export class OauthServer {
     };
     this.access.set(await sha256Base64Url(access), record);
     this.refresh.set(await sha256Base64Url(refresh), { ...record, expiresAt: now + REFRESH_TTL_MS, family });
+    const registered = this.clients.get(client.clientId);
+    if (registered && !registered.usedAt) this.clients.set(client.clientId, { ...registered, usedAt: new Date(now).toISOString() });
     return {
       access_token: access,
       token_type: "Bearer",
@@ -408,5 +450,19 @@ export class OauthServer {
     for (const [code, stored] of this.codes) if (stored.expiresAt <= now || stored.used) this.codes.delete(code);
     for (const [hash, record] of this.access) if (record.expiresAt <= now) this.access.delete(hash);
     for (const [hash, record] of this.refresh) if (record.expiresAt <= now) this.refresh.delete(hash);
+    const busy = this.busyClients();
+    for (const [id, client] of this.clients) {
+      if (!client.usedAt && !busy.has(id) && !(now - Date.parse(client.createdAt) < UNUSED_CLIENT_TTL_MS)) this.clients.delete(id);
+    }
+  }
+
+  /** Client con un token, un consenso o un codice ancora validi (dopo `prune`). */
+  private busyClients() {
+    const busy = new Set<string>();
+    for (const record of this.access.values()) busy.add(record.clientId);
+    for (const record of this.refresh.values()) busy.add(record.clientId);
+    for (const request of this.requests.values()) busy.add(request.clientId);
+    for (const stored of this.codes.values()) busy.add(stored.request.clientId);
+    return busy;
   }
 }

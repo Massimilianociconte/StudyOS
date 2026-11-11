@@ -456,6 +456,96 @@ test("OAuth: iss nel redirect, resource assente o radice, cursor://, loopback co
   assert.equal(refreshed.ok, false);
 });
 
+// /register è aperto a tutti (registrazione dinamica): 50 registrazioni non devono bloccare per
+// sempre i connettori nuovi, e /authorize non deve riempire StudyOS di richieste di consenso.
+const oauthHarness = async () => {
+  const clock = { now: 1_800_000_000_000 };
+  const oauth = new OauthServer("https://studyos-agent.esempio.workers.dev/mcp", () => clock.now);
+  const verifier = "c".repeat(50);
+  const challenge = await sha256Base64Url(verifier);
+  const redirect = "https://chatgpt.com/connector/oauth/callback";
+  const register = (name = "Spam") => {
+    const created = oauth.register({ client_name: name, redirect_uris: [redirect] });
+    assert.equal(created.ok, true, JSON.stringify(created));
+    clock.now += 1000;
+    return created.client.clientId;
+  };
+  const begin = (clientId) => oauth.beginAuthorization(new URLSearchParams({
+    client_id: clientId, redirect_uri: redirect, response_type: "code", code_challenge: challenge, code_challenge_method: "S256", scope: "studyos:read"
+  }));
+  const connect = async (clientId) => {
+    const begun = begin(clientId);
+    assert.equal(begun.ok, true, JSON.stringify(begun));
+    const code = new URL(oauth.decide(begun.requestId, true, ["studyos:read"]).redirectTo).searchParams.get("code");
+    const token = await oauth.exchange(new URLSearchParams({ grant_type: "authorization_code", client_id: clientId, redirect_uri: redirect, code, code_verifier: verifier }));
+    assert.equal(token.ok, true, JSON.stringify(token));
+    return token.body;
+  };
+  const registered = (clientId) => oauth.dump().clients.some((client) => client.clientId === clientId);
+  return { clock, oauth, register, begin, connect, registered };
+};
+
+test("OAuth: registrazione piena, si fa posto togliendo i client senza token, dal più vecchio", async () => {
+  const { clock, oauth, register, begin, connect, registered } = await oauthHarness();
+  const live = register("ChatGPT");
+  const tokens = await connect(live);
+  const waiting = register("Claude");
+  const consent = begin(waiting);
+  assert.equal(consent.ok, true);
+  const spam = Array.from({ length: 48 }, () => register());
+  assert.equal(oauth.dump().clients.length, 50);
+
+  // Al 51° si toglie il client senza token più vecchio; mai uno con token o con un consenso aperto.
+  const newcomer = register("Nuovo");
+  assert.equal(registered(newcomer), true);
+  assert.equal(registered(spam[0]), false);
+  assert.equal(registered(spam[1]), true);
+  for (let index = 0; index < 60; index += 1) register();
+  assert.equal(oauth.dump().clients.length, 50);
+  assert.equal(registered(live), true);
+  assert.equal(registered(waiting), true);
+  assert.ok(await oauth.authenticate(tokens.access_token));
+  assert.equal(oauth.decide(consent.requestId, true, ["studyos:read"]).ok, true);
+  assert.equal(begin(spam[5]).ok, false, "un client tolto non apre più consensi");
+
+  // Una registrazione mai usata scade dopo 24 ore; un client con token resta.
+  const unused = register("Mai usato");
+  clock.now += 24 * 60 * 60 * 1000 + 1;
+  assert.equal(registered(unused), false);
+  assert.equal(registered(live), true);
+});
+
+test("OAuth: «Revoca gli accessi» toglie anche i client, e i consensi aperti sono pochi e brevi", async () => {
+  const { clock, oauth, register, begin, connect, registered } = await oauthHarness();
+  const live = register("ChatGPT");
+  await connect(live);
+  const spammer = register("Spam");
+
+  // Al massimo 5 richieste aperte per client: la sesta prende il posto della più vecchia.
+  const asked = Array.from({ length: 6 }, () => begin(spammer));
+  assert.ok(asked.every((item) => item.ok));
+  assert.equal(oauth.pendingConsent(asked[0].requestId), null);
+  for (const item of asked.slice(1)) assert.ok(oauth.pendingConsent(item.requestId));
+
+  // In tutto al massimo 20 consensi in attesa: oltre, /authorize risponde «troppe richieste».
+  const others = Array.from({ length: 4 }, () => register());
+  for (const clientId of others) for (let index = 0; index < 5; index += 1) begin(clientId);
+  const full = begin(live);
+  assert.equal(full.ok, false);
+  assert.equal(full.status, 429);
+  // Scadono dopo qualche minuto: poi si può chiedere di nuovo.
+  clock.now += 5 * 60 * 1000 + 1;
+  assert.equal(oauth.pendingConsent(asked[5].requestId), null);
+  const again = begin(live);
+  assert.equal(again.ok, true, JSON.stringify(again));
+
+  oauth.revokeAll();
+  assert.deepEqual(oauth.dump().clients, []);
+  assert.equal(registered(live), false);
+  assert.equal(oauth.pendingConsent(again.requestId), null);
+  assert.equal(register("Di nuovo") !== undefined, true);
+});
+
 const shareGrant = (over) => ({
   id: "s1",
   ownerId: "owner-uuid-1",

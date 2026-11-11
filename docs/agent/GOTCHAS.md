@@ -252,5 +252,10 @@
 - Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
   legato al token OAuth); il database ne tiene l'hash. «Revoca l'accesso agli assistenti» revoca
   tutti i permessi dell'account (`studyos_revoke_agent_grants`), anche a browser scollegato.
+- OAuth dell'hub: `/register` e `/authorize` sono aperti a chiunque. `oauth.ts` tiene al massimo
+  50 client (al limite toglie quelli senza token, consensi o codici, dal più vecchio; una
+  registrazione mai usata scade dopo 24 ore) e 5 consensi aperti per client, 20 in tutto, per 5
+  minuti; `httpHub` toglie dalla coda i consensi sostituiti. `revokeAll` toglie anche i client.
+  Non togliere questi limiti: senza, 50 registrazioni bloccavano per sempre i connettori nuovi.
 - Locale: la porta 8787 può essere occupata da un'altra app. Per `wrangler dev` usa
   `--port 8797` e controlla con `lsof -iTCP:8787` prima di mandare richieste a 8787.

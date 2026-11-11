@@ -80,7 +80,13 @@ L'accesso è OAuth 2.1 con PKCE e registrazione dinamica del client. Al primo
 collegamento la conferma compare in Impostazioni → Agenti del browser
 collegato. Sono accettati redirect https, loopback con qualsiasi porta
 (`http://127.0.0.1:…`, `http://localhost:…`) e schemi delle app native come
-`cursor://`. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
+`cursor://`. La registrazione è aperta a chiunque, quindi ha dei limiti: al massimo 50
+client; oltre, l'hub toglie quelli senza token, consensi o codici validi, dal più vecchio, e
+una registrazione mai usata scade dopo 24 ore. Una richiesta di consenso vale 5 minuti; ne
+restano aperte al massimo 5 per client (la nuova prende il posto della più vecchia) e 20 in
+tutto (oltre, la pagina di autorizzazione dice di riprovare tra qualche minuto). «Revoca
+l'accesso agli assistenti» toglie token, consensi e client registrati: per riaverlo, scollega e
+ricollega il connettore nell'assistente. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
 (`initialize` per i client precedenti, `server/discover` per il 2026), sempre in
 JSON e mai in stream.
 

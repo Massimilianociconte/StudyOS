@@ -18,7 +18,7 @@ import { toolSummary } from "./catalog";
 import { choosePoller, siteFromOrigin, type BridgeSite } from "./hubEndpoint";
 import { ResultLedger } from "./ledger";
 import { handleMcpRpc } from "./mcp";
-import { OauthServer, randomToken, timingSafeEqual, type CloudGrantRecord, type PersistedOauth } from "./oauth";
+import { OauthServer, REQUEST_TTL_MS, randomToken, timingSafeEqual, type CloudGrantRecord, type PersistedOauth } from "./oauth";
 import type { AgentActor, AgentCallResult } from "./types";
 import type { CloudRunner } from "./cloudRunner";
 import { isTimeZone } from "./zonedDate";
@@ -410,7 +410,9 @@ export class HttpHub {
     if (request.method === "GET" && url.pathname === "/authorize") {
       return this.exclusive(async () => {
         const begun = this.oauth.beginAuthorization(url.searchParams);
-        if (!begun.ok) return this.html(400, this.messagePage(begun.description));
+        // Il consenso nuovo può aver preso il posto di uno vecchio dello stesso client: fuori dalla coda.
+        this.dropStaleConsents();
+        if (!begun.ok) return this.html(begun.status ?? 400, this.messagePage(begun.description));
         const job: ConsentJob = { type: "consent", requestId: begun.requestId, clientName: begun.clientName, scopes: begun.scopes, redirectHost: begun.redirectHost };
         if (this.oauth.isCloudResource(begun.resource)) {
           // Connettore remoto: la richiesta va solo all'account scritto nell'indirizzo.
@@ -427,7 +429,7 @@ export class HttpHub {
         this.claim();
         const secure = this.options.secureCookies ? "; Secure" : "";
         return this.html(200, this.authorizePage(begun.clientName, job.accountName), {
-          "set-cookie": `studyos_oauth=${encodeURIComponent(begun.requestId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}`
+          "set-cookie": `studyos_oauth=${encodeURIComponent(begun.requestId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(REQUEST_TTL_MS / 1000)}${secure}`
         });
       });
     }
@@ -535,6 +537,7 @@ export class HttpHub {
       if (url.pathname === "/oauth/revoke") {
         return this.exclusive(async () => {
           this.oauth.revokeAll();
+          this.dropStaleConsents();
           await this.markDirty();
           return this.json(200, { ok: true });
         });
@@ -725,10 +728,15 @@ export class HttpHub {
         error: "StudyOS non ha ricevuto l'azione entro 2 minuti e non l'ha eseguita. Chiedi alla persona di aprire StudyOS e riprova."
       });
     }
+    this.dropStaleConsents();
+    return dropped > 0;
+  }
+
+  /** Richieste di consenso scadute, sostituite o revocate: non vanno più consegnate. */
+  private dropStaleConsents() {
     for (let index = this.consents.length - 1; index >= 0; index -= 1) {
       if (!this.oauth.pendingConsent(this.consents[index].requestId)) this.consents.splice(index, 1);
     }
-    return dropped > 0;
   }
 
   private async poll(site: BridgeSite, account: string): Promise<Job | null> {
