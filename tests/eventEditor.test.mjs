@@ -252,7 +252,7 @@ test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
   assert.deepEqual(lost.find((option) => option.id === "following").details.slice(1), [
     "2 giorni che avevi cambiato da soli perdono le loro modifiche e tornano come il resto della serie.",
     "Gli altri giorni che avevi cambiato o annullato da soli restano così.",
-    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: la ripetizione nuova vale anche per quelle date.",
+    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: anche quelle date prendono la ripetizione nuova e perdono il titolo, l'orario e gli altri dettagli che avevano cambiato.",
     "Spariscono: ven 4, 11 dic."
   ]);
   const remove = scopeOptions({ action: "delete", date: "2026-11-12" });

@@ -193,12 +193,24 @@
   arriverebbero mai.
 - Nel calendario le occorrenze condivise hanno la chiave con il prefisso del proprietario:
   due persone possono avere eventi con lo stesso id.
-- «Questo e i successivi» (`planSplit`, e `planAll` dal primo giorno): le parti divise prima
-  dopo quel giorno si assorbono solo se la modifica cambia la regola (anche quando la regola
-  segue un giorno spostato), e la scelta elenca le date che spariscono (`scopeImpact.gone`;
-  l'agente le restituisce in `removedDates`). Senza regola nuova restano con le loro regole e
-  prendono solo i campi cambiati (`laterPartsPlan`); l'ora solo se avevano quella della serie
-  modificata prima della modifica (R1-S1).
+- «Questo e i successivi» (`planSplit`, e `planAll` dal primo giorno): il motore classifica la
+  modifica da solo (`followingChange`), così modulo, trascinamento e agente fanno lo stesso
+  (R1-S1 bis).
+  - A. Regola nuova = frequenza, intervallo, giorni scelti, schema del mese o fine scelta. Non lo
+    è la regola che segue solo il giorno spostato (`movedRule`, stessa fine, volte rimaste o
+    "fino al" spostato), né BYDAY esplicito contro implicito con gli stessi giorni. Assorbe TUTTE
+    le parti dopo della famiglia (`laterPartsOf`, comprese le divisioni degli antenati) e la parte
+    modificata arriva alla fine della famiglia (`familyEnd`: fine dell'ultima parte, o mai), mai
+    all'inizio della divisione dopo; una fine scelta nel modulo vince. La scelta elenca le date
+    che spariscono e dice che quelle parti perdono titolo, orario e dettagli propri
+    (`scopeImpact.gone`; l'agente le dà in `removedDates`).
+  - B. Spostamento (trascinamento o nuova data di inizio) = cambio di programma come l'ora: le
+    parti dopo con lo stesso programma della serie prima della modifica (regola senza fine, ora,
+    giorni di un tutto il giorno; `scheduleKey` + `sameTime`) si spostano dello stesso scarto,
+    con gli stessi giorni della regola, "fino al" e `originalDate` spostati; le altre tengono il
+    loro. Nulla sparisce. Spostamento + regola nuova = A.
+  - C. I giorni di un tutto il giorno (`spanDays`) contano come ora (`sameTime`).
+  - In B e C tutte le parti dopo prendono i campi cambiati (`laterPartsPlan`).
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`

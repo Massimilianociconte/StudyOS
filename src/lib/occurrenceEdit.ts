@@ -10,6 +10,7 @@ import {
   isOccurrenceRow,
   laterParts,
   legacyProjection,
+  movedRule,
   normalizeRepeat,
   planDelete,
   planEdit,
@@ -19,7 +20,7 @@ import {
 } from "./repeat";
 import { allScopePatch, occurrenceTarget, shiftPatchDays, startDayOf } from "./occurrenceLookup";
 import { followingPatch } from "./eventEditor";
-import { adaptRuleToStart, weekdayOf, weekdayPosition } from "./repeatPicker";
+import { weekdayOf, weekdayPosition } from "./repeatPicker";
 import { civilAddDays, civilDaysBetween, daysInMonth, isCivilDate, isValidTimeZone, localMidnight, parseCivil } from "./tz";
 
 type Occurrence = CalendarEvent & { occurrenceDate: string };
@@ -129,32 +130,8 @@ const withoutRepeat = (changes: Partial<CalendarEvent>): Partial<CalendarEvent> 
 const pickedDay = (item: Pick<CalendarEvent, "start" | "allDay">, changes: Partial<CalendarEvent>, series: Pick<CalendarEvent, "allDay" | "timeZone">) =>
   startDayOf(changes.start ?? item.start, (changes.allDay ?? item.allDay ?? series.allDay) === true, zoneOf(series));
 
-const WEEK: readonly Weekday[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
-
-/**
- * Regola dopo lo spostamento di un suo giorno da `from` a `to` (date civili). Settimanale con più
- * giorni, tra cui quello di `from`: ogni giorno si sposta dello stesso scarto, come in Google Calendar
- * ("lun–ven" un giorno dopo: "mar–sab"). Ogni 2 o più settimane si sposta anche l'inizio della
- * settimana (WKST), così le date della stessa settimana restano insieme. Un giorno solo o "il secondo
- * lunedì": vedi `adaptRuleToStart`. Stesso giorno della settimana, o un giorno che la regola non ha:
- * la regola com'è (stesso oggetto).
- */
-export const movedRule = (rule: RepeatRule | null | undefined, from: string, to: string): RepeatRule | null => {
-  if (!rule) return null;
-  if (!isCivilDate(from) || !isCivilDate(to)) return rule;
-  const days = rule.freq === "weekly" ? rule.byWeekday ?? [] : [];
-  if (days.length < 2) return adaptRuleToStart(rule, from, to);
-  const shift = (WEEK.indexOf(weekdayOf(to)) - WEEK.indexOf(weekdayOf(from)) + 7) % 7;
-  if (!shift || !days.includes(weekdayOf(from))) return rule;
-  const moved = new Set(days.map((day) => WEEK[(WEEK.indexOf(day) + shift) % 7]));
-  const next: RepeatRule = { ...rule, byWeekday: WEEK.filter((day) => moved.has(day)) };
-  if ((rule.interval ?? 1) > 1) {
-    const wkst = WEEK[(WEEK.indexOf(rule.wkst ?? "MO") + shift) % 7];
-    if (wkst === "MO") delete next.wkst;
-    else next.wkst = wkst;
-  }
-  return next;
-};
+// La regola che segue un giorno spostato sta nel motore (vedi `movedRule`): la usano anche i piani.
+export { movedRule } from "./repeat";
 
 /**
  * Giorni della settimana di una regola settimanale con più giorni spostati tutti insieme (per dirlo
@@ -281,16 +258,23 @@ export interface ScopeImpact {
   kept: number;
   /** Il giorno aperto era cambiato da solo e perde la sua modifica. */
   ownLost: boolean;
-  /** Divisioni successive (un "Questo e i successivi" di prima) che la modifica sostituisce (solo con una regola nuova). */
+  /**
+   * Parti successive della famiglia (un "Questo e i successivi" di prima, anche da una serie da cui
+   * questa è nata) che la modifica sostituisce: solo con una regola nuova, che vale per tutto il resto.
+   */
   absorbed: number;
-  /** Date di quelle divisioni che spariscono (nell'anno dopo il giorno aperto), in ordine. */
+  /** Date di quelle parti che spariscono (nell'anno dopo il giorno aperto), in ordine. */
   gone: string[];
   /** Ne spariscono anche dopo quell'anno. */
   goneMore: boolean;
-  /** Parti successive (divise prima) che una modifica senza regola nuova lascia nei loro giorni, con i campi cambiati. */
+  /** Parti successive (divise prima) che una modifica senza regola nuova lascia, con i campi cambiati. */
   laterParts: number;
-  /** Di queste, quante tengono un orario loro mentre la modifica cambia l'ora. */
+  /** Di queste, quante tengono un orario loro mentre la modifica cambia l'ora (o i giorni di un tutto il giorno). */
   laterOwnTime: number;
+  /** Spostando il giorno: quante si spostano con lui (avevano gli stessi giorni e lo stesso orario). */
+  laterMoved: number;
+  /** Spostando il giorno: quante restano dove sono (giorni o orario loro). */
+  laterOwnDays: number;
 }
 
 /** Giorni dopo quello aperto in cui si cercano le date che spariscono. */
@@ -393,18 +377,29 @@ export const scopeImpact = (
     gone: [],
     goneMore: false,
     laterParts: 0,
-    laterOwnTime: 0
+    laterOwnTime: 0,
+    laterMoved: 0,
+    laterOwnDays: 0
   };
   if (scope === "following" && after.absorbed) {
     const gone = goneDates(events, after.events, after.absorbedIds, after.touched, target.date, shift);
     impact.gone = gone.dates;
     impact.goneMore = gone.more;
   } else if (scope === "following") {
-    // Senza regola nuova le parti successive restano (R1-S1): quante, e quante tengono un orario loro.
+    // Senza regola nuova le parti successive restano (R1-S1): quante, quante tengono un orario loro
+    // e, spostando il giorno, quante si spostano con lui.
     const later = laterParts(events, target.seriesId, target.date);
     impact.laterParts = later.length;
     const part = after.events.find((event) => event.id === `${target.seriesId}~${target.date}` && !isOccurrenceRow(event)) ?? after.events.find((event) => event.id === target.seriesId);
     if (later.length && part && !sameClock(part, series)) impact.laterOwnTime = later.filter((event) => !sameClock(event, series)).length;
+    if (later.length && shift) {
+      const dayOf = (event: CalendarEvent) => startDayOf(event.start, event.allDay, zoneOf(event));
+      impact.laterMoved = later.filter((event) => {
+        const next = after.events.find((item) => item.id === event.id && !isOccurrenceRow(item));
+        return next !== undefined && dayOf(next) !== dayOf(event);
+      }).length;
+      impact.laterOwnDays = later.length - impact.laterMoved;
+    }
   }
   for (const row of rows) {
     const own = target.row && row.id === item.id;

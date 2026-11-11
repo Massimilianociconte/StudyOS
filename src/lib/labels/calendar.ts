@@ -191,12 +191,16 @@ export const SCOPE_TEXT = {
   followingEdit: (day: string) => `Cambia l'evento di ${day} e tutti quelli dopo; quelli prima restano come sono.`,
   followingMove: (day: string) => `Sposta l'evento di ${day} e tutti quelli dopo; quelli prima restano dove sono.`,
   followingDelete: (day: string) => `Elimina l'evento di ${day} e tutti quelli dopo, comprese le modifiche fatte ai singoli giorni.`,
-  /** Regola nuova: le parti cambiate prima con "Questo e i successivi" prendono la ripetizione nuova. */
-  followingSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: la ripetizione nuova vale anche per quelle date.",
+  /** Regola nuova: le parti cambiate prima con "Questo e i successivi" prendono la ripetizione nuova e perdono ciò che avevano di loro. */
+  followingSplits:
+    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: anche quelle date prendono la ripetizione nuova e perdono il titolo, l'orario e gli altri dettagli che avevano cambiato.",
   /** Le date di quelle parti che la ripetizione nuova non ha (es. "ven 4, 11, 18 dic"). */
   followingGone: (dates: string, more: boolean) => `Spariscono: ${dates}${more ? " e altre date dopo" : ""}.`,
   /** Senza regola nuova le parti cambiate prima restano (R1-S1). */
   followingKeepsSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: quelle date restano nei loro giorni e prendono solo ciò che hai cambiato qui.",
+  /** Spostando il giorno: le parti cambiate prima con gli stessi giorni e lo stesso orario si spostano anche loro. */
+  followingMovesSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: anche quelle date si spostano e prendono ciò che hai cambiato qui.",
+  followingSplitsOwnDays: "Dove avevi già cambiato giorni o orario, quelle date restano dove sono.",
   followingSplitsOwnTime: "Dove avevi già cambiato l'orario, resta quello.",
   followingKeepsEnd: "La serie finisce quando finiva prima.",
   /** Da un giorno cambiato da solo: i successivi prendono ciò che quel giorno ha di suo (vedi followingPatch). */

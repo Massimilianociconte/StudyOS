@@ -30,33 +30,8 @@ export const presetIdOf = (rule: RepeatRule | null | undefined, start: string): 
   return match?.id ?? "custom";
 };
 
-/**
- * La data d'inizio cambia: le regole che dipendono dal giorno della settimana dell'inizio (scritte
- * con quel giorno) lo seguono. Le altre si restituiscono così come sono (stesso oggetto).
- */
-export const adaptRuleToStart = (rule: RepeatRule | null | undefined, oldStart: string, newStart: string): RepeatRule | null => {
-  if (!rule) return null;
-  if (!isCivilDate(oldStart) || !isCivilDate(newStart) || oldStart === newStart) return rule;
-  const oldDay = weekdayOf(oldStart);
-  const newDay = weekdayOf(newStart);
-  if (rule.freq === "weekly" && rule.byWeekday?.length === 1 && rule.byWeekday[0] === oldDay) {
-    return oldDay === newDay ? rule : { ...rule, byWeekday: [newDay] };
-  }
-  if (rule.freq === "monthly" && rule.monthly?.by === "weekday" && rule.monthly.weekday === oldDay) {
-    const before = weekdayPosition(oldStart);
-    const after = weekdayPosition(newStart);
-    const nth = rule.monthly.nth;
-    if (nth === -1 && before.last) {
-      const next = after.last ? -1 : (Math.min(after.nth, 4) as 1 | 2 | 3 | 4);
-      return { ...rule, monthly: { by: "weekday", nth: next, weekday: newDay } };
-    }
-    if (nth === before.nth) {
-      const next = after.nth > 4 ? -1 : (after.nth as 1 | 2 | 3 | 4);
-      return { ...rule, monthly: { by: "weekday", nth: next, weekday: newDay } };
-    }
-  }
-  return rule;
-};
+// La regola che segue la data d'inizio sta nel motore: serve anche ai piani di modifica (spostamenti).
+export { adaptRuleToStart } from "./repeat";
 
 // ---------------------------------------------------------------------------------------
 // Personalizza

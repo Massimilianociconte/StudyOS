@@ -13,7 +13,7 @@ import {
 } from "../src/lib/occurrenceEdit.ts";
 import { scopeOptions, shortDatesText, weekdaysText } from "../src/lib/eventEditor.ts";
 import { findOccurrence } from "../src/lib/occurrenceLookup.ts";
-import { applyEditPlan, expandEvents, isOccurrenceRow, planDelete, planEdit } from "../src/lib/repeat.ts";
+import { applyEditPlan, expandEvents, isOccurrenceRow, normalizeRepeat, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { customFromRule, repeatPresets, ruleFromCustom } from "../src/lib/repeatPicker.ts";
 import { SCOPE_TEXT } from "../src/lib/labels/calendar.ts";
 import { localMidnight } from "../src/lib/tz.ts";
@@ -72,7 +72,20 @@ const impactsFor = (events, item, changes, shownFields = item) => {
   }
   return result;
 };
-const NO_IMPACT = { changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: 0, gone: [], goneMore: false, laterParts: 0, laterOwnTime: 0 };
+const NO_IMPACT = {
+  changedLost: 0,
+  changedGone: 0,
+  cancelledLost: 0,
+  kept: 0,
+  ownLost: false,
+  absorbed: 0,
+  gone: [],
+  goneMore: false,
+  laterParts: 0,
+  laterOwnTime: 0,
+  laterMoved: 0,
+  laterOwnDays: 0
+};
 
 test("B1. spostare un giorno a un altro giorno con «Questo e i successivi» o «Tutti»: si dice che le modifiche e gli annullamenti si perdono", () => {
   const events = withChangedDays();
@@ -628,4 +641,218 @@ test("R1-S1 (revisione finale). La scelta dice che le parti divise prima restano
 test("date in breve per mese: il giorno della settimana solo quando cambia", () => {
   assert.equal(shortDatesText(["2026-12-04", "2026-12-11", "2026-12-18", "2027-01-01", "2027-01-04"]), "ven 4, 11, 18 dic, ven 1, lun 4 gen");
   assert.equal(shortDatesText([]), "");
+});
+
+// ---------------------------------------------------------------------------------------
+// R1-S1, seconda revisione: una regola nuova assorbe tutto ciò che viene dopo (anche le parti
+// divise da un antenato) fino alla fine della famiglia; uno spostamento di giorno sposta le parti
+// successive con gli stessi giorni e lo stesso orario e non fa sparire nulla.
+// ---------------------------------------------------------------------------------------
+
+const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const weekdayView = (events, from, to) =>
+  expandEvents(events, localMidnight(from), localMidnight(to)).map(
+    (item) => `${item.occurrenceDate} ${WEEKDAY_NAMES[new Date(`${item.occurrenceDate}T12:00:00Z`).getUTCDay()]} ${item.title}`
+  );
+/** Come il calendario: chiamate, impatto e testo della scelta, poi le chiamate applicate con il motore. */
+const following = (events, seriesId, date, changes, action = "edit", ruleChanged = false) => {
+  const item = findOccurrence(events, seriesId, date);
+  assert.ok(item, `${seriesId} ${date}`);
+  const series = seriesOf(events, seriesId);
+  const { calls } = occurrenceEditCalls({ item, series, scope: "following", changes, shown: item });
+  const impact = scopeImpact(events, item, "following", calls, NOW, changes);
+  const lines = scopeOptions({ action, date, ruleChanged, impacts: { following: impact } }).find((option) => option.id === "following").details;
+  return { after: simulateOccurrenceEdit(events, seriesId, date, calls, NOW).events, impact, lines: lines.slice(1) };
+};
+const laterOf = (impact) => [impact.absorbed, impact.gone, impact.laterParts, impact.laterMoved, impact.laterOwnDays];
+
+test("R1-S1 bis (A). Regola nuova da una parte di una parte: assorbe anche la parte divisa dall'antenato e arriva alla fine della famiglia", () => {
+  // P ogni lunedì; R dal 30/11, Q dal 9/11 (si ferma a R), E dal 16/11 della parte Q: R è divisa dall'antenato.
+  let events = [MONDAYS()];
+  events = following(events, "s", "2026-11-30", { title: "R" }).after;
+  events = following(events, "s", "2026-11-09", { title: "Q" }).after;
+  events = following(events, "s~2026-11-09", "2026-11-16", { title: "E" }).after;
+  const e = "s~2026-11-09~2026-11-16";
+  // La regola com'è nel modulo (con la fine che E ha per la divisione, 29/11) e com'è dall'agente (senza fine).
+  for (const [label, end] of [["modulo", normalizeRepeat(seriesOf(events, e)).end], ["agente", undefined]]) {
+    const repeat = { freq: "weekly", byWeekday: ["MO", "WE"], ...(end ? { end } : {}) };
+    const { after, impact, lines } = following(events, e, "2026-11-23", { title: "Z", repeat }, "edit", true);
+    assert.equal(after.some((item) => item.id === "s~2026-11-30"), false, `${label}: R si assorbe`);
+    assert.deepEqual(normalizeRepeat(seriesOf(after, `${e}~2026-11-23`)), { freq: "weekly", byWeekday: ["MO", "WE"] }, `${label}: fino alla fine della famiglia (mai)`);
+    assert.deepEqual(
+      weekdayView(after, "2026-11-01", "2026-12-15"),
+      [
+        "2026-11-02 Mon Lezione",
+        "2026-11-09 Mon Q",
+        "2026-11-16 Mon E",
+        ...["2026-11-23 Mon", "2026-11-25 Wed", "2026-11-30 Mon", "2026-12-02 Wed", "2026-12-07 Mon", "2026-12-09 Wed", "2026-12-14 Mon"].map((day) => `${day} Z`)
+      ],
+      label
+    );
+    // I lunedì di R restano (con la regola nuova): non sparisce nulla, ma R perde il suo titolo e lo si dice.
+    assert.deepEqual(laterOf(impact), [1, [], 0, 0, 0], label);
+    assert.deepEqual(lines, [SCOPE_TEXT.followingSplits], label);
+  }
+  // Una fine scelta nel modulo vince: dopo il 13/12 i lunedì di R spariscono, e si dicono.
+  const chosen = following(events, e, "2026-11-23", { repeat: { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "until", date: "2026-12-13" } } }, "edit", true);
+  assert.equal(weekdayView(chosen.after, "2026-11-01", "2027-02-01").at(-1), "2026-12-09 Wed E");
+  assert.deepEqual([chosen.impact.absorbed, chosen.impact.gone.slice(0, 3), chosen.impact.goneMore], [1, ["2026-12-14", "2026-12-21", "2026-12-28"], true]);
+});
+
+test("R1-S1 bis (A). Giorni cambiati nel modulo (lun → lun e mer) dopo una divisione: la parte arriva alla fine della famiglia", () => {
+  // Divisione dal 30/11 con solo il titolo: i suoi lunedì restano con la regola nuova (ma senza il titolo A).
+  let events = [MONDAYS()];
+  events = following(events, "s", "2026-11-30", { title: "A" }).after;
+  const shownRule = normalizeRepeat(seriesOf(events));
+  assert.deepEqual(shownRule.end, { type: "until", date: "2026-11-29" }, "il modulo mostra «fino al 29/11»");
+  const { after, impact, lines } = following(events, "s", "2026-11-16", { repeat: { ...shownRule, byWeekday: ["MO", "WE"] } }, "edit", true);
+  assert.deepEqual(normalizeRepeat(seriesOf(after, "s~2026-11-16")), { freq: "weekly", byWeekday: ["MO", "WE"] });
+  assert.deepEqual(
+    weekdayView(after, "2026-11-14", "2026-12-08"),
+    ["2026-11-16 Mon", "2026-11-18 Wed", "2026-11-23 Mon", "2026-11-25 Wed", "2026-11-30 Mon", "2026-12-02 Wed", "2026-12-07 Mon"].map((day) => `${day} Lezione`)
+  );
+  assert.deepEqual(laterOf(impact), [1, [], 0, 0, 0]);
+  assert.deepEqual(lines, [SCOPE_TEXT.followingSplits]);
+
+  // Divisione con lunedì e venerdì: i venerdì spariscono e si dicono per nome.
+  let fridays = [MONDAYS()];
+  fridays = following(fridays, "s", "2026-11-30", { repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } }, "edit", true).after;
+  const ruled = following(fridays, "s", "2026-11-16", { repeat: { ...normalizeRepeat(seriesOf(fridays)), byWeekday: ["MO", "WE"] } }, "edit", true);
+  assert.deepEqual([ruled.impact.absorbed, ruled.impact.gone.slice(0, 3), ruled.impact.goneMore], [1, ["2026-12-04", "2026-12-11", "2026-12-18"], true]);
+  assert.deepEqual(ruled.lines, [SCOPE_TEXT.followingSplits, "Spariscono: ven 4, 11, 18, 25 dic, ven 1, 8 gen e altre date dopo."]);
+
+  // La famiglia finisce: con «fino al» la parte nuova finisce lì; con le volte, all'ultima data.
+  let ended = [MONDAYS()];
+  ended = following(ended, "s", "2026-11-30", { title: "A" }).after;
+  ended = apply(ended, planDelete(ended, "s~2026-11-30", "2027-01-11", "following", { now: NOW }));
+  const endedAfter = following(ended, "s", "2026-11-16", { repeat: { ...normalizeRepeat(seriesOf(ended)), byWeekday: ["MO", "WE"] } }, "edit", true);
+  assert.deepEqual(normalizeRepeat(seriesOf(endedAfter.after, "s~2026-11-16")).end, { type: "until", date: "2027-01-10" });
+  assert.deepEqual(endedAfter.impact.gone, []);
+  let counted = [event({ repeat: { freq: "weekly", byWeekday: ["MO"], end: { type: "count", count: 10 } } })];
+  counted = following(counted, "s", "2026-11-30", { title: "A" }).after;
+  const countedAfter = following(counted, "s", "2026-11-16", { repeat: { ...normalizeRepeat(seriesOf(counted)), byWeekday: ["MO", "WE"] } }, "edit", true);
+  assert.deepEqual(normalizeRepeat(seriesOf(countedAfter.after, "s~2026-11-16")).end, { type: "until", date: "2027-01-04" });
+  assert.equal(weekdayView(countedAfter.after, "2026-11-01", "2027-06-01").at(-1), "2027-01-04 Mon Lezione");
+});
+
+test("R1-S1 bis (B). Spostare dal lunedì al martedì «Questo e i successivi»: la parte dopo con gli stessi giorni e orario si sposta, niente sparisce", () => {
+  for (const [label, make] of [["lunedì scritto", MONDAYS], ["ogni settimana", () => WEEKLY]]) {
+    let events = [make()];
+    events = following(events, "s", "2026-11-30", { title: "A" }).after;
+    const before = weekdayView(events, "2026-11-01", "2027-05-27").length;
+    for (const [shift, until, days] of [
+      [1, "2027-05-28", ["2026-11-17 Tue Lezione", "2026-11-24 Tue Lezione", "2026-12-01 Tue A", "2026-12-08 Tue A", "2026-12-15 Tue A"]],
+      [-1, "2027-05-26", ["2026-11-15 Sun Lezione", "2026-11-22 Sun Lezione", "2026-11-29 Sun A", "2026-12-06 Sun A", "2026-12-13 Sun A"]]
+    ]) {
+      const item = findOccurrence(events, "s", "2026-11-16");
+      const { after, impact, lines } = following(events, "s", "2026-11-16", shiftMs(item, shift * DAY), "move");
+      assert.deepEqual(weekdayView(after, "2026-11-01", "2026-12-16"), ["2026-11-02 Mon Lezione", "2026-11-09 Mon Lezione", ...days], `${label} ${shift}`);
+      assert.equal(weekdayView(after, "2026-11-01", until).length, before, `${label} ${shift}: nessuna data sparisce`);
+      assert.deepEqual(laterOf(impact), [0, [], 1, 1, 0], `${label} ${shift}`);
+      assert.deepEqual(lines, [SCOPE_TEXT.followingMovesSplits, SCOPE_TEXT.followingKeepsEnd], `${label} ${shift}`);
+    }
+    // Dal primo giorno (la serie è divisa, quindi c'è «Questo e i successivi»): lo stesso.
+    const first = following(events, "s", "2026-11-02", shiftMs(findOccurrence(events, "s", "2026-11-02"), DAY), "move");
+    assert.deepEqual(
+      weekdayView(first.after, "2026-11-01", "2026-12-09"),
+      [...["2026-11-03", "2026-11-10", "2026-11-17", "2026-11-24"].map((day) => `${day} Tue Lezione`), "2026-12-01 Tue A", "2026-12-08 Tue A"],
+      label
+    );
+    assert.deepEqual(laterOf(first.impact), [0, [], 1, 1, 0], label);
+  }
+});
+
+test("R1-S1 bis (B). Lunedì e venerdì spostati al martedì: la parte dopo uguale si sposta (anche di tre giorni), quella con giorni o orario suoi resta", () => {
+  const monFri = () => event({ repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } });
+  const count = (events, until) => weekdayView(events, "2026-11-01", until).length;
+  // Uguale (solo il titolo dal 30/11): mar e sab, poi la parte A anche lei mar e sab.
+  let same = [monFri()];
+  same = following(same, "s", "2026-11-30", { title: "A" }).after;
+  const before = count(same, "2027-05-27");
+  const item = findOccurrence(same, "s", "2026-11-16");
+  const moved = following(same, "s", "2026-11-16", shiftMs(item, DAY), "move");
+  assert.deepEqual(weekdayView(moved.after, "2026-11-14", "2026-12-09"), [
+    "2026-11-17 Tue Lezione",
+    "2026-11-21 Sat Lezione",
+    "2026-11-24 Tue Lezione",
+    "2026-11-28 Sat Lezione",
+    "2026-12-01 Tue A",
+    "2026-12-05 Sat A",
+    "2026-12-08 Tue A"
+  ]);
+  assert.equal(count(moved.after, "2027-05-28"), before);
+  assert.deepEqual(normalizeRepeat(seriesOf(moved.after, "s~2026-11-30")), { freq: "weekly", byWeekday: ["TU", "SA"] });
+  assert.deepEqual(laterOf(moved.impact), [0, [], 1, 1, 0]);
+  // Di tre giorni (lun e ven → gio e lun): il venerdì 27/11 diventa lunedì 30/11, e c'è.
+  const thursday = following(same, "s", "2026-11-16", shiftMs(item, 3 * DAY), "move");
+  assert.deepEqual(weekdayView(thursday.after, "2026-11-14", "2026-12-08"), [
+    "2026-11-19 Thu Lezione",
+    "2026-11-23 Mon Lezione",
+    "2026-11-26 Thu Lezione",
+    "2026-11-30 Mon Lezione",
+    "2026-12-03 Thu A",
+    "2026-12-07 Mon A"
+  ]);
+  assert.equal(count(thursday.after, "2027-05-30"), before);
+
+  // Con un orario suo (dal 30/11 un'ora dopo) o giorni suoi (dal 30/11 solo il lunedì): resta dov'è.
+  for (const [label, splitPatch, rule, expected] of [
+    ["orario suo", (split) => shiftMs(split, 3600e3), false, ["2026-11-30 Mon A", "2026-12-04 Fri A", "2026-12-07 Mon A"]],
+    ["giorni suoi", () => ({ repeat: { freq: "weekly", byWeekday: ["MO"] } }), true, ["2026-11-30 Mon A", "2026-12-07 Mon A"]]
+  ]) {
+    let own = [monFri()];
+    own = following(own, "s", "2026-11-30", { title: "A", ...splitPatch(findOccurrence(own, "s", "2026-11-30")) }, "edit", rule).after;
+    const dragged = following(own, "s", "2026-11-16", shiftMs(findOccurrence(own, "s", "2026-11-16"), DAY), "move");
+    assert.deepEqual(
+      weekdayView(dragged.after, "2026-11-14", "2026-12-09"),
+      ["2026-11-17 Tue Lezione", "2026-11-21 Sat Lezione", "2026-11-24 Tue Lezione", "2026-11-28 Sat Lezione", ...expected],
+      label
+    );
+    assert.deepEqual(laterOf(dragged.impact), [0, [], 1, 0, 1], label);
+    assert.deepEqual(dragged.lines, [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingKeepsEnd], label);
+  }
+  // Due parti dopo, una uguale e una con un orario suo: la prima si sposta, l'altra no (e lo si dice).
+  let mixed = [monFri()];
+  mixed = following(mixed, "s", "2026-11-30", { title: "A" }).after;
+  mixed = following(mixed, "s~2026-11-30", "2026-12-14", { title: "B", ...shiftMs(findOccurrence(mixed, "s~2026-11-30", "2026-12-14"), 3600e3) }).after;
+  const both = following(mixed, "s", "2026-11-16", shiftMs(findOccurrence(mixed, "s", "2026-11-16"), DAY), "move");
+  assert.deepEqual(weekdayView(both.after, "2026-11-30", "2026-12-19"), [
+    "2026-12-01 Tue A",
+    "2026-12-05 Sat A",
+    "2026-12-08 Tue A",
+    "2026-12-12 Sat A",
+    "2026-12-14 Mon B",
+    "2026-12-18 Fri B"
+  ]);
+  assert.deepEqual(laterOf(both.impact), [0, [], 2, 1, 1]);
+  assert.deepEqual(both.lines, [SCOPE_TEXT.followingMovesSplits, SCOPE_TEXT.followingSplitsOwnDays, SCOPE_TEXT.followingKeepsEnd]);
+});
+
+test("R1-S1 bis (A). Spostare il giorno e scegliere giorni nuovi insieme è una regola nuova: la parte dopo si assorbe", () => {
+  let events = [MONDAYS()];
+  events = following(events, "s", "2026-11-30", { title: "A" }).after;
+  const item = findOccurrence(events, "s", "2026-11-16");
+  const { after, impact } = following(events, "s", "2026-11-16", { ...shiftMs(item, DAY), repeat: { freq: "weekly", byWeekday: ["TU", "TH"] } }, "edit", true);
+  assert.equal(after.some((entry) => entry.id === "s~2026-11-30"), false);
+  assert.deepEqual(
+    weekdayView(after, "2026-11-14", "2026-12-04"),
+    ["2026-11-17 Tue", "2026-11-19 Thu", "2026-11-24 Tue", "2026-11-26 Thu", "2026-12-01 Tue", "2026-12-03 Thu"].map((day) => `${day} Lezione`)
+  );
+  assert.equal(impact.absorbed, 1);
+  assert.deepEqual(impact.gone, [], "i lunedì di A diventano i martedì della parte nuova");
+});
+
+test("R1-S1 bis (C). Tutto il giorno da uno a due giorni: lo prende la parte dopo che durava un giorno, non quella che ne durava tre", () => {
+  // Come li scrive il modulo: da mezzanotte locale del primo giorno a mezzanotte dopo l'ultimo.
+  const days = (first, after) => ({ start: localMidnight(first).toISOString(), end: localMidnight(after).toISOString(), allDay: true });
+  const allDay = event({ ...days("2026-11-02", "2026-11-03"), repeat: { freq: "weekly", byWeekday: ["MO"] } });
+  const spans = (events, from, to) =>
+    expandEvents(events, localMidnight(from), localMidnight(to)).map((item) => `${item.occurrenceDate} ${Math.round((Date.parse(item.end) - Date.parse(item.start)) / DAY)}`);
+  let events = [allDay];
+  events = following(events, "s", "2026-11-30", { title: "A" }).after;
+  events = following(events, "s~2026-11-30", "2026-12-14", { title: "B", ...days("2026-12-14", "2026-12-17") }).after;
+  const { after, impact, lines } = following(events, "s", "2026-11-16", days("2026-11-16", "2026-11-18"));
+  assert.deepEqual(spans(after, "2026-11-14", "2026-12-22"), ["2026-11-16 2", "2026-11-23 2", "2026-11-30 2", "2026-12-07 2", "2026-12-14 3", "2026-12-21 3"]);
+  assert.deepEqual([impact.laterParts, impact.laterOwnTime], [2, 1]);
+  assert.deepEqual(lines, [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingSplitsOwnTime, SCOPE_TEXT.followingKeepsEnd]);
 });

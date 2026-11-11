@@ -659,8 +659,9 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   // (la regola segue il giorno spostato; da un giorno già cambiato da solo, con «all», anche lui).
   const { scope, occurrence, target, series } = day;
   const { calls } = occurrenceEditCalls({ item: occurrence, series, scope, changes });
-  // «following» con una regola nuova sostituisce le parti divise prima: le date che spariscono si
-  // dicono, come nella scelta del calendario (R1-S1). Senza regola nuova quelle parti restano.
+  // «following» con una regola nuova assorbe tutte le parti dopo della famiglia: le date che
+  // spariscono si dicono, come nella scelta del calendario (R1-S1 bis, A). Uno spostamento sposta
+  // le parti dopo con lo stesso programma e lascia le altre: non sparisce nulla (B).
   const impact = scope === "following" ? scopeImpact(state().events, occurrence, scope, calls, undefined, changes) : null;
   const gone = impact?.gone ?? [];
   const goneMore = gone.length > REMOVED_DATES_SHOWN || impact?.goneMore === true;
