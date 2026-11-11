@@ -98,3 +98,18 @@ test("withZonedDate rimette sempre il Date originale", async () => {
   assert.equal(isTimeZone("Marte/Base"), false);
   assert.equal(isTimeZone(""), false);
 });
+
+test("withZonedDate: anche il fuso «del dispositivo» (deviceTimeZone) è quello scelto, poi torna quello vero", async () => {
+  const { withZonedDate } = await import("../src/agent/zonedDate.ts");
+  const { deviceTimeZone } = await import("../src/lib/tz.ts");
+  const native = deviceTimeZone();
+  const inside = await withZonedDate("America/New_York", async () => deviceTimeZone());
+  assert.equal(inside, "America/New_York");
+  assert.equal(deviceTimeZone(), native);
+  const nested = await withZonedDate("Asia/Tokyo", () => withZonedDate("Pacific/Honolulu", async () => deviceTimeZone()).then((zone) => [zone, deviceTimeZone()]));
+  assert.deepEqual(nested, ["Pacific/Honolulu", "Asia/Tokyo"]);
+  await assert.rejects(withZonedDate("Europe/Rome", async () => {
+    throw new Error("boom");
+  }));
+  assert.equal(deviceTimeZone(), native);
+});

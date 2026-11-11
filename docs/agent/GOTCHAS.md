@@ -236,7 +236,11 @@
   concedere il SELECT su tutta la tabella: esporrebbe l'hash del token.
 - Connettore remoto (`src/agent/cloudRunner.ts`): durante un'esecuzione `globalThis.Date` è
   `ZonedDate` (`src/agent/zonedDate.ts`) nel fuso di chi ha dato il consenso, perché il Worker gira
-  in UTC. Il `Date` globale è uno solo: le esecuzioni sono serializzate da un lock del modulo, e
+  in UTC. Anche `deviceTimeZone()` (`src/lib/tz.ts`) restituisce quel fuso (lo imposta
+  `withZonedDate`): store e motore lo fissano sulle serie nuove e sulle divisioni. Il codice che
+  ha bisogno del fuso «del dispositivo» passa da `deviceTimeZone()`, mai da
+  `Intl.DateTimeFormat().resolvedOptions()`, che sul Worker dice "UTC" (le serie create dal
+  connettore finivano in UTC e d'estate un'ora dopo). Il `Date` globale è uno solo: le esecuzioni sono serializzate da un lock del modulo, e
   un modulo caricato con `import()` durante l'esecuzione non deve salvare `Date` in una costante
   (resterebbe `ZonedDate` anche dopo). Lo store condiviso
   (`useStudyStore`) si riempie con i dati dell'account solo per la durata della chiamata, con la
