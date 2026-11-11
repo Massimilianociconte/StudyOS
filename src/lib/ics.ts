@@ -1120,17 +1120,26 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
       else overrides.push([date, row]);
     }
     exdates.sort();
+    // Giorni cambiati a mano (righe senza sourceRecurrenceId): X-STUDYOS-EDITED, così chi importa il file
+    // li tiene come suoi. Le date restano anche in EXDATE per le altre app.
+    const edited = exdates.filter((date) => !rows?.get(date)?.sourceRecurrenceId);
     vevent(uid, [
       ...startEnd(timing),
       `RRULE:${rruleOf(rule, timing)}`,
       ...(exdates.length ? [dateLine("EXDATE", timing, exdates.map((date) => instant(timing, date)))] : []),
+      ...(edited.length ? [dateLine("X-STUDYOS-EDITED", timing, edited.map((date) => instant(timing, date)))] : []),
       ...relatedTo(event),
       ...content(event, timing)
     ]);
     for (const [date, row] of overrides.sort((a, b) => compareText(a[0], b[0]))) {
       const rowTiming = timingOf(row, timing.zone);
       if (!rowTiming) continue;
-      vevent(uid, [dateLine("RECURRENCE-ID", timing, [instant(timing, date)]), ...startEnd(rowTiming), ...content(row, rowTiming)]);
+      vevent(uid, [
+        dateLine("RECURRENCE-ID", timing, [instant(timing, date)]),
+        ...startEnd(rowTiming),
+        ...(row.sourceRecurrenceId ? [] : ["X-STUDYOS-EDITED:TRUE"]),
+        ...content(row, rowTiming)
+      ]);
     }
   }
 
@@ -1225,6 +1234,10 @@ export interface IcsImportedEvent {
   occasion?: EventOccasion;
   /** RELATED-TO;RELTYPE=PARENT: UID della serie madre (figlia di una divisione fatta in StudyOS). */
   parentUid?: string;
+  /** X-STUDYOS-EDITED su un RECURRENCE-ID: giorno cambiato a mano in StudyOS. */
+  edited?: true;
+  /** X-STUDYOS-EDITED sulla serie: date escluse a mano in StudyOS (tra quelle di `exdates`). */
+  editedExdates?: string[];
 }
 
 export interface IcsParseResult {
@@ -1467,6 +1480,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         event.recurrenceId = canonical(rid);
         if (ridProp.params.RANGE?.toUpperCase() === "THISANDFUTURE") thisAndFuture = true;
         if (cancelled) event.cancelled = true;
+        if (propOf(vevent, "X-STUDYOS-EDITED")) event.edited = true;
       }
 
       if (recurring) {
@@ -1495,6 +1509,15 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
             .map(canonical)
         );
         if (exdates.length) event.exdates = [...new Set(exdates)].sort();
+        const edited = propsOf(vevent, "X-STUDYOS-EDITED").flatMap((property) =>
+          property.value
+            .split(",")
+            .map((value) => readDate(property, value.trim(), zone))
+            .filter((value): value is DateValue => value !== null)
+            .map(canonical)
+            .filter((value) => exdates.includes(value))
+        );
+        if (edited.length) event.editedExdates = [...new Set(edited)].sort();
         if (propOf(vevent, "RDATE") || propOf(vevent, "EXRULE")) extraDates = true;
       }
 
@@ -1587,6 +1610,8 @@ export interface IcsImportItem {
   tags?: string[];
   occasion?: EventOccasion;
   parentUid?: string;
+  edited?: true;
+  editedExdates?: string[];
 }
 
 export interface IcsItemOptions {
@@ -1631,6 +1656,8 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.cancelled ? { cancelled: true as const } : {}),
       ...(event.occasion ? { occasion: event.occasion } : {}),
       ...(event.parentUid ? { parentUid: event.parentUid } : {}),
+      ...(event.edited ? { edited: true as const } : {}),
+      ...(event.editedExdates?.length ? { editedExdates: event.editedExdates } : {}),
       category: categoryFromList(categories) ?? guessCategory(event.title, options.defaultCategory),
       ...(subject ? { subjectId: subject.id, color: subject.color } : {})
     };
@@ -1928,9 +1955,16 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   /**
    * Righe della serie dal file (date escluse e giorni modificati). Un giorno dopo una divisione fatta
    * in StudyOS va alla figlia che lo mostra. `owned`: la serie è nel file, le righe importate non più
-   * presenti si tolgono.
+   * presenti si tolgono. I giorni segnati come cambiati a mano (X-STUDYOS-EDITED) diventano dell'utente.
    */
-  const applyRows = (master: CalendarEvent, uid: string, exdates: readonly string[], changes: readonly IcsImportItem[], owned: boolean) => {
+  const applyRows = (
+    master: CalendarEvent,
+    uid: string,
+    exdates: readonly string[],
+    changes: readonly IcsImportItem[],
+    owned: boolean,
+    editedExdates: readonly string[] = []
+  ) => {
     const timing = timingOf(master, fallbackZone);
     if (!timing) return;
     const dateOf = (rid: string | undefined) => {
@@ -1943,14 +1977,14 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       if (!match) return undefined;
       return civilDateOf(utcMs(Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)), timing.zone);
     };
-    const entries = new Map<string, { rid: string; change: IcsImportItem | null; item?: IcsImportItem }>();
+    const entries = new Map<string, { rid: string; change: IcsImportItem | null; item?: IcsImportItem; edited: boolean }>();
     for (const rid of exdates) {
       const date = dateOf(rid);
-      if (date) entries.set(date, { rid, change: null });
+      if (date) entries.set(date, { rid, change: null, edited: editedExdates.includes(rid) });
     }
     for (const change of changes) {
       const date = dateOf(change.sourceRecurrenceId);
-      if (date) entries.set(date, { rid: change.sourceRecurrenceId as string, change: change.cancelled ? null : change, item: change });
+      if (date) entries.set(date, { rid: change.sourceRecurrenceId as string, change: change.cancelled ? null : change, item: change, edited: Boolean(change.edited) });
     }
     // Troppi giorni per una serie (o per il file): si leggono i più vicini a oggi, con un avviso.
     let dates = [...entries.keys()].sort(compareText);
@@ -1969,7 +2003,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     });
     let changed = false;
     for (const date of dates) {
-      const { rid, change, item } = entries.get(date) as { rid: string; change: IcsImportItem | null; item?: IcsImportItem };
+      const { rid, change, item, edited } = entries.get(date) as { rid: string; change: IcsImportItem | null; item?: IcsImportItem; edited: boolean };
       const home = family.find((entry) => entry.days.has(date));
       if (!home) {
         // Non è un giorno della serie: una modifica diventa un evento singolo, una data esclusa non serve.
@@ -1983,24 +2017,20 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         placed.add(current.id);
         continue;
       }
-      // Un giorno della figlia scritto dal suo UID (il file di StudyOS) è più preciso del file della madre
-      // e vince su di lui, in qualunque ordine arrivino: così i due file non si alternano.
-      if (current && home.member !== master && current.sourceUid !== uid && current.sourceUid === exportUidOf(home.member)) {
-        placed.add(current.id);
-        continue;
-      }
-      const desired = rowFor(home.member, home.timing, date, uid, rid, change, current);
+      // Cambiato a mano in StudyOS (anche in un altro calendario): riga dell'utente, senza sourceRecurrenceId,
+      // che i file dopo non toccano. Il resto segue l'ultimo file.
+      const fromFile = rowFor(home.member, home.timing, date, uid, rid, change, current);
+      const desired = edited ? withoutKeys(fromFile, ["sourceRecurrenceId"]) : fromFile;
       placed.add(desired.id);
       if (current && current.id === desired.id && sameRow(current, desired)) continue;
       put(desired);
       changed = true;
     }
     if (owned) {
+      // Anche nelle figlie, qualunque file le abbia messe: vale l'ultimo file della famiglia.
       for (const entry of family) {
         for (const row of entry.rows) {
           if (!row.sourceRecurrenceId || placed.has(row.id) || puts.has(row.id)) continue;
-          // Nelle figlie solo le righe venute da questo UID.
-          if (entry.member !== master && row.sourceUid !== uid) continue;
           stale.set(row.id, master.id);
         }
       }
@@ -2144,7 +2174,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         for (const row of adopted.rows) put(row);
         for (const id of adopted.removed) deletes.add(id);
         for (const [from, to] of adopted.relink) relinked.set(from, to);
-        applyRows(adopted.master, uid, item.exdates ?? [], changes.get(uid) ?? [], true);
+        applyRows(adopted.master, uid, item.exdates ?? [], changes.get(uid) ?? [], true, item.editedExdates);
         changes.delete(uid);
         continue;
       }
@@ -2160,7 +2190,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     } else master = create(item);
     masterOf.set(uid, master.id);
     if (item.parentUid && uid.endsWith("@studyos")) parentLinks.push([uid, item.parentUid]);
-    applyRows(master, uid, item.exdates ?? [], changes.get(uid) ?? [], true);
+    applyRows(master, uid, item.exdates ?? [], changes.get(uid) ?? [], true, item.editedExdates);
     changes.delete(uid);
   }
 
@@ -2184,7 +2214,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   // un altro calendario, così il file della madre non ne ripete i giorni.
   for (const [uid, parentUid] of parentLinks) {
     const childId = masterOf.get(uid) as string;
-    const parentId = masterOf.get(parentUid) ?? localMaster(parentUid)?.id;
+    // Solo con la madre nello stesso file: un file con la sola figlia non taglia una serie che hai già.
+    const parentId = masterOf.get(parentUid);
     const child = puts.get(childId) ?? byId.get(childId);
     const parent = parentId ? puts.get(parentId) ?? byId.get(parentId) : undefined;
     if (!child || !parent || parent.id === child.id || parentIdOf(child) || isOccurrenceRow(parent)) continue;

@@ -584,11 +584,18 @@ test("serie divisa copiata in un altro calendario: resta una famiglia, e il file
   for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
     let { events, master, child } = splitCalendar();
     events = apply(events, planEdit(child, events, "2026-12-21", "this", { title: "Fisica (ripasso mio)" }, { now: NOW }));
+    events = apply(events, planDelete(events, child.id, "2026-12-28", "this", { now: NOW }));
     events = apply(events, merge(events, parseIcs(google, { timeZone: device }), { timeZone: device }));
     assert.ok(window(events).includes("2026-12-21T08:00:00.000Z Fisica (ripasso mio)"), device);
+    assert.ok(!window(events).some((line) => line.startsWith("2026-12-28")), device);
     const own = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
     // La figlia dice chi è la madre (RFC 5545 RELATED-TO); la madre no.
     assert.equal(own.split("RELATED-TO;RELTYPE=PARENT:split@google.com").length, 2, device);
+    // I giorni cambiati a mano sono segnati (il 21/12 sulla sua modifica, il 28/12 accanto alle date escluse,
+    // che restano per le altre app); quelli venuti da Google no.
+    assert.equal(own.split("X-STUDYOS-EDITED:TRUE").length, 2, device);
+    assert.match(own, /\r\nX-STUDYOS-EDITED;TZID=Europe\/Rome:20261228T090000\r\n/, device);
+    assert.match(own, /\r\nEXDATE;TZID=Europe\/Rome:20261214T090000,20261228T090000\r\n/, device);
     let copy = apply([], merge([], parseIcs(own, { timeZone: device }), { timeZone: device }));
     const copyParent = copy.find((event) => event.sourceUid === "split@google.com" && !event.seriesId);
     const copyChild = copy.find((event) => event.sourceUid === `${child.id}@studyos` && !event.seriesId);
@@ -596,6 +603,12 @@ test("serie divisa copiata in un altro calendario: resta una famiglia, e il file
     assert.equal(copyChild.splitFrom, copyParent.id, device);
     assert.equal(copyChild.originalDate, "2026-11-23", device);
     assert.deepEqual(window(copy), window(events), device);
+    // Nella copia i giorni cambiati a mano sono dell'utente (senza sourceRecurrenceId), gli altri del file.
+    const copyRow = (date) => copy.find((event) => event.seriesId === copyChild.id && event.originalDate === date);
+    assert.equal(copyRow("2026-12-21").sourceRecurrenceId, undefined, device);
+    assert.equal(copyRow("2026-12-28").sourceRecurrenceId, undefined, device);
+    assert.equal(copyRow("2026-12-28").cancelled, true, device);
+    assert.ok(copyRow("2026-12-07").sourceRecurrenceId, device);
     // Il file originale di Google nella copia: niente giorni doppi, niente cambia.
     const plan = merge(copy, parseIcs(google, { timeZone: device }), { timeZone: device });
     assert.deepEqual(counts(plan), NOTHING, device);
@@ -609,6 +622,99 @@ test("serie divisa copiata in un altro calendario: resta una famiglia, e il file
       copy = apply(copy, next);
     }
     assert.deepEqual(window(copy), window(events), device);
+    // Google senza più modifiche: i suoi giorni tornano normali anche nella copia, quelli dell'utente restano.
+    copy = apply(copy, merge(copy, parseIcs(SPLIT, { timeZone: device }), { timeZone: device }));
+    const shown = window(copy);
+    assert.ok(shown.includes("2026-12-07T08:00:00.000Z Fisica (aula nuova)"), device);
+    assert.ok(shown.includes("2026-12-14T08:00:00.000Z Fisica (aula nuova)"), device);
+    assert.ok(shown.includes("2026-12-21T08:00:00.000Z Fisica (ripasso mio)"), device);
+    assert.ok(!shown.some((line) => line.startsWith("2026-12-28")), device);
+  }
+});
+
+// Google più recente: il 7/12 spostato di nuovo, il 14/12 tornato, il 21/12 cancellato.
+const SPLIT_NEWER = SPLIT.replace(
+  "END:VEVENT\r\nEND:VCALENDAR",
+  [
+    "EXDATE;TZID=Europe/Rome:20261221T090000",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:split@google.com",
+    "RECURRENCE-ID;TZID=Europe/Rome:20261207T090000",
+    "DTSTART;TZID=Europe/Rome:20261207T170000",
+    "DTEND;TZID=Europe/Rome:20261207T180000",
+    "SUMMARY:Fisica (sera)",
+    "END:VEVENT",
+    "END:VCALENDAR"
+  ].join("\r\n")
+);
+const december = (events) => window(events).filter((line) => line >= "2026-12-07" && line < "2026-12-22");
+const AFTER_NEWER = ["2026-12-07T16:00:00.000Z Fisica (sera)", "2026-12-14T08:00:00.000Z Fisica (aula nuova)"];
+const AFTER_CHANGED = ["2026-12-07T14:00:00.000Z Fisica (pomeriggio)", "2026-12-21T08:00:00.000Z Fisica (aula nuova)"];
+const AFTER_PLAIN = ["2026-12-07T08:00:00.000Z Fisica (aula nuova)", "2026-12-14T08:00:00.000Z Fisica (aula nuova)", "2026-12-21T08:00:00.000Z Fisica (aula nuova)"];
+
+test("serie divisa: vale l'ultimo file, anche dopo un vecchio export di StudyOS", () => {
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    let { events } = splitCalendar();
+    const step = (text) => {
+      const plan = merge(events, parseIcs(text, { timeZone: device }), { timeZone: device });
+      events = apply(events, plan);
+      return counts(plan);
+    };
+    step(SPLIT_CHANGED);
+    const older = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
+    step(SPLIT_NEWER);
+    assert.deepEqual(december(events), AFTER_NEWER, device);
+    step(older);
+    assert.deepEqual(december(events), AFTER_CHANGED, `${device} vecchio export`);
+    step(SPLIT_NEWER);
+    assert.deepEqual(december(events), AFTER_NEWER, `${device} Google di nuovo`);
+    assert.deepEqual(step(SPLIT_NEWER), NOTHING, device);
+    assert.deepEqual(december(events), AFTER_NEWER, device);
+  }
+});
+
+test("serie divisa copiata da un vecchio export: le modifiche successive di Google arrivano anche nella copia", () => {
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    let { events } = splitCalendar();
+    events = apply(events, merge(events, parseIcs(SPLIT_CHANGED, { timeZone: device }), { timeZone: device }));
+    const older = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
+    let copy = apply([], merge([], parseIcs(older, { timeZone: device }), { timeZone: device }));
+    assert.deepEqual(december(copy), AFTER_CHANGED, device);
+    const step = (text) => {
+      const plan = merge(copy, parseIcs(text, { timeZone: device }), { timeZone: device });
+      copy = apply(copy, plan);
+      return counts(plan);
+    };
+    step(SPLIT_NEWER);
+    assert.deepEqual(december(copy), AFTER_NEWER, device);
+    assert.deepEqual(step(SPLIT_NEWER), NOTHING, device);
+    step(SPLIT);
+    assert.deepEqual(december(copy), AFTER_PLAIN, `${device} Google senza modifiche`);
+  }
+});
+
+test("RELATED-TO verso una serie che non è nel file: non divide le serie che hai già", () => {
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    const mine = apply([], merge([], parseIcs(SPLIT, { timeZone: device }), { timeZone: device }));
+    const only = ics(
+      "BEGIN:VEVENT",
+      "UID:altro@studyos",
+      "RELATED-TO;RELTYPE=PARENT:split@google.com",
+      "DTSTART;TZID=Europe/Rome:20261130T090000",
+      "DTEND;TZID=Europe/Rome:20261130T100000",
+      "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=1",
+      "SUMMARY:Altro",
+      "END:VEVENT"
+    );
+    const plan = merge(mine, parseIcs(only, { timeZone: device }), { timeZone: device });
+    assert.equal(plan.added, 1, device);
+    assert.equal(plan.updated, 0, device);
+    const after = apply(mine, plan);
+    assert.ok(!after.some((event) => event.splitFrom), device);
+    const mondays = (events) => window(events).filter((line) => line.startsWith("2026-12-") && line.endsWith(" Fisica"));
+    assert.equal(mondays(mine).length, 4, device);
+    assert.equal(mondays(after).length, 4, device);
   }
 });
 
