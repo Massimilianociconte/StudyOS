@@ -1,5 +1,6 @@
 // Ponte HTTP di StudyOS. Lo stesso codice gira sul programma locale e sull'hub pubblico.
 // Non legge IndexedDB: consegna le azioni al browser collegato e conserva solo token (in hash) e esiti.
+import { BROWSER_FORGET_MS, accountKey as accountKeyOf, listAccounts, parseBrowserInfo, type AccountView, type BridgeBrowser } from "./accounts";
 import { AGENT_MCP_PATH, AGENT_PROTOCOL_VERSIONS, AGENT_SERVER_VERSION } from "./constants";
 import { toolSummary } from "./catalog";
 import { choosePoller, siteFromOrigin, type BridgeSite } from "./hubEndpoint";
@@ -12,6 +13,8 @@ const BODY_LIMIT = 262_144;
 const PUBLISHED_FRESH_MS = 45_000;
 /** Un'azione che il browser non ha ritirato entro questo tempo non parte più: niente esecuzioni a sorpresa ore dopo. */
 const STALE_CALL_MS = 120_000;
+/** Il lastSeen di un browser si salva al più una volta al giorno: serve solo a dimenticare i browser spariti. */
+const SEEN_SAVE_MS = 24 * 60 * 60_000;
 
 const isPendingResult = (result: AgentCallResult | undefined) => Boolean(result?.ok && result.data.status === "pending_approval");
 
@@ -100,6 +103,8 @@ export interface HubSnapshot {
   ledger: Array<{ id: string; at: number; result: AgentCallResult }>;
   pairFailures: number;
   pairLockedUntil: number;
+  /** Browser collegati con il nome del loro account (assente negli snapshot di prima). */
+  browsers?: BridgeBrowser[];
 }
 
 export interface HttpHubOptions {
@@ -128,6 +133,8 @@ interface CallJob {
   actor: AgentActor;
   summary: string;
   queuedAt: number;
+  /** accountKey dell'account che deve eseguirla: la ritira solo un suo browser. */
+  account: string;
 }
 
 interface ConsentJob {
@@ -142,6 +149,7 @@ type Job = CallJob | ConsentJob;
 
 interface Waiter {
   site: BridgeSite;
+  account: string;
   active: boolean;
   resolve: (job: Job | null) => void;
   timer: ReturnType<typeof setTimeout> | null;
@@ -172,6 +180,8 @@ export class HttpHub {
   private readonly open = new Set<string>();
   private readonly watchers = new Map<string, Set<(result: AgentCallResult) => void>>();
   private readonly waiters: Waiter[] = [];
+  private readonly browsers = new Map<string, BridgeBrowser>();
+  private readonly savedSeen = new Map<string, number>();
   private lastSeen = 0;
   private publishedSeen = 0;
   private gate: Promise<void> = Promise.resolve();
@@ -197,7 +207,8 @@ export class HttpHub {
       oauth: this.oauth.dump(),
       ledger: this.ledger.exportState(this.now()),
       pairFailures: this.pairFailures,
-      pairLockedUntil: this.pairLockedUntil
+      pairLockedUntil: this.pairLockedUntil,
+      browsers: [...this.browsers.values()].filter((browser) => !browser.legacy).map((browser) => ({ ...browser }))
     };
   }
 
@@ -210,6 +221,21 @@ export class HttpHub {
     this.ledger.importState(Array.isArray(state.ledger) ? state.ledger : []);
     this.pairFailures = state.pairFailures || 0;
     this.pairLockedUntil = state.pairLockedUntil || 0;
+    this.browsers.clear();
+    this.savedSeen.clear();
+    for (const raw of Array.isArray(state.browsers) ? state.browsers : []) {
+      const info = raw && typeof raw === "object" ? parseBrowserInfo({ id: raw.id, name: raw.label }) : null;
+      if (!info || typeof raw.lastSeen !== "number" || this.now() - raw.lastSeen > BROWSER_FORGET_MS) continue;
+      const label = info.name ?? "";
+      this.browsers.set(info.id, {
+        id: info.id,
+        key: accountKeyOf(label),
+        label,
+        site: raw.site === "published" ? "published" : "local",
+        lastSeen: raw.lastSeen
+      });
+      this.savedSeen.set(info.id, raw.lastSeen);
+    }
     this.dirty = false;
   }
 
@@ -226,6 +252,58 @@ export class HttpHub {
 
   connected() {
     return this.now() - this.lastSeen < PUBLISHED_FRESH_MS;
+  }
+
+  /** Account dei browser collegati, uno per nome. */
+  accounts(): AccountView[] {
+    return listAccounts(this.browsers.values(), this.now(), PUBLISHED_FRESH_MS);
+  }
+
+  private accountConnected(account: string) {
+    const now = this.now();
+    for (const browser of this.browsers.values()) {
+      if (browser.key === account && now - browser.lastSeen < PUBLISHED_FRESH_MS) return true;
+    }
+    return false;
+  }
+
+  private publishedFresh(account: string) {
+    const now = this.now();
+    for (const browser of this.browsers.values()) {
+      if (browser.key === account && browser.site === "published" && now - browser.lastSeen < PUBLISHED_FRESH_MS) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Registra il browser che chiede lavoro e restituisce il suo account. Un'app di prima senza
+   * dichiarazione vale come account senza nome. true in `save` = lo snapshot va riscritto.
+   */
+  private touchBrowser(value: unknown, site: BridgeSite): { account: string; save: boolean } {
+    const now = this.now();
+    let save = false;
+    for (const [id, browser] of this.browsers) {
+      if (now - browser.lastSeen <= BROWSER_FORGET_MS) continue;
+      this.browsers.delete(id);
+      this.savedSeen.delete(id);
+      save ||= !browser.legacy;
+    }
+    const info = parseBrowserInfo(value);
+    if (!info) {
+      const id = `legacy-${site}`;
+      this.browsers.set(id, { id, key: "", label: "", site, lastSeen: now, legacy: true });
+      return { account: "", save };
+    }
+    const known = this.browsers.get(info.id);
+    const label = info.name ?? known?.label ?? "";
+    const key = accountKeyOf(label);
+    const renamed = !known || known.label !== label || known.site !== site;
+    this.browsers.set(info.id, { id: info.id, key, label, site, lastSeen: now });
+    if (renamed || now - (this.savedSeen.get(info.id) ?? 0) > SEEN_SAVE_MS) {
+      this.savedSeen.set(info.id, now);
+      save = true;
+    }
+    return { account: key, save };
   }
 
   async handle(request: Request): Promise<Response> {
@@ -350,17 +428,31 @@ export class HttpHub {
         return this.json(200, { token: this.bridgeToken });
       });
     }
-    if (request.method === "POST" && (url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat" || url.pathname === "/bridge/result" || url.pathname === "/oauth/decide" || url.pathname === "/oauth/revoke")) {
-      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[] };
+    if (request.method === "POST" && (url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat" || url.pathname === "/bridge/forget" || url.pathname === "/bridge/result" || url.pathname === "/oauth/decide" || url.pathname === "/oauth/revoke")) {
+      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[]; browser?: unknown };
       const site = siteFromOrigin(origin);
+      const asksWork = url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat";
       const allowed = await this.exclusive(async () => {
-        if (!this.bridgeAuthorized(body.token ?? "")) return false;
+        if (!this.bridgeAuthorized(body.token ?? "")) return null;
         this.lastSeen = this.now();
         if (site === "published") this.publishedSeen = this.now();
-        return true;
+        if (!asksWork) return { account: "" };
+        const touched = this.touchBrowser(body.browser, site);
+        if (touched.save) await this.markDirty();
+        return { account: touched.account };
       });
       if (!allowed) return this.json(401, { error: "Collegamento non riconosciuto." });
       if (url.pathname === "/bridge/heartbeat") return this.json(200, { ok: true });
+      if (url.pathname === "/bridge/forget") {
+        // Il browser si scollega: il suo account sparisce dalle scelte se non ha altri browser.
+        const info = parseBrowserInfo(body.browser);
+        await this.exclusive(async () => {
+          if (!info || !this.browsers.delete(info.id)) return;
+          this.savedSeen.delete(info.id);
+          await this.markDirty();
+        });
+        return this.json(200, { ok: true });
+      }
       if (url.pathname === "/bridge/result") {
         if (!body.id || !body.result) return this.json(400, { error: "Manca l'esito." });
         await this.exclusive(async () => {
@@ -384,7 +476,7 @@ export class HttpHub {
           return this.json(200, { ok: true });
         });
       }
-      const job = await this.poll(site);
+      const job = await this.poll(site, allowed.account);
       return this.json(200, job ?? { type: "idle" });
     }
     if (url.pathname === AGENT_MCP_PATH || url.pathname === "/") return this.mcp(request, url);
@@ -437,7 +529,8 @@ export class HttpHub {
     const response = await handleMcpRpc(message, {
       actor,
       ledger: this.ledger,
-      connected: () => this.connected(),
+      connected: (account) => (account === undefined ? this.connected() : this.accountConnected(account)),
+      accounts: () => this.accounts(),
       invoke: (call) => this.invoke(call),
       waitForResult: (id) => this.waitForResult(id)
     });
@@ -465,7 +558,7 @@ export class HttpHub {
     }));
   }
 
-  private invoke(call: { id: string; name: string; args: Record<string, unknown>; actor: AgentActor }) {
+  private invoke(call: { id: string; name: string; args: Record<string, unknown>; actor: AgentActor; account?: string }) {
     return new Promise<AgentCallResult>((resolve) => {
       let settled = false;
       const done = (result: AgentCallResult) => {
@@ -497,7 +590,7 @@ export class HttpHub {
           done(result);
         });
         this.open.add(call.id);
-        this.calls.push({ type: "call", id: call.id, name: call.name, args: call.args, actor: call.actor, summary: toolSummary(call.name, call.args), queuedAt: this.now() });
+        this.calls.push({ type: "call", id: call.id, name: call.name, args: call.args, actor: call.actor, summary: toolSummary(call.name, call.args), queuedAt: this.now(), account: call.account ?? "" });
         this.claim();
       });
     });
@@ -559,12 +652,12 @@ export class HttpHub {
     return dropped > 0;
   }
 
-  private async poll(site: BridgeSite): Promise<Job | null> {
+  private async poll(site: BridgeSite, account: string): Promise<Job | null> {
     let resolveJob: (job: Job | null) => void = () => undefined;
     const done = new Promise<Job | null>((resolve) => {
       resolveJob = resolve;
     });
-    const entry: Waiter = { site, active: true, resolve: (job) => resolveJob(job), timer: null };
+    const entry: Waiter = { site, account, active: true, resolve: (job) => resolveJob(job), timer: null };
     await this.exclusive(async () => {
       this.lastSeen = this.now();
       if (site === "published") this.publishedSeen = this.now();
@@ -583,13 +676,30 @@ export class HttpHub {
     return done;
   }
 
+  /**
+   * Consegna il lavoro ai browser in attesa. Le richieste di accesso vanno a un browser qualsiasi;
+   * un'azione solo a un browser del suo account, così un account scollegato non blocca gli altri.
+   */
   private claim() {
-    const job = this.consents[0] ?? this.calls[0];
-    if (!job) return;
-    const chosen = choosePoller(this.waiters.filter((waiter) => waiter.active), this.now() - this.publishedSeen < PUBLISHED_FRESH_MS);
-    if (!chosen) return;
-    if (this.consents[0]) this.consents.shift();
-    else this.calls.shift();
+    const active = () => this.waiters.filter((waiter) => waiter.active);
+    while (this.consents.length) {
+      const chosen = choosePoller(active(), this.now() - this.publishedSeen < PUBLISHED_FRESH_MS);
+      if (!chosen) break;
+      this.hand(chosen, this.consents.shift() as ConsentJob);
+    }
+    for (let index = 0; index < this.calls.length;) {
+      const job = this.calls[index];
+      const chosen = choosePoller(active().filter((waiter) => waiter.account === job.account), this.publishedFresh(job.account));
+      if (!chosen) {
+        index += 1;
+        continue;
+      }
+      this.calls.splice(index, 1);
+      this.hand(chosen, job);
+    }
+  }
+
+  private hand(chosen: Waiter, job: Job) {
     chosen.active = false;
     if (chosen.timer) clearTimeout(chosen.timer);
     this.removeWaiter(chosen);

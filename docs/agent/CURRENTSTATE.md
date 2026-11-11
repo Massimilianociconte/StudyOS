@@ -229,3 +229,17 @@ corpo del trigger. Provato sullo stack locale: un `DELETE` vero non arriva mai s
 filtrato per proprietario. Verifiche: 249 test, lint, build, SQL due volte e verifica, 121 controlli,
 prova nel browser dell'annullamento (riepilogo cambiato tra controllo e conferma, elementi lasciati
 com'erano) e del ripristino di un obiettivo eliminato.
+
+Più account sullo stesso connettore MCP (11 novembre 2026, server 1.3.0): ogni browser collegato
+manda all'hub un id casuale e il nome del profilo, e l'hub tiene un account per nome. Ogni strumento
+ha il parametro facoltativo `account`, obbligatorio quando gli account sono più di uno, e
+`studyos_list_accounts` li elenca. Le azioni vanno solo ai browser dell'account scelto. Logica in
+`src/agent/accounts.ts`, instradamento in `src/agent/httpHub.ts`, test in
+`tests/agent-accounts.test.mjs`. Verificato con l'hub locale e due browser, «Massimiliano Ciconte» e
+«Camilla Rossi»:
+- una task creata con `account: "Camilla Rossi"` arriva e chiede conferma solo nello StudyOS di Camilla;
+- senza nome, o con un nome sconosciuto, la risposta elenca gli account e non esegue niente;
+- «Scollega questo browser» toglie l'account dall'elenco.
+
+Per usarlo con ChatGPT servono il deploy del Worker e la pubblicazione del sito, poi va ricreato il
+connettore.

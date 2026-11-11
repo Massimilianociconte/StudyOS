@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { AGENT_TOOLS, findAgentTool } from "../src/agent/catalog.ts";
+import { AGENT_TOOLS, HUB_TOOLS, findAgentTool } from "../src/agent/catalog.ts";
 import { handleMcpRpc } from "../src/agent/mcp.ts";
 import { ResultLedger } from "../src/agent/ledger.ts";
 import { OauthServer, sha256Base64Url } from "../src/agent/oauth.ts";
@@ -183,10 +183,14 @@ test("proiezioni: niente email, inviti, file o foto", () => {
   assert.deepEqual(group.members, [{ displayName: "M", role: "owner" }]);
 });
 
-test("execute copre ogni strumento tranne lo stato di conferma", () => {
+test("execute copre ogni strumento tranne quelli che risponde l'hub", () => {
   const source = readFileSync(new URL("../src/agent/execute.ts", import.meta.url), "utf8");
+  assert.deepEqual([...HUB_TOOLS].sort(), ["studyos_approval_status", "studyos_list_accounts"]);
   for (const tool of AGENT_TOOLS) {
-    if (tool.name === "studyos_approval_status") continue;
+    if (HUB_TOOLS.has(tool.name)) {
+      assert.equal(source.includes(`case "${tool.name}"`), false, tool.name);
+      continue;
+    }
     assert.equal(source.includes(`case "${tool.name}"`), true, tool.name);
   }
 });

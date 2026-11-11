@@ -1,3 +1,4 @@
+import { accountLabel, chooseAccount, type AccountView } from "./accounts";
 import { AGENT_PROTOCOL_VERSIONS, AGENT_RESPONSE_CHAR_LIMIT, AGENT_SERVER_NAME, AGENT_SERVER_VERSION } from "./constants";
 import { AGENT_TOOLS, findAgentTool, mcpToolDefinition } from "./catalog";
 import { ResultLedger } from "./ledger";
@@ -6,6 +7,7 @@ import type { AgentActor, AgentCallResult } from "./types";
 
 export const AGENT_INSTRUCTIONS = [
   "StudyOS è il workspace di studio della persona. I dati stanno nel browser che ha il sito aperto (anche dal telefono, sulla copia pubblicata) e non vanno copiati altrove. Non chiedere segreti (passphrase, codici di invito, token, chiave di collegamento).",
+  "Più persone possono collegare il proprio StudyOS a questo stesso connettore. Se chi scrive nomina un account (per esempio «nell'account di Camilla Rossi» o «sono Camilla»), passa account con quel nome a ogni strumento della richiesta. studyos_list_accounts elenca gli account collegati. Se ce n'è più di uno e la persona non ha detto quale, chiediglielo prima di leggere o modificare. Con più account ogni risposta riporta in account quello usato: dillo alla persona quando confermi una modifica.",
   "Inizia con studyos_overview o studyos_status: danno data, ora locale e fuso orario della persona. Scrivi le date in ISO 8601; senza offset valgono nell'ora locale della persona.",
   "Le letture rispondono subito. Le modifiche e le eliminazioni restano in attesa finché la persona le conferma nell'app, salvo una policy diversa.",
   "Se la risposta contiene status=pending_approval, non ripetere l'azione: di' alla persona di confermarla in StudyOS e chiama studyos_approval_status con approvalId.",
@@ -18,8 +20,11 @@ export const AGENT_INSTRUCTIONS = [
 export interface McpDeps {
   actor: AgentActor;
   ledger: ResultLedger;
-  connected: () => boolean;
-  invoke: (call: { id: string; name: string; args: Record<string, unknown>; actor: AgentActor }) => Promise<AgentCallResult>;
+  /** Senza argomento: qualche browser è collegato. Con un account: un suo browser è collegato. */
+  connected: (account?: string) => boolean;
+  /** Account dei browser collegati. Senza, il connettore ha un solo account. */
+  accounts?: () => AccountView[];
+  invoke: (call: { id: string; name: string; args: Record<string, unknown>; actor: AgentActor; account?: string }) => Promise<AgentCallResult>;
   /** Attende l'esito di un'azione ancora in conferma. Senza, studyos_approval_status legge solo il registro. */
   waitForResult?: (id: string) => Promise<AgentCallResult | undefined>;
   createId?: () => string;
@@ -75,13 +80,25 @@ export const toToolContent = (result: AgentCallResult) => ({
   isError: result.ok === false
 });
 
-const offlineStatus = () => ({
+const offlineStatus = (account = "") => ({
   ok: true as const,
   data: {
     connected: false,
-    message: "StudyOS non è collegato. Apri https://massimilianociconte.github.io/StudyOS/ (va bene anche dal telefono), vai in Impostazioni → Agenti e collega questo browser. Tieni la pagina aperta: i dati restano lì."
+    ...(account ? { account } : {}),
+    message: account
+      ? `StudyOS di ${account} non è aperto ora. ${account} deve aprire https://massimilianociconte.github.io/StudyOS/ nel browser collegato (va bene anche dal telefono) e tenerlo aperto: i dati restano lì.`
+      : "StudyOS non è collegato. Apri https://massimilianociconte.github.io/StudyOS/ (va bene anche dal telefono), vai in Impostazioni → Agenti e collega questo browser. Tieni la pagina aperta: i dati restano lì."
   }
 });
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+/** Con più account la risposta dice in quale ha lavorato, anche quando l'azione aspetta la conferma. */
+const withAccount = (result: AgentCallResult, account: string): AgentCallResult => {
+  if (!account) return result;
+  if (result.ok) return { ...result, data: { ...result.data, account } };
+  return { ...result, data: { ...(result.data ?? {}), account } };
+};
 
 /** Gestisce un messaggio JSON-RPC MCP. null = notifica senza risposta. */
 export const handleMcpRpc = async (message: unknown, deps: McpDeps): Promise<Record<string, unknown> | null> => {
@@ -133,7 +150,17 @@ export const handleMcpRpc = async (message: unknown, deps: McpDeps): Promise<Rec
       const reply = (result: AgentCallResult) => ({ jsonrpc: "2.0", id: rpc.id, result: { ...toToolContent(result), _meta: SERVER_META } });
       const found = findAgentTool(name);
       if (!found) return reply({ ok: false, code: "invalid", error: `Strumento sconosciuto: ${name}. Usa tools/list.` });
-      const parsed = parseToolArgs(found.inputSchema, params.arguments ?? {});
+      // account sceglie dove eseguire: non arriva mai all'app, che riceve solo gli argomenti dello strumento.
+      const { account: asked, ...toolArgs } = isRecord(params.arguments) ? params.arguments : {};
+      if (asked !== undefined && asked !== null && typeof asked !== "string") {
+        return reply({ ok: false, code: "invalid", error: "account deve essere il nome della persona, come testo." });
+      }
+      const accounts = deps.accounts?.() ?? [];
+      if (name === "studyos_list_accounts") {
+        const items = accounts.map((account) => ({ name: accountLabel(account.name), connected: account.connected }));
+        return reply({ ok: true, data: { items, count: items.length } });
+      }
+      const parsed = parseToolArgs(found.inputSchema, isRecord(params.arguments) ? toolArgs : params.arguments ?? {});
       if (!parsed.ok) return reply({ ok: false, code: "invalid", error: parsed.error });
       if (found.risk !== "read" && !deps.actor.scopes.includes("studyos:write")) {
         return reply({ ok: false, code: "denied", error: "Questo collegamento può solo leggere. Ricollega StudyOS concedendo anche le azioni." });
@@ -143,15 +170,20 @@ export const handleMcpRpc = async (message: unknown, deps: McpDeps): Promise<Rec
         const stored = deps.waitForResult ? await deps.waitForResult(approvalId) : deps.ledger.recall(approvalId);
         return reply(stored ?? { ok: false, code: "not_found", error: "Nessuna azione con questo approvalId. Potrebbe essere scaduta (30 minuti) o appartenere a un altro avvio del server." });
       }
-      if (!deps.connected()) {
-        if (name === "studyos_status") return reply(offlineStatus());
-        return reply({ ok: false, code: "not_connected", error: offlineStatus().data.message });
+      const target = chooseAccount(accounts, typeof asked === "string" ? asked : undefined);
+      if (!target.ok) return reply({ ok: false, code: target.code, error: target.error });
+      // Il nome si riporta solo quando c'è da distinguere: con un solo account le risposte restano come prima.
+      const shown = accounts.length > 1 || typeof asked === "string" ? accountLabel(target.name) : "";
+      if (!(deps.accounts ? deps.connected(target.key) : deps.connected())) {
+        const offline = offlineStatus(shown);
+        if (name === "studyos_status") return reply(offline);
+        return reply({ ok: false, code: "not_connected", error: offline.data.message, ...(shown ? { data: { account: shown } } : {}) });
       }
       const id = deps.createId?.() ?? `call_${crypto.randomUUID()}`;
-      const result = await deps.invoke({ id, name, args: parsed.data, actor: deps.actor });
+      const result = await deps.invoke({ id, name, args: parsed.data, actor: deps.actor, account: target.key });
       // L'hub registra già l'esito: non sovrascrivere una conferma arrivata nel frattempo.
       if (!deps.ledger.recall(id)) deps.ledger.remember(id, result);
-      return reply(result);
+      return reply(withAccount(result, shown));
     }
     return rpcError(rpc.id, -32601, `Metodo non supportato: ${rpc.method}.`);
   } catch (error) {

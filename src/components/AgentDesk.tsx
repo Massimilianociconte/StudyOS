@@ -16,7 +16,8 @@ import {
   useAgentLink
 } from "../lib/agentLink";
 import { readSavedHub } from "../lib/agentLocal";
-import { useStudyStore } from "../store/useStudyStore";
+import { agentAccountLabels } from "../lib/labels";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
 import { Button, Field, inputClass } from "./ui";
 
@@ -128,6 +129,7 @@ export function AgentSettings() {
   const [code, setCode] = useState("");
   const [hubAddress, setHubAddress] = useState(() => readSavedHub());
   const [busy, setBusy] = useState(false);
+  const accountName = useStudyStore((state) => selectPreferences(state).displayName.trim());
   const trusted = trustedWritesActive(link.policy);
   const localPage = isLocalPage(window.location.origin);
   const published = window.location.hostname === "massimilianociconte.github.io";
@@ -197,6 +199,20 @@ export function AgentSettings() {
         </p>
       ) : null}
       {link.paired ? <Button variant="soft" icon="LogOut" onClick={() => disconnectAgent()}>Scollega questo browser</Button> : null}
+
+      <div className="grid grid-cols-1 gap-1">
+        <h4 className="text-sm font-black">{agentAccountLabels.title}</h4>
+        <p className="text-sm font-bold text-[var(--muted)]">
+          {accountName ? agentAccountLabels.named(accountName) : agentAccountLabels.unnamed}
+          {accountName ? null : (
+            <>
+              {" "}
+              <a href="#settings-profilo" className="font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+            </>
+          )}
+        </p>
+        <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.help}</p>
+      </div>
 
       <div>
         <h4 className="text-sm font-black">Cosa può fare un assistente</h4>

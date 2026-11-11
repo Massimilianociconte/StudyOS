@@ -444,3 +444,14 @@ export const RESTORE_TEXT = {
   blocked: "Non ripristinabile",
   blockedHint: "Non è tra i tuoi dati su questo dispositivo e questa versione non ha i suoi file."
 } as const;
+
+/** Impostazioni → Agenti: più persone sullo stesso connettore, ognuna scelta per nome in chat. */
+export const agentAccountLabels = {
+  title: "Account in chat",
+  named: (name: string) => `Gli assistenti trovano questo StudyOS con il nome «${name}», quello del tuo profilo.`,
+  unnamed:
+    "Questo StudyOS non ha ancora un nome. Scrivilo in Profilo e obiettivi: serve per sceglierlo in chat quando più persone usano lo stesso connettore.",
+  toProfile: "Vai al profilo",
+  help:
+    "Più persone possono usare lo stesso connettore in ChatGPT. Ognuna apre StudyOS nel suo browser, scrive il proprio nome nel profilo e collega il browser qui con la stessa chiave. In chat basta dire di chi è l'account, per esempio «nell'account di Camilla Rossi»: la modifica va in quello StudyOS, e la richiesta di conferma compare lì."
+} as const;

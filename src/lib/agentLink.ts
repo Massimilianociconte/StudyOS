@@ -4,9 +4,9 @@ import { describeAgentCall, executeAgentTool } from "../agent/execute";
 import { hubCandidates, isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
 import type { AgentCallResult, AuditEntry } from "../agent/types";
-import { appendAudit, readAgentToken, readAudit, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
+import { appendAudit, readAgentToken, readAudit, readBrowserId, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
-import { useStudyStore } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 
 export interface PendingAgentCall {
   id: string;
@@ -199,6 +199,16 @@ const vaultClosed = () => {
   return current.loading || current.locked;
 };
 
+/**
+ * Come l'hub riconosce questo browser: id stabile e nome del profilo, con cui in chat si sceglie
+ * l'account. A vault chiuso il nome non si conosce e non si manda: l'hub tiene l'ultimo ricevuto.
+ */
+const browserInfo = () => {
+  const id = readBrowserId();
+  if (vaultClosed()) return { id };
+  return { id, name: selectPreferences(useStudyStore.getState()).displayName.trim() };
+};
+
 const askPerson = (call: PendingAgentCall) => new Promise<CallChoice>((resolve) => {
   let finished = false;
   const entry = { call, decide: (choice: CallChoice) => finish(choice) };
@@ -299,7 +309,7 @@ const heartbeat = async () => {
   const token = readAgentToken();
   if (!token || generation === 0) return;
   try {
-    await postJson("/bridge/heartbeat", { token });
+    await postJson("/bridge/heartbeat", { token, browser: browserInfo() });
     if (snapshot.hub !== "up") refresh({ hub: "up" });
   } catch {
     // il giro di poll riporta l'errore
@@ -338,7 +348,7 @@ const loop = async (mine: number) => {
     }
     pollAbort = new AbortController();
     try {
-      const job = await postJson("/bridge/poll", { token }, pollAbort.signal);
+      const job = await postJson("/bridge/poll", { token, browser: browserInfo() }, pollAbort.signal);
       if (mine !== generation) return;
       refresh({ hub: "up", error: snapshot.error.startsWith("Il programma") ? "" : snapshot.error });
       if (!isRecord(job) || job.type === "idle") continue;
@@ -429,6 +439,9 @@ export const pairAgent = async (code: string) => {
 };
 
 export const disconnectAgent = () => {
+  const token = readAgentToken();
+  // L'hub toglie subito questo browser dagli account scelti in chat; se non risponde lo dimentica dopo 30 giorni.
+  if (token) void postJson("/bridge/forget", { token, browser: { id: readBrowserId() } }).catch(() => undefined);
   writeAgentToken(null);
   dropQueues();
   refresh({

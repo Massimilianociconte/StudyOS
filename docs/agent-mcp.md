@@ -48,7 +48,7 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.2.0: dopo l'aggiornamento ricrea il connettore (vedi «Ripubblicare dopo una
+versione 1.3.0: dopo l'aggiornamento ricrea il connettore (vedi «Ripubblicare dopo una
 modifica»).
 
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
@@ -82,6 +82,39 @@ collegato. Sono accettati redirect https, loopback con qualsiasi porta
 `cursor://`. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
 (`initialize` per i client precedenti, `server/discover` per il 2026), sempre in
 JSON e mai in stream.
+
+## Più account sullo stesso connettore
+
+Più persone possono usare lo stesso connettore, anche dallo stesso account ChatGPT.
+Ognuna apre il sito pubblicato nel proprio browser, scrive il suo nome in
+**Impostazioni → Profilo e obiettivi** e collega il browser in **Impostazioni →
+Agenti** con la stessa chiave. Il nome del profilo è il nome dell'account in chat.
+Browser con lo stesso nome, per esempio il telefono e il computer della stessa persona,
+sono lo stesso account.
+
+In chat basta dire di chi è l'account: «nel planning di Camilla Rossi aggiungi…».
+ChatGPT passa `account` con quel nome e l'hub manda l'azione solo ai browser di
+quell'account. La richiesta di conferma compare in quello StudyOS, e la risposta
+riporta `account` con il nome usato.
+
+- Ogni strumento ha il parametro facoltativo `account`. L'hub lo toglie prima di
+  passare l'azione all'app, che non cambia.
+- `studyos_list_accounts` elenca gli account collegati, con il nome e se il loro StudyOS è
+  aperto ora.
+- Con un solo account `account` si può omettere, come prima. Con più account è
+  obbligatorio: senza nome la risposta elenca gli account e chiede quale usare. Un nome
+  che non corrisponde dà errore e non esegue niente.
+- Il confronto ignora maiuscole, accenti e ordine delle parole. «Camilla» trova
+  «Camilla Rossi», e «Camilla Rossi» trova un profilo chiamato solo «Camilla». Se il
+  nome corrisponde a più account, serve il nome completo.
+- I dati di ogni account restano nel suo browser: per lavorare sull'account di Camilla,
+  il suo StudyOS deve essere aperto. Altrimenti la risposta è `not_connected` con il
+  suo nome.
+- «Scollega questo browser» toglie subito il browser dall'elenco. L'hub dimentica da
+  solo i browser che non vede da 30 giorni.
+- Chi usa il connettore può agire su tutti gli account collegati. Il limite sono le
+  conferme di ogni StudyOS, che seguono le regole scelte da quella persona in
+  Impostazioni → Agenti.
 
 ## Collegare i client
 

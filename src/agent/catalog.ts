@@ -985,6 +985,15 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     summary: () => "Controllare l'esito di una conferma"
   }),
   tool({
+    name: "studyos_list_accounts",
+    title: "Account collegati",
+    description: "Elenca gli account StudyOS collegati a questo connettore: il nome che ognuno ha nel profilo e se il suo StudyOS è aperto ora. Usalo quando la persona nomina un account o quando una risposta dice che ce n'è più di uno; poi passa account con quel nome agli altri strumenti.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({}),
+    summary: () => "Vedere gli account collegati"
+  }),
+  tool({
     name: "studyos_list_audit",
     title: "Registro azioni degli agenti",
     description: "Legge il registro locale delle azioni già chieste dagli agenti su questo browser: strumento, esito, orario. Non include passphrase, file o codici di invito.",
@@ -1009,11 +1018,27 @@ export const toolSummary = (name: string, args: Record<string, unknown>) => {
   }
 };
 
+/** Strumenti che risponde l'hub da solo, senza passare dall'app: non hanno un caso in execute.ts. */
+export const HUB_TOOLS: ReadonlySet<string> = new Set(["studyos_approval_status", "studyos_list_accounts"]);
+
+const ACCOUNT = {
+  type: "string",
+  minLength: 1,
+  maxLength: 80,
+  description: "Nome della persona di cui usare StudyOS, come lo dice in chat (es. «Camilla Rossi» o «Camilla»). Serve quando più persone hanno collegato il proprio StudyOS: studyos_list_accounts li elenca. Con un solo account si può omettere."
+} as const satisfies JsonSchema;
+
+/** Lo schema visto dai client MCP ha in più `account`: l'hub lo toglie prima di passare gli argomenti all'app. */
+const withAccountParam = (schema: JsonSchema): JsonSchema => ({
+  ...schema,
+  properties: { ...(schema.properties ?? {}), account: ACCOUNT }
+});
+
 export const mcpToolDefinition = (item: AgentTool) => ({
   name: item.name,
   title: item.title,
   description: item.description,
-  inputSchema: item.inputSchema,
+  inputSchema: HUB_TOOLS.has(item.name) ? item.inputSchema : withAccountParam(item.inputSchema),
   annotations: {
     // title anche qui: i client 2025-03-26 lo leggono solo dalle annotazioni.
     title: item.title,
