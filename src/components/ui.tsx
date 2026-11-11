@@ -421,10 +421,11 @@ export function useScrollLock(active: boolean, areaRef?: RefObject<HTMLElement |
 const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
 /**
- * Finestra modale: pagina bloccata (`useScrollLock`), focus sul pannello all'apertura, Tab che resta
- * nel pannello, Esc (`onEscape`) e Tab gestiti solo dalla finestra in cima, focus che torna a chi
- * l'ha aperta alla chiusura. Ascolto in bolla su window: fumetti, menu e selettori aperti dentro la
- * finestra fermano Esc prima (in cattura) e chiudono solo sé stessi.
+ * Finestra modale: pagina bloccata (`useScrollLock`), focus all'apertura sull'elemento del pannello
+ * con `data-autofocus` (altrimenti sul pannello), Tab che resta nel pannello, Esc (`onEscape`) e Tab
+ * gestiti solo dalla finestra in cima, focus che torna a chi l'ha aperta alla chiusura. Ascolto in
+ * bolla su window: fumetti, menu e selettori aperti dentro la finestra fermano Esc prima (in
+ * cattura) e chiudono solo sé stessi.
  */
 export function useDialogLayer(
   open: boolean,
@@ -438,7 +439,8 @@ export function useDialogLayer(
     if (!open) return;
     const token = dialogLayers.push(null);
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panelRef.current?.focus({ preventScroll: true });
+    const panel = panelRef.current;
+    (panel?.querySelector<HTMLElement>("[data-autofocus]") ?? panel)?.focus({ preventScroll: true });
     const onKey = (event: KeyboardEvent) => {
       if (!dialogLayers.isTop(token)) return;
       if (event.key === "Escape") {
