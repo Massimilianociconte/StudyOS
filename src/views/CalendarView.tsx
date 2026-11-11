@@ -6,10 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type ReactNode,
-  type DragEvent as ReactDragEvent,
-  type MouseEvent as ReactMouseEvent
+  type ReactNode
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -22,10 +19,7 @@ import {
   endOfWeek,
   format,
   isBefore,
-  isSameDay,
-  isSameMonth,
   parseISO,
-  setHours,
   startOfDay,
   startOfMonth,
   startOfWeek
@@ -58,28 +52,23 @@ import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters
 import { safeHref } from "../lib/safeUrl";
 import { CalendarTransfer, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
-import { allDayRange, daysUntil, eventMinutes, isAllDayEvent, selectableSubjects, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel } from "../lib/selectors";
-import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { allDayRange, daysUntil, selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents, RECURRENCE_LABEL, type EventOccurrence } from "../lib/recurrence";
 import {
   ALL_DAY_LABEL,
   CALENDAR_HELP,
   CALENDAR_TEXT,
-  ENERGY_LABEL,
+  CALENDAR_VIEW_TEXT,
   EVENT_CATEGORY_LABEL,
   EVENT_STATUS_LABEL,
   EXAM_STATUS_LABEL,
   NO_SUBJECT_LABEL,
   OFFICIAL_EXAMS_ADD_LABEL,
   PRIORITY_LABEL,
-  PRIORITY_TONE,
   SHARE_TEXT,
-  TASK_STATUS_LABEL,
-  capitalizeFirst,
   eventLinkLabel,
   formatMinutes
 } from "../lib/labels";
-import { useNow } from "../hooks/useNow";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { CourseIcon } from "../components/CourseIcon";
 import { BARB_DATASET } from "../data/university/barb.dataset";
@@ -97,6 +86,17 @@ import {
   type CalendarViewId,
   type SubjectCalendarSummary
 } from "../lib/calendarFilter";
+import { Agenda } from "../components/calendar/Agenda";
+import { CalendarHoverPreview } from "../components/calendar/CalendarHoverPreview";
+import { CalendarFilterRow } from "../components/calendar/CalendarFilters";
+import { UndatedTasksDrawer } from "../components/calendar/UndatedTasks";
+import { holidaysInRange } from "../lib/holidays";
+import { undatedDueDate, undatedTasks } from "../lib/calendarRender";
+import { todayYmd } from "../lib/datePicker";
+import { DayList } from "../components/calendar/DayList";
+import { MonthGrid } from "../components/calendar/MonthGrid";
+import { TimeGrid } from "../components/calendar/TimeGrid";
+import { defaultStartFor } from "../components/calendar/shared";
 
 // Pannello Condividi (e CloudPanel con supabase-js) caricato solo quando si apre dal menu.
 const loadShareDrawer = () => import("../components/ShareDrawer");
@@ -143,22 +143,6 @@ const sharedCalendarEvent = (entity: SharedEntity): CalendarEvent | null => {
   };
 };
 
-/** Si trascina solo ciò che si può modificare: gli eventi altrui in sola lettura non sono trascinabili. */
-const canDrag = (item: CalendarOccurrence) => !item.sharedFrom || item.sharedFrom.canEdit;
-
-/** Materia da mostrare ("" = nessuna): per gli eventi di altri quella del proprietario, mai una delle mie. */
-const occurrenceSubject = (item: ShownEvent, subjects: Subjects) =>
-  item.sharedFrom ? item.sharedFrom.subjectName ?? "" : item.subjectId ? subjectName(subjects, item.subjectId) : "";
-
-/**
- * Bordo tratteggiato nel colore della persona (outline: non tocca il bordo colorato a sinistra).
- * Classe e variabile, non stile in linea: così il contorno del focus da tastiera resta visibile.
- */
-const SHARED_OUTLINE = "outline-dashed outline-1 -outline-offset-1 outline-[color:var(--owner-color)]";
-const sharedOutlineClass = (item: ShownEvent) => (item.sharedFrom ? SHARED_OUTLINE : "");
-const sharedOutline = (item: ShownEvent): CSSProperties =>
-  item.sharedFrom ? ({ "--owner-color": item.sharedFrom.color } as CSSProperties) : {};
-
 /** Campi dell'evento che cambiano insieme: se ne cambia uno, una modifica a un evento altrui li manda tutti. */
 const LINKED_EVENT_FIELDS = [
   ["start", "end", "allDay"],
@@ -185,30 +169,12 @@ const toDatetimeLocal = (date: string | Date) => {
   return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 };
 
-/** Prossima mezz'ora utile (o le 9:00 per un giorno senza orario). */
-const defaultStartFor = (day: Date) => {
-  if (day.getHours() || day.getMinutes()) {
-    const selected = new Date(day);
-    selected.setSeconds(0, 0);
-    return selected;
-  }
-  if (isSameDay(day, new Date())) {
-    const next = new Date();
-    next.setSeconds(0, 0);
-    next.setMinutes(next.getMinutes() < 30 ? 30 : 60);
-    return next;
-  }
-  return setHours(startOfDay(day), 9);
-};
-
 type PreviewPoint = { x: number; y: number };
 type CalendarPreviewState =
   | { kind: "event"; event: ShownEvent; x: number; y: number }
   | { kind: "task"; task: Task; x: number; y: number };
 
 const supportsHoverPreview = () => typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-
-const pointerPoint = (event: ReactMouseEvent<HTMLElement>): PreviewPoint => ({ x: event.clientX, y: event.clientY });
 
 interface Handlers {
   subjects: Subjects;
@@ -224,14 +190,6 @@ interface Handlers {
   onPreviewMove: (point: PreviewPoint) => void;
   onPreviewHide: () => void;
 }
-
-// Solo colori esadecimali, anche per i miei eventi: chi li modifica con "Può modificare" non deve poter
-// mettere nello stile un url() da scaricare. Evento di altri senza colore valido: quello della sua
-// materia (dal proprietario), poi quello della persona; mai di una delle mie materie.
-const eventColor = (event: ShownEvent, subjects: Subjects) =>
-  safeCssColor(event.color) ||
-  (event.sharedFrom ? event.sharedFrom.subjectColor || event.sharedFrom.color : subjectColor(subjects, event.subjectId));
-const allDayEventLabel = (event: CalendarEvent) => event.tags?.includes("appello-importato") ? "Data appello" : ALL_DAY_LABEL;
 
 export function CalendarView() {
   // Valori salvati di prima ancora validi: "focus" diventa Giorno con "Solo 8–19", "exam" e
@@ -360,6 +318,19 @@ export function CalendarView() {
     return [...result.values()];
   }, [received, labels]);
   const calendarTasks = useMemo(() => tasks.filter((task) => task.dueDate && task.status !== "archived"), [tasks]);
+  // Festività italiane: calcolate per il periodo visibile, mai salvate né esportate; non contano negli
+  // stati vuoti e il filtro per materia non le tocca. "Festività" le spegne (scelta del dispositivo).
+  const [showHolidays, setShowHolidays] = useUiState<boolean>("calendar.holidays", true, {
+    scope: "device",
+    validate: (value) => typeof value === "boolean"
+  });
+  // Attività senza data ("Senza data · N" in Giorno e Agenda), con lo stesso filtro per materia.
+  const [undatedOpen, setUndatedOpen] = useState(false);
+  const undated = useMemo(() => filterCalendarItems({ tasks: undatedTasks(tasks) }, subjectFilter).tasks, [tasks, subjectFilter]);
+  const placeUndated = (taskId: string, day: string) => {
+    const dueDate = undatedDueDate(day);
+    if (dueDate) void updateTask(taskId, { dueDate });
+  };
   const editingEvent = editingEventId ? events.find((event) => event.id === editingEventId) ?? null : null;
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
 
@@ -396,6 +367,7 @@ export function CalendarView() {
     () => filterCalendarItems({ occurrences, tasks: calendarTasks, exams }, subjectFilter),
     [occurrences, calendarTasks, exams, subjectFilter]
   );
+  const holidays = useMemo(() => (showHolidays ? holidaysInRange(todayYmd(range.from), todayYmd(range.to)) : []), [showHolidays, range]);
   const rangeEmpty = !hasItemsInRange(visible, range.from, range.to);
   const subjectSummary = useMemo(() => subjectCalendarSummary({ subjects, events, exams, tasks }), [subjects, events, exams, tasks]);
   const addForSubject = () => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)));
@@ -554,33 +526,51 @@ export function CalendarView() {
               <IconButton icon="ChevronRight" label="Periodo successivo" onClick={() => navigate(1)} />
             </div>
           </div>
-          <SubjectFilterBar subjects={subjects} active={filterSubject} onChange={setStoredSubject} />
+          <CalendarFilterRow
+            subjects={subjects}
+            active={filterSubject}
+            onChange={setStoredSubject}
+            showHolidays={showHolidays}
+            onToggleHolidays={() => setShowHolidays((value) => !value)}
+            undatedCount={undated.length}
+            onOpenUndated={mode === "day" || mode === "agenda" ? () => setUndatedOpen(true) : undefined}
+          />
         </>
       )}
 
       {calendarOwners.length && !summary ? (
-        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Calendari di altre persone">
+        // Con «Solo» attivo gli eventi altrui non si vedono (usano le materie del proprietario): i
+        // pulsanti restano, spenti, con una riga che lo spiega.
+        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label={CALENDAR_VIEW_TEXT.sharedGroup}>
           <span className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--muted)]">
             {CALENDAR_TEXT.sharedCalendars}
             <HelpTip {...CALENDAR_HELP.shared} />
           </span>
           {calendarOwners.map((owner) => {
             const hidden = hiddenOwners.includes(owner.id);
+            const name = owner.name || CALENDAR_VIEW_TEXT.unknownOwner;
             return (
               <button
                 key={owner.id}
                 type="button"
                 aria-pressed={!hidden}
+                disabled={Boolean(filterSubject)}
+                aria-describedby={filterSubject ? "calendar-shared-filtered" : undefined}
                 onClick={() => useSharedStore.getState().toggleOwner(owner.id)}
-                className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border border-dashed px-3 text-xs font-black ${hidden ? "opacity-50" : ""}`}
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40 ${hidden ? "opacity-50" : ""}`}
                 style={{ borderColor: ownerColor(owner.id) }}
-                title={hidden ? `Mostra gli eventi di ${owner.name}` : `Nascondi gli eventi di ${owner.name}`}
+                title={hidden ? CALENDAR_VIEW_TEXT.showOwner(name) : CALENDAR_VIEW_TEXT.hideOwner(name)}
               >
                 <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: ownerColor(owner.id) }} />
-                {owner.name}
+                {name}
               </button>
             );
           })}
+          {filterSubject ? (
+            <p id="calendar-shared-filtered" className="basis-full text-xs font-bold text-[var(--muted)]">
+              {CALENDAR_VIEW_TEXT.sharedFiltered}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -598,7 +588,7 @@ export function CalendarView() {
         {mode === "week" ? (
           <>
             <div className="hidden md:block">
-              <TimeGrid days={weekDays} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} handlers={handlers} onPickDay={(day) => {
+              <TimeGrid days={weekDays} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} holidays={holidays} handlers={handlers} onPickDay={(day) => {
                 setCursor(day);
                 setMode("day");
               }} />
@@ -609,6 +599,7 @@ export function CalendarView() {
                 occurrences={visible.occurrences}
                 tasks={visible.tasks}
                 exams={visible.exams}
+                holidays={holidays}
                 handlers={handlers}
                 // Settimana vuota sul telefono: un messaggio solo (con un filtro, quello sopra).
                 empty={
@@ -627,6 +618,7 @@ export function CalendarView() {
             occurrences={visible.occurrences}
             tasks={visible.tasks}
             exams={visible.exams}
+            holidays={holidays}
             handlers={handlers}
             hourHeight={dayFocus ? 64 : 52}
             fixedHours={dayFocus ? [8, 19] : undefined}
@@ -641,6 +633,7 @@ export function CalendarView() {
             occurrences={visible.occurrences}
             tasks={visible.tasks}
             exams={visible.exams}
+            holidays={holidays}
             handlers={handlers}
             onPickDay={(day) => {
               setCursor(day);
@@ -650,7 +643,16 @@ export function CalendarView() {
         ) : null}
 
         {mode === "agenda" ? (
-          <Agenda from={range.from} to={range.to} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} handlers={handlers} empty={subjectEmpty} />
+          <Agenda
+            from={range.from}
+            to={range.to}
+            occurrences={visible.occurrences}
+            tasks={visible.tasks}
+            exams={visible.exams}
+            holidays={holidays}
+            handlers={handlers}
+            empty={subjectEmpty}
+          />
         ) : null}
         {mode === "exam" ? <ExamSession exams={exams} subjects={subjects} onGoExams={() => setActiveView("exams")} onOpenExam={openExam} /> : null}
         {mode === "semester" ? (
@@ -668,6 +670,18 @@ export function CalendarView() {
           />
         ) : null}
       </Panel>
+
+      <UndatedTasksDrawer
+        open={undatedOpen}
+        onClose={() => setUndatedOpen(false)}
+        tasks={undated}
+        subjects={subjects}
+        onPlace={placeUndated}
+        onOpenTask={(id) => {
+          setUndatedOpen(false);
+          setEditingTaskId(id);
+        }}
+      />
 
       {editingEvent ? (
         <EventEditorModal
@@ -817,917 +831,6 @@ export function CalendarView() {
 
       {preview ? <CalendarHoverPreview preview={preview} subjects={subjects} /> : null}
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Griglia oraria (settimana / giorno / focus)                          */
-/* ------------------------------------------------------------------ */
-
-interface Placed {
-  item: CalendarOccurrence;
-  startMin: number;
-  endMin: number;
-  lane: number;
-  lanes: number;
-}
-
-/** Eventi sovrapposti affiancati in colonne (come Google/Apple Calendar). */
-const layoutDay = (items: Omit<Placed, "lane" | "lanes">[]): Placed[] => {
-  const sorted = [...items].sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
-  const result: Placed[] = [];
-  let cluster: Placed[] = [];
-  let clusterEnd = -1;
-  const flush = () => {
-    const laneEnds: number[] = [];
-    for (const entry of cluster) {
-      let lane = laneEnds.findIndex((end) => end <= entry.startMin);
-      if (lane === -1) {
-        lane = laneEnds.length;
-        laneEnds.push(entry.endMin);
-      } else {
-        laneEnds[lane] = entry.endMin;
-      }
-      entry.lane = lane;
-    }
-    for (const entry of cluster) result.push({ ...entry, lanes: laneEnds.length });
-    cluster = [];
-  };
-  for (const entry of sorted) {
-    if (cluster.length && entry.startMin >= clusterEnd) {
-      flush();
-      clusterEnd = -1;
-    }
-    cluster.push({ ...entry, lane: 0, lanes: 1 });
-    clusterEnd = Math.max(clusterEnd, entry.endMin);
-  }
-  if (cluster.length) flush();
-  return result;
-};
-
-const minutesInDay = (occurrence: CalendarOccurrence, day: Date) => {
-  const dayStart = startOfDay(day).getTime();
-  const start = Math.max(0, (parseISO(occurrence.start).getTime() - dayStart) / 60_000);
-  const end = Math.min(24 * 60, (parseISO(occurrence.end).getTime() - dayStart) / 60_000);
-  return { startMin: start, endMin: Math.max(end, start + 15) };
-};
-
-function TimeGrid({
-  days,
-  occurrences,
-  tasks,
-  exams,
-  handlers,
-  hourHeight = 46,
-  fixedHours,
-  onPickDay,
-  onExpandHours
-}: {
-  days: Date[];
-  occurrences: CalendarOccurrence[];
-  tasks: Task[];
-  exams: Exam[];
-  handlers: Handlers;
-  hourHeight?: number;
-  fixedHours?: [number, number];
-  onPickDay?: (day: Date) => void;
-  onExpandHours?: () => void;
-}) {
-  const now = useNow(60_000);
-  const grab = useRef<{ key: string; offsetMin: number } | null>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const [expandedDays, setExpandedDays] = useState<string[]>([]);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
-
-  useEffect(() => {
-    const element = containerRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  // Larghezza di una colonna giorno (52 px di etichette orarie, 6 px tra le colonne).
-  const columnWidth = containerWidth ? (containerWidth - 52 - days.length * 6) / days.length : 200;
-
-  const perDay = days.map((day) => {
-    const dayStart = startOfDay(day).getTime();
-    const dayEnd = dayStart + 24 * 60 * 60_000;
-    const dayEvents = occurrences.filter((item) => parseISO(item.start).getTime() < dayEnd && parseISO(item.end).getTime() > dayStart);
-    // Gli eventi "Tutto il giorno" non occupano corsie orarie: stanno nella riga in alto.
-    const timed = dayEvents.filter((item) => !isAllDayEvent(item));
-    return {
-      day,
-      allDay: dayEvents.filter(isAllDayEvent),
-      placed: layoutDay(timed.map((item) => ({ item, ...minutesInDay(item, day) }))),
-      tasks: tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)).sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? "")),
-      exams: exams.filter((exam) => isSameDay(parseISO(exam.date), day))
-    };
-  });
-
-  // Fascia oraria: 8–20 di base, allargata per includere gli eventi visibili.
-  let [hourStart, hourEnd] = fixedHours ?? [8, 20];
-  if (!fixedHours) {
-    for (const entry of perDay) {
-      for (const placed of entry.placed) {
-        hourStart = Math.min(hourStart, Math.floor(placed.startMin / 60));
-        hourEnd = Math.max(hourEnd, Math.ceil(placed.endMin / 60));
-      }
-    }
-    hourStart = Math.max(0, hourStart);
-    hourEnd = Math.min(24, hourEnd);
-  }
-
-  const hours = Array.from({ length: hourEnd - hourStart }, (_, index) => hourStart + index);
-  const gridHeight = hours.length * hourHeight;
-  const hasAllDay = perDay.some((entry) => entry.allDay.length || entry.tasks.length || entry.exams.length);
-  // Fascia fissa (Focus 8–19): eventi interamente fuori fascia, che la griglia taglia.
-  const hiddenBefore = fixedHours ? perDay.reduce((sum, entry) => sum + entry.placed.filter((placed) => placed.endMin <= hourStart * 60).length, 0) : 0;
-  const hiddenAfter = fixedHours ? perDay.reduce((sum, entry) => sum + entry.placed.filter((placed) => placed.startMin >= hourEnd * 60).length, 0) : 0;
-  const columns = `52px repeat(${days.length}, minmax(0, 1fr))`;
-
-  const minutesFromPointer = (event: ReactMouseEvent<HTMLElement> | ReactDragEvent<HTMLElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const minutes = hourStart * 60 + ((event.clientY - rect.top) / hourHeight) * 60;
-    return Math.max(0, Math.min(24 * 60 - 15, Math.round(minutes / 15) * 15));
-  };
-
-  return (
-    <div className="min-w-0" ref={containerRef}>
-      {/* intestazione giorni */}
-      <div className="grid grid-cols-1 gap-x-1.5" style={{ gridTemplateColumns: columns }}>
-        <span />
-        {days.map((day) => {
-          const today = isSameDay(day, now);
-          const content = (
-            <>
-              <span className="text-[11px] font-black uppercase text-[var(--faint)]">{format(day, "EEE", { locale: it })}</span>
-              <span
-                className={`grid h-8 min-w-8 place-items-center rounded-full px-1.5 text-lg font-black ${today ? "bg-[var(--accent)] text-[#10131d]" : ""}`}
-              >
-                {format(day, "d")}
-              </span>
-            </>
-          );
-          return onPickDay ? (
-            <button
-              key={day.toISOString()}
-              type="button"
-              onClick={() => onPickDay(day)}
-              className="flex items-center justify-center gap-1.5 rounded-[14px] py-1 hover:bg-[var(--surface-soft)] hover:underline hover:decoration-[var(--faint)] hover:underline-offset-4"
-              aria-label={`Apri ${format(day, "EEEE d MMMM", { locale: it })}`}
-              title={`Apri ${format(day, "EEEE d MMMM", { locale: it })}`}
-            >
-              {content}
-            </button>
-          ) : (
-            <div key={day.toISOString()} className="flex items-center gap-1.5 py-1">
-              {content}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* riga "tutto il giorno": eventi senza orario, esami e attività in scadenza */}
-      {hasAllDay ? (
-        <div className="mt-1.5 grid gap-x-1.5 border-b border-[var(--border)] pb-1.5" style={{ gridTemplateColumns: columns }}>
-          <span
-            className="pt-1 text-right text-[10px] font-black uppercase leading-tight text-[var(--faint)]"
-            title="Eventi senza orario, esami e attività in scadenza"
-          >
-            Tutto il giorno
-          </span>
-          {perDay.map((entry) => {
-            const dayKey = entry.day.toISOString();
-            const base = days.length > 1 ? 3 : 12;
-            const expanded = expandedDays.includes(dayKey);
-            const limit = expanded ? Number.MAX_SAFE_INTEGER : base;
-            const hidden = entry.tasks.length - limit;
-            return (
-              <div key={dayKey} className="grid grid-cols-1 min-w-0 content-start gap-1">
-                {entry.allDay.map((item) => (
-                  <AllDayChip key={item.occurrenceKey} item={item} handlers={handlers} />
-                ))}
-                {entry.exams.map((exam) => (
-                  <ExamChip key={exam.id} exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
-                ))}
-                {entry.tasks.slice(0, limit).map((task) => (
-                  <TaskChip key={task.id} task={task} handlers={handlers} />
-                ))}
-                {hidden > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => (days.length > 1 ? onPickDay?.(entry.day) : setExpandedDays((value) => [...value, dayKey]))}
-                    className="flex min-h-11 items-center text-left text-[11px] font-black text-[var(--muted)] hover:text-[var(--text)]"
-                  >
-                    +{hidden} {hidden === 1 ? "altra" : "altre"}
-                  </button>
-                ) : expanded && days.length === 1 && entry.tasks.length > base ? (
-                  <button
-                    type="button"
-                    onClick={() => setExpandedDays((value) => value.filter((key) => key !== dayKey))}
-                    className="flex min-h-11 items-center text-left text-[11px] font-black text-[var(--muted)] hover:text-[var(--text)]"
-                  >
-                    Mostra meno
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-
-      {hiddenBefore > 0 ? (
-        <button
-          type="button"
-          onClick={onExpandHours}
-          className="mt-1.5 w-full rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-center text-xs font-black text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
-        >
-          {hiddenBefore} {hiddenBefore === 1 ? "evento prima" : "eventi prima"} delle {String(hourStart).padStart(2, "0")}:00 · mostra tutte le ore
-        </button>
-      ) : null}
-
-      {/* corpo orario */}
-      <div className="relative mt-1.5 grid gap-x-1.5" style={{ gridTemplateColumns: columns }}>
-        <div className="relative" style={{ height: gridHeight }}>
-          {hours.map((hour) => (
-            <span
-              key={hour}
-              className="absolute right-1 -translate-y-1/2 text-[11px] font-black text-[var(--faint)]"
-              style={{ top: (hour - hourStart) * hourHeight }}
-            >
-              {hour === hourStart ? "" : `${String(hour).padStart(2, "0")}:00`}
-            </span>
-          ))}
-        </div>
-        {perDay.map((entry) => {
-          const key = entry.day.toISOString();
-          const today = isSameDay(entry.day, now);
-          const nowMin = (now.getTime() - startOfDay(entry.day).getTime()) / 60_000;
-          return (
-            <div
-              key={key}
-              role="presentation"
-              title="Clicca su un orario libero per aggiungere un evento"
-              className={`relative cursor-copy overflow-hidden rounded-[14px] ${dropTarget === key ? "bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]" : today ? "bg-[var(--surface-soft)]" : ""}`}
-              style={{
-                height: gridHeight,
-                backgroundImage: `repeating-linear-gradient(to bottom, var(--border) 0, var(--border) 1px, transparent 1px, transparent ${hourHeight}px)`
-              }}
-              onClick={(event) => {
-                const minutes = minutesFromPointer(event);
-                handlers.onCreate(addMinutes(startOfDay(entry.day), Math.floor(minutes / 30) * 30));
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "move";
-                setDropTarget(key);
-              }}
-              onDragLeave={() => setDropTarget((value) => (value === key ? null : value))}
-              onDrop={(event) => {
-                event.preventDefault();
-                setDropTarget(null);
-                const dragged = grab.current;
-                grab.current = null;
-                if (!dragged) return;
-                const item = occurrences.find((occurrence) => occurrence.occurrenceKey === dragged.key);
-                if (!item) return;
-                const minutes = Math.max(0, minutesFromPointer(event) - Math.round(dragged.offsetMin / 15) * 15);
-                handlers.onMoveEvent(item, addMinutes(startOfDay(entry.day), minutes));
-              }}
-            >
-              {today && nowMin >= hourStart * 60 && nowMin <= hourEnd * 60 ? (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-0 right-0 z-10 h-0.5 bg-[var(--accent-3)]"
-                  style={{ top: ((nowMin - hourStart * 60) / 60) * hourHeight }}
-                >
-                  <span className="absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full bg-[var(--accent-3)]" />
-                </span>
-              ) : null}
-              {entry.placed.map((placed) => {
-                const top = ((placed.startMin - hourStart * 60) / 60) * hourHeight;
-                const height = Math.max(20, ((placed.endMin - placed.startMin) / 60) * hourHeight - 2);
-                const color = eventColor(placed.item, handlers.subjects);
-                const width = 100 / placed.lanes;
-                // Colonne strette (tablet in verticale): eventi sovrapposti a cascata invece che
-                // in corsie affiancate da 30 px, dove il titolo diventerebbe illeggibile.
-                const cascade = placed.lanes > 1 && columnWidth / placed.lanes < 72;
-                const position = cascade
-                  ? { left: `${placed.lane * 10}px`, width: `calc(100% - ${placed.lane * 10 + 2}px)`, zIndex: 1 + placed.lane }
-                  : { left: `calc(${placed.lane * width}% + 1px)`, width: `calc(${width}% - 3px)` };
-                // Righe disponibili nel blocco: il titolo ha la precedenza (colonne strette su tablet),
-                // l'orario compare da 3 righe, la materia da 5.
-                const lineCount = Math.max(1, Math.floor((height - 6) / 13.75));
-                const showTime = lineCount >= 3;
-                const showSubject = lineCount >= 5 && Boolean(occurrenceSubject(placed.item, handlers.subjects));
-                const titleLines = Math.min(5, Math.max(1, lineCount - (showTime ? 1 : 0) - (showSubject ? 1 : 0)));
-                return (
-                  <button
-                    key={placed.item.occurrenceKey}
-                    type="button"
-                    draggable={canDrag(placed.item)}
-                    onDragStart={(event) => {
-                      if (!canDrag(placed.item)) {
-                        event.preventDefault();
-                        return;
-                      }
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      grab.current = { key: placed.item.occurrenceKey, offsetMin: ((event.clientY - rect.top) / hourHeight) * 60 };
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", placed.item.occurrenceKey);
-                      handlers.onPreviewHide();
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handlers.onEditEvent(placed.item.id, placed.item.sharedFrom?.ownerId);
-                    }}
-                    onMouseEnter={(event) => handlers.onPreviewEvent(placed.item, pointerPoint(event))}
-                    onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
-                    onMouseLeave={handlers.onPreviewHide}
-                    className={`absolute overflow-hidden rounded-[10px] border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight hover:z-20 hover:brightness-110 ${
-                      placed.item.status === "done" ? "opacity-60" : ""
-                    } ${sharedOutlineClass(placed.item)}`}
-                    style={{
-                      top,
-                      height,
-                      ...position,
-                      borderLeftColor: color,
-                      background: `color-mix(in srgb, ${color} 24%, var(--bg-2))`,
-                      boxShadow: cascade ? "0 0 0 1px var(--bg-2)" : undefined,
-                      ...sharedOutline(placed.item)
-                    }}
-                  >
-                    <span
-                      className="safe-text font-black"
-                      style={{ display: "-webkit-box", WebkitLineClamp: titleLines, WebkitBoxOrient: "vertical", overflow: "hidden" }}
-                    >
-                      {placed.item.sharedFrom ? (
-                        <>
-                          <SharedMark origin={placed.item.sharedFrom} compact />{" "}
-                        </>
-                      ) : null}
-                      {placed.item.recurring ? (
-                        <span role="img" aria-label="Si ripete">
-                          ↻{" "}
-                        </span>
-                      ) : null}
-                      {placed.item.title}
-                    </span>
-                    {showTime ? (
-                      <span className="one-line-safe block font-bold text-[var(--muted)]">
-                        {timeLabel(placed.item.start)}–{timeLabel(placed.item.end)}
-                      </span>
-                    ) : null}
-                    {showSubject ? (
-                      <span className="one-line-safe block font-bold text-[var(--muted)]">{occurrenceSubject(placed.item, handlers.subjects)}</span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          );
-        })}
-      </div>
-
-      {hiddenAfter > 0 ? (
-        <button
-          type="button"
-          onClick={onExpandHours}
-          className="mt-1.5 w-full rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-center text-xs font-black text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
-        >
-          {hiddenAfter} {hiddenAfter === 1 ? "evento dopo" : "eventi dopo"} le {String(hourEnd).padStart(2, "0")}:00 · mostra tutte le ore
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function TaskChip({ task, handlers }: { task: Task; handlers: Handlers }) {
-  const done = task.status === "done";
-  const overdue = !done && task.dueDate ? isBefore(parseISO(task.dueDate), new Date()) : false;
-  return (
-    <div
-      className={`flex min-w-0 items-center gap-1.5 rounded-[10px] bg-[var(--surface-soft)] px-1.5 py-1 text-[11px] font-bold hover:bg-[var(--surface)] ${done ? "opacity-55" : ""}`}
-      title={task.title}
-    >
-      <button
-        type="button"
-        aria-label={done ? `Segna "${task.title}" come da fare` : `Segna "${task.title}" come fatta`}
-        onClick={(event) => {
-          event.stopPropagation();
-          handlers.onToggleTask(task.id);
-        }}
-        className="relative grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border-[1.5px] after:absolute after:-inset-4 after:content-['']"
-        style={{ borderColor: PRIORITY_TONE[task.priority], background: done ? PRIORITY_TONE[task.priority] : "transparent" }}
-      >
-        {done ? <Icon name="Check" className="h-2.5 w-2.5 text-[#10131d]" /> : null}
-      </button>
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          handlers.onEditTask(task.id);
-        }}
-        onMouseEnter={(event) => handlers.onPreviewTask(task, pointerPoint(event))}
-        onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
-        onMouseLeave={handlers.onPreviewHide}
-        aria-label={`Apri l'attività "${task.title}"`}
-        className={`min-w-0 flex-1 truncate text-left ${done ? "line-through" : ""} ${overdue ? "text-[var(--danger-text)]" : ""}`}
-      >
-        {task.title}
-      </button>
-    </div>
-  );
-}
-
-function AllDayChip({ item, handlers }: { item: CalendarOccurrence; handlers: Handlers }) {
-  const color = eventColor(item, handlers.subjects);
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        handlers.onEditEvent(item.id, item.sharedFrom?.ownerId);
-      }}
-      onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
-      onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
-      onMouseLeave={handlers.onPreviewHide}
-      className={`flex min-w-0 items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-left text-[11px] font-black hover:brightness-110 ${
-        item.status === "done" ? "opacity-60" : ""
-      } ${sharedOutlineClass(item)}`}
-      style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))`, ...sharedOutline(item) }}
-      title={`${allDayEventLabel(item)} · ${item.title}`}
-    >
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-      {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
-      <span className="min-w-0 truncate">
-        {item.recurring ? (
-          <span role="img" aria-label="Si ripete">
-            ↻{" "}
-          </span>
-        ) : null}
-        {item.title}
-      </span>
-    </button>
-  );
-}
-
-function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Subjects; onOpen: (id: string) => void }) {
-  const color = subjectColor(subjects, exam.subjectId);
-  const name = subjectName(subjects, exam.subjectId);
-  return (
-    <button
-      type="button"
-      className="flex w-full min-w-0 items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-left text-[11px] font-black hover:brightness-110"
-      style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))` }}
-      title={`Esame di ${name} · preparazione al ${exam.preparation}%`}
-      aria-label={CALENDAR_TEXT.openExamAria(name)}
-      onClick={(event) => {
-        // Nella cella del mese e nella griglia oraria il click crea un evento: aprire un esame non deve farlo.
-        event.stopPropagation();
-        onOpen(exam.id);
-      }}
-    >
-      <Icon name="GraduationCap" className="h-3 w-3 shrink-0" />
-      <span className="min-w-0 truncate">Esame · {name}</span>
-    </button>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Settimana su mobile: elenco per giorno                               */
-/* ------------------------------------------------------------------ */
-
-function DayList({
-  days,
-  occurrences,
-  tasks,
-  exams,
-  handlers,
-  empty: emptyWeek
-}: {
-  days: Date[];
-  occurrences: CalendarOccurrence[];
-  tasks: Task[];
-  exams: Exam[];
-  handlers: Handlers;
-  /** Al posto di sette "Nessun impegno" quando tutta la settimana è vuota. */
-  empty?: ReactNode;
-}) {
-  const perDay = days.map((day) => {
-    const dayEvents = occurrences.filter((item) => isSameDay(parseISO(item.start), day));
-    const dayTasks = tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day));
-    const dayExams = exams.filter((exam) => isSameDay(parseISO(exam.date), day));
-    return { day, dayEvents, dayTasks, dayExams, empty: !dayEvents.length && !dayTasks.length && !dayExams.length };
-  });
-  if (perDay.every((entry) => entry.empty)) return <>{emptyWeek}</>;
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
-      {perDay.map(({ day, dayEvents, dayTasks, dayExams, empty }) => {
-        return (
-          <section key={day.toISOString()} aria-label={format(day, "EEEE d MMMM", { locale: it })}>
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <h3 className={`text-sm font-black capitalize ${isSameDay(day, new Date()) ? "text-[var(--accent-ink)]" : ""}`}>{format(day, "EEEE d MMMM", { locale: it })}</h3>
-              <button
-                type="button"
-                onClick={() => handlers.onCreate(defaultStartFor(day))}
-                className="grid h-11 min-w-11 place-items-center rounded-full bg-[var(--surface-soft)] px-2.5"
-                aria-label={`Aggiungi un evento il ${format(day, "d MMMM", { locale: it })}`}
-                title={`Aggiungi un evento il ${format(day, "d MMMM", { locale: it })}`}
-              >
-                <Icon name="Plus" className="h-4 w-4" />
-              </button>
-            </div>
-            {empty ? (
-              <p className="rounded-[14px] border border-dashed border-[var(--border)] px-3 py-2 text-xs font-bold text-[var(--faint)]">Nessun impegno</p>
-            ) : (
-              <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
-                {dayExams.map((exam) => (
-                  <li key={exam.id}>
-                    <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
-                  </li>
-                ))}
-                {dayEvents.map((item) => (
-                  <li key={item.occurrenceKey}>
-                    <EventRow item={item} handlers={handlers} />
-                  </li>
-                ))}
-                {dayTasks.map((task) => (
-                  <li key={task.id}>
-                    <TaskChip task={task} handlers={handlers} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-function EventRow({ item, handlers }: { item: CalendarOccurrence; handlers: Handlers }) {
-  const color = eventColor(item, handlers.subjects);
-  const allDay = isAllDayEvent(item);
-  return (
-    <button
-      type="button"
-      onClick={() => handlers.onEditEvent(item.id, item.sharedFrom?.ownerId)}
-      onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
-      onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
-      onMouseLeave={handlers.onPreviewHide}
-      className={`flex w-full min-w-0 items-center gap-3 rounded-[14px] px-2.5 py-2 text-left hover:bg-[var(--surface-soft)] ${item.status === "done" ? "opacity-60" : ""} ${sharedOutlineClass(item)}`}
-      style={sharedOutline(item)}
-    >
-      {allDay ? (
-        <span className="w-12 shrink-0 text-center text-xs font-black text-[var(--faint)]" title={allDayEventLabel(item)} aria-hidden="true">
-          —
-        </span>
-      ) : (
-        <span className="w-12 shrink-0 text-xs font-black tabular-nums">{timeLabel(item.start)}</span>
-      )}
-      <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: color }} />
-      <span className="min-w-0 flex-1">
-        <span className="one-line-safe block text-sm font-extrabold">
-          {item.recurring ? (
-            <span role="img" aria-label="Si ripete">
-              ↻{" "}
-            </span>
-          ) : null}
-          {item.title}
-        </span>
-        <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
-          {allDay ? allDayEventLabel(item) : `${timeLabel(item.start)}–${timeLabel(item.end)}`}
-          {occurrenceSubject(item, handlers.subjects) ? ` · ${occurrenceSubject(item, handlers.subjects)}` : ""}
-        </span>
-      </span>
-      {item.sharedFrom ? <SharedMark origin={item.sharedFrom} /> : null}
-      <Tag className="hidden shrink-0 sm:inline-flex">{EVENT_CATEGORY_LABEL[item.category]}</Tag>
-    </button>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Mese                                                                 */
-/* ------------------------------------------------------------------ */
-
-function MonthGrid({
-  days,
-  month,
-  occurrences,
-  tasks,
-  exams,
-  handlers,
-  onPickDay
-}: {
-  days: Date[];
-  month: Date;
-  occurrences: CalendarOccurrence[];
-  tasks: Task[];
-  exams: Exam[];
-  handlers: Handlers;
-  onPickDay: (day: Date) => void;
-}) {
-  const [dropDay, setDropDay] = useState<string | null>(null);
-  const dragged = useRef<string | null>(null);
-  const limit = 3;
-  return (
-    <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
-      {["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"].map((day) => (
-        <div key={day} className="px-1 pb-1 text-[11px] font-black uppercase text-[var(--faint)]">
-          {day}
-        </div>
-      ))}
-      {days.map((day) => {
-        const key = day.toISOString();
-        const dayEvents = occurrences.filter((item) => isSameDay(parseISO(item.start), day));
-        const dayTasks = tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day));
-        const dayExams = exams.filter((exam) => isSameDay(parseISO(exam.date), day));
-        const total = dayEvents.length + dayTasks.length + dayExams.length;
-        const today = isSameDay(day, new Date());
-        const outside = !isSameMonth(day, month);
-        let shown = 0;
-        return (
-          <div
-            key={key}
-            role="presentation"
-            title="Clicca per aggiungere un evento in questo giorno"
-            onClick={() => handlers.onCreate(defaultStartFor(day))}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDropDay(key);
-            }}
-            onDragLeave={() => setDropDay((value) => (value === key ? null : value))}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDropDay(null);
-              const item = occurrences.find((occurrence) => occurrence.occurrenceKey === dragged.current);
-              dragged.current = null;
-              if (!item) return;
-              const start = parseISO(item.start);
-              const next = startOfDay(day);
-              next.setHours(start.getHours(), start.getMinutes(), 0, 0);
-              handlers.onMoveEvent(item, next);
-            }}
-            className={`min-h-[68px] min-w-0 cursor-copy rounded-[14px] border p-1 sm:min-h-[112px] sm:p-1.5 ${
-              dropDay === key ? "border-[var(--accent)]" : "border-[var(--border)]"
-            } ${outside ? "opacity-45" : ""} ${today ? "bg-[var(--surface)]" : "bg-[var(--surface-soft)]"}`}
-          >
-            <div className="mb-1 flex items-center justify-between gap-1">
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onPickDay(day);
-                }}
-                className={`relative grid h-6 min-w-6 place-items-center rounded-full px-1 text-xs font-black before:absolute before:-inset-2.5 before:content-[""] hover:bg-[var(--surface-strong)] ${
-                  today ? "bg-[var(--accent)] text-[#10131d] hover:bg-[var(--accent)]" : ""
-                }`}
-                aria-label={`Apri ${format(day, "EEEE d MMMM", { locale: it })}`}
-                title={`Apri ${format(day, "EEEE d MMMM", { locale: it })}`}
-              >
-                {format(day, "d")}
-              </button>
-              {total ? <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] sm:hidden" /> : null}
-            </div>
-            <div className="hidden gap-0.5 sm:grid">
-              {dayExams.map((exam) => {
-                shown += 1;
-                return shown <= limit ? <ExamChip key={exam.id} exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} /> : null;
-              })}
-              {dayEvents.map((item) => {
-                shown += 1;
-                if (shown > limit) return null;
-                const color = eventColor(item, handlers.subjects);
-                const allDay = isAllDayEvent(item);
-                return (
-                  <button
-                    key={item.occurrenceKey}
-                    type="button"
-                    draggable={canDrag(item)}
-                    onDragStart={(event) => {
-                      if (!canDrag(item)) {
-                        event.preventDefault();
-                        return;
-                      }
-                      dragged.current = item.occurrenceKey;
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", item.occurrenceKey);
-                      handlers.onPreviewHide();
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handlers.onEditEvent(item.id, item.sharedFrom?.ownerId);
-                    }}
-                    onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
-                    onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
-                    onMouseLeave={handlers.onPreviewHide}
-                    className={`flex min-w-0 items-center gap-1 rounded-[8px] px-1 py-0.5 text-left text-[11px] ${
-                      allDay ? "font-black hover:brightness-110" : "font-bold hover:bg-[var(--surface-strong)]"
-                    } ${sharedOutlineClass(item)}`}
-                    style={allDay ? { background: `color-mix(in srgb, ${color} 26%, var(--bg-2))`, ...sharedOutline(item) } : sharedOutline(item)}
-                    title={allDay ? `${allDayEventLabel(item)} · ${item.title}` : `${timeLabel(item.start)} · ${item.title}`}
-                  >
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-                    {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
-                    {allDay ? null : <span className="shrink-0 tabular-nums text-[var(--muted)]">{timeLabel(item.start)}</span>}
-                    <span className="min-w-0 truncate">{item.title}</span>
-                  </button>
-                );
-              })}
-              {dayTasks.map((task) => {
-                shown += 1;
-                return shown <= limit ? <TaskChip key={task.id} task={task} handlers={handlers} /> : null;
-              })}
-              {total > limit ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onPickDay(day);
-                  }}
-                  className="flex min-h-11 items-center px-1 text-left text-[11px] font-black text-[var(--muted)] hover:text-[var(--text)]"
-                >
-                  +{total - limit} altri
-                </button>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Agenda                                                               */
-/* ------------------------------------------------------------------ */
-
-function Agenda({
-  from,
-  to,
-  occurrences,
-  tasks,
-  exams,
-  handlers,
-  empty
-}: {
-  from: Date;
-  to: Date;
-  occurrences: CalendarOccurrence[];
-  tasks: Task[];
-  exams: Exam[];
-  handlers: Handlers;
-  /** Stato vuoto al posto di quello generico (es. con il filtro per materia). */
-  empty?: ReactNode;
-}) {
-  const overdue = tasks
-    .filter((task) => task.status !== "done" && task.dueDate && isBefore(parseISO(task.dueDate), startOfDay(new Date())))
-    .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
-  const days = eachDayOfInterval({ start: from, end: addDays(to, -1) });
-  const sections = days
-    .map((day) => ({
-      day,
-      events: occurrences.filter((item) => isSameDay(parseISO(item.start), day)),
-      tasks: tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)),
-      exams: exams.filter((exam) => isSameDay(parseISO(exam.date), day))
-    }))
-    .filter((section) => section.events.length || section.tasks.length || section.exams.length);
-
-  if (!sections.length && !overdue.length) {
-    if (empty) return <>{empty}</>;
-    return (
-      <EmptyState
-        icon="CalendarDays"
-        title="Niente in programma"
-        body="In queste due settimane non hai eventi, scadenze o esami: quello che aggiungi comparirà qui, giorno per giorno."
-        action={
-          <Button variant="primary" icon="Plus" onClick={() => handlers.onCreate(defaultStartFor(from))}>
-            Nuovo evento
-          </Button>
-        }
-      />
-    );
-  }
-
-  const dayTitle = (day: Date) => {
-    const diff = daysUntil(day);
-    const base = format(day, "EEEE d MMMM", { locale: it });
-    return diff === 0 ? `Oggi · ${base}` : diff === 1 ? `Domani · ${base}` : base;
-  };
-
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
-      {overdue.length && isSameDay(from, startOfDay(new Date())) ? (
-        <section aria-label="Attività in ritardo">
-          <h3 className="mb-1.5 text-xs font-black uppercase text-[var(--danger-text)]">In ritardo · {overdue.length}</h3>
-          <ul className="grid grid-cols-[minmax(0,1fr)] gap-1 sm:grid-cols-2">
-            {overdue.map((task) => (
-              <li key={task.id}>
-                <TaskChip task={task} handlers={handlers} />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {sections.map((section) => (
-        <section key={section.day.toISOString()} aria-label={dayTitle(section.day)} className="grid grid-cols-[minmax(0,1fr)] gap-1 md:grid-cols-[180px_minmax(0,1fr)] md:gap-4">
-          <h3 className={`pt-2 text-sm font-black capitalize ${isSameDay(section.day, new Date()) ? "text-[var(--accent-ink)]" : ""}`}>{dayTitle(section.day)}</h3>
-          <ul className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
-            {section.exams.map((exam) => (
-              <li key={exam.id} className="px-2.5 py-1">
-                <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
-              </li>
-            ))}
-            {section.events.map((item) => (
-              <li key={item.occurrenceKey}>
-                <EventRow item={item} handlers={handlers} />
-              </li>
-            ))}
-            {section.tasks.length ? (
-              <li className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2.5 py-1 sm:grid-cols-2">
-                {section.tasks.map((task) => (
-                  <TaskChip key={task.id} task={task} handlers={handlers} />
-                ))}
-              </li>
-            ) : null}
-          </ul>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Anteprima al passaggio del mouse                                     */
-/* ------------------------------------------------------------------ */
-
-function CalendarHoverPreview({ preview, subjects }: { preview: CalendarPreviewState; subjects: Subjects }) {
-  const width = 320;
-  const height = preview.kind === "event" ? 200 : 240;
-  const left = Math.min(Math.max(12, preview.x + 16), Math.max(12, window.innerWidth - width - 12));
-  const top = Math.min(Math.max(12, preview.y + 16), Math.max(12, window.innerHeight - height - 12));
-  const accent = preview.kind === "event" ? eventColor(preview.event, subjects) : subjectColor(subjects, preview.task.subjectId);
-  const taskTimerRunning = preview.kind === "task" && isTaskTimerRunning(preview.task);
-  const taskElapsed = preview.kind === "task" ? taskElapsedSeconds(preview.task) : 0;
-  const taskCompletedLate = preview.kind === "task" && isTaskCompletedLate(preview.task);
-
-  return (
-    <aside
-      aria-hidden="true"
-      className="pointer-events-none fixed z-[60] w-[min(320px,calc(100vw-24px))] rounded-[24px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_90%,transparent)] p-4 text-left shadow-soft backdrop-blur-2xl"
-      style={{ left, top }}
-    >
-      <div className="mb-2 flex items-start gap-3">
-        <span className="mt-1 h-9 w-1.5 shrink-0 rounded-full" style={{ background: accent }} />
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-black uppercase text-[var(--faint)]">
-            {preview.kind === "event" ? EVENT_CATEGORY_LABEL[preview.event.category] : "Attività"}
-          </p>
-          <h4 className="two-line-safe text-base font-black">{preview.kind === "event" ? preview.event.title : preview.task.title}</h4>
-        </div>
-      </div>
-
-      {preview.kind === "event" ? (
-        <div className="grid grid-cols-1 gap-2 text-sm">
-          <p className="font-bold text-[var(--muted)]">
-            {capitalizeFirst(format(parseISO(preview.event.start), "EEEE d MMM", { locale: it }))} ·{" "}
-            {isAllDayEvent(preview.event) ? allDayEventLabel(preview.event) : `${timeLabel(preview.event.start)}–${timeLabel(preview.event.end)} · ${formatMinutes(eventMinutes(preview.event))}`}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {preview.event.sharedFrom ? <SharedMark origin={preview.event.sharedFrom} /> : null}
-            <Tag color={accent}>{preview.event.sharedFrom ? preview.event.sharedFrom.subjectName ?? NO_SUBJECT_LABEL : subjectName(subjects, preview.event.subjectId)}</Tag>
-            <Tag>{EVENT_STATUS_LABEL[preview.event.status]}</Tag>
-            {preview.event.recurrence && preview.event.recurrence !== "none" ? <Tag>{RECURRENCE_LABEL[preview.event.recurrence]}</Tag> : null}
-            {preview.event.category === "deadline" || preview.event.category === "exam" ? <Tag>{studyDaysLabel(preview.event.start)}</Tag> : null}
-          </div>
-          {preview.event.description || preview.event.notes ? (
-            <p className="three-line-safe text-[var(--muted)]">{preview.event.description || preview.event.notes}</p>
-          ) : null}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-2 text-sm">
-          <p className="font-bold text-[var(--muted)]">
-            {preview.task.dueDate ? `${shortDate(preview.task.dueDate)} · ${timeLabel(preview.task.dueDate)}` : "Nessuna data"} ·{" "}
-            {subjectName(subjects, preview.task.subjectId)}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            <Tag color={PRIORITY_TONE[preview.task.priority]}>{PRIORITY_LABEL[preview.task.priority]}</Tag>
-            <Tag>{TASK_STATUS_LABEL[preview.task.status]}</Tag>
-            <Tag>{ENERGY_LABEL[preview.task.energy]}</Tag>
-            <Tag>
-              {formatMinutes(preview.task.estimatedMinutes)} stimati
-              {taskTimerRunning ? ` · ⏱ ${formatElapsedSeconds(taskElapsed)}` : preview.task.actualMinutes !== undefined ? ` · ${preview.task.actualMinutes} min reali` : ""}
-            </Tag>
-            {taskCompletedLate ? <Tag className="text-[var(--warning-text)]">Completata in ritardo</Tag> : null}
-          </div>
-          {preview.task.description || preview.task.notes ? (
-            <p className="three-line-safe text-[var(--muted)]">{preview.task.description || preview.task.notes}</p>
-          ) : null}
-        </div>
-      )}
-    </aside>
   );
 }
 
@@ -2396,7 +1499,8 @@ function ExamSession({
               key={exam.id}
               type="button"
               onClick={() => onOpenExam(exam.id)}
-              aria-label={`${CALENDAR_TEXT.openExamAria(name)} · ${days} ${days === 1 ? "giorno" : "giorni"}`}
+              // Nome accessibile = il testo della scheda (numero, giorni, materia); l'azione nel title.
+              title={CALENDAR_TEXT.openExamAria(name)}
               className="quiet-panel motion-safe group block min-w-0 p-4 text-left hover:border-[var(--accent-ink)] hover:bg-[var(--surface)]"
               style={{ boxShadow: `inset 0 3px 0 ${color}` }}
             >
@@ -2430,7 +1534,7 @@ function ExamSession({
                 <button
                   type="button"
                   onClick={() => onOpenExam(exam.id)}
-                  aria-label={CALENDAR_TEXT.openExamAria(subjectName(subjects, exam.subjectId))}
+                  title={CALENDAR_TEXT.openExamAria(subjectName(subjects, exam.subjectId))}
                   className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[14px] px-2 text-left text-sm text-[var(--muted)] hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
                 >
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: subjectColor(subjects, exam.subjectId) }} />
@@ -2491,7 +1595,8 @@ function SemesterMap({
               <button
                 type="button"
                 onClick={() => onFilter(subject.id)}
-                aria-label={`${CALENDAR_TEXT.summaryShow(subject.name)} · ${CALENDAR_TEXT.summaryItems(row.items)}`}
+                // Nome accessibile = il testo della scheda (materia, voci); l'azione nel title.
+                title={CALENDAR_TEXT.summaryShow(subject.name)}
                 className="motion-safe group flex min-w-0 items-center gap-3 rounded-[14px] p-2 text-left hover:bg-[var(--surface)]"
               >
                 <span className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-super" style={{ background: safeCssColor(subject.color) || "var(--accent)" }}>
@@ -2511,7 +1616,8 @@ function SemesterMap({
               <button
                 type="button"
                 onClick={() => onOpenSubject(subject.id)}
-                aria-label={CALENDAR_TEXT.openSubjectAria(subject.name)}
+                aria-label={`${CALENDAR_TEXT.openSubject} · ${subject.name}`}
+                title={CALENDAR_TEXT.openSubjectAria(subject.name)}
                 className="inline-flex min-h-11 items-center gap-1 self-start rounded-full px-2.5 text-xs font-extrabold text-[var(--accent-ink)] hover:underline"
               >
                 {CALENDAR_TEXT.openSubject}
@@ -2528,63 +1634,6 @@ function SemesterMap({
 /* ------------------------------------------------------------------ */
 /* Filtro per materia e stati vuoti                                     */
 /* ------------------------------------------------------------------ */
-
-/**
- * Riga "Tutte · Analisi · Fisica…": scorre in orizzontale dentro la riga (mai la pagina). Con un
- * filtro attivo, a sinistra e sempre visibile, il chip "Solo: Analisi ✕" che lo toglie.
- */
-function SubjectFilterBar({ subjects, active, onChange }: { subjects: Subjects; active: Subjects[number] | null; onChange: (id: string | null) => void }) {
-  const rowRef = useRef<HTMLDivElement>(null);
-  const options = selectableSubjects(subjects, active?.id);
-  // La pillola attiva resta in vista anche quando la riga scorre (telefono).
-  useEffect(() => {
-    const row = rowRef.current;
-    const pressed = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
-    if (!row || !pressed) return;
-    const start = pressed.offsetLeft - row.offsetLeft;
-    const end = start + pressed.offsetWidth;
-    if (start < row.scrollLeft) row.scrollTo({ left: Math.max(0, start - 12) });
-    else if (end > row.scrollLeft + row.clientWidth) row.scrollTo({ left: end - row.clientWidth + 12 });
-  }, [active?.id]);
-  if (!options.length) return null;
-  const pill = (pressed: boolean) =>
-    `motion-safe inline-flex min-h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-extrabold ${
-      pressed
-        ? "border-transparent bg-[var(--accent)] text-[#10131d]"
-        : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
-    }`;
-  return (
-    <div className="mb-4 flex min-w-0 items-center gap-2">
-      {active ? (
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          aria-label={CALENDAR_TEXT.clearFilter(active.name)}
-          title={CALENDAR_TEXT.showAll}
-          className="motion-safe inline-flex min-h-9 max-w-[50%] shrink-0 items-center gap-1.5 rounded-full border border-[var(--accent-ink)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text)] hover:bg-[var(--surface)]"
-        >
-          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: safeCssColor(active.color) || "var(--accent)" }} />
-          <span className="min-w-0 truncate">{CALENDAR_TEXT.onlySubject(active.name)}</span>
-          <Icon name="X" className="h-3.5 w-3.5 shrink-0" />
-        </button>
-      ) : null}
-      <div ref={rowRef} role="group" aria-label={CALENDAR_TEXT.filterLabel} className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto py-0.5">
-        <button type="button" aria-pressed={!active} onClick={() => onChange(null)} className={pill(!active)}>
-          {CALENDAR_TEXT.allSubjects}
-        </button>
-        {options.map((subject) => {
-          const pressed = active?.id === subject.id;
-          return (
-            <button key={subject.id} type="button" aria-pressed={pressed} onClick={() => onChange(pressed ? null : subject.id)} className={pill(pressed)}>
-              <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: safeCssColor(subject.color) || "var(--accent)" }} />
-              {subject.name}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 /** Filtro per materia senza impegni nel periodo: un evento già legato alla materia, o tutte le materie. */
 function SubjectEmptyNotice({ name, onAdd, onClear }: { name: string; onAdd: () => void; onClear: () => void }) {

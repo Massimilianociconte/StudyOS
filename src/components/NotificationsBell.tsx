@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { useStudyStore } from "../store/useStudyStore";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { Icon } from "./Icon";
@@ -23,22 +23,52 @@ export function NotificationsBell({ onOpen }: { onOpen: () => void }) {
     void import("../lib/groupSync").then((module) => module.ensureSharedMailbox()).catch(() => undefined);
   }, []);
 
+  // Promemoria degli eventi: il watcher arriva a parte, quando la pagina è libera (fuori dal bundle
+  // d'ingresso). Se il pezzo non arriva (offline, versione vecchia) non si monta niente.
+  const [ReminderWatcher, setReminderWatcher] = useState<ComponentType | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      void import("./calendar/EventReminderWatcher").then(
+        (module) => {
+          if (!cancelled) setReminderWatcher(() => module.EventReminderWatcher);
+        },
+        () => undefined
+      );
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(load, { timeout: 5000 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(handle);
+      };
+    }
+    const handle = window.setTimeout(load, 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, []);
+
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={unread ? `Notifiche, ${unread} non lette` : "Notifiche"}
-      title={unread ? `${unread} notifiche non lette` : "Notifiche"}
-      className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
-    >
-      <span className={unread ? "motion-safe:animate-[bell-nudge_2.4s_ease-in-out_infinite]" : undefined}>
-        <Icon name="Bell" className="h-4.5 w-4.5" />
-      </span>
-      {unread ? (
-        <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent-3)] px-1 text-[11px] font-black text-[#10131d]">
-          {unread > 9 ? "9+" : unread}
+    <>
+      {ReminderWatcher ? <ReminderWatcher /> : null}
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={unread ? `Notifiche, ${unread} non lette` : "Notifiche"}
+        title={unread ? `${unread} notifiche non lette` : "Notifiche"}
+        className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
+      >
+        <span className={unread ? "motion-safe:animate-[bell-nudge_2.4s_ease-in-out_infinite]" : undefined}>
+          <Icon name="Bell" className="h-4.5 w-4.5" />
         </span>
-      ) : null}
-    </button>
+        {unread ? (
+          <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent-3)] px-1 text-[11px] font-black text-[#10131d]">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        ) : null}
+      </button>
+    </>
   );
 }
