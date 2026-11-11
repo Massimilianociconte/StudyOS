@@ -16,6 +16,7 @@ import {
   personFromRow,
   personQueryParam,
   profileFromRow,
+  profileNameToWrite,
   type FoundPerson,
   type MyProfile
 } from "./people";
@@ -83,14 +84,13 @@ export const loadMyProfile = async (): Promise<MyProfile | null> => {
 
 /**
  * Salva i campi indicati (crea la riga se manca). Il nome, se non è nel patch, è quello di
- * "Profilo e obiettivi": la riga creata qui non resta senza nome. `handle` vuoto o null lo toglie.
+ * "Profilo e obiettivi", ma solo se non è vuoto: un nome locale vuoto non cancella quello del server. `handle` vuoto o null lo toglie.
  */
 export const saveMyProfile = async (patch: Partial<Pick<MyProfile, "handle" | "discoverable" | "displayName">>): Promise<MyProfile> => {
   const me = myId();
-  const row: Record<string, unknown> = {
-    user_id: me,
-    display_name: (patch.displayName ?? profileName()).trim().slice(0, DISPLAY_NAME_MAX)
-  };
+  const row: Record<string, unknown> = { user_id: me };
+  const name = profileNameToWrite(patch.displayName, profileName());
+  if (name !== null) row.display_name = name;
   if (patch.handle !== undefined) {
     if (patch.handle === null || !patch.handle.trim()) {
       row.handle = null;

@@ -62,6 +62,16 @@ export const profileFromRow = (row: Record<string, unknown> | null | undefined):
     : { ...DEFAULT_PROFILE };
 
 /** Titolo della scheda di una persona: il nome, oppure "Nome non impostato". */
+/**
+ * Il nome da scrivere sul profilo online, o null se va lasciato com'è: un nome locale vuoto non
+ * deve cancellare quello impostato su un altro dispositivo (la colonna ha default '', quindi una
+ * riga nuova senza nome funziona). Un nome passato esplicitamente si scrive sempre.
+ */
+export const profileNameToWrite = (explicit: string | undefined, local: string): string | null => {
+  const name = (explicit ?? local).trim().slice(0, DISPLAY_NAME_MAX);
+  return explicit !== undefined || name ? name : null;
+};
+
 export const personTitle = (person: FoundPerson) => person.displayName || peopleLabels.noName;
 
 /** `@nome` da mostrare, oppure null. */

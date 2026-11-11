@@ -15,6 +15,7 @@ import {
   personQueryParam,
   personTitle,
   profileFromRow,
+  profileNameToWrite,
   shareInviteRecipient
 } from "../src/lib/people.ts";
 import { inviteFromRow } from "../src/lib/sharing.ts";
@@ -117,4 +118,12 @@ test("legame degli inviti: arriva dal server, non si toglie, conserva il nome, s
   assert.equal(bound[2], local[2]);
   assert.equal(bindInviteRecipients(bound, [invite("i1", { recipientUserId: "u-bob" })]), bound);
   assert.equal(bindInviteRecipients(local, []), local);
+});
+
+test("profilo online: un nome locale vuoto non cancella quello del server", () => {
+  assert.equal(profileNameToWrite(undefined, "  "), null);
+  assert.equal(profileNameToWrite(undefined, "  Alice "), "Alice");
+  assert.equal(profileNameToWrite("Bea", ""), "Bea");
+  assert.equal(profileNameToWrite("", "Alice"), "");
+  assert.equal(profileNameToWrite(undefined, "x".repeat(80)).length, 60);
 });
