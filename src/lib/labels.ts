@@ -136,6 +136,65 @@ export const EVENT_STATUS_LABEL: Record<CalendarEvent["status"], string> = {
   skipped: "Saltato"
 };
 
+/** Calendario: intestazione, menu "Altre azioni", viste, filtro per materia, riepiloghi, stati vuoti. */
+export const CALENDAR_TEXT = {
+  subtitle: "Lezioni, studio, scadenze ed esami.",
+  newEvent: "Nuovo evento",
+  importFile: "Importa da un altro calendario",
+  exportFile: "Esporta il calendario",
+  share: "Condividi",
+  officialDates: "Date ufficiali degli appelli",
+  subjectSummary: "Riepilogo per materia",
+  examSummary: "Riepilogo esami",
+  backToCalendar: "Torna al calendario",
+  viewsLabel: "Vista calendario",
+  dayFocus: "Solo 8–19, ore grandi",
+  dayFocusTitle: "Mostra il giorno dalle 8 alle 19, con le ore più grandi",
+  filterLabel: "Mostra gli impegni di una materia",
+  allSubjects: "Tutte",
+  onlySubject: (name: string) => `Solo: ${name}`,
+  clearFilter: (name: string) => `Togli «Solo: ${name}» e mostra tutte le materie`,
+  showAll: "Mostra tutte le materie",
+  addEvent: "Aggiungi un evento",
+  emptySubject: (name: string) => `Nessun impegno di ${name} in questo periodo`,
+  emptyWeek: "Settimana senza impegni",
+  sharedCalendars: "Calendari condivisi:",
+  summaryCounts: (planned: number, withItems: number) =>
+    `${planned} ${planned === 1 ? "materia" : "materie"} nel piano di studio · ${withItems} con impegni in calendario`,
+  summaryHint: "Tocca una materia per vedere nel calendario solo i suoi impegni.",
+  summaryItems: (items: number) => (items === 1 ? "1 impegno in calendario" : `${items} impegni in calendario`),
+  summaryBreakdown: ({ events, weekly, exams, deadlines }: { events: number; weekly: number; exams: number; deadlines: number }) =>
+    [
+      events ? `${events} ${events === 1 ? "evento" : "eventi"}${weekly ? ` (${weekly} ogni settimana)` : ""}` : "",
+      exams ? `${exams} ${exams === 1 ? "esame" : "esami"}` : "",
+      deadlines ? `${deadlines} ${deadlines === 1 ? "scadenza" : "scadenze"}` : ""
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  summaryShow: (name: string) => `Mostra solo ${name} nel calendario`,
+  summaryCompleted: "Superata",
+  openSubject: "Apri materia",
+  openSubjectAria: (name: string) => `Apri la materia ${name}`,
+  summaryEmptyTitle: "Ancora nessuna materia",
+  summaryEmptyBody: "Aggiungi le tue materie: qui vedrai quanti impegni hai in calendario per ognuna e potrai mostrarne una sola.",
+  goSubjects: "Vai a Materie",
+  openExamAria: (name: string) => `Apri l'esame di ${name}`
+} as const;
+
+/** Aiuto "?" del Calendario (HelpTip): testi ed esempi. */
+export const CALENDAR_HELP = {
+  views: {
+    title: "Le viste del calendario",
+    text: "Giorno, Settimana e Mese mostrano gli impegni sul calendario; Agenda li elenca per le prossime due settimane. Tocca un orario libero per aggiungere un evento.",
+    example: "tocca martedì alle 10 per segnare la lezione di Anatomia."
+  },
+  shared: {
+    title: "Calendari condivisi",
+    text: "I bordi tratteggiati sono eventi di un'altra persona. Tocca il suo nome per mostrarli o nasconderli.",
+    example: "nascondi il calendario di Giulia per vedere solo il tuo."
+  }
+} as const;
+
 /** Colore semantico della priorità (token del tema, leggibile in chiaro e scuro). */
 export const PRIORITY_TONE: Record<Task["priority"], string> = {
   low: "var(--faint)",

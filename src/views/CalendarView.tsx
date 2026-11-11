@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -33,28 +35,45 @@ import { useStudyStore } from "../store/useStudyStore";
 import { sharedOfTypes, useSharedStore } from "../store/useSharedStore";
 import { changedFields, originOf, ownerColor, safeCssColor, sharedKey, ShareUserError, type SharedEntity, type SharedOrigin } from "../lib/sharing";
 import { SharedMark } from "../components/SharedMark";
-import { ShareButton } from "../components/ShareButton";
 import { createId } from "../lib/id";
 import type { CalendarEvent, EventCategory, Exam, Task } from "../types";
-import { Button, DIMMED_DISABLED_FIELDS, EmptyState, Field, IconButton, Panel, ProgressBar, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import {
+  Button,
+  DIMMED_DISABLED_FIELDS,
+  EmptyState,
+  Field,
+  HelpTip,
+  IconButton,
+  PageActions,
+  Panel,
+  SectionTitle,
+  Segmented,
+  Tag,
+  inputClass,
+  type PageAction
+} from "../components/ui";
 import { Icon } from "../components/Icon";
 import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
 import { safeHref } from "../lib/safeUrl";
-import { CalendarTransfer } from "../components/CalendarTransfer";
+import { CalendarTransfer, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { allDayRange, daysUntil, eventMinutes, isAllDayEvent, selectableSubjects, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel } from "../lib/selectors";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { expandEvents, RECURRENCE_LABEL, type EventOccurrence } from "../lib/recurrence";
 import {
   ALL_DAY_LABEL,
+  CALENDAR_HELP,
+  CALENDAR_TEXT,
   ENERGY_LABEL,
   EVENT_CATEGORY_LABEL,
   EVENT_STATUS_LABEL,
   EXAM_STATUS_LABEL,
   NO_SUBJECT_LABEL,
+  OFFICIAL_EXAMS_ADD_LABEL,
   PRIORITY_LABEL,
   PRIORITY_TONE,
+  SHARE_TEXT,
   TASK_STATUS_LABEL,
   capitalizeFirst,
   eventLinkLabel,
@@ -65,8 +84,25 @@ import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiStat
 import { CourseIcon } from "../components/CourseIcon";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
+import { cloudConfigured } from "../lib/cloudSyncState";
+import {
+  STORED_CALENDAR_MODES,
+  dayForNewEvent,
+  filterCalendarItems,
+  hasItemsInRange,
+  isCalendarSummary,
+  resolveCalendarMode,
+  resolveSubjectFilter,
+  subjectCalendarSummary,
+  type CalendarViewId,
+  type SubjectCalendarSummary
+} from "../lib/calendarFilter";
 
-type CalendarMode = "day" | "week" | "month" | "agenda" | "exam" | "semester" | "focus";
+// Pannello Condividi (e CloudPanel con supabase-js) caricato solo quando si apre dal menu.
+const loadShareDrawer = () => import("../components/ShareDrawer");
+const ShareDrawer = lazy(() => loadShareDrawer().then((module) => ({ default: module.ShareDrawer })));
+
+type StoredCalendarMode = (typeof STORED_CALENDAR_MODES)[number];
 type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
 
 /** Occorrenza del calendario: propria, oppure di un'altra persona (`sharedFrom`). */
@@ -132,15 +168,14 @@ const LINKED_EVENT_FIELDS = [
 /** Errore di una scrittura sui dati altrui: il testo dello store (già in italiano) o quello di riserva. */
 const sharedFailure = (cause: unknown, fallback: string) => (cause instanceof ShareUserError ? cause.message : fallback);
 
-// Le viste di uso comune vengono prima; gli id restano quelli salvati in "calendar.mode".
-const modes: { id: CalendarMode; label: string; title: string }[] = [
+// Quattro viste nel selettore; gli id restano quelli salvati in "calendar.mode". I riepiloghi
+// ("exam", "semester") si aprono dal menu "Altre azioni"; la vecchia "Giornata di studio" ("focus")
+// è l'opzione "Solo 8–19, ore grandi" di Giorno (vedi resolveCalendarMode).
+const modes: { id: CalendarViewId; label: string; title: string }[] = [
   { id: "day", label: "Giorno", title: "Un giorno, ora per ora" },
   { id: "week", label: "Settimana", title: "Sette giorni con gli orari (sul telefono, un elenco giorno per giorno)" },
   { id: "month", label: "Mese", title: "Tutto il mese, un riquadro per giorno" },
-  { id: "agenda", label: "Agenda", title: "Elenco di eventi, scadenze ed esami delle prossime due settimane" },
-  { id: "exam", label: "Esami", title: "Quanti giorni mancano a ogni esame e a che punto è la preparazione" },
-  { id: "semester", label: "Per materia", title: "Le tue materie, con quanti eventi hai in calendario per ognuna" },
-  { id: "focus", label: "Giornata di studio", title: "Un giorno dalle 8 alle 19, con le ore più grandi" }
+  { id: "agenda", label: "Agenda", title: "Elenco di eventi, scadenze ed esami delle prossime due settimane" }
 ];
 
 const categories = (Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => ({ id, label: EVENT_CATEGORY_LABEL[id] }));
@@ -181,6 +216,8 @@ interface Handlers {
   onEditTask: (id: string) => void;
   onToggleTask: (id: string) => void;
   onCreate: (at: Date, kind?: "event" | "task") => void;
+  /** Apre l'esame nella sezione Esami. */
+  onOpenExam: (id: string) => void;
   onMoveEvent: (occurrence: CalendarOccurrence, nextStart: Date) => void;
   onPreviewEvent: (event: ShownEvent, point: PreviewPoint) => void;
   onPreviewTask: (task: Task, point: PreviewPoint) => void;
@@ -197,7 +234,22 @@ const eventColor = (event: ShownEvent, subjects: Subjects) =>
 const allDayEventLabel = (event: CalendarEvent) => event.tags?.includes("appello-importato") ? "Data appello" : ALL_DAY_LABEL;
 
 export function CalendarView() {
-  const [mode, setMode] = useUiState<CalendarMode>("calendar.mode", "week", { validate: oneOf(...modes.map((item) => item.id)) });
+  // Valori salvati di prima ancora validi: "focus" diventa Giorno con "Solo 8–19", "exam" e
+  // "semester" sono i riepiloghi del menu.
+  const [storedMode, setMode] = useUiState<StoredCalendarMode>("calendar.mode", "week", { validate: oneOf(...STORED_CALENDAR_MODES) });
+  const [storedDayFocus, setDayFocus] = useUiState<boolean>("calendar.dayFocus", false, { validate: (value) => typeof value === "boolean" });
+  const { mode, dayFocus } = resolveCalendarMode(storedMode, storedDayFocus);
+  useEffect(() => {
+    if (storedMode !== "focus") return;
+    setDayFocus(true);
+    setMode("day");
+  }, [storedMode, setDayFocus, setMode]);
+  // Vista da cui si è aperto un riepilogo: "Torna al calendario" riporta lì.
+  const returnMode = useRef<CalendarViewId>("week");
+  const openSummary = (summary: "exam" | "semester") => {
+    if (!isCalendarSummary(mode)) returnMode.current = mode;
+    setMode(summary);
+  };
   // Data visualizzata e dettaglio aperto restano dopo un refresh della scheda.
   const [cursorIso, setCursorIso] = useUiState("calendar.cursor", () => new Date().toISOString(), {
     scope: "tab",
@@ -210,10 +262,38 @@ export function CalendarView() {
   );
   const [editingEventId, setEditingEventId] = useUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
   const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
-  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task" } | null>(null);
+  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string } | null>(null);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const [barbImportOpen, setBarbImportOpen] = useState(false);
-  const { events, subjects, exams, tasks, updateEvent, addEvent, deleteEvent, addTask, updateTask, toggleTask, deleteTask, setActiveView } = useStudyStore();
+  const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
+  const transfer = useRef<CalendarTransferHandle>(null);
+  const { events, subjects, exams, tasks, loading, locked, updateEvent, addEvent, deleteEvent, addTask, updateTask, toggleTask, deleteTask, setActiveView } =
+    useStudyStore();
+  // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
+  // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
+  const [storedSubject, setStoredSubject] = useUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
+  const subjectFilter = resolveSubjectFilter(storedSubject, subjects);
+  const filterSubject = subjectFilter ? subjects.find((subject) => subject.id === subjectFilter) ?? null : null;
+  useEffect(() => {
+    if (storedSubject && !subjectFilter && !loading && !locked) setStoredSubject(null);
+  }, [storedSubject, subjectFilter, loading, locked, setStoredSubject]);
+  /** Nuovo evento o attività: con un filtro attivo, già legato a quella materia (altrimenti sparirebbe dalla vista). */
+  const openCreator = (at: Date, kind: "event" | "task" = "event") => setCreator({ at, kind, subjectId: subjectFilter ?? undefined });
+  const openExam = (id: string) => {
+    writeUiState("exams.editing", id, "tab");
+    setActiveView("exams");
+  };
+  const openShare = () => {
+    if (sharePhase !== "idle") return;
+    setSharePhase("loading");
+    loadShareDrawer().then(
+      () => setSharePhase("open"),
+      () => {
+        setSharePhase("idle");
+        setNotice(SHARE_TEXT.loadFailed);
+      }
+    );
+  };
   const { sharedItems, received, labels, hiddenOwners } = useSharedStore(
     useShallow((state) => ({ sharedItems: state.items, received: state.received, labels: state.labels, hiddenOwners: state.hiddenOwners }))
   );
@@ -311,12 +391,23 @@ export function CalendarView() {
     return [...own, ...shared].sort((a, b) => a.start.localeCompare(b.start));
   }, [events, sharedEvents, range]);
 
+  // Ciò che le quattro viste mostrano, filtrato per materia (senza filtro: gli stessi elenchi).
+  const visible = useMemo(
+    () => filterCalendarItems({ occurrences, tasks: calendarTasks, exams }, subjectFilter),
+    [occurrences, calendarTasks, exams, subjectFilter]
+  );
+  const rangeEmpty = !hasItemsInRange(visible, range.from, range.to);
+  const subjectSummary = useMemo(() => subjectCalendarSummary({ subjects, events, exams, tasks }), [subjects, events, exams, tasks]);
+  const addForSubject = () => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)));
+  const subjectEmpty = filterSubject ? (
+    <SubjectEmptyNotice name={filterSubject.name} onAdd={addForSubject} onClear={() => setStoredSubject(null)} />
+  ) : null;
+
   const navigate = (direction: -1 | 1) => {
     setCursor((current) => {
-      if (mode === "day" || mode === "focus") return addDays(current, direction);
+      if (mode === "day") return addDays(current, direction);
       if (mode === "week") return addWeeks(current, direction);
       if (mode === "agenda") return addDays(current, direction * 14);
-      if (mode === "semester") return addMonths(current, direction * 6);
       return addMonths(current, direction);
     });
   };
@@ -328,10 +419,10 @@ export function CalendarView() {
         ? `${format(weekDays[0], "d MMM", { locale: it })} – ${format(weekDays[6], "d MMM yyyy", { locale: it })}`
         : mode === "agenda"
           ? `${format(range.from, "d MMM", { locale: it })} – ${format(addDays(range.to, -1), "d MMM", { locale: it })}`
-          : mode === "day" || mode === "focus"
+          : mode === "day"
             ? format(cursor, "EEEE d MMMM yyyy", { locale: it })
             : "";
-  const navigable = mode !== "exam" && mode !== "semester";
+  const summary = isCalendarSummary(mode);
 
   const moveEvent = async (item: CalendarOccurrence, nextStart: Date) => {
     const origin = item.sharedFrom;
@@ -369,7 +460,8 @@ export function CalendarView() {
     onEditEvent: (id, ownerId) => (ownerId ? setEditingSharedKey(sharedKey(ownerId, "calendarEvent", id)) : setEditingEventId(id)),
     onEditTask: setEditingTaskId,
     onToggleTask: (id) => void toggleTask(id),
-    onCreate: (at, kind = "event") => setCreator({ at, kind }),
+    onCreate: (at, kind = "event") => openCreator(at, kind),
+    onOpenExam: openExam,
     onMoveEvent: (item, nextStart) => void moveEvent(item, nextStart),
     onPreviewEvent: (event, point) => {
       if (supportsHoverPreview()) setPreview({ kind: "event", event, x: point.x, y: point.y });
@@ -385,68 +477,93 @@ export function CalendarView() {
     <div>
       <SectionTitle
         title="Calendario"
-        subtitle="Lezioni, studio, scadenze ed esami in un'unica vista: clicca un giorno o un orario per aggiungere un evento."
+        subtitle={CALENDAR_TEXT.subtitle}
         action={
-          // Azione principale per prima; sotto, più discrete, le azioni che si usano di rado.
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button icon="Plus" variant="primary" onClick={() => setCreator({ at: defaultStartFor(new Date()), kind: "event" })}>
-                Nuovo evento
+          // Una sola azione primaria; il resto, che si usa di rado, nel menu "Altre azioni".
+          <PageActions
+            primary={
+              <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
+                {CALENDAR_TEXT.newEvent}
               </Button>
-              <Button
-                icon="CalendarPlus"
-                variant="soft"
-                onClick={() => setBarbImportOpen(true)}
-                title="Scegli le date d'esame ufficiali delle tue materie e aggiungile al calendario"
-              >
-                Aggiungi appelli ufficiali
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-1">
-              <Button
-                variant="ghost"
-                icon="Landmark"
-                title="Apri le date ufficiali degli appelli in Esami"
-                onClick={() => {
+            }
+            more={[
+              { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
+              { label: CALENDAR_TEXT.importFile, icon: "Import", onClick: () => transfer.current?.chooseFile() },
+              { label: CALENDAR_TEXT.exportFile, icon: "Download", onClick: () => transfer.current?.exportFile() },
+              ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
+              {
+                label: CALENDAR_TEXT.officialDates,
+                icon: "Landmark",
+                onClick: () => {
                   writeUiState("exams.tab", "barb", "device");
                   setActiveView("exams");
-                }}
-              >
-                Vedi appelli ufficiali
-              </Button>
-              <CalendarTransfer />
-              <ShareButton scopes={["calendar"]} />
-            </div>
-          </div>
+                }
+              },
+              { label: CALENDAR_TEXT.subjectSummary, icon: "BookOpen", onClick: () => openSummary("semester") },
+              { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") }
+            ]}
+          />
         }
       />
+      <CalendarTransfer ref={transfer} buttons={false} />
       {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
+      {sharePhase === "open" ? (
+        <Suspense fallback={null}>
+          <ShareDrawer open onClose={() => setSharePhase("idle")} initialScopes={["calendar"]} />
+        </Suspense>
+      ) : null}
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Segmented label="Vista calendario" value={mode} onChange={setMode} options={modes} />
-        {navigable ? (
-          <div className="flex items-center gap-1.5 sm:ml-auto">
-            <p className="mr-1 min-w-0 truncate text-sm font-black capitalize">{periodLabel}</p>
-            <IconButton icon="ChevronLeft" label="Periodo precedente" onClick={() => navigate(-1)} />
-            <button
-              type="button"
-              onClick={() => setCursor(new Date())}
-              className="min-h-11 rounded-full bg-[var(--surface-strong)] px-3.5 text-xs font-black hover:bg-[var(--surface)]"
-            >
-              Oggi
-            </button>
-            <IconButton icon="ChevronRight" label="Periodo successivo" onClick={() => navigate(1)} />
+      {summary ? (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Button variant="soft" icon="ChevronLeft" onClick={() => setMode(returnMode.current)}>
+            {CALENDAR_TEXT.backToCalendar}
+          </Button>
+          <h3 className="min-w-0 text-base font-black">{mode === "exam" ? CALENDAR_TEXT.examSummary : CALENDAR_TEXT.subjectSummary}</h3>
+        </div>
+      ) : (
+        <>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 max-w-full items-center gap-2">
+              <Segmented label={CALENDAR_TEXT.viewsLabel} value={mode as CalendarViewId} onChange={setMode} options={modes} className="min-w-0 max-sm:[&>button]:px-2.5" />
+              <HelpTip {...CALENDAR_HELP.views} />
+            </div>
+            {mode === "day" ? (
+              <button
+                type="button"
+                aria-pressed={dayFocus}
+                onClick={() => setDayFocus((value) => !value)}
+                title={CALENDAR_TEXT.dayFocusTitle}
+                className={`motion-safe inline-flex min-h-11 items-center gap-1.5 rounded-full px-3.5 text-xs font-black ${
+                  dayFocus ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-strong)] hover:bg-[var(--surface)]"
+                }`}
+              >
+                <Icon name={dayFocus ? "Check" : "Clock"} className="h-3.5 w-3.5 shrink-0" />
+                {CALENDAR_TEXT.dayFocus}
+              </button>
+            ) : null}
+            <div className="flex min-w-0 items-center gap-1.5 sm:ml-auto">
+              <p className="mr-1 min-w-0 truncate text-sm font-black capitalize">{periodLabel}</p>
+              <IconButton icon="ChevronLeft" label="Periodo precedente" onClick={() => navigate(-1)} />
+              <button
+                type="button"
+                onClick={() => setCursor(new Date())}
+                className="min-h-11 rounded-full bg-[var(--surface-strong)] px-3.5 text-xs font-black hover:bg-[var(--surface)]"
+              >
+                Oggi
+              </button>
+              <IconButton icon="ChevronRight" label="Periodo successivo" onClick={() => navigate(1)} />
+            </div>
           </div>
-        ) : (
-          <p className="min-h-11 content-center text-sm font-black text-[var(--muted)] sm:ml-auto">
-            {mode === "exam" ? "Giorni che mancano agli esami" : "Eventi per materia"}
-          </p>
-        )}
-      </div>
+          <SubjectFilterBar subjects={subjects} active={filterSubject} onChange={setStoredSubject} />
+        </>
+      )}
 
-      {calendarOwners.length ? (
+      {calendarOwners.length && !summary ? (
         <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Calendari di altre persone">
-          <span className="text-xs font-black text-[var(--muted)]">Calendari condivisi:</span>
+          <span className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--muted)]">
+            {CALENDAR_TEXT.sharedCalendars}
+            <HelpTip {...CALENDAR_HELP.shared} />
+          </span>
           {calendarOwners.map((owner) => {
             const hidden = hiddenOwners.includes(owner.id);
             return (
@@ -475,30 +592,45 @@ export function CalendarView() {
       ) : null}
 
       <Panel>
+        {/* Filtro per materia senza nulla nel periodo (l'Agenda lo mostra al posto del suo stato vuoto). */}
+        {subjectEmpty && rangeEmpty && (mode === "day" || mode === "week" || mode === "month") ? <div className="mb-3">{subjectEmpty}</div> : null}
+
         {mode === "week" ? (
           <>
             <div className="hidden md:block">
-              <TimeGrid days={weekDays} occurrences={occurrences} tasks={calendarTasks} exams={exams} handlers={handlers} onPickDay={(day) => {
+              <TimeGrid days={weekDays} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} handlers={handlers} onPickDay={(day) => {
                 setCursor(day);
                 setMode("day");
               }} />
             </div>
             <div className="md:hidden">
-              <DayList days={weekDays} occurrences={occurrences} tasks={calendarTasks} exams={exams} handlers={handlers} />
+              <DayList
+                days={weekDays}
+                occurrences={visible.occurrences}
+                tasks={visible.tasks}
+                exams={visible.exams}
+                handlers={handlers}
+                // Settimana vuota sul telefono: un messaggio solo (con un filtro, quello sopra).
+                empty={
+                  subjectEmpty ? null : (
+                    <WeekEmptyNotice onAdd={() => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)))} />
+                  )
+                }
+              />
             </div>
           </>
         ) : null}
 
-        {mode === "day" || mode === "focus" ? (
+        {mode === "day" ? (
           <TimeGrid
             days={[startOfDay(cursor)]}
-            occurrences={occurrences}
-            tasks={calendarTasks}
-            exams={exams}
+            occurrences={visible.occurrences}
+            tasks={visible.tasks}
+            exams={visible.exams}
             handlers={handlers}
-            hourHeight={mode === "focus" ? 64 : 52}
-            fixedHours={mode === "focus" ? [8, 19] : undefined}
-            onExpandHours={mode === "focus" ? () => setMode("day") : undefined}
+            hourHeight={dayFocus ? 64 : 52}
+            fixedHours={dayFocus ? [8, 19] : undefined}
+            onExpandHours={dayFocus ? () => setDayFocus(false) : undefined}
           />
         ) : null}
 
@@ -506,9 +638,9 @@ export function CalendarView() {
           <MonthGrid
             days={monthDays}
             month={cursor}
-            occurrences={occurrences}
-            tasks={calendarTasks}
-            exams={exams}
+            occurrences={visible.occurrences}
+            tasks={visible.tasks}
+            exams={visible.exams}
             handlers={handlers}
             onPickDay={(day) => {
               setCursor(day);
@@ -517,9 +649,24 @@ export function CalendarView() {
           />
         ) : null}
 
-        {mode === "agenda" ? <Agenda from={range.from} to={range.to} occurrences={occurrences} tasks={calendarTasks} exams={exams} handlers={handlers} /> : null}
-        {mode === "exam" ? <ExamSession exams={exams} subjects={subjects} onGoExams={() => setActiveView("exams")} /> : null}
-        {mode === "semester" ? <SemesterMap events={events} subjects={subjects} onGoSubjects={() => setActiveView("subjects")} /> : null}
+        {mode === "agenda" ? (
+          <Agenda from={range.from} to={range.to} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} handlers={handlers} empty={subjectEmpty} />
+        ) : null}
+        {mode === "exam" ? <ExamSession exams={exams} subjects={subjects} onGoExams={() => setActiveView("exams")} onOpenExam={openExam} /> : null}
+        {mode === "semester" ? (
+          <SemesterMap
+            summary={subjectSummary}
+            onGoSubjects={() => setActiveView("subjects")}
+            onFilter={(id) => {
+              setStoredSubject(id);
+              setMode("week");
+            }}
+            onOpenSubject={(id) => {
+              writeUiState("subjects.open", id, "tab");
+              setActiveView("subjects");
+            }}
+          />
+        ) : null}
       </Panel>
 
       {editingEvent ? (
@@ -862,7 +1009,7 @@ function TimeGrid({
                   <AllDayChip key={item.occurrenceKey} item={item} handlers={handlers} />
                 ))}
                 {entry.exams.map((exam) => (
-                  <ExamChip key={exam.id} exam={exam} subjects={handlers.subjects} />
+                  <ExamChip key={exam.id} exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
                 ))}
                 {entry.tasks.slice(0, limit).map((task) => (
                   <TaskChip key={task.id} task={task} handlers={handlers} />
@@ -1126,19 +1273,25 @@ function AllDayChip({ item, handlers }: { item: CalendarOccurrence; handlers: Ha
   );
 }
 
-function ExamChip({ exam, subjects }: { exam: Exam; subjects: Subjects }) {
+function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Subjects; onOpen: (id: string) => void }) {
   const color = subjectColor(subjects, exam.subjectId);
+  const name = subjectName(subjects, exam.subjectId);
   return (
-    <div
-      className="flex min-w-0 cursor-default items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-[11px] font-black"
+    <button
+      type="button"
+      className="flex w-full min-w-0 items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-left text-[11px] font-black hover:brightness-110"
       style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))` }}
-      title={`Esame di ${subjectName(subjects, exam.subjectId)} · preparazione al ${exam.preparation}%`}
-      // Nella cella del mese il click crea un evento: cliccare un esame non deve farlo.
-      onClick={(event) => event.stopPropagation()}
+      title={`Esame di ${name} · preparazione al ${exam.preparation}%`}
+      aria-label={CALENDAR_TEXT.openExamAria(name)}
+      onClick={(event) => {
+        // Nella cella del mese e nella griglia oraria il click crea un evento: aprire un esame non deve farlo.
+        event.stopPropagation();
+        onOpen(exam.id);
+      }}
     >
       <Icon name="GraduationCap" className="h-3 w-3 shrink-0" />
-      <span className="min-w-0 truncate">Esame · {subjectName(subjects, exam.subjectId)}</span>
-    </div>
+      <span className="min-w-0 truncate">Esame · {name}</span>
+    </button>
   );
 }
 
@@ -1151,21 +1304,27 @@ function DayList({
   occurrences,
   tasks,
   exams,
-  handlers
+  handlers,
+  empty: emptyWeek
 }: {
   days: Date[];
   occurrences: CalendarOccurrence[];
   tasks: Task[];
   exams: Exam[];
   handlers: Handlers;
+  /** Al posto di sette "Nessun impegno" quando tutta la settimana è vuota. */
+  empty?: ReactNode;
 }) {
+  const perDay = days.map((day) => {
+    const dayEvents = occurrences.filter((item) => isSameDay(parseISO(item.start), day));
+    const dayTasks = tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day));
+    const dayExams = exams.filter((exam) => isSameDay(parseISO(exam.date), day));
+    return { day, dayEvents, dayTasks, dayExams, empty: !dayEvents.length && !dayTasks.length && !dayExams.length };
+  });
+  if (perDay.every((entry) => entry.empty)) return <>{emptyWeek}</>;
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
-      {days.map((day) => {
-        const dayEvents = occurrences.filter((item) => isSameDay(parseISO(item.start), day));
-        const dayTasks = tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day));
-        const dayExams = exams.filter((exam) => isSameDay(parseISO(exam.date), day));
-        const empty = !dayEvents.length && !dayTasks.length && !dayExams.length;
+      {perDay.map(({ day, dayEvents, dayTasks, dayExams, empty }) => {
         return (
           <section key={day.toISOString()} aria-label={format(day, "EEEE d MMMM", { locale: it })}>
             <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -1186,7 +1345,7 @@ function DayList({
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                 {dayExams.map((exam) => (
                   <li key={exam.id}>
-                    <ExamChip exam={exam} subjects={handlers.subjects} />
+                    <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
                   </li>
                 ))}
                 {dayEvents.map((item) => (
@@ -1335,7 +1494,7 @@ function MonthGrid({
             <div className="hidden gap-0.5 sm:grid">
               {dayExams.map((exam) => {
                 shown += 1;
-                return shown <= limit ? <ExamChip key={exam.id} exam={exam} subjects={handlers.subjects} /> : null;
+                return shown <= limit ? <ExamChip key={exam.id} exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} /> : null;
               })}
               {dayEvents.map((item) => {
                 shown += 1;
@@ -1411,7 +1570,8 @@ function Agenda({
   occurrences,
   tasks,
   exams,
-  handlers
+  handlers,
+  empty
 }: {
   from: Date;
   to: Date;
@@ -1419,6 +1579,8 @@ function Agenda({
   tasks: Task[];
   exams: Exam[];
   handlers: Handlers;
+  /** Stato vuoto al posto di quello generico (es. con il filtro per materia). */
+  empty?: ReactNode;
 }) {
   const overdue = tasks
     .filter((task) => task.status !== "done" && task.dueDate && isBefore(parseISO(task.dueDate), startOfDay(new Date())))
@@ -1434,6 +1596,7 @@ function Agenda({
     .filter((section) => section.events.length || section.tasks.length || section.exams.length);
 
   if (!sections.length && !overdue.length) {
+    if (empty) return <>{empty}</>;
     return (
       <EmptyState
         icon="CalendarDays"
@@ -1474,7 +1637,7 @@ function Agenda({
           <ul className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
             {section.exams.map((exam) => (
               <li key={exam.id} className="px-2.5 py-1">
-                <ExamChip exam={exam} subjects={handlers.subjects} />
+                <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
               </li>
             ))}
             {section.events.map((item) => (
@@ -1955,7 +2118,8 @@ function CreateModal({
   onClose,
   onSubmit
 }: {
-  initial: { at: Date; kind: "event" | "task" };
+  /** `subjectId`: materia già scelta (es. con il filtro per materia attivo). */
+  initial: { at: Date; kind: "event" | "task"; subjectId?: string };
   subjects: Subjects;
   /** Calendari di altre persone in cui posso aggiungere eventi ("Nel calendario di"). */
   calendars?: WritableCalendar[];
@@ -1968,7 +2132,7 @@ function CreateModal({
   const [ownerNotice, setOwnerNotice] = useState("");
   const [error, setError] = useState("");
   const [title, setTitle] = useState("");
-  const [subjectId, setSubjectId] = useState("");
+  const [subjectId, setSubjectId] = useState(initial.subjectId ?? "");
   const [startsAt, setStartsAt] = useState(toDatetimeLocal(defaultStartFor(initial.at)));
   const [duration, setDuration] = useState<number | "allday">(60);
   const [priority, setPriority] = useState<Task["priority"]>("medium");
@@ -2190,7 +2354,17 @@ function CreateModal({
 /* Sessione esami e semestre                                            */
 /* ------------------------------------------------------------------ */
 
-function ExamSession({ exams, subjects, onGoExams }: { exams: Exam[]; subjects: Subjects; onGoExams: () => void }) {
+function ExamSession({
+  exams,
+  subjects,
+  onGoExams,
+  onOpenExam
+}: {
+  exams: Exam[];
+  subjects: Subjects;
+  onGoExams: () => void;
+  onOpenExam: (id: string) => void;
+}) {
   const today = startOfDay(new Date());
   const upcoming = exams.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today)).sort((a, b) => a.date.localeCompare(b.date));
   const past = exams.filter((exam) => !upcoming.includes(exam)).sort((a, b) => b.date.localeCompare(a.date));
@@ -2210,23 +2384,40 @@ function ExamSession({ exams, subjects, onGoExams }: { exams: Exam[]; subjects: 
   return (
     <div className="grid grid-cols-1 gap-5">
       {!upcoming.length ? <p className="text-sm font-bold text-[var(--muted)]">Nessun esame in arrivo.</p> : null}
-      <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr))]">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {upcoming.map((exam) => {
           const color = subjectColor(subjects, exam.subjectId);
           const days = daysUntil(exam.date);
+          const name = subjectName(subjects, exam.subjectId);
+          const preparation = Math.max(0, Math.min(100, exam.preparation));
+          // Tutta la scheda è un pulsante che apre l'esame (solo testo e span dentro).
           return (
-            <div key={exam.id} className="quiet-panel p-4" style={{ boxShadow: `inset 0 3px 0 ${color}` }}>
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="text-3xl font-black tabular-nums">{days}</p>
+            <button
+              key={exam.id}
+              type="button"
+              onClick={() => onOpenExam(exam.id)}
+              aria-label={`${CALENDAR_TEXT.openExamAria(name)} · ${days} ${days === 1 ? "giorno" : "giorni"}`}
+              className="quiet-panel motion-safe group block min-w-0 p-4 text-left hover:border-[var(--accent-ink)] hover:bg-[var(--surface)]"
+              style={{ boxShadow: `inset 0 3px 0 ${color}` }}
+            >
+              <span className="flex items-baseline justify-between gap-2">
+                <span className="text-3xl font-black tabular-nums">{days}</span>
                 <Tag>{EXAM_STATUS_LABEL[exam.status]}</Tag>
-              </div>
-              <p className="text-xs font-bold text-[var(--muted)]">{days === 1 ? "giorno" : "giorni"} all'esame · {format(parseISO(exam.date), "EEEE d MMMM", { locale: it })}</p>
-              <h4 className="two-line-safe mt-2 font-black">{subjectName(subjects, exam.subjectId)}</h4>
-              <div className="mt-3">
-                <ProgressBar value={exam.preparation} color={color} />
-              </div>
-              <p className="mt-1.5 text-xs font-bold text-[var(--muted)]">Preparazione al {exam.preparation}% · voto obiettivo {exam.targetGrade}</p>
-            </div>
+              </span>
+              <span className="block text-xs font-bold text-[var(--muted)]">
+                {days === 1 ? "giorno" : "giorni"} all'esame · {format(parseISO(exam.date), "EEEE d MMMM", { locale: it })}
+              </span>
+              <span className="mt-2 flex items-center gap-1 font-black">
+                <span className="two-line-safe min-w-0">{name}</span>
+                <Icon name="ChevronRight" className="motion-safe h-4 w-4 shrink-0 text-[var(--muted)] group-hover:translate-x-0.5 group-hover:text-[var(--accent-ink)]" />
+              </span>
+              <span aria-hidden="true" className="mt-3 block h-2 overflow-hidden rounded-full bg-[var(--surface-strong)]">
+                <span className="block h-full rounded-full" style={{ width: `${preparation}%`, background: color }} />
+              </span>
+              <span className="mt-1.5 block text-xs font-bold text-[var(--muted)]">
+                Preparazione al {exam.preparation}% · voto obiettivo {exam.targetGrade}
+              </span>
+            </button>
           );
         })}
       </div>
@@ -2235,9 +2426,18 @@ function ExamSession({ exams, subjects, onGoExams }: { exams: Exam[]; subjects: 
           <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">Già sostenuti o con data passata</h4>
           <ul className="grid grid-cols-1 gap-1">
             {past.map((exam) => (
-              <li key={exam.id} className="flex items-center gap-2 text-sm text-[var(--muted)]">
-                <span className="h-2 w-2 rounded-full" style={{ background: subjectColor(subjects, exam.subjectId) }} />
-                <span className="font-bold">{subjectName(subjects, exam.subjectId)}</span> · {shortDate(exam.date)}
+              <li key={exam.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpenExam(exam.id)}
+                  aria-label={CALENDAR_TEXT.openExamAria(subjectName(subjects, exam.subjectId))}
+                  className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[14px] px-2 text-left text-sm text-[var(--muted)] hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
+                >
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: subjectColor(subjects, exam.subjectId) }} />
+                  <span className="one-line-safe min-w-0">
+                    <span className="font-bold">{subjectName(subjects, exam.subjectId)}</span> · {shortDate(exam.date)}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
@@ -2247,42 +2447,172 @@ function ExamSession({ exams, subjects, onGoExams }: { exams: Exam[]; subjects: 
   );
 }
 
-function SemesterMap({ events, subjects, onGoSubjects }: { events: CalendarEvent[]; subjects: Subjects; onGoSubjects: () => void }) {
-  if (!subjects.length)
+/**
+ * Riepilogo "Per materia": ogni scheda mostra solo quella materia nel calendario (Settimana); "Apri
+ * materia" porta alla sua scheda in Materie. Solo materie non archiviate, le superate in fondo.
+ */
+function SemesterMap({
+  summary,
+  onGoSubjects,
+  onFilter,
+  onOpenSubject
+}: {
+  summary: SubjectCalendarSummary<Subjects[number]>;
+  onGoSubjects: () => void;
+  onFilter: (id: string) => void;
+  onOpenSubject: (id: string) => void;
+}) {
+  if (!summary.rows.length)
     return (
       <EmptyState
         icon="BookOpen"
-        title="Ancora nessuna materia"
-        body="Aggiungi le tue materie: qui vedrai quanti eventi hai in calendario per ognuna, divisi per semestre."
+        title={CALENDAR_TEXT.summaryEmptyTitle}
+        body={CALENDAR_TEXT.summaryEmptyBody}
         action={
           <Button variant="primary" icon="Plus" onClick={onGoSubjects}>
-            Vai a Materie
+            {CALENDAR_TEXT.goSubjects}
           </Button>
         }
       />
     );
   return (
-    <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))]">
-      {subjects.map((subject) => {
-        const course = resolveBarbCourse(subject, BARB_DATASET.courses);
-        const count = events.filter((event) => event.subjectId === subject.id).length;
-        const weekly = events.filter((event) => event.subjectId === subject.id && event.recurrence === "weekly").length;
-        return (
-          <div key={subject.id} className="quiet-panel flex items-center gap-3 p-3.5">
-            <span className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center rounded-super" style={{ background: subject.color }}>
-              {course ? <CourseIcon course={course} className="h-5 w-5 text-[#10131d]" /> : <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />}
-            </span>
-            <div className="min-w-0">
-              <h4 className="two-line-safe font-black leading-tight">{subject.name}</h4>
-              <p className="text-xs font-bold text-[var(--muted)]">
-                {count} {count === 1 ? "evento" : "eventi"}
-                {weekly ? ` · ${weekly} ogni settimana` : ""}
-              </p>
-              <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag>
-            </div>
-          </div>
-        );
-      })}
+    <div className="grid grid-cols-1 gap-4">
+      <div>
+        <p className="text-sm font-black">{CALENDAR_TEXT.summaryCounts(summary.planned, summary.withItems)}</p>
+        <p className="text-xs font-bold text-[var(--muted)]">{CALENDAR_TEXT.summaryHint}</p>
+      </div>
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {summary.rows.map((row) => {
+          const { subject } = row;
+          const course = resolveBarbCourse(subject, BARB_DATASET.courses);
+          const breakdown = CALENDAR_TEXT.summaryBreakdown(row);
+          return (
+            <li key={subject.id} className={`quiet-panel flex min-w-0 flex-col p-1.5 ${row.completed ? "opacity-80" : ""}`}>
+              <button
+                type="button"
+                onClick={() => onFilter(subject.id)}
+                aria-label={`${CALENDAR_TEXT.summaryShow(subject.name)} · ${CALENDAR_TEXT.summaryItems(row.items)}`}
+                className="motion-safe group flex min-w-0 items-center gap-3 rounded-[14px] p-2 text-left hover:bg-[var(--surface)]"
+              >
+                <span className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-super" style={{ background: safeCssColor(subject.color) || "var(--accent)" }}>
+                  {course ? <CourseIcon course={course} className="h-5 w-5 text-[#10131d]" /> : <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />}
+                </span>
+                <span className="block min-w-0 flex-1">
+                  <span className="two-line-safe block font-black leading-tight">{subject.name}</span>
+                  <span className="block text-xs font-bold text-[var(--muted)]">{CALENDAR_TEXT.summaryItems(row.items)}</span>
+                  {breakdown ? <span className="safe-text block text-xs font-medium text-[var(--muted)]">{breakdown}</span> : null}
+                  <span className="mt-1 flex flex-wrap gap-1">
+                    <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag>
+                    {row.completed ? <Tag>{CALENDAR_TEXT.summaryCompleted}</Tag> : null}
+                  </span>
+                </span>
+                <Icon name="ChevronRight" className="motion-safe h-4 w-4 shrink-0 text-[var(--muted)] group-hover:translate-x-0.5 group-hover:text-[var(--accent-ink)]" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenSubject(subject.id)}
+                aria-label={CALENDAR_TEXT.openSubjectAria(subject.name)}
+                className="inline-flex min-h-11 items-center gap-1 self-start rounded-full px-2.5 text-xs font-extrabold text-[var(--accent-ink)] hover:underline"
+              >
+                {CALENDAR_TEXT.openSubject}
+                <Icon name="ExternalLink" className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Filtro per materia e stati vuoti                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Riga "Tutte · Analisi · Fisica…": scorre in orizzontale dentro la riga (mai la pagina). Con un
+ * filtro attivo, a sinistra e sempre visibile, il chip "Solo: Analisi ✕" che lo toglie.
+ */
+function SubjectFilterBar({ subjects, active, onChange }: { subjects: Subjects; active: Subjects[number] | null; onChange: (id: string | null) => void }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const options = selectableSubjects(subjects, active?.id);
+  // La pillola attiva resta in vista anche quando la riga scorre (telefono).
+  useEffect(() => {
+    const row = rowRef.current;
+    const pressed = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!row || !pressed) return;
+    const start = pressed.offsetLeft - row.offsetLeft;
+    const end = start + pressed.offsetWidth;
+    if (start < row.scrollLeft) row.scrollTo({ left: Math.max(0, start - 12) });
+    else if (end > row.scrollLeft + row.clientWidth) row.scrollTo({ left: end - row.clientWidth + 12 });
+  }, [active?.id]);
+  if (!options.length) return null;
+  const pill = (pressed: boolean) =>
+    `motion-safe inline-flex min-h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-extrabold ${
+      pressed
+        ? "border-transparent bg-[var(--accent)] text-[#10131d]"
+        : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
+    }`;
+  return (
+    <div className="mb-4 flex min-w-0 items-center gap-2">
+      {active ? (
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          aria-label={CALENDAR_TEXT.clearFilter(active.name)}
+          title={CALENDAR_TEXT.showAll}
+          className="motion-safe inline-flex min-h-9 max-w-[50%] shrink-0 items-center gap-1.5 rounded-full border border-[var(--accent-ink)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text)] hover:bg-[var(--surface)]"
+        >
+          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: safeCssColor(active.color) || "var(--accent)" }} />
+          <span className="min-w-0 truncate">{CALENDAR_TEXT.onlySubject(active.name)}</span>
+          <Icon name="X" className="h-3.5 w-3.5 shrink-0" />
+        </button>
+      ) : null}
+      <div ref={rowRef} role="group" aria-label={CALENDAR_TEXT.filterLabel} className="no-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto py-0.5">
+        <button type="button" aria-pressed={!active} onClick={() => onChange(null)} className={pill(!active)}>
+          {CALENDAR_TEXT.allSubjects}
+        </button>
+        {options.map((subject) => {
+          const pressed = active?.id === subject.id;
+          return (
+            <button key={subject.id} type="button" aria-pressed={pressed} onClick={() => onChange(pressed ? null : subject.id)} className={pill(pressed)}>
+              <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: safeCssColor(subject.color) || "var(--accent)" }} />
+              {subject.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Filtro per materia senza impegni nel periodo: un evento già legato alla materia, o tutte le materie. */
+function SubjectEmptyNotice({ name, onAdd, onClear }: { name: string; onAdd: () => void; onClear: () => void }) {
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[18px] border border-dashed border-[var(--border)] p-3">
+      <Icon name="CalendarDays" className="h-5 w-5 shrink-0 text-[var(--accent-ink)]" />
+      <p className="safe-text min-w-0 flex-1 basis-48 text-sm font-bold">{CALENDAR_TEXT.emptySubject(name)}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" icon="Plus" onClick={onAdd}>
+          {CALENDAR_TEXT.addEvent}
+        </Button>
+        <Button variant="ghost" onClick={onClear}>
+          {CALENDAR_TEXT.showAll}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Settimana vuota sul telefono: un solo messaggio invece di sette "Nessun impegno". */
+function WeekEmptyNotice({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[18px] border border-dashed border-[var(--border)] p-3">
+      <Icon name="CalendarDays" className="h-5 w-5 shrink-0 text-[var(--accent-ink)]" />
+      <p className="safe-text min-w-0 flex-1 basis-40 text-sm font-bold">{CALENDAR_TEXT.emptyWeek}</p>
+      <Button variant="primary" icon="Plus" onClick={onAdd}>
+        {CALENDAR_TEXT.addEvent}
+      </Button>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { EventCategory } from "../types";
@@ -13,12 +13,21 @@ import { Icon } from "./Icon";
 
 const MAX_ICS_BYTES = 5 * 1024 * 1024;
 
+/** Comandi per aprire importazione ed esportazione da fuori (es. il menu "Altre azioni"). */
+export interface CalendarTransferHandle {
+  /** Apre la scelta del file da importare: va chiamato dentro un tocco o un clic. */
+  chooseFile: () => void;
+  exportFile: () => void;
+}
+
 /**
  * Pulsanti Importa/Esporta .ics del calendario (Google, Apple, orario delle lezioni). L'import
  * mostra un'anteprima prima di scrivere: tipo predefinito, abbinamento alle materie, avvisi.
+ * Con `buttons={false}` non mostra i pulsanti: si comanda con `ref` (anteprima e avvisi restano qui).
  */
-export function CalendarTransfer() {
+export function CalendarTransfer({ ref, buttons = true }: { ref?: Ref<CalendarTransferHandle>; buttons?: boolean } = {}) {
   const { events, exams, tasks, subjects, importEvents } = useStudyStore();
+  const fileInput = useRef<HTMLInputElement>(null);
   const [parsed, setParsed] = useState<(IcsParseResult & { fileName: string }) | null>(null);
   const [category, setCategory] = useState<EventCategory>("lesson");
   const [matchSubjects, setMatchSubjects] = useState(true);
@@ -41,6 +50,8 @@ export function CalendarTransfer() {
     setError("");
     setResult("File del calendario scaricato: aprilo con Google Calendar o Apple Calendario per aggiungere eventi, esami e scadenze.");
   };
+
+  useImperativeHandle(ref, () => ({ chooseFile: () => fileInput.current?.click(), exportFile: exportIcs }));
 
   const readFile = async (file?: File) => {
     setError("");
@@ -113,35 +124,48 @@ export function CalendarTransfer() {
     );
   };
 
+  const input = (
+    <input
+      ref={fileInput}
+      type="file"
+      accept=".ics,text/calendar"
+      className="sr-only"
+      tabIndex={buttons ? undefined : -1}
+      aria-hidden={buttons ? undefined : true}
+      onChange={(event) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        void readFile(file);
+      }}
+    />
+  );
+
   return (
     <>
-      <label
-        className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-transparent px-4 text-sm font-extrabold text-[var(--text)] hover:bg-[var(--surface)] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)]"
-        title="Scegli un file .ics esportato da Google Calendar, Apple Calendario o dall'orario delle lezioni: prima di aggiungere vedrai un'anteprima"
-      >
-        <Icon name="Import" className="h-4 w-4" />
-        <span className="hidden sm:inline">Importa da Google/Apple</span>
-        <span className="sr-only sm:hidden">Importa da Google o Apple (file .ics)</span>
-        <input
-          type="file"
-          accept=".ics,text/calendar"
-          className="sr-only"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            void readFile(file);
-          }}
-        />
-      </label>
-      <Button
-        variant="ghost"
-        icon="Download"
-        onClick={exportIcs}
-        title="Scarica eventi, esami e scadenze in un file .ics da aprire in Google Calendar o Apple Calendario"
-        aria-label="Esporta il calendario in un file .ics"
-      >
-        <span className="hidden sm:inline">Esporta</span>
-      </Button>
+      {buttons ? (
+        <>
+          <label
+            className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-transparent px-4 text-sm font-extrabold text-[var(--text)] hover:bg-[var(--surface)] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)]"
+            title="Scegli un file .ics esportato da Google Calendar, Apple Calendario o dall'orario delle lezioni: prima di aggiungere vedrai un'anteprima"
+          >
+            <Icon name="Import" className="h-4 w-4" />
+            <span className="hidden sm:inline">Importa da Google/Apple</span>
+            <span className="sr-only sm:hidden">Importa da Google o Apple (file .ics)</span>
+            {input}
+          </label>
+          <Button
+            variant="ghost"
+            icon="Download"
+            onClick={exportIcs}
+            title="Scarica eventi, esami e scadenze in un file .ics da aprire in Google Calendar o Apple Calendario"
+            aria-label="Esporta il calendario in un file .ics"
+          >
+            <span className="hidden sm:inline">Esporta</span>
+          </Button>
+        </>
+      ) : (
+        input
+      )}
 
       {error || result ? (
         <div
