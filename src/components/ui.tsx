@@ -405,11 +405,16 @@ export function Drawer({
   }, [open]);
 
   // Portal su body: un drawer aperto dentro un altro non resta confinato nel pannello sotto.
+  // role="dialog" sullo sfondo a tutto schermo, come le altre finestre: HelpTip e menu si montano
+  // qui dentro (non inerti per gli screen reader) senza essere ritagliati dal pannello.
   return createPortal(
     <AnimatePresence>
       {open ? (
         <m.div
           key="drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
           className="fixed inset-0 z-50 flex items-end justify-end bg-black/45 backdrop-blur-sm sm:items-stretch sm:p-3"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -421,9 +426,6 @@ export function Drawer({
         >
           <m.div
             ref={panelRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
             tabIndex={-1}
             className={`soft-panel flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-b-none outline-none sm:max-h-none sm:rounded-b-[var(--radius)] ${width}`}
             initial={{ ...offset, opacity: 0 }}
@@ -451,11 +453,40 @@ export function Drawer({
   );
 }
 
+const MODAL_SELECTOR = '[aria-modal="true"]';
+
+/**
+ * Dove montare fumetti e menu: dentro la finestra modale aperta che contiene il pulsante (fuori da un
+ * aria-modal gli screen reader li ignorano), altrimenti su body. Le finestre dell'app (Drawer e
+ * modali) hanno aria-modal sullo sfondo fixed a tutto schermo e senza overflow: lì un fumetto fixed
+ * non viene ritagliato e le coordinate restano quelle dello schermo.
+ */
+const floatingHost = (anchor: HTMLElement | null): HTMLElement => anchor?.closest<HTMLElement>(MODAL_SELECTOR) ?? document.body;
+
+/**
+ * Un tocco sullo sfondo di una finestra con un fumetto aperto chiude solo il fumetto: le finestre si
+ * chiudono sul mousedown dello sfondo, che arriva dopo questo pointerdown (al tocco, dopo il rilascio).
+ * Quel mousedown si ferma qui; una pressione senza mousedown (scorrimento) scade alla successiva.
+ */
+function swallowBackdropPress(backdrop: Element) {
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.target === backdrop) event.stopPropagation();
+    stop();
+  };
+  const stop = () => {
+    window.removeEventListener("mousedown", onMouseDown, true);
+    window.removeEventListener("pointerdown", stop, true);
+  };
+  window.addEventListener("mousedown", onMouseDown, true);
+  // Aggiunto durante il pointerdown attuale (già passato da window in cattura): vale dal prossimo.
+  window.addEventListener("pointerdown", stop, true);
+}
+
 /**
  * Fumetti e menu ancorati a un pulsante: posizione fixed calcolata dal pulsante (sotto, sopra se manca
  * spazio, sempre dentro lo schermo), aggiornata a scorrimento e ridimensionamento. Esc e tocco fuori
  * chiudono. Esc si ferma qui (cattura su window, prima dell'ascolto dei Drawer): un Drawer aperto
- * sotto il fumetto resta aperto.
+ * sotto il fumetto resta aperto; lo stesso per un tocco sul suo sfondo (swallowBackdropPress).
  */
 function useFloatingLayer(
   open: boolean,
@@ -501,6 +532,7 @@ function useFloatingLayer(
     const onPointer = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && (anchorRef.current?.contains(target) || floatingRef.current?.contains(target))) return;
+      if (target instanceof Element && target.matches(MODAL_SELECTOR)) swallowBackdropPress(target);
       closeRef.current(false);
     };
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
@@ -540,6 +572,8 @@ const floatingStyle = (position: FloatingPosition | null, width: string) => ({
  */
 export function HelpTip({ title, text, example, label }: { title: string; text: string; example?: string; label?: string }) {
   const [open, setOpen] = useState(false);
+  // Contenitore del portal, scelto all'apertura e tenuto per l'animazione d'uscita.
+  const [host, setHost] = useState<HTMLElement | null>(null);
   const id = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -566,7 +600,11 @@ export function HelpTip({ title, text, example, label }: { title: string; text: 
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={id}
-        onClick={() => (open ? close(true) : setOpen(true))}
+        onClick={() => {
+          if (open) return close(true);
+          setHost(floatingHost(buttonRef.current));
+          setOpen(true);
+        }}
         className={`motion-safe group relative inline-flex shrink-0 items-center gap-1.5 rounded-full align-middle after:absolute after:-inset-2.5 after:content-[''] ${
           label ? "min-h-6 text-xs font-extrabold text-[var(--accent-ink)] hover:underline" : "h-6 w-6"
         }`}
@@ -627,7 +665,7 @@ export function HelpTip({ title, text, example, label }: { title: string; text: 
             </m.div>
           ) : null}
         </AnimatePresence>,
-        document.body
+        host ?? document.body
       )}
     </>
   );
@@ -652,6 +690,7 @@ export function PageActions({ primary, more = [] }: { primary?: ReactNode; more?
 
 function MoreActionsMenu({ items }: { items: PageAction[] }) {
   const [open, setOpen] = useState(false);
+  const [host, setHost] = useState<HTMLElement | null>(null);
   const startAt = useRef<"first" | "last">("first");
   const id = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -673,6 +712,7 @@ function MoreActionsMenu({ items }: { items: PageAction[] }) {
 
   const openMenu = (at: "first" | "last") => {
     startAt.current = at;
+    setHost(floatingHost(buttonRef.current));
     setOpen(true);
   };
 
@@ -752,7 +792,7 @@ function MoreActionsMenu({ items }: { items: PageAction[] }) {
             </m.div>
           ) : null}
         </AnimatePresence>,
-        document.body
+        host ?? document.body
       )}
     </>
   );
