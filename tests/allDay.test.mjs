@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { allDayRange, isAllDayEvent } from "../src/lib/selectors.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
 import { buildIcs, parseIcs } from "../src/lib/ics.ts";
+import { zonedToUtc } from "../src/lib/tz.ts";
 
 const baseEvent = (patch) => ({
   id: "e1",
@@ -73,9 +74,10 @@ test("buildIcs: evento all-day esportato come VALUE=DATE con fine esclusiva", ()
 });
 
 test("buildIcs: evento con orario invariato (DTSTART con ora, nessun VALUE=DATE)", () => {
+  // 9:00–10:00 a Roma: istanti fissi, così il test non dipende dal fuso di chi lo esegue.
   const timed = baseEvent({
-    start: new Date(2026, 9, 3, 9, 0).toISOString(),
-    end: new Date(2026, 9, 3, 10, 0).toISOString()
+    start: zonedToUtc([2026, 10, 3, 9, 0], "Europe/Rome").toISOString(),
+    end: zonedToUtc([2026, 10, 3, 10, 0], "Europe/Rome").toISOString()
   });
   const ics = buildIcs({ events: [timed], exams: [], tasks: [], subjects: [], timeZone: "Europe/Rome" });
   assert.match(ics, /DTSTART[^:\n]*:20261003T090000/);

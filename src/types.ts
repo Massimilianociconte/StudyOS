@@ -183,6 +183,12 @@ export interface CalendarEvent extends BaseEntity {
   reminders?: EventReminder[];
   /** RECURRENCE-ID importato (chiave di deduplica insieme a `sourceUid`). */
   sourceRecurrenceId?: string;
+  /**
+   * Riga importata (con `sourceRecurrenceId`) che nel file era un giorno cambiato a mano in StudyOS
+   * (X-STUDYOS-EDITED), ricevuta quando l'import ha creato la serie (una copia). La cambia solo un file
+   * segnato con lo stesso `sourceUid`; gli altri file non la toccano. Assente per tutte le altre righe.
+   */
+  sourceEdited?: true;
 }
 
 export type Weekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";

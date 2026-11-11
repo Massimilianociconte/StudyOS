@@ -50,7 +50,7 @@ import { Icon } from "../components/Icon";
 import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
 import { safeHref } from "../lib/safeUrl";
-import { CalendarTransfer, type CalendarTransferHandle } from "../components/CalendarTransfer";
+import { CalendarTransfer, transferMenuItem, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { allDayRange, daysUntil, selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents, RECURRENCE_LABEL, type EventOccurrence } from "../lib/recurrence";
@@ -460,8 +460,7 @@ export function CalendarView() {
             }
             more={[
               { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
-              { label: CALENDAR_TEXT.importFile, icon: "Import", onClick: () => transfer.current?.chooseFile() },
-              { label: CALENDAR_TEXT.exportFile, icon: "Download", onClick: () => transfer.current?.exportFile() },
+              transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
               {
                 label: CALENDAR_TEXT.officialDates,
@@ -477,7 +476,7 @@ export function CalendarView() {
           />
         }
       />
-      <CalendarTransfer ref={transfer} buttons={false} />
+      <CalendarTransfer ref={transfer} />
       {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
       {sharePhase === "open" ? (
         <Suspense fallback={null}>
