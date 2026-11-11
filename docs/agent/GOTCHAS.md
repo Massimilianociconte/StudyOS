@@ -253,7 +253,13 @@
 - Connettore remoto, CPU: il piano Free dà 10 ms per richiesta. Non mettere calcoli costosi dentro
   un comparatore di `sort` sui dati dell'account (`urgentTasks` costava 8 ms per date ricalcolate a
   ogni confronto). Misura con un account di prova grande prima di aggiungere lavoro alle risposte
-  di `studyos_overview`.
+  di `studyos_overview`. `withZonedDate` riusa una classe `ZonedDate` per fuso: crearne una a ogni
+  chiamata faceva ricompilare al motore ogni `new Date` (in Node, account con 1500 attività, 800
+  eventi e 1000 sessioni: seconda `studyos_overview` da 45–52 a 28–31 ms; account piccolo invariato,
+  6–15 ms). Il resto è `parseISO`/`format` di date-fns per ogni sessione e attività nei selettori
+  (`studyStreak`, `studyMinutesThisWeek`, `urgentTasks`), più caro con `ZonedDate`. I numeri di Node
+  non sono quelli del Worker: misura `cpuTime` con `wrangler tail` sull'account vero prima di
+  concludere che serve il piano a pagamento.
 - Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
   legato al token OAuth); il database ne tiene l'hash. «Revoca l'accesso agli assistenti» revoca
   tutti i permessi dell'account (`studyos_revoke_agent_grants`), anche a browser scollegato.

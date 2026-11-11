@@ -99,6 +99,17 @@ test("withZonedDate rimette sempre il Date originale", async () => {
   assert.equal(isTimeZone(""), false);
 });
 
+test("withZonedDate riusa la stessa classe per fuso (CPU sul Worker), una diversa per ogni fuso", async () => {
+  const { withZonedDate } = await import("../src/agent/zonedDate.ts");
+  const first = await withZonedDate("Asia/Tokyo", async () => Date);
+  const second = await withZonedDate("Asia/Tokyo", async () => Date);
+  const rome = await withZonedDate("Europe/Rome", async () => Date);
+  assert.equal(first, second);
+  assert.notEqual(first, rome);
+  assert.equal(new second("2026-11-11T00:00:00Z").getHours(), 9);
+  assert.equal(new rome("2026-11-11T00:00:00Z").getHours(), 1);
+});
+
 test("withZonedDate: anche il fuso «del dispositivo» (deviceTimeZone) è quello scelto, poi torna quello vero", async () => {
   const { withZonedDate } = await import("../src/agent/zonedDate.ts");
   const { deviceTimeZone } = await import("../src/lib/tz.ts");

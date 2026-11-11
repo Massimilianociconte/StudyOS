@@ -173,13 +173,28 @@ export const createZonedDate = (timeZone: string): DateConstructor => {
 };
 
 /**
+ * Una classe per fuso, riusata a ogni esecuzione: una classe nuova per chiamata costringe il motore
+ * JavaScript a ricompilare ogni `new Date` e ogni getter del codice degli strumenti (CPU sul Worker).
+ */
+const classes = new Map<string, DateConstructor>();
+const zonedClass = (timeZone: string) => {
+  let Zoned = classes.get(timeZone);
+  if (!Zoned) {
+    Zoned = createZonedDate(timeZone);
+    if (classes.size >= 64) classes.clear();
+    classes.set(timeZone, Zoned);
+  }
+  return Zoned;
+};
+
+/**
  * Esegue `task` con globalThis.Date nel fuso indicato e lo ripristina sempre. Anche il fuso «del
  * dispositivo» (`deviceTimeZone`, che legge Intl e non Date) diventa quello indicato: lo store lo
  * fissa sulle serie nuove, il motore delle ripetizioni sulle divisioni. Chi chiama deve evitare
  * esecuzioni sovrapposte (CloudRunner le serializza): il Date globale è uno solo.
  */
 export const withZonedDate = async <T>(timeZone: string, task: () => Promise<T>): Promise<T> => {
-  const Zoned = createZonedDate(timeZone);
+  const Zoned = zonedClass(timeZone);
   const previous = globalThis.Date;
   const previousZone = overrideDeviceTimeZone(timeZone);
   globalThis.Date = Zoned;
