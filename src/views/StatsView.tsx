@@ -367,7 +367,7 @@ function WithHelp({ children, help }: { children: ReactNode; help: ReactNode }) 
   return (
     <div className="relative min-w-0">
       {children}
-      <span className="absolute -right-1.5 -top-2.5">{help}</span>
+      <span className="absolute right-0 -top-2.5">{help}</span>
     </div>
   );
 }

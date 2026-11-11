@@ -22,6 +22,7 @@ import {
   planSplit,
   reminderInstants,
   repeatLegacyKey,
+  searchHits,
   validateRepeat
 } from "../src/lib/repeat.ts";
 import { civilAddDays, civilDateOf, localMidnight } from "../src/lib/tz.ts";
@@ -1288,4 +1289,18 @@ test("S4. tutto il giorno salvato a Roma e fissato da Londra, New York o Tokyo: 
   assert.deepEqual(days("Europe/Rome", split), [["2026-11-23", "Lezione"], ["2026-11-30", "Nuova"], ["2026-12-07", "Nuova"], ["2026-12-14", "Nuova"]]);
   const cut = withTz("Asia/Tokyo", () => applyEditPlan([old], planDelete([old], "W", "2026-12-07", "following", { now: NOW })).events);
   assert.deepEqual(days("Europe/Rome", cut), [["2026-11-23", "Lezione"], ["2026-11-30", "Lezione"]]);
+});
+
+test("N3 (revisione finale). Ricerca: ogni serie una volta, un giorno cambiato solo se la serie non c'è già, niente giorni annullati", () => {
+  let events = [weeklySeries({ id: "P", title: "Anatomia" }), weeklySeries({ id: "Q", title: "Fisica", sourceUid: "uid-2" })];
+  // Anatomia: il 16/11 spostato alle 11, il 23/11 annullato. Fisica: il 16/11 rinominato «Esercitazione di anatomia».
+  events = applyEditPlan(events, planEdit(events[0], events, "2026-11-16", "this", { start: "2026-11-16T10:00:00.000Z", end: "2026-11-16T11:00:00.000Z" }, { now: NOW })).events;
+  events = applyEditPlan(events, planDelete(events, "P", "2026-11-23", "this", { now: NOW })).events;
+  events = applyEditPlan(events, planEdit(events.find((item) => item.id === "Q"), events, "2026-11-16", "this", { title: "Esercitazione di anatomia" }, { now: NOW })).events;
+  events = [...events, weeklySeries({ id: "old", title: "Anatomia (vecchia)", archived: true, sourceUid: "uid-3" })];
+  const find = (word) => searchHits(events, (item) => String(item.title).toLowerCase().includes(word)).map((item) => item.id);
+  // «anatomia»: la serie una volta (non il giorno spostato né quello annullato), più il giorno di Fisica rinominato.
+  assert.deepEqual(find("anatomia"), ["P", "Q@2026-11-16"]);
+  assert.deepEqual(find("fisica"), ["Q"]);
+  assert.deepEqual(find("esercitazione"), ["Q@2026-11-16"]);
 });

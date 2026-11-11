@@ -193,7 +193,7 @@ export function TimeGrid({
             <>
               <span className="text-[11px] font-black uppercase text-[var(--faint)]">{format(day, "EEE", { locale: it })}</span>
               <span
-                className={`grid h-8 min-w-8 place-items-center rounded-full px-1.5 text-lg font-black ${today ? "bg-[var(--accent)] text-[#10131d]" : ""}`}
+                className={`grid h-8 min-w-8 grid-cols-1 place-items-center rounded-full px-1.5 text-lg font-black ${today ? "bg-[var(--accent)] text-[#10131d]" : ""}`}
               >
                 {format(day, "d")}
               </span>
@@ -405,7 +405,7 @@ export function TimeGrid({
                     // Il nome comincia dal testo visibile ("+2"), poi la spiegazione.
                     aria-label={`${CALENDAR_LAYOUT_TEXT.more(more.count)}, ${CALENDAR_LAYOUT_TEXT.moreAria(more.count)}`}
                     title={CALENDAR_LAYOUT_TEXT.moreAria(more.count)}
-                    className="absolute right-0 z-[5] grid place-items-start justify-center rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black text-[var(--text)] after:absolute after:-inset-y-3 after:inset-x-0 after:content-[''] hover:bg-[var(--surface)]"
+                    className="absolute right-0 z-[5] grid grid-cols-1 place-items-start justify-center rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black text-[var(--text)] after:absolute after:-inset-y-3 after:inset-x-0 after:content-[''] hover:bg-[var(--surface)]"
                     style={{ top, height, width: MORE_GUTTER_PX - 2 }}
                   >
                     {CALENDAR_LAYOUT_TEXT.more(more.count)}

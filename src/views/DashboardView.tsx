@@ -305,7 +305,7 @@ export function DashboardView() {
                         type="button"
                         onClick={() => void toggleTask(task.id)}
                         aria-label={task.status === "done" ? `Riapri "${task.title}"` : `Completa "${task.title}"`}
-                        className={`relative ml-3 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-3 after:content-[""] ${
+                        className={`relative ml-3 grid h-5 w-5 shrink-0 grid-cols-1 place-items-center rounded-full border-2 after:absolute after:-inset-3 after:content-[""] ${
                           task.status === "done" ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)]"
                         }`}
                       >
@@ -526,7 +526,7 @@ export function DashboardView() {
                     <li key={item.occurrenceKey}>
                       <button type="button" onClick={() => openEvent(item.id)} className={ROW}>
                         <span
-                          className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px]"
+                          className="grid h-8 w-8 shrink-0 grid-cols-1 place-items-center rounded-[10px]"
                           style={{ background: style.background, color: style.text, boxShadow: `inset 0 0 0 1px ${style.border}` }}
                         >
                           <Icon name={paint.icon} className="h-4 w-4" />
@@ -704,7 +704,7 @@ function GettingStarted({
               >
                 <span className="flex items-center gap-2 text-sm font-black">
                   <span
-                    className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs ${
+                    className={`grid h-7 w-7 shrink-0 grid-cols-1 place-items-center rounded-full text-xs ${
                       isNext ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-strong)] text-[var(--text)]"
                     }`}
                   >

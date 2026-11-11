@@ -628,6 +628,27 @@ const defaultGroupKey = (event: unknown) => {
 /** Riga di un'occorrenza modificata o cancellata (non una serie). */
 export const isOccurrenceRow = (event: Pick<CalendarEvent, "seriesId">) => typeof event.seriesId === "string" && event.seriesId.length > 0;
 
+/**
+ * Eventi tra i risultati di una ricerca (`matches`): ogni serie una volta; un giorno cambiato da solo
+ * solo se la sua serie non c'è già (per esempio rinominato); giorni annullati ed eventi archiviati no,
+ * perché il calendario non li mostra.
+ */
+export const searchHits = <T extends CalendarEvent>(events: readonly T[], matches: (event: T) => boolean): T[] => {
+  const hits: T[] = [];
+  const series = new Set<string>();
+  const days: T[] = [];
+  for (const event of events) {
+    if (event.archived || event.cancelled) continue;
+    if (isOccurrenceRow(event)) days.push(event);
+    else if (matches(event)) {
+      hits.push(event);
+      series.add(event.id);
+    }
+  }
+  for (const day of days) if (!series.has(day.seriesId as string) && matches(day)) hits.push(day);
+  return hits;
+};
+
 /** Id prevedibile della riga di un'occorrenza: modifiche da due dispositivi convergono. */
 export const occurrenceId = (seriesId: string, date: string) => `${seriesId}@${date}`;
 

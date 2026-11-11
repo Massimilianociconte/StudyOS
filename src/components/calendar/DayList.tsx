@@ -81,7 +81,7 @@ export function DayList({
               <button
                 type="button"
                 onClick={() => handlers.onCreate(defaultStartFor(day))}
-                className="grid h-11 min-w-11 place-items-center rounded-full bg-[var(--surface-soft)] px-2.5"
+                className="grid h-11 min-w-11 grid-cols-1 place-items-center rounded-full bg-[var(--surface-soft)] px-2.5"
                 aria-label={CALENDAR_VIEW_TEXT.addOn(format(day, "d MMMM", { locale: it }))}
                 title={CALENDAR_VIEW_TEXT.addOn(format(day, "d MMMM", { locale: it }))}
               >
@@ -149,7 +149,7 @@ export function EventRow({ item, handlers }: { item: CalendarOccurrence; handler
       )}
       {/* Tipologia: icona sul colore della tipologia (o della materia). */}
       <span
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px]"
+        className="grid h-8 w-8 shrink-0 grid-cols-1 place-items-center rounded-[10px]"
         style={{ background: paint.style.background, color: paint.style.text, boxShadow: `inset 0 0 0 1px ${paint.style.border}` }}
       >
         <TypeIcon paint={paint} className="h-4 w-4" />

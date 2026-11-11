@@ -145,7 +145,7 @@ export function MonthGrid({
                       event.stopPropagation();
                       onPickDay(day);
                     }}
-                    className={`relative grid h-6 min-w-6 place-items-center rounded-full px-1 text-xs font-black before:absolute before:-inset-2.5 before:content-[""] hover:bg-[var(--surface-strong)] ${
+                    className={`relative grid h-6 min-w-6 grid-cols-1 place-items-center rounded-full px-1 text-xs font-black before:absolute before:-inset-2.5 before:content-[""] hover:bg-[var(--surface-strong)] ${
                       today ? "bg-[var(--accent)] text-[#10131d] hover:bg-[var(--accent)]" : ""
                     }`}
                     aria-label={CALENDAR_VIEW_TEXT.openDay(format(day, "d"), format(day, "EEEE d MMMM", { locale: it }))}
@@ -313,7 +313,7 @@ function MonthEvent({
       title={`${timeLabel(item.start)} · ${item.title}${occasion ? ` · ${occasion}` : ""}`}
     >
       {/* Icona della tipologia nel suo colore (al posto del pallino). */}
-      <span className="grid shrink-0 place-items-center" style={{ color: paint.style.border }}>
+      <span className="grid shrink-0 grid-cols-1 place-items-center" style={{ color: paint.style.border }}>
         <TypeIcon paint={paint} />
       </span>
       {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
