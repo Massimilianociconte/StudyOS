@@ -66,6 +66,13 @@ const newerWins = <T extends Dated>(current: T[], incoming: T[]) => {
 };
 
 /**
+ * Inviti nuovi da segnalare con una notifica: solo quelli ricevuti e ancora in attesa. Gli inviti
+ * che ho mandato io tornano dal server (creati lì da invite_person_to_group) e non vanno notificati a me.
+ */
+export const invitesToNotify = (fresh: GroupInvite[], me: string): GroupInvite[] =>
+  fresh.filter((invite) => invite.status === "pending" && invite.fromUserId !== me);
+
+/**
  * Unisce lo stato condiviso scaricato con quello locale. `queriedGroupIds` sono i gruppi chiesti
  * al server (quelli di cui risulto membro); per quelli che il server restituisce:
  * - i membri sono quelli del server (chi entra con invito/codice non cambia la data del gruppo,

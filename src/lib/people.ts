@@ -137,9 +137,13 @@ export const shareInviteRecipient = (invite: { recipientEmail: string | null; re
   invite.recipientEmail || (invite.recipientUserId ? peopleLabels.sentToPerson : peopleLabels.withLink);
 
 /**
- * Lega agli inviti locali l'account destinatario arrivato dal server, anche se la riga non ha
- * cambiato data (la migrazione di people.sql lega gli inviti per email). Non toglie mai un legame e
- * conserva il nome salvato da chi ha invitato. Stesso array se non cambia nulla.
+ * Lega agli inviti locali l'account destinatario arrivato dal server, anche se la copia locale
+ * sembra più recente (la migrazione di people.sql lega gli inviti e aggiorna updated_at: senza
+ * questo il merge newerWins terrebbe la copia locale e il legame andrebbe perso). Non toglie mai
+ * un legame. Il nome salvato da chi ha invitato resta finché l'invito è in attesa: dopo
+ * accettazione o rifiuto il server aggiorna updated_at e la copia del server sostituisce quella
+ * locale (questa funzione ripristina solo recipientUserId, non recipientName). Stesso array se
+ * non cambia nulla.
  */
 export const bindInviteRecipients = (local: GroupInvite[], server: readonly GroupInvite[]): GroupInvite[] => {
   const bound = new Map<string, string>();

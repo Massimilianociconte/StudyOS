@@ -43,7 +43,6 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
   const [permission, setPermission] = useState<SharePermission>("view");
   const [subjectIds, setSubjectIds] = useState<string[]>([]);
   const [target, setTarget] = useState<Target>("invite");
-  const [email, setEmail] = useState("");
   const [askBack, setAskBack] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -89,10 +88,6 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
   const submit = async () => {
     if (busy) return;
     if (!scopes.length) return setError("Scegli almeno una cosa da condividere.");
-    const recipient = email.trim().toLowerCase();
-    if (chosen === "invite" && recipient && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-      return setError("Controlla l'indirizzo email: sembra incompleto (es. nome@esempio.it).");
-    }
     setError("");
     setBusy(true);
     try {
@@ -100,7 +95,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
       const list = offers();
       if (chosen === "invite") {
         const requests = askBack ? list.map((offer) => ({ scope: offer.scope, permission: offer.permission })) : [];
-        const { token } = await sync.createShareInvite({ offers: list, requests, recipientEmail: recipient || undefined });
+        const { token } = await sync.createShareInvite({ offers: list, requests });
         setCreated({ link: shareInviteLink(token), offers: list });
       } else {
         const name = targetName();
@@ -253,21 +248,6 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
 
           {chosen === "invite" ? (
             <div className="grid grid-cols-1 gap-3">
-              <Field label="Email (facoltativa)">
-                <input
-                  className={inputClass}
-                  type="email"
-                  inputMode="email"
-                  autoComplete="off"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="nome@esempio.it"
-                />
-              </Field>
-              <p className="text-xs font-semibold text-[var(--muted)]">
-                Con l'email l'invito compare anche nella sua app quando accede con quell'indirizzo. StudyOS non manda email: il link lo
-                mandi tu.
-              </p>
               <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-[18px] bg-[var(--surface-soft)] p-3">
                 <input
                   type="checkbox"

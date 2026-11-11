@@ -1,8 +1,9 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
 import { getMeta, setMeta } from "./db";
-import { makeGroupInviteCode, mergeSharedSnapshot, type SharedSnapshot } from "./groups";
+import { invitesToNotify, makeGroupInviteCode, mergeSharedSnapshot, type SharedSnapshot } from "./groups";
 import { GROUP_JOINED_EVENT, clearPendingInvite, readPendingInvite } from "./groupInvite";
+import { bindInviteRecipients } from "./people";
 import { getSession, isCloudConfigured, supabase } from "./supabase";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 
@@ -137,6 +138,7 @@ const toInvite = (row: Record<string, unknown>): GroupInvite => ({
   fromUserId: String(row.from_user_id ?? ""),
   fromDisplayName: String(row.from_display_name ?? ""),
   recipientEmail: (row.recipient_email as string | null) ?? undefined,
+  recipientUserId: (row.recipient_user_id as string | null) ?? undefined,
   code: String(row.code ?? ""),
   status: (row.status as GroupInvite["status"]) ?? "pending"
 });
@@ -189,17 +191,19 @@ const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds
   );
   await applyShared({
     studyGroups: merged.groups,
-    groupInvites: merged.invites,
+    // La migrazione di people.sql ha già legato gli inviti all'account (e per quelli di gruppo ha
+    // aggiornato updated_at): il legame deve restare anche se la copia locale sembra più recente
+    // (newerWins la vincerebbe), e bindInviteRecipients lo garantisce.
+    groupInvites: bindInviteRecipients(merged.invites, snapshot.invites),
     groupResources: merged.resources,
     groupActivities: merged.activities
   });
   return { freshInvites: merged.freshInvites, freshGroups: merged.freshGroups };
 };
 
-const notifyFreshInvites = async (fresh: GroupInvite[]) => {
+const notifyFreshInvites = async (fresh: GroupInvite[], me: string) => {
   const state = useStudyStore.getState();
-  for (const invite of fresh) {
-    if (invite.status !== "pending") continue;
+  for (const invite of invitesToNotify(fresh, me)) {
     await state
       .addNotification({
         kind: "invite",
@@ -213,7 +217,7 @@ const notifyFreshInvites = async (fresh: GroupInvite[]) => {
 };
 
 /**
- * Scarica le novità condivise: inviti nominali, risposte ai miei inviti,
+ * Scarica le novità condivise: inviti al mio account, risposte ai miei inviti,
  * membri/risorse/attività dei miei gruppi. Ritorna false se non applicabile.
  */
 export const pullSharedUpdates = async (): Promise<boolean> => {
@@ -226,14 +230,12 @@ export const pullSharedUpdates = async (): Promise<boolean> => {
   }
   if (!session?.user) return false;
   const me = session.user.id;
-  const email = (session.user.email ?? "").toLowerCase();
   try {
     const snapshot: SharedSnapshot = { groups: [], invites: [], resources: [], activities: [] };
-    if (email) {
-      const { data, error } = await supabase.from("studyos_group_invites").select("*").eq("recipient_email", email).eq("status", "pending");
-      if (error) throw error;
-      snapshot.invites.push(...(data ?? []).map(toInvite));
-    }
+    // Solo gli inviti legati al mio account (supabase/people.sql): l'email non vale più come prova.
+    const { data, error } = await supabase.from("studyos_group_invites").select("*").eq("recipient_user_id", me).eq("status", "pending");
+    if (error) throw error;
+    snapshot.invites.push(...(data ?? []).map(toInvite));
     const { data: sent, error: sentError } = await supabase.from("studyos_group_invites").select("*").eq("from_user_id", me);
     if (sentError) throw sentError;
     snapshot.invites.push(...(sent ?? []).map(toInvite));
@@ -284,7 +286,7 @@ export const pullSharedUpdates = async (): Promise<boolean> => {
       snapshot.activities.push(...(activities ?? []).map(toActivity));
     }
     const { freshInvites } = await mergeShared(snapshot, me, myGroupIds);
-    await notifyFreshInvites(freshInvites);
+    await notifyFreshInvites(freshInvites, me);
     return true;
   } catch {
     return false;
@@ -390,19 +392,32 @@ export const deleteSharedGroup = (groupId: string) => deleteRow("studyos_groups"
 
 export const deleteSharedResource = (resourceId: string) => deleteRow("studyos_group_resources", resourceId);
 
-export const pushSharedInvite = (invite: GroupInvite) =>
-  pushRow("studyos_group_invites", {
+/**
+ * Solo inviti con codice, senza destinatario (la policy di inserimento rifiuta gli altri): quelli a
+ * una persona li crea il server con invite_person_to_group, quelli per email non esistono più.
+ */
+export const pushSharedInvite = async (invite: GroupInvite) => {
+  if (invite.recipientEmail || invite.recipientUserId) return false;
+  return pushRow("studyos_group_invites", {
     id: invite.id,
     group_id: invite.groupId,
     group_name: invite.groupName,
     group_description: invite.groupDescription ?? null,
     from_user_id: invite.fromUserId,
     from_display_name: invite.fromDisplayName,
-    recipient_email: invite.recipientEmail ?? null,
+    recipient_email: null,
     code: invite.code,
     status: invite.status,
     updated_at: invite.updatedAt
   });
+};
+
+/** Nome della persona appena invitata, solo per l'elenco di chi invita (il server non lo conserva). */
+export const rememberInviteRecipient = async (inviteId: string, name: string) => {
+  const state = useStudyStore.getState();
+  if (!state.groupInvites.some((invite) => invite.id === inviteId && invite.recipientName !== name)) return;
+  await applyShared({ groupInvites: state.groupInvites.map((invite) => (invite.id === inviteId ? { ...invite, recipientName: name } : invite)) });
+};
 
 export const pushSharedResource = async (resource: GroupResource) => {
   const ok = await pushRow("studyos_group_resources", {
@@ -601,25 +616,25 @@ export const regenerateInviteCode = async (groupId: string): Promise<string> => 
 };
 
 let inviteChannel: RealtimeChannel | null = null;
-let inviteSubscribedEmail = "";
+let inviteSubscribedUser = "";
 
 const stopInviteSubscription = () => {
   if (inviteChannel && supabase) {
     void supabase.removeChannel(inviteChannel).catch(() => undefined);
   }
   inviteChannel = null;
-  inviteSubscribedEmail = "";
+  inviteSubscribedUser = "";
 };
 
-const startInviteSubscription = (email: string) => {
-  if (!supabase || inviteSubscribedEmail === email) return;
+const startInviteSubscription = (userId: string) => {
+  if (!supabase || inviteSubscribedUser === userId) return;
   stopInviteSubscription();
-  inviteSubscribedEmail = email;
+  inviteSubscribedUser = userId;
   inviteChannel = supabase
-    .channel(`studyos-invites:${email}`)
+    .channel(`studyos-invites:${userId}`)
     .on(
       "postgres_changes",
-      { event: "INSERT", schema: "public", table: "studyos_group_invites", filter: `recipient_email=eq.${email}` },
+      { event: "INSERT", schema: "public", table: "studyos_group_invites", filter: `recipient_user_id=eq.${userId}` },
       (payload) => {
         const invite = toInvite((payload.new ?? {}) as Record<string, unknown>);
         if (!invite.id) return;
@@ -641,7 +656,7 @@ const startInviteSubscription = (email: string) => {
 };
 
 /**
- * Cassetta postale condivisa: pull iniziale + realtime sugli inviti nominali.
+ * Cassetta postale condivisa: pull iniziale + realtime sugli inviti al mio account.
  * Silenziosa quando non applicabile (ospite, offline, migrazione assente).
  */
 export const ensureSharedMailbox = async (): Promise<boolean> => {
@@ -654,8 +669,7 @@ export const ensureSharedMailbox = async (): Promise<boolean> => {
   }
   if (!session?.user) return false;
   const ok = await pullSharedUpdates();
-  const email = (session.user.email ?? "").toLowerCase();
-  if (ok && email && supabase) startInviteSubscription(email);
+  if (ok && supabase) startInviteSubscription(session.user.id);
   return ok;
 };
 

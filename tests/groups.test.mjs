@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   groupInviteLink,
   groupInviteMessage,
+  invitesToNotify,
   isInviteCodeShape,
   makeGroupInviteCode,
   mergeSharedSnapshot,
@@ -156,4 +157,13 @@ test("merge condiviso: senza novità restituisce gli stessi oggetti (niente risc
   const merged = mergeSharedSnapshot(local, server, "alice", ["g1"]);
   assert.equal(merged.groups[0], shared);
   assert.equal(merged.resources[0], res);
+});
+
+test("notifiche inviti: solo quelli ricevuti e ancora in attesa, mai quelli che ho mandato io", () => {
+  const base = { groupId: "g1", groupName: "Fisio", groupDescription: "", fromDisplayName: "Alice", code: "", updatedAt: "2026-01-01T00:00:00.000Z" };
+  const sent = { ...base, id: "i1", fromUserId: "me", recipientUserId: "bob", status: "pending" };
+  const received = { ...base, id: "i2", fromUserId: "alice", recipientUserId: "me", status: "pending" };
+  const answered = { ...base, id: "i3", fromUserId: "alice", recipientUserId: "me", status: "accepted" };
+  assert.deepEqual(invitesToNotify([sent], "me"), []);
+  assert.deepEqual(invitesToNotify([sent, received, answered], "me").map((invite) => invite.id), ["i2"]);
 });

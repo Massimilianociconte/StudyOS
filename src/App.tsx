@@ -106,6 +106,8 @@ export default function App() {
       // Motore di sync + supabase-js caricati in differita: fuori dal bundle iniziale.
       if (cloudConfigured) void import("./lib/cloudSync").then((module) => module.initCloudSync());
       if (cloudConfigured) void import("./lib/shareSync").then((module) => module.initShareSync());
+      // Nome del profilo online (ricerca persone): stesso caricamento in differita.
+      if (cloudConfigured) void import("./lib/peopleSync").then((module) => module.initPeopleSync());
     });
   }, [init]);
 
