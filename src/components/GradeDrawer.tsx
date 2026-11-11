@@ -3,7 +3,8 @@ import { format, parseISO } from "date-fns";
 import type { Exam, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { MAX_GRADE, MIN_GRADE, isValidGrade } from "../lib/grades";
-import { Button, Drawer, Field, inputClass } from "./ui";
+import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
+import { CAREER_HELP } from "../lib/labels";
 
 const GRADES = Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MIN_GRADE + index);
 
@@ -182,26 +183,33 @@ export function GradeDrawer({
             <input className={inputClass} type="date" value={draft.date} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
           </Field>
         </div>
-        <div className="flex flex-wrap gap-4">
-          <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-[var(--accent)]"
-              checked={draft.honors}
-              disabled={draft.passFail || draft.grade !== String(MAX_GRADE)}
-              onChange={(event) => setDraft((value) => ({ ...value, honors: event.target.checked }))}
-            />
-            Lode (solo con 30)
-          </label>
-          <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-[var(--accent)]"
-              checked={draft.passFail}
-              onChange={(event) => setDraft((value) => ({ ...value, passFail: event.target.checked, honors: false }))}
-            />
-            Idoneità (senza voto)
-          </label>
+        {/* Il "?" sta accanto all'etichetta, non dentro: un tocco sul "?" non spunta la casella. */}
+        <div className="flex flex-wrap gap-x-4">
+          <span className="flex items-center gap-1.5">
+            <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--accent)]"
+                checked={draft.honors}
+                disabled={draft.passFail || draft.grade !== String(MAX_GRADE)}
+                onChange={(event) => setDraft((value) => ({ ...value, honors: event.target.checked }))}
+              />
+              Lode (solo con 30)
+            </label>
+            <HelpTip title={CAREER_HELP.honors.title} text={CAREER_HELP.honors.text} />
+          </span>
+          <span className="flex items-center gap-1.5">
+            <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--accent)]"
+                checked={draft.passFail}
+                onChange={(event) => setDraft((value) => ({ ...value, passFail: event.target.checked, honors: false }))}
+              />
+              Idoneità (senza voto)
+            </label>
+            <HelpTip title={CAREER_HELP.passFail.title} text={CAREER_HELP.passFail.text} example={CAREER_HELP.passFail.example} />
+          </span>
         </div>
         {editing && exam ? (
           <p className="text-xs font-bold text-[var(--muted)]">
