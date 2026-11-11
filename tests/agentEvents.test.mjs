@@ -508,3 +508,68 @@ test("R1-S1 ter. delete_event «following» toglie tutte le parti dopo dell'inte
     ["2026-11-02 Lezione", "2026-11-09 Q", "2026-11-16 E"]
   );
 });
+
+// Lunedì alle 10 a Roma, divisa con «following» il 16/11 (B) e, da B, il 30/11 (C); più un giorno
+// cambiato da solo in B. È la famiglia che «Tutti» del calendario elimina per intero.
+const splitFamily = async () => {
+  useStudyStore.setState({ events: [MONDAYS, ONCE] });
+  const call = (args) => executeAgentTool("studyos_update_event", args);
+  assert.equal((await call({ id: "m", occurrenceDate: "2026-11-16", scope: "following", title: "B" })).ok, true);
+  assert.equal((await call({ id: "m~2026-11-16", occurrenceDate: "2026-11-30", scope: "following", title: "C", location: "Aula 2" })).ok, true);
+  assert.equal((await call({ id: "m~2026-11-16", occurrenceDate: "2026-11-23", scope: "this", title: "Solo il 23" })).ok, true);
+  const titles = () =>
+    expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date("2026-12-15T00:00:00.000Z"))
+      .filter((item) => item.id !== "once")
+      .map((item) => `${item.occurrenceDate} ${item.title}`);
+  assert.deepEqual(titles(), ["2026-11-02 Lezione", "2026-11-09 Lezione", "2026-11-16 B", "2026-11-23 Solo il 23", "2026-11-30 C", "2026-12-07 C", "2026-12-14 C"]);
+  return titles;
+};
+
+test("delete_event senza occurrenceDate su una serie: tutta la famiglia, come «Tutti» nel calendario", async () => {
+  const titles = await splitFamily();
+  const removed = await executeAgentTool("studyos_delete_event", { id: "m", confirm: true });
+  assert.equal(removed.ok, true, JSON.stringify(removed));
+  assert.deepEqual([removed.data.id, removed.data.deleted, removed.data.parts], ["m", true, 3]);
+  assert.deepEqual(titles(), []);
+  assert.deepEqual(events().map((item) => item.id), ["once"]);
+
+  // Anche partendo da una parte: via tutta la serie, madre compresa.
+  const again = await splitFamily();
+  assert.equal((await executeAgentTool("studyos_delete_event", { id: "m~2026-11-16~2026-11-30", confirm: true })).ok, true);
+  assert.deepEqual(again(), []);
+  assert.deepEqual(events().map((item) => item.id), ["once"]);
+
+  // Un evento che non si ripete: solo lui, come prima.
+  const single = await executeAgentTool("studyos_delete_event", { id: "once", confirm: true });
+  assert.deepEqual([single.data.id, single.data.deleted, "parts" in single.data], ["once", true, false]);
+  assert.deepEqual(events(), []);
+});
+
+test("update_event «all» o senza occurrenceDate: come «Tutti», le parti dopo restano e il risultato le elenca", async () => {
+  const titles = await splitFamily();
+  const renamed = await executeAgentTool("studyos_update_event", { id: "m", title: "Nuovo" });
+  assert.equal(renamed.ok, true, JSON.stringify(renamed));
+  assert.deepEqual(renamed.data.keptParts, [
+    { id: "m~2026-11-16", from: "2026-11-16", title: "B" },
+    { id: "m~2026-11-16~2026-11-30", from: "2026-11-30", title: "C" }
+  ]);
+  assert.deepEqual(titles(), ["2026-11-02 Nuovo", "2026-11-09 Nuovo", "2026-11-16 B", "2026-11-23 Solo il 23", "2026-11-30 C", "2026-12-07 C", "2026-12-14 C"]);
+
+  // Da un giorno della parte B con «all»: cambia B (fino al 29/11), C resta ed è elencata.
+  const fromPart = await executeAgentTool("studyos_update_event", { id: "m~2026-11-16", occurrenceDate: "2026-11-16", scope: "all", title: "B2" });
+  assert.equal(fromPart.ok, true, JSON.stringify(fromPart));
+  assert.deepEqual(fromPart.data.keptParts, [{ id: "m~2026-11-16~2026-11-30", from: "2026-11-30", title: "C" }]);
+  assert.deepEqual(titles(), ["2026-11-02 Nuovo", "2026-11-09 Nuovo", "2026-11-16 B2", "2026-11-23 Solo il 23", "2026-11-30 C", "2026-12-07 C", "2026-12-14 C"]);
+
+  // L'ultima parte, una serie mai divisa o «following»: niente keptParts.
+  const last = await executeAgentTool("studyos_update_event", { id: "m~2026-11-16~2026-11-30", title: "C2" });
+  assert.equal("keptParts" in last.data, false);
+  const following = await executeAgentTool("studyos_update_event", { id: "m", occurrenceDate: "2026-11-09", scope: "following", priority: "high" });
+  assert.equal("keptParts" in following.data, false);
+
+  // La descrizione dello strumento dice che cosa resta, come la scelta del calendario.
+  const description = findAgentTool("studyos_update_event").description;
+  assert.match(description, /«Questo e i successivi»/);
+  assert.match(description, /keptParts/);
+  assert.match(findAgentTool("studyos_delete_event").description, /senza occurrenceDate, elimina l'intera serie, comprese le parti/);
+});

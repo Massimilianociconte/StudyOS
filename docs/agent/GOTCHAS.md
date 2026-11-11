@@ -225,6 +225,11 @@
 - Eliminare «Questo e i successivi» (`planDelete`) toglie tutte le parti dopo della famiglia
   (`laterPartsOf`, comprese le divisioni degli antenati), come la regola nuova di A; modulo e
   agente passano dallo stesso piano.
+- Agente e «Tutti»: `studyos_delete_event` senza `occurrenceDate` su una serie è «Tutti»
+  (`planDelete` con `includeSplits` dal primo giorno: tutta la famiglia, anche dall'id di una
+  parte; `parts` nel risultato). `studyos_update_event` senza `occurrenceDate` o con `scope=all`
+  è «Tutti» della modifica: cambia solo quella serie e le parti dopo (divise prima con
+  «Questo e i successivi») restano, elencate in `keptParts` come le dice la scelta del calendario.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`
