@@ -334,6 +334,48 @@ test("store: addSession conserva origine e argomento (aggiunta a mano)", async (
   assert.equal("topicId" in store.getState().sessions[0], false);
 });
 
+test("store: Salva dal riepilogo usa i campi corretti; i minuti corretti spostano la fine", () => {
+  const now = Date.now();
+  // Cronometro rimasto acceso 9 ore: nel riepilogo diventano 90 minuti.
+  const started = { ...defaultTimer("pomodoro", { kind: "stopwatch", subjectId: "s1" }), running: true, startedAt: now - 540 * MIN, runningSince: now - 540 * MIN, sessionId: "session_rev" };
+  seedStore({ timer: started });
+  assert.equal(store.getState().endStudyTimer().status, "review");
+  const result = store.getState().saveTimerReview({ subjectId: "s2", topicId: "t3", title: "Moto rettilineo", notes: "rifare es. 4", template: "exercises", minutes: 90 });
+  assert.equal(result.status, "saved");
+  const [session] = store.getState().sessions;
+  assert.equal(session.id, "session_rev");
+  assert.equal(session.subjectId, "s2");
+  assert.equal(session.topicId, "t3");
+  assert.equal(session.title, "Moto rettilineo");
+  assert.equal(session.notes, "rifare es. 4");
+  assert.equal(session.template, "exercises");
+  assert.equal(session.source, "stopwatch");
+  assert.equal(session.actualMinutes, 90);
+  assert.equal(Date.parse(session.end) - Date.parse(session.start), 90 * MIN);
+  assert.equal(store.getState().timerReview, false);
+  assert.equal(isTimerIdle(store.getState().timer), true);
+  assert.equal(store.getState().timer.kind, "stopwatch");
+  // Un argomento di un'altra materia non si salva; senza riepilogo aperto non c'è niente da salvare.
+  assert.equal(store.getState().saveTimerReview({ title: "x", notes: "", template: "review", minutes: 5 }).status, "idle");
+  seedStore({ timer: { ...startCountdownState(now - 40 * MIN, { minutes: 30, subjectId: "s1", sessionId: "session_cd2" }) } });
+  store.getState().endStudyTimer();
+  store.getState().saveTimerReview({ subjectId: "s1", topicId: "t3", title: "Limiti", notes: "", template: "review", minutes: 30 });
+  assert.equal("topicId" in store.getState().sessions[0], false);
+  assert.equal(store.getState().sessions[0].end, new Date(now - 10 * MIN).toISOString(), "fine reale del Timer");
+});
+
+test("store: restoreSession rimette la sessione eliminata (Annulla)", async () => {
+  seedStore();
+  await store.getState().addSession({ title: "Da eliminare", status: "completed", actualMinutes: 30, source: "manual" });
+  const [session] = store.getState().sessions;
+  await store.getState().deleteSession(session.id);
+  assert.equal(store.getState().sessions.length, 0);
+  await store.getState().restoreSession(session);
+  assert.deepEqual(store.getState().sessions, [session]);
+  await store.getState().restoreSession(session);
+  assert.equal(store.getState().sessions.length, 1, "niente doppioni");
+});
+
 test("store: il timer vecchio in localStorage si carica come prima (kind assente = Pomodoro)", () => {
   const storage = memoryStorage({ [TIMER_STORAGE_KEY]: JSON.stringify({ mode: "classic", running: false, remainingSeconds: 600, durationSeconds: 2700 }) });
   assert.equal(loadTimer(storage).kind, "pomodoro");

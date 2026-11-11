@@ -7,6 +7,7 @@ import type { StudySession, StudyTopic, Subject, TimerSettings } from "../types"
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, studyMinutesThisWeek, studyStreak, subjectColor, subjectName } from "../lib/selectors";
 import {
+  SESSION_FORM_TEXT,
   SESSION_SOURCE_LABEL,
   SESSION_TEMPLATE_LABEL,
   STUDY_SIDE_TEXT,
@@ -22,6 +23,7 @@ import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, type R
 import { Button, Drawer, Field, HelpTip, IconButton, Panel, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TopicManager, reviewDueLabel } from "../components/TopicManager";
+import { ManualSessionDrawer, UNDO_MS, useSessionEditor } from "../components/StudySessionDrawers";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
@@ -63,8 +65,6 @@ import {
 } from "../lib/timerAlerts";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
-/** Quanto resta visibile "Annulla" dopo aver scartato una sessione. */
-const UNDO_MS = 15_000;
 
 const pillClass = (active: boolean) =>
   `min-h-9 rounded-full px-3 text-xs font-black ${
@@ -78,11 +78,12 @@ const KIND_ICON: Record<TimerKind, string> = { pomodoro: "Timer", timer: "Hourgl
 
 export function StudyView() {
   const store = useStudyStore();
-  const { sessions, topics, subjects, addSession, deleteSession, reviewTopic, setActiveView } = store;
+  const { sessions, topics, subjects, reviewTopic, setActiveView } = store;
   const weeklyTarget = selectPreferences(store).weeklyTargetMinutes;
   const [topicsOpen, setTopicsOpen] = useUiState("study.topicsOpen", false, { scope: "tab" });
   const [logOpen, setLogOpen] = useUiState("study.logOpen", false, { scope: "tab" });
   const [notice, setNotice] = useState("");
+  const sessionEditor = useSessionEditor();
 
   const today = new Date();
   const dueReviews = dueTopics(topics, today);
@@ -136,26 +137,27 @@ export function StudyView() {
               {history.length ? (
                 <ul className="grid grid-cols-1 gap-1">
                   {history.map((session) => (
-                    <li key={session.id} className="group flex min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 hover:bg-[var(--surface-soft)]">
-                      <span className="grid grid-cols-1 h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: `color-mix(in srgb, ${subjectColor(subjects, session.subjectId)} 30%, transparent)` }}>
-                        <Icon name={session.source === "timer" || session.source === "stopwatch" ? KIND_ICON[session.source] : "Timer"} className="h-4 w-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="one-line-safe text-sm font-extrabold">{session.title}</p>
-                        <p className="one-line-safe text-xs font-bold text-[var(--muted)]">
-                          {capitalizeFirst(format(parseISO(session.start), "EEE d MMM · HH:mm", { locale: it }))} · {SESSION_TEMPLATE_LABEL[session.template]}
-                          {session.source && session.source !== "manual" ? ` · ${SESSION_SOURCE_LABEL[session.source]}` : ""}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-sm font-black tabular-nums">{formatMinutes(session.actualMinutes || session.plannedMinutes)}</span>
-                      <IconButton
-                        icon="Trash2"
-                        label={`Elimina la sessione "${session.title}"`}
-                        className="h-8 w-8 bg-transparent text-[var(--danger-text)] transition-opacity hover:bg-[var(--danger-bg)] can-hover:opacity-0 can-hover:group-focus-within:opacity-100 can-hover:group-hover:opacity-100"
-                        onClick={() => {
-                          if (window.confirm(`Eliminare la sessione "${session.title}" (${formatMinutes(session.actualMinutes)})? Le ore verranno tolte dalle statistiche. L'operazione non si può annullare.`)) void deleteSession(session.id);
-                        }}
-                      />
+                    <li key={session.id}>
+                      {/* Tocca la sessione per correggerla o eliminarla (con Annulla). */}
+                      <button
+                        type="button"
+                        onClick={() => sessionEditor.edit(session.id)}
+                        aria-label={SESSION_FORM_TEXT.editAria(session.title)}
+                        className="flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]"
+                      >
+                        <span className="grid grid-cols-1 h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: `color-mix(in srgb, ${subjectColor(subjects, session.subjectId)} 30%, transparent)` }}>
+                          <Icon name={session.source === "timer" || session.source === "stopwatch" ? KIND_ICON[session.source] : "Timer"} className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="one-line-safe block text-sm font-extrabold">{session.title}</span>
+                          <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
+                            {capitalizeFirst(format(parseISO(session.start), "EEE d MMM · HH:mm", { locale: it }))} · {SESSION_TEMPLATE_LABEL[session.template]}
+                            {session.source && session.source !== "manual" ? ` · ${SESSION_SOURCE_LABEL[session.source]}` : ""}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-sm font-black tabular-nums">{formatMinutes(session.actualMinutes || session.plannedMinutes)}</span>
+                        <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--faint)]" />
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -164,6 +166,7 @@ export function StudyView() {
                   Ancora nessuna sessione. Qui trovi lo studio salvato con il timer o aggiunto con «Aggiungi studio fatto».
                 </p>
               )}
+              {sessionEditor.undoNotice ? <div className="mt-2 px-2">{sessionEditor.undoNotice}</div> : null}
             </Panel>
           </div>
         </div>
@@ -231,15 +234,14 @@ export function StudyView() {
 
       <ManualSessionDrawer
         open={logOpen}
-        subjects={subjects}
         defaultSubjectId={lastSubjectId && subjects.some((subject) => subject.id === lastSubjectId) ? lastSubjectId : ""}
         onClose={() => setLogOpen(false)}
-        onSave={async (session) => {
-          await addSession(session);
+        onSaved={(minutes) => {
           setLogOpen(false);
-          setNotice(`Studio aggiunto: ${formatMinutes(session.actualMinutes ?? 0)}.`);
+          setNotice(SESSION_FORM_TEXT.added(formatMinutes(minutes)));
         }}
       />
+      {sessionEditor.drawer}
 
       <SharedSection entityTypes={["studySession", "studyTopic"]} />
     </div>
@@ -268,6 +270,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
     setTimerSubject,
     setTimerDetails,
     saveTimerSettings,
+    setTimerReviewOpen,
     setActiveView
   } = useStudyStore(
     useShallow((state) => ({
@@ -278,6 +281,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
       toggleStudyTimer: state.toggleStudyTimer,
       finishStudyTimer: state.finishStudyTimer,
       endStudyTimer: state.endStudyTimer,
+      setTimerReviewOpen: state.setTimerReviewOpen,
       resetStudyTimer: state.resetStudyTimer,
       restoreStudyTimer: state.restoreStudyTimer,
       skipBreak: state.skipBreak,
@@ -509,7 +513,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
       <div className="mt-4 flex flex-wrap gap-2">
         {ended ? (
           <>
-            <Button variant="primary" icon="Check" onClick={onFinish} className="min-w-[120px]">
+            <Button variant="primary" icon="Check" onClick={() => setTimerReviewOpen(true)} className="min-w-[120px]">
               {TIMER_TEXT.saveEnded}
             </Button>
             {!over ? (
@@ -523,14 +527,15 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
             {timer.running ? TIMER_TEXT.pause : idle ? TIMER_TEXT.start : TIMER_TEXT.resume}
           </Button>
         )}
-        {!idle && !ended && studying && !countdown ? (
+        {/* Pomodoro: salva subito (come i blocchi). Timer e Cronometro: prima il riepilogo. */}
+        {!idle && !ended && studying && timer.kind === "pomodoro" ? (
           <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
             {TIMER_TEXT.finish}
           </Button>
         ) : null}
-        {!idle && !ended && countdown ? (
+        {!idle && !ended && timer.kind !== "pomodoro" ? (
           <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
-            {TIMER_TEXT.endEarly}
+            {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
           </Button>
         ) : null}
         {!studying ? (
@@ -1094,114 +1099,5 @@ function ReviewPanel({
         </ul>
       ) : null}
     </Panel>
-  );
-}
-
-/** "Aggiungi studio fatto": registra una sessione fatta senza timer (biblioteca, lezione, studio di gruppo). */
-function ManualSessionDrawer({
-  open,
-  subjects,
-  defaultSubjectId,
-  onClose,
-  onSave
-}: {
-  open: boolean;
-  subjects: Subject[];
-  defaultSubjectId: string;
-  onClose: () => void;
-  onSave: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
-}) {
-  const initial = () => ({ subjectId: defaultSubjectId, template: "new-topic" as StudySession["template"], date: format(new Date(), "yyyy-MM-dd"), time: format(new Date(Date.now() - 60 * 60_000), "HH:mm"), minutes: "60", title: "" });
-  const [draft, setDraft] = useState(initial);
-  const [error, setError] = useState("");
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) {
-      setDraft(initial());
-      setError("");
-    }
-  }
-
-  const save = async () => {
-    const minutes = Math.round(Number(draft.minutes.replace(",", ".")));
-    const start = new Date(`${draft.date}T${draft.time || "09:00"}`);
-    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 16 * 60) return setError("Scrivi una durata tra 1 e 960 minuti (16 ore).");
-    if (Number.isNaN(start.getTime())) return setError("Controlla il giorno e l'ora di inizio.");
-    if (start.getTime() > Date.now()) return setError("L'ora di inizio è nel futuro: scegli un momento già passato.");
-    await onSave({
-      title: draft.title.trim() || `${SESSION_TEMPLATE_LABEL[draft.template]}${draft.subjectId ? ` · ${subjectName(subjects, draft.subjectId)}` : ""}`,
-      subjectId: draft.subjectId || undefined,
-      template: draft.template,
-      plannedMinutes: minutes,
-      actualMinutes: minutes,
-      start: start.toISOString(),
-      end: new Date(start.getTime() + minutes * 60_000).toISOString(),
-      status: "completed",
-      focusLevel: 3,
-      source: "manual"
-    });
-  };
-
-  return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      eyebrow="Studio"
-      title="Aggiungi studio fatto"
-      width="max-w-[480px]"
-      footer={
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Annulla
-          </Button>
-          <Button variant="primary" icon="Check" onClick={() => void save()}>
-            Salva sessione
-          </Button>
-        </div>
-      }
-    >
-      <div className="grid grid-cols-1 gap-3">
-        <p className="text-sm text-[var(--muted)]">Hai studiato senza timer, in biblioteca, a lezione o in gruppo? Aggiungilo qui: conterà nelle tue ore.</p>
-        <Field label="Materia">
-          <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-            <option value="">Nessuna materia</option>
-            {selectableSubjects(subjects, draft.subjectId).map((subject) => (
-              <option key={subject.id} value={subject.id}>
-                {subject.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-3">
-          <Field label="Giorno">
-            <input className={inputClass} type="date" value={draft.date} max={format(new Date(), "yyyy-MM-dd")} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
-          </Field>
-          <Field label="Ora di inizio">
-            <input className={inputClass} type="time" value={draft.time} onChange={(event) => setDraft((value) => ({ ...value, time: event.target.value }))} />
-          </Field>
-          <Field label="Durata (minuti)">
-            <input className={inputClass} inputMode="numeric" placeholder="Es. 60" value={draft.minutes} onChange={(event) => setDraft((value) => ({ ...value, minutes: event.target.value }))} />
-          </Field>
-        </div>
-        <Field label="Titolo (facoltativo)">
-          <input className={inputClass} value={draft.title} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} placeholder="Es. Ripasso in biblioteca" />
-        </Field>
-        <Field label="Tipo di sessione">
-          <select className={inputClass} value={draft.template} onChange={(event) => setDraft((value) => ({ ...value, template: event.target.value as StudySession["template"] }))}>
-            {TEMPLATES.map((id) => (
-              <option key={id} value={id}>
-                {SESSION_TEMPLATE_LABEL[id]}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {error ? (
-          <p role="alert" className="text-sm font-bold text-[var(--danger-text)]">
-            {error}
-          </p>
-        ) : null}
-      </div>
-    </Drawer>
   );
 }

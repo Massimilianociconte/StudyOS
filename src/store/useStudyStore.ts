@@ -81,6 +81,7 @@ import {
   type TimerMode,
   type TimerState
 } from "../lib/studyTimer";
+import { editedSessionTimes, type SessionEdit } from "../lib/studySessions";
 import { resolveTimerDurations } from "../lib/timerPrefs";
 import type { TimerSettings } from "../types";
 import { useSharedStore } from "./useSharedStore";
@@ -163,6 +164,8 @@ interface StudyState {
   addSession: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
   updateSession: (id: string, patch: Partial<StudySession>) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
+  /** Annulla dopo Elimina: la sessione torna com'era (senza doppioni). */
+  restoreSession: (session: StudySession) => Promise<void>;
   /** Crea argomenti da ripassare; restituisce quanti sono stati aggiunti (i duplicati per materia vengono saltati). */
   addTopics: (topics: Array<Partial<StudyTopic> & Pick<StudyTopic, "title" | "subjectId">>) => Promise<number>;
   updateTopic: (id: string, patch: Partial<StudyTopic>) => Promise<void>;
@@ -237,6 +240,8 @@ interface StudyState {
   /** "Termina" di Timer e Cronometro: il tempo si ferma e si apre il riepilogo prima di salvare. */
   endStudyTimer: () => { status: "review" | "too-short" | "idle" };
   setTimerReviewOpen: (open: boolean) => void;
+  /** "Salva" del riepilogo di Timer e Cronometro: i campi corretti vincono su quelli del timer. */
+  saveTimerReview: (edit: SessionEdit) => { status: "saved"; session: StudySession } | { status: "too-short" } | { status: "idle" };
   skipBreak: () => void;
   setTimerKind: (kind: TimerKind) => void;
   setTimerSubject: (subjectId: string | null) => void;
@@ -1262,6 +1267,12 @@ export const useStudyStore = create<StudyState>((set, get) => {
       await commit();
     },
 
+    restoreSession: async (session) => {
+      if (get().sessions.some((item) => item.id === session.id)) return;
+      set((state) => ({ sessions: [session, ...state.sessions] }));
+      await commit();
+    },
+
     addTopics: async (items) => {
       const existing = new Set(get().topics.map((topic) => `${topic.subjectId}:${topic.title.trim().toLowerCase()}`));
       const now = nowIso();
@@ -1731,6 +1742,46 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
     setTimerReviewOpen: (open) => {
       if (get().timerReview !== open) set({ timerReview: open });
+    },
+    saveTimerReview: (edit) => {
+      const state = get();
+      const now = Date.now();
+      const timer = state.timer;
+      if (state.loading || state.locked || timer.kind === "pomodoro" || !timer.ended) return { status: "idle" };
+      const block = finishedSession(timer, now);
+      if (!block) return { status: "too-short" };
+      // Minuti corretti (cronometro rimasto acceso): la fine si sposta, l'inizio resta quello vero.
+      const times = editedSessionTimes({ start: block.start, end: block.end, minutes: block.actualMinutes }, { minutes: edit.minutes });
+      const subjectId = knownSubjectId(state, edit.subjectId);
+      const session =
+        saveTimerBlock({
+          ...block,
+          start: times.start,
+          end: times.end,
+          actualMinutes: edit.minutes,
+          subjectId,
+          topicId: topicFor(state, subjectId, edit.topicId),
+          title: edit.title,
+          notes: edit.notes,
+          template: edit.template
+        }) ?? get().sessions.find((item) => item.id === block.sessionId);
+      // Il timer resta nella sua modalità, pronto per la prossima sessione.
+      const nextSubjectId = knownSubjectId(state, timer.subjectId);
+      const durations = timerDurationsFor(state, nextSubjectId);
+      setTimerState(
+        set,
+        defaultTimer(timer.mode, {
+          kind: timer.kind,
+          durations,
+          subjectId: nextSubjectId,
+          topicId: topicFor(state, nextSubjectId, timer.topicId),
+          title: timer.title,
+          template: timer.template,
+          targetMinutes: durations.stopwatchTargetMinutes
+        })
+      );
+      set({ timerReview: false });
+      return session ? { status: "saved", session } : { status: "idle" };
     },
     skipBreak: () => {
       const state = get();
