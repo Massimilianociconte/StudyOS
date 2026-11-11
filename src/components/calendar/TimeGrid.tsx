@@ -2,7 +2,7 @@
 // Gli eventi contemporanei stanno affiancati (posizione e altezza restano quelle dell'orario); dove le
 // colonne non entrano, le prime più un "+N" che apre l'elenco di quella fascia.
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { addDays, addMinutes, format, isSameDay, parseISO, startOfDay } from "date-fns";
+import { addDays, format, isSameDay, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Exam, Task } from "../../types";
 import { SharedMark } from "../SharedMark";
@@ -16,12 +16,14 @@ import type { Holiday } from "../../lib/holidays";
 import {
   MIN_EVENT_HEIGHT_PX,
   MORE_GUTTER_PX,
+  atWallMinutes,
   dayPieces,
   holidayBars,
   holidayId,
   laneRows,
   layoutTimedDay,
   occasionText,
+  wallMinutes,
   weekStartsOf,
   type MoreBand,
   type PlacedPiece
@@ -33,7 +35,6 @@ import { canDrag, editOccurrence, occurrenceSubject, pointerPoint, sharedOutline
 import type { CalendarOccurrence, Handlers } from "./types";
 
 const MINUTE_MS = 60_000;
-const HOUR_MS = 3_600_000;
 /** Etichette orarie a sinistra e spazio tra le colonne dei giorni (px). */
 const HOURS_COLUMN_PX = 52;
 const COLUMN_GAP_PX = 6;
@@ -96,8 +97,9 @@ export function TimeGrid({
   const bars = eventBars(occurrences);
   const barById = new Map(bars.map((bar) => [bar.id, bar]));
   const holidayById = new Map(holidays.map((holiday) => [holidayId(holiday), holiday]));
-  // Settimana: barre continue da un giorno all'altro (prima le festività), al più WEEK_LANES corsie.
-  const laneRow = days.length === 7 ? laneRows([...holidayBars(holidays), ...bars], weekStartsOf(days), WEEK_LANES)[0] : undefined;
+  // Settimana: barre continue da un giorno all'altro, al più WEEK_LANES corsie. Prima gli eventi
+  // dell'utente: a parità di giorni le festività cedono la corsia (e finiscono nel "+N").
+  const laneRow = days.length === 7 ? laneRows([...bars, ...holidayBars(holidays)], weekStartsOf(days), WEEK_LANES)[0] : undefined;
   const lanes = laneRow?.lanes ?? 0;
 
   const perDay = days.map((day) => {
@@ -108,7 +110,7 @@ export function TimeGrid({
     const pieces = dayPieces(occurrences, dayStart, dayEnd);
     return {
       day,
-      dayStart,
+      dayEnd,
       ymd,
       // Vista Giorno: le barre che toccano il giorno, come striscia con "giorno 2 di 3".
       bars: laneRow ? [] : bars.filter((bar) => bar.startDay <= ymd && bar.endDay >= ymd),
@@ -120,11 +122,17 @@ export function TimeGrid({
     };
   });
 
-  /** Minuti dalla mezzanotte del giorno (inizio e fine disegnata, almeno l'altezza minima). */
-  const minutesOf = (startMs: number, endMs: number, dayStart: number) => {
-    const startMin = (startMs - dayStart) / MINUTE_MS;
+  /**
+   * Minuti d'orologio dalla mezzanotte (inizio e fine disegnata, almeno l'altezza minima): nei giorni del
+   * cambio dell'ora un evento alle 10 sta sulla riga delle 10. Se l'ora che si ripete (ottobre) rende
+   * la fine non successiva all'inizio, vale la durata vera.
+   */
+  const minutesOf = (startMs: number, endMs: number, dayEnd: number) => {
+    const startMin = wallMinutes(startMs, dayEnd);
+    const wallEnd = wallMinutes(endMs, dayEnd);
+    const endMin = wallEnd > startMin ? wallEnd : startMin + (endMs - startMs) / MINUTE_MS;
     const minMinutes = (MIN_EVENT_HEIGHT_PX / hourHeight) * 60;
-    return { startMin, endMin: Math.max((endMs - dayStart) / MINUTE_MS, startMin + minMinutes) };
+    return { startMin, endMin: Math.max(endMin, startMin + minMinutes) };
   };
 
   // Fascia oraria: 8–20 di base, allargata per includere gli eventi visibili (anche quelli nel "+N").
@@ -132,7 +140,7 @@ export function TimeGrid({
   if (!fixedHours) {
     for (const entry of perDay) {
       for (const piece of entry.pieces) {
-        const { startMin, endMin } = minutesOf(piece.startMs, piece.endMs, entry.dayStart);
+        const { startMin, endMin } = minutesOf(piece.startMs, piece.endMs, entry.dayEnd);
         hourStart = Math.min(hourStart, Math.floor(startMin / 60));
         hourEnd = Math.max(hourEnd, Math.ceil(endMin / 60));
       }
@@ -146,11 +154,18 @@ export function TimeGrid({
   const hasAllDay = Boolean(laneRow?.segments.length) || perDay.some((entry) => entry.bars.length || entry.holidays.length || entry.tasks.length || entry.exams.length);
   // Fascia fissa (Focus 8–19): eventi interamente fuori fascia, che la griglia taglia.
   const outside = (test: (minutes: { startMin: number; endMin: number }) => boolean) =>
-    fixedHours ? perDay.reduce((sum, entry) => sum + entry.pieces.filter((piece) => test(minutesOf(piece.startMs, piece.endMs, entry.dayStart))).length, 0) : 0;
+    fixedHours ? perDay.reduce((sum, entry) => sum + entry.pieces.filter((piece) => test(minutesOf(piece.startMs, piece.endMs, entry.dayEnd))).length, 0) : 0;
   const hiddenBefore = outside(({ endMin }) => endMin <= hourStart * 60);
   const hiddenAfter = outside(({ startMin }) => startMin >= hourEnd * 60);
   const columns = `${HOURS_COLUMN_PX}px repeat(${days.length}, minmax(0, 1fr))`;
-  const topOf = (ms: number, dayStart: number) => (((ms - dayStart) / MINUTE_MS - hourStart * 60) / 60) * hourHeight;
+  /** Posizione e altezza (px) di un pezzo nella griglia, dall'ora d'orologio. */
+  const boxOf = (startMs: number, endMs: number, dayEnd: number) => {
+    const { startMin, endMin } = minutesOf(startMs, endMs, dayEnd);
+    return {
+      top: ((startMin - hourStart * 60) / 60) * hourHeight,
+      height: Math.max(MIN_EVENT_HEIGHT_PX, ((endMin - startMin) / 60) * hourHeight - 2)
+    };
+  };
 
   const minutesFromPointer = (event: ReactMouseEvent<HTMLElement> | ReactDragEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -321,7 +336,7 @@ export function TimeGrid({
         {perDay.map((entry) => {
           const key = entry.day.toISOString();
           const today = isSameDay(entry.day, now);
-          const nowMin = (now.getTime() - entry.dayStart) / MINUTE_MS;
+          const nowMin = wallMinutes(now.getTime(), entry.dayEnd);
           return (
             <div
               key={key}
@@ -334,7 +349,7 @@ export function TimeGrid({
               }}
               onClick={(event) => {
                 const minutes = minutesFromPointer(event);
-                handlers.onCreate(addMinutes(startOfDay(entry.day), Math.floor(minutes / 30) * 30));
+                handlers.onCreate(atWallMinutes(entry.day, Math.floor(minutes / 30) * 30));
               }}
               onDragOver={(event) => {
                 event.preventDefault();
@@ -352,7 +367,7 @@ export function TimeGrid({
                 if (!item) return;
                 // Il punto preso resta sotto il puntatore (anche se l'evento era cominciato il giorno prima).
                 const minutes = minutesFromPointer(event) - Math.round(dragged.offsetMin / 15) * 15;
-                handlers.onMoveEvent(item, addMinutes(startOfDay(entry.day), minutes));
+                handlers.onMoveEvent(item, atWallMinutes(entry.day, minutes));
               }}
             >
               {today && nowMin >= hourStart * 60 && nowMin <= hourEnd * 60 ? (
@@ -368,8 +383,7 @@ export function TimeGrid({
                 <TimedEvent
                   key={placed.key}
                   placed={placed}
-                  top={topOf(placed.startMs, entry.dayStart)}
-                  height={Math.max(MIN_EVENT_HEIGHT_PX, ((placed.endMs - placed.startMs) / HOUR_MS) * hourHeight - 2)}
+                  {...boxOf(placed.startMs, placed.endMs, entry.dayEnd)}
                   hourHeight={hourHeight}
                   handlers={handlers}
                   onGrab={(value) => {
@@ -378,8 +392,7 @@ export function TimeGrid({
                 />
               ))}
               {entry.layout.more.map((more) => {
-                const top = topOf(more.startMs, entry.dayStart);
-                const height = Math.max(MIN_EVENT_HEIGHT_PX, ((more.endMs - more.startMs) / HOUR_MS) * hourHeight - 2);
+                const { top, height } = boxOf(more.startMs, more.endMs, entry.dayEnd);
                 return (
                   <button
                     key={more.cluster}
@@ -389,7 +402,8 @@ export function TimeGrid({
                       handlers.onPreviewHide();
                       setBand({ day: entry.day, band: more });
                     }}
-                    aria-label={CALENDAR_LAYOUT_TEXT.moreAria(more.count)}
+                    // Il nome comincia dal testo visibile ("+2"), poi la spiegazione.
+                    aria-label={`${CALENDAR_LAYOUT_TEXT.more(more.count)}, ${CALENDAR_LAYOUT_TEXT.moreAria(more.count)}`}
                     title={CALENDAR_LAYOUT_TEXT.moreAria(more.count)}
                     className="absolute right-0 z-[5] grid place-items-start justify-center rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black text-[var(--text)] after:absolute after:-inset-y-3 after:inset-x-0 after:content-[''] hover:bg-[var(--surface)]"
                     style={{ top, height, width: MORE_GUTTER_PX - 2 }}
@@ -486,7 +500,7 @@ function TimedEvent({
       onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
       onMouseLeave={handlers.onPreviewHide}
       className={`absolute overflow-hidden rounded-[10px] border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight hover:z-20 hover:brightness-110 ${
-        item.status === "done" ? "opacity-60" : ""
+        item.status === "done" ? "opacity-75" : ""
       } ${sharedOutlineClass(item)}`}
       style={{
         top,

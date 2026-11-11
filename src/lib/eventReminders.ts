@@ -40,13 +40,21 @@ const leadOf = (reminder: EventReminder) => (reminder.daysBefore ?? 0) * DAY_MS 
 const isShared = (event: CalendarEvent) => Boolean((event as { sharedFrom?: unknown }).sharedFrom);
 
 /**
- * Promemoria da avvisare tra `now - grace` e `now + horizon`, in ordine. Solo eventi propri, non
- * fatti, non saltati e non ancora finiti. Senza promemoria in nessun evento esce subito.
+ * Radice della famiglia di una serie: dopo "questa e le successive" la serie figlia (`S~giorno`) tiene
+ * la chiave della madre, così un'occorrenza già avvisata non avvisa di nuovo.
  */
-export function planReminders(
+const familyOf = (id: string) => (typeof id === "string" ? id.split("~")[0] || id : String(id));
+
+/**
+ * Promemoria con l'istante in [fromMs, toMs] (in ordine), di eventi propri, non fatti, non saltati e
+ * non ancora finiti; `accept` scarta altro (es. eventi già cominciati). Senza promemoria esce subito.
+ */
+function collectReminders(
   events: readonly CalendarEvent[],
-  now: Date,
-  { horizonMs = REMINDER_HORIZON_MS, graceMs = REMINDER_GRACE_MS }: { horizonMs?: number; graceMs?: number } = {}
+  nowMs: number,
+  fromMs: number,
+  toMs: number,
+  accept: (item: CalendarEvent, at: number, startMs: number) => boolean = () => true
 ): PlannedReminder[] {
   const own = events.filter((event) => !isShared(event));
   let maxLead = -1;
@@ -55,9 +63,6 @@ export function planReminders(
   }
   if (maxLead < 0) return [];
 
-  const nowMs = now.getTime();
-  const fromMs = nowMs - graceMs;
-  const toMs = nowMs + horizonMs;
   // "alle HH:mm" può cadere fino a un giorno dopo l'inizio: un giorno di margine da entrambe le parti.
   // Si espandono tutti gli eventi propri: le divisioni di una serie ("questa e le successive") contano.
   const occurrences = expandEvents(own, new Date(fromMs - 2 * DAY_MS), new Date(toMs + maxLead + DAY_MS));
@@ -78,18 +83,51 @@ export function planReminders(
       const [instant] = reminderInstants(item, [reminder]);
       if (!instant) continue;
       const at = instant.getTime();
-      if (at < fromMs || at > toMs) continue;
+      if (at < fromMs || at > toMs || !accept(item, at, startMs)) continue;
       planned.push({
-        key: `${eventId}@${item.occurrenceDate}#${reminderKeyOf(reminder)}@${at}`,
+        key: `${familyOf(eventId)}@${item.occurrenceDate}#${reminderKeyOf(reminder)}@${at}`,
         at,
         eventId,
-        title: item.title,
+        title: typeof item.title === "string" ? item.title : "",
         startMs,
         allDay: item.allDay === true
       });
     }
   }
   return planned.sort((a, b) => a.at - b.at || a.key.localeCompare(b.key));
+}
+
+/** Promemoria da avvisare tra `now - grace` e `now + horizon`, in ordine. */
+export function planReminders(
+  events: readonly CalendarEvent[],
+  now: Date,
+  { horizonMs = REMINDER_HORIZON_MS, graceMs = REMINDER_GRACE_MS }: { horizonMs?: number; graceMs?: number } = {}
+): PlannedReminder[] {
+  const nowMs = now.getTime();
+  return collectReminders(events, nowMs, nowMs - graceMs, nowMs + horizonMs);
+}
+
+/** Fin dove si recuperano i promemoria persi ad app chiusa. */
+export const MISSED_WINDOW_MS = 24 * HOUR_MS;
+/** Al più tanti promemoria persi diventano notifiche in una volta (i più recenti). */
+export const MISSED_MAX = 5;
+
+/**
+ * Promemoria persi ad app chiusa (o con il computer in pausa): istante nelle ultime 24 ore ma oltre la
+ * mezz'ora di tolleranza, evento non ancora cominciato, evento creato prima del promemoria (uno messo
+ * dopo non è "perso"). Stesse chiavi di planReminders: ognuno compare una volta sola. Diventano solo
+ * notifiche in app, senza notifica di sistema né suono.
+ */
+export function missedReminders(
+  events: readonly CalendarEvent[],
+  now: Date,
+  { windowMs = MISSED_WINDOW_MS, graceMs = REMINDER_GRACE_MS }: { windowMs?: number; graceMs?: number } = {}
+): PlannedReminder[] {
+  const nowMs = now.getTime();
+  return collectReminders(events, nowMs, nowMs - windowMs, nowMs - graceMs - 1, (item, at, startMs) => {
+    const created = Date.parse(item.createdAt);
+    return startMs > nowMs && (Number.isNaN(created) || created < at);
+  });
 }
 
 /** Chiavi già avvisate (dal localStorage): qualsiasi dato rovinato vale "nessuna". */

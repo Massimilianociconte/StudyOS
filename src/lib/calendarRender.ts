@@ -14,7 +14,8 @@ import {
   type EventTypeKey,
   type TypeColorOverrides
 } from "./eventColors";
-import { ageOn } from "./repeat";
+import type { CalendarEvent } from "../types";
+import { ageOn, expandEvents, type EventOccurrence } from "./repeat";
 import { occasionAgeText } from "./labels";
 
 const DAY_MS = 86_400_000;
@@ -52,12 +53,50 @@ export function isBarEvent(item: Timed): boolean {
   return Boolean(span && span.startDay !== span.endDay);
 }
 
+/** Mezzanotte locale più vicina a `ms` (a pari distanza, quella del giorno stesso). */
+function nearestLocalMidnight(ms: number): Date {
+  const at = new Date(ms);
+  const floor = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const next = new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1);
+  return next.getTime() - ms < ms - floor.getTime() ? next : floor;
+}
+
+/**
+ * Giorni toccati da un evento (ultimo compreso). Tutto il giorno: dalla mezzanotte locale più vicina
+ * all'inizio, per max(1, arrotondato(durata / 24 ore)) giorni, la stessa regola del motore (repeat.ts)
+ * per i dati salvati come istanti. Così un giorno di 23 o 25 ore (cambio dell'ora) o la mezzanotte di
+ * un altro fuso (evento salvato a Roma visto da New York) resta un giorno, non due.
+ */
+export function daySpanOf(item: Timed): { startDay: string; endDay: string } | null {
+  if (item.allDay !== true) return eventDaySpan(item);
+  const start = msOf(item.start);
+  if (Number.isNaN(start)) return null;
+  const end = msOf(item.end);
+  const days = !Number.isNaN(end) && end > start ? Math.max(1, Math.round((end - start) / DAY_MS)) : 1;
+  const first = nearestLocalMidnight(start);
+  const last = new Date(first.getFullYear(), first.getMonth(), first.getDate() + days - 1);
+  return { startDay: todayYmd(first), endDay: todayYmd(last) };
+}
+
 /** Giorni di una barra (ultimo compreso); null se l'evento non è una barra. `id` = chiave dell'occorrenza. */
 export function barSource(item: Timed & { id: string; occurrenceKey?: string }): DayRangeItem | null {
   if (!isBarEvent(item)) return null;
-  const span = eventDaySpan(item);
+  const span = daySpanOf(item);
   return span ? { id: item.occurrenceKey ?? item.id, ...span } : null;
 }
+
+/**
+ * Minuti segnati dall'orologio (0–1440) di un istante del giorno che finisce a `dayEndMs`: nei giorni
+ * del cambio dell'ora un evento alle 10 sta sulla riga delle 10, non un'ora prima o dopo.
+ */
+export function wallMinutes(ms: number, dayEndMs: number): number {
+  if (ms >= dayEndMs) return 24 * 60;
+  const at = new Date(ms);
+  return at.getHours() * 60 + at.getMinutes() + at.getSeconds() / 60;
+}
+
+/** Il giorno `day` all'ora d'orologio `minutes` dalla mezzanotte (crea e sposta dalla griglia oraria). */
+export const atWallMinutes = (day: Date, minutes: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, minutes);
 
 /** Pezzo di un evento con orario dentro un giorno; `offsetMs` = quanto dell'evento sta prima del pezzo. */
 export type DayPiece<T> = { item: T; startMs: number; endMs: number; offsetMs: number };
@@ -157,7 +196,7 @@ export const monthItemBudget = (visibleLanes: number, limit = 3) => Math.max(1, 
  * giorno, oppure `firstDay` se è cominciata prima. Una voce su più giorni compare una volta sola.
  */
 export function listDayOf(item: Timed, firstDay: string, lastDay: string): string | null {
-  const span = eventDaySpan(item);
+  const span = daySpanOf(item);
   if (!span || span.endDay < firstDay || span.startDay > lastDay) return null;
   return span.startDay < firstDay ? firstDay : span.startDay;
 }
@@ -165,9 +204,21 @@ export function listDayOf(item: Timed, firstDay: string, lastDay: string): strin
 /** "ven 4 – dom 6 dic" per una barra su più giorni; null per tutto il resto. */
 export function spanText(item: Timed, today: string = todayYmd()): string | null {
   if (!isBarEvent(item)) return null;
-  const span = eventDaySpan(item);
+  const span = daySpanOf(item);
   if (!span || span.startDay === span.endDay) return null;
   return formatRangeField(span.startDay, span.endDay, today);
+}
+
+/**
+ * "Prossimi giorni" della Home: eventi (occorrenze comprese) che cominciano da domani in poi, nei
+ * prossimi 120 giorni, al più `count`. Anche con tanti eventi oggi l'elenco non resta vuoto.
+ */
+export function upcomingAfterToday<T extends CalendarEvent>(events: readonly T[], now: Date, count: number): (T & EventOccurrence)[] {
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const until = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate() + 120);
+  return expandEvents(events, tomorrow, until)
+    .filter((item) => msOf(item.start) >= tomorrow.getTime())
+    .slice(0, count);
 }
 
 type DatedTask = { status: string; dueDate?: string; archived?: boolean };

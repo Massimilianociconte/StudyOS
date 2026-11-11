@@ -1,14 +1,17 @@
 // Promemoria degli eventi mentre l'app è aperta. Caricato a parte dalla campanella (NotificationsBell),
 // fuori dal bundle d'ingresso: non disegna niente, mette un timer per ogni promemoria delle prossime
 // 48 ore e, quando scatta, aggiunge una notifica in app (che apre il calendario) e, se il permesso è
-// stato dato, una notifica di sistema. Le chiavi già avvisate restano sul dispositivo.
+// stato dato, una notifica di sistema. Le chiavi già avvisate restano sul dispositivo. I promemoria
+// persi ad app chiusa (ultime 24 ore, evento non ancora cominciato) arrivano solo nella campanella.
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../../store/useStudyStore";
 import { EVENT_REMINDER_TEXT } from "../../lib/labels";
 import {
   FIRED_STORAGE_KEY,
+  MISSED_MAX,
   REMINDER_GRACE_MS,
+  missedReminders,
   notificationIdOf,
   parseFired,
   planReminders,
@@ -81,20 +84,41 @@ export function EventReminderWatcher() {
 
   useEffect(() => {
     if (!ready) return undefined;
-    const plan = planReminders(events, new Date());
-    if (!plan.length) return undefined;
-    const fire = (item: PlannedReminder) => {
-      const nowMs = Date.now();
-      // Un timer scattato molto in ritardo (computer in pausa) non avvisa: ci pensa il nuovo piano.
-      if (nowMs - item.at > REMINDER_GRACE_MS || firedHere.has(item.key)) return;
+    /** Notifica in app (e, se `system`, di sistema) di un promemoria non ancora avvisato. */
+    const notify = (item: PlannedReminder, nowMs: number, system: boolean) => {
+      if (firedHere.has(item.key)) return;
       const fired = readFired();
       if (fired[item.key]) return;
+      const title = (item.title ?? "").trim() || EVENT_REMINDER_TEXT.untitled;
+      const body = reminderWhenText(item.startMs, item.allDay, new Date(nowMs));
       firedHere.add(item.key);
       writeFired(pruneFired({ ...fired, [item.key]: nowMs }, nowMs));
-      const title = item.title.trim() || EVENT_REMINDER_TEXT.untitled;
-      const body = reminderWhenText(item.startMs, item.allDay, new Date(nowMs));
       void addNotification({ id: notificationIdOf(item.key), kind: "system", title, body, linkView: "calendar" }).catch(() => undefined);
-      void showSystemReminder(item.key, title, body);
+      if (system) void showSystemReminder(item.key, title, body);
+    };
+    // Sta fuori dai riquadri d'errore delle viste: un dato strano non deve far cadere l'app.
+    let plan: PlannedReminder[] = [];
+    try {
+      const now = new Date();
+      plan = planReminders(events, now);
+      // Persi ad app chiusa: solo nella campanella (niente notifica di sistema), i più recenti, una volta.
+      const missed = missedReminders(events, now);
+      for (const item of missed.slice(-MISSED_MAX)) notify(item, now.getTime(), false);
+      for (const item of missed.slice(0, -MISSED_MAX)) firedHere.add(item.key);
+    } catch {
+      return undefined;
+    }
+    if (!plan.length) return undefined;
+    const fire = (item: PlannedReminder) => {
+      try {
+        const nowMs = Date.now();
+        // Un timer scattato molto in ritardo (computer in pausa) non avvisa: al risveglio il nuovo
+        // piano lo ritrova tra i persi e lo mette nella campanella.
+        if (nowMs - item.at > REMINDER_GRACE_MS) return;
+        notify(item, nowMs, true);
+      } catch {
+        // promemoria non avvisato: niente di più
+      }
     };
     const timers = plan.map((item) => window.setTimeout(() => fire(item), Math.max(0, item.at - Date.now())));
     return () => timers.forEach((id) => window.clearTimeout(id));

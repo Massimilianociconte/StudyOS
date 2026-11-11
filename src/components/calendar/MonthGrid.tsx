@@ -1,13 +1,13 @@
 // Mese: una riga per settimana. Gli eventi di tutto il giorno o su più giorni sono barre continue in
 // alto (spezzate solo al cambio di riga); sotto, le voci del giorno. Si trascinano gli eventi da un
 // giorno all'altro, anche le barre (il giorno preso resta sotto il puntatore).
-import { useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
+import { useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { addDays, format, isSameDay, isSameMonth, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Exam, Task } from "../../types";
 import { SharedMark } from "../SharedMark";
 import { timeLabel } from "../../lib/selectors";
-import { CALENDAR_VIEW_TEXT } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT, WEEKDAY_SHORT } from "../../lib/labels";
 import { addDays as addYmdDays, daysInclusive } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";
 import { holidayBars, holidayId, holidayPaint, isBarEvent, laneRows, monthItemBudget, occasionText, weekStartsOf } from "../../lib/calendarRender";
@@ -18,7 +18,8 @@ import type { CalendarOccurrence, Handlers } from "./types";
 
 /** Corsie di barre per riga: oltre, la barra si conta nel "+N" dei suoi giorni. */
 const MONTH_LANES = 3;
-const WEEKDAYS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
+/** Intestazioni da lunedì a domenica (in maiuscolo dallo stile). */
+const WEEKDAYS = (["MO", "TU", "WE", "TH", "FR", "SA", "SU"] as const).map((code) => WEEKDAY_SHORT[code]);
 
 /** Evento preso per trascinarlo: chiave dell'occorrenza e giorni tra il suo primo giorno e quello preso. */
 type Grab = { key: string; offsetDays: number };
@@ -51,7 +52,8 @@ export function MonthGrid({
   const bars = eventBars(occurrences);
   const barById = new Map(bars.map((bar) => [bar.id, bar]));
   const holidayById = new Map(holidays.map((holiday) => [holidayId(holiday), holiday]));
-  const rows = laneRows([...holidayBars(holidays), ...bars], weekStartsOf(days), MONTH_LANES);
+  // Prima gli eventi dell'utente: a parità di giorni le festività cedono la corsia (e vanno nel "+N").
+  const rows = laneRows([...bars, ...holidayBars(holidays)], weekStartsOf(days), MONTH_LANES);
   const timed = occurrences.filter((item) => !isBarEvent(item));
 
   /** Click, trascinamento e rilascio su un giorno (fondo, numero e voci della cella). */
@@ -123,7 +125,9 @@ export function MonthGrid({
             {week.map((day, column) => {
               const key = day.toISOString();
               const today = isSameDay(day, now);
+              // Sul telefono anche le barre oltre le corsie mostrate accendono il punto.
               const hasItems =
+                row.hidden[column] > 0 ||
                 timed.some((item) => isSameDay(parseISO(item.start), day)) ||
                 tasks.some((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)) ||
                 exams.some((exam) => isSameDay(parseISO(exam.date), day));
@@ -161,12 +165,25 @@ export function MonthGrid({
                 gridRow: segment.lane + 2
               };
               const inset = `${segment.continuesBefore ? "" : "ml-1"} ${segment.continuesAfter ? "" : "mr-1"}`;
+              // Telefono: toccare il filo apre il giorno toccato (area di tocco più alta del filo).
+              const lineProps = {
+                "aria-hidden": true,
+                onClick: (event: ReactMouseEvent<HTMLSpanElement>) => {
+                  event.stopPropagation();
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const columns = segment.endCol - segment.startCol + 1;
+                  const offset = Math.min(columns - 1, Math.max(0, Math.floor(((event.clientX - rect.left) / Math.max(1, rect.width)) * columns)));
+                  const day = week[segment.startCol + offset];
+                  if (day) onPickDay(day);
+                }
+              } as const;
+              const lineHit = "relative block h-1 cursor-pointer after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] sm:hidden";
               const holiday = holidayById.get(segment.id);
               if (holiday) {
                 const paint = holidayPaint(holiday.kind, theme);
                 return (
                   <div key={segment.id} className={`relative min-w-0 ${inset}`} style={place}>
-                    <span aria-hidden="true" className="block h-1 rounded-full sm:hidden" style={{ background: paint.strong ? paint.border : "var(--border)" }} />
+                    <span {...lineProps} className={`${lineHit} rounded-full`} style={{ background: paint.strong ? paint.border : "var(--border)" }} />
                     <div className="hidden sm:block">
                       <HolidayChip holiday={holiday} theme={theme} />
                     </div>
@@ -178,8 +195,8 @@ export function MonthGrid({
               return (
                 <div key={segment.id} className={`relative min-w-0 ${inset}`} style={place}>
                   <span
-                    aria-hidden="true"
-                    className={`block h-1 sm:hidden ${segment.continuesBefore ? "" : "rounded-l-full"} ${segment.continuesAfter ? "" : "rounded-r-full"}`}
+                    {...lineProps}
+                    className={`${lineHit} ${segment.continuesBefore ? "" : "rounded-l-full"} ${segment.continuesAfter ? "" : "rounded-r-full"}`}
                     style={{ background: paintOf(bar.item, handlers.subjects).color }}
                   />
                   <div className="hidden sm:block">
@@ -232,7 +249,7 @@ export function MonthGrid({
                   key={`items-${key}`}
                   role="presentation"
                   {...dayTarget(day, key)}
-                  className="hidden min-w-0 cursor-copy content-start gap-0.5 px-1 pb-1 sm:grid sm:px-1.5 sm:pb-1.5"
+                  className="hidden min-w-0 cursor-copy content-start gap-0.5 px-1 pb-1 sm:grid sm:grid-cols-[minmax(0,1fr)] sm:px-1.5 sm:pb-1.5"
                   style={{ gridColumn: column + 1, gridRow: itemsRow }}
                 >
                   {items.slice(0, budget)}
@@ -290,7 +307,7 @@ function MonthEvent({
       onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
       onMouseLeave={handlers.onPreviewHide}
       className={`flex min-w-0 items-center gap-1 rounded-[8px] px-1 py-0.5 text-left text-[11px] font-bold hover:bg-[var(--surface-strong)] ${
-        item.status === "done" ? "opacity-60" : ""
+        item.status === "done" ? "opacity-75" : ""
       } ${sharedOutlineClass(item)}`}
       style={sharedOutline(item)}
       title={`${timeLabel(item.start)} · ${item.title}${occasion ? ` · ${occasion}` : ""}`}

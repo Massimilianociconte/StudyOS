@@ -137,7 +137,7 @@ export function EventRow({ item, handlers }: { item: CalendarOccurrence; handler
       onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
       onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
       onMouseLeave={handlers.onPreviewHide}
-      className={`flex w-full min-w-0 items-center gap-3 rounded-[14px] px-2.5 py-2 text-left hover:bg-[var(--surface-soft)] ${item.status === "done" ? "opacity-60" : ""} ${sharedOutlineClass(item)}`}
+      className={`flex w-full min-w-0 items-center gap-3 rounded-[14px] px-2.5 py-2 text-left hover:bg-[var(--surface-soft)] ${item.status === "done" ? "opacity-75" : ""} ${sharedOutlineClass(item)}`}
       style={sharedOutline(item)}
     >
       {allDay ? (

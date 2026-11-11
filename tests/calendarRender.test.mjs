@@ -298,3 +298,109 @@ test("eventPaint: colore per tipologia, icona, stile leggibile in chiaro e scuro
   // Stessa entrata, stesso oggetto: si calcola una volta sola.
   assert.equal(render.eventPaint({ category: "exam", color: "#7CF7C8" }, { theme: "dark" }).style, exam.style);
 });
+
+/* ------------------------------------------------------------------ */
+/* Revisione 1: tutto il giorno vecchi, ora del giorno, Prossimi giorni  */
+/* ------------------------------------------------------------------ */
+
+const { expandEvents } = await import("../src/lib/repeat.ts");
+
+const legacyAllDay = (patch) => ({
+  id: "s1",
+  title: "Domenica libera",
+  description: "",
+  category: "personal",
+  color: "",
+  priority: "medium",
+  status: "planned",
+  checklist: [],
+  attachmentIds: [],
+  notes: "",
+  links: [],
+  tags: [],
+  archived: false,
+  allDay: true,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  ...patch
+});
+
+test("barSource: serie vecchie di tutto il giorno restano di un giorno, anche il 29/03/2026 (ora legale)", () => {
+  // Salvate come istanti, senza fuso: mezzanotte del dispositivo e mezzanotte di Roma (vista da qui).
+  const series = [
+    legacyAllDay({ id: "device-weekly", start: iso(2026, 1, 4), end: iso(2026, 1, 5), recurrence: "weekly" }),
+    legacyAllDay({ id: "rome-weekly", start: "2026-01-03T23:00:00.000Z", end: "2026-01-04T23:00:00.000Z", recurrence: "weekly" }),
+    legacyAllDay({ id: "device-daily", start: iso(2026, 3, 20), end: iso(2026, 3, 21), recurrence: "daily" }),
+    legacyAllDay({ id: "rome-daily", start: "2026-03-19T23:00:00.000Z", end: "2026-03-20T23:00:00.000Z", recurrence: "daily" })
+  ];
+  for (const event of series) {
+    const occurrences = expandEvents([event], local(2026, 3, 1), local(2026, 4, 13));
+    assert.ok(occurrences.length > 3, event.id);
+    const days = new Set();
+    for (const item of occurrences) {
+      const bar = render.barSource(item);
+      assert.deepEqual(bar && { startDay: bar.startDay, endDay: bar.endDay }, { startDay: item.occurrenceDate, endDay: item.occurrenceDate }, `${event.id} ${item.occurrenceDate}`);
+      assert.equal(render.spanText(item, "2026-03-01"), null, `${event.id} ${item.occurrenceDate}: un giorno, niente periodo`);
+      assert.ok(!days.has(bar.startDay), `${event.id}: due barre lo stesso giorno (${bar.startDay})`);
+      days.add(bar.startDay);
+    }
+    assert.ok(
+      occurrences.some((item) => item.occurrenceDate === "2026-03-29"),
+      `${event.id}: c'è l'occorrenza di domenica 29 marzo`
+    );
+  }
+});
+
+test("barSource, listDayOf: un tutto il giorno salvato a Roma è un giorno solo anche in un altro fuso", () => {
+  const trip = legacyAllDay({ id: "trip", start: "2026-11-13T23:00:00.000Z", end: "2026-11-14T23:00:00.000Z" });
+  const [item] = expandEvents([trip], new Date("2026-11-09T00:00:00Z"), new Date("2026-11-20T00:00:00Z"));
+  assert.deepEqual(render.barSource(item), { id: item.occurrenceKey, startDay: "2026-11-14", endDay: "2026-11-14" });
+  assert.equal(render.listDayOf(item, "2026-11-09", "2026-11-15"), "2026-11-14");
+  assert.equal(render.listDayOf(item, "2026-11-16", "2026-11-22"), null, "non sconfina nella settimana dopo");
+  assert.equal(render.spanText(item, "2026-11-01"), null);
+
+  // Tre giorni a cavallo dell'ora legale (71 ore a Roma): restano tre giorni, da qualsiasi fuso.
+  const weekend = legacyAllDay({ id: "w", start: "2026-03-26T23:00:00.000Z", end: "2026-03-29T22:00:00.000Z" });
+  assert.deepEqual(render.barSource({ ...weekend, occurrenceKey: "w" }), { id: "w", startDay: "2026-03-27", endDay: "2026-03-29" });
+  const local3 = legacyAllDay({ id: "l", start: iso(2026, 3, 27), end: iso(2026, 3, 30) });
+  assert.deepEqual(render.barSource({ ...local3, occurrenceKey: "l" }), { id: "l", startDay: "2026-03-27", endDay: "2026-03-29" });
+  assert.ok(render.spanText(local3, "2026-03-01"));
+  // Fine prima dell'inizio: un giorno.
+  assert.deepEqual(render.barSource({ ...legacyAllDay({ start: iso(2026, 5, 2), end: iso(2026, 5, 1) }), occurrenceKey: "x" }), { id: "x", startDay: "2026-05-02", endDay: "2026-05-02" });
+});
+
+test("wallMinutes e atWallMinutes: l'ora segnata dall'orologio, anche nei giorni del cambio dell'ora", () => {
+  for (const [y, m, d] of [
+    [2026, 3, 29],
+    [2026, 3, 8],
+    [2026, 10, 25],
+    [2026, 11, 12]
+  ]) {
+    const dayEnd = local(y, m, d + 1).getTime();
+    assert.equal(render.wallMinutes(local(y, m, d, 10).getTime(), dayEnd), 600, `${d}/${m} alle 10`);
+    assert.equal(render.wallMinutes(local(y, m, d, 23, 30).getTime(), dayEnd), 1410);
+    assert.equal(render.wallMinutes(dayEnd, dayEnd), 1440, "la mezzanotte dopo chiude il giorno");
+    const created = render.atWallMinutes(local(y, m, d), 600);
+    assert.equal(created.getHours(), 10, `${d}/${m}: si crea alle 10, non alle 11 o alle 9`);
+    assert.equal(created.getDate(), d);
+  }
+});
+
+test("upcomingAfterToday: i prossimi giorni anche con tanti eventi oggi", () => {
+  const now = local(2026, 11, 11, 18);
+  const today = Array.from({ length: 7 }, (_, index) =>
+    legacyAllDay({ id: `t${index}`, allDay: false, start: iso(2026, 11, 11, 8 + index), end: iso(2026, 11, 11, 9 + index) })
+  );
+  const later = [
+    legacyAllDay({ id: "late", allDay: false, start: iso(2026, 11, 11, 23), end: iso(2026, 11, 12, 1) }),
+    legacyAllDay({ id: "day3", allDay: false, start: iso(2026, 11, 14, 10), end: iso(2026, 11, 14, 11) }),
+    legacyAllDay({ id: "tomorrow", allDay: false, start: iso(2026, 11, 12, 9), end: iso(2026, 11, 12, 10) }),
+    legacyAllDay({ id: "tomorrow2", allDay: false, start: iso(2026, 11, 12, 14), end: iso(2026, 11, 12, 15) })
+  ];
+  assert.deepEqual(
+    render.upcomingAfterToday([...today, ...later], now, 5).map((item) => item.id),
+    ["tomorrow", "tomorrow2", "day3"]
+  );
+  assert.equal(render.upcomingAfterToday([...today, ...later], now, 2).length, 2);
+  assert.deepEqual(render.upcomingAfterToday(today, now, 5), []);
+});

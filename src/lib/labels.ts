@@ -1034,7 +1034,6 @@ export const CALENDAR_VIEW_TEXT = {
   bandTitle: (from: string, to: string) => `Dalle ${from} alle ${to}`,
   bandCount: (count: number) => `${count} ${count === 1 ? "evento" : "eventi"} in questa fascia`,
   holidaysTitle: "Mostra o nascondi festività e ricorrenze italiane",
-  holidayDay: (name: string) => `Festività: ${name}`,
   holidaysOfPeriod: "Festività del periodo:",
   undated: (count: number) => `Senza data · ${count}`,
   undatedAria: (count: number) => `${count === 1 ? "1 attività" : `${count} attività`} senza data: scegli quando farle`,

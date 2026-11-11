@@ -22,7 +22,6 @@ import {
   timeLabel,
   todayEvents,
   upcomingExams,
-  upcomingEvents,
   urgentTasks
 } from "../lib/selectors";
 import {
@@ -42,7 +41,8 @@ import {
   HOME_TEXT,
   occasionAgeText
 } from "../lib/labels";
-import { EVENT_TYPE_COLORS, eventColorStyle, eventTypeIcon, eventTypeKey, themeTone } from "../lib/eventColors";
+import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
+import { eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
 import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
 import { CourseIcon } from "../components/CourseIcon";
@@ -148,7 +148,9 @@ export function DashboardView() {
   const now = new Date();
   const todayTasks = tasks.filter((task) => task.dueDate && task.status !== "archived" && isSameDay(parseISO(task.dueDate), now));
   const urgent = urgentTasks(tasks, 4);
-  const nextEvents = upcomingEvents(events, 6).filter((event) => !isSameDay(parseISO(event.start), now)).slice(0, 5);
+  // Da domani in poi: prima si prendevano i primi 6 da oggi e poi si toglievano quelli di oggi, così con
+  // tanti impegni oggi "Prossimi giorni" restava vuoto.
+  const nextEvents = upcomingAfterToday(events, now, 5);
   const nextExams = upcomingExams(exams, 4);
   const weeklyMinutes = studyMinutesThisWeek(sessions);
   const streak = studyStreak(sessions);
@@ -166,6 +168,8 @@ export function DashboardView() {
   // Compleanni e anniversari dei prossimi dodici mesi: la prossima volta di ciascuno, al massimo tre.
   const occasions = nextOccurrences(events, now).slice(0, 3);
   const theme = themeTone(store.settings.themeMode);
+  // Come nel calendario: colori per tipologia scelti dall'utente e colore messo a mano.
+  const typeOverrides = sanitizeTypeColorOverrides((preferences as { eventTypeColors?: unknown }).eventTypeColors);
 
   const nextExamDays = nextExams[0] ? studyDaysUntil(nextExams[0].date) : 0;
   const stats = [
@@ -321,7 +325,17 @@ export function DashboardView() {
                   ))}
                   {reviewsDue.length ? (
                     <li>
-                      <button type="button" onClick={() => goToView("study", [["study.topicsOpen", true, "tab"]])} className={ROW}>
+                      <button
+                        type="button"
+                        // Tutte le materie, come il conteggio: senza, l'elenco riaprirebbe filtrato sull'ultima materia.
+                        onClick={() =>
+                          goToView("study", [
+                            ["study.topicsFilter", "", "tab"],
+                            ["study.topicsOpen", true, "tab"]
+                          ])
+                        }
+                        className={ROW}
+                      >
                         <span className="grid w-11 shrink-0 grid-cols-1 place-items-center">
                           <Icon name="Brain" className="h-4 w-4 text-[var(--accent-ink)]" />
                         </span>
@@ -499,9 +513,14 @@ export function DashboardView() {
               <PanelHeader title={HOME_OCCASIONS_TEXT.title} action={HOME_OCCASIONS_TEXT.openCalendar} onAction={() => setActiveView("calendar")} />
               <ul className="grid grid-cols-1 gap-0.5">
                 {occasions.map((item) => {
-                  const type = eventTypeKey({ category: item.category, occasionKind: item.occasion?.kind });
-                  const style = eventColorStyle(EVENT_TYPE_COLORS[type], theme);
-                  const days = daysUntil(item.start, now);
+                  const paint = eventPaint(item, {
+                    subjectColor: item.subjectId ? subjectColor(subjects, item.subjectId, "") : undefined,
+                    overrides: typeOverrides,
+                    theme
+                  });
+                  const style = paint.style;
+                  // Il giorno della ricorrenza (data civile), non l'istante: vale in ogni fuso.
+                  const days = daysUntil(item.occurrenceDate, now);
                   const when = days <= 0 ? HOME_OCCASIONS_TEXT.today : days === 1 ? HOME_OCCASIONS_TEXT.tomorrow : HOME_OCCASIONS_TEXT.inDays(days);
                   return (
                     <li key={item.occurrenceKey}>
@@ -510,12 +529,12 @@ export function DashboardView() {
                           className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px]"
                           style={{ background: style.background, color: style.text, boxShadow: `inset 0 0 0 1px ${style.border}` }}
                         >
-                          <Icon name={eventTypeIcon(type)} className="h-4 w-4" />
+                          <Icon name={paint.icon} className="h-4 w-4" />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="one-line-safe block text-sm font-black">{item.title}</span>
                           <span className="block text-xs font-bold text-[var(--muted)]">
-                            {when} · {format(parseISO(item.start), "EEE d MMM", { locale: it })}
+                            {when} · {format(parseISO(item.occurrenceDate), "EEE d MMM", { locale: it })}
                             {item.age !== undefined && item.occasion ? ` · ${occasionAgeText(item.occasion.kind, item.age)}` : ""}
                           </span>
                         </span>

@@ -21,11 +21,13 @@ export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers })
     >
       <button
         type="button"
-        aria-label={done ? CALENDAR_VIEW_TEXT.markTodo(task.title) : CALENDAR_VIEW_TEXT.markDone(task.title)}        onClick={(event) => {
+        aria-label={done ? CALENDAR_VIEW_TEXT.markTodo(task.title) : CALENDAR_VIEW_TEXT.markDone(task.title)}
+        onClick={(event) => {
           event.stopPropagation();
           handlers.onToggleTask(task.id);
         }}
-        className="relative grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border-[1.5px] after:absolute after:-inset-4 after:content-['']"
+        // Area di tocco di 26 px (WCAG 2.5.8): non copre il titolo accanto né la voce sopra.
+        className="relative grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border-[1.5px] after:absolute after:-inset-1.5 after:content-['']"
         style={{ borderColor: PRIORITY_TONE[task.priority], background: done ? PRIORITY_TONE[task.priority] : "transparent" }}
       >
         {done ? <Icon name="Check" className="h-2.5 w-2.5 text-[#10131d]" /> : null}

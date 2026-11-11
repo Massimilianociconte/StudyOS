@@ -3,9 +3,8 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { isSameDay, setHours, startOfDay } from "date-fns";
 import type { CalendarEvent } from "../../types";
-import { safeCssColor } from "../../lib/sharing";
-import { subjectColor, subjectName } from "../../lib/selectors";
-import { ALL_DAY_LABEL } from "../../lib/labels";
+import { subjectName } from "../../lib/selectors";
+import { ALL_DAY_LABEL, CALENDAR_VIEW_TEXT } from "../../lib/labels";
 import type { CalendarOccurrence, Handlers, PreviewPoint, ShownEvent, Subjects } from "./types";
 
 /** Si trascina solo ciò che si può modificare: gli eventi altrui in sola lettura non sono trascinabili. */
@@ -46,11 +45,4 @@ export const defaultStartFor = (day: Date) => {
   return setHours(startOfDay(day), 9);
 };
 
-// Solo colori esadecimali, anche per i miei eventi: chi li modifica con "Può modificare" non deve poter
-// mettere nello stile un url() da scaricare. Evento di altri senza colore valido: quello della sua
-// materia (dal proprietario), poi quello della persona; mai di una delle mie materie.
-export const eventColor = (event: ShownEvent, subjects: Subjects) =>
-  safeCssColor(event.color) ||
-  (event.sharedFrom ? event.sharedFrom.subjectColor || event.sharedFrom.color : subjectColor(subjects, event.subjectId));
-
-export const allDayEventLabel = (event: CalendarEvent) => (event.tags?.includes("appello-importato") ? "Data appello" : ALL_DAY_LABEL);
+export const allDayEventLabel = (event: CalendarEvent) => (event.tags?.includes("appello-importato") ? CALENDAR_VIEW_TEXT.examDate : ALL_DAY_LABEL);

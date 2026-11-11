@@ -124,6 +124,40 @@ test("planReminders: un'occorrenza modificata usa i suoi promemoria", () => {
   assert.equal(plan[0].eventId, "s");
 });
 
+test("planReminders: dopo 'questa e le successive' la stessa occorrenza tiene la chiave (niente secondo avviso)", () => {
+  const before = reminders.planReminders([event({ id: "s", reminders: [{ minutesBefore: 15 }] })], NOW);
+  const split = reminders.planReminders([event({ id: "s~2026-11-12", splitFrom: "s", reminders: [{ minutesBefore: 15 }] })], NOW);
+  assert.equal(split[0].key, before[0].key);
+  assert.equal(split[0].eventId, "s~2026-11-12", "si apre la serie figlia");
+});
+
+test("missedReminders: persi ad app chiusa, solo se l'evento non è ancora cominciato", () => {
+  const list = [
+    // Esame domani alle 9, promemoria il giorno prima alle 8: passato da un'ora → perso.
+    event({ id: "exam", start: iso(2026, 11, 13, 9), end: iso(2026, 11, 13, 12), reminders: [{ daysBefore: 1, at: "08:00" }] }),
+    // Già cominciato: niente.
+    event({ id: "started", start: iso(2026, 11, 12, 8, 45), end: iso(2026, 11, 12, 10), reminders: [{ minutesBefore: 30 }] }),
+    // Più di 24 ore fa: niente.
+    event({ id: "old", start: iso(2026, 11, 14, 10), end: iso(2026, 11, 14, 11), reminders: [{ daysBefore: 3, at: "07:00" }] }),
+    // Da 20 minuti: ci pensa ancora planReminders (avviso normale).
+    event({ id: "grace", start: iso(2026, 11, 12, 11), end: iso(2026, 11, 12, 12), reminders: [{ at: "08:40" }] }),
+    // Creato dopo l'ora del promemoria: non è "perso", l'utente l'ha messo dopo.
+    event({ id: "new", createdAt: iso(2026, 11, 12, 8, 30), start: iso(2026, 11, 13, 9), end: iso(2026, 11, 13, 10), reminders: [{ daysBefore: 1, at: "08:00" }] }),
+    // Condiviso o fatto: niente.
+    event({ id: "shared", sharedFrom: { ownerId: "u2" }, start: iso(2026, 11, 13, 9), end: iso(2026, 11, 13, 10), reminders: [{ daysBefore: 1, at: "08:00" }] }),
+    event({ id: "done", status: "done", start: iso(2026, 11, 13, 9), end: iso(2026, 11, 13, 10), reminders: [{ daysBefore: 1, at: "08:00" }] })
+  ];
+  const missed = reminders.missedReminders(list, NOW);
+  assert.deepEqual(
+    missed.map((item) => item.eventId),
+    ["exam"]
+  );
+  assert.equal(missed[0].at, local(2026, 11, 12, 8).getTime());
+  assert.equal(missed[0].key, `exam@2026-11-13#1d0m0800@${missed[0].at}`, "stessa chiave dell'avviso normale");
+  assert.deepEqual(reminders.planReminders(list, NOW).map((item) => item.eventId), ["grace"], "nessun doppione tra i due elenchi");
+  assert.deepEqual(reminders.missedReminders([event({})], NOW), []);
+});
+
 test("parseFired e pruneFired: dati rovinati ignorati, vecchi tolti", () => {
   assert.deepEqual(reminders.parseFired(null), {});
   assert.deepEqual(reminders.parseFired("not json"), {});

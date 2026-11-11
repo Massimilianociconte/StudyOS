@@ -144,7 +144,7 @@ export function EventBar({
       onMouseLeave={handlers.onPreviewHide}
       className={`flex min-h-6 w-full min-w-0 items-center gap-1 px-1.5 py-0.5 text-left text-[11px] font-black leading-tight hover:brightness-110 ${
         roundStart ? "rounded-l-[8px]" : ""
-      } ${roundEnd ? "rounded-r-[8px]" : ""} ${item.status === "done" ? "opacity-60" : ""} ${sharedOutlineClass(item)} ${className}`}
+      } ${roundEnd ? "rounded-r-[8px]" : ""} ${item.status === "done" ? "opacity-75" : ""} ${sharedOutlineClass(item)} ${className}`}
       style={{ background: paint.style.background, color: paint.style.text, boxShadow: `inset 3px 0 0 ${roundStart ? paint.style.border : "transparent"}`, ...sharedOutline(item), ...style }}
       title={`${item.title} · ${spanText(item) ?? allDayEventLabel(item)}`}
     >
