@@ -6,7 +6,7 @@ import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME } from "./label
 import { describeReminder, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
 import { CALENDAR_EVENT_FIELD_GROUPS, changedFields, safeCssColor } from "./sharing";
-import { civilAddDays, civilDateOf, civilDaysBetween, isCivilDate, localMidnight, parseCivil } from "./tz";
+import { civilAddDays, civilDaysBetween, isCivilDate, localMidnight, parseCivil } from "./tz";
 
 const MINUTE_MS = 60_000;
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -311,59 +311,8 @@ export const wallTimeChanged = (before: Pick<CalendarEvent, "start" | "end" | "a
   return afterStart.getHours() !== beforeStart.getHours() || afterStart.getMinutes() !== beforeStart.getMinutes() || afterLength !== beforeLength;
 };
 
-/** Sposta inizio e fine della modifica di `days` giorni (ora locale), il resto uguale. */
-export const shiftPatchDays = (patch: Partial<CalendarEvent>, days: number): Partial<CalendarEvent> => {
-  if (!days) return patch;
-  const shift = (value: string | undefined) => {
-    if (value === undefined) return undefined;
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    date.setDate(date.getDate() + days);
-    return date.toISOString();
-  };
-  return {
-    ...patch,
-    ...(patch.start !== undefined ? { start: shift(patch.start) } : {}),
-    ...(patch.end !== undefined ? { end: shift(patch.end) } : {})
-  };
-};
-
-/** Giorno (YYYY-MM-DD) di un inizio: tutto il giorno nell'ora locale, altrimenti nel fuso della serie. */
-const dayOfStart = (start: string, allDay: boolean | undefined, zone: string | undefined) => {
-  const date = new Date(start);
-  return Number.isNaN(date.getTime()) ? "" : civilDateOf(date, allDay ? undefined : zone);
-};
-
-/**
- * Modifica da passare a "Tutti" salvando dal giorno `date`. La serie si sposta dello scarto tra la
- * nuova occorrenza e `date` (con "tutto il giorno" cambiato, gli orari si scrivono così come sono dal
- * primo giorno). Il modulo parte dall'occorrenza come si vede, che può stare su un altro giorno (riga
- * spostata): la modifica si riporta al giorno giusto, così cambia solo ciò che è stato cambiato.
- */
-export const allScopePatch = (
-  changes: Partial<CalendarEvent>,
-  {
-    occurrence,
-    series,
-    date
-  }: {
-    occurrence: Pick<CalendarEvent, "start" | "allDay">;
-    series: Pick<CalendarEvent, "start" | "allDay" | "timeZone">;
-    date: string;
-  }
-): Partial<CalendarEvent> => {
-  const toggled = changes.allDay !== undefined && changes.allDay !== (series.allDay ?? false);
-  // "Tutto il giorno" che non cambia non si passa: una serie senza il campo lo vedrebbe come un
-  // cambio e prenderebbe gli orari così come sono (spostandosi al giorno aperto).
-  const { allDay: _allDay, ...withoutAllDay } = changes;
-  const patch = toggled || changes.allDay === undefined ? changes : withoutAllDay;
-  if (patch.start === undefined && patch.end === undefined) return patch;
-  const zone = series.timeZone;
-  const from = dayOfStart(occurrence.start, occurrence.allDay, zone);
-  const to = toggled ? dayOfStart(series.start, series.allDay, zone) : date;
-  if (!isCivilDate(from) || !isCivilDate(to)) return patch;
-  return shiftPatchDays(patch, civilDaysBetween(from, to));
-};
+// Spostamento della modifica per "Tutti": in occurrenceLookup.ts (lo usa anche l'agente, nel bundle iniziale).
+export { allScopePatch, shiftPatchDays } from "./occurrenceLookup";
 
 /** Campi di contenuto che un giorno cambiato da solo può avere diversi dalla sua serie. */
 const ROW_CONTENT_KEYS = ["title", "description", "category", "color", "colorCustom", "priority", "status", "reminders", "location", "links"] as const;

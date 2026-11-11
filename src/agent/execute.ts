@@ -8,6 +8,9 @@ import { gradeStats, isValidGrade, librettoEntries, projectedStats } from "../li
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
 import { createId, nowIso } from "../lib/id";
 import { expandEvents, type EventOccurrence } from "../lib/recurrence";
+import { allScopePatch, findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
+import { isOccurrenceRow, normalizeRepeat, sanitizeOccasion, sanitizeReminders, validateRepeat, type OccurrenceScope } from "../lib/repeat";
+import { safeCssColor } from "../lib/sharing";
 import { dueTopics } from "../lib/review";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import { studyMinutesThisWeek, studyStreak, upcomingExams, urgentTasks } from "../lib/selectors";
@@ -61,22 +64,39 @@ const nameOf = (names: Map<string, string>, id: string | undefined) => (id ? nam
 const taskOut = (task: Task, names: Map<string, string>, full = false) =>
   publicEntity(task, { subjectName: nameOf(names, task.subjectId) }, full ? [] : ["description", "notes"]);
 
-const eventOut = (event: CalendarEvent | EventOccurrence, names: Map<string, string>) => ({
-  id: event.id,
-  title: event.title,
-  start: event.start,
-  end: event.end,
-  allDay: event.allDay === true,
-  category: event.category,
-  subjectId: event.subjectId,
-  subjectName: nameOf(names, event.subjectId),
-  priority: event.priority,
-  status: event.status,
-  recurring: "recurring" in event ? event.recurring : (event.recurrence ?? "none") !== "none",
-  recurrence: event.recurrence ?? "none",
-  recurrenceUntil: event.recurrenceUntil,
-  description: event.description.length > 300 ? `${event.description.slice(0, 300)}…` : event.description
-});
+/**
+ * Evento o occorrenza. Un giorno di una serie si indica con l'id della serie e occurrenceDate: l'id di
+ * un giorno modificato ("serie@giorno") non è un id valido per gli strumenti. La regola è quella della serie.
+ */
+const eventOut = (event: CalendarEvent | EventOccurrence, names: Map<string, string>, events: readonly CalendarEvent[] = state().events) => {
+  const recurring = "recurring" in event ? event.recurring : (event.recurrence ?? "none") !== "none";
+  const target = recurring && "occurrenceDate" in event ? occurrenceTarget(event) : null;
+  const series = target?.row ? events.find((item) => item.id === target.seriesId) : event;
+  const repeat = recurring && series ? normalizeRepeat(series) : null;
+  const occasion = sanitizeOccasion(event.occasion);
+  const reminders = sanitizeReminders(event.reminders);
+  return {
+    id: target ? target.seriesId : event.id,
+    title: event.title,
+    start: event.start,
+    end: event.end,
+    allDay: event.allDay === true,
+    category: event.category,
+    subjectId: event.subjectId,
+    subjectName: nameOf(names, event.subjectId),
+    priority: event.priority,
+    status: event.status,
+    recurring,
+    ...(target ? { seriesId: target.seriesId, occurrenceDate: target.date } : {}),
+    recurrence: event.recurrence ?? "none",
+    recurrenceUntil: event.recurrenceUntil,
+    ...(repeat ? { repeat } : {}),
+    ...(occasion ? { occasion } : {}),
+    ...(reminders.length ? { reminders } : {}),
+    ...(typeof event.location === "string" && event.location ? { location: event.location } : {}),
+    description: event.description.length > 300 ? `${event.description.slice(0, 300)}…` : event.description
+  };
+};
 
 const examOut = (exam: Exam, names: Map<string, string>, full = false) => {
   const daysLeft = differenceInCalendarDays(parseISO(exam.date), new Date());
@@ -128,7 +148,7 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
       case "studyos_update_event":
         return updateEvent(args);
       case "studyos_delete_event":
-        return remove("events", text(args.id), "Evento non trovato.", () => state().deleteEvent(text(args.id)));
+        return deleteEvent(args);
       case "studyos_list_exams":
         return listExams(args);
       case "studyos_get_exam":
@@ -319,7 +339,7 @@ const overviewResult = async (): Promise<AgentCallResult> => {
     weeklyTargetMinutes: preferences.weeklyTargetMinutes,
     studiedMinutesThisWeek: studyMinutesThisWeek(current.sessions),
     streak: studyStreak(current.sessions),
-    todayEvents: today.slice(0, 12).map((event) => eventOut(event, names)),
+    todayEvents: today.slice(0, 12).map((event) => eventOut(event, names, current.events)),
     urgentTasks: urgentTasks(current.tasks, 8).map((task) => ({ id: task.id, title: task.title, status: task.status, priority: task.priority, dueDate: task.dueDate, subjectName: nameOf(names, task.subjectId) })),
     upcomingExams: upcomingExams(current.exams, 6).map((exam) => ({ id: exam.id, subjectId: exam.subjectId, subjectName: nameOf(names, exam.subjectId), date: exam.date, daysLeft: differenceInCalendarDays(parseISO(exam.date), now), status: exam.status, preparation: exam.preparation })),
     topicsDue: { count: due.length, first: due.slice(0, 5).map((topic) => ({ id: topic.id, title: topic.title, subjectName: nameOf(names, topic.subjectId) })) },
@@ -469,8 +489,94 @@ const listEvents = (args: Args): AgentCallResult => {
     return includes(query, item.title, item.description);
   });
   const names = subjectNames();
-  return ok({ from: from.toISOString(), to: to.toISOString(), ...page(expandEvents(events, from, to).map((event) => eventOut(event, names)), args) });
+  const all = state().events;
+  return ok({ from: from.toISOString(), to: to.toISOString(), ...page(expandEvents(events, from, to).map((event) => eventOut(event, names, all)), args) });
 };
+
+// --- Eventi: campi nuovi, giornate intere su più giorni, giorni di una serie. ---
+
+/** Giornate intere dal giorno di `first` a `last` compreso. */
+const daySpan = (first: Date, last: Date | null): { start: string; end: string } | string => {
+  if (!last) return "end non è una data valida.";
+  const from = startOfDay(first);
+  const to = startOfDay(last);
+  if (to < from) return "L'ultimo giorno deve essere uguale o successivo al primo.";
+  return { start: from.toISOString(), end: addDays(to, 1).toISOString() };
+};
+
+/** Ultimo giorno compreso di un tutto il giorno: "YYYY-MM-DD" è quel giorno; una mezzanotte è la fine esclusiva. */
+const lastAllDay = (value: unknown): Date | null => {
+  const raw = text(value).trim();
+  const date = instant(raw);
+  if (!date) return null;
+  if (DAY_RE.test(raw)) return startOfDay(date);
+  const midnight = date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0 && date.getMilliseconds() === 0;
+  return midnight ? addDays(startOfDay(date), -1) : startOfDay(date);
+};
+
+/** Come nextEventRange, ma un tutto il giorno su più giorni (vacanza) tiene i suoi giorni e accetta end. */
+const nextRange = (event: Pick<CalendarEvent, "start" | "end" | "allDay">, args: Args) => {
+  const range = nextEventRange(event, args);
+  if (range === null || typeof range === "string") return range;
+  const allDay = typeof args.allDay === "boolean" ? args.allDay : event.allDay === true;
+  if (!allDay) return range;
+  const first = new Date(range.start);
+  if (args.end !== undefined) return daySpan(first, lastAllDay(args.end));
+  if (event.allDay !== true) return range;
+  const days = Math.max(1, differenceInCalendarDays(parseISO(event.end), parseISO(event.start)));
+  return daySpan(first, addDays(first, days - 1));
+};
+
+/** Ripetizione, ricorrenza, promemoria, colore e luogo dagli argomenti (un testo = errore). */
+const eventExtras = (args: Args): Partial<CalendarEvent> | string => {
+  const extra: Partial<CalendarEvent> = {};
+  if (args.repeat !== undefined) {
+    const checked = validateRepeat(args.repeat);
+    if (!checked.ok) return `repeat non valida (${checked.errors.join(", ")}).`;
+    extra.repeat = checked.rule;
+  }
+  if (args.occasion !== undefined) {
+    const occasion = sanitizeOccasion(args.occasion);
+    if (!occasion) return "occasion non valida: kind deve essere birthday, anniversary, holiday o recurring-day.";
+    extra.occasion = occasion;
+  }
+  if (args.reminders !== undefined) extra.reminders = sanitizeReminders(args.reminders);
+  if (args.color !== undefined) {
+    const color = safeCssColor(args.color);
+    if (!/^#[0-9a-f]{6}$/i.test(color)) return "color deve essere un colore #RRGGBB.";
+    extra.color = color.toUpperCase();
+    extra.colorCustom = args.colorCustom !== false;
+  } else if (typeof args.colorCustom === "boolean") extra.colorCustom = args.colorCustom;
+  if (typeof args.location === "string") extra.location = args.location.trim().slice(0, 200) || undefined;
+  return extra;
+};
+
+const SCOPES: readonly OccurrenceScope[] = ["this", "following", "all"];
+
+/**
+ * Giorno di una serie indicato da id + occurrenceDate (+ scope): la serie, l'occorrenza e la portata.
+ * Senza occurrenceDate: null (vale tutto l'evento, come prima). Un testo = errore da restituire.
+ */
+const occurrenceArgs = (id: string, args: Args) => {
+  const scope = args.scope === undefined ? "all" : (args.scope as OccurrenceScope);
+  if (!SCOPES.includes(scope)) return fail("invalid", "scope deve essere this, following o all.");
+  if (args.occurrenceDate === undefined) {
+    if (scope !== "all") return fail("invalid", "scope this o following vale solo con occurrenceDate (il giorno, da studyos_list_events).");
+    return null;
+  }
+  const date = text(args.occurrenceDate);
+  if (!validDay(date)) return fail("invalid", "occurrenceDate deve essere un giorno YYYY-MM-DD.");
+  const events = state().events;
+  const occurrence = findOccurrence(events, id, date);
+  if (occurrence && !occurrence.recurring) return fail("invalid", "L'evento non si ripete: togli occurrenceDate.");
+  if (!occurrence) return fail("not_found", "Quel giorno non è un'occorrenza dell'evento (occurrenceDate da studyos_list_events).");
+  const target = occurrenceTarget(occurrence);
+  const series = events.find((item) => item.id === target.seriesId && !isOccurrenceRow(item));
+  if (!series) return fail("not_found", "Evento non trovato.");
+  return { scope, occurrence, target, series };
+};
+
+const isResult = (value: unknown): value is AgentCallResult => Boolean(value) && typeof value === "object" && "ok" in (value as object);
 
 const createEvent = async (args: Args): Promise<AgentCallResult> => {
   const start = instant(args.start);
@@ -482,20 +588,27 @@ const createEvent = async (args: Args): Promise<AgentCallResult> => {
   const subject = requireSubject(args.subjectId);
   if (subject === false) return fail("not_found", "Materia non trovata.");
   const recurrence = (args.recurrence as CalendarEvent["recurrence"]) ?? "none";
+  const extra = eventExtras(args);
+  if (typeof extra === "string") return fail("invalid", extra);
+  // Una ricorrenza (compleanno…) senza regola si ripete ogni anno, come nell'app.
+  if (extra.occasion && !extra.repeat && recurrence === "none") extra.repeat = { freq: "yearly" };
+  const span = args.allDay === true && args.end !== undefined ? daySpan(start, lastAllDay(args.end)) : range;
+  if (typeof span === "string") return fail("invalid", span);
   const id = await createdId("events", () => state().addEvent({
+    ...extra,
     title: text(args.title).trim(),
-    start: range.start,
-    end: range.end,
+    start: span.start,
+    end: span.end,
     category: (args.category as CalendarEvent["category"]) ?? "study",
     description: text(args.description),
     notes: text(args.notes),
     subjectId: subject ? subject.id : undefined,
     allDay: args.allDay === true,
     priority: (args.priority as CalendarEvent["priority"]) ?? "medium",
-    recurrence,
-    recurrenceUntil: recurrence === "none" ? undefined : optional(args.recurrenceUntil)
+    // repeat vince su recurrence: i campi vecchi li scrive lo store dalla regola.
+    ...(extra.repeat ? {} : { recurrence, recurrenceUntil: recurrence === "none" ? undefined : optional(args.recurrenceUntil) })
   }));
-  return ok({ id, start: range.start, end: range.end });
+  return ok({ id, start: span.start, end: span.end });
 };
 
 const updateEvent = async (args: Args): Promise<AgentCallResult> => {
@@ -505,15 +618,58 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   if (args.subjectId && requireSubject(args.subjectId) === false) return fail("not_found", "Materia non trovata.");
   const patch = blankToUndefined(pick(args, ["title", "category", "description", "notes", "subjectId", "allDay", "priority", "status", "recurrence", "recurrenceUntil"]), ["subjectId", "recurrenceUntil"]);
   if (typeof patch.recurrenceUntil === "string" && !validDay(patch.recurrenceUntil)) return fail("invalid", "recurrenceUntil deve essere un giorno YYYY-MM-DD.");
+  const extra = eventExtras(args);
+  if (typeof extra === "string") return fail("invalid", extra);
+  Object.assign(patch, extra);
+  // repeat vince su recurrence; location vuota = tolta.
+  if (extra.repeat) {
+    delete patch.recurrence;
+    delete patch.recurrenceUntil;
+  }
+  if (args.location !== undefined && extra.location === undefined) patch.location = undefined;
 
-  const range = nextEventRange(event, args);
+  const day = occurrenceArgs(id, args);
+  if (isResult(day)) return day;
+  if (day && day.scope === "this" && ["repeat", "recurrence", "recurrenceUntil"].some((key) => key in patch)) {
+    return fail("invalid", "Con scope=this non si cambia la ripetizione: usa following o all.");
+  }
+
+  const range = nextRange(day ? day.occurrence : event, args);
   if (typeof range === "string") return fail("invalid", range);
   if (range) {
     patch.start = range.start;
     patch.end = range.end;
   }
-  await state().updateEvent(id, patch as Partial<CalendarEvent>);
-  return ok({ id, start: patch.start ?? event.start, end: patch.end ?? event.end });
+  const changes = patch as Partial<CalendarEvent>;
+  if (!day) {
+    await state().updateEvent(id, changes);
+    return ok({ id, start: changes.start ?? event.start, end: changes.end ?? event.end });
+  }
+  // Come nel calendario: start ed end sono i nuovi orari di quel giorno.
+  const { scope, occurrence, target, series } = day;
+  if (scope === "all") {
+    await state().editOccurrence(target.seriesId, target.date, "all", allScopePatch(changes, { occurrence, series, date: target.date }));
+    // Un giorno già cambiato da solo prende anche lui la modifica (non la regola).
+    if (target.row) {
+      const { repeat: _repeat, recurrence: _recurrence, recurrenceUntil: _until, ...own } = changes;
+      await state().editOccurrence(target.seriesId, target.date, "this", own);
+    }
+  } else {
+    await state().editOccurrence(target.seriesId, target.date, scope, changes);
+  }
+  return ok({ id: target.seriesId, occurrenceDate: target.date, scope, start: changes.start ?? occurrence.start, end: changes.end ?? occurrence.end });
+};
+
+const deleteEvent = async (args: Args): Promise<AgentCallResult> => {
+  const id = text(args.id);
+  if (!state().events.some((item) => item.id === id)) return fail("not_found", "Evento non trovato.");
+  const day = occurrenceArgs(id, args);
+  if (isResult(day)) return day;
+  if (!day) return remove("events", id, "Evento non trovato.", () => state().deleteEvent(id));
+  const { scope, target } = day;
+  // «Tutti» da un giorno: tutta la serie, comprese le parti nate dividendola (come nel calendario).
+  await state().deleteOccurrence(target.seriesId, target.date, scope, scope === "all" ? { includeSplits: true } : undefined);
+  return ok({ id: target.seriesId, occurrenceDate: target.date, scope, deleted: true });
 };
 
 const listExams = (args: Args): AgentCallResult => {
