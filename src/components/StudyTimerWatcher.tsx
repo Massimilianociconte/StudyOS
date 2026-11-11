@@ -11,8 +11,11 @@ import { Button } from "./ui";
 import { Icon } from "./Icon";
 
 // Riepilogo e modifica delle sessioni: caricati alla prima apertura, fuori dal bundle d'ingresso.
-const TimerReviewDrawer = lazy(() => import("./StudySessionDrawers").then((module) => ({ default: module.TimerReviewDrawer })));
-const SessionEditorDrawer = lazy(() => import("./StudySessionDrawers").then((module) => ({ default: module.SessionEditorDrawer })));
+// Come ShareButton: si monta solo dopo che il pezzo di app è arrivato. Il watcher sta fuori dai
+// ViewErrorBoundary: un import fallito dentro `lazy` farebbe cadere tutta l'app.
+const loadDrawers = () => import("./StudySessionDrawers");
+const TimerReviewDrawer = lazy(() => loadDrawers().then((module) => ({ default: module.TimerReviewDrawer })));
+const SessionEditorDrawer = lazy(() => loadDrawers().then((module) => ({ default: module.SessionEditorDrawer })));
 
 const BASE_TITLE = "StudyOS";
 
@@ -85,6 +88,34 @@ export function StudyTimerWatcher() {
   const [editorMounted, setEditorMounted] = useState(false);
   if (reviewWanted && !reviewMounted) setReviewMounted(true);
   if (editingId && !editorMounted) setEditorMounted(true);
+
+  // Scaricati alla prima richiesta. Se non arrivano (offline, scheda aperta prima di un aggiornamento)
+  // non si monta niente: il riepilogo resta da fare (timer.ended), si chiude solo il foglio, e alla
+  // richiesta successiva ("Rivedi e salva", "Modifica") si riprova.
+  const [drawersReady, setDrawersReady] = useState(false);
+  const loadingDrawers = useRef(false);
+  const wantDrawers = reviewWanted || editingId !== null;
+  useEffect(() => {
+    if (!wantDrawers || drawersReady || loadingDrawers.current) return;
+    loadingDrawers.current = true;
+    loadDrawers().then(
+      () => {
+        loadingDrawers.current = false;
+        setDrawersReady(true);
+      },
+      () => {
+        loadingDrawers.current = false;
+        const review = useStudyStore.getState().timerReview;
+        setTimerReviewOpen(false);
+        setEditingId(null);
+        setAlert(
+          review
+            ? { title: SESSION_FORM_TEXT.loadFailedReview, body: SESSION_FORM_TEXT.loadFailedReviewBody, icon: "AlertTriangle", goToStudy: true }
+            : { title: SESSION_FORM_TEXT.loadFailedEdit, body: SESSION_FORM_TEXT.loadFailedEditBody, icon: "AlertTriangle", autoClose: true }
+        );
+      }
+    );
+  }, [wantDrawers, drawersReady, setTimerReviewOpen]);
   const remaining = timerRemainingSeconds(timer, now);
   const elapsed = timerElapsedSeconds(timer, now);
   // Pomodoro e Timer contano alla rovescia: a zero si chiude la fase.
@@ -227,12 +258,12 @@ export function StudyTimerWatcher() {
     setAlert({ title: SESSION_FORM_TEXT.deleted(session.title), icon: "Trash2", autoClose: true, undo: () => void restoreSession(session, links) });
   };
 
-  const drawers = (
+  const drawers = drawersReady ? (
     <Suspense fallback={null}>
       {reviewMounted ? <TimerReviewDrawer onSaved={onReviewSaved} onDiscarded={onReviewDiscarded} /> : null}
       {editorMounted ? <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onDeleted={onSessionDeleted} /> : null}
     </Suspense>
-  );
+  ) : null;
 
   if (!alert) return drawers;
 

@@ -231,8 +231,11 @@ interface StudyState {
   startStudyTimer: (mode: TimerMode, options?: { subjectId?: string | null }) => void;
   /** Avvia (da fermo, con le durate attuali della materia), mette in pausa o riprende. */
   toggleStudyTimer: () => void;
-  /** Scarta il blocco o la sessione in corso: timer fermo, stessa materia. */
-  resetStudyTimer: (mode?: TimerMode) => void;
+  /**
+   * Scarta il blocco o la sessione in corso: timer fermo, stessa materia. false = non ha azzerato
+   * (un'altra scheda aveva uno stato più recente, preso al suo posto): niente "Annulla".
+   */
+  resetStudyTimer: (mode?: TimerMode) => boolean;
   /** Chiude la fase scaduta; a fine blocco Pomodoro salva la sessione (una volta sola). */
   settleStudyTimer: () => TimerEvent | null;
   startStopwatch: (subjectId?: string | null) => void;
@@ -1666,7 +1669,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       if (!next.ended && state.timerReview) set({ timerReview: false });
     },
     resetStudyTimer: (mode) => {
-      if (adoptNewerTimer()) return;
+      if (adoptNewerTimer()) return false;
       const state = get();
       const current = state.timer;
       const subjectId = knownSubjectId(state, current.subjectId);
@@ -1684,6 +1687,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
         })
       );
       set({ timerReview: false });
+      return true;
     },
     settleStudyTimer: () => {
       const state = get();

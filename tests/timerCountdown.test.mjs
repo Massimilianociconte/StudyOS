@@ -449,9 +449,12 @@ test("store: una scheda rimasta indietro non salva né azzera sopra lo stato pi�
     assert.equal(store.getState().timerReview, false);
     // Azzera: stessa regola, il cronometro dell'altra scheda resta.
     store.setState({ timer: { ...newer, changedAt: newer.changedAt - 2000 } });
-    store.getState().resetStudyTimer();
+    assert.equal(store.getState().resetStudyTimer(), false, "non ha azzerato: niente «Sessione scartata» né «Annulla»");
     assert.equal(store.getState().timer.running, true);
     assert.equal(JSON.parse(storage.getItem(TIMER_STORAGE_KEY)).sessionId, "session_y");
+    // Allineata, la stessa scheda azzera davvero.
+    assert.equal(store.getState().resetStudyTimer(), true);
+    assert.equal(store.getState().timer.running, false);
   } finally {
     delete globalThis.localStorage;
   }

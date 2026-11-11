@@ -319,18 +319,27 @@ export function TimerReviewDrawer({
       once.release();
       return;
     }
-    acted.current = true;
     const saved = saveTimerReview(result.value);
-    if (saved.status === "saved") onSaved(saved.session);
+    if (saved.status === "saved") {
+      acted.current = true;
+      onSaved(saved.session);
+      return;
+    }
+    // Non salvata (un'altra scheda era più avanti, troppo breve): Salva e Scarta tornano usabili.
+    once.release();
   };
 
   const discard = () => {
     const previous = useStudyStore.getState().timer;
     // Già scartata o salvata (doppio tocco, altra scheda): niente da scartare e "Annulla" resta quello di prima.
     if (!previous.ended || !once.take()) return;
-    acted.current = true;
     const lost = timerUnsavedSeconds(previous, Date.now());
-    resetStudyTimer();
+    // Non azzerato (un'altra scheda era più avanti): niente "Scartata" né "Annulla".
+    if (!resetStudyTimer()) {
+      once.release();
+      return;
+    }
+    acted.current = true;
     onDiscarded(previous, formatMinutes(Math.floor(lost / 60)));
   };
 

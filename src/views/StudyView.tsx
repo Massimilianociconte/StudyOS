@@ -462,7 +462,8 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
     const previous = useStudyStore.getState().timer;
     const lost = timerUnsavedSeconds(previous, Date.now());
     clearMessages();
-    resetStudyTimer();
+    // Non azzerato (un'altra scheda era più avanti): niente "Scartata" né "Annulla".
+    if (!resetStudyTimer()) return;
     // Da un minuto in su si può tornare indietro.
     if (lost >= 60) setUndo({ previous, studied: formatMinutes(Math.floor(lost / 60)) });
   };
