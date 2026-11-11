@@ -21,14 +21,15 @@ import {
   holidayId,
   laneRows,
   layoutTimedDay,
+  occasionText,
   weekStartsOf,
   type MoreBand,
   type PlacedPiece
 } from "../../lib/calendarRender";
-import { EventBar, HolidayChip, eventBars, useEventTheme } from "./bars";
+import { EventBar, HolidayChip, TypeIcon, eventBars, useEventPaint, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
 import { EventRow } from "./DayList";
-import { canDrag, editOccurrence, eventColor, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
+import { canDrag, editOccurrence, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
 
 const MINUTE_MS = 60_000;
@@ -452,7 +453,8 @@ function TimedEvent({
   onGrab: (grab: Grab) => void;
 }) {
   const { item } = placed;
-  const color = eventColor(item, handlers.subjects);
+  const paint = useEventPaint()(item, handlers.subjects);
+  const occasion = occasionText(item);
   // Righe disponibili nel blocco: il titolo ha la precedenza (colonne strette), l'orario compare da 3
   // righe, la materia da 5.
   const lineCount = Math.max(1, Math.floor((height - 6) / 13.75));
@@ -490,14 +492,17 @@ function TimedEvent({
         top,
         height,
         ...horizontal(placed),
-        borderLeftColor: color,
-        background: `color-mix(in srgb, ${color} 24%, var(--bg-2))`,
+        // Colore della tipologia (o della materia), con testo leggibile nel tema.
+        borderLeftColor: paint.style.border,
+        background: paint.style.background,
+        color: paint.style.text,
         // Un filo del colore della pagina separa gli eventi affiancati.
         boxShadow: placed.columns > 1 ? "0 0 0 1px var(--bg-2)" : undefined,
         ...sharedOutline(item)
       }}
     >
       <span className="safe-text font-black" style={{ display: "-webkit-box", WebkitLineClamp: titleLines, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+        <TypeIcon paint={paint} className="mr-0.5 inline h-3 w-3 align-[-2px]" />
         {item.sharedFrom ? (
           <>
             <SharedMark origin={item.sharedFrom} compact />{" "}
@@ -511,11 +516,12 @@ function TimedEvent({
         {item.title}
       </span>
       {showTime ? (
-        <span className="one-line-safe block font-bold text-[var(--muted)]">
+        <span className="one-line-safe block font-bold opacity-80">
           {timeLabel(item.start)}–{timeLabel(item.end)}
+          {occasion ? ` · ${occasion}` : ""}
         </span>
       ) : null}
-      {showSubject ? <span className="one-line-safe block font-bold text-[var(--muted)]">{subject}</span> : null}
+      {showSubject ? <span className="one-line-safe block font-bold opacity-80">{subject}</span> : null}
     </button>
   );
 }

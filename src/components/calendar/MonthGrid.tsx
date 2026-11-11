@@ -10,10 +10,10 @@ import { timeLabel } from "../../lib/selectors";
 import { CALENDAR_VIEW_TEXT } from "../../lib/labels";
 import { addDays as addYmdDays, daysInclusive } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";
-import { holidayBars, holidayId, holidayPaint, isBarEvent, laneRows, monthItemBudget, weekStartsOf } from "../../lib/calendarRender";
-import { EventBar, HolidayChip, eventBars, useEventTheme } from "./bars";
+import { holidayBars, holidayId, holidayPaint, isBarEvent, laneRows, monthItemBudget, occasionText, weekStartsOf } from "../../lib/calendarRender";
+import { EventBar, HolidayChip, TypeIcon, eventBars, useEventPaint, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
-import { canDrag, defaultStartFor, editOccurrence, eventColor, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
+import { canDrag, defaultStartFor, editOccurrence, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
 
 /** Corsie di barre per riga: oltre, la barra si conta nel "+N" dei suoi giorni. */
@@ -46,6 +46,7 @@ export function MonthGrid({
   const [dropDay, setDropDay] = useState<string | null>(null);
   const grab = useRef<Grab | null>(null);
   const theme = useEventTheme();
+  const paintOf = useEventPaint();
   const now = new Date();
   const bars = eventBars(occurrences);
   const barById = new Map(bars.map((bar) => [bar.id, bar]));
@@ -179,7 +180,7 @@ export function MonthGrid({
                   <span
                     aria-hidden="true"
                     className={`block h-1 sm:hidden ${segment.continuesBefore ? "" : "rounded-l-full"} ${segment.continuesAfter ? "" : "rounded-r-full"}`}
-                    style={{ background: eventColor(bar.item, handlers.subjects) }}
+                    style={{ background: paintOf(bar.item, handlers.subjects).color }}
                   />
                   <div className="hidden sm:block">
                     <EventBar
@@ -268,7 +269,8 @@ function MonthEvent({
   handlers: Handlers;
   onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void;
 }) {
-  const color = eventColor(item, handlers.subjects);
+  const paint = useEventPaint()(item, handlers.subjects);
+  const occasion = occasionText(item);
   return (
     <button
       type="button"
@@ -291,9 +293,12 @@ function MonthEvent({
         item.status === "done" ? "opacity-60" : ""
       } ${sharedOutlineClass(item)}`}
       style={sharedOutline(item)}
-      title={`${timeLabel(item.start)} · ${item.title}`}
+      title={`${timeLabel(item.start)} · ${item.title}${occasion ? ` · ${occasion}` : ""}`}
     >
-      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+      {/* Icona della tipologia nel suo colore (al posto del pallino). */}
+      <span className="grid shrink-0 place-items-center" style={{ color: paint.style.border }}>
+        <TypeIcon paint={paint} />
+      </span>
       {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
       <span className="shrink-0 tabular-nums text-[var(--muted)]">{timeLabel(item.start)}</span>
       <span className="min-w-0 truncate">{item.title}</span>

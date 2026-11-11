@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 const render = await import("../src/lib/calendarRender.ts");
 const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels.ts");
+const { EVENT_TYPE_COLORS } = await import("../src/lib/eventColors.ts");
 
 // Date locali del dispositivo: i test valgono in ogni fuso (Roma, New York, UTC).
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
@@ -264,4 +265,36 @@ test("holidayPaint: le feste nazionali un po' più marcate delle ricorrenze", ()
   assert.notEqual(national.background, celebration.background);
   assert.ok(national.strong && !celebration.strong);
   assert.equal(render.holidayPaint("clock", "light").strong, false);
+});
+
+test("occasionText: anni compiuti nel giorno dell'occorrenza", () => {
+  const birthday = { occurrenceDate: "2026-12-04", occasion: { kind: "birthday", birthYear: 2001 } };
+  assert.equal(render.occasionText(birthday), "compie 25 anni");
+  assert.equal(render.occasionText({ occurrenceDate: "2027-06-01", occasion: { kind: "anniversary", birthYear: 2026 } }), "1 anno");
+  assert.equal(render.occasionText({ occurrenceDate: "2026-12-04", occasion: { kind: "birthday" } }), "");
+  assert.equal(render.occasionText({ occurrenceDate: "2026-12-04" }), "");
+});
+
+test("eventPaint: colore per tipologia, icona, stile leggibile in chiaro e scuro", () => {
+  const exam = render.eventPaint({ category: "exam", color: "#7CF7C8" }, { theme: "dark" });
+  assert.equal(exam.color, EVENT_TYPE_COLORS.exam, "il colore automatico di prima segue la tipologia");
+  assert.equal(exam.icon, "GraduationCap");
+  assert.equal(exam.type, "exam");
+  for (const key of ["background", "border", "text"]) assert.match(exam.style[key], /^#[0-9A-F]{6}$/);
+
+  const lesson = render.eventPaint({ category: "lesson", color: "#123456", subjectId: "s" }, { subjectColor: "#123456", theme: "light" });
+  assert.equal(lesson.color, "#123456", "lezione con materia: colore della materia");
+
+  const custom = render.eventPaint({ category: "exam", color: "#00AA00", colorCustom: true }, { theme: "dark" });
+  assert.equal(custom.color, "#00AA00");
+
+  const birthday = render.eventPaint({ category: "personal", color: "#7CF7C8", occasion: { kind: "birthday" } }, { theme: "dark" });
+  assert.equal(birthday.icon, "Cake");
+  assert.equal(birthday.color, EVENT_TYPE_COLORS.birthday);
+
+  const overridden = render.eventPaint({ category: "gym", color: "#7CF7C8" }, { overrides: { gym: "#000000" }, theme: "dark" });
+  assert.equal(overridden.color, "#000000", "colore della tipologia scelto dall'utente");
+
+  // Stessa entrata, stesso oggetto: si calcola una volta sola.
+  assert.equal(render.eventPaint({ category: "exam", color: "#7CF7C8" }, { theme: "dark" }).style, exam.style);
 });

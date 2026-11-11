@@ -7,8 +7,8 @@ import { RECURRENCE_LABEL } from "../../lib/recurrence";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../../lib/taskTimer";
 import { eventMinutes, isAllDayEvent, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel } from "../../lib/selectors";
 import {
+  CALENDAR_VIEW_TEXT,
   ENERGY_LABEL,
-  EVENT_CATEGORY_LABEL,
   EVENT_STATUS_LABEL,
   NO_SUBJECT_LABEL,
   PRIORITY_LABEL,
@@ -17,8 +17,10 @@ import {
   capitalizeFirst,
   formatMinutes
 } from "../../lib/labels";
-import { spanText } from "../../lib/calendarRender";
-import { allDayEventLabel, eventColor } from "./shared";
+import { occasionText, spanText } from "../../lib/calendarRender";
+import { eventTypeLabel } from "../../lib/eventColors";
+import { TypeIcon, useEventPaint } from "./bars";
+import { allDayEventLabel } from "./shared";
 import type { CalendarPreviewState, Subjects } from "./types";
 
 export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarPreviewState; subjects: Subjects }) {
@@ -26,7 +28,10 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
   const height = preview.kind === "event" ? 200 : 240;
   const left = Math.min(Math.max(12, preview.x + 16), Math.max(12, window.innerWidth - width - 12));
   const top = Math.min(Math.max(12, preview.y + 16), Math.max(12, window.innerHeight - height - 12));
-  const accent = preview.kind === "event" ? eventColor(preview.event, subjects) : subjectColor(subjects, preview.task.subjectId);
+  const paintOf = useEventPaint();
+  const paint = preview.kind === "event" ? paintOf(preview.event, subjects) : null;
+  const accent = paint ? paint.color : preview.kind === "task" ? subjectColor(subjects, preview.task.subjectId) : "";
+  const occasion = preview.kind === "event" ? occasionText(preview.event) : "";
   const taskTimerRunning = preview.kind === "task" && isTaskTimerRunning(preview.task);
   const taskElapsed = preview.kind === "task" ? taskElapsedSeconds(preview.task) : 0;
   const taskCompletedLate = preview.kind === "task" && isTaskCompletedLate(preview.task);
@@ -41,10 +46,12 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
       <div className="mb-2 flex items-start gap-3">
         <span className="mt-1 h-9 w-1.5 shrink-0 rounded-full" style={{ background: accent }} />
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-black uppercase text-[var(--faint)]">
-            {preview.kind === "event" ? EVENT_CATEGORY_LABEL[preview.event.category] : "Attività"}
+          <p className="flex items-center gap-1 text-[11px] font-black uppercase text-[var(--faint)]">
+            {paint ? <TypeIcon paint={paint} /> : null}
+            {paint ? eventTypeLabel(paint.type) : CALENDAR_VIEW_TEXT.task}
           </p>
           <h4 className="two-line-safe text-base font-black">{preview.kind === "event" ? preview.event.title : preview.task.title}</h4>
+          {occasion ? <p className="text-xs font-bold text-[var(--muted)]">{occasion}</p> : null}
         </div>
       </div>
 
@@ -78,7 +85,7 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
       ) : (
         <div className="grid grid-cols-1 gap-2 text-sm">
           <p className="font-bold text-[var(--muted)]">
-            {preview.task.dueDate ? `${shortDate(preview.task.dueDate)} · ${timeLabel(preview.task.dueDate)}` : "Nessuna data"} ·{" "}
+            {preview.task.dueDate ? `${shortDate(preview.task.dueDate)} · ${timeLabel(preview.task.dueDate)}` : CALENDAR_VIEW_TEXT.noDate} ·{" "}
             {subjectName(subjects, preview.task.subjectId)}
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -86,10 +93,14 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
             <Tag>{TASK_STATUS_LABEL[preview.task.status]}</Tag>
             <Tag>{ENERGY_LABEL[preview.task.energy]}</Tag>
             <Tag>
-              {formatMinutes(preview.task.estimatedMinutes)} stimati
-              {taskTimerRunning ? ` · ⏱ ${formatElapsedSeconds(taskElapsed)}` : preview.task.actualMinutes !== undefined ? ` · ${preview.task.actualMinutes} min reali` : ""}
+              {CALENDAR_VIEW_TEXT.estimated(formatMinutes(preview.task.estimatedMinutes))}
+              {taskTimerRunning
+                ? ` · ⏱ ${formatElapsedSeconds(taskElapsed)}`
+                : preview.task.actualMinutes !== undefined
+                  ? ` · ${CALENDAR_VIEW_TEXT.actual(preview.task.actualMinutes)}`
+                  : ""}
             </Tag>
-            {taskCompletedLate ? <Tag className="text-[var(--warning-text)]">Completata in ritardo</Tag> : null}
+            {taskCompletedLate ? <Tag className="text-[var(--warning-text)]">{CALENDAR_VIEW_TEXT.completedLate}</Tag> : null}
           </div>
           {preview.task.description || preview.task.notes ? (
             <p className="three-line-safe text-[var(--muted)]">{preview.task.description || preview.task.notes}</p>

@@ -1,17 +1,43 @@
 // Barre della fascia "tutto il giorno": eventi di tutto il giorno o su più giorni, continue da un giorno
 // all'altro (Settimana, Mese) oppure come striscia del giorno con "giorno 2 di 3" (vista Giorno).
-import type { CSSProperties, DragEvent as ReactDragEvent } from "react";
+import { useCallback, useMemo, type CSSProperties, type DragEvent as ReactDragEvent } from "react";
 import { Icon } from "../Icon";
 import { SharedMark } from "../SharedMark";
-import { useStudyStore } from "../../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../../store/useStudyStore";
 import type { Holiday } from "../../lib/holidays";
 import { CALENDAR_VIEW_TEXT, HOLIDAY_KIND_LABEL } from "../../lib/labels";
-import { barSource, holidayPaint, spanText } from "../../lib/calendarRender";
+import { barSource, eventPaint, holidayPaint, occasionText, spanText, type EventPaint } from "../../lib/calendarRender";
 import type { DayRangeItem } from "../../lib/calendarLayout";
 import { formatDateField, todayYmd } from "../../lib/datePicker";
-import { themeTone, type EventTheme } from "../../lib/eventColors";
-import { allDayEventLabel, canDrag, editOccurrence, eventColor, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
-import type { CalendarOccurrence, Handlers } from "./types";
+import { sanitizeTypeColorOverrides, themeTone, type EventTheme } from "../../lib/eventColors";
+import { subjectColor } from "../../lib/selectors";
+import { allDayEventLabel, canDrag, editOccurrence, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
+import type { CalendarOccurrence, Handlers, ShownEvent, Subjects } from "./types";
+
+/**
+ * Colore, tipologia, icona e stile leggibile (tema chiaro o scuro) di un evento, con i colori per
+ * tipologia scelti dall'utente. `preferences.eventTypeColors` si legge senza fidarsi: arriva con il
+ * nuovo modulo evento. Eventi altrui: il colore della materia del proprietario, mai di una delle mie.
+ */
+export function useEventPaint(): (event: ShownEvent, subjects: Subjects) => EventPaint {
+  const theme = useEventTheme();
+  const stored = useStudyStore((state) => (selectPreferences(state) as { eventTypeColors?: unknown }).eventTypeColors);
+  const overrides = useMemo(() => sanitizeTypeColorOverrides(stored), [stored]);
+  return useCallback(
+    (event: ShownEvent, subjects: Subjects) =>
+      eventPaint(event, {
+        subjectColor: event.sharedFrom ? event.sharedFrom.subjectColor : event.subjectId ? subjectColor(subjects, event.subjectId, "") : undefined,
+        overrides,
+        theme
+      }),
+    [overrides, theme]
+  );
+}
+
+/** Icona piccola della tipologia (Lezione, Esame, Compleanno…): accanto al titolo, non letta. */
+export const TypeIcon = ({ paint, className = "h-3 w-3" }: { paint: EventPaint; className?: string }) => (
+  <Icon name={paint.icon} className={`${className} shrink-0`} />
+);
 
 /**
  * Elenchi vuoti (Agenda, Settimana sul telefono): le festività non contano come impegni, quindi resta lo
@@ -93,8 +119,10 @@ export function EventBar({
   /** Solo dove la barra si può trascinare su un altro giorno (Mese). */
   onDragStart?: (event: ReactDragEvent<HTMLButtonElement>) => void;
 }) {
-  const color = eventColor(item, handlers.subjects);
+  const paint = useEventPaint()(item, handlers.subjects);
   const draggable = Boolean(onDragStart) && canDrag(item);
+  // Ricorrenze: gli anni compiuti, se non c'è già "giorno 2 di 3".
+  const extra = detail ?? (occasionText(item) || undefined);
   return (
     <button
       type="button"
@@ -117,10 +145,10 @@ export function EventBar({
       className={`flex min-h-6 w-full min-w-0 items-center gap-1 px-1.5 py-0.5 text-left text-[11px] font-black leading-tight hover:brightness-110 ${
         roundStart ? "rounded-l-[8px]" : ""
       } ${roundEnd ? "rounded-r-[8px]" : ""} ${item.status === "done" ? "opacity-60" : ""} ${sharedOutlineClass(item)} ${className}`}
-      style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))`, ...sharedOutline(item), ...style }}
+      style={{ background: paint.style.background, color: paint.style.text, boxShadow: `inset 3px 0 0 ${roundStart ? paint.style.border : "transparent"}`, ...sharedOutline(item), ...style }}
       title={`${item.title} · ${spanText(item) ?? allDayEventLabel(item)}`}
     >
-      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+      <TypeIcon paint={paint} />
       {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
       <span className="min-w-0 truncate">
         {item.recurring ? (
@@ -130,7 +158,7 @@ export function EventBar({
         ) : null}
         {item.title}
       </span>
-      {detail ? <span className="ml-auto shrink-0 pl-1 font-bold text-[var(--muted)]">{detail}</span> : null}
+      {extra ? <span className="ml-auto shrink-0 pl-1 font-bold opacity-80">{extra}</span> : null}
     </button>
   );
 }

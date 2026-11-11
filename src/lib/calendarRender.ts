@@ -4,7 +4,18 @@
 import type { Holiday, HolidayKind } from "./holidays";
 import { collapseForWidth, eventDaySpan, layoutDayColumns, multiDaySegments, type DayRangeItem, type WeekSegment } from "./calendarLayout";
 import { formatRangeField, parseYmd, todayYmd } from "./datePicker";
-import { EVENT_TYPE_COLORS, eventColorStyle, type EventTheme } from "./eventColors";
+import {
+  EVENT_TYPE_COLORS,
+  eventColorStyle,
+  eventTypeIcon,
+  eventTypeKey,
+  resolveEventColor,
+  type EventTheme,
+  type EventTypeKey,
+  type TypeColorOverrides
+} from "./eventColors";
+import { ageOn } from "./repeat";
+import { occasionAgeText } from "./labels";
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -233,4 +244,44 @@ function styleOf(hex: string, theme: EventTheme) {
     styleCache.set(key, style);
   }
   return style;
+}
+/* ------------------------------------------------------------------ */
+/* Ricorrenze, colori e icone                                           */
+/* ------------------------------------------------------------------ */
+
+type OccasionLike = { occurrenceDate?: string; occasion?: { kind?: string; birthYear?: number } };
+
+/** "compie 25 anni" / "25 anni" nel giorno dell'occorrenza; "" senza anno. */
+export function occasionText(item: OccasionLike): string {
+  const occasion = item.occasion;
+  if (!occasion?.kind || !item.occurrenceDate) return "";
+  const age = ageOn(occasion.birthYear, item.occurrenceDate);
+  return age === null ? "" : occasionAgeText(occasion.kind, age);
+}
+
+export type EventPaint = { color: string; type: EventTypeKey; icon: string; style: { background: string; border: string; text: string } };
+
+type PaintableEvent = { category: string; color?: string; occasion?: { kind?: string } };
+
+/**
+ * Colore, tipologia, icona e stile leggibile di un evento: colore della tipologia (o della materia per
+ * Lezione, Studio, Laboratorio e Ripasso, o scelto a mano), preferenze dell'utente comprese.
+ * `colorCustom` si legge senza fidarsi del tipo: arriva con il nuovo modulo evento.
+ */
+export function eventPaint(
+  event: PaintableEvent,
+  { subjectColor, overrides, theme }: { subjectColor?: string; overrides?: TypeColorOverrides; theme: EventTheme }
+): EventPaint {
+  const custom = (event as { colorCustom?: unknown }).colorCustom;
+  const occasionKind = event.occasion?.kind;
+  const color = resolveEventColor({
+    category: event.category,
+    occasionKind,
+    subjectColor,
+    color: event.color,
+    colorCustom: typeof custom === "boolean" ? custom : undefined,
+    overrides
+  });
+  const type = eventTypeKey({ category: event.category, occasionKind });
+  return { color, type, icon: eventTypeIcon(type), style: styleOf(color, theme) };
 }

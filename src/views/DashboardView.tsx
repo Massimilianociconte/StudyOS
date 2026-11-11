@@ -11,6 +11,7 @@ import {
   completionRate,
   daysUntil,
   isAllDayEvent,
+  nextOccurrences,
   shortDate,
   studyDaysLabel,
   studyDaysUntil,
@@ -37,8 +38,11 @@ import {
   formatHours,
   formatMinutes,
   HOME_HELP,
-  HOME_TEXT
+  HOME_OCCASIONS_TEXT,
+  HOME_TEXT,
+  occasionAgeText
 } from "../lib/labels";
+import { EVENT_TYPE_COLORS, eventColorStyle, eventTypeIcon, eventTypeKey, themeTone } from "../lib/eventColors";
 import { Icon } from "../components/Icon";
 import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
 import { CourseIcon } from "../components/CourseIcon";
@@ -159,6 +163,9 @@ export function DashboardView() {
   const recentAttachments = [...attachments].sort((a, b) => b.addedAt.localeCompare(a.addedAt)).slice(0, 4);
   const reviewsDue = dueTopics(topics, now);
   const barb = useBarbLookup(activeSubjects.length > 0);
+  // Compleanni e anniversari dei prossimi dodici mesi: la prossima volta di ciascuno, al massimo tre.
+  const occasions = nextOccurrences(events, now).slice(0, 3);
+  const theme = themeTone(store.settings.themeMode);
 
   const nextExamDays = nextExams[0] ? studyDaysUntil(nextExams[0].date) : 0;
   const stats = [
@@ -486,6 +493,40 @@ export function DashboardView() {
               <EmptyLine text={HOME_TEXT.emptyUpcoming} action={HOME_TEXT.addEvent} onAction={() => openQuickAdd("event")} />
             )}
           </Panel>
+
+          {occasions.length ? (
+            <Panel>
+              <PanelHeader title={HOME_OCCASIONS_TEXT.title} action={HOME_OCCASIONS_TEXT.openCalendar} onAction={() => setActiveView("calendar")} />
+              <ul className="grid grid-cols-1 gap-0.5">
+                {occasions.map((item) => {
+                  const type = eventTypeKey({ category: item.category, occasionKind: item.occasion?.kind });
+                  const style = eventColorStyle(EVENT_TYPE_COLORS[type], theme);
+                  const days = daysUntil(item.start, now);
+                  const when = days <= 0 ? HOME_OCCASIONS_TEXT.today : days === 1 ? HOME_OCCASIONS_TEXT.tomorrow : HOME_OCCASIONS_TEXT.inDays(days);
+                  return (
+                    <li key={item.occurrenceKey}>
+                      <button type="button" onClick={() => openEvent(item.id)} className={ROW}>
+                        <span
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px]"
+                          style={{ background: style.background, color: style.text, boxShadow: `inset 0 0 0 1px ${style.border}` }}
+                        >
+                          <Icon name={eventTypeIcon(type)} className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="one-line-safe block text-sm font-black">{item.title}</span>
+                          <span className="block text-xs font-bold text-[var(--muted)]">
+                            {when} · {format(parseISO(item.start), "EEE d MMM", { locale: it })}
+                            {item.age !== undefined && item.occasion ? ` · ${occasionAgeText(item.occasion.kind, item.age)}` : ""}
+                          </span>
+                        </span>
+                        <RowChevron />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Panel>
+          ) : null}
 
           <Panel>
             <PanelHeader title="Obiettivi" action={HOME_TEXT.allGoals} onAction={() => setActiveView("goals")} />

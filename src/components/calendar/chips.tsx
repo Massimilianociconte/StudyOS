@@ -5,6 +5,9 @@ import type { Exam, Task } from "../../types";
 import { Icon } from "../Icon";
 import { CALENDAR_VIEW_TEXT, PRIORITY_TONE } from "../../lib/labels";
 import { subjectColor, subjectName } from "../../lib/selectors";
+import { EVENT_TYPE_COLORS, eventColorStyle, eventTypeIcon } from "../../lib/eventColors";
+import { safeCssColor } from "../../lib/sharing";
+import { useEventTheme } from "./bars";
 import { pointerPoint } from "./shared";
 import type { Handlers, Subjects } from "./types";
 
@@ -46,13 +49,14 @@ export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers })
 }
 
 export function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Subjects; onOpen: (id: string) => void }) {
-  const color = subjectColor(subjects, exam.subjectId);
+  // Stile della tipologia Esame (come gli eventi d'esame), con il pallino della materia.
+  const style = eventColorStyle(EVENT_TYPE_COLORS.exam, useEventTheme());
   const name = subjectName(subjects, exam.subjectId);
   return (
     <button
       type="button"
       className="flex w-full min-w-0 items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-left text-[11px] font-black hover:brightness-110"
-      style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))` }}
+      style={{ background: style.background, color: style.text, boxShadow: `inset 3px 0 0 ${style.border}` }}
       title={CALENDAR_VIEW_TEXT.examTitle(name, exam.preparation)}
       onClick={(event) => {
         // Nella cella del mese e nella griglia oraria il click crea un evento: aprire un esame non deve farlo.
@@ -60,7 +64,8 @@ export function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Sub
         onOpen(exam.id);
       }}
     >
-      <Icon name="GraduationCap" className="h-3 w-3 shrink-0" />
+      <Icon name={eventTypeIcon("exam")} className="h-3 w-3 shrink-0" />
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: safeCssColor(subjectColor(subjects, exam.subjectId)) || "var(--accent)" }} />
       {/* Nome accessibile = testo visibile ("Esame · Analisi"), poi l'azione detta solo a voce. */}
       <span className="min-w-0 truncate">{CALENDAR_VIEW_TEXT.exam(name)}</span>
       <span className="sr-only">, {CALENDAR_VIEW_TEXT.openAction}</span>

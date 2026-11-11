@@ -7,14 +7,15 @@ import type { Exam, Task } from "../../types";
 import { Icon } from "../Icon";
 import { SharedMark } from "../SharedMark";
 import { Tag } from "../ui";
-import { CALENDAR_VIEW_TEXT, EVENT_CATEGORY_LABEL } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT } from "../../lib/labels";
 import { isAllDayEvent, timeLabel } from "../../lib/selectors";
 import { todayYmd } from "../../lib/datePicker";
+import { eventTypeLabel } from "../../lib/eventColors";
 import type { Holiday } from "../../lib/holidays";
-import { holidaysByDay, listDayOf, spanText } from "../../lib/calendarRender";
-import { HolidayChip, HolidaysNote, useEventTheme } from "./bars";
+import { holidaysByDay, listDayOf, occasionText, spanText } from "../../lib/calendarRender";
+import { HolidayChip, HolidaysNote, TypeIcon, useEventPaint, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
-import { allDayEventLabel, defaultStartFor, editOccurrence, eventColor, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
+import { allDayEventLabel, defaultStartFor, editOccurrence, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
 
 /** Le voci di ogni giorno di un elenco: una voce su più giorni compare una volta sola. */
@@ -123,10 +124,12 @@ export function DayList({
 }
 
 export function EventRow({ item, handlers }: { item: CalendarOccurrence; handlers: Handlers }) {
-  const color = eventColor(item, handlers.subjects);
+  const paint = useEventPaint()(item, handlers.subjects);
   const allDay = isAllDayEvent(item);
   // Su più giorni: il periodo al posto di "Tutto il giorno" o dell'orario.
   const range = spanText(item);
+  const occasion = occasionText(item);
+  const subject = occurrenceSubject(item, handlers.subjects);
   return (
     <button
       type="button"
@@ -144,7 +147,13 @@ export function EventRow({ item, handlers }: { item: CalendarOccurrence; handler
       ) : (
         <span className="w-12 shrink-0 text-xs font-black tabular-nums">{timeLabel(item.start)}</span>
       )}
-      <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: color }} />
+      {/* Tipologia: icona sul colore della tipologia (o della materia). */}
+      <span
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px]"
+        style={{ background: paint.style.background, color: paint.style.text, boxShadow: `inset 0 0 0 1px ${paint.style.border}` }}
+      >
+        <TypeIcon paint={paint} className="h-4 w-4" />
+      </span>
       <span className="min-w-0 flex-1">
         <span className="one-line-safe block text-sm font-extrabold">
           {item.recurring ? (
@@ -156,11 +165,12 @@ export function EventRow({ item, handlers }: { item: CalendarOccurrence; handler
         </span>
         <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
           {range ?? (allDay ? allDayEventLabel(item) : `${timeLabel(item.start)}–${timeLabel(item.end)}`)}
-          {occurrenceSubject(item, handlers.subjects) ? ` · ${occurrenceSubject(item, handlers.subjects)}` : ""}
+          {occasion ? ` · ${occasion}` : ""}
+          {subject ? ` · ${subject}` : ""}
         </span>
       </span>
       {item.sharedFrom ? <SharedMark origin={item.sharedFrom} /> : null}
-      <Tag className="hidden shrink-0 sm:inline-flex">{EVENT_CATEGORY_LABEL[item.category]}</Tag>
+      <Tag className="hidden shrink-0 sm:inline-flex">{eventTypeLabel(paint.type)}</Tag>
     </button>
   );
 }
