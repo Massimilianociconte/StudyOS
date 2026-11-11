@@ -199,6 +199,20 @@ export function parseTime(text: string): string | null {
   return `${pad(hours)}:${pad(minutes)}`;
 }
 
+export type TypedTimeCheck = { status: "empty" | "invalid" | "early" } | { status: "ok"; time: string };
+
+/**
+ * Ora scritta nel campo, controllata prima di salvare o di chiudere con "Fatto": vuota (nulla da salvare),
+ * non valida, prima di `minTime` oppure buona (normalizzata "HH:mm").
+ */
+export function checkTypedTime(typed: string, minTime?: string): TypedTimeCheck {
+  if (!typed.trim()) return { status: "empty" };
+  const time = parseTime(typed);
+  if (!time) return { status: "invalid" };
+  if (minTime && time < minTime) return { status: "early" };
+  return { status: "ok", time };
+}
+
 /** Valore locale "YYYY-MM-DDTHH:mm" (come `datetime-local`) → data e ora; null se vuoto o non valido. */
 export function splitDateTime(value: string): { date: string; time: string } | null {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(value);
@@ -261,6 +275,12 @@ export function pickRange(state: RangePick, day: string): RangePick & { done: bo
   if (!state.anchor) return { start: day, end: day, anchor: day, done: false };
   return { ...previewRange(state.anchor, day), anchor: null, done: true };
 }
+
+/**
+ * "Fatto" a metà scelta: con il solo inizio toccato si salva quel giorno; senza tocchi null (resta
+ * l'intervallo di prima).
+ */
+export const finishRange = (state: RangePick) => (state.anchor ? { start: state.anchor, end: state.anchor } : null);
 
 /** Intervallo in anteprima mentre si sceglie la fine (dito o puntatore su `day`). */
 export const previewRange = (anchor: string, day: string) => (day < anchor ? { start: day, end: anchor } : { start: anchor, end: day });

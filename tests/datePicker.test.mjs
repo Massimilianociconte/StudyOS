@@ -6,7 +6,9 @@ const {
   addDays,
   addMonths,
   addYears,
+  checkTypedTime,
   clampYmd,
+  finishRange,
   daysInclusive,
   formatDateField,
   formatDateLong,
@@ -193,6 +195,22 @@ test("formatRangeField: un solo mese, mesi diversi, anni diversi", () => {
   assert.equal(formatRangeField("2026-11-12", "2026-11-12", today), "gio 12 nov");
   assert.equal(DATE_PICKER_TEXT.days(1), "1 giorno");
   assert.equal(DATE_PICKER_TEXT.days(3), "3 giorni");
+});
+
+test("checkTypedTime: ora scritta da confermare con Fatto (vuota, non valida, troppo presto, buona)", () => {
+  assert.deepEqual(checkTypedTime(""), { status: "empty" });
+  assert.deepEqual(checkTypedTime("   "), { status: "empty" }, "campo svuotato: si chiude senza cambiare");
+  assert.deepEqual(checkTypedTime("9.7"), { status: "invalid" });
+  assert.deepEqual(checkTypedTime("25"), { status: "invalid" });
+  assert.deepEqual(checkTypedTime("8:30", "09:00"), { status: "early" });
+  assert.deepEqual(checkTypedTime("9", "09:00"), { status: "ok", time: "09:00" });
+  assert.deepEqual(checkTypedTime("930"), { status: "ok", time: "09:30" });
+  assert.equal(DATE_PICKER_TEXT.timeInvalid, "Scrivi un orario come 9:30");
+});
+
+test("finishRange: Fatto dopo un solo tocco salva un giorno; senza tocchi non cambia nulla", () => {
+  assert.deepEqual(finishRange({ start: "2026-12-04", end: "2026-12-06", anchor: "2027-01-05" }), { start: "2027-01-05", end: "2027-01-05" });
+  assert.equal(finishRange({ start: "2026-12-04", end: "2026-12-06", anchor: null }), null);
 });
 
 test("pickRange: primo tocco = inizio, secondo = fine (in qualunque ordine)", () => {

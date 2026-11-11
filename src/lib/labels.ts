@@ -412,7 +412,7 @@ export const DATE_PICKER_TEXT = {
   timeInput: "Scrivi l'ora",
   timePlaceholder: "hh:mm",
   timeSlots: "Orari",
-  timeInvalid: "Ora non valida: scrivi per esempio 9:30 o 14.15.",
+  timeInvalid: "Scrivi un orario come 9:30",
   timeTooEarly: (min: string) => `Scegli un orario dalle ${min} in poi.`,
   rangeStartHint: "Tocca il primo giorno",
   rangeEndHint: "Ora tocca l'ultimo giorno",

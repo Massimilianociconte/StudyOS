@@ -21,8 +21,10 @@ import { Button, floatingHost, inputClass, useDialogLayer, useFloatingLayer } fr
 import { DATE_PICKER_TEXT as TEXT } from "../lib/labels";
 import {
   addMonths,
+  checkTypedTime,
   clampYmd,
   daysInclusive,
+  finishRange,
   formatDateField,
   formatDateLong,
   formatDateTimeField,
@@ -35,7 +37,6 @@ import {
   monthGrid,
   moveByKey,
   nearestSlot,
-  parseTime,
   parseYmd,
   pickRange,
   previewRange,
@@ -470,32 +471,40 @@ const SLOT_STEP = 15;
 
 /**
  * Ora: campo "hh:mm" (accetta 9.30, 930, 09:30) e orari ogni 15 minuti centrati su quello scelto.
- * Frecce, Home/End tra gli orari; un tocco su un orario lo sceglie e chiude.
+ * Frecce, Home/End tra gli orari; un tocco su un orario lo sceglie e chiude. Il testo scritto e il
+ * messaggio d'errore stanno nel campo che lo usa, così "Fatto" li controlla prima di chiudere.
  */
 function TimeChooser({
   value,
+  typed,
+  error,
   minTime,
   sheet,
   focusRequest,
-  onCommit
+  inputRef,
+  onType,
+  onSubmitTyped,
+  onPickSlot
 }: {
   value: string;
+  typed: string;
+  error: string;
   minTime?: string;
   sheet: boolean;
   focusRequest: number;
-  onCommit: (time: string, close: boolean) => void;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onType: (text: string) => void;
+  /** Invio (`close`) o uscita dal campo. */
+  onSubmitTyped: (close: boolean) => void;
+  onPickSlot: (time: string) => void;
 }) {
   const id = useId();
   const slots = useMemo(() => timeSlots(SLOT_STEP), []);
   const listRef = useRef<HTMLDivElement>(null);
   const [cursor, setCursor] = useState(() => nearestSlot(value || "09:00", SLOT_STEP));
-  const [typed, setTyped] = useState(value);
-  const [error, setError] = useState("");
   const columns = sheet ? 4 : 1;
 
   useEffect(() => {
-    setTyped(value);
-    setError("");
     if (value) setCursor(nearestSlot(value, SLOT_STEP));
   }, [value]);
 
@@ -510,15 +519,6 @@ function TimeChooser({
     // Solo alla richiesta (data appena scelta), non a ogni spostamento del cursore.
     if (focusRequest) listRef.current?.querySelector<HTMLElement>(`[data-slot="${cursor}"]`)?.focus();
   }, [focusRequest]);
-
-  const commitTyped = (close: boolean) => {
-    if (!typed.trim() || typed === value) return;
-    const time = parseTime(typed);
-    if (!time) return setError(TEXT.timeInvalid);
-    if (minTime && time < minTime) return setError(TEXT.timeTooEarly(minTime));
-    setError("");
-    onCommit(time, close);
-  };
 
   const onListKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const index = slots.indexOf(cursor);
@@ -540,6 +540,7 @@ function TimeChooser({
         {TEXT.time}
       </label>
       <input
+        ref={inputRef}
         id={`${id}-input`}
         className={inputClass}
         inputMode="decimal"
@@ -549,16 +550,13 @@ function TimeChooser({
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : undefined}
         value={typed}
-        onChange={(event) => {
-          setTyped(event.target.value);
-          setError("");
-        }}
+        onChange={(event) => onType(event.target.value)}
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
           event.preventDefault();
-          commitTyped(true);
+          onSubmitTyped(true);
         }}
-        onBlur={() => commitTyped(false)}
+        onBlur={() => onSubmitTyped(false)}
       />
       {error ? (
         <p id={`${id}-error`} role="alert" className="safe-text mt-1 text-xs font-bold text-[var(--danger-text)]">
@@ -584,7 +582,7 @@ function TimeChooser({
               disabled={Boolean(minTime && slot < minTime)}
               onClick={() => {
                 setCursor(slot);
-                onCommit(slot, true);
+                onPickSlot(slot);
               }}
               className={`motion-safe min-h-10 rounded-[12px] text-sm font-extrabold tabular-nums disabled:cursor-not-allowed disabled:opacity-35 ${
                 chosen ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--text)] hover:bg-[var(--surface)]"
@@ -699,10 +697,40 @@ export function DateTimeField({
   const [focusTime, setFocusTime] = useState(0);
   const date = parts?.date ?? focusDay;
   const minTime = minParts && date === minParts.date ? minParts.time : undefined;
+  const currentTime = parts?.time ?? "";
+  const [typed, setTyped] = useState(currentTime);
+  const [timeError, setTimeError] = useState("");
+  const timeInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setTyped(currentTime);
+    setTimeError("");
+  }, [currentTime]);
 
   const open = () => {
     setFocusDay(clampYmd(parts?.date ?? today, minDate));
+    setTyped(currentTime);
+    setTimeError("");
     picker.openPicker();
+  };
+  /**
+   * Ora scritta nel campo: salvata se è un orario; se non lo è, messaggio sotto il campo e false (il
+   * pannello resta aperto). Campo vuoto: nulla da salvare.
+   */
+  const saveTyped = () => {
+    const check = checkTypedTime(typed, minTime);
+    if (check.status === "invalid" || check.status === "early") {
+      setTimeError(check.status === "early" && minTime ? TEXT.timeTooEarly(minTime) : TEXT.timeInvalid);
+      return false;
+    }
+    setTimeError("");
+    if (check.status === "ok" && (!parts || check.time !== currentTime)) onChange(joinDateTime(date, check.time));
+    return true;
+  };
+  /** "Fatto" (e Invio nel campo dell'ora): chiude solo se l'ora scritta è buona o il campo è vuoto. */
+  const done = () => {
+    if (allDay || saveTyped()) picker.close(true);
+    else timeInputRef.current?.focus();
   };
   const pickDay = (ymd: string) => {
     const time = parts?.time ?? defaultTime;
@@ -741,13 +769,23 @@ export function DateTimeField({
           />
           {allDay ? null : (
             <TimeChooser
-              value={parts?.time ?? ""}
+              value={currentTime}
+              typed={typed}
+              error={timeError}
               minTime={minTime}
               sheet={picker.sheet}
               focusRequest={focusTime}
-              onCommit={(time, close) => {
+              inputRef={timeInputRef}
+              onType={(text) => {
+                setTyped(text);
+                setTimeError("");
+              }}
+              onSubmitTyped={(close) => (close ? done() : saveTyped())}
+              onPickSlot={(time) => {
+                setTyped(time);
+                setTimeError("");
                 onChange(joinDateTime(date, time));
-                if (close) picker.close(true);
+                picker.close(true);
               }}
             />
           )}
@@ -775,7 +813,7 @@ export function DateTimeField({
               {TEXT.today}
             </Button>
           ) : null}
-          <Button variant="primary" onClick={() => picker.close(true)}>
+          <Button variant="primary" onClick={done}>
             {TEXT.done}
           </Button>
         </PickerFooter>
@@ -787,7 +825,8 @@ export function DateTimeField({
 /**
  * Più giorni sullo stesso calendario ("YYYY-MM-DD", fine compresa): primo tocco = inizio, secondo =
  * fine (se viene prima, i due si scambiano), intervallo evidenziato e "N giorni" (partenza e ritorno
- * compresi). `onChange(start, end)` a ogni tocco: dopo il primo l'intervallo è di un giorno.
+ * compresi). `onChange(start, end)` solo a intervallo completo, o con "Fatto" dopo il solo inizio (un
+ * giorno); Esc, Annulla o un tocco fuori lasciano l'intervallo di prima.
  */
 export function DateRangeField({
   start,
@@ -811,7 +850,8 @@ export function DateRangeField({
   const [focusDay, setFocusDay] = useState(today);
   const [anchor, setAnchor] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
-  const shown = anchor && hover ? previewRange(anchor, hover) : validStart ? { start: validStart, end: validEnd } : undefined;
+  // A metà scelta si vede la bozza (inizio toccato, fine sotto il puntatore), non l'intervallo salvato.
+  const shown = anchor ? previewRange(anchor, hover ?? anchor) : validStart ? { start: validStart, end: validEnd } : undefined;
   const count = shown ? daysInclusive(shown.start, shown.end) : 0;
 
   const open = () => {
@@ -822,9 +862,15 @@ export function DateRangeField({
   };
   const pick = (day: string) => {
     const next = pickRange({ start: validStart, end: validEnd, anchor }, day);
-    onChange(next.start, next.end);
     setAnchor(next.anchor);
-    if (next.done) picker.close(true);
+    if (!next.done) return;
+    onChange(next.start, next.end);
+    picker.close(true);
+  };
+  const done = () => {
+    const single = finishRange({ start: validStart, end: validEnd, anchor });
+    if (single) onChange(single.start, single.end);
+    picker.close(true);
   };
 
   return (
@@ -857,7 +903,7 @@ export function DateRangeField({
           onHover={(day) => setHover(anchor ? day : null)}
         />
         <PickerFooter>
-          <Button variant="primary" onClick={() => picker.close(true)}>
+          <Button variant="primary" onClick={done}>
             {TEXT.done}
           </Button>
         </PickerFooter>
