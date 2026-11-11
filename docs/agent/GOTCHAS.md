@@ -225,6 +225,15 @@
 - Eliminare «Questo e i successivi» (`planDelete`) toglie tutte le parti dopo della famiglia
   (`laterPartsOf`, comprese le divisioni degli antenati), come la regola nuova di A; modulo e
   agente passano dallo stesso piano.
+- Tutto il giorno = DATE CIVILI nel fuso dell'evento (`timeZone` della serie, altrimenti quello
+  fissato alla creazione), mai in quello del dispositivo: chi legge o scrive istanti passa da
+  `allDayDays` / `allDayTimes` / `allDaySpan` (repeat.ts). Si salva la mezzanotte in quel fuso
+  (moduli `draftTimes` con `EventDraft.timeZone`, ricorrenza, vacanza, trascinamento
+  `draggedTimes`, `shiftPatchDays` con `allDay`); il motore rilegge in quel fuso e un istante che lì
+  non è mezzanotte (agente, app vecchie) vale la mezzanotte più vicina con i giorni dalla durata
+  arrotondata, come `timingOf` in ics.ts. Le occorrenze espanse invece stanno alla mezzanotte del
+  DISPOSITIVO dei loro giorni (la griglia legge così): `allDayDays` le riconosce da `occurrenceKey`,
+  `startDayOf(…, true, zona)` è per inizi salvati e modifiche, `shownDayOf` per l'occorrenza mostrata.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`

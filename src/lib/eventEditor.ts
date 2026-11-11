@@ -4,7 +4,18 @@ import type { CalendarEvent, EventCategory, EventReminder, RepeatRule, Weekday }
 import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, sanitizeTypeColorOverrides, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "./eventColors";
 import { DATE_PICKER_TEXT, MONTH_NAME, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
 import { EVENT_EDITOR_TEXT, SCOPE_TEXT } from "./labels/calendar";
-import { applyRepeatFields, changesRepeat, describeReminder, isOccurrenceRow, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
+import {
+  allDayDays,
+  allDayTimes,
+  applyRepeatFields,
+  changesRepeat,
+  describeReminder,
+  isOccurrenceRow,
+  normalizeRepeat,
+  sanitizeReminders,
+  validateRepeat,
+  type OccurrenceScope
+} from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
 import type { ScopeImpact, SeriesSpan } from "./occurrenceEdit";
 import { startDayOf } from "./occurrenceLookup";
@@ -47,6 +58,11 @@ export interface EventDraft {
   links: string[];
   priority: CalendarEvent["priority"];
   status: CalendarEvent["status"];
+  /**
+   * Fuso dell'evento aperto: i giorni di un tutto il giorno sono date in quel fuso e si salvano a
+   * mezzanotte lì (assente: il dispositivo, che l'evento nuovo prende alla creazione).
+   */
+  timeZone?: string;
 }
 
 export interface ColorContext {
@@ -148,12 +164,14 @@ export const draftFromEvent = (event: CalendarEvent, { subjectColor, overrides, 
   const start = toLocalInput(event.start);
   const end = toLocalInput(event.end);
   const allDay = event.allDay === true;
+  // Tutto il giorno: le date nel fuso dell'evento (un'occorrenza espansa sta già sui giorni giusti).
+  const days = allDay ? allDayDays(event) : null;
   const colorCustom = initialColorCustom(event, subjectColor);
   return {
     title: event.title ?? "",
     allDay,
-    start: allDay ? withDate(dateOf(start), "00:00") : start,
-    end: allDay ? withDate(lastDayOf(start, end), "00:00") : end,
+    start: allDay ? withDate(days?.first ?? dateOf(start), "00:00") : start,
+    end: allDay ? withDate(days?.last ?? lastDayOf(start, end), "00:00") : end,
     category: event.category,
     subjectId: event.subjectId ?? "",
     color: resolveEventColor({
@@ -171,7 +189,8 @@ export const draftFromEvent = (event: CalendarEvent, { subjectColor, overrides, 
     location: typeof event.location === "string" ? event.location : "",
     links: Array.isArray(event.links) ? [...event.links] : [],
     priority: event.priority ?? "medium",
-    status: event.status ?? "planned"
+    status: event.status ?? "planned",
+    ...(isValidTimeZone(event.timeZone) ? { timeZone: event.timeZone } : {})
   };
 };
 
@@ -180,14 +199,16 @@ const isoOf = (local: string) => {
   return Number.isNaN(ms) ? local : new Date(ms).toISOString();
 };
 
-/** Inizio e fine da salvare: istanti; tutto il giorno, mezzanotti locali con fine esclusiva. */
-export const draftTimes = (draft: Pick<EventDraft, "allDay" | "start" | "end">) => {
+/**
+ * Inizio e fine da salvare: istanti; tutto il giorno, mezzanotti nel fuso dell'evento (`timeZone`,
+ * altrimenti il dispositivo) con fine esclusiva, così il motore rilegge gli stessi giorni.
+ */
+export const draftTimes = (draft: Pick<EventDraft, "allDay" | "start" | "end" | "timeZone">) => {
   if (!draft.allDay) return { start: isoOf(draft.start), end: isoOf(draft.end) };
   const first = dateOf(draft.start);
   const last = dateOf(draft.end);
   if (!isCivilDate(first)) return { start: draft.start, end: draft.end };
-  const end = isCivilDate(last) && last >= first ? last : first;
-  return { start: localMidnight(first).toISOString(), end: localMidnight(civilAddDays(end, 1)).toISOString() };
+  return allDayTimes(first, isCivilDate(last) ? last : first, draft.timeZone);
 };
 
 /**

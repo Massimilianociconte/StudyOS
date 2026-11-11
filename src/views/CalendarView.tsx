@@ -52,7 +52,7 @@ import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
 import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, recipientEventUpdate, rowHasOwnContent, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
-import { occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, weekdayShift, type ScopeImpact } from "../lib/occurrenceEdit";
+import { draggedTimes, occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, weekdayShift, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
   newOccasionDraft,
   newVacationDraft,
@@ -60,6 +60,7 @@ import {
   occasionChanges,
   occasionDraftFromEvent,
   occasionFields,
+  occasionStartYear,
   vacationChanges,
   vacationDraftFromEvent,
   vacationFields
@@ -396,7 +397,7 @@ export function CalendarView() {
   /** Bozza del modulo completo da campi già pronti (dal modulo semplice), sopra l'evento salvato se c'è. */
   const draftFromFields = (fields: Partial<CalendarEvent>, saved?: CalendarEvent) =>
     draftFromEvent({ links: [], priority: "medium", status: "planned", description: "", ...saved, ...fields } as CalendarEvent, ownColorContext(saved?.subjectId));
-  const startYearOf = (event: CalendarEvent) => parseCivil(civilDateOf(new Date(event.start)))?.year;
+  const startYearOf = (event: CalendarEvent) => occasionStartYear(event);
   /** Colore scelto a mano per l'evento (per l'anteprima dei moduli semplici), se c'è. */
   const customColorOf = (event: CalendarEvent) =>
     initialColorCustom(event, ownColorContext(event.subjectId).subjectColor) ? safeCssColor(event.color) || undefined : undefined;
@@ -541,10 +542,9 @@ export function CalendarView() {
       // Un giorno di una mia serie: solo questo, questo e i successivi, o tutti.
       const target = occurrenceTarget(item);
       const own = ownSeriesOf(target.seriesId);
-      const start = new Date(parseISO(item.start).getTime() + delta);
-      const end = new Date(parseISO(item.end).getTime() + delta);
-      if (!own || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
-      const moved = { start: start.toISOString(), end: end.toISOString() };
+      // Tutto il giorno: gli stessi giorni spostati, a mezzanotte nel fuso della serie (non del dispositivo).
+      const moved = draggedTimes(item, delta);
+      if (!own || !moved) return;
       // Il giorno porta con sé ciò che mostra (per "Questo e i successivi" da un giorno cambiato da solo).
       const scope = await askScope(SCOPE_TEXT.titleMove(shortTitle(item.title)), occurrenceScopeOptions(item, "move", moved, item));
       if (!scope) return;
@@ -560,9 +560,10 @@ export function CalendarView() {
       ? sharedEvents.find((event) => event.id === item.id && event.sharedFrom.ownerId === origin.ownerId)
       : events.find((event) => event.id === item.id);
     if (!series) return;
-    const start = new Date(parseISO(series.start).getTime() + delta);
-    const end = new Date(parseISO(series.end).getTime() + delta);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    const times = draggedTimes(series, delta);
+    if (!times) return;
+    const start = new Date(times.start);
+    const end = new Date(times.end);
     // Evento altrui che si ripete: si sposta tutta la serie dello stesso scarto (lo si dice prima, con i
     // giorni della settimana nuovi se la regola ne ha più d'uno).
     if (item.recurring) {

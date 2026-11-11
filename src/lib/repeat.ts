@@ -347,7 +347,54 @@ const nearestMidnightDate = (ms: number, zone: string | undefined) => {
   return midnight(next) - ms < ms - midnight(date) ? next : date;
 };
 
-const legacyOf = (event: CalendarEvent): Legacy => {
+/**
+ * Giorni di un tutto il giorno da inizio e fine salvati, letti nel fuso `zone` (assente = dispositivo):
+ * il primo giorno e quanti sono. Fluttuante o a mezzanotte nel fuso: quel giorno, fino alla fine
+ * esclusa (una fine a metà giornata comprende quel giorno). Altrimenti (istanti alla mezzanotte di un
+ * altro fuso) il giorno della mezzanotte più vicina e i giorni dalla durata arrotondata: un giorno
+ * resta un giorno. Stessa regola per il motore, i moduli e lo spostamento (e `timingOf` in ics.ts).
+ */
+export const allDaySpan = (start: unknown, end: unknown, zone: string | undefined): { date: string; days: number } | null => {
+  const first = civilOf(start, zone);
+  if (!first) return null;
+  if (!FLOATING.test(start as string) && !first.midnight) {
+    const startMs = parseISO(start as string).getTime();
+    const endMs = instantOf(end, zone);
+    const days = !Number.isNaN(endMs) && endMs > startMs ? Math.round((endMs - startMs) / DAY_MS) : 1;
+    return { date: nearestMidnightDate(startMs, zone), days: Math.max(1, days) };
+  }
+  const last = civilOf(end, zone);
+  const endDate = last ? (last.midnight ? last.date : civilAddDays(last.date, 1)) : first.date;
+  return { date: first.date, days: Math.max(1, civilDaysBetween(first.date, endDate)) };
+};
+
+/**
+ * Primo e ultimo giorno (compresi) di un tutto il giorno: quelli che mostra il calendario. Un evento
+ * salvato (o una sua riga) si legge nel SUO fuso (`timeZone`; senza, il dispositivo), mai in quello di
+ * chi guarda; un'occorrenza espansa (`occurrenceKey`) sta già alla mezzanotte del dispositivo dei suoi
+ * giorni. Lo usano tutti i moduli: un dispositivo in qualunque fuso vede e salva gli stessi giorni.
+ */
+export const allDayDays = (item: { start?: unknown; end?: unknown; timeZone?: string; occurrenceKey?: unknown }): { first: string; last: string } | null => {
+  const span = allDaySpan(item.start, item.end, typeof item.occurrenceKey === "string" ? undefined : zoneOf(item));
+  return span ? { first: span.date, last: civilAddDays(span.date, span.days - 1) } : null;
+};
+
+/**
+ * Inizio e fine da salvare per i giorni `first`–`last` (compresi) di un tutto il giorno: mezzanotti nel
+ * fuso `zone` dell'evento (assente o non valido: il dispositivo, che lo fissa alla creazione), fine
+ * esclusiva. Il motore li rilegge in quel fuso esattamente (`allDaySpan`).
+ */
+export const allDayTimes = (first: string, last: string, zone: string | undefined): { start: string; end: string } => {
+  const valid = isValidTimeZone(zone) ? zone : undefined;
+  const midnight = (date: string) => {
+    const parts = parseCivil(date);
+    return parts ? zonedToUtc([parts.year, parts.month, parts.day, 0, 0, 0, 0], valid).toISOString() : date;
+  };
+  const end = isCivilDate(last) && last >= first ? last : first;
+  return { start: midnight(first), end: midnight(isCivilDate(end) ? civilAddDays(end, 1) : end) };
+};
+
+const legacyOf =(event: CalendarEvent): Legacy => {
   const recurrence = (event.recurrence ?? "none") as unknown;
   const until = typeof event.recurrenceUntil === "string" && event.recurrenceUntil ? parseISO(event.recurrenceUntil).getTime() : Number.NaN;
   const limitMs = Number.isNaN(until) ? Number.POSITIVE_INFINITY : until + DAY_MS;
@@ -364,28 +411,18 @@ const seriesOf = (event: CalendarEvent, explicitRule?: RepeatRule | null): Serie
   const rule = explicitRule !== undefined ? explicitRule : fromRepeat ?? legacyRule(event);
   const floatingStart = typeof event.start === "string" && FLOATING.test(event.start);
   if (!legacy && event.allDay === true && (floatingStart || zone)) {
-    const start = civilOf(event.start, zone);
-    if (!start) return null;
-    if (!floatingStart && !start.midnight) {
-      // Salvato come istanti alla mezzanotte di un altro fuso: giorno della mezzanotte più vicina,
-      // durata in giorni da quella salvata (altrimenti un giorno diventerebbe due).
-      const startMs = parseISO(event.start as string).getTime();
-      const endMs = instantOf(event.end, zone);
-      const days = !Number.isNaN(endMs) && endMs > startMs ? Math.round((endMs - startMs) / DAY_MS) : 1;
-      const startDate = nearestMidnightDate(startMs, zone);
-      return { rule, zone, civil: true, startDate, wall: [0, 0, 0, 0], baseStartMs: localMidnight(startDate).getTime(), durationMs: DAY_MS, spanDays: Math.max(1, days) };
-    }
-    const end = civilOf(event.end, zone);
-    const endDate = end ? (end.midnight ? end.date : civilAddDays(end.date, 1)) : start.date;
+    // Giorni nel fuso della serie; istanti alla mezzanotte di un altro fuso: la più vicina (vedi allDaySpan).
+    const span = allDaySpan(event.start, event.end, zone);
+    if (!span) return null;
     return {
       rule,
       zone,
       civil: true,
-      startDate: start.date,
+      startDate: span.date,
       wall: [0, 0, 0, 0],
-      baseStartMs: localMidnight(start.date).getTime(),
+      baseStartMs: localMidnight(span.date).getTime(),
       durationMs: DAY_MS,
-      spanDays: Math.max(1, civilDaysBetween(start.date, endDate))
+      spanDays: span.days
     };
   }
   const baseStartMs = instantOf(event.start, zone);
@@ -1151,11 +1188,11 @@ const shiftedSeriesTimes = (event: CalendarEvent, series: Series, date: string, 
   const nextStart = patch.start ?? original.start;
   const nextEnd = patch.end ?? original.end;
   if (series.civil) {
-    const startDay = civilOf(nextStart, series.zone);
-    const endDay = civilOf(nextEnd, series.zone);
-    if (!startDay) return {};
-    const shift = civilDaysBetween(date, startDay.date);
-    const span = endDay ? Math.max(1, civilDaysBetween(startDay.date, endDay.midnight ? endDay.date : civilAddDays(endDay.date, 1))) : series.spanDays;
+    // Giorni nel fuso della serie, come quelli salvati (mezzanotte di un altro fuso: la più vicina).
+    const days = allDaySpan(nextStart, nextEnd, series.zone);
+    if (!days) return {};
+    const shift = civilDaysBetween(date, days.date);
+    const span = civilOf(nextEnd, series.zone) ? days.days : series.spanDays;
     const first = civilAddDays(series.startDate, shift);
     return { start: floatingDate(first), end: floatingDate(civilAddDays(first, span)) };
   }
@@ -1295,7 +1332,7 @@ const scheduleKey = (rule: RepeatRule | null, startDate: string) => {
 const patchDay = (series: Series, date: string, patch: Partial<CalendarEvent>) => {
   if (patch.start === undefined) return date;
   const civil = patch.allDay !== undefined ? patch.allDay === true : series.civil;
-  if (civil) return civilOf(patch.start, series.zone)?.date ?? date;
+  if (civil) return allDaySpan(patch.start, patch.end, series.zone)?.date ?? date;
   const ms = instantOf(patch.start, series.zone);
   if (Number.isNaN(ms)) return date;
   const parts = utcToZonedParts(ms, series.zone);
@@ -1717,6 +1754,19 @@ const familyOf = (events: readonly CalendarEvent[], id: string) => {
     }
   }
   return family;
+};
+
+/** Ultima data vera della famiglia della serie `id` (la sua ultima parte), per dirla nella scelta; assente: non finisce. */
+export const familyLastDate = (events: readonly CalendarEvent[], id: string) => familyEnd(events, familyOf(events, id));
+
+/**
+ * Ultima data vera della serie `event` prima del giorno `cut` (escluso), con la sua fine: per "Tutti"
+ * su una parte fermata da quella dopo si dice questa, non il giorno prima della parte dopo.
+ * `null`: non finisce; assente: nessuna data.
+ */
+export const lastDateBefore = (event: CalendarEvent, cut?: string) => {
+  const series = seriesOf(event);
+  return series ? lastBefore(series.rule, series.startDate, cut) : undefined;
 };
 
 /** Figlie (e loro discendenti) che partono dal giorno `date` in poi. */

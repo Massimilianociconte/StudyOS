@@ -3,8 +3,8 @@
 import type { CalendarEvent, EventReminder, OccasionKind } from "../types";
 import { eventTypeKey, typeDefaultColor, type TypeColorOverrides } from "./eventColors";
 import { EVENT_EDITOR_TEXT, OCCASION_FORM_TEXT, VACATION_FORM_TEXT } from "./labels/calendar";
-import { ageOn, sanitizeOccasion, sanitizeReminders } from "./repeat";
-import { civilAddDays, civilDateOf, civilDaysBetween, civilFromParts, daysInMonth, isCivilDate, localMidnight, parseCivil } from "./tz";
+import { ageOn, allDayDays, allDayTimes, sanitizeOccasion, sanitizeReminders } from "./repeat";
+import { civilAddDays, civilDateOf, civilDaysBetween, civilFromParts, daysInMonth, isCivilDate, isValidTimeZone, parseCivil } from "./tz";
 
 export const OCCASION_KINDS: readonly OccasionKind[] = ["birthday", "anniversary", "holiday", "recurring-day"];
 
@@ -30,11 +30,30 @@ const dateIn = (year: number, month: number, day: number) => civilFromParts(year
 
 const yearOf = (draft: Pick<OccasionDraft, "year">) => (/^\d{4}$/.test(draft.year.trim()) ? Number(draft.year.trim()) : undefined);
 
-/** Giorno (YYYY-MM-DD) di un inizio salvato: tutto il giorno è sempre nell'ora locale. */
+/** Ora locale del giorno (YYYY-MM-DD) di un istante salvato (eventi con orario). */
 const dayOf = (start: string) => {
   const date = new Date(start);
   return Number.isNaN(date.getTime()) ? "" : civilDateOf(date);
 };
+
+/**
+ * Primo e ultimo giorno (compresi) di un evento salvato. Tutto il giorno: date nel fuso dell'evento
+ * (`allDayDays`, lo stesso per tutti i moduli), mai in quello del dispositivo: un compleanno del 15/3
+ * salvato a Roma resta il 15/3 aperto da Londra o New York.
+ */
+const daysOf = (event: Pick<CalendarEvent, "start" | "end" | "allDay" | "timeZone">) => {
+  const days = event.allDay === true ? allDayDays(event) : null;
+  if (days) return days;
+  const first = dayOf(event.start);
+  const end = dayOf(event.end);
+  // La fine salvata è la mezzanotte dopo l'ultimo giorno.
+  return { first, last: isCivilDate(first) && isCivilDate(end) && end > first ? civilAddDays(end, -1) : first };
+};
+
+/** Anno del primo giorno di una ricorrenza salvata (nel suo fuso). */
+export const occasionStartYear = (event: Pick<CalendarEvent, "start" | "end" | "allDay" | "timeZone">) => parseCivil(daysOf(event).first)?.year;
+
+const zoneOf = (event: Pick<CalendarEvent, "timeZone">) => (isValidTimeZone(event.timeZone) ? event.timeZone : undefined);
 
 export const newOccasionDraft = ({ today, kind = "birthday", name = "" }: { today: string; kind?: OccasionKind; name?: string }): OccasionDraft => {
   const parts = parseCivil(today);
@@ -53,7 +72,7 @@ const nameFromTitle = (title: string) => {
 
 export const occasionDraftFromEvent = (event: CalendarEvent): OccasionDraft => {
   const occasion = sanitizeOccasion(event.occasion);
-  const parts = parseCivil(dayOf(event.start));
+  const parts = parseCivil(daysOf(event).first);
   return {
     kind: occasion?.kind ?? "recurring-day",
     name: occasion?.person || nameFromTitle(event.title ?? ""),
@@ -117,8 +136,8 @@ export const occasionFields = (
     description: draft.notes.trim(),
     category: "personal",
     allDay: true,
-    start: localMidnight(date).toISOString(),
-    end: localMidnight(civilAddDays(date, 1)).toISOString(),
+    // Evento nuovo: il fuso è quello del dispositivo, che lo prende alla creazione.
+    ...allDayTimes(date, date, undefined),
     repeat: { freq: "yearly" },
     occasion: sanitizeOccasion({ kind: draft.kind, person: name, birthYear: yearOf(draft) }),
     reminders: sanitizeReminders(draft.reminders),
@@ -128,10 +147,9 @@ export const occasionFields = (
 
 const sameReminders = (a: readonly EventReminder[], b: readonly EventReminder[]) => JSON.stringify(sanitizeReminders(a)) === JSON.stringify(sanitizeReminders(b));
 
-/** Inizio e fine (mezzanotti locali) del giorno `first` fino a `last` compreso, solo se cambiano. */
-const dayChanges = (event: Pick<CalendarEvent, "start" | "end">, first: string, last: string): Partial<CalendarEvent> => {
-  const start = localMidnight(first).toISOString();
-  const end = localMidnight(civilAddDays(last, 1)).toISOString();
+/** Inizio e fine (mezzanotti nel fuso dell'evento) del giorno `first` fino a `last` compreso, solo se cambiano. */
+const dayChanges = (event: Pick<CalendarEvent, "start" | "end" | "timeZone">, first: string, last: string): Partial<CalendarEvent> => {
+  const { start, end } = allDayTimes(first, last, zoneOf(event));
   return { ...(start !== event.start ? { start } : {}), ...(end !== event.end ? { end } : {}) };
 };
 
@@ -197,10 +215,7 @@ export interface VacationDraft {
 export const newVacationDraft = (today: string, title = ""): VacationDraft => ({ title, first: today, last: today, destination: "", notes: "", reminders: [] });
 
 export const vacationDraftFromEvent = (event: CalendarEvent): VacationDraft => {
-  const first = dayOf(event.start);
-  const end = dayOf(event.end);
-  // La fine salvata è la mezzanotte dopo l'ultimo giorno.
-  const last = isCivilDate(first) && isCivilDate(end) && end > first ? civilAddDays(end, -1) : first;
+  const { first, last } = daysOf(event);
   return {
     title: event.title ?? "",
     first,
@@ -242,8 +257,8 @@ export const vacationFields = (draft: VacationDraft, { overrides, keepColor = fa
     description: draft.notes.trim(),
     category: "vacation",
     allDay: true,
-    start: localMidnight(draft.first).toISOString(),
-    end: localMidnight(civilAddDays(draft.last, 1)).toISOString(),
+    // Evento nuovo: il fuso è quello del dispositivo, che lo prende alla creazione.
+    ...allDayTimes(draft.first, draft.last, undefined),
     location: destination || undefined,
     reminders: sanitizeReminders(draft.reminders),
     ...color
