@@ -200,7 +200,9 @@ striscia in alto con "giorno 2 di 3"; in Agenda una sola voce "ven 3 – dom 5".
 
 **Colori per tipologia.** Ogni tipologia ha un colore predefinito applicato subito alla scelta (con
 anteprima nel modulo): Esame rosso, Palestra bianco, Personale verde, Vacanza giallo, Compleanno viola,
-festività grigio chiaro; le altre tipologie hanno un colore proprio della tavolozza. Se l'utente sceglie
+festività grigio chiaro; Lezione, Studio, Laboratorio e Ripasso con una materia prendono il colore
+della materia (come oggi), senza materia un colore proprio; le altre tipologie hanno un colore proprio
+della tavolozza. Se l'utente sceglie
 un colore a mano quell'evento lo tiene (`colorCustom`), anche cambiando tipologia; altrimenti segue il
 colore della tipologia. Eventi già salvati: se il loro colore è quello che l'app assegnava in
 automatico seguono la tipologia, altrimenti è considerato scelto a mano. I colori predefiniti si
