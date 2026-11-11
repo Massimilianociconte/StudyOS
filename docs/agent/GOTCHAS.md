@@ -262,5 +262,8 @@
   registrazione mai usata scade dopo 24 ore) e 5 consensi aperti per client, 20 in tutto, per 5
   minuti; `httpHub` toglie dalla coda i consensi sostituiti. `revokeAll` toglie anche i client.
   Non togliere questi limiti: senza, 50 registrazioni bloccavano per sempre i connettori nuovi.
+  `/pair` si blocca con 8 tentativi sbagliati negli ultimi 10 minuti (finestra scorrevole,
+  `pairFailureTimes` nello stato salvato; i tentativi rifiutati col blocco non contano): un
+  contatore che non scende mai teneva il blocco per sempre con un tentativo ogni 10 minuti.
 - Locale: la porta 8787 può essere occupata da un'altra app. Per `wrangler dev` usa
   `--port 8797` e controlla con `lsof -iTCP:8787` prima di mandare richieste a 8787.

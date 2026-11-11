@@ -322,9 +322,54 @@ test("hub: /register e /authorize aperti a tutti non si riempiono per sempre", a
   }
   assert.equal(delivered.length, 20);
 
-  // «Revoca gli accessi» nell'app toglie anche i client registrati.
+  // «Revoca l'accesso agli assistenti» nell'app toglie anche i client registrati.
   const revoked = await ask(agent, "/oauth/revoke", { method: "POST", headers: site, body: JSON.stringify({ token }) });
   assert.equal(revoked.status, 200);
   assert.equal(agent.exportState().oauth.clients.length, 0);
   assert.equal((await register()).status, 201);
+});
+
+test("hub: il blocco dei tentativi di collegamento conta solo gli ultimi 10 minuti e passa da solo", async () => {
+  const start = Date.parse("2026-11-12T10:00:00Z");
+  clock.now = start;
+  const agent = hub();
+  const pair = (code) => ask(agent, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code }) });
+  const minutes = (value) => value * 60_000;
+
+  for (let index = 0; index < 8; index += 1) assert.equal((await pair(`sbagliata-${index}`)).status, 401);
+  assert.equal((await pair(key)).status, 429, "8 errori in 10 minuti: bloccato, anche con la chiave giusta");
+
+  // Scaduti gli errori, un solo tentativo sbagliato ogni 10 minuti non tiene il blocco per sempre.
+  clock.now = start + minutes(10) + 1;
+  assert.equal((await pair("ancora-sbagliata")).status, 401);
+  assert.equal((await pair(key)).status, 200);
+
+  // Finestra scorrevole: 7 errori, poi l'ottavo 9 minuti dopo blocca; quando i primi 7 escono
+  // dalla finestra si torna a collegarsi, senza aspettare altri 10 minuti dall'ultimo.
+  clock.now = start + minutes(30);
+  for (let index = 0; index < 7; index += 1) assert.equal((await pair(`errore-${index}`)).status, 401);
+  clock.now = start + minutes(39);
+  assert.equal((await pair("errore-8")).status, 401);
+  assert.equal((await pair(key)).status, 429);
+
+  // Lo stato salvato tiene il blocco anche dopo un riavvio dell'hub.
+  const saved = agent.exportState();
+  const restarted = hub();
+  restarted.importState(saved);
+  const pairAgain = (code) => ask(restarted, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code }) });
+  assert.equal((await pairAgain(key)).status, 429);
+  clock.now = start + minutes(40) + 1;
+  assert.equal((await pairAgain(key)).status, 200);
+
+  // Uno stato di prima (solo contatore e scadenza del blocco): il blocco dura fino alla scadenza scritta.
+  const legacy = hub();
+  legacy.importState({ ...saved, pairFailureTimes: undefined, pairFailures: 40, pairLockedUntil: clock.now + minutes(3) });
+  const pairLegacy = (code) => ask(legacy, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code }) });
+  assert.equal((await pairLegacy(key)).status, 429);
+  clock.now += minutes(3) + 1;
+  assert.equal((await pairLegacy(key)).status, 200);
+  const stale = hub();
+  stale.importState({ ...saved, pairFailureTimes: undefined, pairFailures: 40, pairLockedUntil: clock.now - 1 });
+  assert.equal((await ask(stale, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code: key }) })).status, 200);
+  clock.now = Date.now();
 });
