@@ -4,7 +4,7 @@ import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects } from "../lib/selectors";
 import { PRIORITY_LABEL } from "../lib/labels";
-import { Button, Field, inputClass } from "./ui";
+import { Button, Field, inputClass, useDialogLayer } from "./ui";
 import { DurationField, type DurationUnit } from "./DurationField";
 import { durationToMinutes } from "../lib/duration";
 
@@ -33,6 +33,8 @@ export function TaskModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const moreRef = useRef<HTMLDetailsElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  useDialogLayer(true, { panelRef, onEscape: () => { if (!busy) onClose(); } });
 
   const save = async () => {
     if (busy) return;
@@ -81,11 +83,8 @@ export function TaskModal({
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onClose();
       }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy) onClose();
-      }}
     >
-      <section className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 sm:p-5">
+      <section ref={panelRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 outline-none sm:p-5">
         <div className="mb-1">
           <p className="text-xs font-black uppercase text-[var(--faint)]">Nuova attività</p>
           <h3 className="min-w-0 text-balance text-2xl font-black leading-tight [overflow-wrap:break-word]">
@@ -101,7 +100,7 @@ export function TaskModal({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Es. Ripassare il capitolo 4 di fisiologia"
-              autoFocus
+              data-autofocus
               onKeyDown={(event) => {
                 if (event.key === "Enter") void save();
               }}

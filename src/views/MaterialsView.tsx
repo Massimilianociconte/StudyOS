@@ -3,7 +3,7 @@ import type { Attachment } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, MATERIALS_HELP, MATERIALS_TEXT, attachmentKind, capitalizeFirst, hostOf, type AttachmentKind } from "../lib/labels";
-import { Button, EmptyState, Field, HelpTip, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { Button, EmptyState, Field, HelpTip, IconButton, SectionTitle, Segmented, Tag, inputClass, useDialogLayer } from "../components/ui";
 import { HelpField } from "../components/HelpField";
 import { goToView } from "../hooks/useLinkedUiState";
 import { Icon } from "../components/Icon";
@@ -62,6 +62,8 @@ export function MaterialsView() {
   };
 
   const fileInput = useRef<HTMLInputElement>(null);
+  const editPanelRef = useRef<HTMLElement>(null);
+  useDialogLayer(editingAttachment !== null, { panelRef: editPanelRef, onEscape: () => setEditingAttachment(null) });
   const uploadFile = async (file: File) => {
     setUploadError("");
     try {
@@ -327,11 +329,8 @@ export function MaterialsView() {
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setEditingAttachment(null);
           }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setEditingAttachment(null);
-          }}
         >
-          <section className="soft-panel w-full max-w-xl p-4 sm:p-5">
+          <section ref={editPanelRef} tabIndex={-1} className="soft-panel w-full max-w-xl p-4 outline-none sm:p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="safe-text text-2xl font-black">Modifica materiale</h3>
@@ -342,7 +341,7 @@ export function MaterialsView() {
 
             <div className="grid grid-cols-1 gap-3">
               <Field label="Nome">
-                <input className={inputClass} value={draft.name} onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} autoFocus />
+                <input className={inputClass} value={draft.name} onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} data-autofocus />
               </Field>
               {editingAttachment.externalUrl ? (
                 <Field label="Indirizzo del link (https://…)">
