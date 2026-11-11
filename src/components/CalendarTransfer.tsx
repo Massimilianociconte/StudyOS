@@ -3,7 +3,7 @@ import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { EventCategory } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import type { IcsImportedEvent, IcsParseResult } from "../lib/ics";
+import type { IcsImportedEvent, IcsMergePlan, IcsParseResult } from "../lib/ics";
 import { downloadBlob } from "../lib/backup";
 import { CALENDAR_GUIDE_TEXT as T, EVENT_CATEGORY_LABEL } from "../lib/labels";
 import { describeRule } from "../lib/repeat";
@@ -46,6 +46,8 @@ const readHints = () => {
 };
 
 const ICS_TYPE = "text/calendar";
+/** Pausa prima di rifare l'anteprima quando cambia il calendario. */
+const PLAN_PAUSE_MS = 500;
 const canShareFiles = () => {
   try {
     return typeof navigator !== "undefined" && typeof navigator.canShare === "function" && navigator.canShare({ files: [new File([""], "studyos.ics", { type: ICS_TYPE })] });
@@ -195,18 +197,29 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
 
   const candidates = useMemo(() => selectableSubjects(subjects), [subjects]);
   // Conti veri: la stessa unione dell'importazione, con il calendario di adesso (tipo e materie non li cambiano).
-  const plan = useMemo(() => {
-    if (!parsed || !ics) return null;
-    let next = 0;
-    return ics.mergeIcsImport({
-      events,
-      exams,
-      tasks,
-      items: ics.icsImportItems(parsed.events, { defaultCategory: "lesson" }),
-      now: new Date().toISOString(),
-      newId: () => `anteprima-${++next}`
-    });
-  }, [parsed, ics, events, exams, tasks]);
+  // Subito per un file nuovo; se cambia il calendario (sincronizzazione, altre schede) si rifà una volta sola,
+  // dopo una pausa, non a ogni modifica. L'importazione rifà comunque l'unione sul calendario di quel momento.
+  const items = useMemo(() => (parsed && ics ? ics.icsImportItems(parsed.events, { defaultCategory: "lesson" }) : null), [parsed, ics]);
+  const [planned, setPlanned] = useState<{ file: IcsParseResult; plan: IcsMergePlan } | null>(null);
+  const plannedFile = useRef<IcsParseResult | null>(null);
+  useEffect(() => {
+    if (!parsed || !ics || !items) return;
+    const run = () => {
+      let next = 0;
+      plannedFile.current = parsed;
+      setPlanned({
+        file: parsed,
+        plan: ics.mergeIcsImport({ events, exams, tasks, items, now: new Date().toISOString(), newId: () => `anteprima-${++next}` })
+      });
+    };
+    if (plannedFile.current !== parsed) {
+      run();
+      return;
+    }
+    const timer = window.setTimeout(run, PLAN_PAUSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [parsed, ics, items, events, exams, tasks]);
+  const plan = planned && planned.file === parsed ? planned.plan : null;
   const nothingNew = plan !== null && !plan.puts.length && !plan.deletes.length;
   const warnings = parsed ? [...parsed.warnings, ...(plan?.warnings ?? [])] : [];
   const preview = useMemo(() => {

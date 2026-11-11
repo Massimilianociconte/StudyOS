@@ -1134,8 +1134,11 @@ export const ICS_TEXT = {
     count === 1 ? "1 attività con scadenza non è stata importata: StudyOS importa solo gli eventi." : `${count} attività con scadenza non sono state importate: StudyOS importa solo gli eventi.`,
   tooLong: (titles: readonly string[]) =>
     `${quotedTitles(titles)} ${titles.length === 1 ? "durava" : "duravano"} più di un anno: la fine è stata portata a un anno dopo l'inizio. Controlla le date.`,
-  tooManyRows: (titles: readonly string[], max: number) =>
-    `${quotedTitles(titles)} ${titles.length === 1 ? "ha" : "hanno"} troppi giorni esclusi o modificati: sono stati letti solo i primi ${max}.`,
+  /** `read`: quanti giorni della serie sono stati letti davvero (i più vicini a oggi). */
+  tooManyRows: (titles: readonly string[], read: number) =>
+    read
+      ? `${quotedTitles(titles)} ${titles.length === 1 ? "ha" : "hanno"} troppi giorni esclusi o modificati: ${read === 1 ? "è stato letto solo quello più vicino a oggi" : `sono stati letti solo i ${read} più vicini a oggi`}.`
+      : `${quotedTitles(titles)}: il file ha troppi giorni esclusi o modificati in tutto, e per ${titles.length === 1 ? "questa serie" : "queste serie"} non ne è stato letto nessuno.`,
   legacyKept: (titles: readonly string[]) =>
     titles.length === 1
       ? `${quotedTitles(titles)} era già stato importato in più parti, con modifiche che non si possono unire senza perderne qualcuna: è rimasto com'era. Se vuoi la versione del file, elimina quelle parti e importa di nuovo.`
@@ -1209,7 +1212,7 @@ export const CALENDAR_GUIDE_TEXT = {
     return "Aggiorna il calendario";
   },
   nothingNew: "Nessuna novità",
-  nothingNewHint: "Gli eventi di questo file sono già nel calendario così come sono: non c'è niente da aggiungere o aggiornare.",
+  nothingNewHint: "Questo file non cambia niente nel tuo calendario.",
   importFailed: "Non è stato possibile aggiungere gli eventi. Riprova tra poco.",
   resultTitle: "Importazione completata",
   result: (added: number, updated: number) => {
