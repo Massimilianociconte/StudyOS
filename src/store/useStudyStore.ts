@@ -134,6 +134,11 @@ interface StudyState {
   /** Crea una materia e ne restituisce l'id. */
   addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<string>;
   updateSubject: (id: string, patch: Partial<Subject>) => Promise<void>;
+  /**
+   * Elimina per sempre una materia con i suoi esami (voti compresi) e argomenti; attività, eventi,
+   * sessioni e widget restano senza materia, materiali/note/promemoria collegati si staccano.
+   */
+  deleteSubject: (id: string) => Promise<void>;
   addExam: (exam: Partial<Exam> & Pick<Exam, "subjectId" | "date">) => Promise<void>;
   updateExam: (id: string, patch: Partial<Exam>) => Promise<void>;
   deleteExam: (id: string) => Promise<void>;
@@ -1052,6 +1057,37 @@ export const useStudyStore = create<StudyState>((set, get) => {
         subjects: state.subjects.map((subject) =>
           subject.id === id ? { ...subject, ...patch, updatedAt: nowIso() } : subject
         )
+      }));
+      await commit();
+    },
+
+    deleteSubject: async (id) => {
+      const before = get();
+      // Esami e argomenti non esistono senza materia: se ne vanno con lei, e con loro i collegamenti.
+      const gone = new Set([
+        `subject:${id}`,
+        ...before.exams.filter((exam) => exam.subjectId === id).map((exam) => `exam:${exam.id}`),
+        ...before.topics.filter((topic) => topic.subjectId === id).map((topic) => `studyTopic:${topic.id}`)
+      ]);
+      const now = nowIso();
+      const unlink = <T extends { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string }>(item: T) =>
+        item.linkedEntityType && gone.has(`${item.linkedEntityType}:${item.linkedEntityId}`)
+          ? { ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: now }
+          : item;
+      // Il resto resta senza materia; gli oggetti non toccati restano gli stessi (il diff non li riscrive).
+      const free = <T extends { subjectId?: string; updatedAt: string }>(item: T) =>
+        item.subjectId === id ? { ...item, subjectId: undefined, updatedAt: now } : item;
+      set((state) => ({
+        subjects: state.subjects.filter((subject) => subject.id !== id),
+        exams: state.exams.filter((exam) => exam.subjectId !== id),
+        topics: state.topics.filter((topic) => topic.subjectId !== id),
+        tasks: state.tasks.map(free),
+        events: state.events.map(free),
+        sessions: state.sessions.map(free),
+        widgets: state.widgets.map(free),
+        attachments: state.attachments.map(unlink),
+        notes: state.notes.map(unlink),
+        reminders: state.reminders.map(unlink)
       }));
       await commit();
     },

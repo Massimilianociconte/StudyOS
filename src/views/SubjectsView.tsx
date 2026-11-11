@@ -3,8 +3,9 @@ import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { shortDate, studyDaysUntil } from "../lib/selectors";
 import { readImageFile } from "../lib/files";
-import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
+import { ATTACHMENT_KIND_ICON, SUBJECT_REMOVE_TEXT, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
 import { Button, Drawer, EmptyState, Field, IconButton, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { InlineConfirm } from "../components/InlineConfirm";
 import { Icon } from "../components/Icon";
 import { CourseIcon } from "../components/CourseIcon";
 import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
@@ -51,11 +52,42 @@ export function SubjectsView() {
   const [showArchived, setShowArchived] = useUiState("subjects.showArchived", false);
   const [semester, setSemester] = useUiState<SemesterId | "tutti">("subjects.semester", "tutti", { validate: oneOf("tutti", ...SEMESTER_IDS) });
   const [showCompleted, setShowCompleted] = useUiState("subjects.showCompleted", false);
-  const { subjects, tasks, sessions, exams, attachments, addSubject, updateSubject, setActiveView } = useStudyStore();
+  const { subjects, tasks, sessions, exams, topics, attachments, addSubject, updateSubject, deleteSubject, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
   const state = { tasks, sessions, exams, attachments };
+  // Ultima materia archiviata dalla scheda: «Annulla» le rende lo stato di prima per qualche secondo.
+  const [archivedNotice, setArchivedNotice] = useState<{ id: string; name: string; previous: Subject["status"] } | null>(null);
+
+  useEffect(() => {
+    if (!archivedNotice) return;
+    const timer = window.setTimeout(() => setArchivedNotice(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [archivedNotice]);
 
   const isArchived = (subject: Subject) => subject.status === "archived" || subject.archived;
+  const archiveSubject = (subject: Subject) => {
+    setArchivedNotice({ id: subject.id, name: subject.name, previous: subject.status });
+    void updateSubject(subject.id, { status: "archived" });
+  };
+  const undoArchive = () => {
+    if (!archivedNotice) return;
+    void updateSubject(archivedNotice.id, { status: archivedNotice.previous });
+    setArchivedNotice(null);
+  };
+  // Archiviate: si eliminano per sempre, con una conferma che dice cosa si perde. Le altre si archiviano.
+  const removal = (subject: Subject) => {
+    if (!isArchived(subject)) return { onArchive: () => archiveSubject(subject) };
+    const subjectExams = exams.filter((exam) => exam.subjectId === subject.id);
+    const graded = subjectExams.filter((exam) => typeof exam.grade === "number" || exam.passFail).length;
+    const topicCount = topics.filter((topic) => topic.subjectId === subject.id).length;
+    return {
+      deleteText: SUBJECT_REMOVE_TEXT.confirm(subject.name, subjectExams.length, graded, topicCount),
+      onDelete: async () => {
+        if (openId === subject.id) setOpenId(null);
+        await deleteSubject(subject.id);
+      }
+    };
+  };
   const active = subjects.filter((subject) => !isArchived(subject) && subject.status !== "completed");
   // Materie superate (anche quelle registrate dal libretto): fuori dalla griglia principale.
   const completed = subjects.filter((subject) => !isArchived(subject) && subject.status === "completed");
@@ -85,6 +117,7 @@ export function SubjectsView() {
                 stats={subjectStats(subject, state)}
                 onOpen={() => setOpenId(subject.id)}
                 onStatus={(status) => void updateSubject(subject.id, { status })}
+                {...removal(subject)}
               />
             ))}
           </div>
@@ -127,6 +160,19 @@ export function SubjectsView() {
         {[{ id: "tutti" as const, label: "Tutte" }, ...SEMESTER_IDS.map((id) => ({ id, label: id === "annuale" ? "Annuali" : SEMESTER_LABEL[id] }))].map((item) => <button key={item.id} type="button" aria-pressed={semester === item.id} onClick={() => setSemester(item.id)} className={`min-h-9 rounded-full px-3 text-xs font-black ${semester === item.id ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)]"}`}>{item.label}</button>)}
       </div> : null}
 
+      {/* Sempre presente: il lettore di schermo annuncia l'archiviazione appena compare il testo. */}
+      <div role="status" aria-live="polite">
+        {archivedNotice ? (
+          <div className="soft-panel mb-4 flex flex-wrap items-center gap-2 p-2.5">
+            <Icon name="Archive" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+            <p className="safe-text min-w-0 flex-1 text-sm font-bold">{SUBJECT_REMOVE_TEXT.archived(archivedNotice.name)}</p>
+            <Button variant="soft" icon="RotateCcw" onClick={undoArchive}>
+              {SUBJECT_REMOVE_TEXT.undo}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
       {active.length === 0 ? (
         <EmptyState
           icon="BookOpen"
@@ -153,6 +199,7 @@ export function SubjectsView() {
               stats={subjectStats(subject, state)}
               onOpen={() => setOpenId(subject.id)}
               onStatus={(status) => void updateSubject(subject.id, { status })}
+              {...removal(subject)}
             />
           ))}
         </div>
@@ -213,15 +260,25 @@ function SubjectCard({
   subject,
   stats,
   onOpen,
-  onStatus
+  onStatus,
+  onArchive,
+  onDelete,
+  deleteText
 }: {
   subject: Subject;
   stats: ReturnType<typeof subjectStats>;
   onOpen: () => void;
   onStatus: (status: Subject["status"]) => void;
+  /** Materie non archiviate: archivia subito dalla scheda (l'elenco offre «Annulla»). */
+  onArchive?: () => void;
+  /** Materie archiviate: elimina per sempre dopo la conferma sul posto con `deleteText`. */
+  onDelete?: () => Promise<void>;
+  deleteText?: string;
 }) {
   const course = resolveBarbCourse(subject, BARB_DATASET.courses);
   const semester = subjectSemester(subject);
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   return (
     <article className="quiet-panel motion-safe group flex min-w-0 flex-col p-3.5 hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--border))]">
       <div className="flex items-start gap-3">
@@ -278,7 +335,44 @@ function SubjectCard({
         <button type="button" onClick={onOpen} aria-label={`Apri ${subject.name}`} className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
           Apri <Icon name="ChevronRight" className="h-3.5 w-3.5" />
         </button>
+        {onArchive ? (
+          <button
+            type="button"
+            onClick={onArchive}
+            aria-label={SUBJECT_REMOVE_TEXT.archiveAria(subject.name)}
+            title={SUBJECT_REMOVE_TEXT.archive}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
+          >
+            <Icon name="Archive" className="h-4 w-4" />
+          </button>
+        ) : null}
+        {onDelete && !confirming ? (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            aria-label={SUBJECT_REMOVE_TEXT.deleteAria(subject.name)}
+            title={SUBJECT_REMOVE_TEXT.deleteForever}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--surface-soft)]"
+          >
+            <Icon name="Trash2" className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
+      {onDelete && confirming ? (
+        <div className="mt-3">
+          <InlineConfirm
+            text={deleteText ?? ""}
+            confirmLabel={SUBJECT_REMOVE_TEXT.deleteForever}
+            icon="Trash2"
+            busy={deleting}
+            onCancel={() => setConfirming(false)}
+            onConfirm={() => {
+              setDeleting(true);
+              void onDelete().finally(() => setDeleting(false));
+            }}
+          />
+        </div>
+      ) : null}
     </article>
   );
 }

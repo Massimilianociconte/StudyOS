@@ -34,6 +34,27 @@ export const SUBJECT_STATUS_LABEL: Record<Subject["status"], string> = {
   archived: "Archiviata"
 };
 
+const countWord = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/** Archiviare una materia dalla sua scheda (con Annulla) ed eliminarla per sempre dalle Archiviate. */
+export const SUBJECT_REMOVE_TEXT = {
+  archive: "Archivia",
+  archiveAria: (name: string) => `Archivia ${name}`,
+  archived: (name: string) => `«${name}» archiviata: attività, esami e materiali restano. La ritrovi in «Archiviate».`,
+  undo: "Annulla",
+  deleteForever: "Elimina per sempre",
+  deleteAria: (name: string) => `Elimina per sempre ${name}`,
+  confirm: (name: string, exams: number, graded: number, topics: number) => {
+    const parts = [
+      exams ? `${countWord(exams, "esame", "esami")}${graded ? " (voti compresi)" : ""}` : "",
+      topics ? countWord(topics, "argomento", "argomenti") : ""
+    ].filter(Boolean);
+    const single = parts.length === 1 && exams + topics === 1;
+    const lost = parts.length ? ` Si ${single ? "cancella" : "cancellano"} anche ${parts.join(" e ")}.` : "";
+    return `Eliminare per sempre «${name}»?${lost} Attività, eventi, sessioni e materiali restano, senza materia. Non si può annullare.`;
+  }
+} as const;
+
 export const EXAM_STATUS_LABEL: Record<Exam["status"], string> = {
   planning: "Da pianificare",
   studying: "In preparazione",
