@@ -589,6 +589,73 @@ const lastDate = (rule: RepeatRule, startDate: string) => {
 };
 
 // ---------------------------------------------------------------------------------------
+// Regola che segue un giorno spostato (qui perché serve anche ai piani di modifica)
+// ---------------------------------------------------------------------------------------
+
+/** Giorno della settimana (MO…SU) di una data YYYY-MM-DD. */
+export const weekdayOf = (date: string): Weekday => WEEKDAY_BY_NUMBER[civilWeekday(date)] ?? "MO";
+
+/** Quale giorno della settimana nel mese: `nth` 1–5 e se è l'ultimo di quel tipo. */
+export const weekdayPosition = (date: string) => {
+  const parts = parseCivil(date);
+  if (!parts) return { nth: 1, last: false };
+  return { nth: Math.ceil(parts.day / 7), last: parts.day + 7 > daysInMonth(parts.year, parts.month) };
+};
+
+/**
+ * La data d'inizio cambia: le regole che dipendono dal giorno della settimana dell'inizio (scritte
+ * con quel giorno) lo seguono. Le altre si restituiscono così come sono (stesso oggetto).
+ */
+export const adaptRuleToStart = (rule: RepeatRule | null | undefined, oldStart: string, newStart: string): RepeatRule | null => {
+  if (!rule) return null;
+  if (!isCivilDate(oldStart) || !isCivilDate(newStart) || oldStart === newStart) return rule;
+  const oldDay = weekdayOf(oldStart);
+  const newDay = weekdayOf(newStart);
+  if (rule.freq === "weekly" && rule.byWeekday?.length === 1 && rule.byWeekday[0] === oldDay) {
+    return oldDay === newDay ? rule : { ...rule, byWeekday: [newDay] };
+  }
+  if (rule.freq === "monthly" && rule.monthly?.by === "weekday" && rule.monthly.weekday === oldDay) {
+    const before = weekdayPosition(oldStart);
+    const after = weekdayPosition(newStart);
+    const nth = rule.monthly.nth;
+    if (nth === -1 && before.last) {
+      const next = after.last ? -1 : (Math.min(after.nth, 4) as 1 | 2 | 3 | 4);
+      return { ...rule, monthly: { by: "weekday", nth: next, weekday: newDay } };
+    }
+    if (nth === before.nth) {
+      const next = after.nth > 4 ? -1 : (after.nth as 1 | 2 | 3 | 4);
+      return { ...rule, monthly: { by: "weekday", nth: next, weekday: newDay } };
+    }
+  }
+  return rule;
+};
+
+/**
+ * Regola dopo lo spostamento di un suo giorno da `from` a `to` (date civili). Settimanale con più
+ * giorni, tra cui quello di `from`: ogni giorno si sposta dello stesso scarto, come in Google Calendar
+ * ("lun–ven" un giorno dopo: "mar–sab"). Ogni 2 o più settimane si sposta anche l'inizio della
+ * settimana (WKST), così le date della stessa settimana restano insieme. Un giorno solo o "il secondo
+ * lunedì": vedi `adaptRuleToStart`. Stesso giorno della settimana, o un giorno che la regola non ha:
+ * la regola com'è (stesso oggetto).
+ */
+export const movedRule = (rule: RepeatRule | null | undefined, from: string, to: string): RepeatRule | null => {
+  if (!rule) return null;
+  if (!isCivilDate(from) || !isCivilDate(to)) return rule;
+  const days = rule.freq === "weekly" ? rule.byWeekday ?? [] : [];
+  if (days.length < 2) return adaptRuleToStart(rule, from, to);
+  const shift = (WEEKDAYS.indexOf(weekdayOf(to)) - WEEKDAYS.indexOf(weekdayOf(from)) + 7) % 7;
+  if (!shift || !days.includes(weekdayOf(from))) return rule;
+  const moved = new Set(days.map((day) => WEEKDAYS[(WEEKDAYS.indexOf(day) + shift) % 7]));
+  const next: RepeatRule = { ...rule, byWeekday: WEEKDAYS.filter((day) => moved.has(day)) };
+  if ((rule.interval ?? 1) > 1) {
+    const wkst = WEEKDAYS[(WEEKDAYS.indexOf(rule.wkst ?? "MO") + shift) % 7];
+    if (wkst === "MO") delete next.wkst;
+    else next.wkst = wkst;
+  }
+  return next;
+};
+
+// ---------------------------------------------------------------------------------------
 // Espansione di elenchi di eventi (con occorrenze modificate e divisioni)
 // ---------------------------------------------------------------------------------------
 
@@ -1053,9 +1120,12 @@ const rowIdsOf = (events: readonly CalendarEvent[], ids: ReadonlySet<string>) =>
 
 const sameEnd = (a: RepeatRule, b: RepeatRule) => JSON.stringify(a.end ?? null) === JSON.stringify(b.end ?? null);
 
-/** Stessa ora (stesso tipo, ora da orologio e durata): le modifiche di un giorno valgono ancora. */
+/**
+ * Stessa ora (stesso tipo, ora da orologio e durata; tutto il giorno: quanti giorni dura): le
+ * modifiche di un giorno valgono ancora.
+ */
 const sameTime = (a: Series | null, b: Series | null) =>
-  a !== null && b !== null && a.civil === b.civil && a.wall.join() === b.wall.join() && a.durationMs === b.durationMs;
+  a !== null && b !== null && a.civil === b.civil && a.wall.join() === b.wall.join() && a.durationMs === b.durationMs && a.spanDays === b.spanDays;
 
 /** L'elenco con la serie `event` (un piano può ricevere un elenco che non la contiene). */
 const withSeries = (events: readonly CalendarEvent[], event: CalendarEvent) =>
@@ -1128,23 +1198,125 @@ const followingFields = (event: CalendarEvent, patch: Partial<CalendarEvent>) =>
   return fields as Partial<CalendarEvent>;
 };
 
-/** Inizio e fine della serie `series` (stesso primo giorno) con l'ora, la durata e il tipo di `time`. */
-const retimed = (series: Series, time: Series) => {
-  const date = series.startDate;
-  const toggled = series.civil !== time.civil ? { allDay: time.civil } : {};
-  if (time.civil) return { start: floatingDate(date), end: floatingDate(civilAddDays(date, time.spanDays)), ...toggled };
+/** Inizio e fine dal giorno `date` con l'ora, la durata e il tipo (o i giorni) di `time`, nel fuso `zone`. */
+const timesOn = (date: string, time: Series, zone: string | undefined) => {
+  if (time.civil) return { start: floatingDate(date), end: floatingDate(civilAddDays(date, time.spanDays)) };
   const day = parseCivil(date);
-  if (!day) return {};
-  const startMs = zonedToUtc([day.year, day.month, day.day, ...time.wall], series.zone).getTime();
-  return { start: new Date(startMs).toISOString(), end: new Date(startMs + time.durationMs).toISOString(), ...toggled };
+  if (!day) return null;
+  const startMs = zonedToUtc([day.year, day.month, day.day, ...time.wall], zone).getTime();
+  return { start: new Date(startMs).toISOString(), end: new Date(startMs + time.durationMs).toISOString() };
+};
+
+/** Fine di una regola spostata di `shift` giorni: "fino al" si sposta con le date, le volte restano quelle. */
+const shiftedEnd = <R extends RepeatRule | null>(rule: R, shift: number): R =>
+  rule && shift && rule.end?.type === "until" ? { ...rule, end: { type: "until", date: civilAddDays(rule.end.date, shift) } } : rule;
+
+/** Fine di una regola, per confrontarla ("mai" = nessuna). */
+const endKey = (end: RepeatEnd | undefined) => (end && end.type !== "never" ? JSON.stringify(end) : "");
+
+/**
+ * Lo schema dei giorni di una regola (senza la fine) dal primo giorno `startDate`: i giorni che la
+ * regola prende dall'inizio si scrivono, così "ogni settimana" da un lunedì è "ogni lunedì".
+ */
+const scheduleKey = (rule: RepeatRule | null, startDate: string) => {
+  if (!rule) return "";
+  const open: Record<string, unknown> = { ...withoutKeys(rule, ["end"]) };
+  if (rule.freq === "weekly") open.byWeekday = rule.byWeekday?.length ? WEEKDAYS.filter((day) => rule.byWeekday?.includes(day)) : [weekdayOf(startDate)];
+  if (rule.freq === "monthly" && (!rule.monthly || rule.monthly.by === "day" || rule.monthly.by === "clampDay")) open.day = startDate.slice(8);
+  if (rule.freq === "yearly") open.day = startDate.slice(5);
+  if (rule.monthly?.by === "day") delete open.monthly;
+  if (open.interval === 1) delete open.interval;
+  if (open.wkst === "MO") delete open.wkst;
+  return JSON.stringify(Object.keys(open).sort().map((key) => [key, open[key]]));
+};
+
+/** Giorno (nel fuso della serie) in cui la modifica mette il giorno `date` toccato. */
+const patchDay = (series: Series, date: string, patch: Partial<CalendarEvent>) => {
+  if (patch.start === undefined) return date;
+  const civil = patch.allDay !== undefined ? patch.allDay === true : series.civil;
+  if (civil) return civilOf(patch.start, series.zone)?.date ?? date;
+  const ms = instantOf(patch.start, series.zone);
+  if (Number.isNaN(ms)) return date;
+  const parts = utcToZonedParts(ms, series.zone);
+  return civilFromParts(parts.year, parts.month, parts.day);
+};
+
+/** Ciò che una modifica "questa e le successive" fa al programma della serie (vedi `followingChange`). */
+interface FollowingChange {
+  /** Giorno in cui va il giorno toccato e giorni di scarto (nel fuso della serie). */
+  day: string;
+  shift: number;
+  /** La modifica sceglie una regola nuova (non solo quella che segue il giorno spostato). */
+  ruleChange: boolean;
+  /** La regola nuova ha una fine scelta (diversa da quella che la serie aveva). */
+  endChosen: boolean;
+}
+
+/**
+ * Che cosa fa una modifica "questa e le successive" dal giorno `date` della serie `series` al suo
+ * programma. Una regola nuova cambia frequenza, intervallo, giorni, schema del mese o fine (R1-S1, A).
+ * Non lo è la regola che segue soltanto il giorno spostato (`movedRule`, con la stessa fine o le volte
+ * rimaste): quello è uno spostamento (B), come quando la regola non scrive il giorno.
+ */
+const followingChange = (event: CalendarEvent, series: Series, date: string, patch: Partial<CalendarEvent>): FollowingChange => {
+  const day = patchDay(series, date, patch);
+  const shift = isCivilDate(day) ? civilDaysBetween(date, day) : 0;
+  const ruled = changesRepeat(event, patch);
+  if (!ruled && !changesLegacy(event, patch)) return { day, shift, ruleChange: false, endChosen: false };
+  const raw = ruled ? (patch.repeat as unknown) : legacyRule({ recurrence: patch.recurrence ?? event.recurrence, recurrenceUntil: "recurrenceUntil" in patch ? patch.recurrenceUntil : event.recurrenceUntil });
+  const checked = raw === undefined || raw === null ? null : validateRepeat(raw);
+  const given = checked?.ok ? checked.rule : null;
+  const current = series.rule;
+  if (!given || !current) return { day, shift, ruleChange: true, endChosen: given !== null };
+  const count = countOf(current);
+  const ends = new Set([endKey(current.end), endKey(shiftedEnd(current, shift).end)]);
+  if (count !== undefined) ends.add(endKey({ type: "count", count: Math.max(1, count - countBefore(current, series.startDate, date)) }));
+  const endChosen = !ends.has(endKey(given.end));
+  const followed = movedRule(current, date, day);
+  const ruleChange = endChosen || !followed || scheduleKey(given, day) !== scheduleKey(followed, day);
+  return { day, shift, ruleChange, endChosen };
 };
 
 /**
- * "Questa e le successive" senza una regola nuova (R1-S1): le parti successive (divise prima)
- * restano con le loro regole e i loro giorni e prendono solo i campi cambiati (`followingFields`).
- * L'ora cambia anche in una parte successiva solo se aveva l'ora della serie modificata prima della
- * modifica (`before`): una parte con un orario suo lo tiene. Le righe come sempre: con l'ora nuova le
- * modifiche dei singoli giorni si perdono e le cancellate restano; con la materia nuova la seguono.
+ * Ultimo giorno della famiglia tra le parti `ids`: la fine della parte che parte per ultima ("fino
+ * al", o la sua ultima volta). Assente = quella parte non finisce.
+ */
+const familyEnd = (events: readonly CalendarEvent[], ids: ReadonlySet<string>): string | undefined => {
+  const byId = new Map(events.filter((item) => !isOccurrenceRow(item)).map((item) => [item.id, item]));
+  let last: { item: CalendarEvent; date: string } | undefined;
+  for (const id of ids) {
+    const item = byId.get(id);
+    const parentId = item ? parentIdOf(item) : undefined;
+    if (!item || item.archived) continue;
+    const parent = parentId ? byId.get(parentId) : undefined;
+    const date = cutDateOf(item, parent ? zoneOf(parent) : undefined);
+    if (!date) continue;
+    if (!last || date > last.date || (date === last.date && timestamp(item.updatedAt) > timestamp(last.item.updatedAt))) last = { item, date };
+  }
+  const series = last ? seriesOf(last.item) : null;
+  if (!series) return undefined;
+  return series.rule ? lastDate(series.rule, series.startDate) : series.startDate;
+};
+
+/**
+ * La serie `event` con la regola nuova `rule` che arriva alla fine della famiglia `ids` (spostata di
+ * `shift` giorni con la serie): una regola nuova vale per tutto ciò che veniva dopo (R1-S1, A).
+ */
+const toFamilyEnd = (event: CalendarEvent, rule: RepeatRule, events: readonly CalendarEvent[], ids: ReadonlySet<string>, shift: number, zone: string | undefined) => {
+  const end = familyEnd(events, ids);
+  const next: RepeatRule = end === undefined ? withoutKeys(rule, ["end"]) : { ...rule, end: { type: "until", date: civilAddDays(end, shift) } };
+  return endKey(next.end) === endKey(rule.end) ? event : applyRepeatFields({ ...event, repeat: next, repeatLegacy: undefined }, { repeatChanged: true, timeZone: zone });
+};
+
+/**
+ * "Questa e le successive" senza una regola nuova (R1-S1 bis, B e C): le parti successive (divise prima)
+ * restano con le loro regole e prendono i campi cambiati (`followingFields`). Il programma cambia
+ * anche in una parte successiva solo se era quello della serie modificata prima della modifica
+ * (`before`): l'ora (e i giorni di un tutto il giorno) se aveva la stessa ora; lo spostamento del
+ * giorno (`change.shift`, con i giorni della regola che lo seguono) se aveva anche lo stesso schema di
+ * giorni. Una parte con un programma suo lo tiene. Le righe come per la parte modificata: con l'ora
+ * nuova le modifiche dei singoli giorni si perdono, le cancellate restano se il giorno c'è ancora;
+ * con la materia nuova la seguono.
  */
 const laterPartsPlan = (
   events: readonly CalendarEvent[],
@@ -1153,23 +1325,48 @@ const laterPartsPlan = (
   patch: Partial<CalendarEvent>,
   before: Series,
   after: Series | null,
+  change: FollowingChange,
   now: string
 ): EditPlan => {
   const later = laterPartsOf(events, event, date);
   if (!later.size) return EMPTY_PLAN;
   const fields = followingFields(event, patch);
   const timeChanged = after !== null && !sameTime(after, before);
+  const schedule = scheduleKey(before.rule, before.startDate);
+  // Giorni della regola dopo lo spostamento (quelli della parte modificata), senza la sua fine.
+  const movedOpen = after?.rule ? withoutKeys(after.rule, ["end"]) : null;
   const puts: CalendarEvent[] = [];
   const deletes: string[] = [];
   for (const item of events) {
     if (isOccurrenceRow(item) || !later.has(item.id)) continue;
     const series = seriesOf(item);
-    const times = timeChanged && after && series && sameTime(series, before) ? retimed(series, after) : {};
-    const retime = "start" in times;
-    if (!Object.keys(fields).length && !retime) continue;
-    puts.push({ ...item, ...fields, ...times, updatedAt: now });
+    const sameClock = series !== null && sameTime(series, before);
+    const retime = timeChanged && sameClock;
+    const move = change.shift !== 0 && sameClock && movedOpen !== null && series?.rule != null && scheduleKey(series.rule, series.startDate) === schedule;
+    if (!series || (!retime && !move)) {
+      if (!Object.keys(fields).length) continue;
+      puts.push({ ...item, ...fields, updatedAt: now });
+      if ("subjectId" in fields) puts.push(...subjectRewrites(rowsOf(item, events), fields.subjectId, now));
+      continue;
+    }
+    const time = retime && after ? after : series;
+    const startDate = move ? civilAddDays(series.startDate, change.shift) : series.startDate;
+    const times = timesOn(startDate, time, series.zone);
+    if (!times) continue;
+    let next: CalendarEvent = { ...item, ...fields, ...times, ...(series.civil !== time.civil ? { allDay: time.civil } : {}), updatedAt: now };
+    if (move && series.rule && movedOpen) {
+      const rule = series.rule.end ? { ...movedOpen, end: shiftedEnd(series.rule, change.shift).end } : movedOpen;
+      // Il giorno da cui la parte ferma quella prima si sposta con lei (mai prima del giorno toccato).
+      const cutFrom = isCivilDate(item.originalDate) ? civilAddDays(item.originalDate, change.shift) : undefined;
+      const originalDate = cutFrom && cutFrom <= date ? civilAddDays(date, 1) : cutFrom;
+      next = applyRepeatFields({ ...next, repeat: rule, repeatLegacy: undefined, ...(originalDate ? { originalDate } : {}) }, { repeatChanged: true, timeZone: series.zone });
+    }
+    puts.push(next);
+    const nextSeries = seriesOf(next);
+    const keepsTime = sameTime(nextSeries, series);
     for (const row of rowsOf(item, events)) {
-      if (retime && !row.cancelled) deletes.push(row.id);
+      const day = row.originalDate as string;
+      if (!nextSeries || !hasInstance(nextSeries, day) || (!row.cancelled && !keepsTime)) deletes.push(row.id);
       else if ("subjectId" in fields && row.subjectId !== fields.subjectId) puts.push({ ...row, subjectId: fields.subjectId, updatedAt: now });
     }
   }
@@ -1198,14 +1395,26 @@ const planAll = (
 ): EditPlan => {
   const now = nowOf(options);
   const fields = { ...pickPatch(patch, SERIES_LOCKED), ...shiftedSeriesTimes(event, series, date, patch) };
-  const chosen = changesRepeat(event, patch) || changesLegacy(event, patch);
-  const next = applyRepeatFields({ ...event, ...fields, updatedAt: now }, { repeatChanged: changesRepeat(event, patch), timeZone: pinZone(event, options) });
-  // "Questa e le successive" dalla prima: con una regola nuova le divisioni successive si assorbono,
-  // con le loro righe in vigore; senza, restano e prendono i campi cambiati (vedi `laterPartsPlan`).
-  const absorbed = absorb && chosen ? followingSplits(overrides, event, date) : new Set<string>();
+  // "Questa e le successive" dalla prima (`absorb`): come per una divisione (vedi `planSplit`).
+  const change = absorb ? followingChange(event, series, date, patch) : null;
+  // Spostamento senza regola nuova: la regola segue il giorno e "fino al" si sposta con le date.
+  const followed = change && !change.ruleChange && change.shift && series.rule ? shiftedEnd(movedRule(series.rule, date, change.day), change.shift) : null;
+  const ruleFields = followed && followed !== series.rule ? { repeat: followed, repeatLegacy: undefined } : {};
+  let next = applyRepeatFields(
+    { ...event, ...fields, ...ruleFields, updatedAt: now },
+    { repeatChanged: changesRepeat(event, patch) || "repeat" in ruleFields, timeZone: pinZone(event, options) }
+  );
+  // Con una regola nuova le parti successive si assorbono, con le loro righe in vigore, e la serie
+  // arriva alla fine della famiglia (salvo una fine scelta); senza, restano e prendono i campi
+  // cambiati e, se avevano lo stesso programma, l'ora e lo spostamento (vedi `laterPartsPlan`).
+  const absorbed = change?.ruleChange ? laterPartsOf(overrides, event, date) : new Set<string>();
+  const ruled = seriesOf(next);
+  if (absorbed.size && change && !change.endChosen && ruled?.rule) next = toFamilyEnd(next, ruled.rule, overrides, absorbed, change.shift, ruled.zone);
   const before = withSeries(overrides, event);
   const nextSeries = seriesOf(next);
-  const cut = cutIn(absorbed.size ? overrides.filter((item) => !absorbed.has(item.id)) : overrides, next);
+  const later = change && !change.ruleChange ? laterPartsPlan(overrides, event, date, patch, series, nextSeries, change, now) : EMPTY_PLAN;
+  const others = later.puts.length ? applyEditPlan(overrides, later).events : overrides;
+  const cut = cutIn(absorbed.size ? others.filter((item) => !absorbed.has(item.id)) : others, next);
   const deletes: string[] = [];
   const kept: CalendarEvent[] = [];
   for (const row of rowsOf(event, overrides)) {
@@ -1215,7 +1424,6 @@ const planAll = (
   const moved = absorbedRows(before, absorbed, next, nextSeries, cut, now);
   deletes.push(...absorbed, ...rowIdsOf(overrides, absorbed));
   const rewrites = next.subjectId !== event.subjectId ? subjectRewrites(kept, next.subjectId, now) : [];
-  const later = absorb && !chosen ? laterPartsPlan(overrides, event, date, patch, series, nextSeries, now) : EMPTY_PLAN;
   return { puts: uniqueById([next, ...rewrites, ...moved, ...later.puts]), deletes: [...deletes, ...later.deletes] };
 };
 
@@ -1232,8 +1440,9 @@ const pinned = (event: CalendarEvent, series: Series, originalDate: string, cut:
  * Piano di una modifica all'occorrenza `originalDate` della serie `series`:
  * - "this": riga `serie@giorno` (nuova o la stessa di prima) con la modifica; la materia è della
  *   serie, quindi un cambio di materia vale per la serie e tutte le sue righe;
- * - "following": divisione (vedi `planSplit`); con una regola nuova assorbe le divisioni
- *   successive, senza le lascia al loro posto con i campi cambiati; dalla prima occorrenza è come "all";
+ * - "following": divisione (vedi `planSplit`); con una regola nuova assorbe tutte le parti
+ *   successive della famiglia e arriva alla sua fine; senza, le parti successive prendono i campi
+ *   cambiati (e ora o spostamento se avevano lo stesso programma); dalla prima occorrenza è come "all";
  * - "all": la serie; inizio e fine si spostano come l'occorrenza toccata (stessi giorni di scarto,
  *   nuova ora); le righe che non sono più occorrenze si eliminano, le altre seguono la materia.
  * Una serie che si ripete senza fuso riceve quello del dispositivo nello stesso piano.
@@ -1290,11 +1499,15 @@ const truncatedRule = (rule: RepeatRule, startDate: string, date: string): Repea
  * (`splitFrom`, `originalDate` = giorno della divisione, nessun `sourceUid`) con la modifica e le
  * occorrenze rimaste; le righe successive passano alla figlia (le modificate si perdono se cambia
  * l'ora, come in Google; le cancellate restano), quella del giorno stesso è sostituita dalla modifica.
- * Le divisioni successive della serie (figlie dal giorno in poi, sorelle successive, loro
- * discendenti): con una regola nuova si assorbono, con le loro righe (la regola nuova vale per tutto
- * ciò che viene dopo); senza, restano con le loro regole e i loro giorni, prendono solo i campi
- * cambiati (R1-S1, vedi `laterPartsPlan`) e la figlia finisce dove parte la prima (salvato). Allo
- * stesso modo, se un antenato è fermato da una sua sorella, la figlia finisce lì.
+ * Le parti successive della famiglia (`laterPartsOf`: figlie dal giorno in poi, sorelle successive,
+ * divisioni degli antenati, loro discendenti), secondo `followingChange`:
+ * - regola nuova (frequenza, intervallo, giorni, schema del mese, fine scelta; R1-S1 bis, A): si
+ *   assorbono con le loro righe, e la figlia arriva alla fine della famiglia (`toFamilyEnd`), mai
+ *   all'inizio della divisione dopo; una fine scelta nel modulo vince;
+ * - spostamento del giorno o ora nuova (B, C): le parti con lo stesso programma della serie prima
+ *   della modifica (regola senza fine, ora, giorni di un tutto il giorno) si spostano allo stesso modo;
+ *   le altre tengono il loro; tutte prendono i campi cambiati (`laterPartsPlan`). Nulla sparisce: la
+ *   figlia finisce dove parte la prima parte dopo (salvato).
  */
 export const planSplit = (
   event: CalendarEvent,
@@ -1323,15 +1536,16 @@ export const planSplit = (
   const remaining = count !== undefined ? { ...rule, end: { type: "count" as const, count: Math.max(1, count - countBefore(rule, series.startDate, originalDate)) } } : rule;
   const childId = options.childId ?? `${event.id}~${originalDate}`;
   const base = withoutKeys(target, ["sourceUid", "sourceRecurrenceId", "seriesId", "cancelled", "repeatLegacy"]);
-  // Regola della figlia: quella della modifica; se la modifica cambia solo i campi vecchi, la loro.
+  // Regola della figlia: quella scelta con la modifica (se cambia solo i campi vecchi, la loro); senza
+  // una regola nuova le volte rimaste, con i giorni che seguono uno spostamento e "fino al" spostato con loro.
+  const change = followingChange(event, series, originalDate, patch);
   const newRule = changesRepeat(event, patch);
-  const legacyPatch = !newRule && changesLegacy(event, patch);
-  const childRule = newRule
-    ? patch.repeat
-    : legacyPatch
-      ? legacyRule({ recurrence: patch.recurrence ?? event.recurrence, recurrenceUntil: "recurrenceUntil" in patch ? patch.recurrenceUntil : event.recurrenceUntil }) ?? undefined
-      : remaining;
-  let child = applyRepeatFields(
+  const childRule = !change.ruleChange
+    ? shiftedEnd(movedRule(remaining, originalDate, change.day) ?? remaining, change.shift)
+    : newRule
+      ? patch.repeat
+      : legacyRule({ recurrence: patch.recurrence ?? event.recurrence, recurrenceUntil: "recurrenceUntil" in patch ? patch.recurrenceUntil : event.recurrenceUntil }) ?? undefined;
+  let child: CalendarEvent = applyRepeatFields(
     {
       ...base,
       ...instanceFields(series, originalDate),
@@ -1349,13 +1563,20 @@ export const planSplit = (
   );
   const withRule = (next: RepeatRule) => applyRepeatFields({ ...child, repeat: next, repeatLegacy: undefined }, { repeatChanged: true, timeZone: zone });
   let childSeries = seriesOf(child);
-  // Divisioni successive della serie: con una regola nuova si assorbono (la regola nuova vale per
-  // tutto ciò che viene dopo); senza, restano con le loro regole e la figlia si ferma dove parte la prima.
-  const ruleChosen = newRule || legacyPatch;
-  const absorbed = ruleChosen ? followingSplits(overrides, target, originalDate) : new Set<string>();
+  // Parti successive della famiglia (divise prima, anche da un antenato): con una regola nuova si
+  // assorbono tutte (la regola nuova vale per tutto ciò che viene dopo) e la figlia arriva alla fine
+  // della famiglia, salvo una fine scelta; senza, restano con le loro regole (con lo spostamento o
+  // l'ora se avevano lo stesso programma) e la figlia si ferma dove parte la prima.
+  const absorbed = change.ruleChange ? laterPartsOf(overrides, target, originalDate) : new Set<string>();
+  if (absorbed.size && !change.endChosen && childSeries?.rule) {
+    child = toFamilyEnd(child, childSeries.rule, overrides, absorbed, change.shift, zone);
+    childSeries = seriesOf(child);
+  }
+  const later = change.ruleChange ? EMPTY_PLAN : laterPartsPlan(overrides, target, originalDate, patch, series, childSeries, change, now);
+  const others = later.puts.length ? applyEditPlan(overrides, later).events : overrides;
   const before = withSeries(overrides, event);
   // Fermata da fuori (una parte successiva rimasta, la sorella di un antenato): la figlia finisce lì, salvato nella sua regola.
-  const childCut = cutIn(absorbed.size ? overrides.filter((item) => !absorbed.has(item.id)) : overrides, child);
+  const childCut = cutIn(absorbed.size ? others.filter((item) => !absorbed.has(item.id)) : others, child);
   if (childCut !== undefined && childSeries?.rule) {
     const ended = truncatedRule(childSeries.rule, childSeries.startDate, childCut);
     if (!sameEnd(ended, childSeries.rule)) {
@@ -1376,12 +1597,8 @@ export const planSplit = (
   }
   // Le righe in vigore delle serie assorbite passano alla figlia allo stesso modo.
   puts.push(...absorbedRows(before, absorbed, child, childSeries, childCut, now));
-  deletes.push(...absorbed, ...rowIdsOf(overrides, absorbed));
-  if (!ruleChosen) {
-    const later = laterPartsPlan(overrides, target, originalDate, patch, series, childSeries, now);
-    puts.push(...later.puts);
-    deletes.push(...later.deletes);
-  }
+  deletes.push(...absorbed, ...rowIdsOf(overrides, absorbed), ...later.deletes);
+  puts.push(...later.puts);
   return keepEnds(overrides, { puts: uniqueById(puts), deletes }, options);
 };
 

@@ -2,21 +2,12 @@
 // "Aggiungi" (nel bundle iniziale) usa solo questo, il resto di repeatPicker resta nel Calendario.
 import type { RepeatRule, Weekday } from "../types";
 import { REPEAT_PICKER_TEXT } from "./labels";
-import { describeRule } from "./repeat";
-import { civilWeekday, daysInMonth, parseCivil } from "./tz";
+import { describeRule, weekdayOf, weekdayPosition } from "./repeat";
 
-const WEEKDAY_BY_NUMBER: Weekday[] = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+// Stanno nel motore (servono anche ai piani di modifica); qui per chi li usa con le scelte pronte.
+export { weekdayOf, weekdayPosition } from "./repeat";
+
 const WORKDAYS: Weekday[] = ["MO", "TU", "WE", "TH", "FR"];
-
-/** Giorno della settimana (MO…SU) di una data YYYY-MM-DD. */
-export const weekdayOf = (date: string): Weekday => WEEKDAY_BY_NUMBER[civilWeekday(date)] ?? "MO";
-
-/** Quale giorno della settimana nel mese: `nth` 1–5 e se è l'ultimo di quel tipo. */
-export const weekdayPosition = (date: string) => {
-  const parts = parseCivil(date);
-  if (!parts) return { nth: 1, last: false };
-  return { nth: Math.ceil(parts.day / 7), last: parts.day + 7 > daysInMonth(parts.year, parts.month) };
-};
 
 export type RepeatPresetId = "none" | "daily" | "weekly" | "monthlyDay" | "monthlyNth" | "monthlyLast" | "yearly" | "workdays";
 

@@ -467,7 +467,13 @@ const splitLines = (impact: ScopeImpact | undefined) => {
     return [SCOPE_TEXT.followingSplits, ...(gone.length ? [SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), more)] : [])];
   }
   if (!impact.laterParts) return [];
-  return [SCOPE_TEXT.followingKeepsSplits, ...(impact.laterOwnTime ? [SCOPE_TEXT.followingSplitsOwnTime] : [])];
+  // Spostando il giorno si spostano le parti con gli stessi giorni e orario; le altre restano (e lo si dice se ce ne sono di tutti e due i tipi).
+  const moved = impact.laterMoved ?? 0;
+  return [
+    moved ? SCOPE_TEXT.followingMovesSplits : SCOPE_TEXT.followingKeepsSplits,
+    ...(moved && impact.laterOwnDays ? [SCOPE_TEXT.followingSplitsOwnDays] : []),
+    ...(impact.laterOwnTime ? [SCOPE_TEXT.followingSplitsOwnTime] : [])
+  ];
 };
 
 /** Righe sui giorni cambiati o annullati da soli: quanti perdono la modifica, quanti restano. */

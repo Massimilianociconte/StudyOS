@@ -422,3 +422,46 @@ test("R1-S1 (revisione finale). update_event «following»: senza regola nuova l
   assert.equal(ruled.data.removedDates.every((date) => new Date(`${date}T12:00:00Z`).getUTCDay() === 5), true);
   assert.equal(ruled.data.removedDatesMore, true);
 });
+
+test("R1-S1 bis. update_event «following»: spostare al martedì sposta anche la parte dopo uguale; una regola nuova assorbe anche la parte divisa da un antenato", async () => {
+  const call = (args) => executeAgentTool("studyos_update_event", { scope: "following", ...args });
+  const romeDays = (to) =>
+    expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date(to)).map((item) => [
+      new Date(item.start).toLocaleDateString("sv-SE", { timeZone: "Europe/Rome" }),
+      new Date(item.start).toLocaleDateString("en-US", { timeZone: "Europe/Rome", weekday: "short" }),
+      item.title
+    ]);
+  // B: lunedì alle 10 a Roma, dal 30/11 solo il titolo; il 16/11 spostato a martedì con i successivi.
+  for (const series of [MONDAYS, { ...MONDAYS, repeat: { freq: "weekly" } }]) {
+    useStudyStore.setState({ events: [series] });
+    assert.equal((await call({ id: "m", occurrenceDate: "2026-11-30", title: "A" })).ok, true);
+    const moved = await call({ id: "m", occurrenceDate: "2026-11-16", start: "2026-11-17T09:00:00.000Z", end: "2026-11-17T10:00:00.000Z" });
+    assert.equal(moved.ok, true, JSON.stringify(moved));
+    assert.equal("removedDates" in moved.data, false);
+    assert.deepEqual(romeDays("2026-12-10T00:00:00.000Z"), [
+      ["2026-11-02", "Mon", "Lezione"],
+      ["2026-11-09", "Mon", "Lezione"],
+      ["2026-11-17", "Tue", "Lezione"],
+      ["2026-11-24", "Tue", "Lezione"],
+      ["2026-12-01", "Tue", "A"],
+      ["2026-12-08", "Tue", "A"]
+    ]);
+  }
+  // A: dal 30/11 lunedì e venerdì (R), poi dal 9/11 (Q) e dal 16/11 della parte Q (E); da E il 23/11 lunedì e mercoledì.
+  useStudyStore.setState({ events: [MONDAYS] });
+  assert.equal((await call({ id: "m", occurrenceDate: "2026-11-30", repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } })).ok, true);
+  assert.equal((await call({ id: "m", occurrenceDate: "2026-11-09", title: "Q" })).ok, true);
+  assert.equal((await call({ id: "m~2026-11-09", occurrenceDate: "2026-11-16", title: "E" })).ok, true);
+  const ruled = await call({ id: "m~2026-11-09~2026-11-16", occurrenceDate: "2026-11-23", title: "Z", repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } });
+  assert.equal(ruled.ok, true, JSON.stringify(ruled));
+  assert.equal(byId("m~2026-11-30"), undefined, "R si assorbe");
+  assert.deepEqual(ruled.data.removedDates.slice(0, 3), ["2026-12-04", "2026-12-11", "2026-12-18"]);
+  assert.equal(ruled.data.removedDatesMore, true);
+  assert.deepEqual(romeDays("2026-12-08T00:00:00.000Z").slice(3), [
+    ["2026-11-23", "Mon", "Z"],
+    ["2026-11-25", "Wed", "Z"],
+    ["2026-11-30", "Mon", "Z"],
+    ["2026-12-02", "Wed", "Z"],
+    ["2026-12-07", "Mon", "Z"]
+  ]);
+});
