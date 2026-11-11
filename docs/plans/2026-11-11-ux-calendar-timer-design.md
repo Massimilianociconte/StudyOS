@@ -79,6 +79,82 @@ calendario da 7 a 4; niente testi tecnici per gli studenti in `BarbView`; il sel
 laurea" del Libretto diventa testo con "Cambia in Impostazioni"; un nome solo per l'aggiunta
 degli appelli ufficiali; "?" con testi ed esempi dove serve; stati vuoti con un'azione.
 
+### 7. Calendario avanzato: ripetizioni, eccezioni, ricorrenze, festività
+
+Richiesta dell'11/11 (stessa giornata). Analisi del codice attuale in
+[2026-11-11-ux-audit/recurrence.md](2026-11-11-ux-audit/recurrence.md). Scelte dell'utente: prima gli
+eventi, le Attività ripetute dopo con lo stesso motore; tutte le Attività con una data nel calendario;
+festività e celebrazioni italiane nel calendario; sincronizzazione solo con file `.ics`, ma completi.
+
+**Ripetizioni.** Nessuna; ogni giorno; ogni settimana in uno o più giorni (lun, mer, ven in un solo
+evento); ogni N settimane; ogni mese per data, ultimo giorno o "primo/secondo/…/ultimo lunedì";
+ogni 3 mesi; ogni 6 mesi; ogni anno; personalizzata (ogni N giorni, settimane, mesi o anni). Fine:
+mai, il giorno X (compreso), dopo N volte. Modello: regola strutturata `repeat` (sottoinsieme di
+RRULE, RFC 5545) con `timeZone` IANA dell'evento; `recurrence`/`recurrenceUntil` restano come
+proiezione compatibile per le versioni vecchie dell'app e per il controllo del server sulle modifiche
+degli altri (`recurrence` resta una stringa per sempre). Conversione solo in lettura, nessuna
+migrazione distruttiva, nessuna modifica a Dexie, schema di sincronizzazione o SQL.
+
+**Modifiche ed eliminazioni.** Solo questa, questa e le successive, tutta la serie — per modifica,
+spostamento (anche trascinando) ed eliminazione. Le occorrenze modificate o cancellate sono righe
+separate con id prevedibile `serie@data` (RECURRENCE-ID / EXDATE): modifiche concorrenti su
+occorrenze diverse non si perdono, sulla stessa occorrenza convergono. "Questa e le successive" divide
+la serie in una serie figlia (`splitFrom`) e chi espande chiude comunque la madre all'inizio della
+figlia, così l'ordine delle scritture non crea doppioni. Eliminare la serie elimina anche le sue
+occorrenze modificate (e, chiedendo, le serie figlie).
+
+**Fusi orari e ora legale.** Gli eventi con orario si ripetono all'ora locale del loro fuso (10:00 a
+Roma resta 10:00 anche dopo il cambio dell'ora e anche se l'evento si guarda da un altro fuso); quelli
+di tutto il giorno e le ricorrenze sono date "fluttuanti" (stesso giorno in ogni fuso). Gli eventi già
+salvati senza fuso mantengono il comportamento di oggi. Ripetizione mensile vecchia: resta "il giorno X
+o l'ultimo del mese" (nessuna occorrenza sparisce).
+
+**Compleanni, anniversari, ricorrenze.** Un percorso dedicato "Ricorrenza" (più semplice del modulo
+evento): tipo (Compleanno, Anniversario, Festa o ricorrenza personale, Altro ogni anno), nome, giorno e
+mese, anno facoltativo (mostra "compie 25 anni" / "25 anni"), note, uno o più promemoria. Ogni anno in
+automatico, tutto il giorno; nato il 29 febbraio → 28 febbraio negli anni non bisestili. Nel calendario:
+piccola icona e colore dedicati, discreti. In Home: prossime ricorrenze entro un anno.
+
+**Promemoria.** Uno o più per evento ("all'ora", 15 min prima, 1 giorno prima alle 9…). Esportati nel
+`.ics` come VALARM (così li fa suonare anche Google o Apple). Dentro StudyOS avvisano quando l'app è
+aperta (notifica dell'app e, se l'utente lo permette, notifica di sistema); avvisi ad app chiusa arrivano
+con le notifiche push della fase 2. L'interfaccia lo dice.
+
+**Festività italiane.** Calcolate, non salvate: festivi nazionali (Capodanno, Epifania, Pasqua, Lunedì
+dell'Angelo, 25 aprile, 1° maggio, 2 giugno, Ferragosto, San Francesco d'Assisi il 4 ottobre dal 2026 —
+Legge 8 ottobre 2025 n. 151 —, Ognissanti, Immacolata, Natale, Santo Stefano) e celebrazioni non festive
+(San Valentino, Giovedì e Martedì grasso, Mercoledì delle Ceneri, Festa della donna, Festa del papà,
+Domenica delle Palme, Festa della mamma, Festa dei nonni, Halloween, Commemorazione dei defunti,
+Vigilia di Natale, San Silvestro, cambi dell'ora). Si vedono in ogni vista come voci leggere di tutto il
+giorno, con un interruttore "Festività" nel menu del calendario; non si esportano e non contano nei
+riepiloghi.
+
+**Attività nel calendario.** Tutte le Attività con una data compaiono in ogni vista (già oggi in parte),
+le fatte attenuate, spuntabili dal calendario; le Attività senza data sono raccolte in "Senza data · N"
+con "Scegli la data".
+
+**Modulo evento progressivo.** Prima titolo, data, ora, tipo; poi una riga "Non si ripete ▾" con scelte
+pronte calcolate dalla data (Ogni giorno · Ogni settimana il martedì · Ogni mese il 12 · Ogni mese il
+secondo martedì · Ogni anno il 12 novembre · Giorni feriali · Personalizza…); "Personalizza" apre una
+sezione con intervallo, giorni della settimana, modo mensile e fine. Promemoria, materia, colore, note
+in "Altre opzioni". Ogni regola ha una frase leggibile ("Ogni 2 settimane lun, mer, ven, fino al 18
+dicembre").
+
+**`.ics`.** Esportazione e importazione conservano RRULE (INTERVAL, BYDAY, BYMONTHDAY, BYSETPOS dove
+serve, COUNT, UNTIL nel formato giusto), EXDATE, occorrenze modificate (RECURRENCE-ID), VALARM e fuso
+(VTIMEZONE); fusi Windows riconosciuti; reimportare la propria esportazione o un vecchio import diviso
+(`uid#n`) non crea doppioni; le parti di una regola non supportate sono conservate e segnalate.
+Nessuna sincronizzazione automatica: lo si dice chiaramente. Un link di abbonamento in sola lettura è
+fattibile (vedi analisi §8) ma resta fuori da questo giro.
+
+**Agenti (MCP).** Compatibili: valori vecchi di `recurrence` sempre accettati; nuovi argomenti
+facoltativi `repeat`, `occurrenceDate`, `scope` (questa / successive / tutte).
+
+**Ordine.** (a) motore puro e store (fusi, regole, espansione con eccezioni e divisioni, festività,
+promemoria come calcolo) in parallelo agli altri filoni; (b) interfaccia (modulo progressivo, scelta
+"solo questa / successive / tutte", ricorrenze, festività, Attività, avvisi) dopo il filtro per materia;
+(c) `.ics` completo e guida all'importazione/esportazione; poi strumenti MCP.
+
 ## Fase 2 (dopo il merge di people-push)
 
 Menu laterale a gruppi (Oggi · Università · Con gli altri · Altro, nulla tolto); un solo
