@@ -55,6 +55,20 @@ export const SUBJECT_REMOVE_TEXT = {
   }
 } as const;
 
+/** Pezzi comuni dell'interfaccia: menu "Altre azioni", aiuto "?" (HelpTip), aggiunta rapida. */
+export const UI_TEXT = {
+  moreActions: "Altre azioni",
+  help: "Aiuto",
+  helpAria: (title: string) => `Aiuto: ${title}`,
+  example: "Per esempio:",
+  close: "Chiudi",
+  /** Scadenza dell'attività nell'aggiunta rapida: parte vuota, si può scegliere. */
+  dueOptional: "Entro quando? (facoltativa)"
+} as const;
+
+/** Un solo nome, ovunque, per aggiungere le date d'esame ufficiali dell'università. */
+export const OFFICIAL_EXAMS_ADD_LABEL = "Aggiungi appelli ufficiali";
+
 export const EXAM_STATUS_LABEL: Record<Exam["status"], string> = {
   planning: "Da pianificare",
   studying: "In preparazione",

@@ -167,8 +167,14 @@ export function SettingsView() {
     try {
       if (isSignedIn()) {
         const alsoCloud = window.confirm(
-          "Sei collegato al tuo account.\n\nOK = cancella i dati anche dall'account e da tutti i dispositivi collegati (non si può annullare).\nAnnulla = svuota solo questo dispositivo e riscarica i dati dall'account."
+          "Sei collegato al tuo account.\n\nOK = cancella i dati anche dall'account e da tutti i dispositivi collegati (non si può annullare).\nAnnulla = l'account resta com'è: dopo scegli se svuotare solo questo dispositivo."
         );
+        // Annulla non deve mai cancellare: svuotare solo il dispositivo richiede un OK esplicito.
+        if (
+          !alsoCloud &&
+          !window.confirm("Svuotare solo questo dispositivo? I dati restano nell'account e verranno riscaricati.\n\nAnnulla = non cancella nulla.")
+        )
+          return;
         await resetAllData({ propagate: alsoCloud });
         if (alsoCloud) await requestSync();
         else await resetCloudDeviceState();

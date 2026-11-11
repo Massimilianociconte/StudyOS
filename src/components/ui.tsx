@@ -1,7 +1,21 @@
 import { createPortal } from "react-dom";
-import { AnimatePresence, m } from "framer-motion";
-import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type PropsWithChildren, type ReactNode } from "react";
+import { AnimatePresence, m, useReducedMotion } from "framer-motion";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PropsWithChildren,
+  type ReactNode,
+  type RefObject
+} from "react";
 import { Icon } from "./Icon";
+import { UI_TEXT } from "../lib/labels";
+import { menuIndexForKey, placeFloating, type FloatingAlign, type FloatingPosition } from "../lib/uiPieces";
 
 export function Button({
   children,
@@ -434,5 +448,354 @@ export function Drawer({
       ) : null}
     </AnimatePresence>,
     document.body
+  );
+}
+
+/**
+ * Fumetti e menu ancorati a un pulsante: posizione fixed calcolata dal pulsante (sotto, sopra se manca
+ * spazio, sempre dentro lo schermo), aggiornata a scorrimento e ridimensionamento. Esc e tocco fuori
+ * chiudono. Esc si ferma qui (cattura su window, prima dell'ascolto dei Drawer): un Drawer aperto
+ * sotto il fumetto resta aperto.
+ */
+function useFloatingLayer(
+  open: boolean,
+  close: (refocus: boolean) => void,
+  anchorRef: RefObject<HTMLElement | null>,
+  floatingRef: RefObject<HTMLElement | null>,
+  align: FloatingAlign
+) {
+  const [position, setPosition] = useState<FloatingPosition | null>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
+
+  // Layout effect: misura e posiziona prima che il fumetto si veda. La posizione resta dopo la
+  // chiusura, così l'animazione d'uscita non salta.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const anchor = anchorRef.current;
+      const floating = floatingRef.current;
+      if (!anchor || !floating) return;
+      const rect = anchor.getBoundingClientRect();
+      const viewport = { width: document.documentElement.clientWidth || window.innerWidth, height: window.innerHeight };
+      // Pulsante uscito dallo schermo scorrendo: il fumetto non resta sospeso da solo.
+      if (rect.bottom < 0 || rect.top > viewport.height) {
+        closeRef.current(false);
+        return;
+      }
+      const next = placeFloating(rect, { width: floating.offsetWidth, height: floating.offsetHeight }, viewport, { align });
+      setPosition((prev) => (prev && prev.top === next.top && prev.left === next.left && prev.side === next.side ? prev : next));
+    };
+    place();
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(place);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeRef.current(true);
+    };
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (anchorRef.current?.contains(target) || floatingRef.current?.contains(target))) return;
+      closeRef.current(false);
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    if (floatingRef.current) observer?.observe(floatingRef.current);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [open, align, anchorRef, floatingRef]);
+
+  return position;
+}
+
+// Niente visibility: hidden prima della misura: il layout effect posiziona prima del disegno e
+// l'ingresso parte da opacity 0; un elemento nascosto non riceverebbe il focus all'apertura.
+const floatingStyle = (position: FloatingPosition | null, width: string) => ({
+  top: position?.top ?? 0,
+  left: position?.left ?? 0,
+  width,
+  maxWidth: "calc(100vw - 32px)",
+  maxHeight: "calc(100dvh - 32px)"
+});
+
+/**
+ * Aiuto "?": si apre al tocco o al clic, mai solo al passaggio del mouse. Il fumetto è in portal su
+ * body come `Drawer` (i pannelli con backdrop-filter spostano e ritagliano gli elementi fixed). Esc
+ * chiude solo il fumetto, anche dentro un Drawer; un tocco fuori o un secondo tocco sul "?" lo
+ * chiudono; il focus torna al pulsante. `label`: testo visibile accanto al "?" (es. "Cosa vuol dire?").
+ */
+export function HelpTip({ title, text, example, label }: { title: string; text: string; example?: string; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
+  const close = useCallback((refocus: boolean) => {
+    setOpen(false);
+    if (refocus) buttonRef.current?.focus({ preventScroll: true });
+  }, []);
+  const position = useFloatingLayer(open, close, buttonRef, tipRef, "center");
+
+  // Il focus entra nel fumetto: lo screen reader legge titolo e spiegazione.
+  useEffect(() => {
+    if (open) tipRef.current?.focus({ preventScroll: true });
+  }, [open]);
+
+  const name = UI_TEXT.helpAria(title);
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={label ? `${label} (${name})` : name}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => (open ? close(true) : setOpen(true))}
+        className={`motion-safe group relative inline-flex shrink-0 items-center gap-1.5 rounded-full align-middle after:absolute after:-inset-2.5 after:content-[''] ${
+          label ? "min-h-6 text-xs font-extrabold text-[var(--accent-ink)] hover:underline" : "h-6 w-6"
+        }`}
+      >
+        <span
+          aria-hidden="true"
+          className="motion-safe grid h-6 w-6 shrink-0 grid-cols-1 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface-soft)] text-xs font-black leading-none text-[var(--muted)] group-hover:bg-[var(--surface)] group-hover:text-[var(--text)] group-aria-expanded:border-transparent group-aria-expanded:bg-[var(--accent)] group-aria-expanded:text-[#10131d]"
+        >
+          ?
+        </span>
+        {label ? <span className="min-w-0">{label}</span> : null}
+      </button>
+      {createPortal(
+        <AnimatePresence>
+          {open ? (
+            <m.div
+              ref={tipRef}
+              key="help-tip"
+              id={id}
+              role="dialog"
+              aria-labelledby={`${id}-title`}
+              aria-describedby={`${id}-text`}
+              tabIndex={-1}
+              onKeyDown={(event) => {
+                // Tab esce dal fumetto: si chiude e il giro riprende dal "?" (prima o dopo).
+                if (event.key !== "Tab") return;
+                const last = event.currentTarget.querySelector("button");
+                if (event.shiftKey || document.activeElement === last) close(true);
+              }}
+              className="soft-panel fixed z-[60] overflow-y-auto p-3 text-left outline-none"
+              style={floatingStyle(position, "20rem")}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : position?.side === "top" ? 4 : -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+            >
+              <div className="flex items-start gap-2">
+                <p id={`${id}-title`} className="safe-text min-w-0 flex-1 pt-1 text-sm font-black">
+                  {title}
+                </p>
+                <button
+                  type="button"
+                  aria-label={UI_TEXT.close}
+                  onClick={() => close(true)}
+                  className="motion-safe relative grid h-7 w-7 shrink-0 grid-cols-1 place-items-center rounded-full text-[var(--muted)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)] hover:text-[var(--text)]"
+                >
+                  <Icon name="X" className="h-4 w-4" />
+                </button>
+              </div>
+              <p id={`${id}-text`} className="safe-text mt-1 text-sm font-medium">
+                {text}
+              </p>
+              {example ? (
+                <p className="safe-text mt-2 text-sm font-medium text-[var(--muted)]">
+                  <span className="font-black text-[var(--accent-ink)]">{UI_TEXT.example}</span> {example}
+                </p>
+              ) : null}
+            </m.div>
+          ) : null}
+        </AnimatePresence>,
+        document.body
+      )}
+    </>
+  );
+}
+
+export type PageAction = { label: string; icon?: string; onClick: () => void; danger?: boolean };
+
+/**
+ * Azioni di una pagina: una sola primaria più il menu "Altre azioni" (⋯) con il resto. Il menu è
+ * in portal su body come `Drawer`; frecce e Home/End per muoversi, Esc o Tab chiudono e il focus
+ * torna al pulsante, un tocco fuori chiude.
+ */
+export function PageActions({ primary, more = [] }: { primary?: ReactNode; more?: PageAction[] }) {
+  if (!primary && !more.length) return null;
+  return (
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+      {primary}
+      {more.length ? <MoreActionsMenu items={more} /> : null}
+    </div>
+  );
+}
+
+function MoreActionsMenu({ items }: { items: PageAction[] }) {
+  const [open, setOpen] = useState(false);
+  const startAt = useRef<"first" | "last">("first");
+  const id = useId();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
+  const close = useCallback((refocus: boolean) => {
+    setOpen(false);
+    if (refocus) buttonRef.current?.focus({ preventScroll: true });
+  }, []);
+  const position = useFloatingLayer(open, close, buttonRef, menuRef, "end");
+
+  const menuItems = () => [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+
+  useEffect(() => {
+    if (!open) return;
+    const list = menuItems();
+    list[startAt.current === "last" ? list.length - 1 : 0]?.focus({ preventScroll: true });
+  }, [open]);
+
+  const openMenu = (at: "first" | "last") => {
+    startAt.current = at;
+    setOpen(true);
+  };
+
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    // Tab chiude: il focus torna al pulsante e il giro della pagina riprende da lì.
+    if (event.key === "Tab") {
+      close(true);
+      return;
+    }
+    const list = menuItems();
+    const next = menuIndexForKey(event.key, list.indexOf(document.activeElement as HTMLElement), list.length);
+    if (next === null) return;
+    event.preventDefault();
+    list[next]?.focus({ preventScroll: true });
+  };
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        id={`${id}-button`}
+        type="button"
+        aria-label={UI_TEXT.moreActions}
+        title={UI_TEXT.moreActions}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => (open ? close(true) : openMenu("first"))}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          openMenu(event.key === "ArrowUp" ? "last" : "first");
+        }}
+        className="motion-safe grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)] aria-expanded:bg-[var(--surface)]"
+      >
+        <Icon name="MoreHorizontal" className="h-[18px] w-[18px]" />
+      </button>
+      {createPortal(
+        <AnimatePresence>
+          {open ? (
+            <m.div
+              ref={menuRef}
+              key="more-actions"
+              id={id}
+              role="menu"
+              aria-labelledby={`${id}-button`}
+              aria-orientation="vertical"
+              onKeyDown={onMenuKeyDown}
+              className="soft-panel fixed z-[60] overflow-y-auto p-1.5"
+              style={{ ...floatingStyle(position, "max-content"), minWidth: "13rem" }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : position?.side === "top" ? 4 : -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.14, ease: "easeOut" }}
+            >
+              {items.map((item, index) => (
+                <button
+                  key={`${index}-${item.label}`}
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  onClick={() => {
+                    // Prima il focus al pulsante: un Drawer aperto dall'azione lo riporta lì alla chiusura.
+                    close(true);
+                    item.onClick();
+                  }}
+                  className={`motion-safe flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-[14px] px-3 text-left text-sm font-extrabold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${
+                    item.danger
+                      ? "text-[var(--danger-text)] hover:bg-[var(--danger-bg)] focus:bg-[var(--danger-bg)]"
+                      : "text-[var(--text)] hover:bg-[var(--surface)] focus:bg-[var(--surface)]"
+                  }`}
+                >
+                  {item.icon ? <Icon name={item.icon} className="h-4 w-4 shrink-0" /> : null}
+                  <span className="safe-text min-w-0">{item.label}</span>
+                </button>
+              ))}
+            </m.div>
+          ) : null}
+        </AnimatePresence>,
+        document.body
+      )}
+    </>
+  );
+}
+
+/**
+ * Riquadro con un numero. Con `onClick` è un pulsante che porta a ciò che il numero conta (freccia,
+ * bordo al passaggio, focus visibile); senza è un blocco di solo testo, senza aspetto da scheda.
+ */
+export function StatTile({
+  label,
+  value,
+  hint,
+  icon,
+  onClick
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: string;
+  icon?: string;
+  onClick?: () => void;
+}) {
+  const body = (
+    <>
+      <span className="flex min-w-0 items-center gap-1.5 text-xs font-black uppercase text-[var(--faint)]">
+        {icon ? <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-[var(--accent-ink)]" /> : null}
+        <span className="one-line-safe">{label}</span>
+      </span>
+      <span className="mt-1 block text-2xl font-black leading-tight [overflow-wrap:anywhere]">{value}</span>
+      {hint ? <span className="safe-text mt-0.5 block text-xs font-medium text-[var(--muted)]">{hint}</span> : null}
+    </>
+  );
+
+  if (!onClick) return <div className="min-w-0 py-1">{body}</div>;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="motion-safe group flex w-full min-w-0 items-start gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3 text-left hover:border-[var(--accent-ink)] hover:bg-[var(--surface)] hover:ring-1 hover:ring-[var(--accent-ink)]"
+    >
+      <span className="block min-w-0 flex-1">{body}</span>
+      <Icon name="ChevronRight" className="motion-safe mt-0.5 h-4 w-4 shrink-0 text-[var(--muted)] group-hover:translate-x-0.5 group-hover:text-[var(--accent-ink)]" />
+    </button>
   );
 }

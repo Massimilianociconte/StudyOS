@@ -5,12 +5,14 @@ import { AnimatePresence, m } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, IconButton, Pill, fileInputClass, inputClass } from "./ui";
 import { Icon } from "./Icon";
-import { fromDatetimeLocal, nextHalfHour, toDatetimeLocal } from "../lib/dates";
+import { fromDatetimeLocal } from "../lib/dates";
+import { quickAddDefaults, quickAddTaskDates, type QuickAddTaskCreate } from "../lib/quickAdd";
+import { UI_TEXT } from "../lib/labels";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
 export type QuickAddMode = Mode;
-type TaskCreateMode = "normal" | "timer" | "completed";
+type TaskCreateMode = QuickAddTaskCreate;
 
 // `hint`: una frase che dice cosa si sta creando, mostrata sotto i tipi.
 const modes: { id: Mode; label: string; icon: string; hint: string }[] = [
@@ -34,7 +36,9 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
   const [title, setTitle] = useState("");
   const [subjectId, setSubjectId] = useState("");
   // Prima: new Date().toISOString() -> ora UTC mostrata come locale (eventi creati 1-2h prima).
-  const [date, setDate] = useState(() => toDatetimeLocal(nextHalfHour()));
+  const [date, setDate] = useState(() => quickAddDefaults().start);
+  // Scadenza dell'attività separata dall'inizio di eventi e studio: parte vuota (senza scadenza).
+  const [taskDue, setTaskDue] = useState(() => quickAddDefaults().taskDue);
   const [url, setUrl] = useState("");
   const [taskCreateMode, setTaskCreateMode] = useState<TaskCreateMode>("normal");
   const [estimatedMinutes, setEstimatedMinutes] = useState("45");
@@ -47,7 +51,9 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
   // Il modale resta montato: a ogni apertura la data proposta torna "adesso" e il tipo è quello richiesto.
   useEffect(() => {
     if (open) {
-      setDate(toDatetimeLocal(nextHalfHour()));
+      const defaults = quickAddDefaults();
+      setDate(defaults.start);
+      setTaskDue(defaults.taskDue);
       setMode(initialMode);
       setError("");
     }
@@ -83,6 +89,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
     setEstimatedMinutes("45");
     setActualMinutes("");
     setTaskCreateMode("normal");
+    setTaskDue(quickAddDefaults().taskDue);
   };
 
   const submit = async () => {
@@ -91,8 +98,10 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
       setError("Inserisci un link o scegli un file.");
       return;
     }
-    const start = fromDatetimeLocal(date) ?? (mode === "subject" || mode === "material" ? new Date().toISOString() : null);
-    if (!start) {
+    // Attività: scadenza facoltativa (campo vuoto = senza scadenza); eventi e studio: inizio obbligatorio.
+    const taskDates = quickAddTaskDates(mode === "task" ? taskDue : "", taskCreateMode);
+    const start = mode === "task" ? "" : fromDatetimeLocal(date) ?? (mode === "subject" || mode === "material" ? new Date().toISOString() : null);
+    if (start === null || !taskDates) {
       setError("Data o ora non valida: controlla il campo e riprova.");
       return;
     }
@@ -106,12 +115,12 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
         await addTask({
           title: title.trim(),
           subjectId: subjectId || undefined,
-          dueDate: start,
+          dueDate: taskDates.dueDate,
           priority: "medium",
           status: taskCreateMode === "timer" ? "doing" : taskCreateMode === "completed" ? "done" : "todo",
           estimatedMinutes: parsedEstimatedMinutes,
           actualMinutes: taskCreateMode === "timer" ? 0 : parsedActualMinutes,
-          completedAt: taskCreateMode === "completed" ? start : undefined,
+          completedAt: taskDates.completedAt,
           timerAccumulatedSeconds:
             taskCreateMode === "timer" ? 0 : parsedActualMinutes !== undefined ? Math.round(parsedActualMinutes * 60) : undefined,
           timerStartedAt: taskCreateMode === "timer" ? now : undefined,
@@ -260,12 +269,12 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
 
               {mode !== "subject" && mode !== "material" ? (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label={mode === "task" ? (taskCreateMode === "completed" ? "Quando l'hai fatta" : "Entro quando?") : "Quando inizia?"}>
+                  <Field label={mode === "task" ? (taskCreateMode === "completed" ? "Quando l'hai fatta" : UI_TEXT.dueOptional) : "Quando inizia?"}>
                     <input
                       className={inputClass}
                       type="datetime-local"
-                      value={date}
-                      onChange={(event) => setDate(event.target.value)}
+                      value={mode === "task" ? taskDue : date}
+                      onChange={(event) => (mode === "task" ? setTaskDue : setDate)(event.target.value)}
                     />
                   </Field>
                   <Field label="Materia (facoltativa)">
