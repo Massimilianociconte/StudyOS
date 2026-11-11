@@ -337,6 +337,24 @@ test("N1. update_event con occurrenceDate e «all» da un giorno dopo: il risult
   assert.ok(/seriesStart/.test(findAgentTool("studyos_update_event").description));
 });
 
+test("S1 (revisione finale). list_events con query o materia: si cerca nelle date come si vedono (dopo l'espansione)", async () => {
+  // Finestra in istanti UTC: la stessa in ogni fuso del dispositivo (solo il 16, spostato al 17).
+  const list = async (args) => {
+    const result = await executeAgentTool("studyos_list_events", { from: "2026-11-15T12:00:00.000Z", to: "2026-11-19T00:00:00.000Z", ...args });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    return result.data.items.map((item) => `${item.occurrenceDate} ${item.title} ${item.start.slice(0, 10)}`);
+  };
+  assert.deepEqual(await list({}), ["2026-11-16 Spostata 2026-11-17"]);
+  // Il giorno spostato non è più «Lezione»: niente fantasma al 16.
+  assert.deepEqual(await list({ query: "Lezione" }), []);
+  // Il titolo nuovo trova il giorno vero.
+  assert.deepEqual(await list({ query: "spostata" }), ["2026-11-16 Spostata 2026-11-17"]);
+  // Materia diversa sul giorno cambiato: conta quella che si vede.
+  useStudyStore.setState({ events: [{ ...SERIES, subjectId: "sub-a" }, { ...ROW, subjectId: "sub-b" }] });
+  assert.deepEqual(await list({ subjectId: "sub-a" }), []);
+  assert.deepEqual(await list({ subjectId: "sub-b" }), ["2026-11-16 Spostata 2026-11-17"]);
+});
+
 /** Fuso del dispositivo fissato per tutta la chiamata (anche asincrona), poi rimesso com'era. */
 const withTz = async (zone, run) => {
   const previous = process.env.TZ;

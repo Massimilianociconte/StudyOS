@@ -33,6 +33,7 @@ import {
   planSharedDelete,
   planSharedUpdate,
   publicShareGrant,
+  sharedEventMove,
   sharedHandle,
   sharedItemsView,
   type SharedDraft
@@ -187,18 +188,22 @@ export const updateSharedItem = async (args: Args): Promise<AgentCallResult> => 
   // L'ultima copia nello store, letta adesso (dopo la conferma): si cambiano solo i campi indicati.
   const entry = findSharedByHandle(visibleShared(), handle);
   if (!entry) return fail("not_found", "Elemento condiviso non trovato: usa un id di studyos_list_shared_items.");
-  const patch = pick(args, ["title", "name", "description", "notes", "body", "status", "priority", "category", "allDay", "plannedMinutes", "preparation", "progress"]);
+  const patch = pick(args, ["title", "name", "description", "notes", "body", "status", "priority", "category", "allDay", "plannedMinutes", "preparation", "progress", "source", "topicId"]);
   for (const key of ["title", "name"]) {
     if (typeof patch[key] !== "string") continue;
     patch[key] = text(patch[key]).trim();
     if (!patch[key]) return fail("invalid", `${key} non può essere vuoto.`);
   }
+  let derived: Record<string, unknown> = {};
   if (entry.entityType === "calendarEvent") {
-    // Orari altrui forse malformati: si leggono come testo, un valore illeggibile non vale come inizio.
-    const event = { start: text(entry.entity.start), end: text(entry.entity.end), allDay: entry.entity.allDay === true };
-    const range = nextEventRange(event, args);
-    if (typeof range === "string") return fail("invalid", range);
-    if (range) Object.assign(patch, range);
+    // Come trascinandolo nel calendario: una serie si sposta tutta dello stesso scarto della data
+    // indicata, e la regola con i giorni della settimana la segue (vedi sharedEventMove).
+    const move = sharedEventMove(entry.entity, optional(args.occurrenceDate), (base) => nextEventRange(base, args));
+    if ("code" in move) return fail(move.code, move.error);
+    if (move.range) Object.assign(patch, move.range);
+    derived = move.derived;
+  } else if (args.occurrenceDate !== undefined) {
+    return fail("invalid", "occurrenceDate vale solo per gli eventi.");
   } else if (args.end !== undefined) {
     return fail("invalid", "end si può cambiare solo sugli eventi.");
   } else if (args.start !== undefined) {
@@ -220,14 +225,14 @@ export const updateSharedItem = async (args: Args): Promise<AgentCallResult> => 
     if (!day) return fail("invalid", `${key} deve essere un giorno YYYY-MM-DD.`);
     patch[key] = day;
   }
-  const plan = planSharedUpdate(shared.received, entry, patch, nowIso());
+  const plan = planSharedUpdate(shared.received, entry, patch, nowIso(), derived);
   if (!plan.ok) return fail(plan.code, plan.error);
   try {
     await shared.saveSharedItem(entry.ownerId, entry.entityType, plan.entity);
   } catch (cause) {
     return shareFailure("save", cause, "denied");
   }
-  return ok({ id: handle, updated: Object.keys(patch) });
+  return ok({ id: handle, updated: [...Object.keys(patch), ...("repeat" in derived ? ["repeat"] : [])] });
 };
 
 export const removeSharedItem = async (handle: string): Promise<AgentCallResult> => {

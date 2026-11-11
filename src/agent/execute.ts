@@ -485,13 +485,15 @@ const listEvents = (args: Args): AgentCallResult => {
   if (typeof span === "string") return fail("invalid", span);
   const { from, to } = span;
   const query = queryOf(args);
-  const events = state().events.filter((item) => {
+  const names = subjectNames();
+  const all = state().events;
+  // Prima le date come si vedono (un giorno cambiato da solo ha titolo, materia e orari suoi), poi i filtri:
+  // filtrando la serie salvata si troverebbe il giorno spostato al posto vecchio, o non lo si troverebbe.
+  const occurrences = expandEvents(all, from, to).filter((item) => {
     if (typeof args.subjectId === "string" && item.subjectId !== args.subjectId) return false;
     return includes(query, item.title, item.description);
   });
-  const names = subjectNames();
-  const all = state().events;
-  return ok({ from: from.toISOString(), to: to.toISOString(), ...page(expandEvents(events, from, to).map((event) => eventOut(event, names, all)), args) });
+  return ok({ from: from.toISOString(), to: to.toISOString(), ...page(occurrences.map((event) => eventOut(event, names, all)), args) });
 };
 
 // --- Eventi: campi nuovi, giornate intere su più giorni, giorni di una serie. ---
