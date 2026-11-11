@@ -10,6 +10,7 @@ import { fromDatetimeLocal } from "../lib/dates";
 import { quickAddDefaults, quickAddTaskDates, type QuickAddTaskCreate } from "../lib/quickAdd";
 import { UI_TEXT } from "../lib/labels";
 import { normalizeExternalUrl } from "../lib/safeUrl";
+import { deviceTimeZone } from "../lib/tz";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
 export type QuickAddMode = Mode;
@@ -135,7 +136,8 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
           start,
           end: addHours(new Date(start), 1).toISOString(),
           category: "other",
-          color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined
+          color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined,
+          timeZone: deviceTimeZone()
         });
       }
       if (mode === "session") {
@@ -147,7 +149,8 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
           start,
           end: new Date(new Date(start).getTime() + 50 * 60_000).toISOString(),
           category: "study",
-          color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined
+          color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined,
+          timeZone: deviceTimeZone()
         });
       }
       if (mode === "subject") {

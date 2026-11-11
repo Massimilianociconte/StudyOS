@@ -183,6 +183,13 @@ export interface CalendarEvent extends BaseEntity {
   reminders?: EventReminder[];
   /** RECURRENCE-ID importato (chiave di deduplica insieme a `sourceUid`). */
   sourceRecurrenceId?: string;
+  /**
+   * true = colore scelto a mano (resta anche cambiando tipologia); false = colore della tipologia.
+   * Assente (eventi salvati prima): vedi `resolveEventColor`.
+   */
+  colorCustom?: boolean;
+  /** Luogo o destinazione (facoltativo). */
+  location?: string;
 }
 
 export type Weekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";

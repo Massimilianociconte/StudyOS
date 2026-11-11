@@ -1015,7 +1015,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const zone = isValidTimeZone(event.timeZone) ? event.timeZone : deviceTimeZone();
       const occasion = sanitizeOccasion(event.occasion);
       const extra = Object.fromEntries(
-        (["repeat", "repeatLegacy", "seriesId", "originalDate", "cancelled", "splitFrom", "sourceRecurrenceId"] as const)
+        (["repeat", "repeatLegacy", "seriesId", "originalDate", "cancelled", "splitFrom", "sourceRecurrenceId", "colorCustom", "location"] as const)
           .filter((key) => event[key] !== undefined)
           .map((key) => [key, event[key]])
       ) as Partial<CalendarEvent>;
