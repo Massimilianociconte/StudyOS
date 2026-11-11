@@ -1,22 +1,27 @@
-import { useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { format, isBefore, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Exam } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, studyDaysUntil, subjectColor, subjectName } from "../lib/selectors";
-import { EXAM_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
+import { EXAMS_HELP, EXAMS_TEXT, EXAM_STATUS_LABEL, OFFICIAL_EXAMS_ADD_LABEL, SHARE_TEXT, capitalizeFirst, formatMinutes } from "../lib/labels";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
 import { readImageFile } from "../lib/files";
 import { safeImageDataUrl } from "../lib/safeUrl";
-import { Button, Field, IconButton, Panel, ProgressBar, SectionTitle, Tag, fileInputClass, inputClass } from "../components/ui";
+import { cloudConfigured } from "../lib/cloudSyncState";
+import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
+import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { BarbExamCalendar } from "../components/BarbExamCalendar";
 import { BarbExamImport } from "../components/BarbExamImport";
-import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
-import { Segmented } from "../components/ui";
-import { oneOf, useUiState } from "../lib/uiState";
+import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
+
+// Pannello Condividi (e supabase-js) scaricato solo al tocco, come in ShareButton: qui è una voce
+// del menu "Altre azioni" e non un pulsante, quindi il caricamento differito sta nella vista.
+const loadShareDrawer = () => import("../components/ShareDrawer");
+const ShareDrawer = lazy(() => loadShareDrawer().then((module) => ({ default: module.ShareDrawer })));
 
 const GRADES = Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MIN_GRADE + index);
 
@@ -74,31 +79,91 @@ const lines = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+/** Titolo della sezione con le azioni della scheda aperta, poi le schede: lo disegna ogni scheda. */
+type ExamsHeader = (actions: ReactNode) => ReactNode;
+
 export function ExamsView() {
   const preferences = useStudyStore(selectPreferences);
-  const hasExams = useStudyStore((state) => state.exams.some((exam) => !exam.archived));
+  const exams = useStudyStore((state) => state.exams);
+  const hasExams = exams.some((exam) => !exam.archived);
   // Chi ha già esami parte dai propri; altrimenti resta la scelta di prima (date ufficiali per BARB).
   const [tab, setTab] = useUiState<"barb" | "personal">(
     "exams.tab",
     () => (hasExams ? "personal" : preferences.showBarb || preferences.degreeProgram === "barb" ? "barb" : "personal"),
     { validate: oneOf("barb", "personal") }
   );
-  return <div className="min-w-0">
-    <Segmented value={tab} onChange={setTab} label="Quali esami vedere" options={[{ id: "personal", label: "I miei esami", icon: "GraduationCap" }, { id: "barb", label: "Date ufficiali", icon: "CalendarDays", title: "Date ufficiali degli appelli del corso di laurea BARB" }]} className="mb-5" />
-    {tab === "barb" ? <BarbExamCalendar /> : <PersonalExamsView />}
-  </div>;
+  // Esame aperto nel modulo: scritto anche da altre schermate (writeUiState + setActiveView).
+  const [editingId, setEditingId] = useUiState<string | null>(EXAMS_EDITING_KEY, null, { scope: "tab", validate: isNullableString });
+  const editing = resolveExamEditing(editingId, exams);
+  const activeTab = editing.exam ? "personal" : tab;
+
+  useEffect(() => {
+    // Id di un esame che non c'è più: si ignora e si cancella. Altrimenti si passa a "I miei esami".
+    if (editing.clear) setEditingId(null);
+    else if (editing.exam && tab !== "personal") setTab("personal");
+  }, [editing.clear, editing.exam, tab, setEditingId, setTab]);
+
+  const header: ExamsHeader = (actions) => (
+    <>
+      <SectionTitle title={EXAMS_TEXT.title} subtitle={EXAMS_TEXT.subtitle} action={actions} />
+      <Segmented
+        value={activeTab}
+        onChange={setTab}
+        label={EXAMS_TEXT.tabsLabel}
+        options={[
+          { id: "personal", label: EXAMS_TEXT.tabPersonal, icon: "GraduationCap" },
+          { id: "barb", label: EXAMS_TEXT.tabOfficial, icon: "CalendarDays" }
+        ]}
+        className="mb-5"
+      />
+    </>
+  );
+
+  return (
+    <div className="min-w-0">
+      {activeTab === "barb" ? <BarbExamCalendar header={header} /> : <PersonalExamsView header={header} editingExam={editing.exam} onEditingChange={setEditingId} />}
+    </div>
+  );
 }
 
-function PersonalExamsView() {
+function PersonalExamsView({
+  header,
+  editingExam,
+  onEditingChange
+}: {
+  header: ExamsHeader;
+  editingExam: Exam | null;
+  onEditingChange: (id: string | null) => void;
+}) {
   const { exams, subjects, tasks, sessions, topics, addExam, updateExam, deleteExam, addTopics, setActiveView } = useStudyStore();
+  const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
   const [draft, setDraft] = useState<ExamDraft>(() => emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
-  const [editingExam, setEditingExam] = useState<Exam | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
+  // Id dell'esame i cui dati sono nel modulo: se l'esame arriva da `exams.editing` (altra
+  // schermata o refresh) il modulo si riempie qui, una volta sola, senza perdere le modifiche.
+  const [draftFor, setDraftFor] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [gradeOpen, setGradeOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [share, setShare] = useState<"idle" | "loading" | "open" | "failed">("idle");
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState("");
+  if (editingExam && draftFor !== editingExam.id) {
+    setDraftFor(editingExam.id);
+    setDraft(draftFromExam(editingExam));
+    // Le opzioni meno usate restano aperte se l'esame le usa già.
+    setMoreOpen(Boolean(editingExam.frequentQuestions.length || editingExam.cover));
+    setMessage("");
+  } else if (!editingExam && draftFor !== null) {
+    setDraftFor(null);
+  }
+  const formOpen = creating || editingExam !== null;
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Aperto anche da un'altra schermata: il focus entra nel modulo, così Esc lo chiude subito.
+  useEffect(() => {
+    if (formOpen) dialogRef.current?.focus({ preventScroll: true });
+  }, [formOpen]);
   const sorted = useMemo(() => [...exams].sort((a, b) => a.date.localeCompare(b.date)), [exams]);
   const today = startOfDay(new Date());
   const upcoming = sorted.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today));
@@ -121,20 +186,41 @@ function PersonalExamsView() {
 
   const openCreate = () => {
     setMessage("");
-    setEditingExam(null);
+    onEditingChange(null);
     setDraft(emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
     setMoreOpen(false);
-    setFormOpen(true);
+    setCreating(true);
   };
 
   const openEdit = (exam: Exam, patch?: Partial<ExamDraft>) => {
     setMessage("");
     setNotice("");
-    setEditingExam(exam);
+    setCreating(false);
+    setDraftFor(exam.id);
     setDraft({ ...draftFromExam(exam), ...patch });
     // Le opzioni meno usate restano aperte se l'esame le usa già.
     setMoreOpen(Boolean(exam.frequentQuestions.length || exam.cover));
-    setFormOpen(true);
+    onEditingChange(exam.id);
+  };
+
+  const closeForm = () => {
+    setCreating(false);
+    onEditingChange(null);
+  };
+
+  const followLink = (target: ExamLinkTarget, subjectId: string) => {
+    const plan = examLinkPlan(target, subjectId);
+    for (const write of plan.writes) writeUiState(write.key, write.value, write.scope);
+    setActiveView(plan.view);
+  };
+
+  const openShare = () => {
+    if (share === "loading") return;
+    setShare("loading");
+    loadShareDrawer().then(
+      () => setShare("open"),
+      () => setShare("failed")
+    );
   };
 
   const saveExam = async () => {
@@ -174,39 +260,53 @@ function PersonalExamsView() {
     } else {
       await addExam(payload);
     }
-    setFormOpen(false);
+    closeForm();
   };
 
   const removeExam = async (exam: Exam) => {
     const name = subjectName(subjects, exam.subjectId);
     if (!window.confirm(`Eliminare l'esame di "${name}"? Sparisce anche dal calendario e, se ha un voto, dal libretto. Non si può annullare.`)) return;
     await deleteExam(exam.id);
-    if (editingExam?.id === exam.id) setFormOpen(false);
+    if (editingExam?.id === exam.id) closeForm();
   };
 
   // Un solo pulsante principale per schermata: quando sotto c'è già l'invito ad aggiungere
   // (nessuna materia o nessun esame in arrivo), quello in alto diventa secondario.
   const headerPrimary = subjects.length > 0 && upcoming.length > 0;
+  const moreActions: PageAction[] = [
+    { label: EXAMS_TEXT.recordGrade, icon: "Award", onClick: () => setGradeOpen(true) },
+    { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setImportOpen(true) },
+    ...(cloudConfigured ? [{ label: EXAMS_TEXT.shareProgress, icon: "Share2", onClick: openShare }] : [])
+  ];
 
   return (
     <div>
-      <SectionTitle
-        title="I miei esami"
-        subtitle="Le date dei tuoi prossimi esami e quanto sei pronto. Voti e medie sono in Libretto e laurea."
-        action={
-          // Con quattro pulsanti in fila il titolo resterebbe senza spazio: da sm vanno a capo, in riga sola da 2xl.
-          <div className="flex flex-wrap items-start gap-2 sm:max-w-[26rem] 2xl:max-w-none">
-            <Button icon="Download" variant="ghost" onClick={() => setImportOpen(true)}>Importa appelli ufficiali</Button>
-            <Button icon="Award" variant="soft" onClick={() => setGradeOpen(true)}>
-              Registra un voto
-            </Button>
+      {header(
+        <PageActions
+          primary={
             <Button icon="Plus" variant={headerPrimary ? "primary" : "soft"} onClick={openCreate}>
-              Aggiungi esame
+              {EXAMS_TEXT.addExam}
             </Button>
-            <ShareButton scopes={["progress"]} label="Condividi i progressi" />
-          </div>
-        }
-      />
+          }
+          more={moreActions}
+        />
+      )}
+
+      {share === "loading" ? (
+        <p role="status" className="mb-4 text-sm font-bold text-[var(--muted)]">
+          {SHARE_TEXT.opening}
+        </p>
+      ) : null}
+      {share === "failed" ? (
+        <p role="alert" className="mb-4 rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
+          {SHARE_TEXT.loadFailed}
+        </p>
+      ) : null}
+      {share === "open" ? (
+        <Suspense fallback={null}>
+          <ShareDrawer open onClose={() => setShare("idle")} initialScopes={["progress"]} />
+        </Suspense>
+      ) : null}
 
       {/* Il libretto completo (medie, voti, proiezione del voto di laurea) è nella sezione Libretto e laurea. */}
       <button
@@ -238,17 +338,23 @@ function PersonalExamsView() {
       ) : null}
 
       {subjects.length === 0 ? (
-        <Panel>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-2xl font-black">Ancora nessuna materia</h3>
-              <p className="safe-text mt-1 text-sm text-[var(--muted)]">Ogni esame appartiene a una materia: aggiungi prima la materia, poi la data dell'esame.</p>
-            </div>
-            <Button icon="BookOpen" variant="primary" onClick={() => setActiveView("subjects")}>
-              Vai a Materie
-            </Button>
-          </div>
-        </Panel>
+        <EmptyState
+          icon="BookOpen"
+          title={EXAMS_TEXT.noSubjectsTitle}
+          body={EXAMS_TEXT.noSubjectsBody}
+          action={
+            <>
+              <Button icon="BookOpen" variant="primary" onClick={() => setActiveView("subjects")}>
+                {EXAMS_TEXT.goToSubjects}
+              </Button>
+              {showBarb ? (
+                <Button icon="GraduationCap" variant="soft" onClick={() => setActiveView("barb")}>
+                  {EXAMS_TEXT.pickFromDegree}
+                </Button>
+              ) : null}
+            </>
+          }
+        />
       ) : (
         <>
           {toRecord.length ? (
@@ -287,21 +393,28 @@ function PersonalExamsView() {
                   onPrep={(delta) => void updateExam(exam.id, { preparation: Math.max(0, Math.min(100, exam.preparation + delta)) })}
                   onEdit={() => openEdit(exam)}
                   onImportProgram={() => void importProgram(exam)}
-                  onStudy={() => setActiveView("study")}
+                  onLink={(target) => followLink(target, exam.subjectId)}
                 />
               ))}
             </div>
           ) : (
-            <Panel>
-              <div className="text-center">
-                <Icon name="GraduationCap" className="mx-auto mb-3 h-10 w-10 text-[var(--accent-ink)]" />
-                <h3 className="text-xl font-black">Ancora nessun esame in arrivo</h3>
-                <p className="mt-1 text-sm text-[var(--muted)]">Aggiungi la data del prossimo esame: qui vedrai i giorni che mancano e quanto sei pronto.</p>
-                <Button className="mt-4" icon="Plus" variant="primary" onClick={openCreate}>
-                  Aggiungi esame
-                </Button>
-              </div>
-            </Panel>
+            <EmptyState
+              icon="GraduationCap"
+              title={EXAMS_TEXT.noUpcomingTitle}
+              body={EXAMS_TEXT.noUpcomingBody}
+              action={
+                <>
+                  <Button icon="Plus" variant="primary" onClick={openCreate}>
+                    {EXAMS_TEXT.addExam}
+                  </Button>
+                  {showBarb ? (
+                    <Button icon="CalendarPlus" variant="soft" onClick={() => setImportOpen(true)}>
+                      {OFFICIAL_EXAMS_ADD_LABEL}
+                    </Button>
+                  ) : null}
+                </>
+              }
+            />
           )}
         </>
       )}
@@ -320,15 +433,17 @@ function PersonalExamsView() {
 
       {formOpen ? (
         <div
-          className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
+          ref={dialogRef}
+          tabIndex={-1}
+          className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 outline-none backdrop-blur-sm sm:place-items-center"
           role="dialog"
           aria-modal="true"
           aria-label={editingExam ? "Modifica esame" : "Aggiungi esame"}
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setFormOpen(false);
+            if (event.target === event.currentTarget) closeForm();
           }}
           onKeyDown={(event) => {
-            if (event.key === "Escape") setFormOpen(false);
+            if (event.key === "Escape") closeForm();
           }}
         >
           <section className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 sm:p-5">
@@ -337,7 +452,7 @@ function PersonalExamsView() {
                 <h3 className="safe-text text-2xl font-black">{editingExam ? "Modifica esame" : "Aggiungi esame"}</h3>
                 <p className="two-line-safe text-sm text-[var(--muted)]">Bastano materia e data: l'esame comparirà anche nel tuo Calendario.</p>
               </div>
-              <IconButton icon="X" label="Chiudi" className="h-10 w-10" onClick={() => setFormOpen(false)} />
+              <IconButton icon="X" label="Chiudi" className="h-10 w-10" onClick={() => closeForm()} />
             </div>
 
             <div className="grid grid-cols-1 gap-3">
@@ -469,7 +584,7 @@ function PersonalExamsView() {
                     Elimina esame
                   </Button>
                 ) : null}
-                <Button variant="soft" onClick={() => setFormOpen(false)}>
+                <Button variant="soft" onClick={() => closeForm()}>
                   Annulla
                 </Button>
                 <Button variant="primary" icon="Check" onClick={saveExam}>
@@ -496,7 +611,7 @@ function ExamCard({
   onPrep,
   onEdit,
   onImportProgram,
-  onStudy
+  onLink
 }: {
   exam: Exam;
   color: string;
@@ -507,10 +622,11 @@ function ExamCard({
   onPrep: (delta: number) => void;
   onEdit: () => void;
   onImportProgram: () => void;
-  onStudy: () => void;
+  onLink: (target: ExamLinkTarget) => void;
 }) {
   const remaining = studyDaysUntil(exam.date);
-  const risk = remaining < 10 && exam.preparation < 70 ? "alto" : remaining < 20 && exam.preparation < 55 ? "medio" : null;
+  const risk = examRisk(remaining, exam.preparation);
+  const riskHelp = risk === "alto" ? EXAMS_HELP.riskHigh : EXAMS_HELP.riskMedium;
   const program = exam.program.slice(0, 6);
   const cover = safeImageDataUrl(exam.cover);
   return (
@@ -538,20 +654,26 @@ function ExamCard({
         <Tag>{EXAM_STATUS_LABEL[exam.status]}</Tag>
         <Tag>Voto obiettivo {exam.targetGrade}</Tag>
         {risk ? (
-          <span
-            title={risk === "alto" ? "Mancano meno di 10 giorni e la preparazione è sotto il 70%." : "Mancano meno di 20 giorni e la preparazione è sotto il 55%."}
-            className={`inline-flex min-h-6 items-center rounded-full px-2 text-[11px] font-black ${
-              risk === "alto" ? "bg-[var(--danger-bg)] text-[var(--danger-text)]" : "bg-[var(--warning-bg)] text-[var(--warning-text)]"
-            }`}
-          >
-            {risk === "alto" ? "Sei indietro" : "Un po' indietro"}
+          // La spiegazione era solo nel title (invisibile su touch): ora è nel "?" accanto.
+          <span className="inline-flex items-center gap-1">
+            <span
+              className={`inline-flex min-h-6 items-center rounded-full px-2 text-[11px] font-black ${
+                risk === "alto" ? "bg-[var(--danger-bg)] text-[var(--danger-text)]" : "bg-[var(--warning-bg)] text-[var(--warning-text)]"
+              }`}
+            >
+              {risk === "alto" ? EXAMS_TEXT.riskHigh : EXAMS_TEXT.riskMedium}
+            </span>
+            <HelpTip title={riskHelp.title} text={riskHelp.text} example={riskHelp.example} />
           </span>
         ) : null}
       </div>
 
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between gap-2 text-xs font-black">
-          <span className="text-[var(--faint)] uppercase">Quanto sei pronto</span>
+          <span className="flex items-center gap-1.5">
+            <span className="text-[var(--faint)] uppercase">{EXAMS_TEXT.readiness}</span>
+            <HelpTip title={EXAMS_HELP.readiness.title} text={EXAMS_HELP.readiness.text} example={EXAMS_HELP.readiness.example} />
+          </span>
           <span className="flex items-center gap-1">
             <button type="button" aria-label={`Abbassa la preparazione per ${name} del 5%`} onClick={() => onPrep(-5)} className="relative grid h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
               −
@@ -565,8 +687,13 @@ function ExamCard({
         <ProgressBar value={exam.preparation} color={color} />
       </div>
 
-      <p className="mt-3 text-xs font-bold text-[var(--muted)]">
-        {openTasks} attività da fare · {formatMinutes(studiedMinutes)} di studio · {topics} {topics === 1 ? "argomento" : "argomenti"} da ripassare
+      {/* I conteggi portano a ciò che contano: attività della materia, timer, argomenti da ripassare. */}
+      <p className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-bold text-[var(--muted)]">
+        <CountLink label={EXAMS_TEXT.tasksLink(openTasks)} aria={EXAMS_TEXT.tasksAria(name)} onClick={() => onLink("tasks")} />
+        <span aria-hidden="true">·</span>
+        <CountLink label={EXAMS_TEXT.studyLink(formatMinutes(studiedMinutes))} aria={EXAMS_TEXT.studyAria(name)} onClick={() => onLink("study")} />
+        <span aria-hidden="true">·</span>
+        <CountLink label={EXAMS_TEXT.topicsLink(topics)} aria={EXAMS_TEXT.topicsAria} onClick={() => onLink("topics")} />
       </p>
 
       {program.length ? (
@@ -588,10 +715,24 @@ function ExamCard({
         ) : (
           <span />
         )}
-        <button type="button" onClick={onStudy} className="inline-flex min-h-8 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-          <Icon name="Timer" className="h-3.5 w-3.5" /> Studia
+        <button type="button" onClick={() => onLink("study")} aria-label={EXAMS_TEXT.studyAria(name)} className="inline-flex min-h-8 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
+          <Icon name="Timer" className="h-3.5 w-3.5" /> {EXAMS_TEXT.study}
         </button>
       </div>
     </article>
+  );
+}
+
+/** Numero della scheda d'esame che porta a un'altra sezione: aspetto da collegamento, area di tocco di 44 px. */
+function CountLink({ label, aria, onClick }: { label: string; aria: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`${label}. ${aria}`}
+      className="relative inline-flex min-h-8 items-center text-[var(--accent-ink)] underline decoration-[color-mix(in_srgb,var(--accent-ink)_40%,transparent)] underline-offset-2 after:absolute after:-inset-x-1 after:-inset-y-1.5 after:content-[''] hover:decoration-[var(--accent-ink)]"
+    >
+      {label}
+    </button>
   );
 }

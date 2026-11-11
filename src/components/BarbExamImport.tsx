@@ -5,6 +5,7 @@ import { courseColor } from "../lib/barbCourseVisuals";
 import { CourseIcon } from "./CourseIcon";
 import { barbSessionDate, barbSessionType } from "./BarbExamSessions";
 import { Button, Drawer, EmptyState, inputClass } from "./ui";
+import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels";
 
 function CourseCheckbox({ checked, mixed, disabled, onChange, label }: { checked: boolean; mixed: boolean; disabled: boolean; onChange: () => void; label: string }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -48,7 +49,7 @@ export function BarbExamImport({ onClose }: { onClose: () => void }) {
   const selectedLabel = selectedCount === 0 ? "Nessun appello selezionato" : selectedCount === 1 ? "1 appello selezionato" : `${selectedCount} appelli selezionati`;
   const confirmLabel = busy ? "Aggiunta in corso…" : selectedCount === 0 ? "Aggiungi al calendario" : selectedCount === 1 ? "Aggiungi 1 appello al calendario" : `Aggiungi ${selectedCount} appelli al calendario`;
   const goToDegree = () => { onClose(); setActiveView("barb"); };
-  return <Drawer open onClose={() => { if (!busy) onClose(); }} title="Aggiungi appelli ufficiali" eyebrow="Calendario" footer={<div className="flex flex-wrap items-center justify-between gap-3"><span className="text-sm font-bold text-[var(--muted)]">{selectedLabel}</span><div className="flex flex-wrap items-center justify-end gap-2"><Button variant="ghost" disabled={busy} onClick={onClose}>{notice ? "Chiudi" : "Annulla"}</Button><Button variant="primary" icon="CalendarPlus" disabled={busy || !selectedCount} onClick={() => void save()}>{confirmLabel}</Button></div></div>}>
+  return <Drawer open onClose={() => { if (!busy) onClose(); }} title={OFFICIAL_EXAMS_ADD_LABEL} eyebrow="Calendario" footer={<div className="flex flex-wrap items-center justify-between gap-3"><span className="text-sm font-bold text-[var(--muted)]">{selectedLabel}</span><div className="flex flex-wrap items-center justify-end gap-2"><Button variant="ghost" disabled={busy} onClick={onClose}>{notice ? "Chiudi" : "Annulla"}</Button><Button variant="primary" icon="CalendarPlus" disabled={busy || !selectedCount} onClick={() => void save()}>{confirmLabel}</Button></div></div>}>
     <div className="space-y-4">
       <p className="text-sm text-[var(--muted)]">Scegli gli appelli delle tue materie: compariranno nel calendario come promemoria di tutta la giornata, con orario e sede ufficiali nei dettagli. Puoi eliminarli quando vuoi.</p>
       {error && <p role="alert" className="rounded-[18px] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p>}
