@@ -2,8 +2,8 @@
 // successive", tutto il giorno dal giorno dell'evento. Fusi sempre espliciti: vale in ogni fuso del dispositivo.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildIcs } from "../src/lib/ics.ts";
-import { applyEditPlan, applyRepeatFields, planDelete, planEdit } from "../src/lib/repeat.ts";
+import { buildIcs, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
+import { applyEditPlan, applyRepeatFields, expandEvents, isOccurrenceRow, planDelete, planEdit } from "../src/lib/repeat.ts";
 
 const T0 = "2026-10-01T10:00:00.000Z";
 const NOW = new Date(Date.UTC(2026, 10, 11, 9));
@@ -186,4 +186,90 @@ test("un evento singolo con la sua occorrenza cancellata non si esporta; modific
   assert.match(block, /SUMMARY:Spostato/);
   assert.match(block, /DTSTART;TZID=Europe\/Rome:20261102T100000/);
   assert.doesNotMatch(block, /RECURRENCE-ID/);
+});
+
+// ---------------------------------------------------------------------------------------
+// R1-S1 ter: spostando con «Questo e i successivi» una parte dopo può fermare quella prima da un giorno
+// dopo il suo primo (la parte spostata tiene la sua ultima data). X-STUDYOS-FROM lo porta nel file, così
+// una copia nuova ha le stesse date.
+// ---------------------------------------------------------------------------------------
+
+const IMPORT_NOW = "2026-11-11T10:00:00.000Z";
+let imported = 0;
+const importInto = (events, text, device) =>
+  mergeIcsImport({
+    events,
+    exams: [],
+    tasks: [],
+    items: icsImportItems(parseIcs(text, { timeZone: device }).events, { defaultCategory: "lesson" }),
+    now: IMPORT_NOW,
+    newId: () => `copy_${++imported}`,
+    timeZone: device
+  });
+const planCounts = (plan) => ({ added: plan.added, updated: plan.updated, puts: plan.puts.length, deletes: plan.deletes.length });
+const NOTHING = { added: 0, updated: 0, puts: 0, deletes: 0 };
+const shown = (events) =>
+  expandEvents(events, new Date("2026-11-01T00:00:00Z"), new Date("2027-03-01T00:00:00Z")).map((item) => `${item.start} ${item.title}`);
+const master = (events, id) => events.find((item) => item.id === id && !isOccurrenceRow(item));
+const edit = (events, id, date, patch) => applyEditPlan(events, planEdit(master(events, id), events, date, "following", patch, { now: NOW.toISOString() })).events;
+
+/** I due casi della revisione: ogni giorno con una parte alle 10 dal 30/11; ogni lunedì con lunedì e venerdì dal 30/11. */
+const takeOverSetups = () => {
+  let daily = [series({ freq: "daily" })];
+  daily = edit(daily, "e1", "2026-11-30", { start: "2026-11-30T09:00:00.000Z", end: "2026-11-30T11:00:00.000Z" });
+  daily = edit(daily, "e1", "2026-11-16", { start: "2026-11-17T08:00:00.000Z", end: "2026-11-17T10:00:00.000Z" });
+  let weekly = [series({ freq: "weekly", byWeekday: ["MO"] })];
+  weekly = edit(weekly, "e1", "2026-11-30", { repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } });
+  weekly = edit(weekly, "e1", "2026-11-16", { start: "2026-11-23T08:00:00.000Z", end: "2026-11-23T10:00:00.000Z" });
+  return [
+    ["ogni giorno", daily, ["2026-11-30T08:00:00.000Z Anatomia", "2026-11-30T09:00:00.000Z Anatomia"]],
+    ["ogni lunedì", weekly, ["2026-11-30T08:00:00.000Z Anatomia", "2026-11-30T08:00:00.000Z Anatomia"]]
+  ];
+};
+
+test("R1-S1 ter. Il giorno da cui una parte ferma quella prima va nel file (X-STUDYOS-FROM) e una copia nuova ha tutte le date", () => {
+  for (const [label, events, onThirtieth] of takeOverSetups()) {
+    assert.deepEqual(shown(events).filter((line) => line.startsWith("2026-11-30")), onThirtieth, `${label}: il 30/11 ci sono tutte e due`);
+    for (const device of ["Europe/Rome", "America/New_York", "UTC", "Pacific/Honolulu", "Pacific/Kiritimati", "Asia/Tokyo"]) {
+      const text = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: NOW });
+      // La parte del 30/11 ferma quella spostata dal 1/12; la parte spostata (dal 16/11) parte un altro giorno.
+      const blocks = vevents(text);
+      const later = blocks.find((block) => block.includes("UID:e1~2026-11-30@studyos"));
+      const moved = blocks.find((block) => block.includes("UID:e1~2026-11-16@studyos"));
+      assert.match(later, /\r\nX-STUDYOS-FROM;VALUE=DATE:20261201\r\n/, `${label} ${device}`);
+      assert.match(moved, /\r\nX-STUDYOS-FROM;VALUE=DATE:20261116\r\n/, `${label} ${device}`);
+      assert.doesNotMatch(blocks.find((block) => block.includes("UID:e1@studyos")), /X-STUDYOS-FROM/);
+      // In un calendario vuoto: le stesse date, anche il 30/11 con tutte e due.
+      let copy = applyEditPlan([], importInto([], text, device)).events;
+      assert.deepEqual(shown(copy), shown(events), `${label} ${device}: copia`);
+      // Reimportato nella copia o nel calendario di partenza: niente cambia.
+      for (const [name, target] of [["copia", copy], ["partenza", events]]) {
+        const plan = importInto(target, text, device);
+        assert.deepEqual(planCounts(plan), NOTHING, `${label} ${device}: reimport ${name}`);
+      }
+      // E la copia esportata di nuovo dice gli stessi giorni.
+      const again = buildIcs({ events: copy, exams: [], tasks: [], subjects: [], timeZone: device, now: NOW });
+      assert.equal((again.match(/X-STUDYOS-FROM;VALUE=DATE:20261201/g) ?? []).length, 1, `${label} ${device}`);
+      copy = applyEditPlan([], importInto([], again, device)).events;
+      assert.deepEqual(shown(copy), shown(events), `${label} ${device}: copia della copia`);
+    }
+  }
+});
+
+test("R1-S1 ter. X-STUDYOS-FROM sbagliato o assente: vale il primo giorno della parte, come nei file di prima", () => {
+  const [[, events]] = takeOverSetups();
+  const text = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: "Europe/Rome", now: NOW });
+  const later = (copy) => copy.find((item) => item.sourceUid === "e1~2026-11-30@studyos" && !isOccurrenceRow(item));
+  for (const [label, value] of [
+    ["senza", null],
+    ["non un giorno", "X-STUDYOS-FROM;VALUE=DATE:2026-13-45"],
+    ["con l'ora", "X-STUDYOS-FROM:20261201T090000Z"],
+    ["prima della madre", "X-STUDYOS-FROM;VALUE=DATE:20261001"],
+    ["troppo lontano", "X-STUDYOS-FROM;VALUE=DATE:20290101"]
+  ]) {
+    const file = text.replace("X-STUDYOS-FROM;VALUE=DATE:20261201", value ?? "").replace(/\r\n\r\n/g, "\r\n");
+    const copy = applyEditPlan([], importInto([], file, "Europe/Rome")).events;
+    assert.equal(later(copy).originalDate, "2026-11-30", label);
+    assert.equal(later(copy).splitFrom !== undefined, true, label);
+  }
 });

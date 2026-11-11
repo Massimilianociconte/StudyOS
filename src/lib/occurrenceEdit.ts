@@ -275,6 +275,11 @@ export interface ScopeImpact {
   laterMoved: number;
   /** Spostando il giorno: quante restano dove sono (giorni o orario loro). */
   laterOwnDays: number;
+  /**
+   * Spostando il giorno: giorni (nell'anno dopo) in cui una parte spostata arriva sul giorno di un'altra
+   * parte della serie, che resta: quel giorno ci sono tutti e due (nulla sparisce, R1-S1 ter).
+   */
+  both: string[];
 }
 
 /** Giorni dopo quello aperto in cui si cercano le date che spariscono. */
@@ -309,6 +314,26 @@ const goneDates = (
   );
   const gone = [...new Set(was)].filter((day) => !now.has(day) && !now.has(civilAddDays(day, shift))).sort();
   return { dates: gone.filter((day) => day < limit), more: gone.some((day) => day >= limit) };
+};
+
+/**
+ * Giorni (da `from` a `to`, escluso) in cui dopo la modifica due parti diverse tra `owners` hanno una data e
+ * prima no: uno spostamento ha portato una parte sul giorno di un'altra.
+ */
+const bothDays = (before: readonly CalendarEvent[], after: readonly CalendarEvent[], owners: ReadonlySet<string>, from: string, to: string) => {
+  const doubled = (events: readonly CalendarEvent[]) => {
+    const byDay = new Map<string, Set<string>>();
+    for (const item of expandEvents(events, localMidnight(from), localMidnight(to))) {
+      const owner = ownerOf(item);
+      if (!owners.has(owner)) continue;
+      const list = byDay.get(item.occurrenceDate) ?? new Set<string>();
+      list.add(owner);
+      byDay.set(item.occurrenceDate, list);
+    }
+    return new Set([...byDay].filter(([, list]) => list.size > 1).map(([day]) => day));
+  };
+  const was = doubled(before);
+  return [...doubled(after)].filter((day) => !was.has(day)).sort();
 };
 
 /** Gli eventi dopo le chiamate, come le farebbe lo store (stesse funzioni, stesso ordine). */
@@ -379,7 +404,8 @@ export const scopeImpact = (
     laterParts: 0,
     laterOwnTime: 0,
     laterMoved: 0,
-    laterOwnDays: 0
+    laterOwnDays: 0,
+    both: []
   };
   if (scope === "following" && after.absorbed) {
     const gone = goneDates(events, after.events, after.absorbedIds, after.touched, target.date, shift);
@@ -399,6 +425,14 @@ export const scopeImpact = (
         return next !== undefined && dayOf(next) !== dayOf(event);
       }).length;
       impact.laterOwnDays = later.length - impact.laterMoved;
+    }
+    if (shift) {
+      // Le parti della famiglia che la modifica tocca, quelle dopo e quelle da cui la serie è nata.
+      const owners = new Set([...after.touched, ...later.map((event) => event.id)]);
+      const byId = new Map(events.filter((event) => !isOccurrenceRow(event)).map((event) => [event.id, event]));
+      for (let id = series.splitFrom; typeof id === "string" && byId.has(id) && !owners.has(id); id = byId.get(id)?.splitFrom) owners.add(id);
+      const from = civilAddDays(shift < 0 ? civilAddDays(target.date, shift) : target.date, -1);
+      impact.both = bothDays(events, after.events, owners, from, civilAddDays(target.date, GONE_WINDOW_DAYS + Math.abs(shift)));
     }
   }
   for (const row of rows) {

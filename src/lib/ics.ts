@@ -49,6 +49,8 @@ const MAX_ROWS_PER_SERIES = 1000;
 const MAX_ROWS = 20_000;
 /** Durata massima di un evento letto da un file (giorni): oltre è quasi certamente un errore. */
 const MAX_SPAN_DAYS = 366;
+/** X-STUDYOS-FROM vale entro questi giorni dal primo giorno della figlia (uno spostamento, non di più). */
+const FROM_RANGE_DAYS = 366;
 const DEFAULT_COLOR = "#7CF7C8";
 const WEEKDAY_BY_NUMBER: readonly Weekday[] = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 const WEEKDAY_CODES = new Set<string>(WEEKDAY_BY_NUMBER);
@@ -1161,11 +1163,17 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
   }
   const cuts = splitCutsOf(masters, exportZone);
   const masterById = new Map(masters.map((event) => [event.id, event]));
-  /** Figlia di una divisione: RELATED-TO verso la madre (RFC 5545), così in un altro calendario resta nella famiglia. */
-  const relatedTo = (event: CalendarEvent) => {
+  /**
+   * Figlia di una divisione: RELATED-TO verso la madre (RFC 5545), così in un altro calendario resta nella
+   * famiglia. Se ferma la parte prima da un giorno diverso dal suo primo (uno spostamento: la parte prima
+   * tiene la sua ultima data spostata), X-STUDYOS-FROM dice quel giorno, così una copia nuova non la perde.
+   */
+  const relatedTo = (event: CalendarEvent, timing: Timing) => {
     const parentId = parentIdOf(event);
     const parent = parentId ? masterById.get(parentId) : undefined;
-    return parent ? [`RELATED-TO;RELTYPE=PARENT:${exportUidOf(parent)}`] : [];
+    if (!parent) return [];
+    const from = isCivilDate(event.originalDate) && event.originalDate !== timing.startDate ? [`X-STUDYOS-FROM;VALUE=DATE:${civilStamp(event.originalDate)}`] : [];
+    return [`RELATED-TO;RELTYPE=PARENT:${exportUidOf(parent)}`, ...from];
   };
 
   for (const event of masters) {
@@ -1184,7 +1192,7 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
       const shown = row ?? event;
       const shownTiming = row ? timingOf(row, timing.zone) : timing;
       if (!shownTiming) continue;
-      vevent(uid, [...startEnd(shownTiming), ...relatedTo(event), ...content(shown, shownTiming)]);
+      vevent(uid, [...startEnd(shownTiming), ...relatedTo(event, timing), ...content(shown, shownTiming)]);
       continue;
     }
     const exdates: string[] = [];
@@ -1204,7 +1212,7 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
       `RRULE:${rruleOf(rule, timing)}`,
       ...(exdates.length ? [dateLine("EXDATE", timing, exdates.map((date) => instant(timing, date)))] : []),
       ...(edited.length ? [dateLine("X-STUDYOS-EDITED", timing, edited.map((date) => instant(timing, date)))] : []),
-      ...relatedTo(event),
+      ...relatedTo(event, timing),
       ...content(event, timing)
     ]);
     for (const [date, row] of overrides.sort((a, b) => compareText(a[0], b[0]))) {
@@ -1312,6 +1320,8 @@ export interface IcsImportedEvent {
   occasion?: EventOccasion;
   /** RELATED-TO;RELTYPE=PARENT: UID della serie madre (figlia di una divisione fatta in StudyOS). */
   parentUid?: string;
+  /** X-STUDYOS-FROM: giorno (YYYY-MM-DD) da cui la figlia ferma la parte prima, se non è il suo primo. */
+  parentFrom?: string;
   /** X-STUDYOS-EDITED su un RECURRENCE-ID: giorno cambiato a mano in StudyOS. */
   edited?: true;
   /** X-STUDYOS-EDITED sulla serie: date escluse a mano in StudyOS (tra quelle di `exdates`). */
@@ -1529,6 +1539,10 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       const parentUid = propsOf(vevent, "RELATED-TO")
         .find((property) => property.params.RELTYPE?.toUpperCase() === "PARENT")
         ?.value.trim();
+      // Giorno da cui la figlia ferma la parte prima (X-STUDYOS-FROM): solo un giorno (VALUE=DATE) valido.
+      const fromProp = parentUid && !ridProp ? propOf(vevent, "X-STUDYOS-FROM") : undefined;
+      const fromValue = fromProp ? readDate(fromProp, fromProp.value.trim(), zone) : null;
+      const parentFrom = fromValue?.type === "date" ? fromValue.date : undefined;
       const occasionProp = propOf(vevent, "X-STUDYOS-OCCASION");
       const occasion = occasionProp
         ? sanitizeOccasion({ kind: occasionProp.params.KIND?.toLowerCase(), birthYear: Number(occasionProp.params.YEAR), person: unescapeText(occasionProp.value) })
@@ -1547,6 +1561,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         ...(allDay ? {} : { timeZone: zone }),
         ...(occasion ? { occasion } : {}),
         ...(parentUid && !ridProp ? { parentUid } : {}),
+        ...(parentFrom ? { parentFrom } : {}),
         recurrence: "none"
       };
 
@@ -1693,6 +1708,7 @@ export interface IcsImportItem {
   tags?: string[];
   occasion?: EventOccasion;
   parentUid?: string;
+  parentFrom?: string;
   edited?: true;
   editedExdates?: string[];
 }
@@ -1740,6 +1756,7 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.cancelled ? { cancelled: true as const } : {}),
       ...(event.occasion ? { occasion: event.occasion } : {}),
       ...(event.parentUid ? { parentUid: event.parentUid } : {}),
+      ...(event.parentUid && event.parentFrom ? { parentFrom: event.parentFrom } : {}),
       ...(event.edited ? { edited: true as const } : {}),
       ...(event.editedExdates?.length ? { editedExdates: event.editedExdates } : {}),
       category: categoryFromList(categories) ?? guessCategory(event.title, options.defaultCategory),
@@ -1911,7 +1928,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   const stale = new Map<string, string>();
   /** Serie locale di ogni UID del file, e le figlie che nel file dicono chi è la madre. */
   const masterOf = new Map<string, string>();
-  const parentLinks: [string, string][] = [];
+  const parentLinks: [string, string, string | undefined][] = [];
   /** Figlie nuove (create da questo import) di una serie che c'era già: non sono una copia nuova. */
   const joinsExisting = new Set<string>();
   /** Serie che avevi già, divise da questo file: titolo e giorno da cui decide la parte nuova. */
@@ -2336,7 +2353,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     } else master = create(item);
     masterOf.set(uid, master.id);
     if (item.parentUid && uid.endsWith("@studyos")) {
-      parentLinks.push([uid, item.parentUid]);
+      parentLinks.push([uid, item.parentUid, item.parentFrom]);
       if (created.has(master.id) && hadSeries(item.parentUid)) joinsExisting.add(master.id);
     }
     applyRows(master, uid, item.exdates ?? [], changes.get(uid) ?? [], true, item.editedExdates);
@@ -2361,7 +2378,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
 
   // Figlie di una divisione fatta in StudyOS (RELATED-TO verso la madre): tornano nella famiglia anche in
   // un altro calendario, così il file della madre non ne ripete i giorni. True se la figlia è collegata.
-  const linkChild = (childId: string, parentUid: string) => {
+  // `from` (X-STUDYOS-FROM): giorno da cui la figlia ferma la parte prima, se non è il suo primo (dopo uno
+  // spostamento la parte prima tiene la sua ultima data spostata). Vale solo dopo il primo giorno della
+  // madre e entro un anno dal primo giorno della figlia; altrimenti, e nei file senza, il suo primo giorno.
+  const linkChild = (childId: string, parentUid: string, from: string | undefined) => {
     // Solo con la madre nello stesso file: un file con la sola figlia non taglia una serie che hai già.
     const parentId = masterOf.get(parentUid);
     const child = puts.get(childId) ?? byId.get(childId);
@@ -2370,6 +2390,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     const childTiming = timingOf(child, fallbackZone);
     const parentTiming = timingOf(parent, fallbackZone);
     if (!childTiming || !parentTiming || parentTiming.startDate >= childTiming.startDate) return false;
+    const takeOver =
+      from && isCivilDate(from) && from > parentTiming.startDate && Math.abs(civilDaysBetween(childTiming.startDate, from)) <= FROM_RANGE_DAYS ? from : childTiming.startDate;
     // Niente giri: la madre non può discendere dalla figlia.
     let ancestor: CalendarEvent | undefined = parent;
     for (let steps = 0; ancestor && ancestor.id !== child.id && steps < 100; steps += 1) {
@@ -2385,16 +2407,16 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       const parentRule = normalizeRepeat(parent);
       const cut = cuts.get(parent.id);
       if (!parentRule) return false;
-      if (runsInto(parentRule, parentTiming.startDate, childTiming.startDate) && !(cut !== undefined && cut <= childTiming.startDate)) return false;
+      if (runsInto(parentRule, parentTiming.startDate, takeOver) && !(cut !== undefined && cut <= takeOver)) return false;
     }
-    put({ ...child, splitFrom: parent.id, originalDate: childTiming.startDate, ...(created.has(child.id) ? {} : { updatedAt: now }) });
+    put({ ...child, splitFrom: parent.id, originalDate: takeOver, ...(created.has(child.id) ? {} : { updatedAt: now }) });
     if (!created.has(child.id)) touched.add(child.id);
     if (existed) splitExisting.push([String(parent.title ?? ""), childTiming.startDate]);
     return true;
   };
-  for (const [uid, parentUid] of parentLinks) {
+  for (const [uid, parentUid, from] of parentLinks) {
     const childId = masterOf.get(uid) as string;
-    if (linkChild(childId, parentUid) || !created.has(childId)) continue;
+    if (linkChild(childId, parentUid, from) || !created.has(childId)) continue;
     // Parte nuova di una serie che hai già, rimasta a sé: lo si dice, perché può ripeterne i giorni.
     const yours = hadSeries(parentUid);
     if (yours) keptApart.push(String(yours.title ?? ""));
