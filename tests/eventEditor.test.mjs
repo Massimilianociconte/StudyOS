@@ -14,6 +14,7 @@ import {
   followingPatch,
   initialColorCustom,
   newEventDraft,
+  recipientEventUpdate,
   reminderChoices,
   removeReminder,
   scopeOptions,
@@ -323,4 +324,40 @@ test("colori delle tipologie: scegliere, tornare al predefinito, ripristinare", 
   // Valori arrivati dalla sincronizzazione: si scartano tipologie e colori non validi.
   assert.deepEqual(withTypeColor({ nope: "#000000", work: "url(x)" }, "birthday", "#A855F7"), {});
   assert.deepEqual(withTypeColor({}, "vacation", "javascript:alert(1)"), {});
+});
+
+test("S2, N4, N5 (revisione finale). modifica di chi riceve: promemoria del proprietario, niente regola su un giorno, niente fuso nuovo", () => {
+  const reminders = [{ id: "r1", minutes: 30 }];
+  const owner = baseEvent({ reminders, subjectId: "sub-owner", repeat: { freq: "weekly", byWeekday: ["TH"] }, recurrence: "weekly", repeatLegacy: "weekly|" });
+  // I promemoria sono personali: quelli scelti qui non vanno nell'evento altrui, quelli del proprietario restano.
+  const titled = recipientEventUpdate(owner, { title: "Laboratorio", reminders: [{ id: "r2", minutes: 10 }], subjectId: "sub-mine" });
+  assert.equal(titled.title, "Laboratorio");
+  assert.deepEqual(titled.reminders, reminders);
+  assert.equal(titled.subjectId, "sub-owner");
+  // Solo promemoria o materia: nulla da salvare.
+  assert.equal(recipientEventUpdate(owner, { reminders: [], subjectId: "x" }), null);
+
+  // Un giorno cambiato da solo (riga) non prende una regola: le app vecchie lo ripeterebbero da solo.
+  const row = baseEvent({ id: "e1@2026-11-19", seriesId: "e1", originalDate: "2026-11-19", title: "Spostata" });
+  const rowUpdate = recipientEventUpdate(row, { title: "Recupero", repeat: { freq: "daily" } });
+  assert.equal(rowUpdate.title, "Recupero");
+  assert.equal("repeat" in rowUpdate, false);
+  assert.equal(rowUpdate.recurrence, "none");
+  assert.equal(recipientEventUpdate(row, { repeat: { freq: "daily" } }), null);
+
+  // Serie senza fuso del proprietario: resta senza (vale il fuso di chi la guarda, come per lui), da qualsiasi fuso.
+  const previous = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    const daily = recipientEventUpdate(owner, { repeat: { freq: "daily" } });
+    assert.deepEqual(daily.repeat, { freq: "daily" });
+    assert.equal(daily.recurrence, "daily");
+    assert.equal("timeZone" in daily, false);
+    // Con il fuso del proprietario: resta il suo, mai quello di chi riceve.
+    const zoned = recipientEventUpdate({ ...owner, timeZone: "Europe/Rome" }, { repeat: { freq: "daily" } });
+    assert.equal(zoned.timeZone, "Europe/Rome");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
 });

@@ -23,7 +23,7 @@ import {
   type EventDraft
 } from "../../lib/eventEditor";
 import { eventTypeIcon, eventTypeKey, eventTypeLabel, type TypeColorOverrides } from "../../lib/eventColors";
-import { describeRule } from "../../lib/repeat";
+import { describeRule, isOccurrenceRow } from "../../lib/repeat";
 import { normalizeExternalUrl, safeHref } from "../../lib/safeUrl";
 import { safeCssColor, type SharedOrigin } from "../../lib/sharing";
 import { selectableSubjects } from "../../lib/selectors";
@@ -244,6 +244,19 @@ export function EventEditor({
   const autoColor = draftColor({ ...draft, colorCustom: false }, colorContext(draft.subjectId));
   const duration = draftDuration(draft);
   const imported = event?.tags?.includes("appello-importato");
+  // Evento di un'altra persona (aperto o in creazione nel suo calendario): i promemoria sono personali,
+  // suonerebbero sui suoi dispositivi, quindi qui non ci sono. Un suo giorno cambiato da solo non prende una regola.
+  const othersEvent = Boolean(sharedFrom) || inOtherCalendar;
+  const sharedRow = Boolean(sharedFrom && event && isOccurrenceRow(event));
+  const moreHint = draft.repeat
+    ? describeRule(draft.repeat, ruleDay)
+    : othersEvent
+      ? imported || inOtherCalendar
+        ? EVENT_EDITOR_TEXT.sectionMoreHintOtherNoLinks
+        : EVENT_EDITOR_TEXT.sectionMoreHintOther
+      : imported
+        ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks
+        : EVENT_EDITOR_TEXT.sectionMoreHint;
 
   const footer = (
     <div className="grid grid-cols-1 gap-2">
@@ -548,12 +561,22 @@ export function EventEditor({
               <details className="quiet-panel p-4">
                 <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-extrabold">
                   <span>{EVENT_EDITOR_TEXT.sectionMore}</span>
-                  <span className="min-w-0 flex-1 truncate font-bold text-[var(--muted)]">· {draft.repeat ? describeRule(draft.repeat, ruleDay) : imported || inOtherCalendar ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks : EVENT_EDITOR_TEXT.sectionMoreHint}</span>
+                  <span className="min-w-0 flex-1 truncate font-bold text-[var(--muted)]">· {moreHint}</span>
                   <Icon name="ChevronDown" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
                 </summary>
                 <div className="mt-3 grid grid-cols-1 gap-4">
-                  <RepeatPicker value={draft.repeat} start={ruleDay} onChange={(rule) => update((value) => ({ ...value, repeat: rule }))} disabled={readOnly} note={repeatNote} />
-                  <ReminderList value={draft.reminders} allDay={draft.allDay} onChange={(reminders) => update((value) => ({ ...value, reminders }))} disabled={readOnly} />
+                  <RepeatPicker
+                    value={draft.repeat}
+                    start={ruleDay}
+                    onChange={(rule) => update((value) => ({ ...value, repeat: rule }))}
+                    disabled={readOnly || sharedRow}
+                    note={sharedRow ? EVENT_EDITOR_TEXT.repeatSharedRow : repeatNote}
+                  />
+                  {othersEvent ? (
+                    <p className="text-xs font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.remindersPersonal}</p>
+                  ) : (
+                    <ReminderList value={draft.reminders} allDay={draft.allDay} onChange={(reminders) => update((value) => ({ ...value, reminders }))} disabled={readOnly} />
+                  )}
                   <Field label={EVENT_EDITOR_TEXT.description}>
                     <textarea
                       className={`${inputClass} min-h-20 py-3`}

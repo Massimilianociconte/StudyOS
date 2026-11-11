@@ -1031,6 +1031,12 @@ export const EVENT_EDITOR_TEXT = {
   sectionMoreHint: "ripetizione, promemoria, descrizione, luogo, collegamenti",
   /** Senza collegamenti (calendario di un'altra persona, evento importato): la sezione non li ha. */
   sectionMoreHintNoLinks: "ripetizione, promemoria, descrizione, luogo",
+  /** Evento di un'altra persona: i promemoria sono personali e la sezione non li ha. */
+  sectionMoreHintOther: "ripetizione, descrizione, luogo, collegamenti",
+  sectionMoreHintOtherNoLinks: "ripetizione, descrizione, luogo",
+  remindersPersonal: "I promemoria sono personali: negli eventi di un'altra persona non si impostano.",
+  /** Giorno di una serie altrui cambiato da solo: la ripetizione è della serie. */
+  repeatSharedRow: "Questo giorno è stato cambiato da solo: per cambiare la ripetizione apri un altro giorno della serie.",
   title: "Titolo",
   titlePlaceholder: "Es. Lezione di Anatomia",
   taskTitlePlaceholder: "Es. Consegnare la relazione di laboratorio",

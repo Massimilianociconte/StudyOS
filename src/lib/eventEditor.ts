@@ -3,12 +3,12 @@
 import type { CalendarEvent, EventCategory, EventReminder, RepeatRule, Weekday } from "../types";
 import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, sanitizeTypeColorOverrides, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "./eventColors";
 import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
-import { describeReminder, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
+import { applyRepeatFields, changesRepeat, describeReminder, isOccurrenceRow, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
 import type { ScopeImpact, SeriesSpan } from "./occurrenceEdit";
 import { startDayOf } from "./occurrenceLookup";
 import { CALENDAR_EVENT_FIELD_GROUPS, changedFields, safeCssColor } from "./sharing";
-import { civilAddDays, civilDaysBetween, isCivilDate, localMidnight, parseCivil } from "./tz";
+import { civilAddDays, civilDaysBetween, isCivilDate, isValidTimeZone, localMidnight, parseCivil } from "./tz";
 
 const MINUTE_MS = 60_000;
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -311,6 +311,31 @@ export const setDraftAllDay = <T extends EventDraft>(draft: T, on: boolean): T =
   const sameDayEnd = withDate(day, timeOf(draft.end));
   const end = localMs(sameDayEnd) > localMs(start) ? sameDayEnd : toLocalInput(new Date(localMs(start) + DEFAULT_DURATION * MINUTE_MS));
   return { ...draft, allDay: false, start, end };
+};
+
+/**
+ * Evento di un'altra persona dopo la modifica `changes` del modulo, sopra la sua ultima versione
+ * `latest` (ciò che il proprietario ha cambiato nel frattempo resta). null = nulla da salvare.
+ * - Promemoria: sono personali, suonerebbero sui dispositivi del proprietario. Restano i suoi.
+ * - Materia: è sua e decide cosa è condiviso. Resta la sua.
+ * - Un giorno cambiato da solo (riga) non prende una regola: le app vecchie lo ripeterebbero da solo.
+ * - Regola cambiata: regola pulita più i campi vecchi; una serie senza fuso resta senza (vale il fuso di
+ *   chi la guarda, come per il proprietario, di cui non si conosce il fuso): mai il fuso di chi riceve.
+ */
+export const recipientEventUpdate = (latest: CalendarEvent, changes: Partial<CalendarEvent>): CalendarEvent | null => {
+  const update: Partial<CalendarEvent> = { ...changes };
+  delete update.subjectId;
+  delete update.reminders;
+  if (isOccurrenceRow(latest)) delete update.repeat;
+  if (!Object.keys(update).length) return null;
+  const merged = { ...latest, ...update } as CalendarEvent;
+  if (!("repeat" in update)) return merged;
+  const next = applyRepeatFields(merged, { repeatChanged: changesRepeat(latest, update) });
+  if (isValidTimeZone(latest.timeZone) || next.timeZone === latest.timeZone) return next;
+  const zoneless = { ...next };
+  if ("timeZone" in latest) zoneless.timeZone = latest.timeZone;
+  else delete zoneless.timeZone;
+  return zoneless;
 };
 
 // Spostamento della modifica per "Tutti": in occurrenceLookup.ts (lo usa anche l'agente, nel bundle iniziale).
