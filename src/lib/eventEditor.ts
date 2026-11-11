@@ -6,6 +6,7 @@ import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME, WEEKDAY_SHORT 
 import { describeReminder, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
 import type { ScopeImpact, SeriesSpan } from "./occurrenceEdit";
+import { startDayOf } from "./occurrenceLookup";
 import { CALENDAR_EVENT_FIELD_GROUPS, changedFields, safeCssColor } from "./sharing";
 import { civilAddDays, civilDaysBetween, isCivilDate, localMidnight, parseCivil } from "./tz";
 
@@ -259,13 +260,28 @@ export const setDraftDuration = <T extends EventDraft>(draft: T, minutes: number
 };
 
 /**
- * Nuovo inizio: la fine si sposta con la stessa durata (o, tutto il giorno, lo stesso numero di
- * giorni) e le ripetizioni legate al giorno della settimana seguono la nuova data.
+ * Giorno della ripetizione per la bozza: quello dell'inizio nel fuso `zone` dell'evento, dove la
+ * regola si ripete (da Tokyo un lunedì sera a Roma si mostra martedì, ma la regola dice lunedì). Tutto
+ * il giorno, o senza fuso: il giorno mostrato.
  */
-export const changeStart = <T extends EventDraft>(draft: T, next: string): T => {
+export const draftRuleDay = (draft: Pick<EventDraft, "allDay" | "start">, zone?: string) => {
+  const shown = dateOf(draft.start);
+  if (draft.allDay || !zone) return shown;
+  const day = startDayOf(isoOf(draft.start), false, zone);
+  return isCivilDate(day) ? day : shown;
+};
+
+/**
+ * Nuovo inizio: la fine si sposta con la stessa durata (o, tutto il giorno, lo stesso numero di
+ * giorni) e le ripetizioni legate al giorno della settimana seguono la nuova data (nel fuso `zone`
+ * dell'evento, vedi `draftRuleDay`).
+ */
+export const changeStart = <T extends EventDraft>(draft: T, next: string, zone?: string): T => {
   const oldDate = dateOf(draft.start);
   const newDate = dateOf(next);
-  const repeat = isCivilDate(oldDate) && isCivilDate(newDate) ? adaptRuleToStart(draft.repeat, oldDate, newDate) : draft.repeat;
+  const ruleFrom = draftRuleDay(draft, zone);
+  const ruleTo = draftRuleDay({ allDay: draft.allDay, start: next }, zone);
+  const repeat = isCivilDate(ruleFrom) && isCivilDate(ruleTo) ? adaptRuleToStart(draft.repeat, ruleFrom, ruleTo) : draft.repeat;
   if (draft.allDay) {
     const span = isCivilDate(oldDate) && isCivilDate(dateOf(draft.end)) ? Math.max(0, civilDaysBetween(oldDate, dateOf(draft.end))) : 0;
     const end = isCivilDate(newDate) ? withDate(civilAddDays(newDate, span), timeOf(draft.end)) : draft.end;

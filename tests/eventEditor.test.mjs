@@ -8,6 +8,7 @@ import {
   draftColor,
   draftFromEvent,
   draftPatch,
+  draftRuleDay,
   editorChanges,
   editorFormFor,
   followingPatch,
@@ -159,6 +160,34 @@ test("spostando l'inizio la fine segue con la stessa durata; la ripetizione segu
   const days = { ...draft, allDay: true, start: "2026-11-12T00:00", end: "2026-11-14T00:00", repeat: null };
   const shifted = changeStart(days, "2026-11-20T00:00");
   assert.equal(shifted.end.slice(0, 10), "2026-11-22");
+});
+
+test("B1 (revisione finale). la ripetizione si legge nel fuso dell'evento: da Tokyo un lunedì di Roma resta lunedì", () => {
+  const previous = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    // Lunedì 16 alle 10 a Roma = lunedì 16 alle 18 a Tokyo; ogni lunedì a Roma.
+    const draft = draftFromEvent(
+      { id: "e", title: "Lezione", start: "2026-11-16T09:00:00.000Z", end: "2026-11-16T10:00:00.000Z", category: "lesson", color: "#7CF7C8", priority: "medium", status: "planned", links: [], repeat: { freq: "weekly", byWeekday: ["MO"] }, timeZone: "Europe/Rome" },
+      {}
+    );
+    assert.equal(draftRuleDay(draft, "Europe/Rome"), "2026-11-16");
+    // Martedì 07:00 a Tokyo = lunedì 23:00 a Roma: per la regola è sempre lunedì.
+    const later = changeStart(draft, "2026-11-17T07:00", "Europe/Rome");
+    assert.equal(draftRuleDay(later, "Europe/Rome"), "2026-11-16");
+    assert.deepEqual(later.repeat, { freq: "weekly", byWeekday: ["MO"] });
+    // Martedì 18:00 a Tokyo = martedì 10:00 a Roma: la regola segue il martedì.
+    assert.deepEqual(changeStart(draft, "2026-11-17T18:00", "Europe/Rome").repeat, { freq: "weekly", byWeekday: ["TU"] });
+    // Lunedì 18:00 a Roma (martedì 02:00 a Tokyo): il giorno della regola è lunedì, quello mostrato martedì.
+    const evening = { ...draft, start: "2026-11-17T02:00", end: "2026-11-17T03:00" };
+    assert.equal(draftRuleDay(evening, "Europe/Rome"), "2026-11-16");
+    assert.equal(draftRuleDay(evening), "2026-11-17");
+    // Tutto il giorno: vale la data locale.
+    assert.equal(draftRuleDay({ ...evening, allDay: true }, "Europe/Rome"), "2026-11-17");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
 });
 
 test("durata: scelta e calcolata", () => {

@@ -17,7 +17,7 @@ import {
 import { allScopePatch, occurrenceTarget, shiftPatchDays, startDayOf } from "./occurrenceLookup";
 import { followingPatch } from "./eventEditor";
 import { adaptRuleToStart, weekdayOf, weekdayPosition } from "./repeatPicker";
-import { civilAddDays, civilDateOf, civilDaysBetween, daysInMonth, isCivilDate, isValidTimeZone, localMidnight, parseCivil } from "./tz";
+import { civilAddDays, civilDaysBetween, daysInMonth, isCivilDate, isValidTimeZone, localMidnight, parseCivil } from "./tz";
 
 type Occurrence = CalendarEvent & { occurrenceDate: string };
 
@@ -78,17 +78,21 @@ export const alignedSeriesStart = (rule: RepeatRule, picked: string, seriesStart
   return picked;
 };
 
+/** Fuso della serie (assente o non valido: quello del dispositivo, come sempre). */
+const zoneOf = (event: Pick<CalendarEvent, "timeZone">) => (isValidTimeZone(event.timeZone) ? event.timeZone : undefined);
+
 /**
  * Primo giorno che il motore darebbe alla serie con la modifica `patch` per "Tutti": la sposta dello
  * scarto tra il giorno aperto e il nuovo inizio della modifica (o, dal primo giorno o cambiando
- * "tutto il giorno", prende l'inizio così com'è). `timed`: la modifica con inizio e fine.
+ * "tutto il giorno", prende l'inizio così com'è). `timed`: la modifica con inizio e fine. Il giorno è
+ * nel fuso della serie, come `seriesStart` (da un dispositivo in un altro fuso può essere un altro).
  */
 const seriesFirstDay = (
   patch: Partial<CalendarEvent>,
   { series, date, seriesStart, toggled }: { series: CalendarEvent; date: string; seriesStart: string; toggled: boolean }
 ) => {
   const timed = patch.start !== undefined ? patch : { ...patch, ...shiftPatchDays({ start: series.start, end: series.end }, civilDaysBetween(seriesStart, date)) };
-  const current = civilDateOf(new Date(timed.start as string));
+  const current = startDayOf(timed.start as string, (timed.allDay ?? series.allDay) === true, zoneOf(series));
   if (!isCivilDate(current)) return null;
   return { timed, first: toggled || date === seriesStart ? current : civilAddDays(seriesStart, civilDaysBetween(date, current)) };
 };
@@ -114,11 +118,13 @@ const withoutRepeat = (changes: Partial<CalendarEvent>): Partial<CalendarEvent> 
   return rest;
 };
 
-/** Giorno da cui si è scelta la regola nel modulo: quello dell'inizio mostrato (ora locale). */
-const pickedDay = (item: Pick<CalendarEvent, "start">, changes: Partial<CalendarEvent>) => {
-  const start = new Date(changes.start ?? item.start);
-  return Number.isNaN(start.getTime()) ? "" : civilDateOf(start);
-};
+/**
+ * Giorno da cui si è scelta la regola nel modulo: quello dell'inizio mostrato, nel fuso della serie
+ * (dove la regola si ripete e dove sta il giorno aperto); tutto il giorno, quello locale. Da Tokyo un
+ * lunedì sera a Roma è già martedì: conta il lunedì, o un cambio d'ora sposterebbe la regola.
+ */
+const pickedDay = (item: Pick<CalendarEvent, "start" | "allDay">, changes: Partial<CalendarEvent>, series: Pick<CalendarEvent, "allDay" | "timeZone">) =>
+  startDayOf(changes.start ?? item.start, (changes.allDay ?? item.allDay ?? series.allDay) === true, zoneOf(series));
 
 const WEEK: readonly Weekday[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 
@@ -170,7 +176,7 @@ const followedRule = (series: CalendarEvent, date: string, picked: string) => mo
  * spostato: allora c'è ancora "Solo questo" (e la regola non va su quel giorno da solo).
  */
 export const userRuleChange = ({ item, series, changes }: { item: Occurrence; series: CalendarEvent; changes: Partial<CalendarEvent> }) =>
-  "repeat" in changes && ruleKey(changes.repeat) !== ruleKey(followedRule(series, occurrenceTarget(item).date, pickedDay(item, changes)));
+  "repeat" in changes && ruleKey(changes.repeat) !== ruleKey(followedRule(series, occurrenceTarget(item).date, pickedDay(item, changes, series)));
 
 /**
  * Chiamate a `editOccurrence(serie, giorno, portata, modifica)` per salvare la modifica `changes` del
@@ -195,7 +201,7 @@ export const occurrenceEditCalls = ({
   shown?: Partial<CalendarEvent>;
 }): { calls: OccurrenceCall[]; newStart?: string; weekdays?: { from: Weekday[]; to: Weekday[] } } => {
   const target = occurrenceTarget(item);
-  const picked = pickedDay(item, changes);
+  const picked = pickedDay(item, changes, series);
   const chosen = userRuleChange({ item, series, changes });
   const own = chosen ? changes : withoutRepeat(changes);
   if (scope === "this") return { calls: [{ scope, patch: own }] };
@@ -209,7 +215,7 @@ export const occurrenceEditCalls = ({
   let patch = allScopePatch(ruled, { occurrence: item, series, date: target.date });
   let newStart: string | undefined;
   if (ruled.repeat) {
-    const seriesStart = startDayOf(series.start, series.allDay, isValidTimeZone(series.timeZone) ? series.timeZone : undefined);
+    const seriesStart = startDayOf(series.start, series.allDay, zoneOf(series));
     const toggled = ruled.allDay !== undefined && ruled.allDay !== (series.allDay ?? false);
     const natural = isCivilDate(seriesStart) ? seriesFirstDay(patch, { series, date: target.date, seriesStart, toggled }) : null;
     if (natural) {
@@ -233,7 +239,7 @@ export const occurrenceEditCalls = ({
  */
 export const seriesMovePatch = (event: CalendarEvent, start: string, end: string): Partial<CalendarEvent> => {
   const rule = normalizeRepeat(event);
-  const zone = isValidTimeZone(event.timeZone) ? event.timeZone : undefined;
+  const zone = zoneOf(event);
   const from = startDayOf(event.start, event.allDay, zone);
   const to = startDayOf(start, event.allDay, zone);
   const next = rule && isCivilDate(from) && isCivilDate(to) ? movedRule(rule, from, to) : null;
@@ -301,8 +307,9 @@ export const scopeImpact = (
 ): ScopeImpact => {
   const target = occurrenceTarget(item);
   const after = simulateOccurrenceEdit(events, target.seriesId, target.date, calls, now);
-  // Di quanti giorni si sposta il giorno aperto: le altre date si spostano allo stesso modo.
-  const picked = pickedDay(item, changes);
+  // Di quanti giorni si sposta il giorno aperto (nel fuso della serie): le altre date si spostano allo stesso modo.
+  const series = events.find((event) => event.id === target.seriesId && !isOccurrenceRow(event)) ?? item;
+  const picked = pickedDay(item, changes, series);
   const shift = isCivilDate(picked) ? civilDaysBetween(target.date, picked) : 0;
   const masters = after.events.filter((event) => !isOccurrenceRow(event));
   const inSeries = (date: string) => {
@@ -349,7 +356,7 @@ export interface SeriesSpan {
 export const seriesSpan = (events: readonly CalendarEvent[], seriesId: string, date: string, today: string): SeriesSpan => {
   const series = events.find((event) => event.id === seriesId && !isOccurrenceRow(event));
   if (!series) return { past: false, parts: 1 };
-  const start = startDayOf(series.start, series.allDay, isValidTimeZone(series.timeZone) ? series.timeZone : undefined);
+  const start = startDayOf(series.start, series.allDay, zoneOf(series));
   const parent = typeof series.splitFrom === "string" && series.splitFrom ? series.splitFrom : undefined;
   // Parti dopo: le figlie della serie e le sorelle che partono dopo di lei.
   const cuts = events

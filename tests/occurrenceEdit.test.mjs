@@ -445,3 +445,101 @@ test("R2-S1. tutta la serie spostata (agente senza giorno, evento di un'altra pe
   const shared = scopeOptions({ action: "move", date: "2026-11-09", sharedOnly: true, daysShift: { from: ["MO", "WE"], to: ["TU", "TH"] } });
   assert.deepEqual(shared[0].details, [SCOPE_TEXT.sharedAll, SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio")]);
 });
+
+// ---------------------------------------------------------------------------------------
+// Revisione finale B1: il giorno della settimana si legge nel fuso della serie, non in quello del
+// dispositivo. Ogni test fissa il fuso del dispositivo e lo rimette com'era.
+// ---------------------------------------------------------------------------------------
+
+const withTz = (zone, run) => {
+  const previous = process.env.TZ;
+  process.env.TZ = zone;
+  try {
+    return run();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+};
+/** Ogni lunedì a Roma, dalle `start` (istante UTC del 2 novembre) per un'ora. */
+const romeMondays = (start) => ({
+  ...event({ start, end: new Date(Date.parse(start) + 3600e3).toISOString() }),
+  recurrence: "weekly",
+  repeat: { freq: "weekly", byWeekday: ["MO"] },
+  repeatLegacy: "weekly|",
+  timeZone: "Europe/Rome"
+});
+/** Giorno della settimana e ora a Roma di ogni data di novembre. */
+const romeShown = (events) =>
+  expandEvents(events, new Date("2026-11-01T00:00:00.000Z"), new Date("2026-12-01T00:00:00.000Z")).map((item) =>
+    new Date(item.start).toLocaleString("en-GB", { timeZone: "Europe/Rome", weekday: "short", hour: "2-digit", minute: "2-digit" })
+  );
+
+test("B1. serie di Roma cambiata da Tokyo: solo l'ora (18:00 → 17:30 dello stesso lunedì), la regola resta il lunedì", () => {
+  // Lunedì 18:00 a Roma = martedì 02:00 a Tokyo: i due fusi cadono in giorni diversi.
+  const series = romeMondays("2026-11-02T17:00:00.000Z");
+  for (const zone of ["Asia/Tokyo", "Europe/Rome"]) {
+    withTz(zone, () => {
+      const item = findOccurrence([series], "s", "2026-11-16");
+      const changes = { start: "2026-11-16T16:30:00.000Z", end: "2026-11-16T17:30:00.000Z" };
+      assert.equal(userRuleChange({ item, series, changes }), false, zone);
+      for (const scope of ["all", "following"]) {
+        const { calls, weekdays } = occurrenceEditCalls({ item, series, scope, changes, shown: item });
+        assert.ok(calls.every((call) => !("repeat" in call.patch)), `${zone} ${scope}: ${JSON.stringify(calls)}`);
+        assert.equal(weekdays, undefined, `${zone} ${scope}`);
+        const after = simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events;
+        const expected = scope === "all" ? ["Mon 17:30", "Mon 17:30", "Mon 17:30", "Mon 17:30", "Mon 17:30"] : ["Mon 18:00", "Mon 18:00", "Mon 17:30", "Mon 17:30", "Mon 17:30"];
+        assert.deepEqual(romeShown(after), expected, `${zone} ${scope}`);
+      }
+      // La scelta non dice che le date cambiano giorno.
+      const impact = scopeImpact([series], item, "all", occurrenceEditCalls({ item, series, scope: "all", changes }).calls, NOW, changes);
+      assert.deepEqual(impact, NO_IMPACT, zone);
+    });
+  }
+});
+
+test("B1. serie di Roma cambiata da Londra: lunedì 00:30 → 00:00 resta lunedì (non domenica)", () => {
+  // Lunedì 00:30 a Roma = domenica 23:30 a Londra.
+  const series = romeMondays("2026-11-01T23:30:00.000Z");
+  withTz("Europe/London", () => {
+    const item = findOccurrence([series], "s", "2026-11-16");
+    const changes = { start: "2026-11-15T23:00:00.000Z", end: "2026-11-16T00:00:00.000Z" };
+    for (const scope of ["all", "following"]) {
+      const { calls } = occurrenceEditCalls({ item, series, scope, changes, shown: item });
+      assert.ok(calls.every((call) => !("repeat" in call.patch)), `${scope}: ${JSON.stringify(calls)}`);
+      const after = simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events;
+      assert.ok(romeShown(after).every((text) => text.startsWith("Mon")), `${scope}: ${romeShown(after)}`);
+      assert.deepEqual(seriesOf(after, scope === "all" ? "s" : "s~2026-11-16").repeat, { freq: "weekly", byWeekday: ["MO"] }, scope);
+    }
+  });
+});
+
+test("B1. da un altro fuso uno spostamento vero di giorno (a Roma) porta la regola sul giorno nuovo", () => {
+  const series = romeMondays("2026-11-02T17:00:00.000Z");
+  for (const zone of ["Asia/Tokyo", "Pacific/Honolulu", "Europe/Rome"]) {
+    withTz(zone, () => {
+      const item = findOccurrence([series], "s", "2026-11-16");
+      // Lunedì 16 18:00 → martedì 17 18:00 a Roma.
+      const changes = shiftMs(item, DAY);
+      const { calls } = occurrenceEditCalls({ item, series, scope: "all", changes });
+      const after = simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events;
+      assert.deepEqual(seriesOf(after).repeat, { freq: "weekly", byWeekday: ["TU"] }, zone);
+      assert.deepEqual(romeShown(after), ["Tue 18:00", "Tue 18:00", "Tue 18:00", "Tue 18:00"], zone);
+    });
+  }
+});
+
+test("B1. «Tutti» con una regola nuova scelta da un altro fuso: la serie parte dal giorno giusto a Roma", () => {
+  // Ogni giorno alle 18 a Roma dal 2; dal mercoledì 18 diventa "ogni settimana": parte mercoledì 4.
+  const series = { ...romeMondays("2026-11-02T17:00:00.000Z"), repeat: { freq: "daily" }, recurrence: "daily", repeatLegacy: "daily|" };
+  for (const zone of ["Asia/Tokyo", "Pacific/Kiritimati", "Europe/Rome"]) {
+    withTz(zone, () => {
+      const wednesday = findOccurrence([series], "s", "2026-11-18");
+      const { calls, newStart } = occurrenceEditCalls({ item: wednesday, series, scope: "all", changes: { repeat: { freq: "weekly" } } });
+      assert.equal(newStart, "2026-11-04", zone);
+      const after = simulateOccurrenceEdit([series], "s", "2026-11-18", calls, NOW).events;
+      assert.deepEqual(seriesOf(after).repeat, { freq: "weekly", byWeekday: ["WE"] }, zone);
+      assert.deepEqual(romeShown(after), ["Wed 18:00", "Wed 18:00", "Wed 18:00", "Wed 18:00"], zone);
+    });
+  }
+});

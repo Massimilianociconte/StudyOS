@@ -336,3 +336,35 @@ test("N1. update_event con occurrenceDate e «all» da un giorno dopo: il risult
   assert.equal(result.data.start, "2026-11-18T09:00:00.000Z");
   assert.ok(/seriesStart/.test(findAgentTool("studyos_update_event").description));
 });
+
+/** Fuso del dispositivo fissato per tutta la chiamata (anche asincrona), poi rimesso com'era. */
+const withTz = async (zone, run) => {
+  const previous = process.env.TZ;
+  process.env.TZ = zone;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+};
+
+test("B1 (revisione finale). update_event da Honolulu: martedì 17 alle 10 a Roma è ancora lunedì 16 a Honolulu, ma la regola va al martedì", async () => {
+  for (const zone of ["Pacific/Honolulu", "Pacific/Kiritimati", "Asia/Tokyo"]) {
+    await withTz(zone, async () => {
+      for (const scope of ["all", "following"]) {
+        useStudyStore.setState({ events: [MONDAYS] });
+        const moved = await executeAgentTool("studyos_update_event", { id: "m", occurrenceDate: "2026-11-16", scope, start: "2026-11-17T09:00:00.000Z" });
+        assert.equal(moved.ok, true, JSON.stringify(moved));
+        const holder = scope === "all" ? byId("m") : events().find((item) => item.splitFrom === "m");
+        assert.deepEqual(holder.repeat, { freq: "weekly", byWeekday: ["TU"] }, `${zone} ${scope}`);
+        assert.deepEqual(weekdays(), scope === "all" ? ["Tue", "Tue", "Tue", "Tue"] : ["Mon", "Mon", "Tue", "Tue"], `${zone} ${scope}`);
+      }
+      // Solo l'ora, lo stesso lunedì a Roma (a Honolulu è ancora domenica): la regola resta.
+      useStudyStore.setState({ events: [MONDAYS] });
+      assert.equal((await executeAgentTool("studyos_update_event", { id: "m", occurrenceDate: "2026-11-16", scope: "all", start: "2026-11-16T07:00:00.000Z" })).ok, true);
+      assert.deepEqual(byId("m").repeat, { freq: "weekly", byWeekday: ["MO"] }, zone);
+      assert.deepEqual(weekdays(), ["Mon", "Mon", "Mon", "Mon", "Mon"], zone);
+    });
+  }
+});
