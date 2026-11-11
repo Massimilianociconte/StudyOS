@@ -1,8 +1,8 @@
 // Logica del modulo evento (creazione e modifica), senza React: bozza ↔ campi dell'evento, modifiche
 // da salvare, orari e "tutto il giorno", errori, promemoria, scelta "solo questo / successivi / tutti".
-import type { CalendarEvent, EventCategory, EventReminder, RepeatRule } from "../types";
+import type { CalendarEvent, EventCategory, EventReminder, RepeatRule, Weekday } from "../types";
 import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, sanitizeTypeColorOverrides, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "./eventColors";
-import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME } from "./labels";
+import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
 import { describeReminder, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
 import type { ScopeImpact, SeriesSpan } from "./occurrenceEdit";
@@ -393,6 +393,33 @@ const rowLines = (impact: ScopeImpact | undefined) => {
   return [...lost, ...(impact.kept ? [lost.length ? SCOPE_TEXT.othersKept : SCOPE_TEXT.rowsKept] : [])];
 };
 
+const WEEK: readonly Weekday[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+
+/**
+ * Giorni della settimana in breve: tre o più di fila con il trattino ("lun–ven", anche a cavallo della
+ * domenica: "dom–gio"), gli altri separati da virgole ("lun, mer").
+ */
+export const weekdaysText = (days: readonly Weekday[]) => {
+  const set = new Set(days.filter((day) => WEEK.includes(day)));
+  if (set.size === 7) return `${WEEKDAY_SHORT.MO}–${WEEKDAY_SHORT.SU}`;
+  const has = (index: number) => set.has(WEEK[(index + 7) % 7]);
+  // Si parte dal primo giorno che apre una serie di fila (non preceduto da un altro).
+  const first = WEEK.findIndex((_, index) => has(index) && !has(index - 1));
+  if (first < 0) return "";
+  const runs: Weekday[][] = [];
+  for (let step = 0; step < 7; step += 1) {
+    const index = (first + step) % 7;
+    if (!has(index)) continue;
+    if (step > 0 && has(index - 1)) runs[runs.length - 1].push(WEEK[index]);
+    else runs.push([WEEK[index]]);
+  }
+  return runs
+    .map((run) =>
+      run.length >= 3 ? `${WEEKDAY_SHORT[run[0]]}–${WEEKDAY_SHORT[run[run.length - 1]]}` : run.map((day) => WEEKDAY_SHORT[day]).join(", ")
+    )
+    .join(", ");
+};
+
 /**
  * Opzioni della scelta per un evento che si ripete, con le conseguenze dette come stanno.
  * - Cambiando la regola non c'è "Solo questo" (una data sola non ha una ripetizione).
@@ -403,6 +430,8 @@ const rowLines = (impact: ScopeImpact | undefined) => {
  * - Dal primo giorno di una serie mai divisa "Questo e i successivi" è "Tutti": non si propone.
  * - `rowContent`: il giorno è cambiato da solo con contenuti suoi, che "Questo e i successivi" porta
  *   ai giorni dopo (lo si dice).
+ * - `daysShift`: spostando il giorno, una regola con più giorni della settimana li sposta tutti
+ *   (vedi `movedRule`): si dicono i giorni prima e dopo.
  * - Eventi di altri (`sharedOnly`): solo "Tutti".
  */
 export const scopeOptions = ({
@@ -415,7 +444,8 @@ export const scopeOptions = ({
   impacts = {},
   span,
   newStart,
-  rowContent = false
+  rowContent = false,
+  daysShift
 }: {
   action: ScopeAction;
   date: string;
@@ -428,9 +458,11 @@ export const scopeOptions = ({
   span?: SeriesSpan;
   newStart?: string;
   rowContent?: boolean;
+  daysShift?: { from: readonly Weekday[]; to: readonly Weekday[] };
 }): ScopeOption[] => {
   const day = occurrenceDayText(date);
   const pin = pinsZone ? [SCOPE_TEXT.pinZone(pinsZone)] : [];
+  const shift = daysShift && action !== "delete" ? { from: weekdaysText(daysShift.from), to: weekdaysText(daysShift.to) } : null;
   const range = {
     ...(span?.from ? { from: occurrenceDayText(span.from) } : {}),
     ...(span?.until ? { until: occurrenceDayText(span.until) } : {}),
@@ -440,11 +472,12 @@ export const scopeOptions = ({
     id: "all",
     label: SCOPE_TEXT.all,
     details: sharedOnly
-      ? [SCOPE_TEXT.sharedAll]
+      ? [SCOPE_TEXT.sharedAll, ...(shift ? [SCOPE_TEXT.allDaysShift(shift.from, shift.to)] : [])]
       : action === "delete"
         ? [span && span.parts > 1 ? SCOPE_TEXT.allDeleteFamily : SCOPE_TEXT.allDelete(range.past)]
         : [
             action === "move" ? SCOPE_TEXT.allMove(range) : SCOPE_TEXT.allEdit(range),
+            ...(shift ? [SCOPE_TEXT.allDaysShift(shift.from, shift.to)] : []),
             ...(impacts.all?.ownLost ? [SCOPE_TEXT.ownLost] : []),
             ...(newStart ? [SCOPE_TEXT.newStart(occurrenceDayText(newStart))] : []),
             ...rowLines(impacts.all),
@@ -462,6 +495,7 @@ export const scopeOptions = ({
       ? [SCOPE_TEXT.followingDelete(day)]
       : [
           action === "move" ? SCOPE_TEXT.followingMove(day) : SCOPE_TEXT.followingEdit(day),
+          ...(shift ? [SCOPE_TEXT.followingDaysShift(shift.from, shift.to)] : []),
           ...(rowContent ? [SCOPE_TEXT.followingTakesDay] : []),
           ...rowLines(impacts.following),
           ...(impacts.following?.absorbed ? [SCOPE_TEXT.followingSplits] : []),

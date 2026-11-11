@@ -52,7 +52,7 @@ import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
 import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, rowHasOwnContent, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
-import { occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, type ScopeImpact } from "../lib/occurrenceEdit";
+import { occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, weekdayShift, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
   newOccasionDraft,
   newVacationDraft,
@@ -508,11 +508,15 @@ export function CalendarView() {
     const current = useStudyStore.getState().events;
     const impacts: Partial<Record<"following" | "all", ScopeImpact>> = {};
     let newStart: string | undefined;
+    let daysShift: ReturnType<typeof weekdayShift>;
     if (own) {
       for (const scope of ["following", "all"] as const) {
         const plan = occurrenceEditCalls({ item, series: own.series, scope, changes, shown });
         impacts[scope] = scopeImpact(current, item, scope, plan.calls, undefined, changes);
-        if (scope === "all") newStart = plan.newStart;
+        if (scope === "all") {
+          newStart = plan.newStart;
+          daysShift = plan.weekdays;
+        }
       }
     }
     return scopeOptions({
@@ -523,7 +527,8 @@ export function CalendarView() {
       impacts,
       span: seriesSpan(current, target.seriesId, target.date, civilDateOf(new Date())),
       newStart,
-      rowContent: Boolean(own && target.row && rowHasOwnContent(item, own.series))
+      rowContent: Boolean(own && target.row && rowHasOwnContent(item, own.series)),
+      daysShift
     });
   };
 
@@ -556,18 +561,24 @@ export function CalendarView() {
       ? sharedEvents.find((event) => event.id === item.id && event.sharedFrom.ownerId === origin.ownerId)
       : events.find((event) => event.id === item.id);
     if (!series) return;
-    // Evento altrui che si ripete: si sposta tutta la serie dello stesso scarto (lo si dice prima).
-    if (item.recurring) {
-      const scope = await askScope(SCOPE_TEXT.titleMove(shortTitle(series.title)), scopeOptions({ action: "move", date: item.occurrenceDate, sharedOnly: true }));
-      if (scope !== "all") return;
-    }
     const start = new Date(parseISO(series.start).getTime() + delta);
     const end = new Date(parseISO(series.end).getTime() + delta);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    // Evento altrui che si ripete: si sposta tutta la serie dello stesso scarto (lo si dice prima, con i
+    // giorni della settimana nuovi se la regola ne ha più d'uno).
+    if (item.recurring) {
+      const preview = seriesMovePatch(series, start.toISOString(), end.toISOString());
+      const daysShift = preview.repeat ? weekdayShift(normalizeRepeat(series), preview.repeat) : undefined;
+      const scope = await askScope(
+        SCOPE_TEXT.titleMove(shortTitle(series.title)),
+        scopeOptions({ action: "move", date: item.occurrenceDate, sharedOnly: true, daysShift })
+      );
+      if (scope !== "all") return;
+    }
     if (origin) {
       // Solo dallo store dei dati altrui (controlla il permesso e mette in coda la scrittura), sull'ultima
-      // versione salvata: cambiano gli orari (e la regola scritta con il giorno della settimana, che segue
-      // il giorno nuovo), il resto resta com'è per il proprietario.
+      // versione salvata: cambiano gli orari (e i giorni della settimana scritti nella regola, che si
+      // spostano dello stesso scarto), il resto resta com'è per il proprietario.
       const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(origin.ownerId, "calendarEvent", series.id))?.entity;
       const current = latest ? sharedCalendarEvent(latest) : null;
       if (!latest || !current) return;

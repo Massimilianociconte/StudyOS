@@ -1029,6 +1029,8 @@ export const EVENT_EDITOR_TEXT = {
   sectionLook: "Aspetto e collocazione",
   sectionMore: "Altre opzioni",
   sectionMoreHint: "ripetizione, promemoria, descrizione, luogo, collegamenti",
+  /** Senza collegamenti (calendario di un'altra persona, evento importato): la sezione non li ha. */
+  sectionMoreHintNoLinks: "ripetizione, promemoria, descrizione, luogo",
   title: "Titolo",
   titlePlaceholder: "Es. Lezione di Anatomia",
   taskTitlePlaceholder: "Es. Consegnare la relazione di laboratorio",
@@ -1167,6 +1169,9 @@ export const SCOPE_TEXT = {
   followingKeepsEnd: "La serie finisce quando finiva prima.",
   /** Da un giorno cambiato da solo: i successivi prendono ciò che quel giorno ha di suo (vedi followingPatch). */
   followingTakesDay: "Anche i giorni dopo prendono il titolo e i dettagli che questo giorno aveva solo per sé.",
+  /** Regola con più giorni della settimana spostata: tutti i giorni dello stesso scarto (es. "lun–ven", "mar–sab"). */
+  followingDaysShift: (from: string, to: string) => `Da questo giorno in poi le date passano da ${from} a ${to}.`,
+  allDaysShift: (from: string, to: string) => `Tutte le date passano da ${from} a ${to}.`,
   /** "Tutti": le date che cambiano davvero (una parte di una serie divisa, o tutta la serie). */
   allEdit: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
     from && until

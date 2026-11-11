@@ -542,7 +542,7 @@ export function EventEditor({
               <details className="quiet-panel p-4">
                 <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-extrabold">
                   <span>{EVENT_EDITOR_TEXT.sectionMore}</span>
-                  <span className="min-w-0 flex-1 truncate font-bold text-[var(--muted)]">· {draft.repeat ? describeRule(draft.repeat, startDate) : EVENT_EDITOR_TEXT.sectionMoreHint}</span>
+                  <span className="min-w-0 flex-1 truncate font-bold text-[var(--muted)]">· {draft.repeat ? describeRule(draft.repeat, startDate) : imported || inOtherCalendar ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks : EVENT_EDITOR_TEXT.sectionMoreHint}</span>
                   <Icon name="ChevronDown" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
                 </summary>
                 <div className="mt-3 grid grid-cols-1 gap-4">

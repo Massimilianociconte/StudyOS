@@ -365,7 +365,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     name: "studyos_update_event",
     title: "Aggiorna evento",
     description:
-      "Aggiorna un evento. Se cambi solo start, la durata resta la stessa. Su una serie, senza occurrenceDate, la modifica vale per tutte le occorrenze. Con occurrenceDate (un giorno della serie) start ed end sono i nuovi orari di quel giorno e scope dice cosa cambia: this = solo quel giorno (non la regola); following = quel giorno e i successivi (la serie si divide in due); all = tutta la serie (predefinito), spostata dello stesso scarto.",
+      "Aggiorna un evento. Se cambi solo start, la durata resta la stessa. Su una serie, senza occurrenceDate, la modifica vale per tutte le occorrenze. Con occurrenceDate (un giorno della serie) start ed end sono i nuovi orari di quel giorno e scope dice cosa cambia: this = solo quel giorno (non la regola); following = quel giorno e i successivi (la serie si divide in due); all = tutta la serie (predefinito), spostata dello stesso scarto. Spostando a un altro giorno della settimana, i giorni scritti nella regola si spostano tutti dello stesso scarto (lun–ven un giorno dopo diventa mar–sab), salvo una repeat data qui. Con following o all il risultato ha anche seriesStart: il primo inizio della serie dopo la modifica (con following, della parte nuova).",
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({

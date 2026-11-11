@@ -1,7 +1,7 @@
 // Modifica di un giorno di una serie con la portata scelta ("Solo questo · Questo e i successivi ·
 // Tutti"): le chiamate da fare allo store, la regola con i giorni scritti, e ciò che la modifica fa
 // davvero alle date cambiate o annullate da sole (simulata con il motore, per dirlo prima). Puro.
-import type { CalendarEvent, RepeatRule } from "../types";
+import type { CalendarEvent, RepeatRule, Weekday } from "../types";
 import {
   applyEditPlan,
   expandEvents,
@@ -120,15 +120,50 @@ const pickedDay = (item: Pick<CalendarEvent, "start">, changes: Partial<Calendar
   return Number.isNaN(start.getTime()) ? "" : civilDateOf(start);
 };
 
+const WEEK: readonly Weekday[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+
+/**
+ * Regola dopo lo spostamento di un suo giorno da `from` a `to` (date civili). Settimanale con più
+ * giorni, tra cui quello di `from`: ogni giorno si sposta dello stesso scarto, come in Google Calendar
+ * ("lun–ven" un giorno dopo: "mar–sab"). Ogni 2 o più settimane si sposta anche l'inizio della
+ * settimana (WKST), così le date della stessa settimana restano insieme. Un giorno solo o "il secondo
+ * lunedì": vedi `adaptRuleToStart`. Stesso giorno della settimana, o un giorno che la regola non ha:
+ * la regola com'è (stesso oggetto).
+ */
+export const movedRule = (rule: RepeatRule | null | undefined, from: string, to: string): RepeatRule | null => {
+  if (!rule) return null;
+  if (!isCivilDate(from) || !isCivilDate(to)) return rule;
+  const days = rule.freq === "weekly" ? rule.byWeekday ?? [] : [];
+  if (days.length < 2) return adaptRuleToStart(rule, from, to);
+  const shift = (WEEK.indexOf(weekdayOf(to)) - WEEK.indexOf(weekdayOf(from)) + 7) % 7;
+  if (!shift || !days.includes(weekdayOf(from))) return rule;
+  const moved = new Set(days.map((day) => WEEK[(WEEK.indexOf(day) + shift) % 7]));
+  const next: RepeatRule = { ...rule, byWeekday: WEEK.filter((day) => moved.has(day)) };
+  if ((rule.interval ?? 1) > 1) {
+    const wkst = WEEK[(WEEK.indexOf(rule.wkst ?? "MO") + shift) % 7];
+    if (wkst === "MO") delete next.wkst;
+    else next.wkst = wkst;
+  }
+  return next;
+};
+
+/**
+ * Giorni della settimana di una regola settimanale con più giorni spostati tutti insieme (per dirlo
+ * nella scelta: "Tutte le date passano da lun–ven a mar–sab"). Altrimenti niente.
+ */
+export const weekdayShift = (before: RepeatRule | null | undefined, after: RepeatRule | null | undefined) => {
+  const from = before?.freq === "weekly" ? before.byWeekday ?? [] : [];
+  const to = after?.freq === "weekly" ? after.byWeekday ?? [] : [];
+  if (from.length < 2 || from.length !== to.length || from.join() === to.join()) return undefined;
+  return { from: [...from], to: [...to] };
+};
+
 /**
  * Regola che la serie prende da sola quando il giorno `date` va al giorno `picked`: "il martedì"
- * diventa "il mercoledì", "il secondo lunedì" il giorno nuovo (vedi `adaptRuleToStart`). Il modulo la
- * scrive già cambiando l'inizio; uno spostamento no.
+ * diventa "il mercoledì", "il secondo lunedì" il giorno nuovo, "lun–ven" diventa "mar–sab" (vedi
+ * `movedRule`). Il modulo scrive già il giorno solo cambiando l'inizio; uno spostamento no.
  */
-const followedRule = (series: CalendarEvent, date: string, picked: string) => {
-  const rule = normalizeRepeat(series);
-  return isCivilDate(date) && isCivilDate(picked) ? adaptRuleToStart(rule, date, picked) : rule;
-};
+const followedRule = (series: CalendarEvent, date: string, picked: string) => movedRule(normalizeRepeat(series), date, picked);
 
 /**
  * La modifica cambia la regola per scelta? Non se la regola nuova è solo quella che segue il giorno
@@ -158,7 +193,7 @@ export const occurrenceEditCalls = ({
   scope: OccurrenceScope;
   changes: Partial<CalendarEvent>;
   shown?: Partial<CalendarEvent>;
-}): { calls: OccurrenceCall[]; newStart?: string } => {
+}): { calls: OccurrenceCall[]; newStart?: string; weekdays?: { from: Weekday[]; to: Weekday[] } } => {
   const target = occurrenceTarget(item);
   const picked = pickedDay(item, changes);
   const chosen = userRuleChange({ item, series, changes });
@@ -166,8 +201,11 @@ export const occurrenceEditCalls = ({
   if (scope === "this") return { calls: [{ scope, patch: own }] };
   const followed = chosen ? null : followedRule(series, target.date, picked);
   const moved = followed && ruleKey(followed) !== ruleKey(normalizeRepeat(series)) ? { ...own, repeat: followed } : own;
+  // Più giorni della settimana spostati insieme: si dice nella scelta.
+  const shifted = followed ? weekdayShift(normalizeRepeat(series), followed) : undefined;
+  const weekdays = shifted ? { weekdays: shifted } : {};
   const ruled = moved.repeat ? { ...moved, repeat: explicitRule(moved.repeat, picked) } : moved;
-  if (scope === "following") return { calls: [{ scope, patch: followingPatch(shown, ruled, target.row) }] };
+  if (scope === "following") return { calls: [{ scope, patch: followingPatch(shown, ruled, target.row) }], ...weekdays };
   let patch = allScopePatch(ruled, { occurrence: item, series, date: target.date });
   let newStart: string | undefined;
   if (ruled.repeat) {
@@ -183,21 +221,22 @@ export const occurrenceEditCalls = ({
   }
   const calls: OccurrenceCall[] = [{ scope: "all", patch }];
   if (target.row) calls.push({ scope: "this", patch: changes });
-  return { calls, ...(newStart ? { newStart } : {}) };
+  return { calls, ...(newStart ? { newStart } : {}), ...weekdays };
 };
 
 /**
  * Tutta la serie spostata con il nuovo inizio `start` (evento di un'altra persona trascinato, agente
- * senza giorno): la regola scritta con il giorno della settimana segue il giorno nuovo, nella stessa
- * modifica, con i campi vecchi coerenti (per le app vecchie e per l'impronta della regola). Se il
- * giorno della settimana non cambia, o la regola non lo scrive, solo gli orari.
+ * senza giorno): la regola scritta con i giorni della settimana li sposta dello stesso scarto (vedi
+ * `movedRule`), nella stessa modifica, con i campi vecchi coerenti (per le app vecchie e per
+ * l'impronta della regola). Se il giorno della settimana non cambia, o la regola non lo scrive, solo
+ * gli orari.
  */
 export const seriesMovePatch = (event: CalendarEvent, start: string, end: string): Partial<CalendarEvent> => {
   const rule = normalizeRepeat(event);
   const zone = isValidTimeZone(event.timeZone) ? event.timeZone : undefined;
   const from = startDayOf(event.start, event.allDay, zone);
   const to = startDayOf(start, event.allDay, zone);
-  const next = rule && isCivilDate(from) && isCivilDate(to) ? adaptRuleToStart(rule, from, to) : null;
+  const next = rule && isCivilDate(from) && isCivilDate(to) ? movedRule(rule, from, to) : null;
   if (!next || ruleKey(next) === ruleKey(rule)) return { start, end };
   const projection = legacyProjection(next, to);
   return { start, end, repeat: next, recurrence: projection.recurrence, recurrenceUntil: projection.recurrenceUntil, repeatLegacy: repeatLegacyKey(projection) };

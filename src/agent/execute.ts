@@ -655,7 +655,19 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   const { scope, occurrence, target, series } = day;
   const { calls } = occurrenceEditCalls({ item: occurrence, series, scope, changes });
   for (const call of calls) await state().editOccurrence(target.seriesId, target.date, call.scope, call.patch);
-  return ok({ id: target.seriesId, occurrenceDate: target.date, scope, start: changes.start ?? occurrence.start, end: changes.end ?? occurrence.end });
+  // Nuovo inizio della serie (con «following», della parte nuova, `${serie}~${giorno}` come la crea
+  // planEdit): l'agente vede se la prima data è cambiata.
+  const after = state().events;
+  const part = scope === "following" ? after.find((item) => item.id === `${target.seriesId}~${target.date}`) : undefined;
+  const holder = scope === "this" ? undefined : part ?? after.find((item) => item.id === target.seriesId);
+  return ok({
+    id: target.seriesId,
+    occurrenceDate: target.date,
+    scope,
+    start: changes.start ?? occurrence.start,
+    end: changes.end ?? occurrence.end,
+    ...(holder ? { seriesStart: holder.start } : {})
+  });
 };
 
 const deleteEvent = async (args: Args): Promise<AgentCallResult> => {

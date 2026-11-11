@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   alignedSeriesStart,
   explicitRule,
+  movedRule,
   occurrenceEditCalls,
   scopeImpact,
   seriesSpan,
@@ -10,7 +11,7 @@ import {
   simulateOccurrenceEdit,
   userRuleChange
 } from "../src/lib/occurrenceEdit.ts";
-import { scopeOptions } from "../src/lib/eventEditor.ts";
+import { scopeOptions, weekdaysText } from "../src/lib/eventEditor.ts";
 import { findOccurrence } from "../src/lib/occurrenceLookup.ts";
 import { applyEditPlan, expandEvents, isOccurrenceRow, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { customFromRule, repeatPresets, ruleFromCustom } from "../src/lib/repeatPicker.ts";
@@ -347,4 +348,100 @@ test("Nit 6. «Questo e i successivi» da un giorno cambiato da solo: si dice ch
     scopeOptions({ action: "move", date: "2026-11-16", rowContent }).find((option) => option.id === "following").details;
   assert.ok(following(true).includes(SCOPE_TEXT.followingTakesDay));
   assert.ok(!following(false).includes(SCOPE_TEXT.followingTakesDay));
+});
+
+// Giorni feriali (lun–ven) a mezzogiorno dal lunedì 2 novembre, come la scelta pronta.
+const WORKDAYS = () => event({ repeat: { freq: "weekly", byWeekday: ["MO", "TU", "WE", "TH", "FR"] } });
+const TUE_SAT = ["TU", "WE", "TH", "FR", "SA"];
+const dates = (events, from, to) => expandEvents(events, localMidnight(from), localMidnight(to)).map((item) => item.occurrenceDate);
+const days = (from, to, weekdays) => {
+  const names = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+  const result = [];
+  for (let day = new Date(`${from}T12:00:00Z`); day <= new Date(`${to}T12:00:00Z`); day = new Date(day.getTime() + DAY)) {
+    if (weekdays.includes(names[day.getUTCDay()])) result.push(day.toISOString().slice(0, 10));
+  }
+  return result;
+};
+
+test("R2-S1. la regola con più giorni segue lo spostamento: tutti i giorni dello stesso scarto", () => {
+  const workdays = { freq: "weekly", byWeekday: ["MO", "TU", "WE", "TH", "FR"] };
+  assert.deepEqual(movedRule(workdays, "2026-11-16", "2026-11-17"), { freq: "weekly", byWeekday: TUE_SAT });
+  assert.deepEqual(movedRule(workdays, "2026-11-16", "2026-11-15"), { freq: "weekly", byWeekday: ["MO", "TU", "WE", "TH", "SU"] });
+  // Ogni 2 settimane: anche l'inizio della settimana si sposta (WKST), così le coppie restano insieme.
+  assert.deepEqual(movedRule({ freq: "weekly", byWeekday: ["MO", "WE"], interval: 2 }, "2026-11-18", "2026-11-19"), {
+    freq: "weekly",
+    byWeekday: ["TU", "TH"],
+    interval: 2,
+    wkst: "TU"
+  });
+  assert.equal("wkst" in movedRule({ freq: "weekly", byWeekday: ["TU", "TH"], interval: 2, wkst: "TU" }, "2026-11-17", "2026-11-16"), false);
+  // Stesso giorno della settimana (una settimana dopo), o un giorno che la regola non ha: la regola resta.
+  assert.equal(movedRule(workdays, "2026-11-16", "2026-11-23"), workdays);
+  assert.equal(movedRule({ freq: "weekly", byWeekday: ["MO", "WE"] }, "2026-11-17", "2026-11-18").byWeekday.join(), "MO,WE");
+  // Un giorno solo e il mensile: come prima.
+  assert.deepEqual(movedRule({ freq: "weekly", byWeekday: ["MO"] }, "2026-11-16", "2026-11-17"), { freq: "weekly", byWeekday: ["TU"] });
+  assert.equal(weekdaysText(["MO", "TU", "WE", "TH", "FR"]), "lun–ven");
+  assert.equal(weekdaysText(TUE_SAT), "mar–sab");
+  assert.equal(weekdaysText(["MO", "TU", "WE", "TH", "SU"]), "dom–gio");
+  assert.equal(weekdaysText(["MO", "WE"]), "lun, mer");
+  assert.equal(weekdaysText(["MO", "TU", "FR"]), "lun, mar, ven");
+});
+
+test("R2-S1. editor «Tutti»: Giorni feriali spostati dal lunedì al martedì diventano mar–sab, senza perdere la prima data", () => {
+  const series = WORKDAYS();
+  for (const date of ["2026-11-16", "2026-11-02"]) {
+    const item = findOccurrence([series], "s", date);
+    // Trascinamento (solo gli orari) e modulo (inizio cambiato e altro, regola non toccata): lo stesso.
+    for (const changes of [shiftMs(item, DAY), { ...shiftMs(item, DAY), notes: "Aula 2" }]) {
+      const { calls, newStart, weekdays } = occurrenceEditCalls({ item, series, scope: "all", changes });
+      assert.equal(newStart, undefined, date);
+      assert.deepEqual(weekdays, { from: ["MO", "TU", "WE", "TH", "FR"], to: TUE_SAT }, date);
+      const after = simulateOccurrenceEdit([series], "s", date, calls, NOW).events;
+      assert.deepEqual(seriesOf(after).repeat, { freq: "weekly", byWeekday: TUE_SAT }, date);
+      assert.deepEqual(dates(after, "2026-11-01", "2026-11-29"), days("2026-11-03", "2026-11-28", TUE_SAT), date);
+    }
+  }
+  // La scelta lo dice: "Tutte le date passano da lun–ven a mar–sab".
+  const options = scopeOptions({ action: "move", date: "2026-11-16", daysShift: { from: ["MO", "TU", "WE", "TH", "FR"], to: TUE_SAT } });
+  assert.ok(options.find((option) => option.id === "all").details.includes(SCOPE_TEXT.allDaysShift("lun–ven", "mar–sab")));
+  assert.ok(options.find((option) => option.id === "following").details.includes(SCOPE_TEXT.followingDaysShift("lun–ven", "mar–sab")));
+  assert.ok(!options.find((option) => option.id === "this").details.some((line) => line.includes("mar–sab")));
+  assert.equal(SCOPE_TEXT.allDaysShift("lun–ven", "mar–sab"), "Tutte le date passano da lun–ven a mar–sab.");
+  // Una regola scelta a mano non si sposta e non si dice.
+  const item = findOccurrence([series], "s", "2026-11-16");
+  const chosen = occurrenceEditCalls({ item, series, scope: "all", changes: { ...shiftMs(item, DAY), repeat: { freq: "weekly", byWeekday: ["TU", "TH"] } } });
+  assert.equal(chosen.weekdays, undefined);
+});
+
+test("R2-S1. editor «Questo e i successivi»: dal 16 le date passano a mar–sab, prima restano lun–ven", () => {
+  const series = WORKDAYS();
+  const item = findOccurrence([series], "s", "2026-11-16");
+  const { calls, weekdays } = occurrenceEditCalls({ item, series, scope: "following", changes: shiftMs(item, DAY), shown: item });
+  assert.deepEqual(weekdays, { from: ["MO", "TU", "WE", "TH", "FR"], to: TUE_SAT });
+  const after = simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events;
+  assert.deepEqual(dates(after, "2026-11-01", "2026-11-29"), [...days("2026-11-02", "2026-11-13", ["MO", "TU", "WE", "TH", "FR"]), ...days("2026-11-17", "2026-11-28", TUE_SAT)]);
+  assert.deepEqual(after.find((entry) => entry.splitFrom === "s").repeat, { freq: "weekly", byWeekday: TUE_SAT });
+  // Dal mercoledì 18 al giovedì 19: lunedì 16 e martedì 17 restano, poi gio, ven, sab.
+  const wednesday = findOccurrence([series], "s", "2026-11-18");
+  const later = occurrenceEditCalls({ item: wednesday, series, scope: "following", changes: shiftMs(wednesday, DAY), shown: wednesday });
+  const moved = simulateOccurrenceEdit([series], "s", "2026-11-18", later.calls, NOW).events;
+  assert.deepEqual(dates(moved, "2026-11-16", "2026-11-23"), ["2026-11-16", "2026-11-17", "2026-11-19", "2026-11-20", "2026-11-21"]);
+});
+
+test("R2-S1. tutta la serie spostata (agente senza giorno, evento di un'altra persona): ogni giorno della regola dello stesso scarto", () => {
+  const series = { ...event({ repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } }), recurrence: "weekly", repeatLegacy: "weekly|", timeZone: "Europe/Rome" };
+  const start = new Date(Date.parse(series.start) + DAY).toISOString();
+  const end = new Date(Date.parse(series.end) + DAY).toISOString();
+  const patch = seriesMovePatch(series, start, end);
+  assert.deepEqual(patch.repeat, { freq: "weekly", byWeekday: ["TU", "TH"] });
+  const after = { ...series, ...patch };
+  // Prima data martedì 3 (nessun martedì in più davanti a lunedì e mercoledì).
+  assert.deepEqual(dates([after], "2026-11-01", "2026-11-15"), ["2026-11-03", "2026-11-05", "2026-11-10", "2026-11-12"]);
+  // Ogni 2 settimane lun e mer, spostata di 6 giorni (lunedì 2 → domenica 8): dom 8, mar 10, dom 22, mar 24.
+  const biweekly = { ...series, repeat: { freq: "weekly", byWeekday: ["MO", "WE"], interval: 2 }, recurrence: "none", repeatLegacy: "none|" };
+  const sixDays = seriesMovePatch(biweekly, new Date(Date.parse(series.start) + 6 * DAY).toISOString(), new Date(Date.parse(series.end) + 6 * DAY).toISOString());
+  assert.deepEqual(dates([{ ...biweekly, ...sixDays }], "2026-11-01", "2026-11-29"), ["2026-11-08", "2026-11-10", "2026-11-22", "2026-11-24"]);
+  // La scelta per l'evento altrui lo dice.
+  const shared = scopeOptions({ action: "move", date: "2026-11-09", sharedOnly: true, daysShift: { from: ["MO", "WE"], to: ["TU", "TH"] } });
+  assert.deepEqual(shared[0].details, [SCOPE_TEXT.sharedAll, SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio")]);
 });
