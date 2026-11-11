@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useStudyStore } from "../store/useStudyStore";
 import { cloudConfigured } from "../lib/cloudSyncState";
+import { useCloudSession } from "../hooks/useCloudSession";
 import { Icon } from "./Icon";
 
 export const unreadNotifications = (notifications: ReturnType<typeof useStudyStore.getState>["notifications"]) =>
@@ -13,15 +14,17 @@ export const unreadNotifications = (notifications: ReturnType<typeof useStudySto
 export function NotificationsBell({ onOpen }: { onOpen: () => void }) {
   const notifications = useStudyStore((state) => state.notifications);
   const unread = unreadNotifications(notifications).length;
+  const sessionUserId = useCloudSession()?.user?.id ?? "";
 
   // Recapito inviti: se il cloud condiviso è attivo, gli inviti di altri utenti
-  // compaiono qui senza dover aprire la sezione Gruppi.
+  // compaiono qui senza dover aprire la sezione Gruppi. Riparte quando cambia l'account:
+  // dopo un accesso o una registrazione nella pagina aperta arrivano senza ricaricare.
   useEffect(() => {
     // groupSync porta con sé supabase-js: import dinamico, solo se il cloud è configurato, così
     // resta fuori dal caricamento iniziale (come il motore di sync in App).
     if (!cloudConfigured) return;
     void import("../lib/groupSync").then((module) => module.ensureSharedMailbox()).catch(() => undefined);
-  }, []);
+  }, [sessionUserId]);
 
   return (
     <button

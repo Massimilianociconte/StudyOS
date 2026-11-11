@@ -18,7 +18,7 @@ export function PeopleNotice({ onOpenProfile }: { onOpenProfile: () => void }) {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface-soft)] p-3 text-sm font-bold">
       <Icon name="Search" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
-      <span className="min-w-0 flex-1">{peopleLabels.notice}</span>
+      <span className="min-w-[12rem] flex-1">{peopleLabels.notice}</span>
       <span className="flex shrink-0 flex-wrap gap-2">
         <Button
           variant="soft"
