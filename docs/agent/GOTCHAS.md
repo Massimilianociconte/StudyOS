@@ -230,3 +230,19 @@
 - Realtime su `studyos_share_invites` funziona anche con il SELECT concesso per colonna
   (`token_hash` escluso): verificato sullo stack locale il 10/11/2026 (0,63 s). Non
   concedere il SELECT su tutta la tabella: esporrebbe l'hash del token.
+- Connettore remoto (`src/agent/cloudRunner.ts`): durante un'esecuzione `globalThis.Date` è
+  `ZonedDate` (`src/agent/zonedDate.ts`) nel fuso di chi ha dato il consenso, perché il Worker gira
+  in UTC. Il `Date` globale è uno solo: le esecuzioni sono serializzate da un lock del modulo, e
+  un modulo caricato con `import()` durante l'esecuzione non deve salvare `Date` in una costante
+  (resterebbe `ZonedDate` anche dopo). Lo store condiviso
+  (`useStudyStore`) si riempie con i dati dell'account solo per la durata della chiamata, con la
+  persistenza sospesa, e si svuota alla fine.
+- Connettore remoto, CPU: il piano Free dà 10 ms per richiesta. Non mettere calcoli costosi dentro
+  un comparatore di `sort` sui dati dell'account (`urgentTasks` costava 8 ms per date ricalcolate a
+  ogni confronto). Misura con un account di prova grande prima di aggiungere lavoro alle risposte
+  di `studyos_overview`.
+- Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
+  legato al token OAuth); il database ne tiene l'hash. «Revoca l'accesso agli assistenti» revoca
+  tutti i permessi dell'account (`studyos_revoke_agent_grants`), anche a browser scollegato.
+- Locale: la porta 8787 può essere occupata da un'altra app. Per `wrangler dev` usa
+  `--port 8797` e controlla con `lsof -iTCP:8787` prima di mandare richieste a 8787.

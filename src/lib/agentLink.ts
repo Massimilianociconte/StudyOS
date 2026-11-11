@@ -3,10 +3,11 @@ import type { AgentTool } from "../agent/catalog";
 import { hubCandidates, isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
 import type { AgentCallResult, AuditEntry } from "../agent/types";
-import { appendAudit, readAgentToken, readAudit, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
+import { appendAudit, readAgentToken, readAudit, readBrowserId, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
+import { agentCloudLabels } from "./labels";
 import { loadOnce } from "./loadOnce";
-import { useStudyStore } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 
 export interface PendingAgentCall {
   id: string;
@@ -23,6 +24,10 @@ export interface PendingAgentConsent {
   clientName: string;
   scopes: string[];
   redirectHost: string;
+  /** Connettore remoto: con «Consenti» si crea il permesso sul cloud dell'account. */
+  cloud?: boolean;
+  /** Nome dell'account scritto nell'indirizzo del connettore remoto. */
+  accountName?: string;
 }
 
 export interface AgentLinkSnapshot {
@@ -199,6 +204,16 @@ const vaultClosed = () => {
   return current.loading || current.locked;
 };
 
+/**
+ * Come l'hub riconosce questo browser: id stabile e nome del profilo, con cui in chat si sceglie
+ * l'account. A vault chiuso il nome non si conosce e non si manda: l'hub tiene l'ultimo ricevuto.
+ */
+const browserInfo = () => {
+  const id = readBrowserId();
+  if (vaultClosed()) return { id };
+  return { id, name: selectPreferences(useStudyStore.getState()).displayName.trim() };
+};
+
 const askPerson = (call: PendingAgentCall) => new Promise<CallChoice>((resolve) => {
   let finished = false;
   const entry = { call, decide: (choice: CallChoice) => finish(choice) };
@@ -305,14 +320,30 @@ const handleConsent = async (job: PendingAgentConsent) => {
     showQueues({ notice: "" });
   });
   if (!readAgentToken()) return;
+  // Connettore remoto: il permesso sul cloud nasce qui, con l'accesso fatto all'account. Senza,
+  // la richiesta si rifiuta subito e ChatGPT lo dice, invece di aspettare.
+  let cloud: { secret: string; timeZone: string } | undefined;
+  let cloudError = "";
+  if (choice.approve && job.cloud) {
+    try {
+      const { createAgentGrant } = await import("./agentCloud");
+      cloud = await createAgentGrant(job.clientName);
+    } catch (error) {
+      cloudError = error instanceof Error ? error.message : agentCloudLabels.failed;
+    }
+  }
+  const approve = choice.approve && !cloudError;
   try {
     await postJson("/oauth/decide", {
       token: readAgentToken(),
       requestId: job.requestId,
-      approve: choice.approve,
-      scopes: choice.scopes
+      approve,
+      scopes: approve ? choice.scopes : [],
+      ...(cloud ? { cloud } : {})
     });
-    refresh({ notice: choice.approve ? `${job.clientName} può usare StudyOS. Ogni modifica resta da confermare, salvo la policy.` : `Accesso rifiutato a ${job.clientName}.` });
+    if (cloudError) refresh({ error: cloudError });
+    else if (!approve) refresh({ notice: `Accesso rifiutato a ${job.clientName}.` });
+    else refresh({ notice: cloud ? agentCloudLabels.approved(job.clientName) : `${job.clientName} può usare StudyOS. Ogni modifica resta da confermare, salvo la policy.` });
   } catch (error) {
     refresh({ error: error instanceof Error ? error.message : "Conferma non inviata." });
   }
@@ -327,7 +358,7 @@ const heartbeat = async () => {
   const token = readAgentToken();
   if (!token || generation === 0) return;
   try {
-    await postJson("/bridge/heartbeat", { token });
+    await postJson("/bridge/heartbeat", { token, browser: browserInfo() });
     if (snapshot.hub !== "up") refresh({ hub: "up" });
   } catch {
     // il giro di poll riporta l'errore
@@ -366,7 +397,7 @@ const loop = async (mine: number) => {
     }
     pollAbort = new AbortController();
     try {
-      const job = await postJson("/bridge/poll", { token }, pollAbort.signal);
+      const job = await postJson("/bridge/poll", { token, browser: browserInfo() }, pollAbort.signal);
       if (mine !== generation) return;
       refresh({ hub: "up", error: snapshot.error.startsWith("Il programma") ? "" : snapshot.error });
       if (!isRecord(job) || job.type === "idle") continue;
@@ -375,7 +406,8 @@ const loop = async (mine: number) => {
           requestId: job.requestId,
           clientName: typeof job.clientName === "string" && job.clientName.trim() ? job.clientName : "Agente",
           scopes: Array.isArray(job.scopes) ? job.scopes.filter((item): item is string => typeof item === "string") : [],
-          redirectHost: typeof job.redirectHost === "string" ? job.redirectHost : ""
+          redirectHost: typeof job.redirectHost === "string" ? job.redirectHost : "",
+          ...(job.cloud === true ? { cloud: true, accountName: typeof job.accountName === "string" ? job.accountName : "" } : {})
         });
         continue;
       }
@@ -457,6 +489,9 @@ export const pairAgent = async (code: string) => {
 };
 
 export const disconnectAgent = () => {
+  const token = readAgentToken();
+  // L'hub toglie subito questo browser dagli account scelti in chat; se non risponde lo dimentica dopo 30 giorni.
+  if (token) void postJson("/bridge/forget", { token, browser: { id: readBrowserId() } }).catch(() => undefined);
   writeAgentToken(null);
   dropQueues();
   refresh({
@@ -493,15 +528,28 @@ export const decideAgentConsent = (approve: boolean, scopes: string[]) => {
   consentQueue[0]?.decide({ approve, scopes: granted });
 };
 
+/** Permessi cloud dei connettori remoti di questo account (serve l'accesso fatto). */
+const revokeCloudGrants = async () => {
+  try {
+    const { revokeAgentGrants } = await import("./agentCloud");
+    return await revokeAgentGrants();
+  } catch {
+    return 0;
+  }
+};
+
 export const revokeAgentAccess = async () => {
   const token = readAgentToken();
   if (!token) {
-    refresh({ error: "Collega prima questo browser con il codice del terminale." });
+    const count = await revokeCloudGrants();
+    if (count) refresh({ error: "", notice: agentCloudLabels.revoked(count) });
+    else refresh({ error: "Collega prima questo browser con il codice del terminale." });
     return;
   }
   try {
     await postJson("/oauth/revoke", { token });
-    refresh({ error: "", notice: "Accessi di ChatGPT e degli altri agenti revocati. Questo browser resta collegato." });
+    const count = await revokeCloudGrants();
+    refresh({ error: "", notice: ["Accessi di ChatGPT e degli altri agenti revocati. Questo browser resta collegato.", agentCloudLabels.revoked(count)].filter(Boolean).join(" ") });
   } catch (error) {
     refresh({ error: error instanceof Error ? error.message : "Revoca non riuscita." });
   }

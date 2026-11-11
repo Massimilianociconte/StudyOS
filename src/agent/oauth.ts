@@ -1,3 +1,4 @@
+import { cloudMcpPath, cloudPathOf } from "./accounts";
 import { AGENT_DATA_SCOPES, AGENT_SCOPES, type AgentDataScope, type AgentScope } from "./constants";
 
 export interface OAuthClient {
@@ -7,14 +8,23 @@ export interface OAuthClient {
   createdAt: string;
 }
 
+/** Permesso cloud di un connettore remoto (`/u/<nome>/mcp`): segreto del grant e fuso del browser. */
+export interface CloudGrantRecord {
+  secret: string;
+  timeZone: string;
+}
+
 export interface AccessRecord {
   clientId: string;
   clientName: string;
   scopes: AgentDataScope[];
+  /** Indirizzo MCP per cui vale il token: /mcp dell'hub o /u/<nome>/mcp di un account. */
   resource: string;
   expiresAt: number;
   /** Stessa concessione di access e refresh: revocarne uno revoca tutta la famiglia. */
   family?: string;
+  /** Solo per il connettore remoto. */
+  cloud?: CloudGrantRecord;
 }
 
 export interface RefreshRecord extends AccessRecord {
@@ -30,7 +40,7 @@ interface AuthRequest {
   resource: string;
   scopes: AgentScope[];
   expiresAt: number;
-  decision?: { approve: boolean; scopes: AgentDataScope[] };
+  decision?: { approve: boolean; scopes: AgentDataScope[]; cloud?: CloudGrantRecord };
   code?: string;
   redirectTo?: string;
 }
@@ -41,6 +51,7 @@ export interface TokenActor {
   scopes: AgentDataScope[];
   clientId: string;
   resource: string;
+  cloud?: CloudGrantRecord;
 }
 
 const CODE_TTL_MS = 60_000;
@@ -151,10 +162,26 @@ export class OauthServer {
     this.now = now;
   }
 
-  /** Il resource indica questo server: indirizzo /mcp, radice dell'hub o assente (client più vecchi). */
-  private resourceMatches(value: string | null) {
+  /**
+   * Indirizzo MCP canonico chiesto dal client: /mcp (anche come radice dell'hub o assente, per i
+   * client più vecchi) oppure il connettore remoto di un account, /u/<nome>/mcp. null = altro server.
+   */
+  resolveResource(value: string | null): string | null {
     const resource = canonicalResource(value ?? "");
-    return !resource || resource === this.canonical || resource === this.issuer;
+    if (!resource || resource === this.canonical || resource === this.issuer) return this.canonical;
+    try {
+      const url = new URL(resource);
+      if (url.origin !== this.issuer || url.search || url.hash) return null;
+      const cloud = cloudPathOf(url.pathname);
+      return cloud ? `${this.issuer}${cloudMcpPath(cloud.slug)}` : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** true = indirizzo di un connettore remoto (dati cloud di un account). */
+  isCloudResource(resource: string) {
+    return resource !== this.canonical;
   }
 
   load(state: PersistedOauth) {
@@ -197,7 +224,7 @@ export class OauthServer {
     return { ok: true, client };
   }
 
-  beginAuthorization(query: URLSearchParams, now = this.now()): { ok: true; requestId: string; clientName: string; scopes: AgentScope[]; redirectHost: string } | { ok: false; error: string; description: string } {
+  beginAuthorization(query: URLSearchParams, now = this.now()): { ok: true; requestId: string; clientName: string; scopes: AgentScope[]; redirectHost: string; resource: string } | { ok: false; error: string; description: string } {
     this.prune(now);
     const client = this.clients.get(query.get("client_id") ?? "");
     if (!client) return { ok: false, error: "invalid_client", description: "Client non registrato." };
@@ -208,8 +235,8 @@ export class OauthServer {
     if (!/^[A-Za-z0-9_-]{43,128}$/.test(challenge) || (query.get("code_challenge_method") ?? "S256") !== "S256") {
       return { ok: false, error: "invalid_request", description: "PKCE S256 obbligatorio." };
     }
-    if (!this.resourceMatches(query.get("resource"))) return { ok: false, error: "invalid_target", description: "Il parametro resource non coincide con questo server." };
-    const resource = this.canonical;
+    const resource = this.resolveResource(query.get("resource"));
+    if (!resource) return { ok: false, error: "invalid_target", description: "Il parametro resource non coincide con questo server." };
     const scopes = parseScopes(query.get("scope"));
     const requestId = randomToken(18);
     this.requests.set(requestId, {
@@ -222,26 +249,36 @@ export class OauthServer {
       scopes,
       expiresAt: now + REQUEST_TTL_MS
     });
-    return { ok: true, requestId, clientName: client.clientName, scopes, redirectHost: new URL(redirect).host };
+    return { ok: true, requestId, clientName: client.clientName, scopes, redirectHost: new URL(redirect).host, resource };
+  }
+
+  /** Annulla una richiesta appena aperta (per esempio: nessun account con quel nome). */
+  dropRequest(requestId: string) {
+    this.requests.delete(requestId);
   }
 
   pendingConsent(requestId: string, now = this.now()) {
     const request = this.requests.get(requestId);
     if (!request || request.expiresAt <= now) return null;
-    return { requestId, clientName: request.clientName, scopes: request.scopes, redirectHost: new URL(request.redirectUri).host, decided: Boolean(request.decision) };
+    return { requestId, clientName: request.clientName, scopes: request.scopes, redirectHost: new URL(request.redirectUri).host, decided: Boolean(request.decision), resource: request.resource };
   }
 
-  decide(requestId: string, approve: boolean, scopes: readonly string[], now = this.now()): { ok: true; redirectTo: string } | { ok: false; error: string } {
+  /**
+   * Decisione della persona nell'app. Per un connettore remoto l'approvazione porta il permesso
+   * cloud creato dall'app (`cloud`), che resta legato ai token di questa concessione.
+   */
+  decide(requestId: string, approve: boolean, scopes: readonly string[], now = this.now(), cloud?: CloudGrantRecord): { ok: true; redirectTo: string } | { ok: false; error: string } {
     const request = this.requests.get(requestId);
     if (!request || request.expiresAt <= now) return { ok: false, error: "Richiesta di accesso scaduta." };
     if (request.decision) return { ok: false, error: "Richiesta già decisa." };
+    if (approve && this.isCloudResource(request.resource) && !cloud) return { ok: false, error: "Per il connettore remoto serve il permesso sul cloud: fai l'accesso al tuo account in StudyOS e riprova." };
     if (!approve) {
       request.decision = { approve: false, scopes: [] };
       request.redirectTo = this.redirect(request, { error: "access_denied" });
       return { ok: true, redirectTo: request.redirectTo };
     }
     const granted = dataScopes(scopes.length ? scopes : request.scopes, request.scopes);
-    request.decision = { approve: true, scopes: granted };
+    request.decision = { approve: true, scopes: granted, ...(this.isCloudResource(request.resource) && cloud ? { cloud: { ...cloud } } : {}) };
     const code = randomToken(32);
     request.code = code;
     this.codes.set(code, { request, scopes: granted, expiresAt: now + CODE_TTL_MS, used: false });
@@ -263,17 +300,29 @@ export class OauthServer {
     const clientId = form.get("client_id") ?? "";
     const client = this.clients.get(clientId);
     if (!client) return { ok: false, status: 401, error: "invalid_client" };
-    if (!this.resourceMatches(form.get("resource"))) return { ok: false, status: 400, error: "invalid_target" };
-    if (grant === "authorization_code") return this.exchangeCode(form, client, now);
-    if (grant === "refresh_token") return this.exchangeRefresh(form, client, now);
+    // resource è facoltativo; se c'è deve indicare lo stesso indirizzo della concessione.
+    const asked = form.get("resource");
+    const target = asked ? this.resolveResource(asked) : undefined;
+    if (target === null) return { ok: false, status: 400, error: "invalid_target" };
+    if (grant === "authorization_code") return this.exchangeCode(form, client, now, target);
+    if (grant === "refresh_token") return this.exchangeRefresh(form, client, now, target);
     return { ok: false, status: 400, error: "unsupported_grant_type" };
   }
 
-  async authenticate(token: string, now = this.now()): Promise<TokenActor | null> {
+  /** Token valido per `resource` (di base /mcp): un token di un connettore non apre gli altri. */
+  async authenticate(token: string, now = this.now(), resource = this.canonical): Promise<TokenActor | null> {
     this.prune(now);
     const record = this.access.get(await sha256Base64Url(token));
-    if (!record || record.expiresAt <= now || record.resource !== this.canonical) return null;
-    return { name: record.clientName, source: "oauth", scopes: record.scopes, clientId: record.clientId, resource: record.resource };
+    if (!record || record.expiresAt <= now || record.resource !== resource) return null;
+    if (this.isCloudResource(record.resource) && !record.cloud) return null;
+    return {
+      name: record.clientName,
+      source: "oauth",
+      scopes: record.scopes,
+      clientId: record.clientId,
+      resource: record.resource,
+      ...(record.cloud ? { cloud: { ...record.cloud } } : {})
+    };
   }
 
   revokeAll() {
@@ -295,12 +344,13 @@ export class OauthServer {
     for (const [key, item] of this.refresh) if (item.family === record.family) this.refresh.delete(key);
   }
 
-  private async exchangeCode(form: URLSearchParams, client: OAuthClient, now: number) {
+  private async exchangeCode(form: URLSearchParams, client: OAuthClient, now: number, target: string | undefined) {
     const code = form.get("code") ?? "";
     const stored = this.codes.get(code);
     if (!stored || stored.used || stored.expiresAt <= now || stored.request.clientId !== client.clientId) {
       return { ok: false as const, status: 400, error: "invalid_grant" };
     }
+    if (target && target !== stored.request.resource) return { ok: false as const, status: 400, error: "invalid_target" };
     const redirect = safeRedirectUri(form.get("redirect_uri") ?? "");
     if (redirect !== stored.request.redirectUri) return { ok: false as const, status: 400, error: "invalid_grant" };
     const verifier = form.get("code_verifier") ?? "";
@@ -308,28 +358,30 @@ export class OauthServer {
     if (!timingSafeEqual(challenge, stored.request.codeChallenge)) return { ok: false as const, status: 400, error: "invalid_grant" };
     stored.used = true;
     this.codes.delete(code);
-    return { ok: true as const, body: await this.issue(client, stored.scopes, now, randomToken(8)) };
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now, randomToken(8), stored.request.resource, stored.request.decision?.cloud) };
   }
 
-  private async exchangeRefresh(form: URLSearchParams, client: OAuthClient, now: number) {
+  private async exchangeRefresh(form: URLSearchParams, client: OAuthClient, now: number, target: string | undefined) {
     const raw = form.get("refresh_token") ?? "";
     const hash = await sha256Base64Url(raw);
     const stored = this.refresh.get(hash);
     if (!stored || stored.expiresAt <= now || stored.clientId !== client.clientId) return { ok: false as const, status: 400, error: "invalid_grant" };
+    if (target && target !== (stored.resource || this.canonical)) return { ok: false as const, status: 400, error: "invalid_target" };
     this.refresh.delete(hash);
-    return { ok: true as const, body: await this.issue(client, stored.scopes, now, stored.family) };
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now, stored.family, stored.resource || this.canonical, stored.cloud) };
   }
 
-  private async issue(client: OAuthClient, scopes: AgentDataScope[], now: number, family: string) {
+  private async issue(client: OAuthClient, scopes: AgentDataScope[], now: number, family: string, resource: string, cloud?: CloudGrantRecord) {
     const access = randomToken(32);
     const refresh = randomToken(32);
     const record: AccessRecord = {
       clientId: client.clientId,
       clientName: client.clientName,
       scopes,
-      resource: this.canonical,
+      resource,
       expiresAt: now + ACCESS_TTL_MS,
-      family
+      family,
+      ...(cloud ? { cloud: { ...cloud } } : {})
     };
     this.access.set(await sha256Base64Url(access), record);
     this.refresh.set(await sha256Base64Url(refresh), { ...record, expiresAt: now + REFRESH_TTL_MS, family });

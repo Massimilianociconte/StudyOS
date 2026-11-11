@@ -16,7 +16,9 @@ import {
   useAgentLink
 } from "../lib/agentLink";
 import { readSavedHub } from "../lib/agentLocal";
-import { useStudyStore } from "../store/useStudyStore";
+import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
+import { agentAccountLabels, agentCloudLabels } from "../lib/labels";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
 import { Button, Field, inputClass } from "./ui";
 
@@ -51,11 +53,19 @@ const when = (value: string) => {
   return date.toLocaleString("it-IT", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 };
 
+/** Accesso all'account cloud, senza caricare Supabase: lo stato lo pubblica la sync. */
+const useSignedIn = () => {
+  const [signedIn, setSignedIn] = useState(() => cloudConfigured && Boolean(getCloudSyncState().session));
+  useEffect(() => subscribeCloudSync(() => setSignedIn(cloudConfigured && Boolean(getCloudSyncState().session))), []);
+  return signedIn;
+};
+
 export function AgentDock() {
   const link = useAgentLink();
   const pending = link.pendingCall;
   const consent = link.pendingConsent;
   const [write, setWrite] = useState(true);
+  const signedIn = useSignedIn();
 
   useEffect(() => {
     setWrite(consent?.scopes.includes("studyos:write") ?? true);
@@ -88,9 +98,16 @@ export function AgentDock() {
 
       {consent ? (
         <section role="dialog" aria-labelledby="agent-consent-title" className="soft-panel border border-[var(--border)] p-4 shadow-soft">
-          <p className="text-xs font-black uppercase text-[var(--faint)]">Nuovo collegamento{consent.redirectHost ? ` · ${consent.redirectHost}` : ""}</p>
+          <p className="text-xs font-black uppercase text-[var(--faint)]">
+            {consent.cloud ? agentCloudLabels.consentKicker : "Nuovo collegamento"}{consent.redirectHost ? ` · ${consent.redirectHost}` : ""}
+          </p>
           <h2 id="agent-consent-title" className="mt-1 text-xl font-black">{consent.clientName}</h2>
-          <p className="mt-1 text-sm font-bold text-[var(--muted)]">Vuole accedere ai tuoi dati di studio. Modifiche ed eliminazioni seguiranno i permessi scelti in Impostazioni › Agenti AI.</p>
+          <p className="mt-1 text-sm font-bold text-[var(--muted)]">
+            {consent.cloud
+              ? agentCloudLabels.consentBody(consent.accountName ?? "")
+              : "Vuole accedere ai tuoi dati di studio. Modifiche ed eliminazioni seguiranno i permessi scelti in Impostazioni › Agenti AI."}
+          </p>
+          {consent.cloud && !signedIn ? <p className="mt-2 text-sm font-bold text-[var(--danger-text)]">{agentCloudLabels.signInHint}</p> : null}
           <label className="mt-3 flex min-h-11 items-center gap-2 text-sm font-bold">
             <input type="checkbox" checked disabled />
             Leggere materie, attività, esami e il resto dei tuoi dati
@@ -128,6 +145,7 @@ export function AgentSettings() {
   const [code, setCode] = useState("");
   const [hubAddress, setHubAddress] = useState(() => readSavedHub());
   const [busy, setBusy] = useState(false);
+  const accountName = useStudyStore((state) => selectPreferences(state).displayName.trim());
   const trusted = trustedWritesActive(link.policy);
   const localPage = isLocalPage(window.location.origin);
   const published = window.location.hostname === "massimilianociconte.github.io";
@@ -197,6 +215,20 @@ export function AgentSettings() {
         </p>
       ) : null}
       {link.paired ? <Button variant="soft" icon="LogOut" onClick={() => disconnectAgent()}>Scollega questo browser</Button> : null}
+
+      <div className="grid grid-cols-1 gap-1">
+        <h4 className="text-sm font-black">{agentAccountLabels.title}</h4>
+        <p className="text-sm font-bold text-[var(--muted)]">
+          {accountName ? agentAccountLabels.named(accountName) : agentAccountLabels.unnamed}
+          {accountName ? null : (
+            <>
+              {" "}
+              <a href="#settings-profilo" className="font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+            </>
+          )}
+        </p>
+        <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.help}</p>
+      </div>
 
       <div>
         <h4 className="text-sm font-black">Cosa può fare un assistente</h4>

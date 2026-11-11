@@ -5,6 +5,7 @@ const TOKEN_KEY = "studyos-agent-token";
 const POLICY_KEY = "studyos-agent-policy";
 const AUDIT_KEY = "studyos-agent-audit";
 const HUB_KEY = "studyos-agent-hub";
+const BROWSER_KEY = "studyos-agent-browser";
 const AUDIT_LIMIT = 150;
 
 const storage = () => {
@@ -16,6 +17,26 @@ const storage = () => {
 };
 
 export const readAgentToken = () => storage()?.getItem(TOKEN_KEY) ?? "";
+
+let memoryBrowserId = "";
+
+/**
+ * Id casuale e stabile di questo browser per l'hub degli agenti: distingue i browser dello stesso
+ * account da quelli di altre persone collegate allo stesso connettore. Non contiene dati personali.
+ */
+export const readBrowserId = () => {
+  const store = storage();
+  const saved = store?.getItem(BROWSER_KEY) ?? memoryBrowserId;
+  if (/^[A-Za-z0-9_-]{8,80}$/.test(saved)) return saved;
+  const created = `browser_${crypto.randomUUID().replace(/-/g, "")}`;
+  memoryBrowserId = created;
+  try {
+    store?.setItem(BROWSER_KEY, created);
+  } catch {
+    // spazio pieno: resta l'id in memoria fino al ricaricamento
+  }
+  return created;
+};
 
 export const readSavedHub = () => storage()?.getItem(HUB_KEY) ?? "";
 

@@ -96,18 +96,25 @@ export const nextOccurrences = (events: CalendarEvent[], now: Date = new Date(),
   return result;
 };
 
-export const urgentTasks = (tasks: Task[], count = 5) =>
-  tasks
+/**
+ * Attività aperte dalla più urgente. Il punteggio si calcola una volta per attività: dentro il
+ * confronto del sort costava due date per ogni passo (pesante sul connettore remoto, che ha un
+ * tetto di CPU per richiesta). Il sort è stabile: a parità di punteggio resta l'ordine di partenza.
+ */
+export const urgentTasks = (tasks: Task[], count = 5) => {
+  const now = new Date();
+  const score = (task: Task) => {
+    const due = task.dueDate ? Math.max(0, 10 - Math.abs(daysUntil(task.dueDate, now))) : 0;
+    const priority = { urgent: 24, high: 16, medium: 8, low: 2 }[task.priority];
+    return due + priority + task.importance * 2;
+  };
+  return tasks
     .filter((task) => task.status !== "done" && task.status !== "archived")
-    .sort((a, b) => {
-      const score = (task: Task) => {
-        const due = task.dueDate ? Math.max(0, 10 - Math.abs(daysUntil(task.dueDate))) : 0;
-        const priority = { urgent: 24, high: 16, medium: 8, low: 2 }[task.priority];
-        return due + priority + task.importance * 2;
-      };
-      return score(b) - score(a);
-    })
-    .slice(0, count);
+    .map((task) => ({ task, score: score(task) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, count)
+    .map((entry) => entry.task);
+};
 
 export const upcomingExams = (exams: Exam[], count = 4) =>
   exams

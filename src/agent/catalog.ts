@@ -1092,6 +1092,15 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     summary: () => "Controllare l'esito di una conferma"
   }),
   tool({
+    name: "studyos_list_accounts",
+    title: "Account collegati",
+    description: "Elenca gli account StudyOS collegati a questo connettore: il nome che ognuno ha nel profilo e se il suo StudyOS è aperto ora. Usalo quando la persona nomina un account o quando una risposta dice che ce n'è più di uno; poi passa account con quel nome agli altri strumenti.",
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({}),
+    summary: () => "Vedere gli account collegati"
+  }),
+  tool({
     name: "studyos_list_audit",
     title: "Registro azioni degli agenti",
     description: "Legge il registro locale delle azioni già chieste dagli agenti su questo browser: strumento, esito, orario. Non include passphrase, file o codici di invito.",
@@ -1116,11 +1125,53 @@ export const toolSummary = (name: string, args: Record<string, unknown>) => {
   }
 };
 
-export const mcpToolDefinition = (item: AgentTool) => ({
+/** Strumenti che risponde l'hub da solo, senza passare dall'app: non hanno un caso in execute.ts. */
+export const HUB_TOOLS: ReadonlySet<string> = new Set(["studyos_approval_status", "studyos_list_accounts"]);
+
+const ACCOUNT = {
+  type: "string",
+  minLength: 1,
+  maxLength: 80,
+  description: "Nome della persona di cui usare StudyOS, come lo dice in chat (es. «Camilla Rossi» o «Camilla»). Serve quando più persone hanno collegato il proprio StudyOS: studyos_list_accounts li elenca. Con un solo account si può omettere."
+} as const satisfies JsonSchema;
+
+/** Lo schema visto dai client MCP ha in più `account`: l'hub lo toglie prima di passare gli argomenti all'app. */
+const withAccountParam = (schema: JsonSchema): JsonSchema => ({
+  ...schema,
+  properties: { ...(schema.properties ?? {}), account: ACCOUNT }
+});
+
+/**
+ * Strumenti che il connettore remoto (un account, dati cloud, app chiusa) non offre: condivisioni
+ * e risorse dei gruppi vogliono la sessione della persona, cronometro e registro vivono nel
+ * browser, conferme ed elenco account non hanno senso senza app collegata.
+ */
+export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
+  "studyos_list_shares",
+  "studyos_list_shared_items",
+  "studyos_create_shared_item",
+  "studyos_update_shared_item",
+  "studyos_delete_shared_item",
+  "studyos_share_with",
+  "studyos_update_share",
+  "studyos_revoke_share",
+  "studyos_add_group_resource",
+  "studyos_delete_group_resource",
+  "studyos_timer_status",
+  "studyos_timer_control",
+  "studyos_list_audit",
+  ...HUB_TOOLS
+]);
+
+/**
+ * Definizione MCP. Sul connettore remoto non c'è `account` (l'account è nell'indirizzo) e le
+ * descrizioni non rimandano agli strumenti delle condivisioni, che lì non ci sono.
+ */
+export const mcpToolDefinition = (item: AgentTool, options: { cloud?: boolean } = {}) => ({
   name: item.name,
   title: item.title,
-  description: item.description,
-  inputSchema: item.inputSchema,
+  description: options.cloud ? item.description.replace(MINE, "") : item.description,
+  inputSchema: HUB_TOOLS.has(item.name) || options.cloud ? item.inputSchema : withAccountParam(item.inputSchema),
   annotations: {
     // title anche qui: i client 2025-03-26 lo leggono solo dalle annotazioni.
     title: item.title,
