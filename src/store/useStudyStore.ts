@@ -159,8 +159,11 @@ interface StudyState {
   deleteTask: (id: string) => Promise<void>;
   addEvent: (event: Partial<CalendarEvent> & Pick<CalendarEvent, "title" | "start" | "end">) => Promise<void>;
   updateEvent: (id: string, patch: Partial<CalendarEvent>) => Promise<void>;
-  /** Import in blocco (es. da .ics): gli eventi con lo stesso `sourceUid` vengono aggiornati. */
-  importEvents: (events: Array<Partial<CalendarEvent> & Pick<CalendarEvent, "title" | "start" | "end">>) => Promise<{ added: number; updated: number }>;
+  /**
+   * Import in blocco da .ics (`icsImportItems`): stesso UID = stesso evento, aggiornato solo se il file
+   * dice cose nuove; date escluse e occorrenze modificate diventano righe della serie. Un salvataggio.
+   */
+  importEvents: (items: import("../lib/ics").IcsImportItem[]) => Promise<{ added: number; updated: number }>;
   /** Importazione selettiva degli appelli pubblici: stesso UID = nessun nuovo evento. */
   importBarbExamSessions: (sessions: BarbExamSession[]) => Promise<{ added: number; skipped: number }>;
   deleteEvent: (id: string) => Promise<void>;
@@ -1085,62 +1088,35 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     importEvents: async (incoming) => {
+      // Unione caricata solo qui (import dinamico): fuori dal bundle iniziale.
+      const { mergeIcsImport } = await import("../lib/ics");
       const now = nowIso();
-      const bySource = new Map(get().events.filter((event) => event.sourceUid).map((event) => [event.sourceUid as string, event]));
-      const updates = new Map<string, CalendarEvent>();
-      const created: CalendarEvent[] = [];
-      const seen = new Set<string>();
-      for (const raw of incoming) {
-        const item = preserveBarbReminderDates(raw);
-        if (item.sourceUid) {
-          if (seen.has(item.sourceUid)) continue; // UID ripetuto nello stesso file
-          seen.add(item.sourceUid);
-        }
-        const existing = item.sourceUid ? bySource.get(item.sourceUid) : undefined;
-        if (existing) {
-          updates.set(existing.id, {
-            ...existing,
-            title: item.title,
-            description: item.description ?? existing.description,
-            start: item.start,
-            end: item.end,
-            allDay: item.allDay ?? existing.allDay,
-            recurrence: item.recurrence ?? existing.recurrence,
-            recurrenceUntil: item.recurrenceUntil,
-            archived: false,
-            updatedAt: now
-          });
-          continue;
-        }
-        created.push({
-          id: item.sourceUid?.startsWith("barb-exam-") ? barbReminderEventId(item.sourceUid) : createId("event"),
-          createdAt: now,
-          updatedAt: now,
-          archived: false,
-          tags: item.tags ?? (item.sourceUid?.startsWith("barb-exam-") ? ["BARB", "appello-importato"] : []),
-          title: item.title,
-          description: item.description ?? "",
-          category: item.category ?? "lesson",
-          subjectId: item.subjectId,
-          color: item.color ?? "#7CF7C8",
-          priority: item.priority ?? "medium",
-          start: item.start,
-          end: item.end,
-          allDay: item.allDay,
-          recurrence: item.recurrence ?? "none",
-          recurrenceUntil: item.recurrenceUntil,
-          status: "planned",
-          checklist: [],
-          attachmentIds: [],
-          notes: item.notes ?? "",
-          links: item.links ?? [],
-          sourceUid: item.sourceUid
-        });
-      }
-      if (!created.length && !updates.size) return { added: 0, updated: 0 };
-      set((state) => ({ events: [...created, ...state.events.map((event) => updates.get(event.id) ?? event)] }));
+      // Appelli BARB: giorno fisso (date-only), id ed etichette di sempre.
+      const items = incoming.map((item) =>
+        item.sourceUid?.startsWith("barb-exam-") ? { ...preserveBarbReminderDates(item), tags: item.tags ?? ["BARB", "appello-importato"] } : item
+      );
+      // Piano e scrittura senza await in mezzo: doppi tocchi e import concorrenti vedono gli UID.
+      const current = get();
+      const plan = mergeIcsImport({
+        events: current.events,
+        exams: current.exams,
+        tasks: current.tasks,
+        items,
+        now,
+        newId: (item) => (item?.sourceUid?.startsWith("barb-exam-") ? barbReminderEventId(item.sourceUid) : createId("event"))
+      });
+      if (!plan.puts.length && !plan.deletes.length) return { added: 0, updated: 0 };
+      set((state) => {
+        const result = applyEditPlan(state.events, { puts: plan.puts.map((event) => preserveBarbReminderDates(event)), deletes: plan.deletes });
+        return {
+          events: result.events,
+          attachments: unlinkEvents(state.attachments, result.removed, now),
+          notes: unlinkEvents(state.notes, result.removed, now),
+          reminders: unlinkEvents(state.reminders, result.removed, now)
+        };
+      });
       await commit();
-      return { added: created.length, updated: updates.size };
+      return { added: plan.added, updated: plan.updated };
     },
 
     updateEvent: async (id, patch) => {

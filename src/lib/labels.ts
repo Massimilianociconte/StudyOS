@@ -1072,6 +1072,40 @@ export const UNIVERSITY_SOURCE_KIND_LABEL: Record<string, string> = {
   "scheda-corso": "Scheda del corso"
 };
 
+// --- File .ics: testi scritti nel file e avvisi dell'importazione (lib/ics.ts) ---
+
+/** Elenco di titoli tra «»: al massimo tre, poi "e altri N". */
+const quotedTitles = (titles: readonly string[]) => {
+  const shown = titles.slice(0, 3).map((title) => `«${title}»`);
+  const rest = titles.length - shown.length;
+  return rest > 0 ? `${shown.join(", ")} e ${rest === 1 ? "un altro evento" : `altri ${rest} eventi`}` : shown.length > 1 ? `${shown.slice(0, -1).join(", ")} e ${shown.at(-1)}` : shown[0] ?? "";
+};
+
+export const ICS_TEXT = {
+  calendarName: "StudyOS",
+  untitled: "Evento importato",
+  location: (place: string) => `Luogo: ${place}`,
+  examTitle: (subject: string) => `Esame: ${subject}`,
+  examFallback: "materia",
+  examCategory: "Esame",
+  taskTitle: (title: string) => `Scadenza: ${title}`,
+  taskCategory: "Scadenza",
+  notCalendar: "Il file non è un calendario .ics valido.",
+  skipped: (count: number) => (count === 1 ? "1 evento senza data valida è stato scartato." : `${count} eventi senza data valida sono stati scartati.`),
+  tooMany: (max: number) => `Il file è molto grande: sono stati letti solo i primi ${max} eventi.`,
+  unknownZone: (zone: string) =>
+    `Il fuso orario «${zone}» non è stato riconosciuto: per i suoi eventi è stata usata l'ora di questo dispositivo. Controlla che gli orari siano giusti.`,
+  simplified: (titles: readonly string[], parts: readonly string[]) =>
+    `${quotedTitles(titles)} si ${titles.length === 1 ? "ripete" : "ripetono"} con una regola che StudyOS non sa seguire del tutto (${parts.join(", ")}): è stata semplificata, controlla le date nel calendario.`,
+  firstOnly: (titles: readonly string[], parts: readonly string[]) =>
+    `${quotedTitles(titles)} si ${titles.length === 1 ? "ripete" : "ripetono"} in un modo che StudyOS non sa seguire (${parts.join(", ")}): è stata importata solo la prima data.`,
+  extraDates: "Alcune date aggiunte a mano a una serie sono state ignorate: se mancano, aggiungile come eventi singoli.",
+  thisAndFuture: "Alcune modifiche nel file valgono per «questa e le successive»: sono state applicate solo al giorno indicato.",
+  multipleRules: (titles: readonly string[]) => `${quotedTitles(titles)} ha più di una regola di ripetizione: è stata usata solo la prima.`,
+  tasksIgnored: (count: number) =>
+    count === 1 ? "1 attività con scadenza (VTODO) non è stata importata: StudyOS importa solo gli eventi." : `${count} attività con scadenza (VTODO) non sono state importate: StudyOS importa solo gli eventi.`
+};
+
 /** Etichetta degli eventi senza orario, che occupano l'intera giornata. */
 export const ALL_DAY_LABEL = "Tutto il giorno";
 

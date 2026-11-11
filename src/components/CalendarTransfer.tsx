@@ -3,7 +3,7 @@ import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { EventCategory } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { buildIcs, guessCategory, matchSubject, parseIcs, type IcsParseResult } from "../lib/ics";
+import { buildIcs, icsImportItems, matchSubject, parseIcs, type IcsParseResult } from "../lib/ics";
 import { downloadBlob } from "../lib/backup";
 import { EVENT_CATEGORY_LABEL } from "../lib/labels";
 import { RECURRENCE_LABEL } from "../lib/recurrence";
@@ -94,23 +94,8 @@ export function CalendarTransfer({ ref, buttons = true }: { ref?: Ref<CalendarTr
 
   const confirmImport = async () => {
     if (!parsed) return;
-    const payload = parsed.events.map((event) => {
-      const subject = matchSubjects ? matchSubject(event.title, candidates) : undefined;
-      return {
-        title: event.title,
-        description: event.description,
-        start: event.start,
-        end: event.end,
-        // Gli eventi VALUE=DATE del file diventano "Tutto il giorno" (prima il flag veniva perso).
-        allDay: event.allDay,
-        recurrence: event.recurrence,
-        recurrenceUntil: event.recurrenceUntil,
-        category: guessCategory(event.title, category),
-        subjectId: subject?.id,
-        color: subject?.color,
-        sourceUid: event.uid
-      };
-    });
+    // Serie, date escluse, occorrenze modificate e promemoria passano così come sono nel file.
+    const payload = icsImportItems(parsed.events, { defaultCategory: category, subjects: candidates, matchSubjects });
     const { added, updated } = await importEvents(payload);
     setParsed(null);
     const parts = [

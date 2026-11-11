@@ -164,18 +164,20 @@ test("ics: import di un orario con TZID, BYDAY su più giorni, COUNT, DURATION e
     "END:VEVENT",
     "END:VCALENDAR"
   ].join("\r\n");
-  const { events, warnings } = parseIcs(ics);
-  assert.equal(events.length, 4); // lunedì + mercoledì + laboratorio + giornata intera
-  const [monday, wednesday] = events;
-  assert.equal(new Date(monday.start).toISOString(), "2026-09-28T07:00:00.000Z"); // 9:00 ora legale di Roma
-  assert.equal(new Date(wednesday.start).getUTCDay(), 3);
-  assert.equal(monday.recurrence, "weekly");
-  assert.equal(monday.recurrenceUntil.slice(0, 7), "2026-12");
-  assert.match(monday.description, /Luogo: Aula G21, Via Celoria 26/);
-  assert.notEqual(monday.uid, wednesday.uid);
+  const { events, warnings } = parseIcs(ics, { timeZone: "Europe/Rome" });
+  // Lunedì e mercoledì restano una sola serie (prima diventavano due serie settimanali).
+  assert.equal(events.length, 3); // lezione lun/mer + laboratorio + giornata intera
+  const [lesson] = events;
+  assert.equal(new Date(lesson.start).toISOString(), "2026-09-28T07:00:00.000Z"); // 9:00 ora legale di Roma
+  assert.deepEqual(lesson.repeat, { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "until", date: "2026-12-18" } });
+  assert.equal(lesson.recurrence, "weekly");
+  assert.equal(lesson.recurrenceUntil, "2026-12-18");
+  assert.match(lesson.description, /Luogo: Aula G21, Via Celoria 26/);
+  assert.deepEqual(lesson.reminders, [{ minutesBefore: 15 }]);
   const lab = events.find((event) => event.uid === "lab-1");
   assert.equal(new Date(lab.end).getTime() - new Date(lab.start).getTime(), 3 * 3600_000);
   assert.equal(lab.title, "Laboratorio di bioinformatica con un titolo molto lungo che viene piegato su più righe dal generatore");
+  assert.deepEqual(lab.repeat.end, { type: "count", count: 4 });
   assert.equal(lab.recurrenceUntil, "2026-10-22");
   const allDay = events.find((event) => event.uid === "day-1");
   assert.equal(allDay.allDay, true);
