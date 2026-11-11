@@ -203,6 +203,8 @@ export const SCOPE_TEXT = {
   followingSplitsOwnDays: "Dove avevi già cambiato giorni o orario, quelle date restano dove sono.",
   followingSplitsOwnTime: "Dove avevi già cambiato l'orario, resta quello.",
   followingKeepsEnd: "La serie finisce quando finiva prima.",
+  /** La modifica sposta l'ultima data della serie (es. "martedì 22 dicembre"). */
+  followingNewEnd: (day: string) => `La serie ora finisce ${day}.`,
   /** Spostando, una data arriva sul giorno di un'altra parte della serie: quel giorno ci sono tutti e due (es. "lun 30 nov"). */
   followingBoth: (dates: string) => `Ci saranno entrambi gli eventi, quello spostato e quello che c'era già: ${dates}.`,
   /** Da un giorno cambiato da solo: i successivi prendono ciò che quel giorno ha di suo (vedi followingPatch). */

@@ -616,8 +616,11 @@ export const scopeOptions = ({
           ...splitLines(impacts.following),
           // Spostando, i giorni in cui una data spostata arriva su quella di un'altra parte: ci sono tutte e due.
           ...(impacts.following?.both?.length ? [SCOPE_TEXT.followingBoth(shortDatesText(impacts.following.both.slice(0, GONE_SHOWN)))] : []),
-          // Se spariscono date, la fine di prima non vale più per tutto ciò che viene dopo.
-          ...(ruleChanged || impacts.following?.gone?.length ? [] : [SCOPE_TEXT.followingKeepsEnd]),
+          // Se spariscono date, la fine di prima non vale più per tutto ciò che viene dopo; se la
+          // modifica sposta l'ultima data, si dice quella nuova.
+          ...(ruleChanged || impacts.following?.gone?.length
+            ? []
+            : [impacts.following?.endsOn ? SCOPE_TEXT.followingNewEnd(occurrenceDayText(impacts.following.endsOn)) : SCOPE_TEXT.followingKeepsEnd]),
           ...pin
         ];
   const firstDay = span?.start === date && span.parts === 1;

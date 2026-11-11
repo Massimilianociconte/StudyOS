@@ -9,7 +9,9 @@ import {
   countBefore,
   expandEvents,
   expandRule,
+  familyLastDate,
   isOccurrenceRow,
+  lastDateBefore,
   laterParts,
   legacyProjection,
   movedRule,
@@ -331,6 +333,11 @@ export interface ScopeImpact {
    * parte della serie, che resta: quel giorno ci sono tutti e due (nulla sparisce, R1-S1 ter).
    */
   both: string[];
+  /**
+   * "Questo e i successivi" senza regola nuova che sposta l'ultima data della serie (fine "fino al" o
+   * N volte spostate con il giorno): la nuova ultima data. Assente se finisce quando finiva prima.
+   */
+  endsOn?: string;
 }
 
 /** Giorni dopo quello aperto in cui si cercano le date che spariscono. */
@@ -463,6 +470,10 @@ export const scopeImpact = (
     impact.gone = gone.dates;
     impact.goneMore = gone.more;
   } else if (scope === "following") {
+    // L'ultima data della serie (della sua ultima parte) cambia? Allora si dice quella nuova.
+    const lastBefore = familyLastDate(events, target.seriesId);
+    const lastAfter = familyLastDate(after.events, target.seriesId);
+    if (typeof lastAfter === "string" && lastAfter !== lastBefore) impact.endsOn = lastAfter;
     // Senza regola nuova le parti successive restano (R1-S1): quante, quante tengono un orario loro
     // e, spostando il giorno, quante si spostano con lui.
     const later = laterParts(events, target.seriesId, target.date);
@@ -528,10 +539,12 @@ export const seriesSpan = (events: readonly CalendarEvent[], seriesId: string, d
   const deleted = planDelete(events, seriesId, date, "all", { includeSplits: true }).deletes;
   const byId = new Map(events.map((event) => [event.id, event]));
   const parts = Math.max(1, deleted.filter((id) => byId.has(id) && !isOccurrenceRow(byId.get(id) as CalendarEvent)).length);
+  // Fermata dalla parte dopo: l'ultima data vera prima di lei (non il giorno prima della parte dopo).
+  const last = cuts.length ? lastDateBefore(series, cuts[0]) : undefined;
   return {
     ...(isCivilDate(start) ? { start } : {}),
     ...(parent && isCivilDate(start) ? { from: start } : {}),
-    ...(cuts.length ? { until: civilAddDays(cuts[0], -1) } : {}),
+    ...(cuts.length ? { until: isCivilDate(last) ? last : civilAddDays(cuts[0], -1) } : {}),
     past: isCivilDate(start) && start < today,
     parts
   };

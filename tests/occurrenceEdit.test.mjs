@@ -167,13 +167,13 @@ test("S2. «Tutti» da una parte nata da «Questo e i successivi»: si dice da q
   const part = seriesSpan(events, child.id, "2026-11-30", TODAY);
   assert.deepEqual(part, { start: "2026-11-23", from: "2026-11-23", past: false, parts: 2 });
   const root = seriesSpan(events, "s", "2026-11-09", TODAY);
-  assert.deepEqual(root, { start: "2026-11-02", until: "2026-11-22", past: true, parts: 2 });
+  assert.deepEqual(root, { start: "2026-11-02", until: "2026-11-16", past: true, parts: 2 });
   const edit = scopeOptions({ action: "edit", date: "2026-11-30", span: part }).find((option) => option.id === "all").details[0];
   assert.equal(edit, SCOPE_TEXT.allEdit({ from: "lunedì 23 novembre", past: false }));
   assert.ok(!edit.includes("anche quelle passate"));
-  // Davanti al giorno della settimana: "da lunedì", "fino a domenica" (non "dal lunedì", "fino al domenica").
+  // Davanti al giorno della settimana: "da lunedì", "fino a lunedì" (non "dal lunedì", "fino al lunedì"); N2: l'ultima data vera.
   assert.ok(edit.includes("da lunedì 23 novembre in poi"), edit);
-  assert.ok(scopeOptions({ action: "edit", date: "2026-11-09", span: root }).find((option) => option.id === "all").details[0].includes("fino a domenica 22 novembre"));
+  assert.ok(scopeOptions({ action: "edit", date: "2026-11-09", span: root }).find((option) => option.id === "all").details[0].includes("fino a lunedì 16 novembre"));
   assert.ok(SCOPE_TEXT.allMove({ from: "lunedì 23 novembre", until: "domenica 6 dicembre", past: false }).includes("da lunedì 23 novembre a domenica 6 dicembre"));
   assert.deepEqual(scopeOptions({ action: "delete", date: "2026-11-30", span: part }).find((option) => option.id === "all").details, [SCOPE_TEXT.allDeleteFamily]);
   // Serie mai divisa, tutta nel futuro: niente "anche quelle passate".
@@ -1016,4 +1016,33 @@ test("S2 (ricontrollo). «Tutti» con una regola nuova che non ha il giorno aper
   assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["MO", "WE"] }, "2026-11-16", "2026-11-02"), "2026-11-02");
   assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["TU", "TH"] }, "2026-11-16", "2026-11-02"), "2026-11-03");
   assert.equal(alignedSeriesStart({ freq: "monthly", monthly: { by: "weekday", nth: -1, weekday: "FR" } }, "2026-11-16", "2026-11-02"), "2026-11-27");
+});
+
+test("N1 (ricontrollo). «Questo e i successivi» che sposta l'ultima data: la scelta dice la nuova, non «finisce quando finiva prima»", () => {
+  const until = romeNine({ freq: "weekly", byWeekday: ["MO"], end: { type: "until", date: "2026-12-21" } });
+  const item = findOccurrence([until], "s", "2026-11-16");
+  const moved = draggedTimes(item, DAY);
+  const impacts = impactsFor([until], item, moved);
+  assert.equal(impacts.following.endsOn, "2026-12-22");
+  const lines = scopeOptions({ action: "move", date: "2026-11-16", impacts }).find((option) => option.id === "following").details;
+  assert.ok(lines.includes(SCOPE_TEXT.followingNewEnd("martedì 22 dicembre")), lines.join(" | "));
+  assert.ok(!lines.includes(SCOPE_TEXT.followingKeepsEnd));
+  // Le volte restano quelle: 8 lunedì dal 2/11 finivano il 21/12, spostati dal 16/11 finiscono martedì 22.
+  const count = romeNine({ freq: "weekly", byWeekday: ["MO"], end: { type: "count", count: 8 } });
+  assert.equal(impactsFor([count], findOccurrence([count], "s", "2026-11-16"), moved).following.endsOn, "2026-12-22");
+  // Solo il titolo, o una serie senza fine: finisce quando finiva prima (nessun campo in più).
+  assert.equal(impactsFor([until], item, { title: "Nuovo" }).following.endsOn, undefined);
+  assert.equal(impactsFor([romeNine()], item, moved).following.endsOn, undefined);
+  const title = scopeOptions({ action: "edit", date: "2026-11-16", impacts: impactsFor([until], item, { title: "Nuovo" }) }).find((option) => option.id === "following").details;
+  assert.ok(title.includes(SCOPE_TEXT.followingKeepsEnd));
+});
+
+test("N2 (ricontrollo). «Tutti» sulla parte prima di una divisione: «fino a» l'ultima data vera, non il giorno prima della parte dopo", () => {
+  let events = [romeNine()];
+  events = following(events, "s", "2026-12-07", { title: "B" }).after;
+  const span = seriesSpan(events, "s", "2026-11-16", TODAY);
+  assert.equal(span.until, "2026-11-30");
+  const all = scopeOptions({ action: "edit", date: "2026-11-16", span }).find((option) => option.id === "all").details[0];
+  assert.ok(all.includes("fino a lunedì 30 novembre"), all);
+  assert.ok(!all.includes("domenica 6 dicembre"), all);
 });
