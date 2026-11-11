@@ -426,6 +426,14 @@ export const CALENDAR_LAYOUT_TEXT = {
   dayOfSpan: (index: number, total: number) => `giorno ${index} di ${total}`
 } as const;
 
+/** Tipologie del calendario oltre alle categorie degli eventi: vacanza, ricorrenze, festività calcolate. */
+export const EVENT_TYPE_EXTRA_LABEL = {
+  vacation: "Vacanza",
+  birthday: "Compleanno",
+  anniversary: "Anniversario",
+  holiday: "Festività"
+} as const;
+
 /** Colore semantico della priorità (token del tema, leggibile in chiaro e scuro). */
 export const PRIORITY_TONE: Record<Task["priority"], string> = {
   low: "var(--faint)",
