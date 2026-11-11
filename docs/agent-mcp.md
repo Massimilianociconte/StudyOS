@@ -48,8 +48,9 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.3.0: dopo l'aggiornamento ricrea il connettore (vedi «Ripubblicare dopo una
-modifica»).
+versione 1.4.0, che aggiunge il connettore remoto di un solo account (vedi sotto). Gli
+strumenti del connettore `/mcp` sono quelli della 1.3.0: se l'hai già ricreato per la
+1.3.0 non serve rifarlo, altrimenti ricrealo (vedi «Ripubblicare dopo una modifica»).
 
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
 salvo una policy impostata da te su «Consenti».
@@ -115,6 +116,72 @@ riporta `account` con il nome usato.
 - Chi usa il connettore può agire su tutti gli account collegati. Il limite sono le
   conferme di ogni StudyOS, che seguono le regole scelte da quella persona in
   Impostazioni → Agenti.
+
+## Connettore remoto di un solo account (StudyOS chiuso)
+
+Un secondo connettore, distinto dal primo, lavora su un solo account e non ha bisogno di
+StudyOS aperto: legge e scrive direttamente i dati cloud di quell'account. L'indirizzo è
+
+`https://studyos-agent.<account>.workers.dev/u/<nome>/mcp`
+
+dove `<nome>` è il nome del profilo con i trattini al posto degli spazi, per esempio
+`/u/camilla-rossi/mcp`. Il nome segue le regole della sezione precedente (maiuscole,
+accenti e ordine delle parole non contano).
+
+Una volta sola, prima del primo collegamento:
+
+1. Esegui `supabase/agent.sql` nel SQL Editor del progetto (vedi `supabase/README.md`).
+2. Imposta sul Worker l'URL del progetto Supabase e la chiave publishable (`sb_publishable_…`,
+   mai `service_role`). `wrangler` chiede il valore a terminale, mai nella riga di comando:
+
+   ```bash
+   npx wrangler secret put STUDYOS_SUPABASE_URL -c worker/wrangler.jsonc
+   npx wrangler secret put STUDYOS_SUPABASE_KEY -c worker/wrangler.jsonc
+   ```
+
+   Senza, `/u/<nome>/mcp` risponde che il connettore remoto non è attivo.
+3. `npx wrangler deploy -c worker/wrangler.jsonc`.
+
+Collegamento, come per il primo connettore e senza password:
+
+- In ChatGPT aggiungi un connettore con l'indirizzo `/u/<nome>/mcp`. ChatGPT apre la
+  pagina di autorizzazione dell'hub.
+- La richiesta compare solo nello StudyOS di quell'account (browser collegato in
+  Impostazioni → Agenti, con quel nome nel profilo), con l'etichetta «Connettore remoto».
+  Il browser deve aver fatto l'accesso al cloud (Impostazioni → Account e
+  sincronizzazione).
+- «Consenti» crea su Supabase un permesso per l'assistente e ne passa il segreto all'hub.
+  Nel database resta solo l'hash SHA-256 del segreto. Lettura e scrittura si scelgono
+  nella stessa richiesta, come per il primo connettore.
+
+Da quel momento StudyOS può restare chiuso. L'hub legge le righe dell'account con
+`studyos_agent_pull` e scrive con `studyos_agent_push`, con le stesse regole della
+sincronizzazione (vince la modifica più recente). Le date usano il fuso del browser che
+ha dato il consenso. L'app vede le modifiche alla sincronizzazione successiva.
+
+Differenze dal primo connettore:
+
+- Nessuna conferma nell'app: il consenso iniziale vale per tutte le azioni dello scope
+  scelto. Le eliminazioni chiedono comunque `confirm: true`.
+- Gli strumenti non hanno il parametro `account`: il connettore è già legato a un account.
+- Non ci sono gli strumenti dei dati condivisi, le risorse dei gruppi, il cronometro, il
+  registro delle azioni, `studyos_approval_status` e `studyos_list_accounts`.
+- File, copertine e foto non arrivano all'hub. Quando l'hub modifica un elemento, il
+  database li rimette dalla riga attuale.
+- Se l'app ha cambiato lo stesso elemento dopo l'ultima lettura dell'hub, la scrittura è
+  rifiutata: la risposta è un errore di conflitto, l'hub rilegge i dati e l'azione si può
+  ripetere.
+
+«Revoca l'accesso agli assistenti» in Impostazioni → Agenti revoca anche tutti i permessi
+remoti dell'account: da lì il connettore risponde che il collegamento non è più valido, e
+per riaverlo serve un nuovo «Consenti».
+
+Limite di CPU del piano Free: 10 ms per richiesta. Su un account di prova con 1340 righe
+(935 KB) ogni chiamata a Worker caldo costa 0,2–6 ms, la prima lettura completa
+dell'account circa 5 ms. La prima richiesta di un Worker appena avviato può arrivare a
+25–50 ms per la compilazione del codice: se Cloudflare la ferma, la chiamata fallisce e
+si può ripetere. Il piano Workers Paid alza il limite a 30 secondi. Un secondo account
+Cloudflare non aiuta, perché il limite vale per ogni singola richiesta.
 
 ## Collegare i client
 

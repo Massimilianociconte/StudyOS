@@ -243,3 +243,24 @@ ha il parametro facoltativo `account`, obbligatorio quando gli account sono più
 
 Per usarlo con ChatGPT servono il deploy del Worker e la pubblicazione del sito, poi va ricreato il
 connettore.
+
+Connettore remoto di un solo account (11 novembre 2026, server 1.4.0): un secondo connettore,
+`https://<hub>/u/<nome>/mcp`, lavora sui dati cloud dell'account con StudyOS chiuso. «Consenti»
+nello StudyOS di quell'account crea un permesso (`supabase/agent.sql`, solo l'hash del segreto nel
+database); l'hub conserva il segreto legato al token e con la chiave publishable chiama
+`studyos_agent_pull` e `studyos_agent_push`. Gli strumenti sono quelli dell'app eseguiti
+sull'hub (`src/agent/cloudRunner.ts`), nel fuso del browser che ha dato il consenso
+(`src/agent/zonedDate.ts`); esclusi condivisioni, risorse dei gruppi, cronometro e registro.
+Verificato:
+- `scripts/supabase/agent-check.mjs` 25 controlli e `supabase/agent-verify.sql` tutto `true` sullo
+  stack locale;
+- `tests/cloudRunner.test.mjs`, `tests/cloudHub.test.mjs`, `tests/zonedDate.test.mjs`;
+- end-to-end con l'hub locale e con `wrangler dev`: consenso di «Camilla Rossi» con l'app, poi app
+  chiusa e chiamate MCP (materia, task con scadenza, evento alle 9 di Roma, eliminazione, panoramica);
+  riaperta l'app con lo stesso account, le modifiche c'erano; la revoca dall'app blocca il connettore;
+- CPU su 1340 righe (935 KB): 0,2–6 ms per chiamata a Worker caldo, prima lettura completa circa 5 ms;
+  la prima richiesta di un Worker appena avviato arriva a 25–50 ms (compilazione).
+
+Per usarlo: `agent.sql` e `agent-verify.sql` nel SQL Editor, secret `STUDYOS_SUPABASE_URL` e
+`STUDYOS_SUPABASE_KEY` sul Worker, deploy del Worker e pubblicazione del
+sito. Non provato sul progetto reale.

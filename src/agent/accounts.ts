@@ -118,3 +118,30 @@ export const chooseAccount = (accounts: readonly AccountView[], query: string | 
       : `Nessun account è collegato. Apri StudyOS, scrivi il tuo nome in Impostazioni → Profilo e collega il browser in Impostazioni → Agenti.`
   };
 };
+
+// --- Connettore remoto di un account: https://<hub>/u/<nome>/mcp ---
+
+const CLOUD_PATH = /^\/u\/([^/]{1,160})\/mcp\/?$/;
+
+/** «Camilla Rossi», «camilla-rossi» e «Camilla%20Rossi» danno tutti `camilla-rossi`. */
+export const cloudSlug = (raw: string): string | null => {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  const key = accountKey(decoded.replace(/[-_+.]/g, " "));
+  if (!key || key.length > NAME_MAX) return null;
+  return key.replace(/ /g, "-");
+};
+
+/** Percorso del connettore remoto: slug normalizzato e nome con cui cercare l'account. */
+export const cloudPathOf = (pathname: string): { slug: string; query: string } | null => {
+  const match = CLOUD_PATH.exec(pathname);
+  if (!match) return null;
+  const slug = cloudSlug(match[1]);
+  return slug ? { slug, query: slug.replace(/-/g, " ") } : null;
+};
+
+export const cloudMcpPath = (slug: string) => `/u/${slug}/mcp`;

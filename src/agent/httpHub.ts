@@ -1,13 +1,27 @@
 // Ponte HTTP di StudyOS. Lo stesso codice gira sul programma locale e sull'hub pubblico.
 // Non legge IndexedDB: consegna le azioni al browser collegato e conserva solo token (in hash) e esiti.
-import { BROWSER_FORGET_MS, accountKey as accountKeyOf, listAccounts, parseBrowserInfo, type AccountView, type BridgeBrowser } from "./accounts";
+import {
+  BROWSER_FORGET_MS,
+  accountKey as accountKeyOf,
+  accountLabel,
+  chooseAccount,
+  cloudMcpPath,
+  cloudPathOf,
+  listAccounts,
+  parseBrowserInfo,
+  type AccountChoice,
+  type AccountView,
+  type BridgeBrowser
+} from "./accounts";
 import { AGENT_MCP_PATH, AGENT_PROTOCOL_VERSIONS, AGENT_SERVER_VERSION } from "./constants";
 import { toolSummary } from "./catalog";
 import { choosePoller, siteFromOrigin, type BridgeSite } from "./hubEndpoint";
 import { ResultLedger } from "./ledger";
 import { handleMcpRpc } from "./mcp";
-import { OauthServer, randomToken, timingSafeEqual, type PersistedOauth } from "./oauth";
+import { OauthServer, randomToken, timingSafeEqual, type CloudGrantRecord, type PersistedOauth } from "./oauth";
 import type { AgentActor, AgentCallResult } from "./types";
+import type { CloudRunner } from "./cloudRunner";
+import { isTimeZone } from "./zonedDate";
 
 const BODY_LIMIT = 262_144;
 const PUBLISHED_FRESH_MS = 45_000;
@@ -123,6 +137,11 @@ export interface HttpHubOptions {
   /** Quanto studyos_approval_status aspetta una conferma ancora aperta prima di rispondere. */
   approvalPollMs?: number;
   persist?: () => Promise<void>;
+  /**
+   * Connettore remoto di ogni account (/u/<nome>/mcp): esegue gli strumenti sui dati cloud con
+   * l'app chiusa. Assente = solo il connettore principale, che passa dal browser.
+   */
+  cloud?: Pick<CloudRunner, "run">;
 }
 
 interface CallJob {
@@ -143,6 +162,12 @@ interface ConsentJob {
   clientName: string;
   scopes: string[];
   redirectHost: string;
+  /** Connettore remoto: la richiesta va solo ai browser di questo account (accountKey). */
+  account?: string;
+  /** Nome dell'account da mostrare nella richiesta. */
+  accountName?: string;
+  /** true = con «Consenti» l'app crea il permesso cloud e lo manda con la decisione. */
+  cloud?: boolean;
 }
 
 type Job = CallJob | ConsentJob;
@@ -156,6 +181,8 @@ interface Waiter {
 }
 
 const emptyOauth = (): PersistedOauth => ({ clients: [], access: [], refresh: [] });
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char] ?? char);
 
@@ -309,7 +336,7 @@ export class HttpHub {
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const host = request.headers.get("host") ?? url.host;
-    const mcp = url.pathname === AGENT_MCP_PATH || url.pathname === "/";
+    const mcp = url.pathname === AGENT_MCP_PATH || url.pathname === "/" || cloudPathOf(url.pathname) !== null;
     if (host.toLowerCase() !== url.host.toLowerCase() || !this.options.allowHost(host)) {
       return this.json(421, { error: "Host non ammesso." });
     }
@@ -337,7 +364,19 @@ export class HttpHub {
         version: AGENT_SERVER_VERSION,
         bridgeConnected: this.connected(),
         publicOrigin: this.options.issuer.startsWith("https://") ? this.options.issuer : null,
-        mcp: this.options.canonical
+        mcp: this.options.canonical,
+        cloud: Boolean(this.options.cloud)
+      });
+    }
+    const cloudMetadata = url.pathname.startsWith("/.well-known/oauth-protected-resource/u/")
+      ? cloudPathOf(url.pathname.slice("/.well-known/oauth-protected-resource".length))
+      : null;
+    if (request.method === "GET" && cloudMetadata && this.options.cloud) {
+      return this.json(200, {
+        resource: `${this.options.issuer}${cloudMcpPath(cloudMetadata.slug)}`,
+        authorization_servers: [this.options.issuer],
+        scopes_supported: ["studyos:read", "studyos:write", "offline_access"],
+        bearer_methods_supported: ["header"]
       });
     }
     if (request.method === "GET" && (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp")) {
@@ -371,11 +410,23 @@ export class HttpHub {
     if (request.method === "GET" && url.pathname === "/authorize") {
       return this.exclusive(async () => {
         const begun = this.oauth.beginAuthorization(url.searchParams);
-        if (!begun.ok) return this.html(400, `<!doctype html><meta charset="utf-8"><title>StudyOS</title><p>${escapeHtml(begun.description)}</p>`);
-        this.consents.push({ type: "consent", requestId: begun.requestId, clientName: begun.clientName, scopes: begun.scopes, redirectHost: begun.redirectHost });
+        if (!begun.ok) return this.html(400, this.messagePage(begun.description));
+        const job: ConsentJob = { type: "consent", requestId: begun.requestId, clientName: begun.clientName, scopes: begun.scopes, redirectHost: begun.redirectHost };
+        if (this.oauth.isCloudResource(begun.resource)) {
+          // Connettore remoto: la richiesta va solo all'account scritto nell'indirizzo.
+          const target = this.cloudAccount(begun.resource);
+          if (!this.options.cloud || !target.ok) {
+            this.oauth.dropRequest(begun.requestId);
+            return this.html(this.options.cloud ? 404 : 501, this.messagePage(target.ok
+              ? "Il connettore remoto non è attivo su questo hub: mancano STUDYOS_SUPABASE_URL e STUDYOS_SUPABASE_KEY."
+              : target.error));
+          }
+          Object.assign(job, { account: target.key, accountName: accountLabel(target.name), cloud: true });
+        }
+        this.consents.push(job);
         this.claim();
         const secure = this.options.secureCookies ? "; Secure" : "";
-        return this.html(200, this.authorizePage(begun.clientName), {
+        return this.html(200, this.authorizePage(begun.clientName, job.accountName), {
           "set-cookie": `studyos_oauth=${encodeURIComponent(begun.requestId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}`
         });
       });
@@ -387,7 +438,9 @@ export class HttpHub {
       if (result.state === "ready") {
         return this.json(200, result, { "set-cookie": "studyos_oauth=; HttpOnly; Path=/; Max-Age=0" });
       }
-      return this.json(200, { state: "pending", connected: this.connected() });
+      const pending = this.oauth.pendingConsent(requestId);
+      const target = pending && this.oauth.isCloudResource(pending.resource) ? this.cloudAccount(pending.resource) : null;
+      return this.json(200, { state: "pending", connected: target ? target.ok && this.accountConnected(target.key) : this.connected() });
     }
     if (request.method === "POST" && url.pathname === "/token") {
       return this.exclusive(async () => {
@@ -429,7 +482,7 @@ export class HttpHub {
       });
     }
     if (request.method === "POST" && (url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat" || url.pathname === "/bridge/forget" || url.pathname === "/bridge/result" || url.pathname === "/oauth/decide" || url.pathname === "/oauth/revoke")) {
-      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[]; browser?: unknown };
+      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[]; browser?: unknown; cloud?: unknown };
       const site = siteFromOrigin(origin);
       const asksWork = url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat";
       const allowed = await this.exclusive(async () => {
@@ -463,7 +516,17 @@ export class HttpHub {
       }
       if (url.pathname === "/oauth/decide") {
         return this.exclusive(async () => {
-          const decided = this.oauth.decide(body.requestId ?? "", body.approve === true, body.scopes ?? []);
+          const pending = this.oauth.pendingConsent(body.requestId ?? "");
+          let cloud: CloudGrantRecord | undefined;
+          if (pending && this.oauth.isCloudResource(pending.resource) && body.approve === true) {
+            // Il permesso cloud creato dall'app con «Consenti»: segreto di 64 caratteri esadecimali e fuso del browser.
+            const raw = isRecord(body.cloud) ? body.cloud : {};
+            if (typeof raw.secret !== "string" || !/^[0-9a-f]{64}$/.test(raw.secret) || !isTimeZone(raw.timeZone)) {
+              return this.json(400, { error: "Permesso cloud mancante o non valido: fai l'accesso al tuo account in StudyOS e riprova." });
+            }
+            cloud = { secret: raw.secret, timeZone: raw.timeZone };
+          }
+          const decided = this.oauth.decide(body.requestId ?? "", body.approve === true, body.scopes ?? [], undefined, cloud);
           if (!decided.ok) return this.json(400, { error: decided.error });
           await this.markDirty();
           return this.json(200, { ok: true });
@@ -479,7 +542,9 @@ export class HttpHub {
       const job = await this.poll(site, allowed.account);
       return this.json(200, job ?? { type: "idle" });
     }
-    if (url.pathname === AGENT_MCP_PATH || url.pathname === "/") return this.mcp(request, url);
+    if (url.pathname === AGENT_MCP_PATH || url.pathname === "/") return this.mcp(request, url, null);
+    const cloudPath = cloudPathOf(url.pathname);
+    if (cloudPath && this.options.cloud) return this.mcp(request, url, cloudPath.slug);
     return this.json(404, { error: "Non trovato." });
   }
 
@@ -505,14 +570,18 @@ export class HttpHub {
     return form;
   }
 
-  private async mcp(request: Request, url: URL): Promise<Response> {
+  /** `slug` = connettore remoto di un account (/u/<slug>/mcp); null = connettore principale. */
+  private async mcp(request: Request, url: URL, slug: string | null): Promise<Response> {
     if (request.method === "DELETE") return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
     // Nessuno stream GET (rimosso dal protocollo 2026-07-28): 405 come chiede la specifica.
     if (request.method !== "POST") return this.json(405, { error: "Usa POST. Il server risponde in JSON." }, { allow: "POST, DELETE" });
     const token = this.bearer(request);
-    const actor = await this.actorFor(token);
+    const resource = slug ? `${this.options.issuer}${cloudMcpPath(slug)}` : this.options.canonical;
+    const cloudActor = slug ? await this.cloudActorFor(token, resource) : null;
+    const actor: AgentActor | null = slug ? cloudActor : await this.actorFor(token);
     if (!actor) {
-      const metadata = `${this.options.issuer}/.well-known/oauth-protected-resource${url.pathname === AGENT_MCP_PATH ? AGENT_MCP_PATH : ""}`;
+      const path = slug ? cloudMcpPath(slug) : url.pathname === AGENT_MCP_PATH ? AGENT_MCP_PATH : "";
+      const metadata = `${this.options.issuer}/.well-known/oauth-protected-resource${path}`;
       return this.json(401, { error: "unauthorized" }, {
         "www-authenticate": `Bearer realm="studyos", resource_metadata="${metadata}"`
       });
@@ -526,14 +595,24 @@ export class HttpHub {
     }
     const gated = protocolStatus(request, message);
     if (gated) return this.json(gated.status, gated.body);
-    const response = await handleMcpRpc(message, {
-      actor,
-      ledger: this.ledger,
-      connected: (account) => (account === undefined ? this.connected() : this.accountConnected(account)),
-      accounts: () => this.accounts(),
-      invoke: (call) => this.invoke(call),
-      waitForResult: (id) => this.waitForResult(id)
-    });
+    const runner = this.options.cloud;
+    const grant = cloudActor?.cloud;
+    const response = await handleMcpRpc(message, grant && runner && slug
+      ? {
+        actor,
+        ledger: this.ledger,
+        connected: () => true,
+        invoke: async () => ({ ok: false, code: "invalid", error: "Strumento non disponibile." }),
+        cloud: { account: this.cloudLabel(slug), run: (name, args) => runner.run(grant, name, args) }
+      }
+      : {
+        actor,
+        ledger: this.ledger,
+        connected: (account) => (account === undefined ? this.connected() : this.accountConnected(account)),
+        accounts: () => this.accounts(),
+        invoke: (call) => this.invoke(call),
+        waitForResult: (id) => this.waitForResult(id)
+      });
     if (!response) return new Response(null, { status: 202, headers: { "cache-control": "no-store" } });
     const version = protocolVersion(request, message);
     const errorCode = response.error && typeof response.error === "object" ? (response.error as { code?: unknown }).code : undefined;
@@ -682,10 +761,18 @@ export class HttpHub {
    */
   private claim() {
     const active = () => this.waiters.filter((waiter) => waiter.active);
-    while (this.consents.length) {
-      const chosen = choosePoller(active(), this.now() - this.publishedSeen < PUBLISHED_FRESH_MS);
-      if (!chosen) break;
-      this.hand(chosen, this.consents.shift() as ConsentJob);
+    // La richiesta di un connettore remoto va solo ai browser del suo account.
+    for (let index = 0; index < this.consents.length;) {
+      const job = this.consents[index];
+      const chosen = job.account
+        ? choosePoller(active().filter((waiter) => waiter.account === job.account), this.publishedFresh(job.account))
+        : choosePoller(active(), this.now() - this.publishedSeen < PUBLISHED_FRESH_MS);
+      if (!chosen) {
+        index += 1;
+        continue;
+      }
+      this.consents.splice(index, 1);
+      this.hand(chosen, job);
     }
     for (let index = 0; index < this.calls.length;) {
       const job = this.calls[index];
@@ -723,6 +810,30 @@ export class HttpHub {
     return Boolean(token) && timingSafeEqual(token, this.bridgeToken);
   }
 
+  /** Account dell'indirizzo di un connettore remoto, con la stessa regola dei nomi in chat. */
+  private cloudAccount(resource: string): AccountChoice {
+    let query = "";
+    try {
+      query = cloudPathOf(new URL(resource).pathname)?.query ?? "";
+    } catch {
+      query = "";
+    }
+    if (!query) return { ok: false, code: "invalid", error: "Indirizzo del connettore non valido." };
+    return chooseAccount(this.accounts().filter((account) => account.key), query);
+  }
+
+  private cloudLabel(slug: string) {
+    const target = this.cloudAccount(`${this.options.issuer}${cloudMcpPath(slug)}`);
+    return target.ok ? accountLabel(target.name) : slug.replace(/-/g, " ");
+  }
+
+  private async cloudActorFor(token: string, resource: string): Promise<(AgentActor & { cloud: CloudGrantRecord }) | null> {
+    if (!token) return null;
+    const remote = await this.oauth.authenticate(token, undefined, resource);
+    if (!remote?.cloud) return null;
+    return { name: remote.name, source: "oauth", scopes: remote.scopes, cloud: remote.cloud };
+  }
+
   private async actorFor(token: string): Promise<AgentActor | null> {
     if (token && timingSafeEqual(token, this.serviceToken)) {
       return { name: "Client locale", source: "stdio", scopes: ["studyos:read", "studyos:write"] };
@@ -756,7 +867,15 @@ export class HttpHub {
     };
   }
 
-  private authorizePage(clientName: string) {
+  private messagePage(text: string) {
+    return `<!doctype html><meta charset="utf-8"><title>StudyOS</title><meta name="viewport" content="width=device-width, initial-scale=1"><p style="font: 16px/1.45 system-ui, sans-serif; max-width: 440px; margin: 40px auto; padding: 0 16px">${escapeHtml(text)}</p>`;
+  }
+
+  /** `accountName` = connettore remoto: la conferma arriva nello StudyOS di quella persona. */
+  private authorizePage(clientName: string, accountName?: string) {
+    const ask = accountName
+      ? `<b>${escapeHtml(clientName)}</b> chiede di usare lo StudyOS di <b>${escapeHtml(accountName)}</b> anche quando l'app è chiusa. ${escapeHtml(accountName)} deve aprire StudyOS, con l'accesso al suo account, e confermare in Impostazioni → Agenti. Dopo, le modifiche partono senza altre conferme.`
+      : `<b>${escapeHtml(clientName)}</b> chiede di usare il tuo studio. Apri StudyOS e conferma la richiesta in Impostazioni → Agenti. Le modifiche resteranno comunque da approvare una per una.`;
     return `<!doctype html>
 <meta charset="utf-8">
 <title>Collega StudyOS</title>
@@ -770,7 +889,7 @@ export class HttpHub {
 </style>
 <main>
   <h1>StudyOS</h1>
-  <p><b>${escapeHtml(clientName)}</b> chiede di usare il tuo studio. Apri StudyOS e conferma la richiesta in Impostazioni → Agenti. Le modifiche resteranno comunque da approvare una per una.</p>
+  <p>${ask}</p>
   <p id="status">In attesa della tua conferma…</p>
 </main>
 <script>

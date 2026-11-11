@@ -1034,11 +1034,37 @@ const withAccountParam = (schema: JsonSchema): JsonSchema => ({
   properties: { ...(schema.properties ?? {}), account: ACCOUNT }
 });
 
-export const mcpToolDefinition = (item: AgentTool) => ({
+/**
+ * Strumenti che il connettore remoto (un account, dati cloud, app chiusa) non offre: condivisioni
+ * e risorse dei gruppi vogliono la sessione della persona, cronometro e registro vivono nel
+ * browser, conferme ed elenco account non hanno senso senza app collegata.
+ */
+export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
+  "studyos_list_shares",
+  "studyos_list_shared_items",
+  "studyos_create_shared_item",
+  "studyos_update_shared_item",
+  "studyos_delete_shared_item",
+  "studyos_share_with",
+  "studyos_update_share",
+  "studyos_revoke_share",
+  "studyos_add_group_resource",
+  "studyos_delete_group_resource",
+  "studyos_timer_status",
+  "studyos_timer_control",
+  "studyos_list_audit",
+  ...HUB_TOOLS
+]);
+
+/**
+ * Definizione MCP. Sul connettore remoto non c'è `account` (l'account è nell'indirizzo) e le
+ * descrizioni non rimandano agli strumenti delle condivisioni, che lì non ci sono.
+ */
+export const mcpToolDefinition = (item: AgentTool, options: { cloud?: boolean } = {}) => ({
   name: item.name,
   title: item.title,
-  description: item.description,
-  inputSchema: HUB_TOOLS.has(item.name) ? item.inputSchema : withAccountParam(item.inputSchema),
+  description: options.cloud ? item.description.replace(MINE, "") : item.description,
+  inputSchema: HUB_TOOLS.has(item.name) || options.cloud ? item.inputSchema : withAccountParam(item.inputSchema),
   annotations: {
     // title anche qui: i client 2025-03-26 lo leggono solo dalle annotazioni.
     title: item.title,

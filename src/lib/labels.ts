@@ -455,3 +455,19 @@ export const agentAccountLabels = {
   help:
     "Più persone possono usare lo stesso connettore in ChatGPT. Ognuna apre StudyOS nel suo browser, scrive il proprio nome nel profilo e collega il browser qui con la stessa chiave. In chat basta dire di chi è l'account, per esempio «nell'account di Camilla Rossi»: la modifica va in quello StudyOS, e la richiesta di conferma compare lì."
 } as const;
+
+/** Connettore remoto di un account (`/u/<nome>/mcp`): ChatGPT lavora sui dati cloud con l'app chiusa. */
+export const agentCloudLabels = {
+  consentKicker: "Connettore remoto",
+  consentBody: (account: string) =>
+    `Vuole usare lo StudyOS${account ? ` di ${account}` : ""} anche quando l'app è chiusa: legge e modifica i dati salvati nel cloud del tuo account. Le modifiche non chiederanno conferma qui.`,
+  signInHint: "Serve l'accesso al tuo account StudyOS: lo trovi in Impostazioni → Account e sincronizzazione.",
+  approved: (client: string) =>
+    `${client} può usare il tuo StudyOS anche con l'app chiusa. Le modifiche arrivano qui alla sincronizzazione successiva.`,
+  signIn: "Per il connettore remoto fai prima l'accesso al tuo account StudyOS (Impostazioni → Account e sincronizzazione), poi ricollega il connettore in ChatGPT.",
+  noCloud: "Questa copia di StudyOS non ha il cloud attivo: il connettore remoto non può funzionare.",
+  missingSql: "Il cloud non è ancora pronto per il connettore remoto: va eseguito supabase/agent.sql nel progetto Supabase.",
+  failed: "Non sono riuscito a creare il permesso per il connettore remoto. Riprova.",
+  revoked: (count: number) =>
+    count === 1 ? "Anche il connettore remoto di questo account è scollegato." : count > 1 ? `Anche i ${count} connettori remoti di questo account sono scollegati.` : ""
+} as const;

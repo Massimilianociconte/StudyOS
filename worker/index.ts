@@ -1,10 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
 import { PUBLISHED_HOST } from "../src/agent/hubEndpoint";
 import { HttpHub, type HubSnapshot } from "../src/agent/httpHub";
+import { createCloudRunner } from "../src/agent/cloudRunner";
 
 interface Env {
   HUB: DurableObjectNamespace<StudyHubObject>;
   STUDYOS_PAIR_KEY: string;
+  /** URL del progetto Supabase e chiave publishable: solo per il connettore remoto. */
+  STUDYOS_SUPABASE_URL?: string;
+  STUDYOS_SUPABASE_KEY?: string;
 }
 
 const PUBLISHED_ORIGIN = `https://${PUBLISHED_HOST}`;
@@ -18,7 +22,12 @@ export class StudyHubObject extends DurableObject<Env> {
     this.opening ??= this.ctx.blockConcurrencyWhile(async () => {
       const stored = await this.ctx.storage.get<HubSnapshot>("snapshot");
       const origin = stored?.issuer || issuer;
+      // Connettore remoto di ogni account: legge e scrive i dati cloud con la chiave publishable.
+      const cloud = this.env.STUDYOS_SUPABASE_URL && this.env.STUDYOS_SUPABASE_KEY
+        ? createCloudRunner({ url: this.env.STUDYOS_SUPABASE_URL, key: this.env.STUDYOS_SUPABASE_KEY })
+        : undefined;
       const hub = new HttpHub({
+        cloud,
         issuer: origin,
         canonical: `${origin}/mcp`,
         secureCookies: origin.startsWith("https://"),

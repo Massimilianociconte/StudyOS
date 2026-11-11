@@ -81,3 +81,12 @@ export const timestampOf = (value: string | undefined | null) => {
   const time = Date.parse(value);
   return Number.isFinite(time) ? time : 0;
 };
+
+/**
+ * Timbro per una modifica che il cloud personale deve accettare: accetta solo un updatedAt più
+ * recente, e con lo stesso timbro e un contenuto diverso rifiuta la riga per sempre ("Conflitto
+ * cloud irrisolto"). Ora, come ogni modifica, ma sempre almeno 1 ms dopo il timbro attuale anche
+ * con l'orologio indietro.
+ */
+export const laterStamp = (stamp: string | undefined | null, now = Date.now()) =>
+  new Date(Math.max(now, timestampOf(stamp) + 1)).toISOString();

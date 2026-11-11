@@ -24,7 +24,15 @@ interface Secrets {
 }
 
 const issuer = PUBLIC_ORIGIN || AGENT_HUB_ORIGIN;
+// Connettore remoto (/u/<nome>/mcp) anche in locale, per provarlo con lo stack Supabase locale:
+// STUDYOS_SUPABASE_URL e STUDYOS_SUPABASE_KEY (publishable). Senza, solo il connettore principale.
+const CLOUD_URL = process.env.STUDYOS_SUPABASE_URL ?? "";
+const CLOUD_KEY = process.env.STUDYOS_SUPABASE_KEY ?? "";
+const cloud = CLOUD_URL && CLOUD_KEY
+  ? (await import("../src/agent/cloudRunner")).createCloudRunner({ url: CLOUD_URL, key: CLOUD_KEY })
+  : undefined;
 const hub = new HttpHub({
+  cloud,
   issuer,
   canonical: CANONICAL,
   secureCookies: issuer.startsWith("https://"),

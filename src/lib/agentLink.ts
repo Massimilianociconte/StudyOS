@@ -6,6 +6,7 @@ import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRis
 import type { AgentCallResult, AuditEntry } from "../agent/types";
 import { appendAudit, readAgentToken, readAudit, readBrowserId, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
+import { agentCloudLabels } from "./labels";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 
 export interface PendingAgentCall {
@@ -23,6 +24,10 @@ export interface PendingAgentConsent {
   clientName: string;
   scopes: string[];
   redirectHost: string;
+  /** Connettore remoto: con «Consenti» si crea il permesso sul cloud dell'account. */
+  cloud?: boolean;
+  /** Nome dell'account scritto nell'indirizzo del connettore remoto. */
+  accountName?: string;
 }
 
 export interface AgentLinkSnapshot {
@@ -287,14 +292,30 @@ const handleConsent = async (job: PendingAgentConsent) => {
     showQueues({ notice: "" });
   });
   if (!readAgentToken()) return;
+  // Connettore remoto: il permesso sul cloud nasce qui, con l'accesso fatto all'account. Senza,
+  // la richiesta si rifiuta subito e ChatGPT lo dice, invece di aspettare.
+  let cloud: { secret: string; timeZone: string } | undefined;
+  let cloudError = "";
+  if (choice.approve && job.cloud) {
+    try {
+      const { createAgentGrant } = await import("./agentCloud");
+      cloud = await createAgentGrant(job.clientName);
+    } catch (error) {
+      cloudError = error instanceof Error ? error.message : agentCloudLabels.failed;
+    }
+  }
+  const approve = choice.approve && !cloudError;
   try {
     await postJson("/oauth/decide", {
       token: readAgentToken(),
       requestId: job.requestId,
-      approve: choice.approve,
-      scopes: choice.scopes
+      approve,
+      scopes: approve ? choice.scopes : [],
+      ...(cloud ? { cloud } : {})
     });
-    refresh({ notice: choice.approve ? `${job.clientName} può usare StudyOS. Ogni modifica resta da confermare, salvo la policy.` : `Accesso rifiutato a ${job.clientName}.` });
+    if (cloudError) refresh({ error: cloudError });
+    else if (!approve) refresh({ notice: `Accesso rifiutato a ${job.clientName}.` });
+    else refresh({ notice: cloud ? agentCloudLabels.approved(job.clientName) : `${job.clientName} può usare StudyOS. Ogni modifica resta da confermare, salvo la policy.` });
   } catch (error) {
     refresh({ error: error instanceof Error ? error.message : "Conferma non inviata." });
   }
@@ -357,7 +378,8 @@ const loop = async (mine: number) => {
           requestId: job.requestId,
           clientName: typeof job.clientName === "string" && job.clientName.trim() ? job.clientName : "Agente",
           scopes: Array.isArray(job.scopes) ? job.scopes.filter((item): item is string => typeof item === "string") : [],
-          redirectHost: typeof job.redirectHost === "string" ? job.redirectHost : ""
+          redirectHost: typeof job.redirectHost === "string" ? job.redirectHost : "",
+          ...(job.cloud === true ? { cloud: true, accountName: typeof job.accountName === "string" ? job.accountName : "" } : {})
         });
         continue;
       }
@@ -478,15 +500,28 @@ export const decideAgentConsent = (approve: boolean, scopes: string[]) => {
   consentQueue[0]?.decide({ approve, scopes: granted });
 };
 
+/** Permessi cloud dei connettori remoti di questo account (serve l'accesso fatto). */
+const revokeCloudGrants = async () => {
+  try {
+    const { revokeAgentGrants } = await import("./agentCloud");
+    return await revokeAgentGrants();
+  } catch {
+    return 0;
+  }
+};
+
 export const revokeAgentAccess = async () => {
   const token = readAgentToken();
   if (!token) {
-    refresh({ error: "Collega prima questo browser con il codice del terminale." });
+    const count = await revokeCloudGrants();
+    if (count) refresh({ error: "", notice: agentCloudLabels.revoked(count) });
+    else refresh({ error: "Collega prima questo browser con il codice del terminale." });
     return;
   }
   try {
     await postJson("/oauth/revoke", { token });
-    refresh({ error: "", notice: "Accessi di ChatGPT e degli altri agenti revocati. Questo browser resta collegato." });
+    const count = await revokeCloudGrants();
+    refresh({ error: "", notice: ["Accessi di ChatGPT e degli altri agenti revocati. Questo browser resta collegato.", agentCloudLabels.revoked(count)].filter(Boolean).join(" ") });
   } catch (error) {
     refresh({ error: error instanceof Error ? error.message : "Revoca non riuscita." });
   }

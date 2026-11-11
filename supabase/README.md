@@ -54,6 +54,19 @@ conferma email): la regola `https://massimilianociconte.github.io/StudyOS/**` tr
 Redirect URLs copre anche questi. Dettagli in
 [docs/groups-sync.md](../docs/groups-sync.md#condivisione-dei-propri-dati-sharingsql).
 
+**Connettore remoto degli agenti (`agent.sql`, opzionale).** Serve solo per il connettore
+`/u/<nome>/mcp`, che lavora sui dati cloud di un account con StudyOS chiuso (vedi
+[docs/agent-mcp.md](../docs/agent-mcp.md#connettore-remoto-di-un-solo-account-studyos-chiuso)).
+Va eseguito dopo `schema.sql`, come un unico script, e si può rieseguire. Poi incolla
+[agent-verify.sql](agent-verify.sql) in una nuova query: tutte le colonne `*_ready` devono essere
+`true`; `active_grants` conta i permessi attivi (zero finché nessuno preme «Consenti»). Crea la
+tabella `studyos_agent_grants` (solo l'hash del segreto di ogni permesso) e le funzioni che l'hub
+chiama con la chiave publishable. Il Worker legge URL del progetto e chiave publishable dai secret
+`STUDYOS_SUPABASE_URL` e `STUDYOS_SUPABASE_KEY`. Senza questa migrazione il primo connettore `/mcp`
+funziona come prima e la richiesta di un connettore remoto spiega nell'app che manca `agent.sql`.
+Si prova in locale con `scripts/supabase/agent-check.mjs` (solo stack locale, vedi
+[scripts/supabase/local-stack.md](../scripts/supabase/local-stack.md)).
+
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.
 

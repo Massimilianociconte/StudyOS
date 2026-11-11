@@ -28,15 +28,28 @@ const blankToUndefined = (patch: Record<string, unknown>, keys: string[]) => {
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
+/**
+ * Esecuzione sul server (connettore remoto, src/agent/cloudRunner.ts): il fuso è quello del
+ * browser della persona, non quello del runtime, e non c'è una policy locale né un'app a cui
+ * chiedere conferma.
+ */
+let runtime: { timeZone?: string; remote: boolean } = { remote: false };
+
+export const configureAgentRuntime = (next: { timeZone?: string; remote: boolean }) => {
+  runtime = { ...next };
+};
+
 /** Ora locale della persona: senza questa un agente non sa che giorno è né in che fuso scrivere. */
 const clock = (now = new Date()) => {
   const minutes = -now.getTimezoneOffset();
   const utcOffset = `${minutes >= 0 ? "+" : "-"}${pad(Math.floor(Math.abs(minutes) / 60))}:${pad(Math.abs(minutes) % 60)}`;
-  let timeZone = "";
-  try {
-    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
-  } catch {
-    // runtime senza Intl: resta l'offset
+  let timeZone = runtime.timeZone ?? "";
+  if (!timeZone) {
+    try {
+      timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+    } catch {
+      // runtime senza Intl: resta l'offset
+    }
   }
   return {
     now: `${format(now, "yyyy-MM-dd'T'HH:mm:ss")}${utcOffset}`,
@@ -284,7 +297,9 @@ const statusResult = (): AgentCallResult => {
     locked: false,
     displayName: preferences.displayName,
     ...clock(),
-    policy: readStoredPolicy(),
+    ...(runtime.remote
+      ? { remote: true, message: "Connettore remoto: lavora sui dati cloud dell'account anche con StudyOS chiuso, senza conferme nell'app." }
+      : { policy: readStoredPolicy() }),
     counts: {
       subjects: current.subjects.length,
       tasks: current.tasks.length,
