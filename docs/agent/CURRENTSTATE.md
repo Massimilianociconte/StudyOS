@@ -246,3 +246,11 @@ strumento nuovo). Sul progetto reale: rieseguire `groups.sql`, `sharing.sql` e `
 si fermano gruppi e condivisioni), poi `people-verify.sql` tutto verde;
 abilitare `pg_net`; `node scripts/push-keys.mjs`; segreti in Vault; quattro `wrangler secret put`
 e `wrangler deploy`; push su `main`.
+Verifiche della ricerca persone e delle push (11 novembre 2026): 291 test, lint, build, `barb:validate`;
+stack locale: `groups.sql`, `sharing.sql` e `people.sql` due volte e `people-verify.sql`, `people-check.mjs`
+109 controlli e `sharing-check.mjs` 121 controlli, 0 falliti; prova nel browser con tre account (ricerca per
+email e `@nome`, profilo non trovabile, invito di gruppo e di dati con accettazione immediata, permesso cambiato,
+interruttore e proposta una tantum, `?apri=`, uscita dall'account, inviti dal vivo anche dopo un accesso senza ricaricare). La consegna push vera si prova sul
+progetto reale dopo il deploy del Worker. Il browser integrato nega il permesso delle notifiche e non registra il
+service worker: permesso concesso, iscrizione, tocco sulla notifica e iscrizione tolta all'uscita si ripetono su
+un browser vero.

@@ -103,6 +103,13 @@ alcun errore.
 
 ## Verifiche eseguite
 
+11/11/2026, ricerca persone e push: 291 test, lint, build, `barb:validate`; stack locale: `groups.sql`,
+`sharing.sql` e `people.sql` due volte e `people-verify.sql`, `people-check.mjs` 109 controlli e
+`sharing-check.mjs` 121 controlli, 0 falliti; prova nel browser con tre account (ricerca per email e `@nome`,
+profilo non trovabile, invito di gruppo e di dati con accettazione immediata, permesso cambiato, interruttore e
+proposta una tantum, `?apri=`, uscita dall'account). Permesso delle notifiche, iscrizione e tocco
+sulla notifica si ripetono su un browser vero: il browser integrato li blocca.
+
 10/11/2026, stack Supabase locale: `schema.sql`, `groups.sql`, `sharing.sql`
 eseguito due volte e `sharing-verify.sql` tutto `true` (`shared_item_policies` 3,
 `own_item_policies` 4). `sharing-check.mjs` con quattro account: 85 controlli superati,
