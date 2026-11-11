@@ -46,9 +46,11 @@ Dopo l'11/11/2026 **rieseguili tutti e tre** (`groups.sql`, `sharing.sql`, `peop
 `groups.sql` e `sharing.sql` contengono ora le stesse regole di `people.sql` sull'accettazione
 degli inviti, così rieseguirne uno non riapre l'accettazione per email.
 
-**Ordine di pubblicazione:** esegui `people.sql` sul progetto reale **prima** di pubblicare il
-nuovo client. Da questa versione il client legge `recipient_user_id`: senza la colonna la
-sincronizzazione dei gruppi si ferma.
+**Ordine di pubblicazione:** sul progetto reale esegui `groups.sql`, `sharing.sql` e `people.sql`
+(in quest'ordine) e controlla che `people-verify.sql` sia tutto verde **prima** del push su
+`main`: il push pubblica il client. Da questa versione il client legge `recipient_user_id`: senza
+la colonna si ferma la sincronizzazione dei gruppi e anche il caricamento delle condivisioni
+(`shareSync` seleziona la colonna e, se la richiesta fallisce, fallisce l'intero caricamento).
 
 `sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
 dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha

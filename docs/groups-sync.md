@@ -249,9 +249,11 @@ Serve `supabase/people.sql`, eseguito dopo `schema.sql`, `groups.sql` e `sharing
 sulle push: [ADR](agent/decisions/2026-11-11-push-pg-net-worker.md); design:
 [spec](plans/2026-11-11-people-search-push-design.md).
 
-**Ordine di pubblicazione:** esegui `people.sql` sul progetto reale **prima** di pubblicare il
-nuovo client. Da questa versione il client legge `recipient_user_id`: senza la colonna la
-sincronizzazione dei gruppi si ferma.
+**Ordine di pubblicazione:** sul progetto reale esegui `groups.sql`, `sharing.sql` e `people.sql`
+(in quest'ordine) e controlla che `people-verify.sql` sia tutto verde **prima** del push su
+`main`: il push pubblica il client. Da questa versione il client legge `recipient_user_id`: senza
+la colonna si ferma la sincronizzazione dei gruppi e anche il caricamento delle condivisioni
+(`shareSync` seleziona la colonna e, se la richiesta fallisce, fallisce l'intero caricamento).
 
 - **Conferma email spenta.** Dall'11/11/2026 gli account nuovi sono attivi alla registrazione:
   l'email non è una prova di identità (chiunque può registrarsi con l'indirizzo di un altro; il
@@ -285,8 +287,8 @@ sincronizzazione dei gruppi si ferma.
   Impostazioni → Profilo, o la proposta dopo il primo invito ricevuto); `src/lib/push.ts` si
   carica con `import()`. Toccare la notifica apre `?apri=notifiche`, `?apri=condivisione` o
   `?apri=gruppi`. Su iPhone e iPad le push funzionano solo con StudyOS aggiunto alla schermata Home.
-  Su un dispositivo condiviso, all'accesso l'iscrizione push lasciata da un altro account viene
-  tolta dal browser, così le notifiche di un altro account non continuano ad arrivare.
+  Su un dispositivo condiviso, quando l'app si avvia con una sessione `syncPushSubscription` toglie
+  dal browser l'iscrizione push se appartiene a un altro account, così le notifiche di un altro account non continuano ad arrivare.
 - **Agenti MCP**: nessuno strumento nuovo; non ricevono email, `@nome` cercati né iscrizioni push.
 
 Prova automatica sullo stack locale: `scripts/supabase/local-stack.md` e
@@ -309,8 +311,10 @@ solo al destinatario, email rifiutate, migrazione, trigger push verso un Worker 
   unicità), non solo con `is_handle_available`.
 - Il tempo di CPU di un lotto grande di push sul piano Free dei Worker (10 ms) non è stato
   misurato: controllalo con `wrangler tail` dopo il deploy.
-- I membri di un gruppo leggono l'email dell'account di ogni membro in `studyos_group_members`
-  (già così prima): chi è invitato per `@nome` rivela la propria email al gruppo quando accetta.
+- I membri di un gruppo leggono l'email di chi è entrato con codice o link in
+  `studyos_group_members` (scelta: entrare è un'azione propria, e la conferma lo dice). Chi accetta
+  un invito per `@nome` non scrive la propria email: né nella riga del membro né in quella della
+  condivisione (resta vuota).
 - L'avviso una tantum (`peopleNoticeSeen`) si ricorda per dispositivo, quindi può comparire una
   volta su ciascun dispositivo.
 - Enforce MFA/SSO: invariato rispetto a `schema.sql`.

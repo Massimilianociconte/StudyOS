@@ -242,6 +242,7 @@ trigger SQL → `pg_net` → Worker `studyos-agent` `/push` (cifratura RFC 8291,
 `service_role`) → servizio push → service worker; il permesso del browser si chiede solo dopo
 un tocco e toccare la notifica apre la pagina giusta (`?apri=`). Agenti MCP invariati (nessuno
 strumento nuovo). Sul progetto reale: rieseguire `groups.sql`, `sharing.sql` e `people.sql`
-(prima di pubblicare il nuovo client, che legge `recipient_user_id`), poi `people-verify.sql`;
+(prima del push su `main`, che pubblica il client: legge `recipient_user_id` e senza la colonna
+si fermano gruppi e condivisioni), poi `people-verify.sql` tutto verde;
 abilitare `pg_net`; `node scripts/push-keys.mjs`; segreti in Vault; quattro `wrangler secret put`
 e `wrangler deploy`; push su `main`.

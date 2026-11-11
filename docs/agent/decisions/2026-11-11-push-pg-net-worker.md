@@ -66,19 +66,21 @@ publishable, mai `service_role`.
   lotto grande sul piano Free (10 ms) non è stato misurato, da controllare con `wrangler tail`
   dopo il deploy; se un `@nome` è preso si può sapere anche salvando direttamente il profilo
   (vincolo di unicità), non solo con `is_handle_available`; i membri di un gruppo leggono
-  l'email di ogni membro in `studyos_group_members` (già così prima), quindi chi è invitato per
-  `@nome` la rivela al gruppo quando accetta; l'avviso una tantum (`peopleNoticeSeen`) si
+  l'email dei membri entrati con codice o link (scelta: è un'azione propria); chi accetta un
+  invito per `@nome` non scrive più la propria email, né nel gruppo né nella condivisione; l'avviso una tantum (`peopleNoticeSeen`) si
   ricorda per dispositivo.
-- Ordine di pubblicazione: `people.sql` sul progetto reale **prima** del nuovo client, che
-  legge `recipient_user_id`.
+- Ordine di pubblicazione: `groups.sql`, `sharing.sql` e `people.sql` sul progetto reale, con
+  `people-verify.sql` tutto verde, **prima** del push su `main` (che pubblica il client). Il
+  client legge `recipient_user_id`: senza la colonna si ferma la sincronizzazione dei gruppi e
+  anche il caricamento delle condivisioni (`shareSync.ts` seleziona la colonna e fallisce tutto).
 - Rotazione del segreto: aggiornare Vault (`vault.update_secret`) e `STUDYOS_PUSH_SECRET` nello
   stesso momento. Rotazione della chiave VAPID: nuova coppia, nuovo `src/lib/pushKeys.ts`,
   `STUDYOS_VAPID_PRIVATE_KEY` e deploy; le iscrizioni vecchie si rifanno all'avvio successivo.
 - Un nuovo evento da notificare è un trigger in `people.sql` che chiama `studyos_push_notify`
   con `kind`, testo, `url` (`?apri=notifiche|condivisione|gruppi`) e `tag`.
 - Su iPhone e iPad le push richiedono StudyOS nella schermata Home.
-- Su un dispositivo condiviso, all'accesso l'iscrizione lasciata da un altro account viene
-  tolta dal browser.
+- Su un dispositivo condiviso, quando l'app si avvia con una sessione `syncPushSubscription`
+  toglie dal browser l'iscrizione se appartiene a un altro account.
 
 ## Componenti interessati
 

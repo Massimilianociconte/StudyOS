@@ -218,6 +218,7 @@
   (`studyos_push_sends`; oltre salta la push in silenzio e le notifiche in app arrivano lo
   stesso). Il database manda lotti di al massimo 40 iscrizioni; il Worker ne accetta al massimo
   49 per richiesta (49 push più una `push_gone` = 50 sottorichieste sul piano Free).
+- Supabase: `net.http_request_queue` e `net._http_response` sono leggibili da `anon` e `authenticated`; restano irraggiungibili solo finché `net` NON è tra gli schemi esposti dell'API (Dashboard → Settings → API). Controllalo dopo aver abilitato `pg_net`.
 - `src/lib/push.ts` e `supabase` solo con `import()`. Il permesso del browser si chiede solo
   dentro un tocco (`enablePush` aspetta come prima cosa `Notification.requestPermission`: non
   mettere un `await` prima). Il service worker c'è solo nella build: per provare le push in
@@ -227,8 +228,8 @@
   (`src/lib/pushKeys.ts`) invalida le iscrizioni: `syncPushSubscription` rifà quelle di chi le
   aveva attivate, e l'uscita dall'account le toglie (`CloudPanel` chiama `disablePush` prima di
   `signOut`), altrimenti il dispositivo continuerebbe a ricevere le notifiche del vecchio account.
-  Dispositivo condiviso: all'accesso l'iscrizione lasciata da un altro account viene tolta dal
-  browser, così le notifiche di un altro account non continuano ad arrivare.
+  Dispositivo condiviso: quando l'app si avvia con una sessione, `syncPushSubscription` toglie
+  dal browser l'iscrizione se appartiene a un altro account, così le notifiche di un altro account non continuano ad arrivare.
 - `public/sw.js`: l'indirizzo della notifica (`data.url`, es. `?apri=notifiche`) si risolve
   sempre contro `self.registration.scope` e fuori dall'app ripiega sulla pagina iniziale. Il
   cassetto Notifiche non è una sezione: lo apre l'evento `studyos:open-notifications`.
