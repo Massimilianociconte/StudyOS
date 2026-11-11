@@ -156,6 +156,85 @@ export interface CalendarEvent extends BaseEntity {
   goalId?: ID;
   /** UID dell'evento nel calendario .ics di origine: un nuovo import aggiorna invece di duplicare. */
   sourceUid?: string;
+  /**
+   * Regola di ripetizione completa (sottoinsieme di RRULE). Vale solo se `repeatLegacy` coincide
+   * ancora con `recurrence|recurrenceUntil`: se una versione vecchia dell'app cambia la ripetizione,
+   * vince quella vecchia. `recurrence`/`recurrenceUntil` restano sempre scritti come proiezione.
+   */
+  repeat?: RepeatRule;
+  /** `${recurrence}|${recurrenceUntil ?? ""}` al momento del salvataggio di `repeat`. */
+  repeatLegacy?: string;
+  /** Fuso IANA dell'evento, preso alla creazione; assente = fuso del dispositivo (come prima). */
+  timeZone?: string;
+  /** Riga di un'occorrenza modificata o cancellata: id della serie (id della riga `${seriesId}@${originalDate}`). */
+  seriesId?: ID;
+  /**
+   * Giorno (YYYY-MM-DD, nel fuso della serie) dell'occorrenza sostituita. In una serie figlia
+   * (`splitFrom`) è il giorno da cui la madre si ferma.
+   */
+  originalDate?: string;
+  /** Occorrenza eliminata (come EXDATE): la riga ha anche `archived: true`, così le app vecchie la saltano. */
+  cancelled?: true;
+  /** Serie figlia di "questa e le successive": chi espande chiude la madre prima della figlia. */
+  splitFrom?: ID;
+  /** Compleanno, anniversario o ricorrenza: tutto il giorno, ogni anno, `category: "personal"`. */
+  occasion?: EventOccasion;
+  /** Promemoria dell'evento (VALARM nell'esportazione). */
+  reminders?: EventReminder[];
+  /** RECURRENCE-ID importato (chiave di deduplica insieme a `sourceUid`). */
+  sourceRecurrenceId?: string;
+}
+
+export type Weekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
+
+/** Come si ripete una regola mensile: "day" salta i mesi senza quel giorno, "clampDay" usa l'ultimo (regola vecchia). */
+export type RepeatMonthly =
+  | { by: "day" }
+  | { by: "lastDay" }
+  | { by: "clampDay" }
+  | { by: "weekday"; nth: 1 | 2 | 3 | 4 | -1; weekday: Weekday };
+
+export type RepeatEnd =
+  | { type: "never" }
+  /** Ultimo giorno compreso (YYYY-MM-DD) nel fuso dell'evento. */
+  | { type: "until"; date: string }
+  /** Numero di volte (1–999); l'inizio dell'evento è la prima. */
+  | { type: "count"; count: number };
+
+/** Ripetizione (sottoinsieme di RRULE, RFC 5545): ogni 3 mesi = monthly × 3, ogni 6 mesi = monthly × 6. */
+export interface RepeatRule {
+  freq: "daily" | "weekly" | "monthly" | "yearly";
+  /** 1–99 (assente = 1). */
+  interval?: number;
+  /** Giorni della settimana (solo settimanale): lun, mer, ven in un solo evento. */
+  byWeekday?: Weekday[];
+  /** Solo mensile; assente = stesso giorno del mese (i mesi senza quel giorno si saltano). */
+  monthly?: RepeatMonthly;
+  /** Solo annuale con inizio il 29 febbraio: negli anni non bisestili 28 febbraio (predefinito), 1° marzo o niente. */
+  yearlyLeap?: "feb28" | "mar1" | "skip";
+  end?: RepeatEnd;
+  /** Inizio della settimana per "ogni N settimane" (assente = lunedì). */
+  wkst?: Weekday;
+  /** RRULE importata con parti non gestite: si esporta così com'è. */
+  sourceRRule?: string;
+}
+
+export interface EventReminder {
+  /** Minuti prima dell'inizio. */
+  minutesBefore?: number;
+  /** Giorni prima (con `at`: quel giorno a quell'ora). */
+  daysBefore?: number;
+  /** Ora del promemoria (HH:mm) nel fuso dell'evento, per gli eventi di tutto il giorno. */
+  at?: string;
+}
+
+export type OccasionKind = "birthday" | "anniversary" | "holiday" | "recurring-day";
+
+export interface EventOccasion {
+  kind: OccasionKind;
+  /** Anno di nascita o di inizio: l'età si calcola per ogni occorrenza. */
+  birthYear?: number;
+  person?: string;
 }
 
 export interface Task extends BaseEntity {

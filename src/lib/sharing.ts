@@ -1057,8 +1057,19 @@ export const parseSharedField = (rule: SharedFieldRule, input: string, original:
 };
 
 /** Campi che viaggiano insieme in una modifica a un elemento altrui: se cambia uno, si mandano tutti. */
+/**
+ * Campi di un evento che vanno insieme in una modifica a un evento altrui: orari, e tutta la
+ * ripetizione (regola nuova, impronta, fuso e i campi vecchi che ne sono la proiezione). Mandarne
+ * solo una parte sopra l'ultima versione creerebbe un'impronta sbagliata o una regola a metà.
+ */
+export const CALENDAR_EVENT_FIELD_GROUPS = [
+  ["start", "end", "allDay"],
+  ["recurrence", "recurrenceUntil", "repeat", "repeatLegacy", "timeZone"]
+] as const;
+
 const SHARED_EDIT_GROUPS: Record<string, readonly (readonly string[])[]> = {
-  studySession: [["start", "end"]]
+  studySession: [["start", "end"]],
+  calendarEvent: CALENDAR_EVENT_FIELD_GROUPS
 };
 
 /**

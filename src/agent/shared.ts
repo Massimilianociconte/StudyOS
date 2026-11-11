@@ -103,7 +103,9 @@ const safeLinks = (value: unknown) =>
  * resta fuori. Colore, link e indirizzo esterno passano a parte, già controllati.
  */
 const SHARED_FIELDS: Record<string, readonly string[]> = {
-  calendarEvent: ["title", "description", "category", "priority", "start", "end", "allDay", "recurrence", "recurrenceUntil", "status", "checklist", "notes"],
+  // Ripetizione nuova: regola, fuso, giorno dell'occorrenza, ricorrenza e promemoria. Restano fuori gli
+  // id interni (seriesId, splitFrom), l'impronta repeatLegacy e la chiave d'importazione sourceRecurrenceId.
+  calendarEvent: ["title", "description", "category", "priority", "start", "end", "allDay", "recurrence", "recurrenceUntil", "status", "checklist", "notes", "repeat", "timeZone", "originalDate", "cancelled", "occasion", "reminders"],
   task: ["title", "description", "priority", "dueDate", "status", "subtasks", "notes", "estimatedMinutes", "actualMinutes", "completedAt", "energy", "difficulty", "importance"],
   studySession: ["title", "template", "plannedMinutes", "actualMinutes", "start", "end", "topics", "perceivedDifficulty", "focusLevel", "status", "notes"],
   studyTopic: ["title", "firstStudiedAt", "comprehension", "memorization", "difficulty", "nextReviewDate", "completedReviews", "lastReviewedAt", "questions", "notes"],
@@ -238,7 +240,8 @@ export const sharedItemsView = (
     const source = entry.entityType === "calendarEvent" ? occurrenceSource(entry) : null;
     return source ? [source] : [];
   });
-  const occurrences = expandEvents(events, filter.from, filter.to).map((occurrence) => ({
+  // Righe modificate e serie figlie si legano solo alla serie dello stesso proprietario.
+  const occurrences = expandEvents(events, filter.from, filter.to, { groupKey: (event) => event.sharedEntry.ownerId }).map((occurrence) => ({
     ...publicSharedItem(occurrence.sharedEntry, received, labels),
     start: occurrence.start,
     end: occurrence.end,

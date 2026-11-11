@@ -1075,6 +1075,110 @@ export const UNIVERSITY_SOURCE_KIND_LABEL: Record<string, string> = {
 /** Etichetta degli eventi senza orario, che occupano l'intera giornata. */
 export const ALL_DAY_LABEL = "Tutto il giorno";
 
+// --- Ripetizioni, ricorrenze, promemoria e festività (frasi composte in lib/repeat.ts) ---
+
+type WeekdayCode = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
+
+export const WEEKDAY_NAME: Record<WeekdayCode, string> = {
+  MO: "lunedì",
+  TU: "martedì",
+  WE: "mercoledì",
+  TH: "giovedì",
+  FR: "venerdì",
+  SA: "sabato",
+  SU: "domenica"
+};
+
+export const WEEKDAY_SHORT: Record<WeekdayCode, string> = { MO: "lun", TU: "mar", WE: "mer", TH: "gio", FR: "ven", SA: "sab", SU: "dom" };
+
+export const MONTH_NAME = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"] as const;
+
+export const REPEAT_TEXT = {
+  none: "Non si ripete",
+  daily: "Ogni giorno",
+  everyDays: (count: number) => `Ogni ${count} giorni`,
+  weekly: "Ogni settimana",
+  everyWeeks: (count: number) => `Ogni ${count} settimane`,
+  monthly: "Ogni mese",
+  everyMonths: (count: number) => `Ogni ${count} mesi`,
+  yearly: "Ogni anno",
+  everyYears: (count: number) => `Ogni ${count} anni`,
+  workdays: "Ogni giorno feriale (lun–ven)",
+  lastDay: "l'ultimo giorno",
+  orLastDay: "(o l'ultimo giorno del mese)",
+  /** Ordinali del "primo lunedì" / "prima domenica" del mese. */
+  ordinalMasculine: { 1: "primo", 2: "secondo", 3: "terzo", 4: "quarto", [-1]: "ultimo" } as Record<number, string>,
+  ordinalFeminine: { 1: "prima", 2: "seconda", 3: "terza", 4: "quarta", [-1]: "ultima" } as Record<number, string>,
+  leapFeb28: "il 28 febbraio negli anni non bisestili",
+  leapMar1: "il 1° marzo negli anni non bisestili",
+  leapSkip: "solo negli anni bisestili",
+  until: "fino",
+  times: (count: number) => (count === 1 ? "per 1 volta" : `per ${count} volte`)
+};
+
+export const OCCASION_KIND_LABEL: Record<"birthday" | "anniversary" | "holiday" | "recurring-day", string> = {
+  birthday: "Compleanno",
+  anniversary: "Anniversario",
+  holiday: "Festa o ricorrenza personale",
+  "recurring-day": "Altro ogni anno"
+};
+
+/** "compie 25 anni" per un compleanno, "25 anni" per un anniversario o una ricorrenza. */
+export const occasionAgeText = (kind: string, years: number) => {
+  const span = `${years} ${years === 1 ? "anno" : "anni"}`;
+  return kind === "birthday" ? `compie ${span}` : span;
+};
+
+export const REMINDER_TEXT = {
+  atStart: "All'ora dell'evento",
+  minutesBefore: (count: number) => `${count} ${count === 1 ? "minuto" : "minuti"} prima`,
+  hoursBefore: (count: number) => `${count} ${count === 1 ? "ora" : "ore"} prima`,
+  daysBefore: (count: number) => `${count} ${count === 1 ? "giorno" : "giorni"} prima`,
+  sameDay: "Il giorno stesso",
+  at: (time: string) => `alle ${time}`,
+  /** Onestà sui limiti: finché non ci sono le notifiche push, avvisano solo ad app aperta. */
+  appOpenOnly: "I promemoria avvisano quando StudyOS è aperta."
+};
+
+export const HOLIDAY_NAME = {
+  newYear: "Capodanno",
+  epiphany: "Epifania",
+  valentine: "San Valentino",
+  fatThursday: "Giovedì grasso",
+  fatTuesday: "Martedì grasso",
+  ashWednesday: "Mercoledì delle Ceneri",
+  womensDay: "Festa della donna",
+  fathersDay: "Festa del papà",
+  palmSunday: "Domenica delle Palme",
+  easter: "Pasqua",
+  easterMonday: "Lunedì dell'Angelo (Pasquetta)",
+  liberation: "Festa della Liberazione",
+  labour: "Festa dei lavoratori",
+  mothersDay: "Festa della mamma",
+  republic: "Festa della Repubblica",
+  assumption: "Ferragosto",
+  grandparents: "Festa dei nonni",
+  saintFrancis: "San Francesco d'Assisi",
+  halloween: "Halloween",
+  allSaints: "Ognissanti",
+  allSouls: "Commemorazione dei defunti",
+  immaculate: "Immacolata Concezione",
+  christmasEve: "Vigilia di Natale",
+  christmas: "Natale",
+  saintStephen: "Santo Stefano",
+  newYearsEve: "San Silvestro",
+  summerTime: "Inizia l'ora legale (lancette avanti di un'ora)",
+  winterTime: "Torna l'ora solare (lancette indietro di un'ora)"
+} as const;
+
+export const HOLIDAY_KIND_LABEL: Record<"national" | "celebration" | "clock", string> = {
+  national: "Festa nazionale",
+  celebration: "Ricorrenza",
+  clock: "Cambio dell'ora"
+};
+
+export const HOLIDAYS_TOGGLE_LABEL = "Festività";
+
 /** Evento senza materia, o con una materia che non si conosce (es. di un'altra persona, non condivisa). */
 export const NO_SUBJECT_LABEL = "Senza materia";
 

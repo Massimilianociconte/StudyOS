@@ -15,6 +15,7 @@ import { it } from "date-fns/locale";
 import type { CalendarEvent, Exam, StudySession, Subject, Task } from "../types";
 import { expandEvents } from "./recurrence";
 import { NO_SUBJECT_LABEL } from "./labels";
+import { ageOn, type EventOccurrence } from "./repeat";
 
 export const subjectName = (subjects: Subject[], id?: string) =>
   subjects.find((subject) => subject.id === id)?.name ?? "Senza materia";
@@ -74,6 +75,26 @@ export const upcomingEvents = (events: CalendarEvent[], count = 6) =>
   expandEvents(events, startOfDay(new Date()), addDays(startOfDay(new Date()), 120))
     .filter((event) => isAfter(parseISO(event.start), new Date()) || isSameDay(parseISO(event.start), new Date()))
     .slice(0, count);
+
+/**
+ * Prossime ricorrenze (compleanni, anniversari…: eventi con `occasion`) da oggi a `days` giorni,
+ * una per serie, in ordine di data, con gli anni compiuti se c'è l'anno. Un anno di orizzonte:
+ * un compleanno tra 5 mesi deve comparire (upcomingEvents guarda solo 120 giorni).
+ */
+export const nextOccurrences = (events: CalendarEvent[], now: Date = new Date(), days = 366): (EventOccurrence & { age?: number })[] => {
+  const from = startOfDay(now);
+  const occasions = events.filter((event) => typeof event.occasion === "object" && event.occasion !== null);
+  const seen = new Set<string>();
+  const result: (EventOccurrence & { age?: number })[] = [];
+  for (const item of expandEvents(occasions, from, addDays(from, days))) {
+    const series = item.seriesId ?? item.id;
+    if (seen.has(series)) continue;
+    seen.add(series);
+    const age = ageOn(item.occasion?.birthYear, item.occurrenceDate);
+    result.push(age === null ? item : { ...item, age });
+  }
+  return result;
+};
 
 export const urgentTasks = (tasks: Task[], count = 5) =>
   tasks

@@ -3,6 +3,7 @@
 // Calendar, Apple Calendario e Outlook. Import: orari delle lezioni o calendari esportati da
 // altre app, con ricorrenze giornaliere/settimanali/mensili (anche settimanali su più giorni).
 import type { CalendarEvent, EventCategory, Exam, Subject, Task } from "../types";
+import { zonedToUtc } from "./tz";
 
 // ---------------------------------------------------------------------------------------
 // Export
@@ -223,30 +224,6 @@ const parseProperty = (line: string): Property | null => {
 
 export const unescapeText = (value: string) =>
   value.replace(/\\([\\;,nN])/g, (_match, char: string) => (char === "n" || char === "N" ? "\n" : char));
-
-/** Offset (ms) del fuso `timeZone` nell'istante `utc`: ora locale del fuso - UTC. */
-const zoneOffset = (utc: number, timeZone: string) => {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  }).formatToParts(new Date(utc));
-  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
-  return Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second")) - utc;
-};
-
-/** Converte un'ora "da orologio" in un fuso IANA nel corrispondente istante UTC. */
-const zonedToUtc = (fields: number[], timeZone: string) => {
-  const guess = Date.UTC(fields[0], fields[1] - 1, fields[2], fields[3], fields[4], fields[5]);
-  let result = guess - zoneOffset(guess, timeZone);
-  result = guess - zoneOffset(result, timeZone); // secondo passaggio per i giorni del cambio d'ora
-  return new Date(result);
-};
 
 const parseDateValue = (property: Property): { date: Date; allDay: boolean } | null => {
   const value = property.value.trim();
