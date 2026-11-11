@@ -7,13 +7,14 @@ import type { BarbExamSession } from "../lib/university/examTypes";
 import { BARB_EXAM_SESSIONS, getExamStatus } from "../lib/university/examSessions";
 import { courseColor } from "../lib/barbCourseVisuals";
 import { safeHref } from "../lib/safeUrl";
+import { BARB_EXAM_TIMING_LABEL, BARB_EXAM_TYPE_LABEL, BARB_EXAM_TYPE_MISSING, EXAMS_HELP, EXAMS_TEXT } from "../lib/labels";
 import { useNow } from "../hooks/useNow";
 import { CourseIcon } from "./CourseIcon";
-import { Button, Drawer, EmptyState, Tag } from "./ui";
+import { Button, Drawer, EmptyState, HelpTip, Tag } from "./ui";
 
 export const barbToday = (now: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 export const barbSessionDate = (date: string) => format(parseISO(date), "d MMMM yyyy", { locale: it });
-export const barbSessionType = (type: string | null) => type ? ({ written: "Scritto", oral: "Orale", practical: "Pratico", exam: "Esame", partial: "Parziale" }[type] ?? type) : "Tipo non pubblicato";
+export const barbSessionType = (type: string | null) => (type ? (BARB_EXAM_TYPE_LABEL[type] ?? type) : BARB_EXAM_TYPE_MISSING);
 
 const examSlotKey = (session: BarbExamSession): string =>
   `${session.date}|${session.type ?? ""}|${session.time ?? ""}`;
@@ -36,7 +37,7 @@ export function BarbExamSessionDetail({ session, course, onClose, inline = false
   ];
   const legacy = !BARB_DATASET.courses.some((item) => item.id === course.id);
   const content = <div className="space-y-5">
-      <Tag color={courseColor(course)}>{legacy ? "Precedente ordinamento F92" : `${course.cfu} CFU`}</Tag>{legacy && <p className="text-xs text-[var(--muted)]">Appello del precedente ordinamento F92: questo insegnamento non è nel piano BARB attuale.</p>}
+      <div className="flex flex-wrap items-center gap-1.5"><Tag color={courseColor(course)}>{legacy ? EXAMS_TEXT.legacy : `${course.cfu} CFU`}</Tag>{legacy && <HelpTip title={EXAMS_HELP.legacy.title} text={EXAMS_HELP.legacy.text} />}</div>
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label} className="quiet-panel p-3"><dt className="text-xs font-bold text-[var(--muted)]">{label}</dt><dd className="safe-text mt-1 text-sm font-extrabold">{value}</dd></div>)}</dl>
       <p className="text-sm text-[var(--muted)]">La durata della prova non è pubblicata: se aggiungi l'appello al tuo calendario, compare come promemoria per tutta la giornata.</p>
       <div><h3 className="text-sm font-black">Note ufficiali</h3><p className="safe-text mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{session.notes ?? "Nessuna nota pubblicata."}</p></div>
@@ -46,7 +47,7 @@ export function BarbExamSessionDetail({ session, course, onClose, inline = false
       </div>
     </div>;
   if (inline) return <section className="quiet-panel mt-4 p-4" aria-label="Dettagli dell'appello"><div className="mb-4 flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-black">Dettagli dell'appello</h4><Button icon="X" onClick={onClose}>Chiudi dettagli</Button></div>{content}</section>;
-  return <Drawer open onClose={onClose} title={course.name} eyebrow="Appello ufficiale BARB" headerExtra={<CourseIcon course={course} className="h-7 w-7" />}>{content}</Drawer>;
+  return <Drawer open onClose={onClose} title={course.name} eyebrow={EXAMS_TEXT.officialEyebrow} headerExtra={<CourseIcon course={course} className="h-7 w-7" />}>{content}</Drawer>;
 }
 
 export function BarbExamSessions({ course }: { course: BarbCourse }) {
@@ -73,7 +74,7 @@ export function BarbExamSessions({ course }: { course: BarbCourse }) {
         <h3 className="safe-text text-lg font-black">{course.name}</h3>
         <p className="text-xs font-bold text-[var(--muted)]">
           {groups.size === 0 ? "Nessun appello pubblicato" : groups.size === 1 ? "1 appello pubblicato (compresi i passati)" : `${groups.size} appelli pubblicati (compresi i passati)`}
-          {sessions.length > groups.size && <span> · {sessions.length} voci negli elenchi ufficiali</span>}
+          {sessions.length > groups.size && <span> · {EXAMS_TEXT.registrationsCount(sessions.length)}</span>}
         </p>
       </div>
     </div>
@@ -95,14 +96,14 @@ export function BarbExamSessions({ course }: { course: BarbCourse }) {
               <div className="text-sm font-extrabold">{barbSessionDate(session.date)}</div>
               <div className="safe-text mt-1 text-xs text-[var(--muted)]">
                 {barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}
-                {group.length > 1 ? ` · ${group.length} voci ufficiali: tocca per sceglierne una` : ""}
+                {group.length > 1 ? ` · ${EXAMS_TEXT.registrations(group.length)}` : ""}
               </div>
             </div>
             <Tag color={status === "prossimo" ? "var(--accent)" : undefined}>
-              {({ passato: "Passato", prossimo: "Prossimo", futuro: "Futuro" })[status]}
+              {BARB_EXAM_TIMING_LABEL[status]}
             </Tag>
           </button>
-          {group.length > 1 && expanded === key && <div className="ml-2 mt-1 grid gap-1 border-l-2 border-[var(--accent)] pl-2">
+          {group.length > 1 && expanded === key && <div className="ml-2 mt-1 grid grid-cols-1 gap-1 border-l-2 border-[var(--accent)] pl-2">
             {group.map((variant, index) => <button key={variant.id} type="button"
               onClick={() => setSelected(variant)}
               className="quiet-panel flex min-w-0 flex-wrap items-center gap-2 p-2 text-left text-xs hover:bg-[var(--surface)]">

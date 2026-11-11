@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Exam, Subject } from "../types";
@@ -8,7 +8,6 @@ import { MAX_GRADE, MIN_GRADE, formatAverage, formatGrade, gradeStats, isValidGr
 import {
   BARB_THESIS_LEVELS,
   DEGREE_PROGRAMS,
-  DEGREE_PROGRAM_IDS,
   averageNeededFor,
   averageNeededOnRemaining,
   isDegreeProgramId,
@@ -16,16 +15,26 @@ import {
   sbThesisPoints,
   type DegreeProgramId
 } from "../lib/graduation";
-import { Button, Field, Panel, ProgressBar, SectionTitle, Segmented, inputClass } from "../components/ui";
+import { Button, EmptyState, Field, HelpTip, Panel, ProgressBar, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
+import { CAREER_HELP, CAREER_TEXT } from "../lib/labels";
+import { requestSettingsSection } from "../lib/settingsJump";
 import { oneOf, useUiState } from "../lib/uiState";
+
+type Help = { title: string; text: string; example?: string };
 
 const points = (value: number) => `${value.toFixed(2).replace(".", ",").replace(/,00$/, "")}`;
 
 export function CareerView() {
   const store = useStudyStore();
   const { exams, subjects, updatePreferences, setActiveView } = store;
+  // Il corso di laurea cambia CFU totali e la sezione Corso di laurea: si sceglie solo in
+  // Impostazioni (categoria Profilo), qui resta in sola lettura con il collegamento.
+  const openDegreeSettings = () => {
+    requestSettingsSection("profilo");
+    setActiveView("settings");
+  };
   const preferences = selectPreferences(store);
   const program: DegreeProgramId = isDegreeProgramId(preferences.degreeProgram) ? preferences.degreeProgram : "barb";
   const [gradeExam, setGradeExam] = useState<Exam | null>(null);
@@ -63,26 +72,26 @@ export function CareerView() {
           label="Media ponderata"
           value={formatAverage(stats.weighted)}
           detail={stats.graded ? "Pesata sui CFU" : "Ancora nessun voto"}
-          hint="Media dei voti in cui gli esami con più CFU contano di più. La lode vale 30."
+          help={CAREER_HELP.weighted}
         />
         <Tile
           label="Media aritmetica"
           value={formatAverage(stats.arithmetic)}
           detail={stats.passed ? `${stats.passed} ${stats.passed === 1 ? "esame superato" : "esami superati"}` : "Registra il primo voto"}
-          hint="Media semplice dei voti, senza tenere conto dei CFU."
+          help={CAREER_HELP.arithmetic}
         />
         <Tile
           label="CFU acquisiti"
           value={`${stats.cfuEarned}`}
           detail={`Su ${preferences.degreeCfu} del corso`}
-          hint="Crediti degli esami superati, idoneità comprese."
+          help={CAREER_HELP.cfu}
           progress={(stats.cfuEarned / Math.max(1, preferences.degreeCfu)) * 100}
         />
         <Tile
           label="Voto di partenza"
           value={formatAverage(stats.base110)}
           detail="Media × 110 / 30"
-          hint="Voto di partenza per la laurea: la media ponderata portata in centodecimi (media × 110 / 30)."
+          help={CAREER_HELP.base}
         />
       </div>
 
@@ -106,6 +115,7 @@ export function CareerView() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <GraduationPanel
           program={program}
+          degreeCfu={preferences.degreeCfu}
           entries={entries}
           weighted={stats.weighted}
           targetsWeighted={withTargets?.weighted ?? null}
@@ -114,7 +124,7 @@ export function CareerView() {
           sbThesisGrade={preferences.sbThesisGrade ?? 27}
           barbThesisPoints={preferences.barbThesisPoints ?? 7}
           abroad={Boolean(preferences.abroad)}
-          onProgram={(id) => void updatePreferences({ degreeProgram: id, degreeCfu: DEGREE_PROGRAMS[id].totalCfu, showBarb: id === "barb" })}
+          onChangeProgram={openDegreeSettings}
           onScenario={(patch) => void updatePreferences(patch)}
         />
 
@@ -154,10 +164,14 @@ export function CareerView() {
   );
 }
 
-function Tile({ label, value, detail, hint, progress }: { label: string; value: string; detail: string; hint?: string; progress?: number }) {
+function Tile({ label, value, detail, help, progress }: { label: string; value: string; detail: string; help: Help; progress?: number }) {
   return (
-    <div className="quiet-panel min-w-0 p-3.5" title={hint}>
-      <p className="truncate text-[11px] font-black uppercase text-[var(--faint)]">{label}</p>
+    <div className="quiet-panel min-w-0 p-3.5">
+      {/* La spiegazione era solo nel title (invisibile su touch): ora è nel "?". */}
+      <div className="flex min-w-0 items-center gap-1.5">
+        <p className="min-w-0 truncate text-[11px] font-black uppercase text-[var(--faint)]">{label}</p>
+        <HelpTip title={help.title} text={help.text} example={help.example} />
+      </div>
       <p className="mt-1 truncate text-2xl font-black tabular-nums">{value}</p>
       <p className="truncate text-xs font-bold text-[var(--muted)]">{detail}</p>
       {progress !== undefined ? (
@@ -171,6 +185,7 @@ function Tile({ label, value, detail, hint, progress }: { label: string; value: 
 
 function GraduationPanel({
   program,
+  degreeCfu,
   entries,
   weighted,
   targetsWeighted,
@@ -179,10 +194,12 @@ function GraduationPanel({
   sbThesisGrade,
   barbThesisPoints,
   abroad,
-  onProgram,
+  onChangeProgram,
   onScenario
 }: {
   program: DegreeProgramId;
+  /** CFU del corso dalle Impostazioni: gli stessi del riquadro CFU. */
+  degreeCfu: number;
   entries: LibrettoEntry[];
   weighted: number | null;
   targetsWeighted: number | null;
@@ -191,10 +208,11 @@ function GraduationPanel({
   sbThesisGrade: number;
   barbThesisPoints: number;
   abroad: boolean;
-  onProgram: (id: DegreeProgramId) => void;
+  onChangeProgram: () => void;
   onScenario: (patch: { sbThesisGrade?: number; barbThesisPoints?: number; abroad?: boolean }) => void;
 }) {
   const [basis, setBasis] = useUiState<"registered" | "targets">("career.basis", "registered", { validate: oneOf("registered", "targets") });
+  const basisId = useId();
   const info = DEGREE_PROGRAMS[program];
   const useTargets = basis === "targets" && targetsWeighted !== null;
   const average = useTargets ? targetsWeighted : weighted;
@@ -221,20 +239,21 @@ function GraduationPanel({
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-xl font-black">Voto di laurea previsto</h3>
-          <p className="text-xs font-bold text-[var(--muted)]">
-            {info.level} · {info.totalCfu} CFU · calcolato con le regole ufficiali UNIMI
+          {/* Sola lettura: il corso di laurea si cambia in Impostazioni, dove sta già la scelta. */}
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs font-bold text-[var(--muted)]">
+            <span className="safe-text min-w-0">{CAREER_TEXT.rulesOf(info.name, info.level, degreeCfu)}</span>
+            <button
+              type="button"
+              onClick={onChangeProgram}
+              aria-label={CAREER_TEXT.changeInSettingsAria}
+              className="relative inline-flex min-h-8 items-center gap-1 font-extrabold text-[var(--accent-ink)] after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] hover:underline"
+            >
+              <Icon name="Settings" className="h-3.5 w-3.5" />
+              {CAREER_TEXT.changeInSettings}
+            </button>
           </p>
         </div>
       </div>
-
-      <Segmented
-        label="Corso di laurea"
-        size="sm"
-        className="mb-3"
-        value={program}
-        onChange={onProgram}
-        options={DEGREE_PROGRAM_IDS.map((id) => ({ id, label: DEGREE_PROGRAMS[id].shortName }))}
-      />
 
       {/* Prima il risultato, poi le ipotesi che lo cambiano. */}
       {projection ? (
@@ -312,12 +331,19 @@ function GraduationPanel({
               </select>
             </Field>
           )}
-          <Field label="Media da usare">
-            <select className={inputClass} value={useTargets ? "targets" : "registered"} onChange={(event) => setBasis(event.target.value as "registered" | "targets")}>
+          {/* Etichetta fuori da Field: il "?" non può stare dentro un <label>. */}
+          <div className="min-w-0">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <label htmlFor={basisId} className="text-xs font-black uppercase text-[var(--faint)]">
+                {CAREER_TEXT.basis}
+              </label>
+              <HelpTip title={CAREER_HELP.basis.title} text={CAREER_HELP.basis.text} />
+            </div>
+            <select id={basisId} className={inputClass} value={useTargets ? "targets" : "registered"} onChange={(event) => setBasis(event.target.value as "registered" | "targets")}>
               <option value="registered">Solo i voti già registrati ({formatAverage(weighted)})</option>
               {targetsWeighted !== null ? <option value="targets">Anche i voti obiettivo degli esami in programma ({formatAverage(targetsWeighted)})</option> : null}
             </select>
-          </Field>
+          </div>
         </div>
         <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-3 rounded-[16px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
           <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={abroad} onChange={(event) => onScenario({ abroad: event.target.checked })} />
@@ -383,18 +409,16 @@ function LibrettoList({
 }) {
   if (!entries.length) {
     return (
-      <Panel>
-        <div className="text-center">
-          <Icon name="Award" className="mx-auto mb-3 h-10 w-10 text-[var(--accent-ink)]" />
-          <h3 className="text-xl font-black">Ancora nessun voto nel libretto</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-[var(--muted)]">
-            Registra i voti degli esami che hai superato: medie e voto di laurea previsto si aggiornano da soli.
-          </p>
-          <Button className="mt-4" icon="Award" variant="primary" onClick={onAdd}>
-            Registra un voto
+      <EmptyState
+        icon="Award"
+        title={CAREER_TEXT.emptyTitle}
+        body={CAREER_TEXT.emptyBody}
+        action={
+          <Button icon="Award" variant="primary" onClick={onAdd}>
+            {CAREER_TEXT.recordGrade}
           </Button>
-        </div>
-      </Panel>
+        }
+      />
     );
   }
   return (

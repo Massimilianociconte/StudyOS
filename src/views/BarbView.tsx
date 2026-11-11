@@ -12,7 +12,7 @@ import { BARB_META, useBarbStore } from "../store/useBarbStore";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { useStudyStore } from "../store/useStudyStore";
 import { useSharedStore } from "../store/useSharedStore";
-import { Button, Drawer, EmptyState, Panel, Pill, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { Button, Drawer, EmptyState, HelpTip, Panel, Pill, SectionTitle, Segmented, StatTile, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CourseIcon } from "../components/CourseIcon";
 import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
@@ -23,23 +23,23 @@ import { SEMESTER_LABEL, SEMESTER_SHORT, SEMESTER_TONE, SEMESTER_IDS } from "../
 import { resolveBarbCourse } from "../lib/university/examSessions";
 import { weekdayLabel } from "../lib/university/normalize";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
-import { UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels";
+import { BARB_CHARACTER_LABEL, BARB_HELP, BARB_TEXT, UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels";
+import {
+  NO_BARB_FILTER,
+  isBarbSemesterFilter,
+  isBarbTab,
+  isMineFilterActive,
+  toggleMineFilter,
+  toggleSemesterFilter,
+  type BarbCourseFilter,
+  type BarbSemesterFilter,
+  type BarbTab
+} from "../lib/barbUi";
 import type { BarbCourse, BarbSemesterInfo, BarbTeacher } from "../lib/university/types";
 
-type Tab = "corsi" | "calendario" | "docenti" | "aule" | "fonti" | "condivisi";
-type SemesterFilter = "tutti" | BarbCourse["semester"];
 type DetailTab = "panoramica" | "programma" | "esame";
 
 const ORARI_URL = "https://orari.unimi.it/PortaleStudenti/";
-
-const CHARACTER_LABEL: Record<BarbCourse["character"], string> = {
-  obbligatorio: "Obbligatorio",
-  "opzionale-scelta-guidata": "Scelta guidata",
-  "scelta-libera": "Scelta libera",
-  lingua: "Lingua",
-  "altre-conoscenze": "Altre conoscenze",
-  "tirocinio-tesi": "Tirocinio e tesi"
-};
 
 /** Struttura del piano di studi: ogni gruppo porta con sé la propria regola di scelta. */
 const PLAN_GROUPS: { id: string; title: string; rule: string; match: (course: BarbCourse) => boolean }[] = [
@@ -87,13 +87,14 @@ function ExternalLink({ href, children }: { href: string; children: ReactNode })
   );
 }
 
+/** Collegamento esterno con l'aspetto di un pulsante (mai `<a><Button/></a>`: due elementi interattivi annidati). */
 function LinkButton({ href, icon, children }: { href: string; icon: string; children: ReactNode }) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="motion-safe inline-flex min-h-10 items-center gap-2 rounded-full bg-[var(--surface-strong)] px-3.5 text-sm font-extrabold hover:bg-[var(--surface)]"
+      className="motion-safe inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)]"
     >
       <Icon name={icon} className="h-4 w-4" />
       {children}
@@ -101,8 +102,44 @@ function LinkButton({ href, icon, children }: { href: string; icon: string; chil
   );
 }
 
+/** Dati utili solo a chi gestisce l'app (comandi, codici, affidabilità): chiusi, mai nel flusso principale. */
+function TechnicalDetails({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <details className={`text-xs text-[var(--muted)] ${className}`}>
+      <summary className="cursor-pointer font-bold text-[var(--faint)]">{BARB_TEXT.technicalDetails}</summary>
+      <div className="mt-2 grid grid-cols-1 gap-2">{children}</div>
+    </details>
+  );
+}
+
+/** Pillola di filtro: premuta mostra la × per toglierla. */
+function FilterChip({ active, color, onClick, children }: { active: boolean; color?: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`motion-safe inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full border px-3 text-xs font-extrabold ${
+        active ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
+      }`}
+    >
+      {color ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: active ? "#10131d" : color }} /> : null}
+      <span className="min-w-0 truncate">{children}</span>
+      {active ? <Icon name="X" className="h-3 w-3 shrink-0" /> : null}
+    </button>
+  );
+}
+
 export function BarbView() {
-  const [tab, setTab] = useUiState<Tab>("barb.tab", "corsi", { validate: oneOf("corsi", "calendario", "docenti", "aule", "fonti", "condivisi") });
+  const [tab, setTab] = useUiState<BarbTab>("barb.tab", "corsi", { validate: isBarbTab });
+  // Filtri degli insegnamenti qui (non in CoursesTab): li usano anche i riquadri dei semestri.
+  const [semester, setSemester] = useUiState<BarbSemesterFilter>("barb.semester", "tutti", { validate: isBarbSemesterFilter });
+  const [myPlanOnly, setMyPlanOnly] = useUiState("barb.myPlanOnly", false);
+  const filter: BarbCourseFilter = { semester, myPlanOnly };
+  const setFilter = (next: BarbCourseFilter) => {
+    setSemester(next.semester);
+    setMyPlanOnly(next.myPlanOnly);
+  };
   const { ready, courses, teachers, semesters, syncLogs, init } = useBarbStore(
     useShallow((state) => ({
       ready: state.ready,
@@ -114,7 +151,7 @@ export function BarbView() {
     }))
   );
   const hasShared = useSharedStore((state) => state.received.some((grant) => grant.scope === "barb_exams" || grant.scope === "calendar"));
-  const activeTab: Tab = tab === "condivisi" && !hasShared ? "corsi" : tab;
+  const activeTab: BarbTab = tab === "condivisi" && !hasShared ? "corsi" : tab;
 
   useEffect(() => {
     void init();
@@ -145,31 +182,48 @@ export function BarbView() {
         subtitle="L'elenco ufficiale degli insegnamenti: scegli quelli del tuo piano di studi e aggiungili alle tue materie."
         action={
           <div className="flex flex-wrap gap-2">
-            <a href="https://barb.cdl.unimi.it/it/insegnamenti/piano-didattico" target="_blank" rel="noreferrer">
-              <Button icon="GraduationCap" variant="soft">Piano didattico ufficiale</Button>
-            </a>
+            <LinkButton href="https://barb.cdl.unimi.it/it/insegnamenti/piano-didattico" icon="GraduationCap">
+              Piano didattico ufficiale
+            </LinkButton>
             <ShareButton scopes={["barb_exams"]} />
           </div>
         }
       />
-      <p className="safe-text mb-4 text-xs font-bold text-[var(--muted)]">
-        <span className="font-black text-[var(--text)]">{BARB_META.degreeName}</span> · {BARB_META.degreeClass} · {BARB_META.degreeCode} · A.A.{" "}
-        {BARB_META.academicYear} · dati dalle fonti ufficiali UNIMI, verificati il {formatDate(verified)}
-      </p>
+      {/* Classe e codice del corso stanno in «Fonti ufficiali»: qui solo nome, anno e verifica. */}
+      <p className="safe-text mb-4 text-xs font-bold text-[var(--muted)]">{BARB_TEXT.meta(BARB_META.degreeName, BARB_META.academicYear, formatDate(verified) ?? "?")}</p>
 
+      {/* Riquadri dei semestri = filtri degli insegnamenti; Insegnamenti e Docenti aprono la loro scheda. */}
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {semesters.map((semester) => (
-          <SemesterTile key={semester.id} semester={semester} count={courses.filter((course) => course.semester === semester.id).length} />
+        {semesters.map((item) => (
+          <SemesterTile
+            key={item.id}
+            semester={item}
+            count={courses.filter((course) => course.semester === item.id).length}
+            active={activeTab === "corsi" && semester === item.id}
+            onToggle={() => {
+              setFilter(toggleSemesterFilter(activeTab === "corsi" ? filter : { ...filter, semester: "tutti" }, item.id));
+              setTab("corsi");
+            }}
+          />
         ))}
-        <StatTile icon="BookOpen" label="Insegnamenti" value={String(courses.length)} detail={`${offered} attivi quest'anno`} />
-        <StatTile icon="Users" label="Docenti" value={String(teachers.length)} detail={`${BARB_META.contacts.length} contatti ufficiali`} />
+        <StatTile
+          icon="BookOpen"
+          label={BARB_TEXT.coursesTile}
+          value={String(courses.length)}
+          hint={BARB_TEXT.coursesTileHint(offered)}
+          onClick={() => {
+            setFilter(NO_BARB_FILTER);
+            setTab("corsi");
+          }}
+        />
+        <StatTile icon="Users" label={BARB_TEXT.teachersTile} value={String(teachers.length)} hint={BARB_TEXT.teachersTileHint(BARB_META.contacts.length)} onClick={() => setTab("docenti")} />
       </div>
 
       <div className="mb-4">
         <Segmented label="Sezioni del corso di laurea" value={activeTab} options={tabs} onChange={setTab} />
       </div>
 
-      {activeTab === "corsi" ? <CoursesTab courses={courses} teachersById={teachersById} /> : null}
+      {activeTab === "corsi" ? <CoursesTab courses={courses} teachersById={teachersById} filter={filter} onFilter={setFilter} /> : null}
       {activeTab === "calendario" ? <WeeklySchedule courses={courses} semesters={semesters} /> : null}
       {activeTab === "docenti" ? <TeachersTab teachers={teachers} courses={courses} /> : null}
       {activeTab === "aule" ? <RoomsTab courses={courses} /> : null}
@@ -179,36 +233,45 @@ export function BarbView() {
   );
 }
 
-function SemesterTile({ semester, count }: { semester: BarbSemesterInfo; count: number }) {
+/** Riquadro del semestre come filtro (aria-pressed): un tocco mostra solo i suoi insegnamenti, un altro li mostra tutti. */
+function SemesterTile({ semester, count, active, onToggle }: { semester: BarbSemesterInfo; count: number; active: boolean; onToggle: () => void }) {
   const published = semester.scheduleStatus === "pubblicato";
   return (
-    <div className="quiet-panel min-w-0 p-3.5" title={semester.scheduleNote}>
-      <div className="flex items-center gap-2 text-xs font-black uppercase text-[var(--faint)]">
-        <Icon name="CalendarDays" className="h-3.5 w-3.5 text-[var(--accent-ink)]" />
-        <span className="truncate">{semester.label}</span>
-      </div>
-      <p className="mt-1 text-lg font-black leading-tight">
-        {semester.startDate && semester.endDate ? `${formatShortDate(semester.startDate)} → ${formatShortDate(semester.endDate)}` : "Date da definire"}
-      </p>
-      <p className="mt-1 flex items-start gap-1.5 text-xs font-bold text-[var(--muted)]">
-        <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: published ? "var(--accent)" : "var(--warning)" }} />
-        <span className="min-w-0">
-          {published ? "Orario pubblicato" : "Orario non ancora pubblicato"} · {count} {count === 1 ? "insegnamento" : "insegnamenti"}
+    <div className="relative min-w-0">
+      <button
+        type="button"
+        aria-pressed={active}
+        onClick={onToggle}
+        className={`motion-safe flex h-full w-full min-w-0 flex-col rounded-[18px] border p-3 text-left ${
+          active
+            ? "border-transparent bg-[color-mix(in_srgb,var(--accent)_16%,var(--surface-soft))] ring-2 ring-[var(--accent)]"
+            : "border-[var(--border)] bg-[var(--surface-soft)] hover:border-[var(--accent-ink)] hover:bg-[var(--surface)]"
+        }`}
+      >
+        <span className="flex min-w-0 items-start gap-2 pr-7 text-xs font-black uppercase text-[var(--faint)]">
+          <Icon name="CalendarDays" className="mt-px h-3.5 w-3.5 shrink-0 text-[var(--accent-ink)]" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{semester.label}</span>
         </span>
-      </p>
-    </div>
-  );
-}
-
-function StatTile({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
-  return (
-    <div className="quiet-panel min-w-0 p-3.5">
-      <div className="flex items-center gap-2 text-xs font-black uppercase text-[var(--faint)]">
-        <Icon name={icon} className="h-3.5 w-3.5 text-[var(--accent-ink)]" />
-        <span className="truncate">{label}</span>
-      </div>
-      <p className="mt-1 text-lg font-black leading-tight">{value}</p>
-      <p className="mt-1 truncate text-xs font-bold text-[var(--muted)]">{detail}</p>
+        <span className="mt-1 block text-lg font-black leading-tight">
+          {semester.startDate && semester.endDate ? `${formatShortDate(semester.startDate)} → ${formatShortDate(semester.endDate)}` : "Date da definire"}
+        </span>
+        <span className="mt-1 flex items-start gap-1.5 text-xs font-bold text-[var(--muted)]">
+          <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: published ? "var(--accent)" : "var(--warning)" }} />
+          <span className="min-w-0">
+            {published ? "Orario pubblicato" : "Orario non ancora pubblicato"} · {count} {count === 1 ? "insegnamento" : "insegnamenti"}
+          </span>
+        </span>
+        <span className="mt-auto inline-flex items-center gap-1 pt-1.5 text-xs font-extrabold text-[var(--accent-ink)]">
+          {active ? <Icon name="Check" className="h-3.5 w-3.5" /> : null}
+          {active ? BARB_TEXT.semesterFilterOn : BARB_TEXT.semesterFilterOff}
+        </span>
+      </button>
+      {/* Nota sull'orario (prima solo nel title): "?" fuori dal pulsante, mai un pulsante dentro un pulsante. */}
+      {semester.scheduleNote ? (
+        <span className="absolute right-2.5 top-2.5">
+          <HelpTip title={BARB_TEXT.semesterHelpTitle(semester.label)} text={semester.scheduleNote} />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -218,13 +281,24 @@ function useSelectedCourseIds(courses: BarbCourse[]) {
   return useMemo(() => new Set(subjects.map((subject) => resolveBarbCourse(subject, courses)?.id).filter(Boolean)), [subjects, courses]);
 }
 
-function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachersById: Map<string, BarbTeacher> }) {
+function CoursesTab({
+  courses,
+  teachersById,
+  filter,
+  onFilter
+}: {
+  courses: BarbCourse[];
+  teachersById: Map<string, BarbTeacher>;
+  filter: BarbCourseFilter;
+  onFilter: (next: BarbCourseFilter) => void;
+}) {
   const [query, setQuery] = useUiState("barb.courseQuery", "", { scope: "tab" });
-  const [semester, setSemester] = useUiState<SemesterFilter>("barb.semester", "tutti", { validate: oneOf("tutti", "primo", "secondo", "annuale", "non-definito") });
+  const { semester, myPlanOnly } = filter;
+  const setSemester = (next: BarbSemesterFilter) => onFilter({ ...filter, semester: next });
+  const setMyPlanOnly = (next: boolean) => onFilter({ ...filter, myPlanOnly: next });
   const [hideNotOffered, setHideNotOffered] = useUiState("barb.hideNotOffered", false);
   const [openId, setOpenId] = useUiState<string | null>("barb.openCourse", null, { scope: "tab", validate: isNullableString });
   const inSubjects = useSelectedCourseIds(courses);
-  const [myPlanOnly, setMyPlanOnly] = useUiState("barb.myPlanOnly", false);
 
   const notOffered = courses.filter((course) => course.offered === false);
 
@@ -259,8 +333,7 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
 
   const resetFilters = () => {
     setQuery("");
-    setSemester("tutti");
-    setMyPlanOnly(false);
+    onFilter(NO_BARB_FILTER);
     setHideNotOffered(false);
   };
   const onlyMineEmpty = myPlanOnly && inSubjects.size === 0;
@@ -307,11 +380,19 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
         </div>
       </div>
 
-      {inSubjects.size > 0 ? <div className="mb-5 flex flex-wrap items-center gap-2 text-xs" aria-label="Nelle tue materie, per semestre">
-        <span className="mr-1 font-black">Nelle tue materie</span>
+      {/* Riepilogo delle mie materie per semestre: ogni pillola è un filtro ("Solo le mie" + semestre). */}
+      {inSubjects.size > 0 ? <div className="mb-5 flex flex-wrap items-center gap-2 text-xs" role="group" aria-label={BARB_TEXT.mineGroupAria}>
+        <span className="mr-1 font-black">{BARB_TEXT.mine}</span>
+        <FilterChip active={isMineFilterActive(filter, "tutti")} onClick={() => onFilter(toggleMineFilter(filter, "tutti"))}>
+          {BARB_TEXT.mineAll(inSubjects.size)}
+        </FilterChip>
         {SEMESTER_IDS.map((id) => {
           const selected = courses.filter((course) => inSubjects.has(course.id) && course.semester === id);
-          return selected.length ? <Tag key={id} color={SEMESTER_TONE[id]}>{SEMESTER_LABEL[id]} · {selected.length} {selected.length === 1 ? "insegnamento" : "insegnamenti"} · {selected.reduce((sum, course) => sum + course.cfu, 0)} CFU</Tag> : null;
+          return selected.length ? (
+            <FilterChip key={id} color={SEMESTER_TONE[id]} active={isMineFilterActive(filter, id)} onClick={() => onFilter(toggleMineFilter(filter, id))}>
+              {BARB_TEXT.mineSemester(SEMESTER_LABEL[id], selected.length, selected.reduce((sum, course) => sum + course.cfu, 0))}
+            </FilterChip>
+          ) : null;
         })}
       </div> : !onlyMineEmpty ? (
         <p className="mb-5 flex items-start gap-2 px-1 text-sm text-[var(--muted)]">
@@ -344,16 +425,17 @@ function CoursesTab({ courses, teachersById }: { courses: BarbCourse[]; teachers
           const cfu = group.items.reduce((sum, course) => sum + course.cfu, 0);
           return (
             <section key={group.id} aria-labelledby={`barb-group-${group.id}`}>
-              <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
+              <div className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
                 <h3 id={`barb-group-${group.id}`} className="text-lg font-black">
                   {group.title}
                 </h3>
+                {group.id.startsWith("gruppo-") ? <HelpTip title={BARB_HELP.choiceGroup.title} text={BARB_HELP.choiceGroup.text} example={BARB_HELP.choiceGroup.example} /> : null}
                 {group.rule ? <span className="text-xs font-black uppercase text-[var(--accent-ink)]">{group.rule}</span> : null}
                 <span className="text-xs font-bold text-[var(--faint)]">
                   {group.items.length} {group.items.length === 1 ? "insegnamento" : "insegnamenti"} in elenco · {cfu} CFU in totale
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr))]">
+              <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,250px),1fr))]">
                 {group.items.map((course) => (
                   <CourseCard
                     key={course.id}
@@ -419,21 +501,18 @@ function CourseCard({
         </div>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {added ? (
-            <span className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--accent)] text-[#10131d]" title="Già nelle tue materie">
+            <span className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--accent)] text-[#10131d]" title={BARB_TEXT.alreadyAdded}>
               <Icon name="Check" className="h-3.5 w-3.5" />
-              <span className="sr-only">Già nelle tue materie</span>
-            </span>
-          ) : !notOffered ? (
-            <span className="grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--muted)]" title="Apri per aggiungerlo alle tue materie">
-              <Icon name="Plus" className="h-3.5 w-3.5" />
-              <span className="sr-only">Non ancora nelle tue materie: apri per aggiungerlo</span>
+              <span className="sr-only">{BARB_TEXT.alreadyAdded}</span>
             </span>
           ) : null}
-          <Icon name="ChevronRight" className="hidden h-4 w-4 text-[var(--faint)] transition-transform group-hover:translate-x-0.5 sm:block" />
+          {/* Il tocco apre il dettaglio (dove c'è «Aggiungi alle mie materie»): freccia, non "+". */}
+          <Icon name="ChevronRight" className="h-4 w-4 text-[var(--faint)] transition-transform group-hover:translate-x-0.5" />
+          <span className="sr-only">{BARB_TEXT.openDetails}</span>
         </span>
       </div>
       <div className="mt-3 flex min-w-0 items-start gap-2.5">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-8 w-8" /></span>
+        <span className="grid h-10 w-10 shrink-0 grid-cols-1 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-8 w-8" /></span>
         <h4 className="three-line-safe text-sm font-black leading-snug sm:text-[15px]">{course.name}</h4>
       </div>
       <BarbExamAvailability course={course} />
@@ -531,10 +610,13 @@ function TextSection({ title, value }: { title: string; value: string | null | u
   );
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
+function Fact({ label, help, children }: { label: string; help?: { title: string; text: string; example?: string }; children: ReactNode }) {
   return (
     <div className="min-w-0 rounded-[16px] bg-[var(--surface-soft)] p-3">
-      <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{label}</dt>
+      <dt className="flex min-w-0 items-center gap-1.5 text-[11px] font-black uppercase text-[var(--faint)]">
+        <span className="min-w-0">{label}</span>
+        {help ? <HelpTip title={help.title} text={help.text} example={help.example} /> : null}
+      </dt>
       <dd className="mt-0.5 break-words text-sm font-bold">{children}</dd>
     </div>
   );
@@ -580,9 +662,9 @@ function CourseDrawer({
       eyebrow={
         course ? (
           <>
-            <span className="grid h-11 w-11 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-9 w-9" /></span>
+            <span className="grid h-11 w-11 grid-cols-1 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-9 w-9" /></span>
             <Tag color={SEMESTER_TONE[course.semester]}>{SEMESTER_LABEL[course.semester]}</Tag>
-            <Pill active={course.character === "obbligatorio"}>{CHARACTER_LABEL[course.character]}</Pill>
+            <Pill active={course.character === "obbligatorio"}>{BARB_CHARACTER_LABEL[course.character] ?? course.character}</Pill>
             {course.choiceGroup ? <Pill>{PLAN_GROUPS.find((group) => group.id === course.choiceGroup)?.title ?? course.choiceGroup}</Pill> : null}
             <Pill>{course.cfu} CFU</Pill>
             {course.offered === false ? (
@@ -639,7 +721,7 @@ function CourseDrawer({
                 <Fact label="Periodo">{SEMESTER_LABEL[course.semester]}{course.year ? ` · ${course.year}° anno` : ""}</Fact>
                 <Fact label="Ore">{course.totalHours ? `${course.totalHours} ore` : <Missing />}</Fact>
                 <Fact label="Lingua">{course.language ?? <Missing />}</Fact>
-                <Fact label="Settore (SSD)">{course.ssd.length ? course.ssd.join(", ") : <Missing />}</Fact>
+                <Fact label="Settore (SSD)" help={BARB_HELP.ssd}>{course.ssd.length ? course.ssd.join(", ") : <Missing />}</Fact>
                 <Fact label="Esame">{course.examMode ?? <Missing />}</Fact>
                 <Fact label="Valutazione">{course.grading ?? <Missing />}</Fact>
               </dl>
@@ -706,9 +788,10 @@ function CourseDrawer({
 
               {course.conflicts.length ? (
                 <div className="rounded-[16px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-xs font-bold text-[var(--warning-text)]">
+                  {/* Solo la nota: il nome interno del campo non dice nulla a chi studia. */}
                   {course.conflicts.map((conflict, index) => (
                     <p key={`${conflict.field}-${index}`}>
-                      {conflict.field}: {conflict.note}
+                      {BARB_TEXT.conflictNote} {conflict.note}
                     </p>
                   ))}
                 </div>
@@ -716,7 +799,12 @@ function CourseDrawer({
 
               <div className="flex flex-wrap gap-2">
                 {course.officialPageUrl ? <LinkButton href={course.officialPageUrl} icon="ExternalLink">Scheda ufficiale</LinkButton> : null}
-                {course.arielUrl ? <LinkButton href={course.arielUrl} icon="Globe">Materiali su Ariel</LinkButton> : null}
+                {course.arielUrl ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <LinkButton href={course.arielUrl} icon="Globe">Materiali su Ariel</LinkButton>
+                    <HelpTip title={BARB_HELP.ariel.title} text={BARB_HELP.ariel.text} />
+                  </span>
+                ) : null}
                 {!course.officialPageUrl && !course.arielUrl ? <Missing label="Nessun link ufficiale" /> : null}
               </div>
             </>
@@ -743,11 +831,19 @@ function CourseDrawer({
             </div>
           ) : null}
 
-          <p className="rounded-[16px] bg-[var(--surface-soft)] p-3 text-xs text-[var(--muted)]">
-            Fonte ufficiale: <ExternalLink href={course.provenance.sourceUrl}>{course.provenance.sourceUrl}</ExternalLink>
-            <br />
-            Verificata il {formatDate(course.provenance.lastVerifiedAt)} · affidabilità dei dati {Math.round(course.provenance.confidence * 100)}%
-          </p>
+          {/* Indirizzo completo e affidabilità stimata servono a chi gestisce l'app: restano chiusi. */}
+          <div className="rounded-[16px] bg-[var(--surface-soft)] p-3 text-xs text-[var(--muted)]">
+            <p>
+              {BARB_TEXT.officialSource} <ExternalLink href={course.provenance.sourceUrl}>{BARB_TEXT.openOfficialPage}</ExternalLink> ·{" "}
+              {BARB_TEXT.verifiedOn(formatDate(course.provenance.lastVerifiedAt) ?? "?")}
+            </p>
+            <TechnicalDetails className="mt-2">
+              <p className="break-all">
+                {BARB_TEXT.sourceAddress} {course.provenance.sourceUrl}
+              </p>
+              <p>{BARB_TEXT.reliability(Math.round(course.provenance.confidence * 100))}</p>
+            </TechnicalDetails>
+          </div>
         </div>
       ) : null}
     </Drawer>
@@ -805,9 +901,9 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
           <div className="quiet-panel p-6 text-sm">
             <p className="font-black">Elenco dei docenti non ancora disponibile</p>
             <p className="mt-1 text-[var(--muted)]">I nomi compaiono qui appena vengono letti dalle pagine ufficiali UNIMI: non ne inseriamo mai di ipotetici.</p>
-            <p className="mt-2 text-xs text-[var(--faint)]">
-              Per chi gestisce l&rsquo;app: <span className="font-mono">npm run barb:sync:teachers -- --apply</span>
-            </p>
+            <TechnicalDetails className="mt-3">
+              <code className="font-mono">npm run barb:sync:teachers -- --apply</code>
+            </TechnicalDetails>
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -817,7 +913,7 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
             action={<Button variant="soft" onClick={() => setQuery("")}>Cancella la ricerca</Button>}
           />
         ) : (
-          <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
+          <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]">
             {filtered.map((teacher) => (
               <article key={teacher.id} className="quiet-panel flex min-w-0 flex-col p-3.5 text-sm">
                 <h4 className="font-black">{teacher.displayName}</h4>
@@ -939,16 +1035,18 @@ function RoomsTab({ courses }: { courses: BarbCourse[] }) {
                 </li>
               ))}
             </ul>
-            <p className="mt-3 text-xs text-[var(--faint)]">
-              Per chi gestisce l&rsquo;app: <span className="font-mono">npm run barb:sync:schedule -- --apply</span>
-            </p>
+            <TechnicalDetails className="mt-3">
+              <code className="font-mono">npm run barb:sync:schedule -- --apply</code>
+            </TechnicalDetails>
           </div>
-          <a href={ORARI_URL} target="_blank" rel="noreferrer">
-            <Button icon="MapPin" variant="soft">Apri l&rsquo;orario ufficiale</Button>
-          </a>
+          <div>
+            <LinkButton href={ORARI_URL} icon="MapPin">
+              Apri l&rsquo;orario ufficiale
+            </LinkButton>
+          </div>
         </div>
       ) : (
-        <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))]">
+        <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))]">
           {rooms.map((room) => (
             <div key={`${room.room}-${room.building}`} className="quiet-panel p-3 text-sm">
               <p className="font-black">{room.room}</p>
@@ -965,6 +1063,7 @@ function RoomsTab({ courses }: { courses: BarbCourse[] }) {
 function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.getState>["syncLogs"] }) {
   const states = Object.values(BARB_META.sourceStates).sort((a, b) => a.url.localeCompare(b.url));
   const timetable = BARB_META.timetable;
+  const latest = [...syncLogs].sort((a, b) => (b.finishedAt ?? b.startedAt).localeCompare(a.finishedAt ?? a.startedAt))[0];
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Panel>
@@ -979,22 +1078,20 @@ function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.get
             </a>
           ))}
         </div>
-        {states.length ? (
-          <details className="mt-4">
-            <summary className="cursor-pointer text-sm font-black">{states.length} pagine controllate all&rsquo;ultimo aggiornamento</summary>
-            <ul className="scrollbar-soft mt-2 grid max-h-72 grid-cols-1 gap-1 overflow-y-auto text-xs text-[var(--muted)]">
-              {states.map((state) => (
-                <li key={state.url} className="break-all">
-                  {formatDateTime(state.fetchedAt)} · {state.statusCode ?? "?"} · <ExternalLink href={state.url}>{state.title ?? state.url}</ExternalLink>
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
       </Panel>
       <Panel>
         <h3 className="mb-2 text-xl font-black">Stato dei dati</h3>
         <dl className="grid grid-cols-1 gap-3 text-sm">
+          <div>
+            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{BARB_TEXT.degreeRow}</dt>
+            <dd>
+              <span className="font-black">{BARB_META.degreeName}</span>
+              <span className="text-[var(--muted)]">
+                {" "}
+                · {BARB_META.degreeClass} · {BARB_META.degreeCode} · A.A. {BARB_META.academicYear}
+              </span>
+            </dd>
+          </div>
           <div>
             <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Orario delle lezioni</dt>
             <dd>
@@ -1012,27 +1109,45 @@ function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.get
           <div>
             <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Ultimo aggiornamento dei dati</dt>
             <dd>
-              {syncLogs.length === 0 ? (
-                <span className="text-[var(--muted)]">Nessun aggiornamento automatico finora: i dati sono stati verificati a mano sulle fonti ufficiali.</span>
+              {latest ? (
+                <span>{BARB_TEXT.lastUpdate(formatDateTime(latest.finishedAt ?? latest.startedAt), latest.recordsChanged)}</span>
               ) : (
-                syncLogs.map((log) => (
-                  <p key={log.id} className="mt-1 rounded-[14px] bg-[var(--surface-soft)] p-2 text-xs">
-                    {formatDateTime(log.finishedAt ?? log.startedAt)} · ambito {log.scope} · {log.recordsChanged} modifiche · {log.notes}
-                  </p>
-                ))
+                <span className="text-[var(--muted)]">Nessun aggiornamento automatico finora: i dati sono stati verificati a mano sulle fonti ufficiali.</span>
               )}
             </dd>
           </div>
         </dl>
-        <details className="mt-4">
-          <summary className="cursor-pointer text-sm font-black">Come si aggiornano i dati (per chi gestisce l&rsquo;app)</summary>
-          <p className="mt-2 text-sm text-[var(--muted)]">
+        {/* Codici di risposta, registro, Firecrawl e comandi: solo per chi gestisce l'app, chiusi. */}
+        <TechnicalDetails className="mt-4">
+          {states.length ? (
+            <div>
+              <p className="font-bold">{BARB_TEXT.technicalPages(states.length)}</p>
+              <ul className="scrollbar-soft mt-1 grid max-h-72 grid-cols-1 gap-1 overflow-y-auto">
+                {states.map((state) => (
+                  <li key={state.url} className="break-all">
+                    {formatDateTime(state.fetchedAt)} · {state.statusCode ?? "?"} · <ExternalLink href={state.url}>{state.title ?? state.url}</ExternalLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {syncLogs.length ? (
+            <div>
+              <p className="font-bold">{BARB_TEXT.technicalLog}</p>
+              {syncLogs.map((log) => (
+                <p key={log.id} className="mt-1 rounded-[14px] bg-[var(--surface-soft)] p-2">
+                  {formatDateTime(log.finishedAt ?? log.startedAt)} · ambito {log.scope} · {log.recordsChanged} modifiche · {log.notes}
+                </p>
+              ))}
+            </div>
+          ) : null}
+          <p>
             L&rsquo;aggiornamento gira sul computer di chi gestisce l&rsquo;app, con Firecrawl in locale (<span className="font-mono">http://localhost:3002</span>, docker in{" "}
             <span className="font-mono">~/firecrawl-oss</span>): nessun servizio online, nessun credito. Ogni aggiornamento salva un report in{" "}
             <span className="font-mono">.cache/ai/university/runs/</span>; i dati cambiano solo con <span className="font-mono">--apply</span> o
             <span className="font-mono"> barb:apply</span>, dopo la verifica.
           </p>
-          <div className="mt-3 grid grid-cols-1 gap-1.5 font-mono text-xs sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-1.5 font-mono sm:grid-cols-2">
             {[
               "npm run barb:check-updates",
               "npm run barb:sync",
@@ -1046,7 +1161,7 @@ function SourcesTab({ syncLogs }: { syncLogs: ReturnType<typeof useBarbStore.get
               </code>
             ))}
           </div>
-        </details>
+        </TechnicalDetails>
       </Panel>
     </div>
   );
@@ -1088,12 +1203,12 @@ function WeeklySchedule({ courses, semesters }: { courses: BarbCourse[]; semeste
             ))}
           </div>
           <div className="flex flex-wrap gap-2">
-            <a href="https://barb.cdl.unimi.it/it/studiare/calendari-e-orari" target="_blank" rel="noreferrer">
-              <Button icon="CalendarDays" variant="soft">Calendari e orari BARB</Button>
-            </a>
-            <a href={ORARI_URL} target="_blank" rel="noreferrer">
-              <Button icon="Clock" variant="soft">Orario ufficiale (Agenda web)</Button>
-            </a>
+            <LinkButton href="https://barb.cdl.unimi.it/it/studiare/calendari-e-orari" icon="CalendarDays">
+              Calendari e orari BARB
+            </LinkButton>
+            <LinkButton href={ORARI_URL} icon="Clock">
+              Orario ufficiale (Agenda web)
+            </LinkButton>
           </div>
         </div>
       ) : mode === "settimana" ? (
