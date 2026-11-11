@@ -136,6 +136,15 @@ const dayChanges = (event: Pick<CalendarEvent, "start" | "end">, first: string, 
 };
 
 /**
+ * `from` sostituito da `to` solo dove è una parola intera: "Al" → "Bo" non cambia "Alberto" né "Alì".
+ * Lettere, cifre e accenti attaccati non fanno da confine; `to` resta com'è scritto (anche con "$").
+ */
+const replaceWord = (text: string, from: string, to: string) => {
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`(?<![\\p{L}\\p{N}\\p{M}])${escaped}(?![\\p{L}\\p{N}\\p{M}])`, "gu"), () => to);
+};
+
+/**
  * Campi da salvare modificando una ricorrenza: solo ciò che il modulo ha cambiato (`before` è la
  * bozza all'apertura, `after` quella salvata), {} se nulla. Mai la categoria, il colore o la regola.
  * Il titolo cambia solo con il nome o il tipo: se era quello di sempre ("Compleanno di …") si
@@ -156,7 +165,7 @@ export const occasionChanges = (
   if (nameChanged || kindChanged) {
     const title = event.title ?? "";
     const derived = !title.trim() || title === occasionTitle(before.kind, oldName) || title === oldName;
-    const next = derived ? occasionTitle(after.kind, name) : nameChanged && oldName && title.includes(oldName) ? title.split(oldName).join(name) : title;
+    const next = derived ? occasionTitle(after.kind, name) : nameChanged && oldName ? replaceWord(title, oldName, name) : title;
     if (next !== title) changes.title = next;
   }
   if (nameChanged || kindChanged || yearChanged) {

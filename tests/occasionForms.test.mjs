@@ -186,3 +186,25 @@ test("S3. vacanza aperta e salvata senza cambiare: nessuna modifica; poi solo ci
   assert.deepEqual(vacationChanges(event, before, { ...before, destination: " " }), { location: undefined });
   assert.deepEqual(vacationChanges(event, before, { ...before, reminders: [{ daysBefore: 1, at: "09:00" }] }), { reminders: [{ daysBefore: 1, at: "09:00" }] });
 });
+
+test("Nit 3. cambiare il nome sostituisce solo la parola intera nel titolo scelto a mano", async () => {
+  const { occasionChanges, occasionDraftFromEvent } = await import("../src/lib/occasionForms.ts");
+  const dinner = {
+    id: "c",
+    title: "Cena con Al e Alberto",
+    start: "2026-03-14T00:00:00.000Z",
+    end: "2026-03-15T00:00:00.000Z",
+    allDay: true,
+    category: "personal",
+    repeat: { freq: "yearly" },
+    occasion: { kind: "recurring-day", person: "Al" },
+    description: "",
+    reminders: []
+  };
+  const before = occasionDraftFromEvent(dinner);
+  const changes = occasionChanges(dinner, before, { ...before, name: "Bo" }, { today: "2026-11-11", baseYear: 2026 });
+  assert.equal(changes.title, "Cena con Bo e Alberto");
+  const accented = { ...dinner, title: "Festa di Al, Alì e Àl", occasion: { kind: "recurring-day", person: "Al" } };
+  const renamed = occasionChanges(accented, occasionDraftFromEvent(accented), { ...occasionDraftFromEvent(accented), name: "$1 Bo" }, { today: "2026-11-11", baseYear: 2026 });
+  assert.equal(renamed.title, "Festa di $1 Bo, Alì e Àl");
+});

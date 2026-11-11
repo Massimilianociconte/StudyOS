@@ -559,7 +559,9 @@ export function EventEditor({
                   <Field label={EVENT_EDITOR_TEXT.location}>
                     <input className={inputClass} value={draft.location} placeholder={EVENT_EDITOR_TEXT.locationPlaceholder} onChange={(e) => update((value) => ({ ...value, location: e.target.value }))} />
                   </Field>
-                  {imported ? null : (
+                  {imported ? null : inOtherCalendar ? (
+                    <p className="text-xs font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.linksOtherCalendar}</p>
+                  ) : (
                     <fieldset className="m-0 min-w-0 border-0 p-0">
                       <legend className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">{EVENT_EDITOR_TEXT.links}</legend>
                       {draft.links.length ? (

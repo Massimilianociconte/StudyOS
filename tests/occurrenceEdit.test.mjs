@@ -6,6 +6,7 @@ import {
   occurrenceEditCalls,
   scopeImpact,
   seriesSpan,
+  seriesMovePatch,
   simulateOccurrenceEdit,
   userRuleChange
 } from "../src/lib/occurrenceEdit.ts";
@@ -154,7 +155,10 @@ test("S2. «Tutti» da una parte nata da «Questo e i successivi»: si dice da q
   const edit = scopeOptions({ action: "edit", date: "2026-11-30", span: part }).find((option) => option.id === "all").details[0];
   assert.equal(edit, SCOPE_TEXT.allEdit({ from: "lunedì 23 novembre", past: false }));
   assert.ok(!edit.includes("anche quelle passate"));
-  assert.ok(scopeOptions({ action: "edit", date: "2026-11-09", span: root }).find((option) => option.id === "all").details[0].includes("fino al domenica 22 novembre"));
+  // Davanti al giorno della settimana: "da lunedì", "fino a domenica" (non "dal lunedì", "fino al domenica").
+  assert.ok(edit.includes("da lunedì 23 novembre in poi"), edit);
+  assert.ok(scopeOptions({ action: "edit", date: "2026-11-09", span: root }).find((option) => option.id === "all").details[0].includes("fino a domenica 22 novembre"));
+  assert.ok(SCOPE_TEXT.allMove({ from: "lunedì 23 novembre", until: "domenica 6 dicembre", past: false }).includes("da lunedì 23 novembre a domenica 6 dicembre"));
   assert.deepEqual(scopeOptions({ action: "delete", date: "2026-11-30", span: part }).find((option) => option.id === "all").details, [SCOPE_TEXT.allDeleteFamily]);
   // Serie mai divisa, tutta nel futuro: niente "anche quelle passate".
   const future = seriesSpan([event({ start: local(2026, 12, 7), end: local(2026, 12, 7, 13), repeat: { freq: "weekly" } })], "s", "2026-12-14", TODAY);
@@ -281,4 +285,66 @@ test("B2. il modulo che adatta la regola al giorno nuovo non è «una regola nuo
   assert.equal(userRuleChange({ item, series: TUESDAYS, changes: { repeat: { freq: "weekly", byWeekday: ["TU", "TH"] } } }), true);
   assert.equal(userRuleChange({ item, series: TUESDAYS, changes: { repeat: null } }), true);
   assert.equal(userRuleChange({ item, series: TUESDAYS, changes: { title: "Altro" } }), false);
+});
+
+const MONDAYS = () => event({ repeat: { freq: "weekly", byWeekday: ["MO"] } });
+
+test("R1-S1. «Tutti» verso un giorno della settimana prima: la serie tiene la sua prima data (1/11, non 8/11)", () => {
+  const series = MONDAYS();
+  for (const date of ["2026-11-16", "2026-11-02"]) {
+    const item = findOccurrence([series], "s", date);
+    const moved = shiftMs(item, -DAY);
+    const { calls, newStart } = occurrenceEditCalls({ item, series, scope: "all", changes: moved });
+    assert.equal(newStart, undefined, date);
+    const after = simulateOccurrenceEdit([series], "s", date, calls, NOW).events;
+    assert.deepEqual(seriesOf(after).repeat, { freq: "weekly", byWeekday: ["SU"] }, date);
+    assert.deepEqual(shown(after, "2026-10-25", "2026-11-23"), ["2026-11-01 Lezione", "2026-11-08 Lezione", "2026-11-15 Lezione", "2026-11-22 Lezione"], date);
+  }
+  // Dal modulo (inizio spostato alla domenica, regola adattata da sola): lo stesso.
+  const item = findOccurrence([series], "s", "2026-11-16");
+  const changes = { ...shiftMs(item, -DAY), repeat: { freq: "weekly", byWeekday: ["SU"] } };
+  const { calls, newStart } = occurrenceEditCalls({ item, series, scope: "all", changes });
+  assert.equal(newStart, undefined);
+  assert.equal(shown(simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events, "2026-10-25", "2026-11-09")[0], "2026-11-01 Lezione");
+  assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["SU"] }, "2026-11-15", "2026-11-02", "2026-11-01"), "2026-11-01");
+  // Una regola scelta a mano resta dal primo giorno in poi (B2).
+  assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["SU"] }, "2026-11-15", "2026-11-02"), "2026-11-08");
+});
+
+test("Nit 2. «La serie ora inizia…» solo se il primo giorno cambia davvero", () => {
+  const series = MONDAYS();
+  const item = findOccurrence([series], "s", "2026-11-16");
+  // Inizio spostato a martedì e regola "ogni giorno": la serie parte ancora lunedì 2.
+  const changes = { ...shiftMs(item, DAY), repeat: { freq: "daily" } };
+  const { calls, newStart } = occurrenceEditCalls({ item, series, scope: "all", changes });
+  assert.equal(newStart, undefined);
+  assert.equal(shown(simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events, "2026-11-01", "2026-11-04")[0], "2026-11-02 Lezione");
+  // Ogni mercoledì scelto dal 18: la serie parte mercoledì 4, e lo si dice.
+  const wednesday = findOccurrence([event({ repeat: { freq: "daily" } })], "s", "2026-11-18");
+  assert.equal(
+    occurrenceEditCalls({ item: wednesday, series: event({ repeat: { freq: "daily" } }), scope: "all", changes: { repeat: { freq: "weekly" } } }).newStart,
+    "2026-11-04"
+  );
+});
+
+test("R1-B1. tutta la serie spostata a un altro giorno (evento di un'altra persona, agente senza giorno): la regola segue", () => {
+  const series = { ...MONDAYS(), recurrence: "weekly", repeatLegacy: "weekly|", timeZone: "Europe/Rome" };
+  const start = new Date(Date.parse(series.start) + DAY).toISOString();
+  const end = new Date(Date.parse(series.end) + DAY).toISOString();
+  const patch = seriesMovePatch(series, start, end);
+  assert.deepEqual(patch, { start, end, repeat: { freq: "weekly", byWeekday: ["TU"] }, recurrence: "weekly", recurrenceUntil: undefined, repeatLegacy: "weekly|" });
+  const after = { ...series, ...patch };
+  assert.deepEqual(shown([after], "2026-11-01", "2026-11-25"), ["2026-11-03 Lezione", "2026-11-10 Lezione", "2026-11-17 Lezione", "2026-11-24 Lezione"]);
+  // Stessa settimana dell'ora: solo gli orari. Regola senza giorno scritto, o nessuna regola: solo gli orari.
+  const later = new Date(Date.parse(series.start) + 3600e3).toISOString();
+  assert.deepEqual(seriesMovePatch(series, later, end), { start: later, end });
+  assert.deepEqual(seriesMovePatch(WEEKLY, start, end), { start, end });
+  assert.deepEqual(seriesMovePatch(event({}), start, end), { start, end });
+});
+
+test("Nit 6. «Questo e i successivi» da un giorno cambiato da solo: si dice che i giorni dopo ne prendono titolo e dettagli", () => {
+  const following = (rowContent) =>
+    scopeOptions({ action: "move", date: "2026-11-16", rowContent }).find((option) => option.id === "following").details;
+  assert.ok(following(true).includes(SCOPE_TEXT.followingTakesDay));
+  assert.ok(!following(false).includes(SCOPE_TEXT.followingTakesDay));
 });

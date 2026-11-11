@@ -246,7 +246,8 @@ const handleCall = async (job: { id: string; name: string; args: Record<string, 
   try {
     tools = await loadAgentTools();
   } catch {
-    record({ tool: job.name, risk: "write", decision: "deny", status: "failed", summary: job.name, actor: job.actorName });
+    // Strumenti non caricati: né rischio né decisione (non c'è stata), solo l'esito.
+    record({ tool: job.name, status: "failed", summary: job.name, actor: job.actorName });
     await deliver(job.id, { ok: false, code: "failed", error: TOOLS_UNAVAILABLE });
     return;
   }

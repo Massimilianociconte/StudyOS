@@ -254,3 +254,40 @@ test("create_event: compleanno ogni anno, vacanza, colore e promemoria", async (
   assert.deepEqual(byId(plain.data.id).repeat, { freq: "daily", end: { type: "count", count: 3 } }, "repeat vince su recurrence");
   assert.equal(byId(plain.data.id).colorCustom, undefined, "senza colore resta quello della tipologia");
 });
+
+// Ogni lunedì alle 10 a Roma con il giorno scritto, come la salvano ora le scelte pronte.
+const MONDAYS = event({ id: "m", recurrence: "weekly", repeat: { freq: "weekly", byWeekday: ["MO"] }, repeatLegacy: "weekly|", timeZone: "Europe/Rome" });
+const mondays = () =>
+  expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date("2026-12-01T00:00:00.000Z"))
+    .filter((item) => item.id === "m" || item.seriesId === "m" || String(item.splitFrom ?? "") === "m")
+    .map((item) => `${item.occurrenceDate} ${new Date(item.start).toISOString().slice(0, 10)}`);
+const weekdays = () =>
+  expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date("2026-12-01T00:00:00.000Z"))
+    .filter((item) => item.recurring)
+    .map((item) => new Date(item.start).toLocaleDateString("en-GB", { weekday: "short", timeZone: "Europe/Rome" }));
+
+test("R1-B1. update_event sposta una serie dal lunedì al martedì: ogni data è di martedì e la regola dice martedì", async () => {
+  // Senza occurrenceDate (tutta la serie), con scope «all» da un giorno: martedì 3, 10, 17, 24.
+  for (const args of [{ start: "2026-11-03T09:00:00.000Z" }, { occurrenceDate: "2026-11-16", scope: "all", start: "2026-11-17T09:00:00.000Z" }]) {
+    useStudyStore.setState({ events: [MONDAYS] });
+    const moved = await executeAgentTool("studyos_update_event", { id: "m", ...args });
+    assert.equal(moved.ok, true, JSON.stringify(moved));
+    assert.deepEqual(byId("m").repeat, { freq: "weekly", byWeekday: ["TU"] }, JSON.stringify(args));
+    assert.deepEqual(weekdays(), ["Tue", "Tue", "Tue", "Tue"], JSON.stringify(args));
+    assert.equal(byId("m").start, "2026-11-03T09:00:00.000Z");
+  }
+  // «following» dal 16: lunedì 2 e 9, poi martedì 17 e 24.
+  useStudyStore.setState({ events: [MONDAYS] });
+  const following = await executeAgentTool("studyos_update_event", { id: "m", occurrenceDate: "2026-11-16", scope: "following", start: "2026-11-17T09:00:00.000Z" });
+  assert.equal(following.ok, true);
+  assert.deepEqual(weekdays(), ["Mon", "Mon", "Tue", "Tue"]);
+  assert.deepEqual(events().find((item) => item.splitFrom === "m").repeat, { freq: "weekly", byWeekday: ["TU"] });
+  // Solo l'ora: la regola resta quella.
+  useStudyStore.setState({ events: [MONDAYS] });
+  assert.equal((await executeAgentTool("studyos_update_event", { id: "m", start: "2026-11-02T10:00:00.000Z" })).ok, true);
+  assert.deepEqual(byId("m").repeat, { freq: "weekly", byWeekday: ["MO"] });
+  // Una regola scritta dall'agente vince.
+  useStudyStore.setState({ events: [MONDAYS] });
+  assert.equal((await executeAgentTool("studyos_update_event", { id: "m", start: "2026-11-03T09:00:00.000Z", repeat: { freq: "weekly", byWeekday: ["TU", "TH"] } })).ok, true);
+  assert.deepEqual(byId("m").repeat, { freq: "weekly", byWeekday: ["TU", "TH"] });
+});

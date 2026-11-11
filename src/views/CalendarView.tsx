@@ -51,8 +51,8 @@ import { OccasionForm, occasionIcon } from "../components/calendar/OccasionForm"
 import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
-import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
-import { occurrenceEditCalls, scopeImpact, seriesSpan, userRuleChange, type ScopeImpact } from "../lib/occurrenceEdit";
+import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, rowHasOwnContent, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
+import { occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
   newOccasionDraft,
   newVacationDraft,
@@ -522,7 +522,8 @@ export function CalendarView() {
       pinsZone: own?.pinsZone,
       impacts,
       span: seriesSpan(current, target.seriesId, target.date, civilDateOf(new Date())),
-      newStart
+      newStart,
+      rowContent: Boolean(own && target.row && rowHasOwnContent(item, own.series))
     });
   };
 
@@ -565,11 +566,14 @@ export function CalendarView() {
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
     if (origin) {
       // Solo dallo store dei dati altrui (controlla il permesso e mette in coda la scrittura), sull'ultima
-      // versione salvata: cambiano solo gli orari, il resto resta com'è per il proprietario.
+      // versione salvata: cambiano gli orari (e la regola scritta con il giorno della settimana, che segue
+      // il giorno nuovo), il resto resta com'è per il proprietario.
       const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(origin.ownerId, "calendarEvent", series.id))?.entity;
-      if (!latest) return;
+      const current = latest ? sharedCalendarEvent(latest) : null;
+      if (!latest || !current) return;
+      const moved = seriesMovePatch(current, start.toISOString(), end.toISOString());
       try {
-        await useSharedStore.getState().saveSharedItem(origin.ownerId, "calendarEvent", { ...latest, start: start.toISOString(), end: end.toISOString() });
+        await useSharedStore.getState().saveSharedItem(origin.ownerId, "calendarEvent", { ...latest, ...moved } as SharedEntity);
         setNotice("");
       } catch (cause) {
         setNotice(sharedFailure(cause, EVENT_EDITOR_TEXT.moveFailed(shortTitle(series.title))));
@@ -1130,8 +1134,8 @@ export function CalendarView() {
                   checklist: [],
                   attachmentIds: [],
                   notes: "",
-                  // I link scritti nel modulo restano (prima si perdevano in silenzio).
-                  links: fields.links ?? []
+                  // Il server non accetta collegamenti in un evento nuovo altrui (il modulo lo dice).
+                  links: []
                 },
                 { repeatChanged: fields.repeat !== undefined }
               );

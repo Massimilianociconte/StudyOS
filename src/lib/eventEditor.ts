@@ -308,6 +308,10 @@ const ROW_CONTENT_KEYS = ["title", "description", "category", "color", "colorCus
  * cambiato da solo (riga): i successivi prendono anche ciò che quel giorno mostrava (titolo, colore,
  * note...), non orari, regola o materia se non cambiati.
  */
+/** Il giorno cambiato da solo `row` ha contenuti suoi (titolo, colore, note…) diversi da quelli della serie? */
+export const rowHasOwnContent = (row: Partial<CalendarEvent>, series: Partial<CalendarEvent>) =>
+  ROW_CONTENT_KEYS.some((key) => JSON.stringify(row[key] ?? null) !== JSON.stringify(series[key] ?? null));
+
 export const followingPatch = (shown: Partial<CalendarEvent>, changes: Partial<CalendarEvent>, fromRow: boolean): Partial<CalendarEvent> => {
   if (!fromRow) return changes;
   const content: Partial<CalendarEvent> = {};
@@ -397,6 +401,8 @@ const rowLines = (impact: ScopeImpact | undefined) => {
  * - `span`: le date che "Tutti" tocca (una parte di una serie divisa, giorni passati o no, parti
  *   eliminate); `newStart`: il nuovo primo giorno della serie con una regola nuova.
  * - Dal primo giorno di una serie mai divisa "Questo e i successivi" è "Tutti": non si propone.
+ * - `rowContent`: il giorno è cambiato da solo con contenuti suoi, che "Questo e i successivi" porta
+ *   ai giorni dopo (lo si dice).
  * - Eventi di altri (`sharedOnly`): solo "Tutti".
  */
 export const scopeOptions = ({
@@ -408,7 +414,8 @@ export const scopeOptions = ({
   sharedOnly = false,
   impacts = {},
   span,
-  newStart
+  newStart,
+  rowContent = false
 }: {
   action: ScopeAction;
   date: string;
@@ -420,6 +427,7 @@ export const scopeOptions = ({
   impacts?: Partial<Record<"following" | "all", ScopeImpact>>;
   span?: SeriesSpan;
   newStart?: string;
+  rowContent?: boolean;
 }): ScopeOption[] => {
   const day = occurrenceDayText(date);
   const pin = pinsZone ? [SCOPE_TEXT.pinZone(pinsZone)] : [];
@@ -454,6 +462,7 @@ export const scopeOptions = ({
       ? [SCOPE_TEXT.followingDelete(day)]
       : [
           action === "move" ? SCOPE_TEXT.followingMove(day) : SCOPE_TEXT.followingEdit(day),
+          ...(rowContent ? [SCOPE_TEXT.followingTakesDay] : []),
           ...rowLines(impacts.following),
           ...(impacts.following?.absorbed ? [SCOPE_TEXT.followingSplits] : []),
           ...(ruleChanged ? [] : [SCOPE_TEXT.followingKeepsEnd]),

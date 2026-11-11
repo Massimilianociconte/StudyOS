@@ -37,7 +37,9 @@ const IMPORTED = {
   repeat: undefined,
   repeatLegacy: undefined,
   title: "Lezione (aula 2)",
-  sourceRecurrenceId: "20261116T090000Z"
+  sourceRecurrenceId: "20261116T090000Z",
+  // Dal ramo .ics: giorno ricevuto come modifica fatta a mano da qualcuno.
+  sourceEdited: true
 };
 const NOW = { now: "2026-11-11T12:00:00.000Z" };
 
@@ -46,6 +48,7 @@ test("un giorno importato cambiato a mano diventa dell'utente: la reimportazione
   const row = plan.puts.find((item) => item.id === IMPORTED.id);
   assert.equal(row.title, "Recupero");
   assert.equal("sourceRecurrenceId" in row, false);
+  assert.equal("sourceEdited" in row, false);
   // Il file resta riconoscibile: la serie e la riga tengono sourceUid.
   assert.equal(row.sourceUid, "uid-1");
 });
@@ -55,6 +58,7 @@ test("un giorno importato eliminato a mano resta eliminato", () => {
   const row = plan.puts.find((item) => item.id === IMPORTED.id);
   assert.equal(row.cancelled, true);
   assert.equal("sourceRecurrenceId" in row, false);
+  assert.equal("sourceEdited" in row, false);
 });
 
 test("una riga fatta dall'utente non cambia per questo", () => {

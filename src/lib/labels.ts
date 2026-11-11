@@ -1065,6 +1065,8 @@ export const EVENT_EDITOR_TEXT = {
   location: "Luogo (facoltativo)",
   locationPlaceholder: "Es. Aula Magna, via Celoria 26",
   links: "Collegamenti",
+  /** Nel calendario di un'altra persona il server non accetta collegamenti in un evento nuovo. */
+  linksOtherCalendar: "Nel calendario di un'altra persona un evento nuovo si crea senza collegamenti.",
   linkPlaceholder: "https://…",
   linkAdd: "Aggiungi il collegamento",
   linkRemove: (label: string) => `Togli il collegamento ${label}`,
@@ -1142,7 +1144,7 @@ export const REPEAT_PICKER_TEXT = {
   countInvalid: "Scrivi un numero di volte tra 1 e 999.",
   onlyForSeries: "Per cambiare la ripetizione scegli poi «Questo e i successivi» o «Tutti».",
   /** Aggiunta veloce: solo le scelte pronte; il resto dal modulo completo. */
-  quickMore: "Per cambiare la durata, scegliere altri giorni o la fine della ripetizione («Personalizza…»), aprilo poi dal Calendario."
+  quickMore: "Per cambiare la durata, scegliere altri giorni o la fine della ripetizione, apri poi l'evento dal Calendario."
 } as const;
 
 /** Scelta "Solo questo · Questo e i successivi · Tutti" per modifica, spostamento ed eliminazione. */
@@ -1163,24 +1165,26 @@ export const SCOPE_TEXT = {
   followingDelete: (day: string) => `Elimina l'evento di ${day} e tutti quelli dopo, comprese le modifiche fatte ai singoli giorni.`,
   followingSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: vale questa modifica.",
   followingKeepsEnd: "La serie finisce quando finiva prima.",
+  /** Da un giorno cambiato da solo: i successivi prendono ciò che quel giorno ha di suo (vedi followingPatch). */
+  followingTakesDay: "Anche i giorni dopo prendono il titolo e i dettagli che questo giorno aveva solo per sé.",
   /** "Tutti": le date che cambiano davvero (una parte di una serie divisa, o tutta la serie). */
   allEdit: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
     from && until
-      ? `Cambia le date di questa serie dal ${from} al ${until}; le altre restano come sono.`
+      ? `Cambia le date di questa serie da ${from} a ${until}; le altre restano come sono.`
       : from
-        ? `Cambia tutte le date di questa serie dal ${from} in poi; quelle prima restano come sono.`
+        ? `Cambia tutte le date di questa serie da ${from} in poi; quelle prima restano come sono.`
         : until
-          ? `Cambia le date di questa serie fino al ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano come sono.`
+          ? `Cambia le date di questa serie fino a ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano come sono.`
           : past
             ? "Cambia tutte le date della serie, anche quelle passate."
             : "Cambia tutte le date della serie.",
   allMove: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
     from && until
-      ? `Sposta allo stesso modo le date di questa serie dal ${from} al ${until}; le altre restano dove sono.`
+      ? `Sposta allo stesso modo le date di questa serie da ${from} a ${until}; le altre restano dove sono.`
       : from
-        ? `Sposta allo stesso modo tutte le date di questa serie dal ${from} in poi; quelle prima restano dove sono.`
+        ? `Sposta allo stesso modo tutte le date di questa serie da ${from} in poi; quelle prima restano dove sono.`
         : until
-          ? `Sposta allo stesso modo le date di questa serie fino al ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano dove sono.`
+          ? `Sposta allo stesso modo le date di questa serie fino a ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano dove sono.`
           : past
             ? "Sposta tutte le date della serie allo stesso modo, anche quelle passate."
             : "Sposta tutte le date della serie allo stesso modo.",

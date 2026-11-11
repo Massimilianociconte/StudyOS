@@ -22,8 +22,9 @@ export interface AuditEntry {
   id: string;
   at: string;
   tool: string;
-  risk: "read" | "write" | "destructive";
-  decision: "allow" | "ask" | "deny";
+  /** Assente quando lo strumento non è stato nemmeno caricato (nessun rischio né decisione da dire). */
+  risk?: "read" | "write" | "destructive";
+  decision?: "allow" | "ask" | "deny";
   status: "executed" | "denied" | "failed" | "pending";
   summary: string;
   actor: string;

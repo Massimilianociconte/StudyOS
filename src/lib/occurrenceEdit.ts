@@ -2,7 +2,18 @@
 // Tutti"): le chiamate da fare allo store, la regola con i giorni scritti, e ciò che la modifica fa
 // davvero alle date cambiate o annullate da sole (simulata con il motore, per dirlo prima). Puro.
 import type { CalendarEvent, RepeatRule } from "../types";
-import { applyEditPlan, expandEvents, expandRule, isOccurrenceRow, normalizeRepeat, planDelete, planEdit, type OccurrenceScope } from "./repeat";
+import {
+  applyEditPlan,
+  expandEvents,
+  expandRule,
+  isOccurrenceRow,
+  legacyProjection,
+  normalizeRepeat,
+  planDelete,
+  planEdit,
+  repeatLegacyKey,
+  type OccurrenceScope
+} from "./repeat";
 import { allScopePatch, occurrenceTarget, shiftPatchDays, startDayOf } from "./occurrenceLookup";
 import { followingPatch } from "./eventEditor";
 import { adaptRuleToStart, weekdayOf, weekdayPosition } from "./repeatPicker";
@@ -50,14 +61,17 @@ const matchesPattern = (rule: RepeatRule, day: string, picked: string) => {
  * Primo giorno, dall'inizio della serie `seriesStart` in poi, da cui la regola scelta dal giorno
  * `picked` comincia davvero: un giorno della regola, con lo stesso passo che arriva a `picked`. Così
  * "Ogni settimana il mercoledì" scelto da un mercoledì resta il mercoledì, "Ogni mese il 18" resta il
- * 18, e non resta un primo giorno in più che la regola non ha.
+ * 18, e non resta un primo giorno in più che la regola non ha. `earliest`: si cerca anche da lì, se è
+ * prima (la serie spostata indietro: "Tutti" dal lunedì alla domenica tiene la domenica prima).
  */
-export const alignedSeriesStart = (rule: RepeatRule, picked: string, seriesStart: string): string => {
-  if (!isCivilDate(picked) || !isCivilDate(seriesStart) || picked <= seriesStart) return seriesStart;
+export const alignedSeriesStart = (rule: RepeatRule, picked: string, seriesStart: string, earliest: string = seriesStart): string => {
+  if (!isCivilDate(picked) || !isCivilDate(seriesStart)) return seriesStart;
+  const from = isCivilDate(earliest) && earliest < seriesStart ? earliest : seriesStart;
+  if (picked <= from) return picked < seriesStart ? picked : seriesStart;
   const open: RepeatRule = { ...rule };
   delete open.end;
   const window = [localMidnight(picked), localMidnight(civilAddDays(picked, 1))] as const;
-  for (let day = seriesStart; day <= picked; day = civilAddDays(day, 1)) {
+  for (let day = from; day <= picked; day = civilAddDays(day, 1)) {
     if (!matchesPattern(rule, day, picked)) continue;
     if (expandRule(open, `${day}T12:00`, undefined, window[0], window[1]).some((item) => item.date === picked)) return day;
   }
@@ -160,15 +174,33 @@ export const occurrenceEditCalls = ({
     const seriesStart = startDayOf(series.start, series.allDay, isValidTimeZone(series.timeZone) ? series.timeZone : undefined);
     const toggled = ruled.allDay !== undefined && ruled.allDay !== (series.allDay ?? false);
     const natural = isCivilDate(seriesStart) ? seriesFirstDay(patch, { series, date: target.date, seriesStart, toggled }) : null;
-    const aligned = alignedSeriesStart(ruled.repeat, picked, seriesStart);
-    if (natural && aligned !== natural.first) {
-      patch = shiftPatchDays(natural.timed, civilDaysBetween(natural.first, aligned));
-      newStart = aligned;
+    if (natural) {
+      const aligned = alignedSeriesStart(ruled.repeat, picked, seriesStart, natural.first);
+      if (aligned !== natural.first) patch = shiftPatchDays(natural.timed, civilDaysBetween(natural.first, aligned));
+      // Si dice solo se il primo giorno cambia davvero (non se torna quello di prima).
+      if (aligned !== natural.first && aligned !== seriesStart) newStart = aligned;
     }
   }
   const calls: OccurrenceCall[] = [{ scope: "all", patch }];
   if (target.row) calls.push({ scope: "this", patch: changes });
   return { calls, ...(newStart ? { newStart } : {}) };
+};
+
+/**
+ * Tutta la serie spostata con il nuovo inizio `start` (evento di un'altra persona trascinato, agente
+ * senza giorno): la regola scritta con il giorno della settimana segue il giorno nuovo, nella stessa
+ * modifica, con i campi vecchi coerenti (per le app vecchie e per l'impronta della regola). Se il
+ * giorno della settimana non cambia, o la regola non lo scrive, solo gli orari.
+ */
+export const seriesMovePatch = (event: CalendarEvent, start: string, end: string): Partial<CalendarEvent> => {
+  const rule = normalizeRepeat(event);
+  const zone = isValidTimeZone(event.timeZone) ? event.timeZone : undefined;
+  const from = startDayOf(event.start, event.allDay, zone);
+  const to = startDayOf(start, event.allDay, zone);
+  const next = rule && isCivilDate(from) && isCivilDate(to) ? adaptRuleToStart(rule, from, to) : null;
+  if (!next || ruleKey(next) === ruleKey(rule)) return { start, end };
+  const projection = legacyProjection(next, to);
+  return { start, end, repeat: next, recurrence: projection.recurrence, recurrenceUntil: projection.recurrenceUntil, repeatLegacy: repeatLegacyKey(projection) };
 };
 
 // ---------------------------------------------------------------------------------------

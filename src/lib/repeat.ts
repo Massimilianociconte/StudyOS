@@ -832,6 +832,9 @@ export const legacyProjection = (rule: RepeatRule | null, startDate: string): { 
   return { recurrence, recurrenceUntil: lastDate(rule, startDate) };
 };
 
+/** Chiavi del file che un giorno importato perde quando l'utente lo cambia o lo elimina a mano. */
+const IMPORTED_DAY_KEYS = ["sourceRecurrenceId", "sourceEdited"] as const;
+
 const withoutKeys = <T extends object>(value: T, keys: readonly string[]): T => {
   const copy = { ...value } as Record<string, unknown>;
   for (const key of keys) delete copy[key];
@@ -1184,7 +1187,7 @@ export const planEdit = (
   const now = nowOf(options);
   const existing = rows.find((row) => row.originalDate === originalDate);
   // Un giorno importato (sourceRecurrenceId) cambiato a mano diventa dell'utente: la reimportazione lo tiene.
-  const base = existing ? withoutKeys(existing, ["sourceRecurrenceId"]) : occurrenceSnapshot(fixed.target, fixed.series, originalDate, options);
+  const base = existing ? withoutKeys(existing, IMPORTED_DAY_KEYS) : occurrenceSnapshot(fixed.target, fixed.series, originalDate, options);
   const row: CalendarEvent = { ...base, ...pickPatch(patch, OCCURRENCE_LOCKED), updatedAt: now };
   const pin = fixed.pin ? [{ ...fixed.target, updatedAt: now }] : [];
   if (!("subjectId" in patch) || patch.subjectId === event.subjectId) return { puts: [...pin, row], deletes: [] };
@@ -1407,7 +1410,7 @@ export const planDelete = (
   if (scope === "this") {
     const existing = rows.find((row) => row.originalDate === originalDate);
     // Come per la modifica: un giorno importato eliminato a mano resta eliminato alla reimportazione.
-    const base = existing ? withoutKeys(existing, ["sourceRecurrenceId"]) : occurrenceSnapshot(target, kept, originalDate, options);
+    const base = existing ? withoutKeys(existing, IMPORTED_DAY_KEYS) : occurrenceSnapshot(target, kept, originalDate, options);
     const row = { ...base, cancelled: true as const, archived: true, updatedAt: now };
     return { puts: fixed.pin ? [{ ...target, updatedAt: now }, row] : [row], deletes: [] };
   }

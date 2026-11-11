@@ -8,7 +8,8 @@ import { gradeStats, isValidGrade, librettoEntries, projectedStats } from "../li
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
 import { createId, nowIso } from "../lib/id";
 import { expandEvents, type EventOccurrence } from "../lib/recurrence";
-import { allScopePatch, findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
+import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
+import { occurrenceEditCalls, seriesMovePatch } from "../lib/occurrenceEdit";
 import { isOccurrenceRow, normalizeRepeat, sanitizeOccasion, sanitizeReminders, validateRepeat, type OccurrenceScope } from "../lib/repeat";
 import { safeCssColor } from "../lib/sharing";
 import { dueTopics } from "../lib/review";
@@ -642,21 +643,18 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   }
   const changes = patch as Partial<CalendarEvent>;
   if (!day) {
+    // Serie spostata a un altro giorno della settimana: la regola scritta con il giorno lo segue
+    // (salvo una regola data dall'agente), come trascinandola nel calendario.
+    const ruleGiven = ["repeat", "recurrence", "recurrenceUntil"].some((key) => key in patch);
+    if (range && !ruleGiven && !isOccurrenceRow(event)) Object.assign(changes, seriesMovePatch(event, range.start, range.end));
     await state().updateEvent(id, changes);
     return ok({ id, start: changes.start ?? event.start, end: changes.end ?? event.end });
   }
-  // Come nel calendario: start ed end sono i nuovi orari di quel giorno.
+  // Come nel calendario: start ed end sono i nuovi orari di quel giorno, con le stesse chiamate
+  // (la regola segue il giorno spostato; da un giorno già cambiato da solo, con «all», anche lui).
   const { scope, occurrence, target, series } = day;
-  if (scope === "all") {
-    await state().editOccurrence(target.seriesId, target.date, "all", allScopePatch(changes, { occurrence, series, date: target.date }));
-    // Un giorno già cambiato da solo prende anche lui la modifica (non la regola).
-    if (target.row) {
-      const { repeat: _repeat, recurrence: _recurrence, recurrenceUntil: _until, ...own } = changes;
-      await state().editOccurrence(target.seriesId, target.date, "this", own);
-    }
-  } else {
-    await state().editOccurrence(target.seriesId, target.date, scope, changes);
-  }
+  const { calls } = occurrenceEditCalls({ item: occurrence, series, scope, changes });
+  for (const call of calls) await state().editOccurrence(target.seriesId, target.date, call.scope, call.patch);
   return ok({ id: target.seriesId, occurrenceDate: target.date, scope, start: changes.start ?? occurrence.start, end: changes.end ?? occurrence.end });
 };
 
