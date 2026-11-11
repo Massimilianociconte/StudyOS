@@ -1006,6 +1006,85 @@ export const EVENT_TYPE_EXTRA_LABEL = {
   holiday: "Festività"
 } as const;
 
+/**
+ * Calendario come si vede (griglie, Mese, Agenda, elenco del telefono, anteprima): fascia "tutto il
+ * giorno", "+N", festività, Attività senza data, calendari di altre persone.
+ */
+export const CALENDAR_VIEW_TEXT = {
+  allDayRow: "Tutto il giorno",
+  allDayRowTitle: "Eventi senza orario, su più giorni, festività, esami e attività in scadenza",
+  examDate: "Data appello",
+  moreTasks: (count: number) => `+${count} ${count === 1 ? "altra" : "altre"}`,
+  moreItems: (count: number) => `+${count} ${count === 1 ? "altro" : "altri"}`,
+  moreItemsAria: (count: number, day: string) => `${count === 1 ? "Un altro impegno" : `Altri ${count} impegni`} ${day}: apri il giorno`,
+  showLess: "Mostra meno",
+  hiddenBefore: (count: number, hour: string) => `${count} ${count === 1 ? "evento prima" : "eventi prima"} delle ${hour} · mostra tutte le ore`,
+  hiddenAfter: (count: number, hour: string) => `${count} ${count === 1 ? "evento dopo" : "eventi dopo"} le ${hour} · mostra tutte le ore`,
+  gridTitle: "Clicca su un orario libero per aggiungere un evento",
+  monthCellTitle: "Clicca per aggiungere un evento in questo giorno",
+  /** Nome del giorno nelle intestazioni: prima il testo visibile ("lun 3"), poi l'azione. */
+  openDay: (visible: string, long: string) => `${visible}, apri ${long}`,
+  noItems: "Nessun impegno",
+  addOn: (day: string) => `Aggiungi un evento il ${day}`,
+  recurring: "Si ripete",
+  exam: (name: string) => `Esame · ${name}`,
+  examTitle: (name: string, preparation: number) => `Esame di ${name} · preparazione al ${preparation}%`,
+  /** Azione detta solo a voce dopo il testo visibile di una voce. */
+  openAction: "apri",
+  bandTitle: (from: string, to: string) => `Dalle ${from} alle ${to}`,
+  bandCount: (count: number) => `${count} ${count === 1 ? "evento" : "eventi"} in questa fascia`,
+  holidaysTitle: "Mostra o nascondi festività e ricorrenze italiane",
+  holidayDay: (name: string) => `Festività: ${name}`,
+  holidaysOfPeriod: "Festività del periodo:",
+  undated: (count: number) => `Senza data · ${count}`,
+  undatedAria: (count: number) => `${count === 1 ? "1 attività" : `${count} attività`} senza data: scegli quando farle`,
+  undatedTitle: "Attività senza data",
+  undatedIntro: "Scegli un giorno e l'attività compare nel calendario, con scadenza alle 18:00 (puoi cambiarla aprendola).",
+  undatedEmpty: "Tutte le attività hanno una data.",
+  undatedOpen: (title: string) => `Apri l'attività "${title}"`,
+  overdue: (count: number) => `In ritardo · ${count}`,
+  overdueGroup: "Attività in ritardo",
+  todayTitle: (day: string) => `Oggi · ${day}`,
+  tomorrowTitle: (day: string) => `Domani · ${day}`,
+  agendaEmptyTitle: "Niente in programma",
+  agendaEmptyBody: "In queste due settimane non hai eventi, scadenze o esami: quello che aggiungi comparirà qui, giorno per giorno.",
+  markDone: (title: string) => `Segna "${title}" come fatta`,
+  markTodo: (title: string) => `Segna "${title}" come da fare`,
+  openTask: (title: string) => `Apri l'attività "${title}"`,
+  task: "Attività",
+  noDate: "Nessuna data",
+  estimated: (time: string) => `${time} stimati`,
+  actual: (minutes: number) => `${minutes} min reali`,
+  completedLate: "Completata in ritardo",
+  sharedGroup: "Calendari di altre persone",
+  showOwner: (name: string) => `Mostra gli eventi di ${name}`,
+  hideOwner: (name: string) => `Nascondi gli eventi di ${name}`,
+  sharedFiltered: "Con «Solo» attivo gli eventi di altre persone non si vedono: usano le loro materie.",
+  unknownOwner: "Un'altra persona"
+} as const;
+
+/** Promemoria degli eventi che suonano ad app aperta: quando inizia l'evento, detto in breve. */
+export const EVENT_REMINDER_TEXT = {
+  now: "Adesso",
+  inMinutes: (count: number) => `Tra ${count} ${count === 1 ? "minuto" : "minuti"}`,
+  started: (time: string) => `Iniziato alle ${time}`,
+  todayAt: (time: string) => `Oggi alle ${time}`,
+  tomorrowAt: (time: string) => `Domani alle ${time}`,
+  dayAt: (day: string, time: string) => `${day} alle ${time}`,
+  today: "Oggi",
+  tomorrow: "Domani",
+  untitled: "Evento senza titolo"
+} as const;
+
+/** Home: riquadro delle prossime ricorrenze (compleanni, anniversari). */
+export const HOME_OCCASIONS_TEXT = {
+  title: "Prossime ricorrenze",
+  today: "Oggi",
+  tomorrow: "Domani",
+  inDays: (count: number) => `tra ${count} giorni`,
+  openCalendar: "Apri calendario"
+} as const;
+
 /** Colore semantico della priorità (token del tema, leggibile in chiaro e scuro). */
 export const PRIORITY_TONE: Record<Task["priority"], string> = {
   low: "var(--faint)",
