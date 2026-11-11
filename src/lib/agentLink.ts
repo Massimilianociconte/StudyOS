@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from "react";
-import { findAgentTool, type AgentTool } from "../agent/catalog";
-import { describeAgentCall, executeAgentTool } from "../agent/execute";
+import type { AgentTool } from "../agent/catalog";
 import { hubCandidates, isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
 import type { AgentCallResult, AuditEntry } from "../agent/types";
 import { appendAudit, readAgentToken, readAudit, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
+import { loadOnce } from "./loadOnce";
 import { useStudyStore } from "../store/useStudyStore";
 
 export interface PendingAgentCall {
@@ -223,7 +223,34 @@ const askPerson = (call: PendingAgentCall) => new Promise<CallChoice>((resolve) 
 // Condividere (alwaysAsk) chiede sempre conferma, anche con «Consenti» o in sessione fidata.
 const policyFor = (tool: AgentTool) => decideToolAction(readStoredPolicy(), tool);
 
+// Catalogo ed esecutore degli strumenti si caricano alla prima richiesta di un agente, non all'avvio:
+// chi non collega agenti non li scarica. Un caricamento fallito non resta in memoria (si riprova
+// alla richiesta dopo) e diventa un errore per l'agente, mai una pagina vuota.
+type AgentTools = {
+  findAgentTool: typeof import("../agent/catalog").findAgentTool;
+  describeAgentCall: typeof import("../agent/execute").describeAgentCall;
+  executeAgentTool: typeof import("../agent/execute").executeAgentTool;
+};
+const loadAgentTools = loadOnce<AgentTools>(() =>
+  Promise.all([import("../agent/catalog"), import("../agent/execute")]).then(([catalog, execute]) => ({
+    findAgentTool: catalog.findAgentTool,
+    describeAgentCall: execute.describeAgentCall,
+    executeAgentTool: execute.executeAgentTool
+  }))
+);
+
+const TOOLS_UNAVAILABLE = "StudyOS non è riuscito a caricare gli strumenti per gli agenti (rete assente o app aggiornata): ricarica la pagina e riprova.";
+
 const handleCall = async (job: { id: string; name: string; args: Record<string, unknown>; actorName: string }) => {
+  let tools: AgentTools;
+  try {
+    tools = await loadAgentTools();
+  } catch {
+    record({ tool: job.name, risk: "write", decision: "deny", status: "failed", summary: job.name, actor: job.actorName });
+    await deliver(job.id, { ok: false, code: "failed", error: TOOLS_UNAVAILABLE });
+    return;
+  }
+  const { findAgentTool, describeAgentCall, executeAgentTool } = tools;
   const tool = findAgentTool(job.name);
   const summary = await describeAgentCall(job.name, job.args);
   // Il registro resta sul dispositivo (localStorage, anche col vault): senza titoli e nomi di altre persone.
