@@ -465,3 +465,46 @@ test("R1-S1 bis. update_event «following»: spostare al martedì sposta anche l
     ["2026-12-07", "Mon", "Z"]
   ]);
 });
+
+test("R1-S1 ter. update_event «following» con una repeat senza end: arriva alla fine dell'intera serie, come nel modulo; end never: non finisce", async () => {
+  const call = (tool, args) => executeAgentTool(tool, { scope: "following", ...args });
+  const romeDays = () =>
+    expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date("2027-06-01T00:00:00.000Z")).map(
+      (item) => `${new Date(item.start).toLocaleDateString("sv-SE", { timeZone: "Europe/Rome" })} ${new Date(item.start).toLocaleDateString("en-US", { timeZone: "Europe/Rome", weekday: "short" })}`
+    );
+  // Lunedì alle 10 a Roma; dal 30/11 lunedì e venerdì (R), finita eliminando dal 4/1: l'ultima data è venerdì 1/1.
+  const family = async () => {
+    useStudyStore.setState({ events: [MONDAYS] });
+    assert.equal((await call("studyos_update_event", { id: "m", occurrenceDate: "2026-11-30", repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } })).ok, true);
+    assert.equal((await call("studyos_delete_event", { id: "m~2026-11-30", occurrenceDate: "2027-01-04", confirm: true })).ok, true);
+    assert.equal(romeDays().at(-1), "2027-01-01 Fri");
+  };
+  await family();
+  const ruled = await call("studyos_update_event", { id: "m", occurrenceDate: "2026-11-16", repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } });
+  assert.equal(ruled.ok, true, JSON.stringify(ruled));
+  assert.equal(byId("m~2026-11-30"), undefined, "R si assorbe");
+  assert.deepEqual(byId("m~2026-11-16").repeat, { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "until", date: "2027-01-01" } });
+  assert.equal(romeDays().at(-1), "2026-12-30 Wed", "si ferma alla fine della famiglia");
+  assert.deepEqual(ruled.data.removedDates, ["2026-12-04", "2026-12-11", "2026-12-18", "2026-12-25", "2027-01-01"]);
+  assert.equal("removedDatesMore" in ruled.data, false);
+  // Senza fine solo se lo chiede.
+  await family();
+  const open = await call("studyos_update_event", { id: "m", occurrenceDate: "2026-11-16", repeat: { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "never" } } });
+  assert.equal(open.ok, true, JSON.stringify(open));
+  assert.equal(romeDays().at(-1), "2027-05-31 Mon");
+});
+
+test("R1-S1 ter. delete_event «following» toglie tutte le parti dopo dell'intera serie, anche quelle divise da un antenato", async () => {
+  const call = (tool, args) => executeAgentTool(tool, { scope: "following", ...args });
+  useStudyStore.setState({ events: [MONDAYS] });
+  // R dal 30/11, Q dal 9/11, E dal 16/11 della parte Q: R è divisa dall'antenato.
+  assert.equal((await call("studyos_update_event", { id: "m", occurrenceDate: "2026-11-30", title: "R" })).ok, true);
+  assert.equal((await call("studyos_update_event", { id: "m", occurrenceDate: "2026-11-09", title: "Q" })).ok, true);
+  assert.equal((await call("studyos_update_event", { id: "m~2026-11-09", occurrenceDate: "2026-11-16", title: "E" })).ok, true);
+  assert.equal((await call("studyos_delete_event", { id: "m~2026-11-09~2026-11-16", occurrenceDate: "2026-11-23", confirm: true })).ok, true);
+  assert.equal(byId("m~2026-11-30"), undefined);
+  assert.deepEqual(
+    expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date("2027-06-01T00:00:00.000Z")).map((item) => `${item.occurrenceDate} ${item.title}`),
+    ["2026-11-02 Lezione", "2026-11-09 Q", "2026-11-16 E"]
+  );
+});
