@@ -255,6 +255,28 @@ test("updateEvent: le righe che hanno già la materia nuova restano lo stesso og
   assert.equal(byId("s@2026-11-23").subjectId, "sub2");
 });
 
+test("editOccurrence 'following' con una regola nuova assorbe la divisione successiva e ne stacca i collegamenti", async () => {
+  await store.getState().editOccurrence("s", "2026-11-30", "following", { title: "Figlia" });
+  store.setState({ attachments: [{ id: "a2", name: "Esercizi", linkedEntityType: "calendarEvent", linkedEntityId: "s~2026-11-30", updatedAt: OLD }] });
+  await store.getState().editOccurrence("s", "2026-11-16", "following", { repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } });
+  assert.deepEqual(ids(), ["other", "s", "s~2026-11-16"]);
+  assert.equal(store.getState().attachments[0].linkedEntityId, undefined);
+});
+
+test("deleteOccurrence di una divisione salva la fine della sorella che fermava, in un solo aggiornamento", async () => {
+  const { planEdit } = await import("../src/lib/repeat.ts");
+  const late = planEdit(SERIES, [SERIES], "2026-11-30", "following", { title: "Tardi" }, { now: OLD });
+  const early = planEdit(SERIES, [SERIES], "2026-11-16", "following", { repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } }, { now: OLD });
+  const earlyChild = early.puts.find((item) => item.splitFrom === "s");
+  store.setState({ events: [late.puts[0], late.puts[1], earlyChild, OTHER] });
+  notifications = 0;
+  await store.getState().deleteOccurrence("s~2026-11-30", "2026-11-30", "all");
+  assert.equal(notifications, 1);
+  assert.deepEqual(byId("s~2026-11-16").repeat.end, { type: "until", date: "2026-11-29" });
+  assert.equal(byId("other"), OTHER);
+  assert.deepEqual(shown("2026-11-29T00:00:00Z", "2026-12-31T00:00:00Z").filter((item) => item.id !== "other"), []);
+});
+
 test("deleteEvent di una serie elimina anche le sue righe (non le altre serie)", async () => {
   await store.getState().editOccurrence("s", "2026-11-16", "this", { title: "Spostata" });
   await store.getState().deleteEvent("s");

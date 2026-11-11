@@ -282,6 +282,11 @@ interface Legacy {
   stepDays: number;
   /** L'ultima occorrenza inizia prima di questo istante (fine del giorno "fino al"). */
   limitMs: number;
+  /**
+   * Tutto il giorno ripetuto salvato come istanti (mezzanotte di chi l'ha creato): il giorno
+   * dell'occorrenza è quello della mezzanotte locale più vicina, come dopo aver fissato il fuso.
+   */
+  roundDay?: boolean;
 }
 
 interface Series {
@@ -329,6 +334,19 @@ const civilOf = (value: unknown, zone: string | undefined): { date: string; midn
 
 const zoneOf = (event: Pick<CalendarEvent, "timeZone">) => (isValidTimeZone(event.timeZone) ? event.timeZone : undefined);
 
+/** Giorno della mezzanotte locale più vicina all'istante (a pari distanza, il giorno prima). */
+const nearestMidnightDate = (ms: number, zone: string | undefined) => {
+  const parts = utcToZonedParts(ms, zone);
+  const date = civilFromParts(parts.year, parts.month, parts.day);
+  if (!parts.hour && !parts.minute && !parts.second && !parts.millisecond) return date;
+  const next = civilAddDays(date, 1);
+  const midnight = (day: string) => {
+    const civil = parseCivil(day);
+    return civil ? zonedToUtc([civil.year, civil.month, civil.day, 0, 0, 0, 0], zone).getTime() : Number.NaN;
+  };
+  return midnight(next) - ms < ms - midnight(date) ? next : date;
+};
+
 const legacyOf = (event: CalendarEvent): Legacy => {
   const recurrence = (event.recurrence ?? "none") as unknown;
   const until = typeof event.recurrenceUntil === "string" && event.recurrenceUntil ? parseISO(event.recurrenceUntil).getTime() : Number.NaN;
@@ -348,6 +366,15 @@ const seriesOf = (event: CalendarEvent, explicitRule?: RepeatRule | null): Serie
   if (!legacy && event.allDay === true && (floatingStart || zone)) {
     const start = civilOf(event.start, zone);
     if (!start) return null;
+    if (!floatingStart && !start.midnight) {
+      // Salvato come istanti alla mezzanotte di un altro fuso: giorno della mezzanotte più vicina,
+      // durata in giorni da quella salvata (altrimenti un giorno diventerebbe due).
+      const startMs = parseISO(event.start as string).getTime();
+      const endMs = instantOf(event.end, zone);
+      const days = !Number.isNaN(endMs) && endMs > startMs ? Math.round((endMs - startMs) / DAY_MS) : 1;
+      const startDate = nearestMidnightDate(startMs, zone);
+      return { rule, zone, civil: true, startDate, wall: [0, 0, 0, 0], baseStartMs: localMidnight(startDate).getTime(), durationMs: DAY_MS, spanDays: Math.max(1, days) };
+    }
     const end = civilOf(event.end, zone);
     const endDate = end ? (end.midnight ? end.date : civilAddDays(end.date, 1)) : start.date;
     return {
@@ -366,6 +393,7 @@ const seriesOf = (event: CalendarEvent, explicitRule?: RepeatRule | null): Serie
   const baseEndMs = instantOf(event.end, zone);
   const durationMs = !Number.isNaN(baseEndMs) && baseEndMs > baseStartMs ? baseEndMs - baseStartMs : HOUR_MS;
   const parts = utcToZonedParts(baseStartMs, zone);
+  if (legacy && event.allDay === true && !floatingStart && legacy.kind !== "none") legacy.roundDay = true;
   return {
     rule,
     ...(legacy ? { legacy } : {}),
@@ -449,7 +477,7 @@ const legacyInstances = (series: Series, legacy: Legacy, fromMs: number, toMs: n
   const out: Instance[] = [];
   const duration = series.durationMs;
   const add = (startMs: number) => {
-    const date = civilDateOf(startMs);
+    const date = legacy.roundDay ? nearestMidnightDate(startMs, undefined) : civilDateOf(startMs);
     if (cut && date >= cut) return false;
     out.push({ date, startMs, endMs: startMs + duration });
     return true;
@@ -484,9 +512,18 @@ const legacyInstances = (series: Series, legacy: Legacy, fromMs: number, toMs: n
   return out;
 };
 
-/** Il giorno è un'occorrenza della serie (prima del taglio di una figlia)? */
-const hasInstance = (series: Series, date: string, cut?: string) =>
-  isCivilDate(date) && seriesInstances(series, date, date, cut, 1).some((instance) => instance.date === date);
+/**
+ * Il giorno è un'occorrenza della serie (prima del taglio di una figlia)? Per gli eventi salvati
+ * prima del nuovo motore si usa la loro espansione, così il giorno è proprio quello mostrato.
+ */
+const hasInstance = (series: Series, date: string, cut?: string) => {
+  if (!isCivilDate(date)) return false;
+  if (series.legacy) {
+    const midnight = localMidnight(date).getTime();
+    return legacyInstances(series, series.legacy, midnight - DAY_MS, midnight + 2 * DAY_MS, cut).some((instance) => instance.date === date);
+  }
+  return seriesInstances(series, date, date, cut, 1).some((instance) => instance.date === date);
+};
 
 /** Giorni civili da guardare per la finestra [from, to). */
 const windowDates = (series: Series, fromMs: number, toMs: number) => {
@@ -606,19 +643,72 @@ const orderedChildren = <T extends CalendarEvent>(list: readonly T[], parentZone
     })
     .sort((a, b) => compareText(a.date, b.date) || timestamp(a.child.updatedAt) - timestamp(b.child.updatedAt) || compareText(a.child.id, b.child.id));
 
-/** Giorno da cui la serie si ferma, come nell'espansione: la sua prima figlia o la sorella che parte dopo. */
+const keyOf = (group: string, id: string) => `${group}\u0000${id}`;
+
+/** Il primo dei due giorni (assente = nessun limite). */
+const earlier = (a: string | undefined, b: string | undefined) => (a === undefined ? b : b === undefined || a <= b ? a : b);
+
+/** La serie è nata da una divisione (madre diversa da sé)? */
+const parentIdOf = (event: CalendarEvent) =>
+  typeof event.splitFrom === "string" && event.splitFrom && event.splitFrom !== event.id ? event.splitFrom : undefined;
+
+/**
+ * Giorno da cui ogni serie si ferma per le divisioni (chiave = gruppo + id), il più vicino tra:
+ * la sua prima figlia, la sorella che parte dopo e il limite che la madre riceve da fuori (sua
+ * sorella successiva o, più su, quella di un antenato), che vale anche per figlie e nipoti.
+ * Due divisioni anche da due dispositivi, in qualunque ordine arrivino, non mostrano mai due
+ * volte lo stesso giorno. La usano sia l'espansione sia i piani.
+ */
+const splitCuts = <T extends CalendarEvent>(events: readonly T[], groupOf: (event: T) => string) => {
+  const byKey = new Map<string, T>();
+  const children = new Map<string, T[]>();
+  for (const event of events) {
+    if (!isRecord(event) || isOccurrenceRow(event) || event.archived) continue;
+    const group = groupOf(event);
+    byKey.set(keyOf(group, event.id), event);
+    const parentId = parentIdOf(event);
+    if (!parentId) continue;
+    const parentKey = keyOf(group, parentId);
+    const list = children.get(parentKey);
+    if (list) list.push(event);
+    else children.set(parentKey, [event]);
+  }
+  const first = new Map<string, string>();
+  const nextSibling = new Map<string, string>();
+  for (const [parentKey, list] of children) {
+    const parent = byKey.get(parentKey);
+    const ordered = orderedChildren(list, parent ? zoneOf(parent) : undefined);
+    if (ordered.length) first.set(parentKey, ordered[0].date);
+    for (let index = 0; index + 1 < ordered.length; index += 1) {
+      const { child } = ordered[index];
+      nextSibling.set(keyOf(groupOf(child), child.id), ordered[index + 1].date);
+    }
+  }
+  // Limite da fuori: la sorella successiva o quello della madre (prima i padri; un ciclo non conta).
+  const bounds = new Map<string, string | undefined>();
+  const boundOf = (key: string): string | undefined => {
+    if (bounds.has(key)) return bounds.get(key);
+    bounds.set(key, undefined);
+    const event = byKey.get(key);
+    const parentId = event ? parentIdOf(event) : undefined;
+    const parentKey = event && parentId ? keyOf(groupOf(event), parentId) : undefined;
+    const bound = earlier(nextSibling.get(key), parentKey && byKey.has(parentKey) ? boundOf(parentKey) : undefined);
+    bounds.set(key, bound);
+    return bound;
+  };
+  const cuts = new Map<string, string>();
+  for (const key of byKey.keys()) {
+    const cut = earlier(first.get(key), boundOf(key));
+    if (cut !== undefined) cuts.set(key, cut);
+  }
+  return cuts;
+};
+
+/** Giorno da cui la serie si ferma, come nell'espansione (`event` al posto della sua versione nell'elenco). */
 const cutIn = (events: readonly CalendarEvent[], event: CalendarEvent): string | undefined => {
-  const childrenOf = (parentId: string) =>
-    events.filter((item) => item.splitFrom === parentId && item.id !== parentId && item.id !== event.id && !item.archived && !isOccurrenceRow(item));
-  const own = orderedChildren(childrenOf(event.id), zoneOf(event))[0]?.date;
-  const parentId = event.splitFrom;
-  if (typeof parentId !== "string" || !parentId || parentId === event.id) return own;
-  const parent = events.find((item) => item.id === parentId && !isOccurrenceRow(item));
-  const ordered = orderedChildren([...childrenOf(parentId), event], parent ? zoneOf(parent) : undefined);
-  const index = ordered.findIndex((entry) => entry.child === event);
-  const sibling = index >= 0 ? ordered[index + 1]?.date : undefined;
-  if (own === undefined) return sibling;
-  return sibling === undefined || own < sibling ? own : sibling;
+  const key = keyOf(defaultGroupKey(event), event.id);
+  const list = [event, ...events.filter((item) => !isOccurrenceRow(item) && keyOf(defaultGroupKey(item), item.id) !== key)];
+  return splitCuts(list, defaultGroupKey).get(key);
 };
 
 /** Occorrenze della serie vicine alla finestra; `complete`: ci sono tutte quelle con giorno in [fromDate, toDate]. */
@@ -648,10 +738,7 @@ export const expandEvents = <T extends CalendarEvent>(events: readonly T[], from
   const fromMs = from.getTime();
   const toMs = to.getTime();
   const overrides = new Map<string, Map<string, T>>();
-  const children = new Map<string, T[]>();
   const masters: { key: string; event: T }[] = [];
-  const masterByKey = new Map<string, T>();
-  const keyOf = (group: string, id: string) => `${group}\u0000${id}`;
 
   for (const event of events) {
     if (!isRecord(event)) continue;
@@ -665,32 +752,11 @@ export const expandEvents = <T extends CalendarEvent>(events: readonly T[], from
       continue;
     }
     if (event.archived) continue;
-    const key = keyOf(groupOf(event), event.id);
-    masters.push({ key, event });
-    masterByKey.set(key, event);
-    if (typeof event.splitFrom === "string" && event.splitFrom && event.splitFrom !== event.id) {
-      const parentKey = keyOf(groupOf(event), event.splitFrom);
-      const list = children.get(parentKey);
-      if (list) list.push(event);
-      else children.set(parentKey, [event]);
-    }
+    masters.push({ key: keyOf(groupOf(event), event.id), event });
   }
 
-  // Tagli delle divisioni: la madre alla prima figlia, ogni figlia alla sorella che parte dopo.
-  const cuts = new Map<string, string>();
-  const lowerCut = (key: string, date: string) => {
-    const current = cuts.get(key);
-    if (current === undefined || date < current) cuts.set(key, date);
-  };
-  for (const [parentKey, list] of children) {
-    const parent = masterByKey.get(parentKey);
-    const ordered = orderedChildren(list, parent ? zoneOf(parent) : undefined);
-    if (ordered.length) lowerCut(parentKey, ordered[0].date);
-    for (let index = 0; index + 1 < ordered.length; index += 1) {
-      const { child } = ordered[index];
-      lowerCut(keyOf(groupOf(child), child.id), ordered[index + 1].date);
-    }
-  }
+  // Tagli delle divisioni: prima figlia, sorella successiva o limite della madre.
+  const cuts = splitCuts(masters.map((master) => master.event), groupOf);
 
   const result: { ms: number; item: T & EventOccurrence }[] = [];
   for (const { key, event } of masters) {
@@ -957,25 +1023,74 @@ const shiftedSeriesTimes = (event: CalendarEvent, series: Series, date: string, 
 const subjectRewrites = (rows: readonly CalendarEvent[], subjectId: string | undefined, now: string) =>
   rows.filter((row) => row.subjectId !== subjectId).map((row) => ({ ...row, subjectId, updatedAt: now }));
 
+/** Righe delle serie `ids`. */
+const rowIdsOf = (events: readonly CalendarEvent[], ids: ReadonlySet<string>) =>
+  events.filter((item) => isOccurrenceRow(item) && ids.has(item.seriesId as string)).map((item) => item.id);
+
+/**
+ * Ultimo giorno mostrato dalle serie `ids` con i tagli di adesso (assente = senza fine, null =
+ * nessun giorno): fin dove arrivava ciò che una modifica "questa e le successive" assorbe.
+ */
+const shownUntil = (events: readonly CalendarEvent[], ids: ReadonlySet<string>): string | undefined | null => {
+  const cuts = splitCuts(events, defaultGroupKey);
+  let last: string | null = null;
+  for (const item of events) {
+    if (isOccurrenceRow(item) || item.archived || !ids.has(item.id)) continue;
+    const series = seriesOf(item);
+    if (!series) continue;
+    const cut = cuts.get(keyOf(defaultGroupKey(item), item.id));
+    if (cut !== undefined && cut <= series.startDate) continue;
+    let end = series.rule ? lastDate(series.rule, series.startDate) : series.startDate;
+    if (cut !== undefined && (end === undefined || end >= cut)) end = civilAddDays(cut, -1);
+    if (end === undefined) return undefined;
+    if (last === null || end > last) last = end;
+  }
+  return last;
+};
+
+/**
+ * Regola di chi assorbe divisioni successive senza sceglierne una nuova: stesso schema, ma arriva
+ * almeno fin dove arrivavano quelle, così nessuna lezione sparisce. Stessa regola se basta già.
+ */
+const reaching = (rule: RepeatRule, startDate: string, shown: string | undefined | null): RepeatRule => {
+  if (shown === null) return rule;
+  const last = lastDate(rule, startDate);
+  if (last === undefined) return rule;
+  if (shown === undefined) return withoutKeys(rule, ["end"]);
+  return shown > last ? { ...rule, end: { type: "until", date: shown } } : rule;
+};
+
+const sameEnd = (a: RepeatRule, b: RepeatRule) => JSON.stringify(a.end ?? null) === JSON.stringify(b.end ?? null);
+
 const planAll = (
   event: CalendarEvent,
   series: Series,
-  rows: readonly CalendarEvent[],
+  overrides: readonly CalendarEvent[],
   date: string,
   patch: Partial<CalendarEvent>,
   options: PlanOptions,
-  cut: string | undefined
+  absorb: boolean
 ): EditPlan => {
   const now = nowOf(options);
   const fields = { ...pickPatch(patch, SERIES_LOCKED), ...shiftedSeriesTimes(event, series, date, patch) };
-  const next = applyRepeatFields({ ...event, ...fields, updatedAt: now }, { repeatChanged: changesRepeat(event, patch), timeZone: pinZone(event, options) });
+  const chosen = changesRepeat(event, patch) || changesLegacy(event, patch);
+  let next = applyRepeatFields({ ...event, ...fields, updatedAt: now }, { repeatChanged: changesRepeat(event, patch), timeZone: pinZone(event, options) });
+  // "Questa e le successive" dalla prima: le divisioni successive (e le loro righe) si assorbono.
+  const absorbed = absorb ? followingSplits(overrides, event, date) : new Set<string>();
+  const current = seriesOf(next);
+  if (absorbed.size && !chosen && current?.rule) {
+    const rule = reaching(current.rule, current.startDate, shownUntil(overrides, absorbed));
+    if (rule !== current.rule) next = applyRepeatFields({ ...next, repeat: rule, repeatLegacy: undefined }, { repeatChanged: true, timeZone: current.zone });
+  }
   const nextSeries = seriesOf(next);
+  const cut = cutIn(absorbed.size ? overrides.filter((item) => !absorbed.has(item.id)) : overrides, next);
   const deletes: string[] = [];
   const kept: CalendarEvent[] = [];
-  for (const row of rows) {
+  for (const row of rowsOf(event, overrides)) {
     if (nextSeries && hasInstance(nextSeries, row.originalDate as string, cut)) kept.push(row);
     else deletes.push(row.id);
   }
+  deletes.push(...absorbed, ...rowIdsOf(overrides, absorbed));
   return { puts: [next, ...(next.subjectId !== event.subjectId ? subjectRewrites(kept, next.subjectId, now) : [])], deletes };
 };
 
@@ -992,10 +1107,11 @@ const pinned = (event: CalendarEvent, series: Series, originalDate: string, cut:
  * Piano di una modifica all'occorrenza `originalDate` della serie `series`:
  * - "this": riga `serie@giorno` (nuova o la stessa di prima) con la modifica; la materia è della
  *   serie, quindi un cambio di materia vale per la serie e tutte le sue righe;
- * - "following": divisione (vedi `planSplit`); dalla prima occorrenza è come "all";
+ * - "following": divisione (vedi `planSplit`), che assorbe le divisioni successive; dalla prima
+ *   occorrenza è come "all";
  * - "all": la serie; inizio e fine si spostano come l'occorrenza toccata (stessi giorni di scarto,
  *   nuova ora); le righe che non sono più occorrenze si eliminano, le altre seguono la materia.
- * Una serie senza fuso riceve quello del dispositivo nello stesso piano prima della sua prima riga.
+ * Una serie che si ripete senza fuso riceve quello del dispositivo nello stesso piano.
  * `overrides`: gli eventi (righe, figlie e sorelle comprese). Giorno che non è un'occorrenza (anche
  * perché lo copre una divisione successiva): piano vuoto.
  */
@@ -1011,11 +1127,12 @@ export const planEdit = (
   const cut = cutIn(overrides, event);
   if (!series || !hasInstance(series, originalDate, cut)) return EMPTY_PLAN;
   if (scope === "following") return planSplit(event, overrides, originalDate, patch, options);
-  const rows = rowsOf(event, overrides);
-  if (scope === "all" || !series.rule) return planAll(event, series, rows, originalDate, patch, options, cut);
-  const now = nowOf(options);
+  if (!series.rule) return planAll(event, series, overrides, originalDate, patch, options, false);
   const fixed = pinned(event, series, originalDate, cut, options);
   if (!fixed) return EMPTY_PLAN;
+  if (scope === "all") return planAll(fixed.target, fixed.series, overrides, originalDate, patch, options, false);
+  const rows = rowsOf(event, overrides);
+  const now = nowOf(options);
   const existing = rows.find((row) => row.originalDate === originalDate);
   const base = existing ?? occurrenceSnapshot(fixed.target, fixed.series, originalDate, options);
   const row: CalendarEvent = { ...base, ...pickPatch(patch, OCCURRENCE_LOCKED), updatedAt: now };
@@ -1028,10 +1145,17 @@ export const planEdit = (
   return { puts: [seriesPut, ...others, { ...row, subjectId }], deletes: [] };
 };
 
-/** Regola della madre fermata prima del giorno `date`: conteggio = occorrenze prima, o "fino al" giorno prima. */
+/**
+ * Regola fermata prima del giorno `date`: conteggio = occorrenze prima, o "fino al" il giorno prima.
+ * Se finisce già prima resta uguale (stesso oggetto).
+ */
 const truncatedRule = (rule: RepeatRule, startDate: string, date: string): RepeatRule => {
   const count = countOf(rule);
-  if (count !== undefined) return { ...rule, end: { type: "count", count: Math.max(1, countBefore(rule, startDate, date)) } };
+  if (count !== undefined && date > startDate) {
+    const before = Math.max(1, countBefore(rule, startDate, date));
+    return before === count ? rule : { ...rule, end: { type: "count", count: before } };
+  }
+  if (rule.end?.type === "until" && rule.end.date < date) return rule;
   return { ...rule, end: { type: "until", date: civilAddDays(date, -1) } };
 };
 
@@ -1040,6 +1164,9 @@ const truncatedRule = (rule: RepeatRule, startDate: string, date: string): Repea
  * (`splitFrom`, `originalDate` = giorno della divisione, nessun `sourceUid`) con la modifica e le
  * occorrenze rimaste; le righe successive passano alla figlia (le modificate si perdono se cambia
  * l'ora, come in Google; le cancellate restano), quella del giorno stesso è sostituita dalla modifica.
+ * Le divisioni successive della serie (figlie dal giorno in poi, sorelle successive, loro
+ * discendenti) e le loro righe si assorbono: senza una regola nuova la figlia arriva fin dove
+ * arrivavano loro. Se un antenato è fermato da una sua sorella, la figlia finisce lì (salvato).
  */
 export const planSplit = (
   event: CalendarEvent,
@@ -1048,21 +1175,26 @@ export const planSplit = (
   patch: Partial<CalendarEvent> = {},
   options: PlanOptions = {}
 ): EditPlan => {
-  const series = seriesOf(event);
+  const original = seriesOf(event);
   const cut = cutIn(overrides, event);
-  if (!series || !hasInstance(series, originalDate, cut)) return EMPTY_PLAN;
+  if (!original || !hasInstance(original, originalDate, cut)) return EMPTY_PLAN;
+  if (!original.rule) return planAll(event, original, overrides, originalDate, patch, options, true);
+  const fixed = pinned(event, original, originalDate, cut, options);
+  if (!fixed) return EMPTY_PLAN;
+  const { target, series } = fixed;
+  const rule = series.rule as RepeatRule;
+  if (originalDate === series.startDate) return keepEnds(overrides, planAll(target, series, overrides, originalDate, patch, options, true), options);
   const rows = rowsOf(event, overrides);
-  if (!series.rule || originalDate === series.startDate) return planAll(event, series, rows, originalDate, patch, options, cut);
   const now = nowOf(options);
-  const zone = series.zone ?? pinZone(event, options);
+  const zone = series.zone;
   const parent = applyRepeatFields(
-    { ...event, repeat: truncatedRule(series.rule, series.startDate, originalDate), repeatLegacy: undefined, updatedAt: now },
+    { ...target, repeat: truncatedRule(rule, series.startDate, originalDate), repeatLegacy: undefined, updatedAt: now },
     { repeatChanged: true, timeZone: zone }
   );
-  const count = countOf(series.rule);
-  const remaining = count !== undefined ? { ...series.rule, end: { type: "count" as const, count: Math.max(1, count - countBefore(series.rule, series.startDate, originalDate)) } } : series.rule;
+  const count = countOf(rule);
+  const remaining = count !== undefined ? { ...rule, end: { type: "count" as const, count: Math.max(1, count - countBefore(rule, series.startDate, originalDate)) } } : rule;
   const childId = options.childId ?? `${event.id}~${originalDate}`;
-  const base = withoutKeys(event, ["sourceUid", "sourceRecurrenceId", "seriesId", "cancelled", "repeatLegacy"]);
+  const base = withoutKeys(target, ["sourceUid", "sourceRecurrenceId", "seriesId", "cancelled", "repeatLegacy"]);
   // Regola della figlia: quella della modifica; se la modifica cambia solo i campi vecchi, la loro.
   const newRule = changesRepeat(event, patch);
   const legacyPatch = !newRule && changesLegacy(event, patch);
@@ -1071,7 +1203,7 @@ export const planSplit = (
     : legacyPatch
       ? legacyRule({ recurrence: patch.recurrence ?? event.recurrence, recurrenceUntil: "recurrenceUntil" in patch ? patch.recurrenceUntil : event.recurrenceUntil }) ?? undefined
       : remaining;
-  const child = applyRepeatFields(
+  let child = applyRepeatFields(
     {
       ...base,
       ...instanceFields(series, originalDate),
@@ -1087,8 +1219,26 @@ export const planSplit = (
     },
     { repeatChanged: true, timeZone: zone }
   );
-  const childSeries = seriesOf(child);
-  const childCut = cutIn(overrides, child);
+  const withRule = (next: RepeatRule) => applyRepeatFields({ ...child, repeat: next, repeatLegacy: undefined }, { repeatChanged: true, timeZone: zone });
+  let childSeries = seriesOf(child);
+  // Divisioni successive della serie: si assorbono; senza regola nuova la figlia arriva fin dove arrivavano.
+  const absorbed = followingSplits(overrides, target, originalDate);
+  if (absorbed.size && !newRule && !legacyPatch && childSeries?.rule) {
+    const reached = reaching(childSeries.rule, childSeries.startDate, shownUntil(overrides, absorbed));
+    if (reached !== childSeries.rule) {
+      child = withRule(reached);
+      childSeries = seriesOf(child);
+    }
+  }
+  // Fermata da fuori (la sorella di un antenato): la figlia finisce lì, salvato nella sua regola.
+  const childCut = cutIn(absorbed.size ? overrides.filter((item) => !absorbed.has(item.id)) : overrides, child);
+  if (childCut !== undefined && childSeries?.rule) {
+    const ended = truncatedRule(childSeries.rule, childSeries.startDate, childCut);
+    if (!sameEnd(ended, childSeries.rule)) {
+      child = withRule(ended);
+      childSeries = seriesOf(child);
+    }
+  }
   const sameTime = childSeries !== null && childSeries.civil === series.civil && childSeries.wall.join() === series.wall.join() && childSeries.durationMs === series.durationMs;
   const puts: CalendarEvent[] = [parent, child];
   const deletes: string[] = [];
@@ -1100,7 +1250,8 @@ export const planSplit = (
     if (!row.cancelled && !sameTime) continue;
     puts.push({ ...row, id: occurrenceId(childId, date), seriesId: childId, subjectId: child.subjectId, updatedAt: now });
   }
-  return { puts, deletes };
+  deletes.push(...absorbed, ...rowIdsOf(overrides, absorbed));
+  return keepEnds(overrides, { puts, deletes }, options);
 };
 
 /** Serie collegate da divisioni: la radice e tutte le figlie (stesso proprietario). */
@@ -1173,6 +1324,7 @@ const followingSplits = (events: readonly CalendarEvent[], event: CalendarEvent,
  * - "following": la serie finisce prima di quel giorno; spariscono le righe successive e le serie
  *   nate da divisioni che continuano dopo (figlie e sorelle successive), con le loro righe;
  * - "all": la serie e le sue righe; con `includeSplits` tutta la famiglia, madre compresa.
+ * Le serie rimaste che una serie tolta fermava salvano la loro fine (vedi `keepEnds`).
  * Gli id da eliminare diventano tombstone con la sincronizzazione.
  */
 export const planDelete = (
@@ -1187,31 +1339,61 @@ export const planDelete = (
   const series = seriesOf(event);
   const cut = cutIn(events, event);
   if (!series || !hasInstance(series, originalDate, cut)) return EMPTY_PLAN;
-  const rows = rowsOf(event, events);
-  const rowsOfIds = (ids: Set<string>) => events.filter((item) => isOccurrenceRow(item) && ids.has(item.seriesId as string)).map((item) => item.id);
-  const wholeSeries = scope === "all" || !series.rule || (scope === "following" && originalDate === series.startDate);
+  const fixed = series.rule ? pinned(event, series, originalDate, cut, options) : null;
+  const wholeSeries = scope === "all" || !series.rule || (scope === "following" && originalDate === (fixed?.series ?? series).startDate);
   if (wholeSeries) {
     const ids = options.includeSplits && scope === "all" ? familyOf(events, seriesId) : new Set([seriesId]);
     if (scope === "following") for (const id of followingSplits(events, event, originalDate)) ids.add(id);
-    return { puts: [], deletes: [...ids, ...rowsOfIds(ids)] };
+    return keepEnds(events, { puts: [], deletes: [...ids, ...rowIdsOf(events, ids)] }, options);
   }
+  if (!fixed) return EMPTY_PLAN;
+  const { target, series: kept } = fixed;
+  const rows = rowsOf(event, events);
   const now = nowOf(options);
   if (scope === "this") {
-    const fixed = pinned(event, series, originalDate, cut, options);
-    if (!fixed) return EMPTY_PLAN;
     const existing = rows.find((row) => row.originalDate === originalDate);
-    const base = existing ?? occurrenceSnapshot(fixed.target, fixed.series, originalDate, options);
+    const base = existing ?? occurrenceSnapshot(target, kept, originalDate, options);
     const row = { ...base, cancelled: true as const, archived: true, updatedAt: now };
-    return { puts: fixed.pin ? [{ ...fixed.target, updatedAt: now }, row] : [row], deletes: [] };
+    return { puts: fixed.pin ? [{ ...target, updatedAt: now }, row] : [row], deletes: [] };
   }
   const parent = applyRepeatFields(
-    { ...event, repeat: truncatedRule(series.rule as RepeatRule, series.startDate, originalDate), repeatLegacy: undefined, updatedAt: now },
-    { repeatChanged: true, timeZone: series.zone ?? pinZone(event, options) }
+    { ...target, repeat: truncatedRule(kept.rule as RepeatRule, kept.startDate, originalDate), repeatLegacy: undefined, updatedAt: now },
+    { repeatChanged: true, timeZone: kept.zone }
   );
   const deletes = rows.filter((row) => (row.originalDate as string) >= originalDate).map((row) => row.id);
   const splits = followingSplits(events, event, originalDate);
-  deletes.push(...splits, ...rowsOfIds(splits));
-  return { puts: [parent], deletes };
+  deletes.push(...splits, ...rowIdsOf(events, splits));
+  return keepEnds(events, { puts: [parent], deletes }, options);
+};
+
+/**
+ * Dopo un piano che toglie serie divise: le serie rimaste che quelle fermavano (la sorella prima,
+ * la madre, le figlie di una serie tolta) salvano nella regola la fine che avevano, così nessuna
+ * lezione ricompare. Le serie che il piano scrive restano come le vuole il piano; le altre, se non
+ * cambiano, restano lo stesso oggetto.
+ */
+const keepEnds = (events: readonly CalendarEvent[], plan: EditPlan, options: PlanOptions): EditPlan => {
+  const removed = new Set(plan.deletes);
+  if (!events.some((item) => removed.has(item.id) && !isOccurrenceRow(item))) return plan;
+  const before = splitCuts(events, defaultGroupKey);
+  const after = applyEditPlan(events, plan).events;
+  const cuts = splitCuts(after, defaultGroupKey);
+  const written = new Set(plan.puts.map((item) => item.id));
+  const now = nowOf(options);
+  const puts = [...plan.puts];
+  for (const item of after) {
+    if (isOccurrenceRow(item) || item.archived || written.has(item.id)) continue;
+    const key = keyOf(defaultGroupKey(item), item.id);
+    const cut = before.get(key);
+    const next = cuts.get(key);
+    if (cut === undefined || (next !== undefined && next <= cut)) continue;
+    const series = seriesOf(item);
+    if (!series?.rule) continue;
+    const rule = truncatedRule(series.rule, series.startDate, cut);
+    if (sameEnd(rule, series.rule)) continue;
+    puts.push(applyRepeatFields({ ...item, repeat: rule, repeatLegacy: undefined, updatedAt: now }, { repeatChanged: true, timeZone: series.zone ?? pinZone(item, options) }));
+  }
+  return puts.length === plan.puts.length ? plan : { puts, deletes: plan.deletes };
 };
 
 /**
