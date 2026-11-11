@@ -76,6 +76,8 @@ export interface ShareInviteSummary {
   requests: ShareRequest[];
   /** Visibile solo a chi ha creato l'invito (RLS): mai inviata agli agenti. */
   recipientEmail: string | null;
+  /** Account destinatario di un invito nell'app (supabase/people.sql); null per gli inviti con link. */
+  recipientUserId: string | null;
   status: ShareInviteStatus;
   expiresAt: string;
   createdAt: string;
@@ -479,6 +481,7 @@ export const inviteFromRow = (row: Record<string, unknown>, now: number = Date.n
       .filter((entry): entry is ShareOffer => entry !== null)
       .map(({ scope, permission }) => ({ scope, permission })),
     recipientEmail: (row.recipient_email as string | null) ?? null,
+    recipientUserId: typeof row.recipient_user_id === "string" && row.recipient_user_id ? row.recipient_user_id : null,
     status: expired ? "expired" : status === "accepted" || status === "declined" || status === "expired" ? status : "pending",
     expiresAt,
     createdAt: String(row.created_at ?? "")

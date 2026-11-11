@@ -274,7 +274,7 @@ export const SHARED_ITEM_TEXT = {
 export const SHARE_INVITE_BLOCKED: Record<InviteBlock, string> = {
   invalid: "Link non valido, oppure l'invito è stato annullato.",
   own: "È un tuo invito: mandalo a un'altra persona.",
-  otherAccount: "Questo invito è per un altro indirizzo email: accedi con quell'account e riapri il link.",
+  otherAccount: "Questo invito è per un altro account: accedi con quello giusto e riapri il link.",
   accepted: "Invito già usato.",
   declined: "Invito rifiutato.",
   expired: "Invito scaduto: chiedine uno nuovo."
@@ -443,4 +443,95 @@ export const RESTORE_TEXT = {
   /** Al posto di «Ripristina» quando il ripristino non riuscirebbe (gone). */
   blocked: "Non ripristinabile",
   blockedHint: "Non è tra i tuoi dati su questo dispositivo e questa versione non ha i suoi file."
+} as const;
+
+// ——— Persone: ricerca, profilo online, inviti all'account (supabase/people.sql) ———
+
+/**
+ * Testi di "Trova una persona", del profilo online e degli inviti all'account. Le voci di `errors`
+ * da `rateLimited` a `emailInvitesGone` sono identiche ai messaggi di supabase/people.sql:
+ * peopleErrorText (lib/people.ts) le riconosce nel testo del server.
+ */
+export const peopleLabels = {
+  findTitle: "Trova una persona",
+  findHint: "Scrivi la sua email esatta o il suo @nome. L'email delle altre persone non compare mai.",
+  findFieldLabel: "Email o @nome della persona",
+  findPlaceholder: "nome@esempio.it oppure @nome",
+  search: "Cerca",
+  searching: "Cerco…",
+  invite: "Invita",
+  inviting: "Invito…",
+  noName: "Nome non impostato",
+  noHandle: "Senza @nome",
+  somebody: "una persona",
+  notFound: "Nessuna persona trovata",
+  notFoundHint: "Controlla l'email o il @nome. Se non ha ancora un account, mandale il link di invito.",
+  checkHint: "Prima di invitare, controlla con la persona che nome e @nome siano proprio i suoi.",
+  needsLogin: "Accedi al tuo account per cercare le persone.",
+  needsScopes: "Scegli almeno una cosa da condividere.",
+  groupSectionTitle: "Invita una persona con il suo account",
+  groupSectionHint: "Per chi ha già un account StudyOS: l'invito compare nella sua app (notifiche e Gruppi) e può accettarlo con un tocco.",
+  groupNotAllowed:
+    "Solo il proprietario e gli amministratori possono invitare una persona con il suo account. Tu puoi mandare il link, il QR o il codice.",
+  groupNotOnline: "Il gruppo non è ancora online: riapri questa finestra tra poco.",
+  groupInvited: (name: string) => `Invito mandato a ${name}: lo vede nelle notifiche e in Gruppi.`,
+  groupActivity: (name: string) => `ha invitato ${name}`,
+  adminRoleHint: "come un membro, ma può anche invitare una persona trovata con la ricerca (email o @nome).",
+  shareTarget: "Una persona (cerca per email o @nome)",
+  shareInvited: (name: string, scopes: string) =>
+    `Invito mandato a ${name}: lo vede nelle notifiche e in Condivisione → Inviti. Quando accetta, vede ${scopes}.`,
+  withLink: "Con link",
+  sentToPerson: "A una persona, nella sua app",
+  invitedPerson: "Persona invitata",
+  codeInvite: (code: string) => `Codice ${code}`,
+  sentInvitesTitle: (count: number) => `Inviti mandati · ${count}`,
+  waiting: "in attesa",
+  expired: "scaduto",
+  expiredEmailInvite: "Scaduto: cerca la persona per invitarla di nuovo",
+  profileTitle: "Profilo online",
+  profileIntro: "Come ti vedono gli altri quando ti cercano per invitarti.",
+  profileNoCloud: "Gli account non sono attivi in questa versione dell'app.",
+  profileSignedOut: "Con l'account puoi scegliere un @nome e farti trovare da chi vuole invitarti.",
+  profileLoading: "Carico il profilo online…",
+  profileVisibleName: (name: string) => `Nome visibile: ${name}`,
+  profileNameHint: "È il nome scritto in «Il tuo nome», qui sopra: il profilo online si aggiorna da solo.",
+  handleLabel: "Il tuo @nome (facoltativo)",
+  handlePlaceholder: "es. giulia.rossi",
+  handleRule: "Da 3 a 24 caratteri: lettere minuscole, numeri, _ e punto.",
+  handleChecking: "Controllo se è libero…",
+  handleAvailable: "Libero: puoi usarlo.",
+  handleTaken: "Già preso: scegline un altro.",
+  handleCurrent: "È il tuo @nome.",
+  handleSave: "Salva @nome",
+  handleRemove: "Togli @nome",
+  handleSaved: (handle: string) => `Fatto: ora ti trovano anche come @${handle}.`,
+  handleRemoved: "@nome tolto: ti trovano solo con l'email esatta.",
+  discoverableLabel: "Gli altri possono trovarmi",
+  discoverableOn: "Chi conosce la tua email o il tuo @nome può trovarti per invitarti. Non vede mai la tua email.",
+  discoverableOff: "Nessuno ti trova con la ricerca. Gli inviti già ricevuti restano e puoi sempre entrare con link, QR o codice.",
+  saving: "Salvo…",
+  retry: "Riprova",
+  notice: "Ora chi conosce la tua email o il tuo @nome può trovarti per invitarti. Puoi spegnerlo in Impostazioni → Profilo.",
+  noticeOk: "Ok",
+  noticeOpenProfile: "Apri il profilo",
+  errors: {
+    rateLimited: "Troppe ricerche, riprova tra un minuto",
+    notFound: "Nessuna persona trovata",
+    alreadyMember: "È già nel gruppo",
+    alreadyInvited: "Ha già un invito",
+    notAllowed: "Solo proprietario e amministratori possono invitare",
+    self: "Non puoi invitare te stesso",
+    tooManyInvites: "Troppi inviti in attesa: annullane qualcuno",
+    emailInvitesGone: "Gli inviti per email non ci sono più: cerca la persona",
+    badQuery: "Scrivi un'email completa (nome@esempio.it) o un @nome.",
+    badHandle: "Il @nome va da 3 a 24 caratteri: lettere minuscole, numeri, _ e punto.",
+    handleTaken: "Questo @nome è già preso: scegline un altro.",
+    unavailable:
+      "La ricerca delle persone non è ancora attiva sul server: esegui supabase/people.sql nel SQL Editor di Supabase (vedi supabase/README.md).",
+    offline: "Server cloud non raggiungibile: controlla la connessione e riprova.",
+    noPermission: "Non hai il permesso per questa operazione.",
+    signedOut: "Accedi al tuo account per cercare le persone.",
+    noCloud: "Gli account non sono attivi in questa versione dell'app.",
+    generic: "Il server ha risposto con un errore. Riprova tra poco."
+  }
 } as const;
