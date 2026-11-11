@@ -1,6 +1,19 @@
 import { create } from "zustand";
 import type { BarbExamSession } from "../lib/university/examTypes";
 import { barbReminderEventId, preserveBarbReminderDates } from "../lib/barbReminders";
+import {
+  applyEditPlan,
+  applyRepeatFields,
+  changesRepeat,
+  isOccurrenceRow,
+  planDelete,
+  planEdit,
+  sanitizeOccasion,
+  sanitizeReminders,
+  unlinkEvents,
+  type OccurrenceScope
+} from "../lib/repeat";
+import { deviceTimeZone, isValidTimeZone } from "../lib/tz";
 import type {
   AppNotification,
   AppView,
@@ -131,6 +144,14 @@ interface StudyState {
   /** Importazione selettiva degli appelli pubblici: stesso UID = nessun nuovo evento. */
   importBarbExamSessions: (sessions: BarbExamSession[]) => Promise<{ added: number; skipped: number }>;
   deleteEvent: (id: string) => Promise<void>;
+  /**
+   * Modifica dall'occorrenza `originalDate` (YYYY-MM-DD nel fuso della serie) della serie `seriesId`:
+   * "this" solo quella, "following" quella e le successive (la serie si divide), "all" tutta la serie.
+   * `repeat` nella modifica = regola scelta (vuota = non si ripete più). Un solo salvataggio.
+   */
+  editOccurrence: (seriesId: string, originalDate: string, scope: OccurrenceScope, patch: Partial<CalendarEvent>) => Promise<void>;
+  /** Eliminazione con le stesse portate; `includeSplits`: anche le serie nate da "questa e le successive". */
+  deleteOccurrence: (seriesId: string, originalDate: string, scope: OccurrenceScope, options?: { includeSplits?: boolean }) => Promise<void>;
   /** Crea una materia e ne restituisce l'id. */
   addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<string>;
   updateSubject: (id: string, patch: Partial<Subject>) => Promise<void>;
@@ -890,7 +911,15 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     addEvent: async (event) => {
-      const created: CalendarEvent = {
+      // Campi della ripetizione nuova: scritti solo se ci sono; il fuso si prende alla creazione.
+      const zone = isValidTimeZone(event.timeZone) ? event.timeZone : deviceTimeZone();
+      const occasion = sanitizeOccasion(event.occasion);
+      const extra = Object.fromEntries(
+        (["repeat", "repeatLegacy", "seriesId", "originalDate", "cancelled", "splitFrom", "sourceRecurrenceId"] as const)
+          .filter((key) => event[key] !== undefined)
+          .map((key) => [key, event[key]])
+      ) as Partial<CalendarEvent>;
+      const draft: CalendarEvent = {
         id: createId("event"),
         createdAt: nowIso(),
         updatedAt: nowIso(),
@@ -914,8 +943,14 @@ export const useStudyStore = create<StudyState>((set, get) => {
         notes: event.notes ?? "",
         links: event.links ?? [],
         sourceUid: event.sourceUid,
-        goalId: event.goalId
+        goalId: event.goalId,
+        ...extra,
+        ...(zone ? { timeZone: zone } : {}),
+        ...(occasion ? { occasion } : {}),
+        ...(event.reminders !== undefined ? { reminders: sanitizeReminders(event.reminders) } : {})
       };
+      // Regola valida: si scrivono anche impronta e proiezione per le app vecchie; non valida: si scarta.
+      const created = applyRepeatFields(draft, { repeatChanged: event.repeat !== undefined && event.repeatLegacy === undefined, timeZone: zone });
       set((state) => ({ events: [created, ...state.events] }));
       await commit();
     },
@@ -1009,20 +1044,72 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     updateEvent: async (id, patch) => {
-      set((state) => ({
-        events: state.events.map((event) => (event.id === id ? preserveBarbReminderDates({ ...event, ...patch, updatedAt: nowIso() }) : event))
-      }));
+      const now = nowIso();
+      set((state) => {
+        const current = state.events.find((event) => event.id === id);
+        if (!current) return {};
+        const merged = preserveBarbReminderDates({ ...current, ...patch, updatedAt: now });
+        // Regola: nuova se la modifica ne sceglie una, altrimenti vince un cambio fatto da un'app vecchia.
+        const next = isOccurrenceRow(current) ? merged : applyRepeatFields(merged, { repeatChanged: changesRepeat(current, patch) });
+        // Materia della serie: la seguono le sue righe, nello stesso salvataggio.
+        const follow = !isOccurrenceRow(current) && next.subjectId !== current.subjectId;
+        return {
+          events: state.events.map((event) =>
+            event.id === id ? next : follow && event.seriesId === id ? { ...event, subjectId: next.subjectId, updatedAt: now } : event
+          )
+        };
+      });
       await commit();
     },
 
     deleteEvent: async (id) => {
-      const detach = detachLinked("calendarEvent", id);
-      set((state) => ({
-        events: state.events.filter((event) => event.id !== id),
-        attachments: state.attachments.map(detach),
-        notes: state.notes.map(detach),
-        reminders: state.reminders.map(detach)
-      }));
+      const now = nowIso();
+      set((state) => {
+        const target = state.events.find((event) => event.id === id);
+        // Una serie si porta via le sue righe (occorrenze modificate o cancellate).
+        const rows = target && !isOccurrenceRow(target) ? state.events.filter((event) => event.seriesId === id).map((event) => event.id) : [];
+        const ids = new Set([id, ...rows]);
+        return {
+          events: applyEditPlan(state.events, { puts: [], deletes: [...ids] }).events,
+          attachments: unlinkEvents(state.attachments, ids, now),
+          notes: unlinkEvents(state.notes, ids, now),
+          reminders: unlinkEvents(state.reminders, ids, now)
+        };
+      });
+      await commit();
+    },
+
+    editOccurrence: async (seriesId, originalDate, scope, patch) => {
+      const now = nowIso();
+      const events = get().events;
+      const series = events.find((event) => event.id === seriesId && !isOccurrenceRow(event));
+      const plan = series ? planEdit(series, events, originalDate, scope, patch, { now }) : null;
+      if (!plan || (!plan.puts.length && !plan.deletes.length)) return;
+      set((state) => {
+        const result = applyEditPlan(state.events, { ...plan, puts: plan.puts.map((item) => preserveBarbReminderDates(item)) });
+        return {
+          events: result.events,
+          attachments: unlinkEvents(state.attachments, result.removed, now),
+          notes: unlinkEvents(state.notes, result.removed, now),
+          reminders: unlinkEvents(state.reminders, result.removed, now)
+        };
+      });
+      await commit();
+    },
+
+    deleteOccurrence: async (seriesId, originalDate, scope, options) => {
+      const now = nowIso();
+      const plan = planDelete(get().events, seriesId, originalDate, scope, { now, includeSplits: options?.includeSplits });
+      if (!plan.puts.length && !plan.deletes.length) return;
+      set((state) => {
+        const result = applyEditPlan(state.events, plan);
+        return {
+          events: result.events,
+          attachments: unlinkEvents(state.attachments, result.removed, now),
+          notes: unlinkEvents(state.notes, result.removed, now),
+          reminders: unlinkEvents(state.reminders, result.removed, now)
+        };
+      });
       await commit();
     },
 

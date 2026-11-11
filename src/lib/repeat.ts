@@ -9,7 +9,7 @@
 //   mezzanotte locale, mensile che usa l'ultimo giorno del mese se il giorno non esiste.
 // - Le regole di altri sono dati non fidati: si validano e ogni espansione ha un tetto.
 import { parseISO } from "date-fns";
-import type { CalendarEvent, EventReminder, RepeatEnd, RepeatMonthly, RepeatRule, Weekday } from "../types";
+import type { CalendarEvent, EventOccasion, EventReminder, OccasionKind, RepeatEnd, RepeatMonthly, RepeatRule, Weekday } from "../types";
 import {
   civilAddDays,
   civilDateOf,
@@ -652,6 +652,26 @@ export const applyRepeatFields = <T extends CalendarEvent>(event: T, options: { 
   };
 };
 
+/**
+ * La modifica sceglie una regola diversa da quella che vale per l'evento (`normalizeRepeat`).
+ * Un modulo che rimanda la regola mostrata non la cambia, così un cambio fatto da un'app vecchia
+ * resta valido; `repeat` vuoto nella modifica = non si ripete più.
+ */
+export const changesRepeat = (event: CalendarEvent, patch: Partial<CalendarEvent>) => {
+  if (!("repeat" in patch)) return false;
+  const raw = patch.repeat as unknown;
+  const checked = raw === undefined || raw === null ? null : validateRepeat(raw);
+  if (checked && !checked.ok) return true;
+  return JSON.stringify(checked ? checked.rule : null) !== JSON.stringify(normalizeRepeat(event));
+};
+
+/** La modifica cambia i campi vecchi (`recurrence`, `recurrenceUntil`) rispetto all'evento. */
+const changesLegacy = (event: CalendarEvent, patch: Partial<CalendarEvent>) =>
+  repeatLegacyKey({
+    recurrence: "recurrence" in patch ? patch.recurrence : event.recurrence,
+    recurrenceUntil: "recurrenceUntil" in patch ? patch.recurrenceUntil : event.recurrenceUntil
+  }) !== repeatLegacyKey(event);
+
 // ---------------------------------------------------------------------------------------
 // Piani di modifica: solo questa, questa e le successive, tutta la serie
 // ---------------------------------------------------------------------------------------
@@ -770,7 +790,7 @@ const subjectRewrites = (rows: readonly CalendarEvent[], subjectId: string | und
 const planAll = (event: CalendarEvent, series: Series, rows: readonly CalendarEvent[], date: string, patch: Partial<CalendarEvent>, options: PlanOptions): EditPlan => {
   const now = nowOf(options);
   const fields = { ...pickPatch(patch, SERIES_LOCKED), ...shiftedSeriesTimes(event, series, date, patch) };
-  const next = applyRepeatFields({ ...event, ...fields, updatedAt: now }, { repeatChanged: "repeat" in patch, timeZone: options.timeZone });
+  const next = applyRepeatFields({ ...event, ...fields, updatedAt: now }, { repeatChanged: changesRepeat(event, patch), timeZone: options.timeZone });
   const nextSeries = seriesOf(next);
   const deletes: string[] = [];
   const kept: CalendarEvent[] = [];
@@ -850,8 +870,9 @@ export const planSplit = (
   const childId = options.childId ?? `${event.id}~${originalDate}`;
   const base = withoutKeys(event, ["sourceUid", "sourceRecurrenceId", "seriesId", "cancelled", "repeatLegacy"]);
   // Regola della figlia: quella della modifica; se la modifica cambia solo i campi vecchi, la loro.
-  const legacyPatch = !("repeat" in patch) && ("recurrence" in patch || "recurrenceUntil" in patch);
-  const childRule = "repeat" in patch
+  const newRule = changesRepeat(event, patch);
+  const legacyPatch = !newRule && changesLegacy(event, patch);
+  const childRule = newRule
     ? patch.repeat
     : legacyPatch
       ? legacyRule({ recurrence: patch.recurrence ?? event.recurrence, recurrenceUntil: "recurrenceUntil" in patch ? patch.recurrenceUntil : event.recurrenceUntil }) ?? undefined
@@ -976,6 +997,37 @@ export const planDelete = (
   return { puts: [parent], deletes };
 };
 
+/**
+ * Lista dopo un piano: le righe del piano sostituiscono quelle con lo stesso id (le nuove vanno in
+ * testa), le eliminate escono, tutte le altre restano lo stesso oggetto (il salvataggio confronta i
+ * riferimenti). `removed`: id davvero tolti, per staccare allegati, note e promemoria.
+ */
+export const applyEditPlan = <T extends CalendarEvent>(events: readonly T[], plan: EditPlan): { events: T[]; removed: Set<string> } => {
+  const puts = new Map(plan.puts.map((item) => [item.id, item as T]));
+  const deletes = new Set(plan.deletes.filter((id) => !puts.has(id)));
+  const removed = new Set<string>();
+  const kept: T[] = [];
+  for (const item of events) {
+    if (deletes.has(item.id)) {
+      removed.add(item.id);
+      continue;
+    }
+    const put = puts.get(item.id);
+    if (put) puts.delete(item.id);
+    kept.push(put ?? item);
+  }
+  return { events: [...puts.values(), ...kept], removed };
+};
+
+type Linked = { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string };
+
+/** Allegati, note o promemoria collegati a eventi tolti: si staccano. Nessuno da staccare = stesso array. */
+export const unlinkEvents = <T extends Linked>(items: T[], removed: ReadonlySet<string>, now: string): T[] => {
+  const linked = (item: T) => item.linkedEntityType === "calendarEvent" && typeof item.linkedEntityId === "string" && removed.has(item.linkedEntityId);
+  if (!removed.size || !items.some(linked)) return items;
+  return items.map((item) => (linked(item) ? { ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: now } : item));
+};
+
 // ---------------------------------------------------------------------------------------
 // Ricorrenze e promemoria
 // ---------------------------------------------------------------------------------------
@@ -1008,6 +1060,20 @@ export const sanitizeReminders = (value: unknown): EventReminder[] => {
     if (result.length >= MAX_REMINDERS) break;
   }
   return result;
+};
+
+const OCCASION_KINDS: readonly OccasionKind[] = ["birthday", "anniversary", "holiday", "recurring-day"];
+const MAX_PERSON_LENGTH = 120;
+
+/** Ricorrenza valida o niente: tipo noto, anno 1–9999, nome non vuoto (al più 120 caratteri). */
+export const sanitizeOccasion = (value: unknown): EventOccasion | undefined => {
+  if (!isRecord(value) || !OCCASION_KINDS.includes(value.kind as OccasionKind)) return undefined;
+  const person = typeof value.person === "string" ? value.person.trim().slice(0, MAX_PERSON_LENGTH) : "";
+  return {
+    kind: value.kind as OccasionKind,
+    ...(isIntIn(value.birthYear, 1, 9999) ? { birthYear: value.birthYear } : {}),
+    ...(person ? { person } : {})
+  };
 };
 
 /**
