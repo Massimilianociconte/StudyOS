@@ -332,7 +332,7 @@ export function MaterialsView() {
             if (event.target === event.currentTarget) setEditingAttachment(null);
           }}
         >
-          <section ref={editPanelRef} tabIndex={-1} className="soft-panel w-full max-w-xl p-4 outline-none sm:p-5">
+          <section ref={editPanelRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-xl overflow-y-auto p-4 outline-none sm:p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="safe-text text-2xl font-black">Modifica materiale</h3>

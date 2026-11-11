@@ -434,7 +434,18 @@ const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), selec
  */
 export function useDialogLayer(
   open: boolean,
-  { panelRef, areaRef, onEscape }: { panelRef: RefObject<HTMLElement | null>; areaRef?: RefObject<HTMLElement | null>; onEscape?: () => void }
+  {
+    panelRef,
+    areaRef,
+    onEscape,
+    returnFocusRef
+  }: {
+    panelRef: RefObject<HTMLElement | null>;
+    areaRef?: RefObject<HTMLElement | null>;
+    onEscape?: () => void;
+    /** Chi riceve il focus alla chiusura al posto dell'elemento attivo all'apertura (es. il campo che ha aperto il selettore). */
+    returnFocusRef?: RefObject<HTMLElement | null>;
+  }
 ) {
   const escapeRef = useRef(onEscape);
   escapeRef.current = onEscape;
@@ -471,9 +482,9 @@ export function useDialogLayer(
     return () => {
       window.removeEventListener("keydown", onKey);
       dialogLayers.remove(token);
-      previousFocus?.focus({ preventScroll: true });
+      (returnFocusRef?.current ?? previousFocus)?.focus({ preventScroll: true });
     };
-  }, [open, panelRef]);
+  }, [open, panelRef, returnFocusRef]);
 }
 
 /**

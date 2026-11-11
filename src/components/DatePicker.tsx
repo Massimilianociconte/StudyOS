@@ -150,7 +150,7 @@ function PickerShell({
   const backdropRef = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
   const position = useFloatingLayer(open, onClose, anchorRef, panelRef, "start", sheet);
-  useDialogLayer(open, { panelRef, areaRef: sheet ? backdropRef : panelRef });
+  useDialogLayer(open, { panelRef, areaRef: sheet ? backdropRef : panelRef, returnFocusRef: anchorRef });
 
   const heading = (
     <p id={titleId} className="one-line-safe mb-2 text-xs font-black uppercase text-[var(--faint)]">
