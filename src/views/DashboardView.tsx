@@ -39,6 +39,7 @@ import {
   occasionAgeText
 } from "../lib/labels";
 import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT } from "../lib/labels/home";
+import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
@@ -157,7 +158,8 @@ export function DashboardView() {
   const activeSubjects = subjects.filter((subject) => ["active", "review", "exam-ready"].includes(subject.status));
   const nextTask = urgent[0];
   const preferences = selectPreferences(store);
-  const weeklyTarget = preferences.weeklyTargetMinutes;
+  // 0 o mancante (dati vecchi, agente): niente percentuale né "su 0 h".
+  const weeklyTarget = weeklyTargetOf(preferences.weeklyTargetMinutes);
   const displayName = preferences.displayName.trim();
   const welcomeName = displayName ? displayName.split(/[ @]/).filter(Boolean)[0] : "";
   const recentAttachments = [...attachments].sort((a, b) => b.addedAt.localeCompare(a.addedAt)).slice(0, 4);
@@ -174,8 +176,8 @@ export function DashboardView() {
     {
       label: "Studio della settimana",
       value: `${formatHours(weeklyMinutes)} h`,
-      detail: `su ${formatHours(weeklyTarget)} h di obiettivo`,
-      progress: (weeklyMinutes / weeklyTarget) * 100,
+      detail: weeklyTarget ? HOME_TEXT.weekTarget(formatHours(weeklyTarget)) : HOME_TEXT.weekNoTarget,
+      progress: weeklyProgress(weeklyMinutes, weeklyTarget),
       icon: "Timer",
       tone: "var(--accent)",
       view: "study" as const

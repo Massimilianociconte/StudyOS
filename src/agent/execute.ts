@@ -1,7 +1,7 @@
 import { addDays, differenceInCalendarDays, format, isValid, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import type { AgentCallResult } from "./types";
-import { toolSummary } from "./catalog";
+import { WEEKLY_TARGET_MAX, WEEKLY_TARGET_MIN, toolSummary } from "./catalog";
 import { publicAttachment, publicEntity, publicGroup, publicPreferences, publicSubject } from "./project";
 import { readAudit, readStoredPolicy } from "../lib/agentLocal";
 import { gradeStats, isValidGrade, librettoEntries, projectedStats } from "../lib/grades";
@@ -16,7 +16,7 @@ import { dueTopics } from "../lib/review";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import { studyMinutesThisWeek, studyStreak, upcomingExams, urgentTasks } from "../lib/selectors";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, timerElapsedSeconds, timerRemainingSeconds, timerUnsavedSeconds } from "../lib/studyTimer";
-import { SESSION_SOURCE_VALUES, editedSessionTimes } from "../lib/studySessions";
+import { SESSION_SOURCE_VALUES, editedSessionTimes, sessionEndsInFuture } from "../lib/studySessions";
 import { TIMER_KIND_LABEL, TIMER_MODE_LABEL } from "../lib/labels";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore, type PreferencesPatch } from "../store/useStudyStore";
@@ -818,6 +818,13 @@ const isOneOf = <T extends string>(values: readonly T[], value: unknown): value 
 const sessionSourceOf = (value: unknown): StudySession["source"] | false | undefined =>
   value === undefined ? undefined : isOneOf(SESSION_SOURCE_VALUES, value) ? value : false;
 
+/** Una sessione fatta non inizia né finisce nel futuro (stessa regola dei moduli dell'app, 1 minuto di margine). */
+const completedInFuture = (start: number, end: number) => {
+  const now = Date.now();
+  return start > now || sessionEndsInFuture(end, now);
+};
+const COMPLETED_IN_FUTURE = "Una sessione fatta (status=completed) non può iniziare o finire nel futuro: anticipa start o riduci actualMinutes.";
+
 const createSession = async (args: Args): Promise<AgentCallResult> => {
   let subject = requireSubject(args.subjectId);
   if (subject === false) return fail("not_found", "Materia non trovata.");
@@ -831,11 +838,13 @@ const createSession = async (args: Args): Promise<AgentCallResult> => {
   }
   const source = sessionSourceOf(args.source);
   if (source === false) return fail("invalid", "source deve essere pomodoro, timer, stopwatch o manual.");
-  const start = args.start === undefined ? nowIso() : toIso(args.start);
-  if (!start) return fail("invalid", "start non è una data valida.");
   const status = (args.status as StudySession["status"]) ?? "planned";
   const plannedMinutes = Number(args.plannedMinutes ?? 50);
   const actualMinutes = typeof args.actualMinutes === "number" ? args.actualMinutes : status === "completed" ? plannedMinutes : 0;
+  // Senza inizio una sessione fatta è appena finita; le altre partono adesso.
+  const start = args.start === undefined ? (status === "completed" ? new Date(Date.now() - actualMinutes * 60_000).toISOString() : nowIso()) : toIso(args.start);
+  if (!start) return fail("invalid", "start non è una data valida.");
+  if (status === "completed" && completedInFuture(Date.parse(start), Date.parse(start) + actualMinutes * 60_000)) return fail("invalid", COMPLETED_IN_FUTURE);
   const id = await createdId("sessions", () => state().addSession({
     title: text(args.title).trim(),
     subjectId: subject ? subject.id : undefined,
@@ -894,6 +903,12 @@ const updateSession = async (args: Args): Promise<AgentCallResult> => {
       patch.start = new Date(times.start).toISOString();
       if (session.end || start) patch.end = new Date(times.end).toISOString();
     } else if (start) patch.start = start.toISOString();
+  }
+  if ((patch.status ?? session.status) === "completed" && (start || typeof args.actualMinutes === "number" || patch.status === "completed")) {
+    const from = Date.parse(patch.start ?? session.start);
+    const until = patch.end ?? session.end;
+    const end = until ? Date.parse(until) : from + (patch.actualMinutes ?? session.actualMinutes) * 60_000;
+    if (completedInFuture(from, end)) return fail("invalid", COMPLETED_IN_FUTURE);
   }
   await state().updateSession(id, patch);
   return ok({ id });
@@ -1053,6 +1068,11 @@ const updateGoal = async (args: Args): Promise<AgentCallResult> => {
 const updatePreferences = async (args: Args): Promise<AgentCallResult> => {
   const patch = pick(args, ["displayName", "weeklyTargetMinutes", "degreeCfu", "showBarb", "degreeProgram", "sbThesisGrade", "barbThesisPoints", "abroad"]);
   if (!Object.keys(patch).length) return fail("invalid", "Indica almeno un campo da aggiornare.");
+  // Come in Impostazioni: almeno un'ora a settimana (0 darebbe percentuali senza senso).
+  const weekly = patch.weeklyTargetMinutes;
+  if (weekly !== undefined && !(Number.isInteger(weekly) && (weekly as number) >= WEEKLY_TARGET_MIN && (weekly as number) <= WEEKLY_TARGET_MAX)) {
+    return fail("invalid", `weeklyTargetMinutes deve essere un numero intero di minuti da ${WEEKLY_TARGET_MIN} (1 ora) a ${WEEKLY_TARGET_MAX}.`);
+  }
   await state().updatePreferences(patch as PreferencesPatch);
   return ok({ preferences: publicPreferences(selectPreferences(state())) });
 };

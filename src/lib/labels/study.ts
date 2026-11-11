@@ -71,8 +71,8 @@ export const TOPIC_FILTER_TEXT = {
 /** Colonna laterale di Studio: i numeri portano dove servono. */
 export const STUDY_SIDE_TEXT = {
   week: "Questa settimana",
-  weekHint: (target: string, streak: number) =>
-    `su ${target} h di obiettivo${streak ? ` · ${streak} ${streak === 1 ? "giorno" : "giorni"} di fila` : ""}`,
+  weekHint: (target: string | undefined, streak: number) =>
+    `${target ? `su ${target} h di obiettivo` : "Nessun obiettivo settimanale"}${streak ? ` · ${streak} ${streak === 1 ? "giorno" : "giorni"} di fila` : ""}`,
   weekProgress: "Ore di studio della settimana rispetto all'obiettivo",
   changeTarget: "Cambia obiettivo",
   upcoming: "Prossimi ripassi",

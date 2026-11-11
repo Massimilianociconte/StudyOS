@@ -20,6 +20,7 @@ import {
   sessionsInRange,
   trendBuckets,
   trendUnit,
+  weeklyTargetOf,
   type PeriodRange,
   type SessionSourceKey,
   type StatsPeriod
@@ -68,7 +69,7 @@ export function StatsView() {
       setActiveView: state.setActiveView
     }))
   );
-  const weeklyTarget = preferences.weeklyTargetMinutes;
+  const weeklyTarget = weeklyTargetOf(preferences.weeklyTargetMinutes);
   const [period, setPeriod] = useUiState<StatsPeriod>("stats.period", "week", { validate: oneOf(...STATS_PERIODS) });
   const [offset, setOffset] = useState(0);
   const range = useMemo(() => periodRange(period, new Date(), { offset, semesters: BARB_DATASET.semesters }), [period, offset]);
@@ -172,7 +173,7 @@ export function StatsView() {
         <StatTile
           label={STATS_TEXT.studied}
           value={STATS_TEXT.hoursValue(formatHours(total))}
-          hint={isWeekNow ? STATS_TEXT.ofTarget(formatHours(weeklyTarget)) : periodHint}
+          hint={isWeekNow && weeklyTarget ? STATS_TEXT.ofTarget(formatHours(weeklyTarget)) : periodHint}
           icon="Timer"
           onClick={() => goTo(setActiveView, "study")}
         />

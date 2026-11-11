@@ -173,3 +173,42 @@ test("sessioni MCP: update cambia materia, argomento, inizio e minuti; la fine s
   assert.equal((await executeAgentTool("studyos_update_session", { id: "session_1", notes: "ok", focusLevel: 5 })).ok, true);
   assert.equal(useStudyStore.getState().sessions[0].notes, "ok");
 });
+
+test("sessioni MCP: una sessione fatta non inizia né finisce nel futuro (come nei moduli dell'app)", async () => {
+  seed();
+  const now = Date.now();
+  const at = (minutes) => new Date(now + minutes * MIN).toISOString();
+  const create = (args) => executeAgentTool("studyos_create_session", { title: "Ripasso", status: "completed", ...args });
+  assert.equal((await create({ actualMinutes: 30, start: at(60) })).code, "invalid", "inizio nel futuro");
+  assert.equal((await create({ actualMinutes: 60, start: at(-30) })).code, "invalid", "finirebbe tra mezz'ora");
+  assert.equal(useStudyStore.getState().sessions.length, 0);
+  const ended = await create({ actualMinutes: 30, start: at(-30) });
+  assert.equal(ended.ok, true, "finisce adesso");
+  // Senza inizio una sessione fatta è appena finita: è iniziata tanti minuti fa quanti ne dura.
+  const before = Date.now();
+  const justDone = await create({ actualMinutes: 40 });
+  assert.equal(justDone.ok, true);
+  const started = Date.parse(justDone.data.start);
+  assert.ok(started <= before - 40 * MIN + 1000 && started >= before - 41 * MIN, justDone.data.start);
+  // Pianificata (o saltata): può stare nel futuro.
+  assert.equal((await executeAgentTool("studyos_create_session", { title: "Domani", start: at(24 * 60) })).ok, true);
+  // Aggiornando una sessione fatta vale la stessa regola.
+  const id = ended.data.id;
+  assert.equal((await executeAgentTool("studyos_update_session", { id, actualMinutes: 90 })).code, "invalid");
+  assert.equal((await executeAgentTool("studyos_update_session", { id, start: at(10) })).code, "invalid");
+  assert.equal(useStudyStore.getState().sessions.find((item) => item.id === id).actualMinutes, 30, "niente salvato");
+  assert.equal((await executeAgentTool("studyos_update_session", { id, actualMinutes: 20 })).ok, true);
+  const planned = useStudyStore.getState().sessions.find((item) => item.title === "Domani");
+  assert.equal((await executeAgentTool("studyos_update_session", { id: planned.id, status: "completed" })).code, "invalid", "domani non è ancora fatta");
+});
+
+test("preferenze MCP: obiettivo settimanale di almeno un'ora, come in Impostazioni", async () => {
+  seed();
+  assert.equal(findAgentTool("studyos_update_preferences").inputSchema.properties.weeklyTargetMinutes.minimum, 60);
+  for (const value of [0, 59, -60, 90.5]) {
+    assert.equal((await executeAgentTool("studyos_update_preferences", { weeklyTargetMinutes: value })).code, "invalid", String(value));
+  }
+  const saved = await executeAgentTool("studyos_update_preferences", { weeklyTargetMinutes: 60 });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.data.preferences.weeklyTargetMinutes, 60);
+});

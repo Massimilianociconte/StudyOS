@@ -13,6 +13,9 @@ const QUERY = { type: "string", minLength: 0, maxLength: 200, default: "", descr
 // enum invece di const: lo capiscono anche gli schemi ridotti di Gemini e delle function call.
 const CONFIRM = { type: "boolean", enum: [true], description: "Deve essere true. Usalo solo se la persona ha chiesto esplicitamente di eliminare questo elemento." } as const satisfies JsonSchema;
 const WHEN = "ISO 8601, es. 2026-11-10T14:30:00+01:00. Senza offset vale l'ora locale della persona (timeZone in studyos_status).";
+/** Obiettivo settimanale in minuti: almeno un'ora come in Impostazioni (lo controlla anche execute.ts). */
+export const WEEKLY_TARGET_MIN = 60;
+export const WEEKLY_TARGET_MAX = 10080;
 const DAY = "Giorno YYYY-MM-DD.";
 const MINE = " Solo dati tuoi: per quelli che altre persone condividono con te usa studyos_list_shared_items.";
 const PERSON = { type: "string", minLength: 1, maxLength: 23, pattern: "^person_[0-9a-f]{16}$", description: "personId restituito da studyos_list_shares." } as const satisfies JsonSchema;
@@ -518,7 +521,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       template: { type: "string", enum: ["new-topic", "review", "exercises", "exam-simulation", "pdf-reading", "notes-cleanup", "memorization", "lab", "oral-prep"], default: "review" },
       plannedMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, default: 50 },
       actualMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, description: "Minuti effettivi. Se status=completed e manca, valgono i minuti pianificati." },
-      start: { type: "string", format: "date-time", description: `Inizio. Se assente, è adesso. ${WHEN}` },
+      start: { type: "string", format: "date-time", description: `Inizio. Se assente, è adesso (status=completed: adesso meno actualMinutes, cioè finita ora). Una sessione completed non può iniziare né finire nel futuro. ${WHEN}` },
       status: { type: "string", enum: ["planned", "completed", "skipped"], default: "planned" },
       topics: { type: "array", maxItems: 30, items: { type: "string", minLength: 1, maxLength: 200 } },
       notes: { type: "string", maxLength: 8000, default: "" },
@@ -800,7 +803,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     idempotent: true,
     inputSchema: objectSchema({
       displayName: { type: "string", maxLength: 80 },
-      weeklyTargetMinutes: { type: "integer", minimum: 0, maximum: 10080 },
+      weeklyTargetMinutes: { type: "integer", minimum: WEEKLY_TARGET_MIN, maximum: WEEKLY_TARGET_MAX, description: "Obiettivo di studio a settimana, in minuti: almeno 60 (1 ora), come in Impostazioni." },
       degreeCfu: { type: "integer", minimum: 1, maximum: 400 },
       showBarb: { type: "boolean" },
       degreeProgram: { type: "string", enum: ["barb", "scienze-biologiche"] },
