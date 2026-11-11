@@ -2,10 +2,10 @@
 // Tutti"): le chiamate da fare allo store, la regola con i giorni scritti, e ciò che la modifica fa
 // davvero alle date cambiate o annullate da sole (simulata con il motore, per dirlo prima). Puro.
 import type { CalendarEvent, RepeatRule } from "../types";
-import { applyEditPlan, expandRule, isOccurrenceRow, planDelete, planEdit, type OccurrenceScope } from "./repeat";
+import { applyEditPlan, expandEvents, expandRule, isOccurrenceRow, normalizeRepeat, planDelete, planEdit, type OccurrenceScope } from "./repeat";
 import { allScopePatch, occurrenceTarget, shiftPatchDays, startDayOf } from "./occurrenceLookup";
 import { followingPatch } from "./eventEditor";
-import { weekdayOf, weekdayPosition } from "./repeatPicker";
+import { adaptRuleToStart, weekdayOf, weekdayPosition } from "./repeatPicker";
 import { civilAddDays, civilDateOf, civilDaysBetween, daysInMonth, isCivilDate, isValidTimeZone, localMidnight, parseCivil } from "./tz";
 
 type Occurrence = CalendarEvent & { occurrenceDate: string };
@@ -65,19 +65,39 @@ export const alignedSeriesStart = (rule: RepeatRule, picked: string, seriesStart
 };
 
 /**
- * La modifica per "Tutti" con l'inizio della serie spostato al giorno `newStart`. Il motore sposta la
- * serie dello scarto tra il giorno aperto e il nuovo inizio della modifica (o, dal primo giorno o
- * cambiando "tutto il giorno", prende l'inizio così com'è): si sposta la modifica quanto basta.
+ * Primo giorno che il motore darebbe alla serie con la modifica `patch` per "Tutti": la sposta dello
+ * scarto tra il giorno aperto e il nuovo inizio della modifica (o, dal primo giorno o cambiando
+ * "tutto il giorno", prende l'inizio così com'è). `timed`: la modifica con inizio e fine.
  */
-const withSeriesStart = (
+const seriesFirstDay = (
   patch: Partial<CalendarEvent>,
-  { series, date, seriesStart, newStart, toggled }: { series: CalendarEvent; date: string; seriesStart: string; newStart: string; toggled: boolean }
-): Partial<CalendarEvent> => {
+  { series, date, seriesStart, toggled }: { series: CalendarEvent; date: string; seriesStart: string; toggled: boolean }
+) => {
   const timed = patch.start !== undefined ? patch : { ...patch, ...shiftPatchDays({ start: series.start, end: series.end }, civilDaysBetween(seriesStart, date)) };
   const current = civilDateOf(new Date(timed.start as string));
-  if (!isCivilDate(current)) return patch;
-  const first = toggled || date === seriesStart ? current : civilAddDays(seriesStart, civilDaysBetween(date, current));
-  return shiftPatchDays(timed, civilDaysBetween(first, newStart));
+  if (!isCivilDate(current)) return null;
+  return { timed, first: toggled || date === seriesStart ? current : civilAddDays(seriesStart, civilDaysBetween(date, current)) };
+};
+
+/** Confronto di regole che non guarda l'ordine dei campi (né quelli vuoti). */
+const ruleKey = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(ruleKey).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${key}:${ruleKey(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+};
+
+const withoutRepeat = (changes: Partial<CalendarEvent>): Partial<CalendarEvent> => {
+  if (!("repeat" in changes)) return changes;
+  const rest = { ...changes };
+  delete rest.repeat;
+  return rest;
 };
 
 /** Giorno da cui si è scelta la regola nel modulo: quello dell'inizio mostrato (ora locale). */
@@ -87,11 +107,30 @@ const pickedDay = (item: Pick<CalendarEvent, "start">, changes: Partial<Calendar
 };
 
 /**
+ * Regola che la serie prende da sola quando il giorno `date` va al giorno `picked`: "il martedì"
+ * diventa "il mercoledì", "il secondo lunedì" il giorno nuovo (vedi `adaptRuleToStart`). Il modulo la
+ * scrive già cambiando l'inizio; uno spostamento no.
+ */
+const followedRule = (series: CalendarEvent, date: string, picked: string) => {
+  const rule = normalizeRepeat(series);
+  return isCivilDate(date) && isCivilDate(picked) ? adaptRuleToStart(rule, date, picked) : rule;
+};
+
+/**
+ * La modifica cambia la regola per scelta? Non se la regola nuova è solo quella che segue il giorno
+ * spostato: allora c'è ancora "Solo questo" (e la regola non va su quel giorno da solo).
+ */
+export const userRuleChange = ({ item, series, changes }: { item: Occurrence; series: CalendarEvent; changes: Partial<CalendarEvent> }) =>
+  "repeat" in changes && ruleKey(changes.repeat) !== ruleKey(followedRule(series, occurrenceTarget(item).date, pickedDay(item, changes)));
+
+/**
  * Chiamate a `editOccurrence(serie, giorno, portata, modifica)` per salvare la modifica `changes` del
  * giorno `item` con la portata `scope`. `shown`: tutto ciò che il giorno mostra (per "Questo e i
  * successivi" da un giorno cambiato da solo). "Tutti" da un giorno cambiato da solo: la serie, poi quel
  * giorno, se esiste ancora. Con una regola nuova i giorni si scrivono (`explicitRule`) e con "Tutti" la
- * serie parte dal primo giorno giusto (`newStart`, se cambia).
+ * serie parte dal primo giorno giusto (`newStart`, se non è quello dello spostamento). Spostando un
+ * giorno a un altro giorno della settimana, la regola scritta lo segue con "Questo e i successivi" e
+ * "Tutti"; "Solo questo" non porta mai una regola.
  */
 export const occurrenceEditCalls = ({
   item,
@@ -107,18 +146,23 @@ export const occurrenceEditCalls = ({
   shown?: Partial<CalendarEvent>;
 }): { calls: OccurrenceCall[]; newStart?: string } => {
   const target = occurrenceTarget(item);
-  if (scope === "this") return { calls: [{ scope, patch: changes }] };
   const picked = pickedDay(item, changes);
-  const ruled = changes.repeat ? { ...changes, repeat: explicitRule(changes.repeat, picked) } : changes;
+  const chosen = userRuleChange({ item, series, changes });
+  const own = chosen ? changes : withoutRepeat(changes);
+  if (scope === "this") return { calls: [{ scope, patch: own }] };
+  const followed = chosen ? null : followedRule(series, target.date, picked);
+  const moved = followed && ruleKey(followed) !== ruleKey(normalizeRepeat(series)) ? { ...own, repeat: followed } : own;
+  const ruled = moved.repeat ? { ...moved, repeat: explicitRule(moved.repeat, picked) } : moved;
   if (scope === "following") return { calls: [{ scope, patch: followingPatch(shown, ruled, target.row) }] };
   let patch = allScopePatch(ruled, { occurrence: item, series, date: target.date });
   let newStart: string | undefined;
   if (ruled.repeat) {
     const seriesStart = startDayOf(series.start, series.allDay, isValidTimeZone(series.timeZone) ? series.timeZone : undefined);
+    const toggled = ruled.allDay !== undefined && ruled.allDay !== (series.allDay ?? false);
+    const natural = isCivilDate(seriesStart) ? seriesFirstDay(patch, { series, date: target.date, seriesStart, toggled }) : null;
     const aligned = alignedSeriesStart(ruled.repeat, picked, seriesStart);
-    if (isCivilDate(seriesStart) && aligned !== seriesStart) {
-      const toggled = ruled.allDay !== undefined && ruled.allDay !== (series.allDay ?? false);
-      patch = withSeriesStart(patch, { series, date: target.date, seriesStart, newStart: aligned, toggled });
+    if (natural && aligned !== natural.first) {
+      patch = shiftPatchDays(natural.timed, civilDaysBetween(natural.first, aligned));
       newStart = aligned;
     }
   }
@@ -135,7 +179,9 @@ export const occurrenceEditCalls = ({
 export interface ScopeImpact {
   /** Giorni cambiati da soli che perdono la modifica (tornano come il resto della serie). */
   changedLost: number;
-  /** Giorni annullati che tornano nel calendario. */
+  /** Giorni cambiati da soli che escono dalla serie (la regola nuova non li ha): spariscono, con la modifica. */
+  changedGone: number;
+  /** Giorni annullati che tornano nel calendario (un annullato che esce dalla serie non torna: non conta). */
   cancelledLost: number;
   /** Giorni cambiati o annullati da soli che restano così. */
   kept: number;
@@ -171,25 +217,45 @@ export const simulateOccurrenceEdit = (events: readonly CalendarEvent[], seriesI
  * Che cosa fa la modifica `calls` del giorno `item` ai giorni cambiati o annullati da soli. Una data
  * cambiata resta se la sua riga resta, o se una riga nuova (passata a una serie divisa) ha lo stesso
  * giorno e lo stesso stato. Con "Questo e i successivi" contano solo i giorni dopo quello aperto, che
- * porta con sé ciò che mostra.
+ * porta con sé ciò che mostra. Una data che perde la riga "torna" solo se la serie nuova ha ancora quel
+ * giorno, spostato quanto il giorno aperto (`changes`: la modifica del modulo); se no esce dalla serie.
  */
-export const scopeImpact = (events: readonly CalendarEvent[], item: Occurrence, scope: OccurrenceScope, calls: readonly OccurrenceCall[], now?: string): ScopeImpact => {
+export const scopeImpact = (
+  events: readonly CalendarEvent[],
+  item: Occurrence,
+  scope: OccurrenceScope,
+  calls: readonly OccurrenceCall[],
+  now?: string,
+  changes: Partial<CalendarEvent> = {}
+): ScopeImpact => {
   const target = occurrenceTarget(item);
   const after = simulateOccurrenceEdit(events, target.seriesId, target.date, calls, now);
+  // Di quanti giorni si sposta il giorno aperto: le altre date si spostano allo stesso modo.
+  const picked = pickedDay(item, changes);
+  const shift = isCivilDate(picked) ? civilDaysBetween(target.date, picked) : 0;
+  const masters = after.events.filter((event) => !isOccurrenceRow(event));
+  const inSeries = (date: string) => {
+    const day = civilAddDays(date, shift);
+    return expandEvents(masters, localMidnight(civilAddDays(day, -2)), localMidnight(civilAddDays(day, 3))).some(
+      (occurrence) => occurrence.occurrenceDate === day && after.touched.has(occurrence.id)
+    );
+  };
   const beforeIds = new Set(events.map((event) => event.id));
   const afterIds = new Set(after.events.map((event) => event.id));
   const fresh = after.events.filter((event) => isOccurrenceRow(event) && !beforeIds.has(event.id));
   const rows = events.filter(
     (event) => isOccurrenceRow(event) && isCivilDate(event.originalDate) && after.touched.has(event.seriesId as string) && (scope !== "following" || (event.originalDate as string) >= target.date)
   );
-  const impact: ScopeImpact = { changedLost: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: after.absorbed };
+  const impact: ScopeImpact = { changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: after.absorbed };
   for (const row of rows) {
     const own = target.row && row.id === item.id;
     if (own && scope === "following") continue;
     const lost = !afterIds.has(row.id) && !fresh.some((next) => next.originalDate === row.originalDate && Boolean(next.cancelled) === Boolean(row.cancelled));
     if (own) impact.ownLost = lost;
     else if (!lost) impact.kept += 1;
-    else if (row.cancelled) impact.cancelledLost += 1;
+    else if (!inSeries(row.originalDate as string)) {
+      if (!row.cancelled) impact.changedGone += 1;
+    } else if (row.cancelled) impact.cancelledLost += 1;
     else impact.changedLost += 1;
   }
   return impact;

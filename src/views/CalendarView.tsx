@@ -52,7 +52,7 @@ import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
 import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
-import { occurrenceEditCalls, scopeImpact, seriesSpan, type ScopeImpact } from "../lib/occurrenceEdit";
+import { occurrenceEditCalls, scopeImpact, seriesSpan, userRuleChange, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
   newOccasionDraft,
   newVacationDraft,
@@ -511,7 +511,7 @@ export function CalendarView() {
     if (own) {
       for (const scope of ["following", "all"] as const) {
         const plan = occurrenceEditCalls({ item, series: own.series, scope, changes, shown });
-        impacts[scope] = scopeImpact(current, item, scope, plan.calls);
+        impacts[scope] = scopeImpact(current, item, scope, plan.calls, undefined, changes);
         if (scope === "all") newStart = plan.newStart;
       }
     }
@@ -881,7 +881,10 @@ export function CalendarView() {
             if (!own) return EVENT_EDITOR_TEXT.saveFailed;
             const scope = await askScope(
               SCOPE_TEXT.titleEdit(shortTitle(patch.title || item.title)),
-              occurrenceScopeOptions(item, "edit", changes, patch, { ruleChanged: "repeat" in changes, subjectChanged: "subjectId" in changes })
+              occurrenceScopeOptions(item, "edit", changes, patch, {
+                ruleChanged: userRuleChange({ item, series: own.series, changes }),
+                subjectChanged: "subjectId" in changes
+              })
             );
             // Annullato: il modulo resta aperto con le modifiche.
             if (!scope) return;

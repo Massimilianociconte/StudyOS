@@ -383,6 +383,7 @@ const rowLines = (impact: ScopeImpact | undefined) => {
   if (!impact) return [];
   const lost = [
     ...(impact.changedLost ? [SCOPE_TEXT.changedLost(impact.changedLost)] : []),
+    ...(impact.changedGone ? [SCOPE_TEXT.changedGone(impact.changedGone)] : []),
     ...(impact.cancelledLost ? [SCOPE_TEXT.cancelledBack(impact.cancelledLost)] : [])
   ];
   return [...lost, ...(impact.kept ? [lost.length ? SCOPE_TEXT.othersKept : SCOPE_TEXT.rowsKept] : [])];

@@ -6,7 +6,8 @@ import {
   occurrenceEditCalls,
   scopeImpact,
   seriesSpan,
-  simulateOccurrenceEdit
+  simulateOccurrenceEdit,
+  userRuleChange
 } from "../src/lib/occurrenceEdit.ts";
 import { scopeOptions } from "../src/lib/eventEditor.ts";
 import { findOccurrence } from "../src/lib/occurrenceLookup.ts";
@@ -65,10 +66,11 @@ const impactsFor = (events, item, changes, shownFields = item) => {
   const result = {};
   for (const scope of ["following", "all"]) {
     const { calls } = occurrenceEditCalls({ item, series, scope, changes, shown: shownFields });
-    result[scope] = scopeImpact(events, item, scope, calls, NOW);
+    result[scope] = scopeImpact(events, item, scope, calls, NOW, changes);
   }
   return result;
 };
+const NO_IMPACT = { changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: 0 };
 
 test("B1. spostare un giorno a un altro giorno con «Questo e i successivi» o «Tutti»: si dice che le modifiche e gli annullamenti si perdono", () => {
   const events = withChangedDays();
@@ -76,7 +78,7 @@ test("B1. spostare un giorno a un altro giorno con «Questo e i successivi» o �
   const moved = shiftMs(item, DAY);
   const impacts = impactsFor(events, item, moved);
   for (const scope of ["following", "all"]) {
-    assert.deepEqual(impacts[scope], { changedLost: 1, cancelledLost: 1, kept: 0, ownLost: false, absorbed: 0 }, scope);
+    assert.deepEqual(impacts[scope], { ...NO_IMPACT, changedLost: 1, cancelledLost: 1 }, scope);
     // Ciò che si dice è ciò che il motore fa: nessuna riga resta, il 30 annullato torna come 1° dicembre.
     const { calls } = occurrenceEditCalls({ item, series: seriesOf(events), scope, changes: moved, shown: item });
     const after = simulateOccurrenceEdit(events, "s", "2026-11-16", calls, NOW).events;
@@ -97,14 +99,34 @@ test("B1. stesso giorno, ora diversa: con «Questo e i successivi» le modifiche
   const item = findOccurrence(events, "s", "2026-11-16");
   const later = shiftMs(item, 3600e3);
   const impacts = impactsFor(events, item, later);
-  assert.deepEqual(impacts.following, { changedLost: 1, cancelledLost: 0, kept: 1, ownLost: false, absorbed: 0 });
-  assert.deepEqual(impacts.all, { changedLost: 0, cancelledLost: 0, kept: 2, ownLost: false, absorbed: 0 });
+  assert.deepEqual(impacts.following, { ...NO_IMPACT, changedLost: 1, kept: 1 });
+  assert.deepEqual(impacts.all, { ...NO_IMPACT, kept: 2 });
   const options = scopeOptions({ action: "move", date: "2026-11-16", impacts });
   assert.deepEqual(options.find((option) => option.id === "following").details.slice(1, 3), [SCOPE_TEXT.changedLost(1), SCOPE_TEXT.othersKept]);
   assert.ok(options.find((option) => option.id === "all").details.includes(SCOPE_TEXT.rowsKept));
   // Solo il titolo, stessa ora: con «Questo e i successivi» restano tutti.
   const title = impactsFor(events, item, { title: "Analisi" }, { ...item, title: "Analisi" });
-  assert.deepEqual(title.following, { changedLost: 0, cancelledLost: 0, kept: 2, ownLost: false, absorbed: 0 });
+  assert.deepEqual(title.following, { ...NO_IMPACT, kept: 2 });
+});
+
+test("B1. una regola nuova che lascia fuori giorni cambiati o annullati: non «tornano», escono dalla serie (e si dice)", () => {
+  // Ogni lunedì dal 2 novembre; il 16 rinominato, il 23 annullato, il 30 rinominato, il 9 rinominato.
+  let events = [WEEKLY];
+  for (const date of ["2026-11-09", "2026-11-16", "2026-11-30"]) events = apply(events, planEdit(seriesOf(events), events, date, "this", { title: `Cambiato ${date}` }, { now: NOW }));
+  events = apply(events, planDelete(events, "s", "2026-11-23", "this", { now: NOW }));
+  // Dal 14 dicembre (secondo lunedì): "Ogni mese il secondo lunedì".
+  const item = findOccurrence(events, "s", "2026-12-14");
+  const rule = repeatPresets("2026-12-14").find((preset) => preset.id === "monthlyNth").rule;
+  const impacts = impactsFor(events, item, { repeat: rule });
+  // Il 9 è un secondo lunedì e resta; il 16 e il 30 non sono più nella serie; il 23 annullato non torna.
+  assert.deepEqual(impacts.all, { ...NO_IMPACT, changedGone: 2, kept: 1 });
+  const { calls } = occurrenceEditCalls({ item, series: seriesOf(events), scope: "all", changes: { repeat: rule } });
+  const after = simulateOccurrenceEdit(events, "s", "2026-12-14", calls, NOW).events;
+  assert.deepEqual(shown(after, "2026-11-01", "2026-12-31"), ["2026-11-09 Cambiato 2026-11-09", "2026-12-14 Lezione"]);
+  const all = scopeOptions({ action: "edit", date: "2026-12-14", ruleChanged: true, impacts }).find((option) => option.id === "all");
+  assert.ok(all.details.includes(SCOPE_TEXT.changedGone(2)));
+  assert.ok(all.details.includes(SCOPE_TEXT.othersKept));
+  assert.ok(!all.details.some((line) => line === SCOPE_TEXT.cancelledBack(1) || line === SCOPE_TEXT.changedLost(2)));
 });
 
 test("B1. spostare con «Tutti» un giorno cambiato da solo: si dice che perde la sua modifica", () => {
@@ -217,4 +239,46 @@ test("B2. la stessa modifica salvata dallo store dà ciò che la simulazione ha 
   assert.equal(stored.start, simulated.start);
   assert.deepEqual(stored.repeat, simulated.repeat);
   assert.equal(expandEvents(useStudyStore.getState().events, localMidnight("2026-11-01"), localMidnight("2026-11-30"))[0].occurrenceDate, "2026-11-04");
+});
+
+test("B2. spostare di un giorno una serie con il giorno scritto: «Tutti» e «Questo e i successivi» la portano sul giorno nuovo", () => {
+  // Ogni martedì scritto (come lo salvano ora le scelte pronte), dal 3 novembre a mezzogiorno.
+  const TUESDAYS = event({ start: local(2026, 11, 3), end: local(2026, 11, 3, 13), repeat: { freq: "weekly", byWeekday: ["TU"] } });
+  const item = findOccurrence([TUESDAYS], "s", "2026-11-17");
+  const moved = shiftMs(item, DAY);
+  const all = occurrenceEditCalls({ item, series: TUESDAYS, scope: "all", changes: moved });
+  assert.equal(all.newStart, undefined, "spostare non è scegliere una regola nuova: niente «La serie ora inizia…»");
+  const afterAll = simulateOccurrenceEdit([TUESDAYS], "s", "2026-11-17", all.calls, NOW).events;
+  assert.deepEqual(seriesOf(afterAll).repeat, { freq: "weekly", byWeekday: ["WE"] });
+  assert.deepEqual(shown(afterAll, "2026-11-01", "2026-11-26"), ["2026-11-04 Lezione", "2026-11-11 Lezione", "2026-11-18 Lezione", "2026-11-25 Lezione"]);
+  const following = occurrenceEditCalls({ item, series: TUESDAYS, scope: "following", changes: moved, shown: item });
+  const afterFollowing = simulateOccurrenceEdit([TUESDAYS], "s", "2026-11-17", following.calls, NOW).events;
+  assert.deepEqual(shown(afterFollowing, "2026-11-01", "2026-12-03"), [
+    "2026-11-03 Lezione",
+    "2026-11-10 Lezione",
+    "2026-11-18 Lezione",
+    "2026-11-25 Lezione",
+    "2026-12-02 Lezione"
+  ]);
+  // «Solo questo»: il giorno si sposta, la serie no.
+  const only = occurrenceEditCalls({ item, series: TUESDAYS, scope: "this", changes: moved });
+  assert.equal("repeat" in only.calls[0].patch, false);
+});
+
+test("B2. il modulo che adatta la regola al giorno nuovo non è «una regola nuova»: c'è «Solo questo» e la regola non va sul giorno", () => {
+  const TUESDAYS = event({ start: local(2026, 11, 3), end: local(2026, 11, 3, 13), repeat: { freq: "weekly", byWeekday: ["TU"] } });
+  const item = findOccurrence([TUESDAYS], "s", "2026-11-17");
+  // Come changeStart nel modulo: inizio al mercoledì e regola adattata a "il mercoledì".
+  const adapted = { ...shiftMs(item, DAY), repeat: { freq: "weekly", byWeekday: ["WE"] } };
+  assert.equal(userRuleChange({ item, series: TUESDAYS, changes: adapted }), false);
+  const only = occurrenceEditCalls({ item, series: TUESDAYS, scope: "this", changes: adapted });
+  assert.equal("repeat" in only.calls[0].patch, false);
+  const all = occurrenceEditCalls({ item, series: TUESDAYS, scope: "all", changes: adapted });
+  assert.equal(all.newStart, undefined);
+  assert.deepEqual(seriesOf(simulateOccurrenceEdit([TUESDAYS], "s", "2026-11-17", all.calls, NOW).events).repeat, { freq: "weekly", byWeekday: ["WE"] });
+  // Una regola scelta davvero resta una regola nuova.
+  assert.equal(userRuleChange({ item, series: TUESDAYS, changes: { ...adapted, repeat: { freq: "daily" } } }), true);
+  assert.equal(userRuleChange({ item, series: TUESDAYS, changes: { repeat: { freq: "weekly", byWeekday: ["TU", "TH"] } } }), true);
+  assert.equal(userRuleChange({ item, series: TUESDAYS, changes: { repeat: null } }), true);
+  assert.equal(userRuleChange({ item, series: TUESDAYS, changes: { title: "Altro" } }), false);
 });

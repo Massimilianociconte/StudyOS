@@ -1191,6 +1191,10 @@ export const SCOPE_TEXT = {
     count === 1
       ? "1 giorno che avevi cambiato da solo perde la sua modifica e torna come il resto della serie."
       : `${count} giorni che avevi cambiato da soli perdono le loro modifiche e tornano come il resto della serie.`,
+  changedGone: (count: number) =>
+    count === 1
+      ? "1 giorno che avevi cambiato da solo non fa più parte della serie: sparisce, con la sua modifica."
+      : `${count} giorni che avevi cambiato da soli non fanno più parte della serie: spariscono, con le loro modifiche.`,
   cancelledBack: (count: number) => (count === 1 ? "1 giorno che avevi annullato torna nel calendario." : `${count} giorni che avevi annullato tornano nel calendario.`),
   rowsKept: "I giorni che avevi cambiato o annullato da soli restano così.",
   othersKept: "Gli altri giorni che avevi cambiato o annullato da soli restano così.",
