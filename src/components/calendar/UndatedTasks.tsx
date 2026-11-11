@@ -4,7 +4,8 @@ import { DateField } from "../DatePicker";
 import { Drawer } from "../ui";
 import { safeCssColor } from "../../lib/sharing";
 import { subjectColor, subjectName } from "../../lib/selectors";
-import { CALENDAR_VIEW_TEXT, DATE_PICKER_TEXT } from "../../lib/labels";
+import { DATE_PICKER_TEXT } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import type { Subjects } from "./types";
 
 /**

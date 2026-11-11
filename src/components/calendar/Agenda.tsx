@@ -8,7 +8,7 @@ import { Button, EmptyState } from "../ui";
 import { daysUntil } from "../../lib/selectors";
 import { todayYmd } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";
-import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT } from "../../lib/labels";
+import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { holidaysByDay, overdueForAgenda } from "../../lib/calendarRender";
 import { HolidayChip, HolidaysNote, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";

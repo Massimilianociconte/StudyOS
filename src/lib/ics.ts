@@ -37,7 +37,9 @@ import {
   utcToZonedParts,
   zonedToUtc
 } from "./tz";
-import { EVENT_CATEGORY_LABEL, ICS_TEXT } from "./labels";
+import { EVENT_CATEGORY_LABEL } from "./labels";
+import { ICS_TEXT } from "./labels/ics";
+import { safeCssColor } from "./sharing";
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -76,6 +78,65 @@ const deviceZone = () => validZone(deviceTimeZone()) ?? "UTC";
 export const escapeText = (value: string) => value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
 
 export const unescapeText = (value: string) => value.replace(/\\([\\;,nN])/g, (_match, char: string) => (char === "n" || char === "N" ? "\n" : char));
+
+// ---------------------------------------------------------------------------------------
+// Colori (COLOR, RFC 7986: un nome di colore CSS)
+// ---------------------------------------------------------------------------------------
+
+const CSS_COLOR_NAMES =
+  "aliceblue:f0f8ff antiquewhite:faebd7 aqua:00ffff aquamarine:7fffd4 azure:f0ffff beige:f5f5dc bisque:ffe4c4 " +
+  "black:000000 blanchedalmond:ffebcd blue:0000ff blueviolet:8a2be2 brown:a52a2a burlywood:deb887 " +
+  "cadetblue:5f9ea0 chartreuse:7fff00 chocolate:d2691e coral:ff7f50 cornflowerblue:6495ed cornsilk:fff8dc " +
+  "crimson:dc143c cyan:00ffff darkblue:00008b darkcyan:008b8b darkgoldenrod:b8860b darkgray:a9a9a9 " +
+  "darkgreen:006400 darkgrey:a9a9a9 darkkhaki:bdb76b darkmagenta:8b008b darkolivegreen:556b2f darkorange:ff8c00 " +
+  "darkorchid:9932cc darkred:8b0000 darksalmon:e9967a darkseagreen:8fbc8f darkslateblue:483d8b " +
+  "darkslategray:2f4f4f darkslategrey:2f4f4f darkturquoise:00ced1 darkviolet:9400d3 deeppink:ff1493 " +
+  "deepskyblue:00bfff dimgray:696969 dimgrey:696969 dodgerblue:1e90ff firebrick:b22222 floralwhite:fffaf0 " +
+  "forestgreen:228b22 fuchsia:ff00ff gainsboro:dcdcdc ghostwhite:f8f8ff gold:ffd700 goldenrod:daa520 gray:808080 " +
+  "green:008000 greenyellow:adff2f grey:808080 honeydew:f0fff0 hotpink:ff69b4 indianred:cd5c5c indigo:4b0082 " +
+  "ivory:fffff0 khaki:f0e68c lavender:e6e6fa lavenderblush:fff0f5 lawngreen:7cfc00 lemonchiffon:fffacd " +
+  "lightblue:add8e6 lightcoral:f08080 lightcyan:e0ffff lightgoldenrodyellow:fafad2 lightgray:d3d3d3 " +
+  "lightgreen:90ee90 lightgrey:d3d3d3 lightpink:ffb6c1 lightsalmon:ffa07a lightseagreen:20b2aa " +
+  "lightskyblue:87cefa lightslategray:778899 lightslategrey:778899 lightsteelblue:b0c4de lightyellow:ffffe0 " +
+  "lime:00ff00 limegreen:32cd32 linen:faf0e6 magenta:ff00ff maroon:800000 mediumaquamarine:66cdaa " +
+  "mediumblue:0000cd mediumorchid:ba55d3 mediumpurple:9370db mediumseagreen:3cb371 mediumslateblue:7b68ee " +
+  "mediumspringgreen:00fa9a mediumturquoise:48d1cc mediumvioletred:c71585 midnightblue:191970 mintcream:f5fffa " +
+  "mistyrose:ffe4e1 moccasin:ffe4b5 navajowhite:ffdead navy:000080 oldlace:fdf5e6 olive:808000 olivedrab:6b8e23 " +
+  "orange:ffa500 orangered:ff4500 orchid:da70d6 palegoldenrod:eee8aa palegreen:98fb98 paleturquoise:afeeee " +
+  "palevioletred:db7093 papayawhip:ffefd5 peachpuff:ffdab9 peru:cd853f pink:ffc0cb plum:dda0dd powderblue:b0e0e6 " +
+  "purple:800080 rebeccapurple:663399 red:ff0000 rosybrown:bc8f8f royalblue:4169e1 saddlebrown:8b4513 " +
+  "salmon:fa8072 sandybrown:f4a460 seagreen:2e8b57 seashell:fff5ee sienna:a0522d silver:c0c0c0 skyblue:87ceeb " +
+  "slateblue:6a5acd slategray:708090 slategrey:708090 snow:fffafa springgreen:00ff7f steelblue:4682b4 tan:d2b48c " +
+  "teal:008080 thistle:d8bfd8 tomato:ff6347 turquoise:40e0d0 violet:ee82ee wheat:f5deb3 white:ffffff " +
+  "whitesmoke:f5f5f5 yellow:ffff00 yellowgreen:9acd32";
+let cssColors: { byName: Map<string, string>; byHex: Map<string, string> } | undefined;
+const cssColorTables = () => {
+  if (cssColors) return cssColors;
+  const byName = new Map<string, string>();
+  const byHex = new Map<string, string>();
+  for (const pair of CSS_COLOR_NAMES.split(" ")) {
+    const [name, hex] = pair.split(":");
+    byName.set(name, `#${hex}`);
+    if (!byHex.has(hex)) byHex.set(hex, name);
+  }
+  cssColors = { byName, byHex };
+  return cssColors;
+};
+/** "#rrggbb" in minuscolo (anche da "#rgb"); undefined con la trasparenza o un valore non valido. */
+const hex6 = (color: string) => {
+  const value = safeCssColor(color).slice(1).toLowerCase();
+  if (value.length === 6) return value;
+  if (value.length === 3) return value.replace(/./g, (char) => char + char);
+  return undefined;
+};
+/** Nome CSS del colore, se ne ha uno esatto. */
+const cssColorName = (color: string) => {
+  const hex = hex6(color);
+  return hex ? cssColorTables().byHex.get(hex) : undefined;
+};
+/** Colore letto da X-STUDYOS-COLOR (valore esatto) o da COLOR (nome CSS); "" se non è un colore. */
+const colorFromIcs = (exact: string | undefined, named: string | undefined) =>
+  safeCssColor(exact) || safeCssColor(cssColorTables().byName.get(String(named ?? "").trim().toLowerCase()));
 
 /** Piega le righe a 75 ottetti (RFC 5545 §3.1) senza spezzare caratteri multibyte. */
 export const foldLine = (line: string) => {
@@ -1050,6 +1111,11 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     const lines = [`SUMMARY:${escapeText(String(event.title ?? ""))}`];
     const description = [event.description, event.notes].filter((part): part is string => typeof part === "string" && part.trim().length > 0).join("\n\n");
     if (description) lines.push(`DESCRIPTION:${escapeText(description)}`);
+    const location = typeof event.location === "string" ? event.location.trim() : "";
+    if (location) lines.push(`LOCATION:${escapeText(location)}`);
+    // Colore scelto a mano: COLOR (RFC 7986) se ha un nome CSS, altrimenti il valore esatto per StudyOS.
+    const color = event.colorCustom === true ? safeCssColor(event.color) : "";
+    if (color) lines.push(cssColorName(color) ? `COLOR:${cssColorName(color)}` : `X-STUDYOS-COLOR:${color}`);
     const categories = [event.category ? label(event.category) : "", subjectName(event.subjectId) ?? ""].filter(Boolean);
     if (categories.length) lines.push(`CATEGORIES:${categories.map((value) => escapeText(String(value))).join(",")}`);
     if (event.status === "skipped") lines.push("STATUS:CANCELLED");
@@ -1220,6 +1286,8 @@ export interface IcsImportedEvent {
   title: string;
   description: string;
   location?: string;
+  /** Colore scelto a mano (X-STUDYOS-COLOR, o COLOR con un nome CSS). */
+  color?: string;
   /** Valori di CATEGORIES (tipo di evento, materia). */
   categories?: string[];
   /** Con orario: istante ISO (UTC). Tutto il giorno: "YYYY-MM-DDT00:00:00" (stesso giorno in ogni fuso). */
@@ -1451,8 +1519,8 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       }
 
       const location = unescapeText(propOf(vevent, "LOCATION")?.value ?? "").trim();
-      const descriptionText = unescapeText(propOf(vevent, "DESCRIPTION")?.value ?? "").trim();
-      const description = [descriptionText, location && !descriptionText.includes(ICS_TEXT.location(location)) ? ICS_TEXT.location(location) : ""].filter(Boolean).join("\n\n");
+      const description = unescapeText(propOf(vevent, "DESCRIPTION")?.value ?? "").trim();
+      const color = colorFromIcs(propOf(vevent, "X-STUDYOS-COLOR")?.value, propOf(vevent, "COLOR")?.value);
       const categories = propsOf(vevent, "CATEGORIES")
         .flatMap((property) => property.value.split(/(?<!\\),/))
         .map((value) => unescapeText(value).trim())
@@ -1471,6 +1539,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         title,
         description,
         ...(location ? { location } : {}),
+        ...(color ? { color } : {}),
         ...(categories.length ? { categories } : {}),
         start,
         end,
@@ -1607,6 +1676,7 @@ export interface IcsImportItem {
   sourceRecurrenceId?: string;
   title: string;
   description: string;
+  location?: string;
   start: string;
   end: string;
   allDay: boolean;
@@ -1618,6 +1688,8 @@ export interface IcsImportItem {
   category?: EventCategory;
   subjectId?: string;
   color?: string;
+  /** Il colore viene dal file (scelto a mano): vale anche con una materia. */
+  colorCustom?: true;
   tags?: string[];
   occasion?: EventOccasion;
   parentUid?: string;
@@ -1657,6 +1729,7 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.recurrenceId ? { sourceRecurrenceId: event.recurrenceId } : {}),
       title: event.title,
       description: event.description,
+      ...(event.location ? { location: event.location } : {}),
       start: event.start,
       end: event.end,
       allDay: event.allDay,
@@ -1670,7 +1743,8 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.edited ? { edited: true as const } : {}),
       ...(event.editedExdates?.length ? { editedExdates: event.editedExdates } : {}),
       category: categoryFromList(categories) ?? guessCategory(event.title, options.defaultCategory),
-      ...(subject ? { subjectId: subject.id, color: subject.color } : {})
+      ...(subject ? { subjectId: subject.id, color: subject.color } : {}),
+      ...(event.color ? { color: event.color, colorCustom: true as const } : {})
     };
   });
 };
@@ -1756,6 +1830,26 @@ const exportedDescription = (event: CalendarEvent) =>
 const sameDescription = (event: CalendarEvent, description: string) =>
   description.trim() === String(event.description ?? "").trim() || description.trim() === exportedDescription(event);
 
+/** Luogo ("" se non c'è). */
+const locationOf = (event: { location?: unknown }) => (typeof event.location === "string" ? event.location.trim() : "");
+
+/** Luogo del file al posto di quello che c'era (senza luogo nel file, l'evento non ne ha). */
+const withLocation = <T extends CalendarEvent>(event: T, location: string | undefined): T => {
+  if (location) return { ...event, location };
+  const copy = { ...event };
+  delete copy.location;
+  return copy;
+};
+
+/** Colore scelto a mano nel file: vale sopra quello della tipologia o della materia. */
+const customColor = (item: Pick<IcsImportItem, "color" | "colorCustom">) => (item.colorCustom ? safeCssColor(item.color) : "");
+
+/** Il colore del file (se ce n'è uno scelto a mano) è già quello dell'evento? */
+const sameColor = (event: CalendarEvent, item: Pick<IcsImportItem, "color" | "colorCustom">) => {
+  const color = customColor(item);
+  return !color || (event.colorCustom === true && String(event.color ?? "").toLowerCase() === color.toLowerCase());
+};
+
 /**
  * Unisce gli eventi del file al calendario senza doppioni (recurrence.md §7.2 caso 12):
  * - stesso UID = stesso evento (gli UID `id@studyos` dei propri file ritrovano l'evento; esami e
@@ -1834,6 +1928,11 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     if (mine && !isOccurrenceRow(mine)) return mine;
     return bySource.get(sourceKey(uid));
   };
+  /**
+   * Serie che avevi già con questo UID, prima di questo import: anche un vecchio import diviso per giorno
+   * della settimana (`uid#1`, `uid#3`), che `localMaster` non vede. Per i controlli sulle parti nuove.
+   */
+  const hadSeries = (uid: string) => localMaster(uid) ?? legacyGroups.get(uid)?.[0];
 
   const create = (item: IcsImportItem, extra: Partial<CalendarEvent> = {}) => {
     const base: CalendarEvent = {
@@ -1844,9 +1943,11 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       tags: item.tags ?? [],
       title: item.title,
       description: item.description,
+      ...(item.location ? { location: item.location } : {}),
       category: item.category ?? "lesson",
       ...(item.subjectId ? { subjectId: item.subjectId } : {}),
       color: item.color ?? DEFAULT_COLOR,
+      ...(customColor(item) ? { color: customColor(item), colorCustom: true } : {}),
       priority: "medium",
       start: item.start,
       end: item.end,
@@ -1886,24 +1987,30 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       !existing.archived &&
       String(existing.title ?? "").trim() === item.title.trim() &&
       sameDescription(existing, item.description) &&
+      locationOf(existing) === (item.location ?? "") &&
+      sameColor(existing, item) &&
       sameTiming(timing, incoming) &&
       !zoneChanged &&
       (!options.rule || ruleKey(current, timing?.startDate ?? "") === ruleKey(rule, incoming.startDate)) &&
       (item.reminders === undefined || reminderKey(existing, existing.reminders) === reminderKey(existing, item.reminders));
     if (same) return null;
-    const next: CalendarEvent = {
-      ...existing,
-      title: item.title,
-      description: sameDescription(existing, item.description) ? existing.description : item.description,
-      start: item.start,
-      end: item.end,
-      allDay: item.allDay,
-      ...(item.timeZone ? { timeZone: item.timeZone } : {}),
-      ...(item.reminders !== undefined ? { reminders: item.reminders } : {}),
-      ...(options.adopt ? { sourceUid: options.adopt } : {}),
-      archived: false,
-      updatedAt: now
-    };
+    const next: CalendarEvent = withLocation(
+      {
+        ...existing,
+        title: item.title,
+        description: sameDescription(existing, item.description) ? existing.description : item.description,
+        start: item.start,
+        end: item.end,
+        allDay: item.allDay,
+        ...(item.timeZone ? { timeZone: item.timeZone } : {}),
+        ...(item.reminders !== undefined ? { reminders: item.reminders } : {}),
+        ...(customColor(item) ? { color: customColor(item), colorCustom: true } : {}),
+        ...(options.adopt ? { sourceUid: options.adopt } : {}),
+        archived: false,
+        updatedAt: now
+      },
+      item.location
+    );
     if (!options.rule) return next;
     return applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone });
   };
@@ -1931,16 +2038,20 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       sourceRecurrenceId: rid
     };
     if (!change) return { ...row, cancelled: true as const, archived: true };
-    return {
-      ...row,
-      title: change.title,
-      description: change.description,
-      start: change.start,
-      end: change.end,
-      allDay: change.allDay,
-      ...(change.timeZone ? { timeZone: change.timeZone } : {}),
-      ...(change.reminders !== undefined ? { reminders: change.reminders } : {})
-    };
+    return withLocation(
+      {
+        ...row,
+        title: change.title,
+        description: change.description,
+        start: change.start,
+        end: change.end,
+        allDay: change.allDay,
+        ...(change.timeZone ? { timeZone: change.timeZone } : {}),
+        ...(change.reminders !== undefined ? { reminders: change.reminders } : {}),
+        ...(customColor(change) ? { color: customColor(change), colorCustom: true } : {})
+      },
+      change.location
+    );
   };
 
   const sameRow = (current: CalendarEvent, desired: CalendarEvent) => {
@@ -1955,6 +2066,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       !current.archived &&
       String(current.title ?? "").trim() === String(desired.title ?? "").trim() &&
       sameDescription(current, String(desired.description ?? "")) &&
+      locationOf(current) === locationOf(desired) &&
+      (desired.colorCustom !== true || (current.colorCustom === true && String(current.color ?? "").toLowerCase() === String(desired.color ?? "").toLowerCase())) &&
       sameTiming(timingOf(current, fallbackZone), timingOf(desired, fallbackZone)) &&
       reminderKey(current, current.reminders) === reminderKey(current, desired.reminders)
     );
@@ -2224,7 +2337,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     masterOf.set(uid, master.id);
     if (item.parentUid && uid.endsWith("@studyos")) {
       parentLinks.push([uid, item.parentUid]);
-      if (created.has(master.id) && localMaster(item.parentUid)) joinsExisting.add(master.id);
+      if (created.has(master.id) && hadSeries(item.parentUid)) joinsExisting.add(master.id);
     }
     applyRows(master, uid, item.exdates ?? [], changes.get(uid) ?? [], true, item.editedExdates);
     changes.delete(uid);
@@ -2283,7 +2396,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     const childId = masterOf.get(uid) as string;
     if (linkChild(childId, parentUid) || !created.has(childId)) continue;
     // Parte nuova di una serie che hai già, rimasta a sé: lo si dice, perché può ripeterne i giorni.
-    const yours = localMaster(parentUid);
+    const yours = hadSeries(parentUid);
     if (yours) keptApart.push(String(yours.title ?? ""));
   }
 

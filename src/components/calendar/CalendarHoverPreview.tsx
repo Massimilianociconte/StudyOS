@@ -7,7 +7,6 @@ import { RECURRENCE_LABEL } from "../../lib/recurrence";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../../lib/taskTimer";
 import { eventMinutes, isAllDayEvent, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel } from "../../lib/selectors";
 import {
-  CALENDAR_VIEW_TEXT,
   ENERGY_LABEL,
   EVENT_STATUS_LABEL,
   NO_SUBJECT_LABEL,
@@ -17,6 +16,7 @@ import {
   capitalizeFirst,
   formatMinutes
 } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { daySpanOf, occasionText, spanText } from "../../lib/calendarRender";
 import { eventTypeLabel } from "../../lib/eventColors";
 import { TypeIcon, useEventPaint } from "./bars";

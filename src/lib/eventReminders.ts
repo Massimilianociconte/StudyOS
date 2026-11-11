@@ -5,7 +5,8 @@ import { differenceInCalendarDays, format } from "date-fns";
 import { it } from "date-fns/locale";
 import type { CalendarEvent, EventReminder } from "../types";
 import { expandEvents, reminderInstants, sanitizeReminders } from "./repeat";
-import { EVENT_REMINDER_TEXT, capitalizeFirst } from "./labels";
+import { capitalizeFirst } from "./labels";
+import { EVENT_REMINDER_TEXT } from "./labels/eventReminders";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;

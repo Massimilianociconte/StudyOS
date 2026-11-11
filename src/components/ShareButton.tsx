@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState } from "react";
 import type { ShareScope } from "../lib/sharing";
 import { cloudConfigured } from "../lib/cloudSyncState";
-import { SHARE_TEXT } from "../lib/labels";
+import { SHARE_TEXT } from "../lib/labels/sharing";
 import { Button } from "./ui";
 
 // Pannello (e CloudPanel con supabase-js) caricato solo al tocco: le viste restano leggere.

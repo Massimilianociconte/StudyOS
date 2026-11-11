@@ -2,7 +2,7 @@ import { useId } from "react";
 import { Icon } from "../Icon";
 import { eventColorStyle, relativeLuminance, themeTone } from "../../lib/eventColors";
 import { EVENT_PALETTE } from "../../lib/eventEditor";
-import { colorName, EVENT_EDITOR_TEXT } from "../../lib/labels";
+import { colorName, EVENT_EDITOR_TEXT } from "../../lib/labels/calendar";
 import { safeCssColor } from "../../lib/sharing";
 
 /** Tema attuale dell'app per le anteprime dei colori. */

@@ -12,6 +12,7 @@ import {
   draftColor,
   draftDuration,
   draftPatch,
+  draftRuleDay,
   DURATION_CHOICES,
   editorChanges,
   occurrenceDayText,
@@ -22,19 +23,13 @@ import {
   type EventDraft
 } from "../../lib/eventEditor";
 import { eventTypeIcon, eventTypeKey, eventTypeLabel, type TypeColorOverrides } from "../../lib/eventColors";
-import { describeRule } from "../../lib/repeat";
+import { describeRule, isOccurrenceRow } from "../../lib/repeat";
 import { normalizeExternalUrl, safeHref } from "../../lib/safeUrl";
 import { safeCssColor, type SharedOrigin } from "../../lib/sharing";
 import { selectableSubjects } from "../../lib/selectors";
-import {
-  EVENT_CATEGORY_LABEL,
-  EVENT_EDITOR_TEXT,
-  EVENT_STATUS_LABEL,
-  NO_SUBJECT_LABEL,
-  PRIORITY_LABEL,
-  eventLinkLabel,
-  formatMinutes
-} from "../../lib/labels";
+import { isValidTimeZone } from "../../lib/tz";
+import { EVENT_CATEGORY_LABEL, EVENT_STATUS_LABEL, NO_SUBJECT_LABEL, PRIORITY_LABEL, formatMinutes } from "../../lib/labels";
+import { EVENT_EDITOR_TEXT, eventLinkLabel } from "../../lib/labels/calendar";
 
 /** Calendario di un'altra persona in cui posso aggiungere eventi, con le sue materie condivise. */
 export interface EditorCalendar {
@@ -159,6 +154,10 @@ export function EventEditor({
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
   const startDate = draft.start.slice(0, 10);
+  // La ripetizione vale nel fuso dell'evento: il suo giorno può non essere quello mostrato (altro fuso).
+  const eventZone = event?.timeZone;
+  const zone = isValidTimeZone(eventZone) ? eventZone : undefined;
+  const ruleDay = draftRuleDay(draft, zone);
   const liveError = (() => {
     const message = validateDraft({ ...draft, title: draft.title || "x" });
     return message === EVENT_EDITOR_TEXT.endBeforeStart || message === EVENT_EDITOR_TEXT.lastDayBeforeFirst || message === EVENT_EDITOR_TEXT.repeatEndsEarly ? message : "";
@@ -175,7 +174,7 @@ export function EventEditor({
     setDraft(change);
   };
   // Spostare un giorno di una serie non ne cambia la regola (la cambia solo chi la sceglie).
-  const moveStart = (current: EventDraft, value: string) => (occurrenceDate ? { ...changeStart(current, value), repeat: current.repeat } : changeStart(current, value));
+  const moveStart = (current: EventDraft, value: string) => (occurrenceDate ? { ...changeStart(current, value, zone), repeat: current.repeat } : changeStart(current, value, zone));
   const setCategory = (category: EventCategory) => update((value) => ({ ...value, category, color: draftColor({ ...value, category }, colorContext(value.subjectId)) }));
   const setSubject = (subjectId: string) => update((value) => ({ ...value, subjectId, color: draftColor(value, colorContext(subjectId)) }));
 
@@ -238,6 +237,19 @@ export function EventEditor({
   const autoColor = draftColor({ ...draft, colorCustom: false }, colorContext(draft.subjectId));
   const duration = draftDuration(draft);
   const imported = event?.tags?.includes("appello-importato");
+  // Evento di un'altra persona (aperto o in creazione nel suo calendario): i promemoria sono personali,
+  // suonerebbero sui suoi dispositivi, quindi qui non ci sono. Un suo giorno cambiato da solo non prende una regola.
+  const othersEvent = Boolean(sharedFrom) || inOtherCalendar;
+  const sharedRow = Boolean(sharedFrom && event && isOccurrenceRow(event));
+  const moreHint = draft.repeat
+    ? describeRule(draft.repeat, ruleDay)
+    : othersEvent
+      ? imported || inOtherCalendar
+        ? EVENT_EDITOR_TEXT.sectionMoreHintOtherNoLinks
+        : EVENT_EDITOR_TEXT.sectionMoreHintOther
+      : imported
+        ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks
+        : EVENT_EDITOR_TEXT.sectionMoreHint;
 
   const footer = (
     <div className="grid grid-cols-1 gap-2">
@@ -542,12 +554,22 @@ export function EventEditor({
               <details className="quiet-panel p-4">
                 <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-extrabold">
                   <span>{EVENT_EDITOR_TEXT.sectionMore}</span>
-                  <span className="min-w-0 flex-1 truncate font-bold text-[var(--muted)]">· {draft.repeat ? describeRule(draft.repeat, startDate) : imported || inOtherCalendar ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks : EVENT_EDITOR_TEXT.sectionMoreHint}</span>
+                  <span className="min-w-0 flex-1 truncate font-bold text-[var(--muted)]">· {moreHint}</span>
                   <Icon name="ChevronDown" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
                 </summary>
                 <div className="mt-3 grid grid-cols-1 gap-4">
-                  <RepeatPicker value={draft.repeat} start={startDate} onChange={(rule) => update((value) => ({ ...value, repeat: rule }))} disabled={readOnly} note={repeatNote} />
-                  <ReminderList value={draft.reminders} allDay={draft.allDay} onChange={(reminders) => update((value) => ({ ...value, reminders }))} disabled={readOnly} />
+                  <RepeatPicker
+                    value={draft.repeat}
+                    start={ruleDay}
+                    onChange={(rule) => update((value) => ({ ...value, repeat: rule }))}
+                    disabled={readOnly || sharedRow}
+                    note={sharedRow ? EVENT_EDITOR_TEXT.repeatSharedRow : repeatNote}
+                  />
+                  {othersEvent ? (
+                    <p className="text-xs font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.remindersPersonal}</p>
+                  ) : (
+                    <ReminderList value={draft.reminders} allDay={draft.allDay} onChange={(reminders) => update((value) => ({ ...value, reminders }))} disabled={readOnly} />
+                  )}
                   <Field label={EVENT_EDITOR_TEXT.description}>
                     <textarea
                       className={`${inputClass} min-h-20 py-3`}

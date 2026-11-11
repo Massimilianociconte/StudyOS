@@ -24,8 +24,10 @@
   solo verso il progetto Supabase configurato: nuove origini esterne vanno aggiunte lì.
 - `normalizeExternalUrl`/`safeHref` (src/lib/safeUrl.ts) sono obbligatori per ogni
   link proveniente da dati utente, backup o sync (blocca `javascript:`).
-- Le etichette dei valori enum (priorità, stati, categorie, tipi di allegato) vivono
-  solo in `src/lib/labels.ts`: la UI non mostra mai i codici interni (`high`, `todo`).
+- Le etichette vivono in `src/lib/labels.ts` (condivise: valori enum come priorità,
+  stati, categorie, tipi di allegato, e testi della struttura o di più schermate) o in
+  `src/lib/labels/<schermata>.ts` (testi di una sola schermata, caricati con lei; mai
+  riesportati da `labels.ts`). La UI non mostra mai i codici interni (`high`, `todo`).
 - Griglie Tailwind: ogni `grid` senza colonne esplicite ha `grid-cols-1`
   (`minmax(0,1fr)`), altrimenti il testo `nowrap`/troncato allarga la traccia
   implicita e la pagina sfora in orizzontale su mobile.
@@ -183,12 +185,20 @@
   mentre si scaricano le versioni. Un campo protetto nuovo in `src/types.ts` va aggiunto a
   `PROTECTED_ENTITY_TYPES` (un test lo controlla). L'elenco legge `REVISION_LIST_COLUMNS`
   (niente payload): la versione intera si scarica per id. Pianificazione dell'annullamento in
-  `src/lib/shareHistory.ts` (caricato con `import()`); i testi restano in `labels.ts`.
+  `src/lib/shareHistory.ts` (caricato con `import()`); i testi (`REVISION_CHANGE_LABEL`,
+  `revisionListIntro`, `REVERT_TEXT`) sono in `src/lib/labels/sharing.ts`, caricati con la
+  schermata.
 - Il cursore di pull per proprietario include la firma dei permessi (`grantSignature`):
   un filtro allargato riparte da zero, altrimenti gli elementi già esistenti non
   arriverebbero mai.
 - Nel calendario le occorrenze condivise hanno la chiave con il prefisso del proprietario:
   due persone possono avere eventi con lo stesso id.
+- «Questo e i successivi» (`planSplit`, e `planAll` dal primo giorno): le parti divise prima
+  dopo quel giorno si assorbono solo se la modifica cambia la regola (anche quando la regola
+  segue un giorno spostato), e la scelta elenca le date che spariscono (`scopeImpact.gone`;
+  l'agente le restituisce in `removedDates`). Senza regola nuova restano con le loro regole e
+  prendono solo i campi cambiati (`laterPartsPlan`); l'ora solo se avevano quella della serie
+  modificata prima della modifica (R1-S1).
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`

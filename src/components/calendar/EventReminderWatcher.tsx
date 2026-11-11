@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../../store/useStudyStore";
-import { EVENT_REMINDER_TEXT } from "../../lib/labels";
+import { EVENT_REMINDER_TEXT } from "../../lib/labels/eventReminders";
 import {
   FIRED_STORAGE_KEY,
   REMINDER_GRACE_MS,

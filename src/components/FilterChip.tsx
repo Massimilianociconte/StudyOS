@@ -1,4 +1,4 @@
-import { FILTER_CHIP_TEXT } from "../lib/labels";
+import { FILTER_CHIP_TEXT } from "../lib/labels/tasks";
 import { Icon } from "./Icon";
 
 /**

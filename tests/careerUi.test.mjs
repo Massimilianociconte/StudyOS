@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { CAREER_TEXT, CAREER_HELP } = await import("../src/lib/labels.ts");
+const { CAREER_TEXT, CAREER_HELP } = await import("../src/lib/labels/career.ts");
 const { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS } = await import("../src/lib/graduation.ts");
 
 test("Libretto: il corso di laurea si legge (nome, livello, CFU) e si cambia solo in Impostazioni", () => {

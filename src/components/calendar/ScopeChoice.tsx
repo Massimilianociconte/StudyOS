@@ -4,7 +4,7 @@ import { Button, IconButton, useDialogLayer } from "../ui";
 import { Icon } from "../Icon";
 import type { OccurrenceScope } from "../../lib/repeat";
 import type { ScopeOption } from "../../lib/eventEditor";
-import { SCOPE_TEXT } from "../../lib/labels";
+import { SCOPE_TEXT } from "../../lib/labels/calendar";
 
 const SCOPE_ICON: Record<OccurrenceScope, string> = { this: "CircleDot", following: "ChevronRight", all: "Layers" };
 

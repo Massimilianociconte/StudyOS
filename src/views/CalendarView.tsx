@@ -51,7 +51,7 @@ import { OccasionForm, occasionIcon } from "../components/calendar/OccasionForm"
 import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
-import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, rowHasOwnContent, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
+import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, recipientEventUpdate, rowHasOwnContent, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
 import { occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, weekdayShift, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
   newOccasionDraft,
@@ -65,25 +65,24 @@ import {
   vacationFields
 } from "../lib/occasionForms";
 import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
-import { applyRepeatFields, changesRepeat, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
+import { applyRepeatFields, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
 import { civilDateOf, deviceTimeZone, isCivilDate, parseCivil } from "../lib/tz";
 import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents } from "../lib/recurrence";
+import { EXAM_STATUS_LABEL, REPEAT_PICKER_TEXT } from "../lib/labels";
 import {
   CALENDAR_HELP,
   CALENDAR_TEXT,
   CALENDAR_VIEW_TEXT,
   EVENT_EDITOR_TEXT,
-  EXAM_STATUS_LABEL,
   OCCASION_FORM_TEXT,
   OCCASION_KIND_LABEL,
-  OFFICIAL_EXAMS_ADD_LABEL,
-  REPEAT_PICKER_TEXT,
   SCOPE_TEXT,
-  SHARE_TEXT,
   TYPE_COLORS_TEXT,
   VACATION_FORM_TEXT
-} from "../lib/labels";
+} from "../lib/labels/calendar";
+import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
+import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { CourseIcon } from "../components/CourseIcon";
 import { BARB_DATASET } from "../data/university/barb.dataset";
@@ -1048,18 +1047,14 @@ export function CalendarView() {
           onSubmit={async ({ changes }) => {
             const ownerId = editingShared.sharedFrom.ownerId;
             // Solo i campi cambiati qui, sopra l'ultima versione nello store: ciò che il proprietario ha
-            // cambiato nel frattempo resta. La materia è sua e da qui non cambia.
-            const update: Partial<CalendarEvent> = { ...changes };
-            delete update.subjectId;
-            if (!Object.keys(update).length) {
+            // cambiato nel frattempo resta. Materia e promemoria sono suoi; vedi recipientEventUpdate.
+            const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(ownerId, "calendarEvent", editingShared.id))?.entity;
+            if (!latest) return EVENT_EDITOR_TEXT.sharedGone;
+            const next = recipientEventUpdate(latest as unknown as CalendarEvent, changes);
+            if (!next) {
               closeSharedEditor();
               return;
             }
-            const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(ownerId, "calendarEvent", editingShared.id))?.entity;
-            if (!latest) return EVENT_EDITOR_TEXT.sharedGone;
-            // Ripetizione cambiata: regola pulita più i campi vecchi, così la vedono anche le app vecchie.
-            const merged = { ...latest, ...update } as unknown as CalendarEvent;
-            const next = "repeat" in update ? applyRepeatFields(merged, { repeatChanged: changesRepeat(latest as unknown as CalendarEvent, update) }) : merged;
             try {
               // Solo dallo store dei dati altrui: mai nel mio calendario.
               await useSharedStore.getState().saveSharedItem(ownerId, "calendarEvent", { ...next } as unknown as SharedEntity);
@@ -1123,7 +1118,8 @@ export function CalendarView() {
               setCreator(null);
               return;
             }
-            const fields = newEventFields(patch);
+            // I promemoria sono personali: un evento nuovo nel calendario di un'altra persona nasce senza.
+            const fields = newEventFields(ownerId ? { ...patch, reminders: undefined } : patch);
             if (ownerId) {
               // Nel calendario di un'altra persona: solo dallo store dei dati altrui, mai nel mio calendario.
               const now = new Date().toISOString();

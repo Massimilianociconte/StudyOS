@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { StudyTopic, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { subjectColor, subjectName } from "../lib/selectors";
-import { TOPIC_FILTER_TEXT } from "../lib/labels";
+import { TOPIC_FILTER_TEXT } from "../lib/labels/study";
 import { Field, IconButton, inputClass } from "./ui";
 import { Icon } from "./Icon";
 

@@ -3,7 +3,8 @@ import { format, isValid, parseISO, startOfDay, subDays } from "date-fns";
 import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
 import { COLLECTION_BY_ENTITY_TYPE } from "../lib/collections";
-import { RESTORE_TEXT, REVERT_TEXT, REVISION_CHANGE_LABEL, revisionListIntro, sharedEntityLabel } from "../lib/labels";
+import { RESTORE_TEXT, sharedEntityLabel } from "../lib/labels";
+import { REVERT_TEXT, REVISION_CHANGE_LABEL, revisionListIntro } from "../lib/labels/sharing";
 import {
   PROTECTED_ENTITY_TYPES,
   REVISION_LIST_LIMIT,

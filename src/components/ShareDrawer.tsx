@@ -4,7 +4,8 @@ import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { useSharedStore } from "../store/useSharedStore";
 import { useCloudSession } from "../hooks/useCloudSession";
 import { cloudConfigured } from "../lib/cloudSyncState";
-import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_HINT, SHARE_SCOPE_LABEL, SHARE_TEXT, scopesSummary } from "../lib/labels";
+import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../lib/labels";
+import { SHARE_SCOPE_HINT, SHARE_TEXT } from "../lib/labels/sharing";
 import {
   SHARE_SCOPES,
   SUBJECTLESS_SCOPES,

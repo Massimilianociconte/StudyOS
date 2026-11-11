@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { EXAM_STATUS_LABEL, GOAL_STATUS_LABEL, SESSION_STATUS_LABEL, SHARED_ITEM_TEXT, TASK_STATUS_LABEL } from "../lib/labels";
+import { EXAM_STATUS_LABEL, GOAL_STATUS_LABEL, SESSION_STATUS_LABEL, TASK_STATUS_LABEL } from "../lib/labels";
+import { SHARED_ITEM_TEXT } from "../lib/labels/sharing";
 import {
   ShareUserError,
   actorInSentence,

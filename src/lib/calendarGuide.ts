@@ -4,7 +4,7 @@
  * quel dispositivo, un rimando spiega perché e indica la strada che funziona. Solo dati e logica:
  * i testi sono in labels.ts, i disegni in components/CalendarGuideArt.
  */
-import { CALENDAR_GUIDE_REDIRECT, CALENDAR_GUIDE_STEPS } from "./labels";
+import { CALENDAR_GUIDE_REDIRECT, CALENDAR_GUIDE_STEPS } from "./labels/calendarGuide";
 
 export type GuideDevice = "samsung" | "android" | "ios" | "windows" | "macos";
 export type GuideApp = "google" | "apple" | "samsung" | "outlook";

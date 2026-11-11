@@ -18,7 +18,7 @@ import {
 import { Button, EmptyState, Field, HelpTip, Panel, ProgressBar, SectionTitle, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
-import { CAREER_HELP, CAREER_TEXT } from "../lib/labels";
+import { CAREER_HELP, CAREER_TEXT } from "../lib/labels/career";
 import { requestSettingsSection } from "../lib/settingsJump";
 import { oneOf, useUiState } from "../lib/uiState";
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { AnimatePresence, m } from "framer-motion";
-import type { AppView, Subject } from "../types";
+import type { AppView, CalendarEvent, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Icon } from "./Icon";
 import { inputClass } from "./ui";
@@ -21,6 +21,7 @@ import {
   hostOf
 } from "../lib/labels";
 import { safeCssColor } from "../lib/sharing";
+import { searchHits } from "../lib/repeat";
 
 type ResultKind = "task" | "event" | "subject" | "exam" | "material" | "session" | "topic" | "goal" | "note";
 
@@ -137,30 +138,30 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
       }
     }
 
-    for (const event of events) {
-      const subject = subjectOf(subjects, event.subjectId);
-      const s = scoreFields(needle, [
+    // Eventi: ogni serie una volta, i giorni cambiati da soli solo se la serie non c'è già (searchHits).
+    const eventScore = (event: CalendarEvent) =>
+      scoreFields(needle, [
         { text: event.title, weight: 3 },
         { text: event.description, weight: 1 },
         { text: event.notes, weight: 0.4 }
       ]);
-      if (s > 0) {
-        const when =
-          event.allDay === true
-            ? `${format(parseISO(event.start), "d MMM", { locale: it })} · ${ALL_DAY_LABEL}`
-            : format(parseISO(event.start), "d MMM HH:mm", { locale: it });
-        out.push({
-          id: event.id,
-          kind: "event",
-          title: event.title,
-          subtitle: [EVENT_CATEGORY_LABEL[event.category] ?? event.category, when, subject?.name].filter(Boolean).join(" · "),
-          view: "calendar",
-          icon: kindIcon.event,
-          score: s,
-          // Il colore di un evento può averlo scritto chi riceve il calendario con modifica: solo esadecimale.
-          accent: safeCssColor(event.color) || subject?.color
-        });
-      }
+    for (const event of searchHits(events, (item) => eventScore(item) > 0)) {
+      const subject = subjectOf(subjects, event.subjectId);
+      const when =
+        event.allDay === true
+          ? `${format(parseISO(event.start), "d MMM", { locale: it })} · ${ALL_DAY_LABEL}`
+          : format(parseISO(event.start), "d MMM HH:mm", { locale: it });
+      out.push({
+        id: event.id,
+        kind: "event",
+        title: event.title,
+        subtitle: [EVENT_CATEGORY_LABEL[event.category] ?? event.category, when, subject?.name].filter(Boolean).join(" · "),
+        view: "calendar",
+        icon: kindIcon.event,
+        score: eventScore(event),
+        // Il colore di un evento può averlo scritto chi riceve il calendario con modifica: solo esadecimale.
+        accent: safeCssColor(event.color) || subject?.color
+      });
     }
 
     for (const subject of subjects) {

@@ -8,11 +8,13 @@ import {
   draftColor,
   draftFromEvent,
   draftPatch,
+  draftRuleDay,
   editorChanges,
   editorFormFor,
   followingPatch,
   initialColorCustom,
   newEventDraft,
+  recipientEventUpdate,
   reminderChoices,
   removeReminder,
   scopeOptions,
@@ -161,6 +163,34 @@ test("spostando l'inizio la fine segue con la stessa durata; la ripetizione segu
   assert.equal(shifted.end.slice(0, 10), "2026-11-22");
 });
 
+test("B1 (revisione finale). la ripetizione si legge nel fuso dell'evento: da Tokyo un lunedì di Roma resta lunedì", () => {
+  const previous = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    // Lunedì 16 alle 10 a Roma = lunedì 16 alle 18 a Tokyo; ogni lunedì a Roma.
+    const draft = draftFromEvent(
+      { id: "e", title: "Lezione", start: "2026-11-16T09:00:00.000Z", end: "2026-11-16T10:00:00.000Z", category: "lesson", color: "#7CF7C8", priority: "medium", status: "planned", links: [], repeat: { freq: "weekly", byWeekday: ["MO"] }, timeZone: "Europe/Rome" },
+      {}
+    );
+    assert.equal(draftRuleDay(draft, "Europe/Rome"), "2026-11-16");
+    // Martedì 07:00 a Tokyo = lunedì 23:00 a Roma: per la regola è sempre lunedì.
+    const later = changeStart(draft, "2026-11-17T07:00", "Europe/Rome");
+    assert.equal(draftRuleDay(later, "Europe/Rome"), "2026-11-16");
+    assert.deepEqual(later.repeat, { freq: "weekly", byWeekday: ["MO"] });
+    // Martedì 18:00 a Tokyo = martedì 10:00 a Roma: la regola segue il martedì.
+    assert.deepEqual(changeStart(draft, "2026-11-17T18:00", "Europe/Rome").repeat, { freq: "weekly", byWeekday: ["TU"] });
+    // Lunedì 18:00 a Roma (martedì 02:00 a Tokyo): il giorno della regola è lunedì, quello mostrato martedì.
+    const evening = { ...draft, start: "2026-11-17T02:00", end: "2026-11-17T03:00" };
+    assert.equal(draftRuleDay(evening, "Europe/Rome"), "2026-11-16");
+    assert.equal(draftRuleDay(evening), "2026-11-17");
+    // Tutto il giorno: vale la data locale.
+    assert.equal(draftRuleDay({ ...evening, allDay: true }, "Europe/Rome"), "2026-11-17");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+});
+
 test("durata: scelta e calcolata", () => {
   const draft = newEventDraft({ start: at(2026, 11, 12, 10) });
   assert.equal(draftDuration(draft), 60);
@@ -213,11 +243,17 @@ test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
   // Cambiando la regola non si può scegliere "Solo questo".
   assert.deepEqual(scopeOptions({ action: "edit", date: "2026-11-12", ruleChanged: true }).map((option) => option.id), ["following", "all"]);
   // Ciò che si dice dei giorni cambiati viene da `impacts` (vedi occurrenceEdit.test).
-  const lost = scopeOptions({ action: "edit", date: "2026-11-12", impacts: { following: { changedLost: 2, cancelledLost: 0, kept: 1, ownLost: false, absorbed: 1 } } });
-  assert.deepEqual(lost.find((option) => option.id === "following").details.slice(1, 4), [
+  const lost = scopeOptions({
+    action: "edit",
+    date: "2026-11-12",
+    ruleChanged: true,
+    impacts: { following: { changedLost: 2, cancelledLost: 0, kept: 1, ownLost: false, absorbed: 1, gone: ["2026-12-04", "2026-12-11"], goneMore: false, laterParts: 0, laterOwnTime: 0 } }
+  });
+  assert.deepEqual(lost.find((option) => option.id === "following").details.slice(1), [
     "2 giorni che avevi cambiato da soli perdono le loro modifiche e tornano come il resto della serie.",
     "Gli altri giorni che avevi cambiato o annullato da soli restano così.",
-    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: vale questa modifica."
+    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: la ripetizione nuova vale anche per quelle date.",
+    "Spariscono: ven 4, 11 dic."
   ]);
   const remove = scopeOptions({ action: "delete", date: "2026-11-12" });
   assert.ok(remove.find((option) => option.id === "all").details[0].includes("tutta la serie"));
@@ -294,4 +330,40 @@ test("colori delle tipologie: scegliere, tornare al predefinito, ripristinare", 
   // Valori arrivati dalla sincronizzazione: si scartano tipologie e colori non validi.
   assert.deepEqual(withTypeColor({ nope: "#000000", work: "url(x)" }, "birthday", "#A855F7"), {});
   assert.deepEqual(withTypeColor({}, "vacation", "javascript:alert(1)"), {});
+});
+
+test("S2, N4, N5 (revisione finale). modifica di chi riceve: promemoria del proprietario, niente regola su un giorno, niente fuso nuovo", () => {
+  const reminders = [{ id: "r1", minutes: 30 }];
+  const owner = baseEvent({ reminders, subjectId: "sub-owner", repeat: { freq: "weekly", byWeekday: ["TH"] }, recurrence: "weekly", repeatLegacy: "weekly|" });
+  // I promemoria sono personali: quelli scelti qui non vanno nell'evento altrui, quelli del proprietario restano.
+  const titled = recipientEventUpdate(owner, { title: "Laboratorio", reminders: [{ id: "r2", minutes: 10 }], subjectId: "sub-mine" });
+  assert.equal(titled.title, "Laboratorio");
+  assert.deepEqual(titled.reminders, reminders);
+  assert.equal(titled.subjectId, "sub-owner");
+  // Solo promemoria o materia: nulla da salvare.
+  assert.equal(recipientEventUpdate(owner, { reminders: [], subjectId: "x" }), null);
+
+  // Un giorno cambiato da solo (riga) non prende una regola: le app vecchie lo ripeterebbero da solo.
+  const row = baseEvent({ id: "e1@2026-11-19", seriesId: "e1", originalDate: "2026-11-19", title: "Spostata" });
+  const rowUpdate = recipientEventUpdate(row, { title: "Recupero", repeat: { freq: "daily" } });
+  assert.equal(rowUpdate.title, "Recupero");
+  assert.equal("repeat" in rowUpdate, false);
+  assert.equal(rowUpdate.recurrence, "none");
+  assert.equal(recipientEventUpdate(row, { repeat: { freq: "daily" } }), null);
+
+  // Serie senza fuso del proprietario: resta senza (vale il fuso di chi la guarda, come per lui), da qualsiasi fuso.
+  const previous = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    const daily = recipientEventUpdate(owner, { repeat: { freq: "daily" } });
+    assert.deepEqual(daily.repeat, { freq: "daily" });
+    assert.equal(daily.recurrence, "daily");
+    assert.equal("timeZone" in daily, false);
+    // Con il fuso del proprietario: resta il suo, mai quello di chi riceve.
+    const zoned = recipientEventUpdate({ ...owner, timeZone: "Europe/Rome" }, { repeat: { freq: "daily" } });
+    assert.equal(zoned.timeZone, "Europe/Rome");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
 });

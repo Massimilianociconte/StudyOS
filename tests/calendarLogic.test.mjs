@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { expandEvents } from "../src/lib/recurrence.ts";
 import { studyStreak } from "../src/lib/selectors.ts";
-import { attachmentKind, eventLinkLabel, formatHours, formatMinutes } from "../src/lib/labels.ts";
+import { attachmentKind, formatHours, formatMinutes } from "../src/lib/labels.ts";
+import { eventLinkLabel } from "../src/lib/labels/calendar.ts";
 
 const event = (patch) => ({
   id: "e1",

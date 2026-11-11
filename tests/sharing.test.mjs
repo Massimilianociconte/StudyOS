@@ -60,14 +60,8 @@ import {
   PROTECTED_ENTITY_TYPES
 } from "../src/lib/sharing.ts";
 import { readFileSync } from "node:fs";
-import {
-  SHARED_ENTITY_LABEL,
-  SHARE_PERMISSION_LABEL,
-  SHARE_SCOPE_LABEL,
-  revisionListIntro,
-  scopesSummary,
-  sharedEntityLabel
-} from "../src/lib/labels.ts";
+import { SHARED_ENTITY_LABEL, SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary, sharedEntityLabel } from "../src/lib/labels.ts";
+import { revisionListIntro } from "../src/lib/labels/sharing.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
 
 // Stessi casi provati in SQL da scripts/supabase/sharing-check.mjs (studyos_scope_covers).
@@ -744,7 +738,9 @@ test("link degli appelli: si mostra il dominio vero, mai un nome ufficiale scelt
 });
 
 test("date nei dati altrui: si cambia il giorno, il formato originale resta", () => {
-  assert.equal(replaceDatePart("2026-11-10T09:00:00.000Z", "2026-12-01"), "2026-12-01T09:00:00.000Z");
+  // Il giorno è quello del dispositivo: le 9 locali del 10 diventano le 9 locali del 1° dicembre, in ogni fuso.
+  const at = (month, day) => new Date(2026, month - 1, day, 9).toISOString();
+  assert.equal(replaceDatePart(at(11, 10), "2026-12-01"), at(12, 1));
   assert.equal(replaceDatePart("2026-11-10", "2026-12-01"), "2026-12-01");
   assert.equal(replaceDatePart(undefined, "2026-12-01"), "2026-12-01");
   assert.equal(replaceDatePart("2026-11-10", ""), undefined);

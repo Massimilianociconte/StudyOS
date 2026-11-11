@@ -27,6 +27,7 @@ import { describeAgentCall, executeAgentTool } from "../src/agent/execute.ts";
 import { useSharedStore } from "../src/store/useSharedStore.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, defaultTimer } from "../src/lib/studyTimer.ts";
+import { expandEvents as expandRepeatEvents } from "../src/lib/repeat.ts";
 
 const actor = { name: "Prova", source: "stdio", scopes: ["studyos:read", "studyos:write"] };
 const reader = { name: "Lettore", source: "oauth", scopes: ["studyos:read"] };
@@ -982,4 +983,143 @@ test("timer MCP: cronometro con materia, finish salva il tempo vero, niente perd
   const pomodoro = await executeAgentTool("studyos_timer_control", { action: "start", kind: "pomodoro" });
   assert.equal(pomodoro.data.timer.durationSeconds, 50 * 60, "kind=pomodoro senza mode usa la durata della materia");
   useStudyStore.setState({ timer: defaultTimer("pomodoro") });
+});
+
+// ---------------------------------------------------------------------------------------
+// Revisione finale: elementi condivisi cercati dopo l'espansione (S1), serie altrui spostate
+// dall'agente come nel calendario (S4), sessioni con origine e argomento (N8).
+// ---------------------------------------------------------------------------------------
+
+// Ogni lunedì alle 10 a Roma dal 2 novembre, nel calendario di Alice; il 16 spostato al 17 e rinominato.
+const sharedSeries = () =>
+  sharedEntry("calendarEvent", "lez", {
+    title: "Lezione",
+    description: "",
+    category: "lesson",
+    priority: "medium",
+    status: "planned",
+    start: "2026-11-02T09:00:00.000Z",
+    end: "2026-11-02T10:00:00.000Z",
+    recurrence: "weekly",
+    repeat: { freq: "weekly", byWeekday: ["MO"] },
+    repeatLegacy: "weekly|",
+    timeZone: "Europe/Rome",
+    tags: [],
+    checklist: [],
+    attachmentIds: [],
+    links: [],
+    notes: ""
+  });
+const sharedMovedRow = () =>
+  sharedEntry("calendarEvent", "lez@2026-11-16", {
+    ...sharedSeries().entity,
+    id: "lez@2026-11-16",
+    title: "Spostata",
+    seriesId: "lez",
+    originalDate: "2026-11-16",
+    start: "2026-11-17T09:00:00.000Z",
+    end: "2026-11-17T10:00:00.000Z",
+    recurrence: "none",
+    repeat: undefined,
+    repeatLegacy: undefined
+  });
+
+test("S1 (revisione finale). elementi condivisi con query: si cerca nelle date come si vedono, con il loro giorno", () => {
+  const items = [sharedSeries(), sharedMovedRow()];
+  const received = [shareGrant({ scope: "calendar" })];
+  const span = { from: new Date("2026-11-15T12:00:00.000Z"), to: new Date("2026-11-19T00:00:00.000Z") };
+  const view = (query) => sharedItemsView(items, received, [], { ...span, query }).map((item) => `${item.occurrenceDate} ${item.title} ${item.start.slice(0, 10)}`);
+  assert.deepEqual(view(), ["2026-11-16 Spostata 2026-11-17"]);
+  assert.deepEqual(view("Lezione"), []);
+  assert.deepEqual(view("spostata"), ["2026-11-16 Spostata 2026-11-17"]);
+  // Un evento singolo non ha occurrenceDate.
+  const single = sharedEntry("calendarEvent", "once", { ...sharedSeries().entity, id: "once", title: "Ricevimento", start: "2026-11-16T15:00:00.000Z", end: "2026-11-16T16:00:00.000Z", recurrence: "none", repeat: undefined, repeatLegacy: undefined });
+  assert.equal("occurrenceDate" in sharedItemsView([single], received, [], span)[0], false);
+});
+
+test("S4 (revisione finale). serie altrui spostata dall'agente: la regola segue il giorno e le date prima restano", async () => {
+  const seed = (items = [sharedSeries()]) => seedApp({ received: [shareGrant({ scope: "calendar", permission: "edit" })], items });
+  const handle = sharedHandle(sharedSeries());
+  const saved = (id = "lez") => useSharedStore.getState().items.find((item) => item.entityId === id).entity;
+  const romeDays = () =>
+    expandRepeatEvents([saved()], new Date("2026-11-01T00:00:00.000Z"), new Date("2026-11-29T00:00:00.000Z")).map((item) =>
+      new Date(item.start).toLocaleDateString("sv-SE", { timeZone: "Europe/Rome" })
+    );
+
+  // Con occurrenceDate (il lunedì 16, letto dall'elenco) al martedì 17: tutta la serie un giorno dopo, dal 3.
+  seed();
+  const moved = await executeAgentTool("studyos_update_shared_item", { id: handle, occurrenceDate: "2026-11-16", start: "2026-11-17T09:00:00.000Z" });
+  assert.equal(moved.ok, true, JSON.stringify(moved));
+  assert.deepEqual(saved().repeat, { freq: "weekly", byWeekday: ["TU"] });
+  assert.equal(saved().recurrence, "weekly");
+  assert.equal(saved().start, "2026-11-03T09:00:00.000Z");
+  assert.equal(saved().end, "2026-11-03T10:00:00.000Z");
+  assert.deepEqual(romeDays(), ["2026-11-03", "2026-11-10", "2026-11-17", "2026-11-24"]);
+
+  // Senza occurrenceDate, l'inizio di una data dopo la prima: rifiutato (le date prima sparirebbero).
+  seed();
+  const later = await executeAgentTool("studyos_update_shared_item", { id: handle, start: "2026-11-17T09:00:00.000Z" });
+  assert.equal(later.code, "invalid", JSON.stringify(later));
+  assert.match(later.error, /occurrenceDate/);
+  assert.equal(saved().start, "2026-11-02T09:00:00.000Z");
+  assert.equal(useSharedStore.getState().outbox.length, 0);
+
+  // Senza occurrenceDate, la prima data al martedì: la regola segue, come trascinandola.
+  seed();
+  assert.equal((await executeAgentTool("studyos_update_shared_item", { id: handle, start: "2026-11-03T09:00:00.000Z" })).ok, true);
+  assert.deepEqual(saved().repeat, { freq: "weekly", byWeekday: ["TU"] });
+  assert.deepEqual(romeDays(), ["2026-11-03", "2026-11-10", "2026-11-17", "2026-11-24"]);
+
+  // Solo l'ora, da un giorno dopo: la regola resta e la serie tiene il suo primo giorno.
+  seed();
+  assert.equal((await executeAgentTool("studyos_update_shared_item", { id: handle, occurrenceDate: "2026-11-16", start: "2026-11-16T10:00:00.000Z" })).ok, true);
+  assert.deepEqual(saved().repeat, { freq: "weekly", byWeekday: ["MO"] });
+  assert.equal(saved().start, "2026-11-02T10:00:00.000Z");
+  assert.equal(saved().end, "2026-11-02T11:00:00.000Z");
+
+  // Un giorno che non è della serie, o occurrenceDate su un evento che non si ripete.
+  seed();
+  assert.equal((await executeAgentTool("studyos_update_shared_item", { id: handle, occurrenceDate: "2026-11-17", start: "2026-11-17T09:00:00.000Z" })).code, "not_found");
+  const once = sharedEntry("calendarEvent", "once", { ...sharedSeries().entity, id: "once", recurrence: "none", repeat: undefined, repeatLegacy: undefined });
+  seed([once]);
+  assert.equal((await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(once), occurrenceDate: "2026-11-02", start: "2026-11-03T09:00:00.000Z" })).code, "invalid");
+  // Il giorno già spostato da solo (riga): si sposta solo lui, anche con il suo occurrenceDate.
+  seed([sharedSeries(), sharedMovedRow()]);
+  const row = await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(sharedMovedRow()), occurrenceDate: "2026-11-16", start: "2026-11-18T09:00:00.000Z" });
+  assert.equal(row.ok, true, JSON.stringify(row));
+  assert.equal(saved("lez@2026-11-16").start, "2026-11-18T09:00:00.000Z");
+  assert.equal(saved("lez@2026-11-16").repeat, undefined);
+  assert.equal(saved().start, "2026-11-02T09:00:00.000Z");
+});
+
+test("N8 (revisione finale). sessioni condivise: origine e argomento si vedono e si cambiano con gli stessi controlli dell'app", async () => {
+  const session = (id, over) =>
+    sharedEntry("studySession", id, { title: "Ripasso", template: "pomodoro", start: "2026-11-10T09:00:00.000Z", status: "completed", notes: "", topics: [], attachmentIds: [], ...over });
+  const good = session("ses_1", { source: "timer", topicId: "top_1" });
+  const odd = session("ses_2", { title: "Strana", source: "<script>", topicId: 42 });
+  const received = [shareGrant({ scope: "study", permission: "edit" })];
+  const span = { from: new Date("2026-11-01T00:00:00.000Z"), to: new Date("2026-12-01T00:00:00.000Z") };
+  const view = sharedItemsView([good, odd], received, [], span);
+  const shownGood = view.find((item) => item.title === "Ripasso");
+  const shownOdd = view.find((item) => item.title === "Strana");
+  assert.equal(shownGood.source, "timer");
+  assert.equal(shownGood.topicId, "top_1");
+  assert.equal("source" in shownOdd, false);
+  assert.equal("topicId" in shownOdd, false);
+
+  const now = "2026-11-10T09:00:00.000Z";
+  assert.equal(planSharedUpdate(received, good, { source: "manual" }, now).entity.source, "manual");
+  assert.equal(planSharedUpdate(received, good, { source: "altro" }, now).code, "invalid");
+  assert.equal(planSharedUpdate(received, good, { topicId: "top_2" }, now).entity.topicId, "top_2");
+  assert.equal(planSharedUpdate(received, good, { topicId: 7 }, now).code, "invalid");
+  assert.equal(planSharedUpdate(received, good, { topicId: "" }, now).entity.topicId, undefined);
+
+  seedApp({ received, items: [good] });
+  const updated = await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(good), source: "manual", topicId: "" });
+  assert.equal(updated.ok, true, JSON.stringify(updated));
+  const saved = useSharedStore.getState().items[0].entity;
+  assert.equal(saved.source, "manual");
+  assert.equal(saved.topicId, undefined);
+  assert.equal((await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(good), source: "altro" })).code, "invalid");
+  assert.ok(/topicId/.test(findAgentTool("studyos_update_shared_item").description));
 });

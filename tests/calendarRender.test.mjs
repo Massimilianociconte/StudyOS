@@ -2,12 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const render = await import("../src/lib/calendarRender.ts");
-const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels.ts");
+const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels/calendar.ts");
 const { EVENT_TYPE_COLORS } = await import("../src/lib/eventColors.ts");
 
 // Date locali del dispositivo: i test valgono in ogni fuso (Roma, New York, UTC).
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
 const iso = (...parts) => local(...parts).toISOString();
+/**
+ * Dispositivi da cui si leggono gli eventi vecchi salvati a Roma senza fuso. Un istante senza fuso si
+ * capisce solo entro 12 ore da Roma: a Kiritimati (+14) la mezzanotte di Roma è alle 13, più vicina al
+ * giorno dopo. Il test fissa questi fusi, così non dipende da quello di chi lo esegue.
+ */
+const ROME_READERS = ["Europe/Rome", "Europe/London", "America/New_York", "Pacific/Honolulu", "Asia/Tokyo", "UTC"];
+const eachReader = (run) => {
+  const previous = process.env.TZ;
+  try {
+    for (const zone of ROME_READERS) {
+      process.env.TZ = zone;
+      run(zone);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+};
 const timed = (id, from, to, extra = {}) => ({ id, occurrenceKey: id, start: iso(...from), end: iso(...to), ...extra });
 
 /* ------------------------------------------------------------------ */
@@ -325,7 +343,7 @@ const legacyAllDay = (patch) => ({
   ...patch
 });
 
-test("barSource: serie vecchie di tutto il giorno restano di un giorno, anche il 29/03/2026 (ora legale)", () => {
+test("barSource: serie vecchie di tutto il giorno restano di un giorno, anche il 29/03/2026 (ora legale)", () => eachReader((zone) => {
   // Salvate come istanti, senza fuso: mezzanotte del dispositivo e mezzanotte di Roma (vista da qui).
   const series = [
     legacyAllDay({ id: "device-weekly", start: iso(2026, 1, 4), end: iso(2026, 1, 5), recurrence: "weekly" }),
@@ -346,12 +364,12 @@ test("barSource: serie vecchie di tutto il giorno restano di un giorno, anche il
     }
     assert.ok(
       occurrences.some((item) => item.occurrenceDate === "2026-03-29"),
-      `${event.id}: c'è l'occorrenza di domenica 29 marzo`
+      `${zone} ${event.id}: c'è l'occorrenza di domenica 29 marzo`
     );
   }
-});
+}));
 
-test("barSource, listDayOf: un tutto il giorno salvato a Roma è un giorno solo anche in un altro fuso", () => {
+test("barSource, listDayOf: un tutto il giorno salvato a Roma è un giorno solo anche in un altro fuso", () => eachReader(() => {
   const trip = legacyAllDay({ id: "trip", start: "2026-11-13T23:00:00.000Z", end: "2026-11-14T23:00:00.000Z" });
   const [item] = expandEvents([trip], new Date("2026-11-09T00:00:00Z"), new Date("2026-11-20T00:00:00Z"));
   assert.deepEqual(render.barSource(item), { id: item.occurrenceKey, startDay: "2026-11-14", endDay: "2026-11-14" });
@@ -367,7 +385,7 @@ test("barSource, listDayOf: un tutto il giorno salvato a Roma è un giorno solo 
   assert.ok(render.spanText(local3, "2026-03-01"));
   // Fine prima dell'inizio: un giorno.
   assert.deepEqual(render.barSource({ ...legacyAllDay({ start: iso(2026, 5, 2), end: iso(2026, 5, 1) }), occurrenceKey: "x" }), { id: "x", startDay: "2026-05-02", endDay: "2026-05-02" });
-});
+}));
 
 test("wallMinutes e atWallMinutes: l'ora segnata dall'orologio, anche nei giorni del cambio dell'ora", () => {
   for (const [y, m, d] of [

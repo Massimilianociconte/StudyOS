@@ -7,7 +7,7 @@ import type { BarbExamSession } from "../lib/university/examTypes";
 import { BARB_EXAM_SESSIONS, getExamStatus } from "../lib/university/examSessions";
 import { courseColor } from "../lib/barbCourseVisuals";
 import { safeHref } from "../lib/safeUrl";
-import { BARB_EXAM_TIMING_LABEL, BARB_EXAM_TYPE_LABEL, BARB_EXAM_TYPE_MISSING, EXAMS_HELP, EXAMS_TEXT } from "../lib/labels";
+import { BARB_EXAM_TIMING_LABEL, BARB_EXAM_TYPE_LABEL, BARB_EXAM_TYPE_MISSING, EXAMS_HELP, EXAMS_TEXT } from "../lib/labels/exams";
 import { useNow } from "../hooks/useNow";
 import { CourseIcon } from "./CourseIcon";
 import { Button, Drawer, EmptyState, HelpTip, Tag } from "./ui";

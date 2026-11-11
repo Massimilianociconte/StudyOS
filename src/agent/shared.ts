@@ -11,7 +11,12 @@ import {
   TASK_STATUS_LABEL
 } from "../lib/labels";
 import { expandEvents } from "../lib/recurrence";
+import { seriesMovePatch } from "../lib/occurrenceEdit";
+import { startDayOf } from "../lib/occurrenceLookup";
+import { isOccurrenceRow, normalizeRepeat } from "../lib/repeat";
 import { normalizeExternalUrl } from "../lib/safeUrl";
+import { SESSION_SOURCE_VALUES, sessionSourceLabel, sessionTopicId } from "../lib/studySessions";
+import { civilAddDays, isCivilDate, isValidTimeZone, localMidnight } from "../lib/tz";
 import {
   SUBJECTLESS_SCOPES,
   VIEW_ONLY_SCOPES,
@@ -108,7 +113,8 @@ const SHARED_FIELDS: Record<string, readonly string[]> = {
   // repeatLegacy e la chiave d'importazione sourceRecurrenceId.
   calendarEvent: ["title", "description", "category", "priority", "start", "end", "allDay", "recurrence", "recurrenceUntil", "status", "checklist", "notes", "repeat", "timeZone", "originalDate", "cancelled", "occasion", "reminders", "location"],
   task: ["title", "description", "priority", "dueDate", "status", "subtasks", "notes", "estimatedMinutes", "actualMinutes", "completedAt", "energy", "difficulty", "importance"],
-  studySession: ["title", "template", "plannedMinutes", "actualMinutes", "start", "end", "topics", "perceivedDifficulty", "focusLevel", "status", "notes"],
+  // Origine (timer, cronometro…) e argomento: con i controlli dell'app (publicSharedItem, planSharedUpdate).
+  studySession: ["title", "template", "plannedMinutes", "actualMinutes", "start", "end", "topics", "perceivedDifficulty", "focusLevel", "status", "notes", "source", "topicId"],
   studyTopic: ["title", "firstStudiedAt", "comprehension", "memorization", "difficulty", "nextReviewDate", "completedReviews", "lastReviewedAt", "questions", "notes"],
   exam: ["date", "program", "preparation", "targetGrade", "status", "simulations", "frequentQuestions", "grade", "honors", "passFail"],
   attachment: ["name", "mimeType", "size", "addedAt", "description"],
@@ -181,6 +187,11 @@ export const publicSharedItem = (
     output[key] = clean;
     if (brief && Array.isArray(value) && value.length > BRIEF_ITEMS) output[`${key}Count`] = value.length;
   }
+  if (entry.entityType === "studySession") {
+    // Come nell'app: un'origine sconosciuta o un argomento non di testo valgono come assenti.
+    if (!sessionSourceLabel(entity.source)) delete output.source;
+    if (!sessionTopicId({ topicId: entity.topicId })) delete output.topicId;
+  }
   const externalUrl = typeof entity.externalUrl === "string" ? normalizeExternalUrl(entity.externalUrl) : null;
   return {
     ...output,
@@ -231,24 +242,29 @@ export const sharedItemsView = (
   filter: SharedItemsFilter
 ) => {
   const query = (filter.query ?? "").trim().toLocaleLowerCase("it");
+  const found = (entity: SharedEntity) => !query || searchable(entity).includes(query);
   const matches = items.filter(
     (entry) =>
       (!filter.scope || scopeCovers(filter.scope, entry.entityType, entry.entity)) &&
-      (!filter.personId || personHandle(entry.ownerId) === filter.personId) &&
-      (!query || searchable(entry.entity).includes(query))
+      (!filter.personId || personHandle(entry.ownerId) === filter.personId)
   );
   const events = matches.flatMap((entry) => {
     const source = entry.entityType === "calendarEvent" ? occurrenceSource(entry) : null;
     return source ? [source] : [];
   });
-  // Righe modificate e serie figlie si legano solo alla serie dello stesso proprietario.
-  const occurrences = expandEvents(events, filter.from, filter.to, { groupKey: (event) => event.sharedEntry.ownerId }).map((occurrence) => ({
-    ...publicSharedItem(occurrence.sharedEntry, received, labels),
-    start: occurrence.start,
-    end: occurrence.end,
-    recurring: occurrence.recurring
-  }));
-  const others = matches.filter((entry) => entry.entityType !== "calendarEvent").map((entry) => publicSharedItem(entry, received, labels));
+  // Righe modificate e serie figlie si legano solo alla serie dello stesso proprietario. La ricerca
+  // guarda le date come si vedono (un giorno spostato e rinominato ha il suo titolo), non la serie salvata.
+  const occurrences = expandEvents(events, filter.from, filter.to, { groupKey: (event) => event.sharedEntry.ownerId })
+    .filter((occurrence) => found(occurrence.sharedEntry.entity))
+    .map((occurrence) => ({
+      ...publicSharedItem(occurrence.sharedEntry, received, labels),
+      start: occurrence.start,
+      end: occurrence.end,
+      recurring: occurrence.recurring,
+      // Il giorno della serie (nel suo fuso), da ridare a studyos_update_shared_item per spostarla.
+      ...(occurrence.recurring ? { occurrenceDate: occurrence.occurrenceDate } : {})
+    }));
+  const others = matches.filter((entry) => entry.entityType !== "calendarEvent" && found(entry.entity)).map((entry) => publicSharedItem(entry, received, labels));
   return [...occurrences, ...others];
 };
 
@@ -256,7 +272,7 @@ export const sharedItemsView = (
 export const SHARED_EDITABLE: Record<string, readonly string[]> = {
   calendarEvent: ["title", "start", "end", "allDay", "category", "description", "notes", "priority", "status"],
   task: ["title", "description", "dueDate", "status", "priority", "notes"],
-  studySession: ["title", "start", "end", "plannedMinutes", "status", "notes"],
+  studySession: ["title", "start", "end", "plannedMinutes", "status", "notes", "source", "topicId"],
   studyTopic: ["title", "nextReviewDate", "notes"],
   exam: ["date", "status", "preparation"],
   attachment: ["name", "description"],
@@ -336,6 +352,63 @@ export type SharedPlan =
   | { ok: true; entityType: string; entity: SharedEntity }
   | { ok: false; code: "invalid" | "denied"; error: string };
 
+type TimeRange = { start: string; end: string };
+type RangeOf = (base: Pick<CalendarEvent, "start" | "end" | "allDay">) => TimeRange | string | null;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Nuovi orari di un evento altrui, come trascinandolo nel calendario. `rangeOf` dà i nuovi inizio e
+ * fine di una data (dagli argomenti dell'agente). Una serie si sposta tutta dello stesso scarto della
+ * data indicata (`occurrenceDate`, il giorno letto da studyos_list_shared_items) e la regola scritta
+ * con i giorni della settimana li sposta con lei (`derived`, vedi seriesMovePatch). Senza
+ * occurrenceDate gli orari sono della prima data: un inizio dalla seconda data in poi è rifiutato,
+ * perché le date prima sparirebbero. Un giorno già cambiato da solo (riga) si sposta da solo.
+ */
+export const sharedEventMove = (
+  entity: SharedEntity,
+  occurrenceDate: string | undefined,
+  rangeOf: RangeOf
+): { range: TimeRange | null; derived: Record<string, unknown> } | { code: "invalid" | "not_found"; error: string } => {
+  const { start, end } = entity;
+  const readable = typeof start === "string" && typeof end === "string" && !Number.isNaN(Date.parse(start)) && !Number.isNaN(Date.parse(end));
+  const event = entity as unknown as CalendarEvent;
+  const series = readable && !isOccurrenceRow(event) && normalizeRepeat(event) ? event : null;
+  if (occurrenceDate !== undefined && !(readable && isOccurrenceRow(event))) {
+    if (!series) return { code: "invalid", error: "L'evento non si ripete: togli occurrenceDate." };
+    if (!isCivilDate(occurrenceDate)) return { code: "invalid", error: "occurrenceDate deve essere un giorno YYYY-MM-DD." };
+    const occurrence = expandEvents([series], localMidnight(civilAddDays(occurrenceDate, -2)), localMidnight(civilAddDays(occurrenceDate, 3))).find(
+      (item) => item.occurrenceDate === occurrenceDate
+    );
+    if (!occurrence) return { code: "not_found", error: "Quel giorno non è una data della serie: usa occurrenceDate da studyos_list_shared_items." };
+    const range = rangeOf(occurrence);
+    if (typeof range === "string") return { code: "invalid", error: range };
+    if (!range) return { range: null, derived: {} };
+    // Tutta la serie dello stesso scarto di quella data (con la durata nuova), come nel calendario.
+    const nextStart = new Date(Date.parse(series.start) + Date.parse(range.start) - Date.parse(occurrence.start)).toISOString();
+    const nextEnd = new Date(Date.parse(nextStart) + Date.parse(range.end) - Date.parse(range.start)).toISOString();
+    const { start: movedStart, end: movedEnd, ...derived } = seriesMovePatch(series, nextStart, nextEnd);
+    return { range: { start: movedStart as string, end: movedEnd as string }, derived };
+  }
+  // Orari altrui forse malformati: si leggono come testo, un valore illeggibile non vale come inizio.
+  const range = rangeOf({ start: typeof start === "string" ? start : "", end: typeof end === "string" ? end : "", allDay: entity.allDay === true });
+  if (typeof range === "string") return { code: "invalid", error: range };
+  if (!range || !series) return { range, derived: {} };
+  const zone = isValidTimeZone(series.timeZone) ? series.timeZone : undefined;
+  const first = startDayOf(series.start, series.allDay, zone);
+  const second = isCivilDate(first)
+    ? expandEvents([series], localMidnight(civilAddDays(first, -1)), new Date(Date.parse(series.start) + 400 * DAY_MS)).find((item) => Date.parse(item.start) > Date.parse(series.start))
+    : undefined;
+  if (second && Date.parse(range.start) >= Date.parse(second.start)) {
+    return {
+      code: "invalid",
+      error: "start è di una data dopo la prima della serie: indica occurrenceDate (il giorno della data da spostare, da studyos_list_shared_items), così le date prima restano."
+    };
+  }
+  const { start: movedStart, end: movedEnd, ...derived } = seriesMovePatch(series, range.start, range.end);
+  return { range: { start: movedStart as string, end: movedEnd as string }, derived };
+};
+
 export const planSharedCreate = (
   received: readonly ShareGrant[],
   ownerId: string,
@@ -356,7 +429,9 @@ export const planSharedUpdate = (
   received: readonly ShareGrant[],
   entry: SharedItem,
   patch: Record<string, unknown>,
-  now: string
+  now: string,
+  /** Campi che seguono da quelli cambiati (la regola di una serie spostata, vedi `sharedEventMove`). */
+  derived: Record<string, unknown> = {}
 ): SharedPlan => {
   const allowed = listed(SHARED_EDITABLE, entry.entityType);
   const keys = Object.keys(patch);
@@ -368,6 +443,14 @@ export const planSharedUpdate = (
   if (patch.status !== undefined && !statuses.includes(String(patch.status))) {
     return { ok: false, code: "invalid", error: `Stato non valido. Valori ammessi: ${statuses.join(", ")}.` };
   }
+  // Sessioni: gli stessi controlli dell'app (origine tra quelle note, argomento come testo; vuoto = tolto).
+  if ("source" in patch && !sessionSourceLabel(patch.source)) {
+    return { ok: false, code: "invalid", error: `Origine non valida. Valori ammessi: ${SESSION_SOURCE_VALUES.join(", ")}.` };
+  }
+  if ("topicId" in patch) {
+    if (patch.topicId === "" || patch.topicId === null) patch = { ...patch, topicId: undefined };
+    else if (!sessionTopicId(patch)) return { ok: false, code: "invalid", error: "topicId deve essere l'id di un argomento, o vuoto per toglierlo." };
+  }
   if (entry.entityType === "task" && patch.status === "doing" && entry.entity.status !== "doing") {
     return {
       ok: false,
@@ -375,7 +458,7 @@ export const planSharedUpdate = (
       error: "Non puoi mettere «In corso» un'attività di un'altra persona: partirebbe il suo cronometro. Usa un altro stato."
     };
   }
-  const next = { ...entry.entity, ...patch, id: entry.entityId, updatedAt: now } as SharedEntity;
+  const next = { ...entry.entity, ...patch, ...derived, id: entry.entityId, updatedAt: now } as SharedEntity;
   if (entry.entityType === "task" && typeof patch.status === "string") {
     Object.assign(next, taskStatusTransitionPatch(entry.entity as unknown as Task, patch.status as Task["status"], new Date(now)));
   }

@@ -58,13 +58,13 @@ export function NotificationsBell({ onOpen }: { onOpen: () => void }) {
         onClick={onOpen}
         aria-label={unread ? `Notifiche, ${unread} non lette` : "Notifiche"}
         title={unread ? `${unread} notifiche non lette` : "Notifiche"}
-        className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
+        className="relative grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
       >
         <span className={unread ? "motion-safe:animate-[bell-nudge_2.4s_ease-in-out_infinite]" : undefined}>
           <Icon name="Bell" className="h-4.5 w-4.5" />
         </span>
         {unread ? (
-          <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent-3)] px-1 text-[11px] font-black text-[#10131d]">
+          <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 grid-cols-1 place-items-center rounded-full bg-[var(--accent-3)] px-1 text-[11px] font-black text-[#10131d]">
             {unread > 9 ? "9+" : unread}
           </span>
         ) : null}

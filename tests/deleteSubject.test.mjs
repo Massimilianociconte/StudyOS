@@ -1,7 +1,7 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
-import { SUBJECT_REMOVE_TEXT } from "../src/lib/labels.ts";
+import { SUBJECT_REMOVE_TEXT } from "../src/lib/labels/subjects.ts";
 
 // Solo memoria: con `loading` attivo la persistenza non scrive (niente IndexedDB in Node).
 const store = useStudyStore;

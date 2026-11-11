@@ -172,7 +172,8 @@ test("ics: import di un orario con TZID, BYDAY su più giorni, COUNT, DURATION e
   assert.deepEqual(lesson.repeat, { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "until", date: "2026-12-18" } });
   assert.equal(lesson.recurrence, "weekly");
   assert.equal(lesson.recurrenceUntil, "2026-12-18");
-  assert.match(lesson.description, /Luogo: Aula G21, Via Celoria 26/);
+  assert.equal(lesson.location, "Aula G21, Via Celoria 26");
+  assert.doesNotMatch(lesson.description, /Luogo/);
   assert.deepEqual(lesson.reminders, [{ minutesBefore: 15 }]);
   const lab = events.find((event) => event.uid === "lab-1");
   assert.equal(new Date(lab.end).getTime() - new Date(lab.start).getTime(), 3 * 3600_000);

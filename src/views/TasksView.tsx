@@ -4,17 +4,8 @@ import { it } from "date-fns/locale";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { daysUntil, selectableSubjects, subjectColor, subjectName, urgentTasks } from "../lib/selectors";
-import {
-  FILTER_CHIP_TEXT,
-  NO_SUBJECT_LABEL,
-  PRIORITY_LABEL,
-  PRIORITY_TONE,
-  TASK_STATUS_LABEL,
-  TASKS_HELP,
-  TASKS_TEXT,
-  capitalizeFirst,
-  formatMinutes
-} from "../lib/labels";
+import { NO_SUBJECT_LABEL, PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
+import { FILTER_CHIP_TEXT, TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
 import { Button, EmptyState, HelpTip, IconButton, PageActions, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { DateField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";

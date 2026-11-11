@@ -6,7 +6,7 @@ import { BARB_EXAM_COURSES, BARB_EXAM_DATA, BARB_EXAM_SESSIONS } from "../lib/un
 import type { BarbExamSession } from "../lib/university/examTypes";
 import { courseColor } from "../lib/barbCourseVisuals";
 import { safeHref } from "../lib/safeUrl";
-import { EXAMS_HELP, EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels";
+import { EXAMS_HELP, EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { oneOf, useUiState } from "../lib/uiState";
 import { useNow } from "../hooks/useNow";
 import { CourseIcon } from "./CourseIcon";

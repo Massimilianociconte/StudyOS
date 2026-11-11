@@ -5,7 +5,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { MAX_GRADE, MIN_GRADE, isValidGrade } from "../lib/grades";
 import { DateField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
-import { CAREER_HELP } from "../lib/labels";
+import { CAREER_HELP } from "../lib/labels/career";
 
 const GRADES = Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MIN_GRADE + index);
 

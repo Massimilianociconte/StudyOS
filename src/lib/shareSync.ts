@@ -14,7 +14,8 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { db, getMeta, setMeta } from "./db";
 import { COLLECTION_BY_ENTITY_TYPE } from "./collections";
-import { RESTORE_TEXT, REVERT_TEXT, SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
+import { RESTORE_TEXT, SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
+import { REVERT_TEXT } from "./labels/sharing";
 import {
   SHARING_UNAVAILABLE_TEXT,
   grantFromRow,

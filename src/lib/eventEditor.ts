@@ -2,12 +2,14 @@
 // da salvare, orari e "tutto il giorno", errori, promemoria, scelta "solo questo / successivi / tutti".
 import type { CalendarEvent, EventCategory, EventReminder, RepeatRule, Weekday } from "../types";
 import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, sanitizeTypeColorOverrides, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "./eventColors";
-import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
-import { describeReminder, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
+import { DATE_PICKER_TEXT, MONTH_NAME, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
+import { EVENT_EDITOR_TEXT, SCOPE_TEXT } from "./labels/calendar";
+import { applyRepeatFields, changesRepeat, describeReminder, isOccurrenceRow, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
 import type { ScopeImpact, SeriesSpan } from "./occurrenceEdit";
+import { startDayOf } from "./occurrenceLookup";
 import { CALENDAR_EVENT_FIELD_GROUPS, changedFields, safeCssColor } from "./sharing";
-import { civilAddDays, civilDaysBetween, isCivilDate, localMidnight, parseCivil } from "./tz";
+import { civilAddDays, civilDaysBetween, isCivilDate, isValidTimeZone, localMidnight, parseCivil } from "./tz";
 
 const MINUTE_MS = 60_000;
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -259,13 +261,28 @@ export const setDraftDuration = <T extends EventDraft>(draft: T, minutes: number
 };
 
 /**
- * Nuovo inizio: la fine si sposta con la stessa durata (o, tutto il giorno, lo stesso numero di
- * giorni) e le ripetizioni legate al giorno della settimana seguono la nuova data.
+ * Giorno della ripetizione per la bozza: quello dell'inizio nel fuso `zone` dell'evento, dove la
+ * regola si ripete (da Tokyo un lunedì sera a Roma si mostra martedì, ma la regola dice lunedì). Tutto
+ * il giorno, o senza fuso: il giorno mostrato.
  */
-export const changeStart = <T extends EventDraft>(draft: T, next: string): T => {
+export const draftRuleDay = (draft: Pick<EventDraft, "allDay" | "start">, zone?: string) => {
+  const shown = dateOf(draft.start);
+  if (draft.allDay || !zone) return shown;
+  const day = startDayOf(isoOf(draft.start), false, zone);
+  return isCivilDate(day) ? day : shown;
+};
+
+/**
+ * Nuovo inizio: la fine si sposta con la stessa durata (o, tutto il giorno, lo stesso numero di
+ * giorni) e le ripetizioni legate al giorno della settimana seguono la nuova data (nel fuso `zone`
+ * dell'evento, vedi `draftRuleDay`).
+ */
+export const changeStart = <T extends EventDraft>(draft: T, next: string, zone?: string): T => {
   const oldDate = dateOf(draft.start);
   const newDate = dateOf(next);
-  const repeat = isCivilDate(oldDate) && isCivilDate(newDate) ? adaptRuleToStart(draft.repeat, oldDate, newDate) : draft.repeat;
+  const ruleFrom = draftRuleDay(draft, zone);
+  const ruleTo = draftRuleDay({ allDay: draft.allDay, start: next }, zone);
+  const repeat = isCivilDate(ruleFrom) && isCivilDate(ruleTo) ? adaptRuleToStart(draft.repeat, ruleFrom, ruleTo) : draft.repeat;
   if (draft.allDay) {
     const span = isCivilDate(oldDate) && isCivilDate(dateOf(draft.end)) ? Math.max(0, civilDaysBetween(oldDate, dateOf(draft.end))) : 0;
     const end = isCivilDate(newDate) ? withDate(civilAddDays(newDate, span), timeOf(draft.end)) : draft.end;
@@ -295,6 +312,31 @@ export const setDraftAllDay = <T extends EventDraft>(draft: T, on: boolean): T =
   const sameDayEnd = withDate(day, timeOf(draft.end));
   const end = localMs(sameDayEnd) > localMs(start) ? sameDayEnd : toLocalInput(new Date(localMs(start) + DEFAULT_DURATION * MINUTE_MS));
   return { ...draft, allDay: false, start, end };
+};
+
+/**
+ * Evento di un'altra persona dopo la modifica `changes` del modulo, sopra la sua ultima versione
+ * `latest` (ciò che il proprietario ha cambiato nel frattempo resta). null = nulla da salvare.
+ * - Promemoria: sono personali, suonerebbero sui dispositivi del proprietario. Restano i suoi.
+ * - Materia: è sua e decide cosa è condiviso. Resta la sua.
+ * - Un giorno cambiato da solo (riga) non prende una regola: le app vecchie lo ripeterebbero da solo.
+ * - Regola cambiata: regola pulita più i campi vecchi; una serie senza fuso resta senza (vale il fuso di
+ *   chi la guarda, come per il proprietario, di cui non si conosce il fuso): mai il fuso di chi riceve.
+ */
+export const recipientEventUpdate = (latest: CalendarEvent, changes: Partial<CalendarEvent>): CalendarEvent | null => {
+  const update: Partial<CalendarEvent> = { ...changes };
+  delete update.subjectId;
+  delete update.reminders;
+  if (isOccurrenceRow(latest)) delete update.repeat;
+  if (!Object.keys(update).length) return null;
+  const merged = { ...latest, ...update } as CalendarEvent;
+  if (!("repeat" in update)) return merged;
+  const next = applyRepeatFields(merged, { repeatChanged: changesRepeat(latest, update) });
+  if (isValidTimeZone(latest.timeZone) || next.timeZone === latest.timeZone) return next;
+  const zoneless = { ...next };
+  if ("timeZone" in latest) zoneless.timeZone = latest.timeZone;
+  else delete zoneless.timeZone;
+  return zoneless;
 };
 
 // Spostamento della modifica per "Tutti": in occurrenceLookup.ts (lo usa anche l'agente, nel bundle iniziale).
@@ -380,6 +422,52 @@ export const occurrenceDayText = (date: string) => {
   const parts = parseCivil(date);
   if (!parts) return date;
   return `${WEEKDAY_NAME[weekdayOf(date)]} ${parts.day} ${MONTH_NAME[parts.month - 1]}`;
+};
+
+/**
+ * Date in breve, per mese: "ven 4, 11, 18 dic, ven 1 gen" (il giorno della settimana solo quando
+ * cambia, il mese alla fine dei suoi giorni).
+ */
+export const shortDatesText = (dates: readonly string[]) => {
+  const groups: string[] = [];
+  let items: string[] = [];
+  let group = "";
+  let month = "";
+  let weekday = "";
+  const close = () => {
+    if (items.length) groups.push(`${items.join(", ")} ${month}`);
+    items = [];
+  };
+  for (const date of dates) {
+    const parts = parseCivil(date);
+    if (!parts) continue;
+    if (`${parts.year}-${parts.month}` !== group) {
+      close();
+      group = `${parts.year}-${parts.month}`;
+      month = DATE_PICKER_TEXT.monthsShort[parts.month - 1];
+      weekday = "";
+    }
+    const day = WEEKDAY_SHORT[weekdayOf(date)];
+    items.push(day === weekday ? String(parts.day) : `${day} ${parts.day}`);
+    weekday = day;
+  }
+  close();
+  return groups.join(", ");
+};
+
+/** Date che spariscono dette per nome: le prime, poi "e altre date dopo". */
+const GONE_SHOWN = 6;
+
+/** Che cosa fa "Questo e i successivi" alle parti cambiate prima (assorbite con una regola nuova, o lasciate). */
+const splitLines = (impact: ScopeImpact | undefined) => {
+  if (!impact) return [];
+  if (impact.absorbed) {
+    const gone = impact.gone ?? [];
+    const more = gone.length > GONE_SHOWN || impact.goneMore === true;
+    return [SCOPE_TEXT.followingSplits, ...(gone.length ? [SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), more)] : [])];
+  }
+  if (!impact.laterParts) return [];
+  return [SCOPE_TEXT.followingKeepsSplits, ...(impact.laterOwnTime ? [SCOPE_TEXT.followingSplitsOwnTime] : [])];
 };
 
 /** Righe sui giorni cambiati o annullati da soli: quanti perdono la modifica, quanti restano. */
@@ -498,8 +586,9 @@ export const scopeOptions = ({
           ...(shift ? [SCOPE_TEXT.followingDaysShift(shift.from, shift.to)] : []),
           ...(rowContent ? [SCOPE_TEXT.followingTakesDay] : []),
           ...rowLines(impacts.following),
-          ...(impacts.following?.absorbed ? [SCOPE_TEXT.followingSplits] : []),
-          ...(ruleChanged ? [] : [SCOPE_TEXT.followingKeepsEnd]),
+          ...splitLines(impacts.following),
+          // Se spariscono date, la fine di prima non vale più per tutto ciò che viene dopo.
+          ...(ruleChanged || impacts.following?.gone?.length ? [] : [SCOPE_TEXT.followingKeepsEnd]),
           ...pin
         ];
   const firstDay = span?.start === date && span.parts === 1;

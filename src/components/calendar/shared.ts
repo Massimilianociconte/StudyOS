@@ -4,7 +4,8 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { isSameDay, setHours, startOfDay } from "date-fns";
 import type { CalendarEvent } from "../../types";
 import { subjectName } from "../../lib/selectors";
-import { ALL_DAY_LABEL, CALENDAR_VIEW_TEXT } from "../../lib/labels";
+import { ALL_DAY_LABEL } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import type { CalendarOccurrence, Handlers, PreviewPoint, ShownEvent, Subjects } from "./types";
 
 /** Si trascina solo ciò che si può modificare: gli eventi altrui in sola lettura non sono trascinabili. */

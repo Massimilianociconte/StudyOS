@@ -3,7 +3,7 @@ import { Icon } from "../Icon";
 import { Button, Field, inputClass } from "../ui";
 import type { EventReminder } from "../../types";
 import { addReminder, customReminder, hasReminder, reminderChoices, removeReminder } from "../../lib/eventEditor";
-import { REMINDER_PICKER_TEXT } from "../../lib/labels";
+import { REMINDER_PICKER_TEXT } from "../../lib/labels/calendar";
 import { describeReminder } from "../../lib/repeat";
 
 type Unit = "minutes" | "hours" | "days";
