@@ -2,7 +2,8 @@
 // da salvare, orari e "tutto il giorno", errori, promemoria, scelta "solo questo / successivi / tutti".
 import type { CalendarEvent, EventCategory, EventReminder, RepeatRule, Weekday } from "../types";
 import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, sanitizeTypeColorOverrides, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "./eventColors";
-import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
+import { MONTH_NAME, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
+import { EVENT_EDITOR_TEXT, SCOPE_TEXT } from "./labels/calendar";
 import { applyRepeatFields, changesRepeat, describeReminder, isOccurrenceRow, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
 import type { ScopeImpact, SeriesSpan } from "./occurrenceEdit";

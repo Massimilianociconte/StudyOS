@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const { layoutDayColumns, collapseForWidth, multiDaySegments, eventDaySpan, dayOfSpan } = await import("../src/lib/calendarLayout.ts");
-const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels.ts");
+const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels/calendar.ts");
 
 const at = (hours, minutes = 0) => Date.UTC(2026, 10, 12, hours, minutes);
 const ev = (id, from, to) => ({ id, startMs: at(...from), endMs: at(...to) });

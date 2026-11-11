@@ -5,7 +5,7 @@ import { courseColor } from "../lib/barbCourseVisuals";
 import { CourseIcon } from "./CourseIcon";
 import { barbSessionDate, barbSessionType } from "./BarbExamSessions";
 import { Button, Drawer, EmptyState, inputClass } from "./ui";
-import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels";
+import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 
 function CourseCheckbox({ checked, mixed, disabled, onChange, label }: { checked: boolean; mixed: boolean; disabled: boolean; onChange: () => void; label: string }) {
   const ref = useRef<HTMLInputElement>(null);

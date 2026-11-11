@@ -24,8 +24,10 @@
   solo verso il progetto Supabase configurato: nuove origini esterne vanno aggiunte lì.
 - `normalizeExternalUrl`/`safeHref` (src/lib/safeUrl.ts) sono obbligatori per ogni
   link proveniente da dati utente, backup o sync (blocca `javascript:`).
-- Le etichette dei valori enum (priorità, stati, categorie, tipi di allegato) vivono
-  solo in `src/lib/labels.ts`: la UI non mostra mai i codici interni (`high`, `todo`).
+- Le etichette vivono in `src/lib/labels.ts` (condivise: valori enum come priorità,
+  stati, categorie, tipi di allegato, e testi della struttura o di più schermate) o in
+  `src/lib/labels/<schermata>.ts` (testi di una sola schermata, caricati con lei; mai
+  riesportati da `labels.ts`). La UI non mostra mai i codici interni (`high`, `todo`).
 - Griglie Tailwind: ogni `grid` senza colonne esplicite ha `grid-cols-1`
   (`minmax(0,1fr)`), altrimenti il testo `nowrap`/troncato allarga la traccia
   implicita e la pagina sfora in orizzontale su mobile.

@@ -4,7 +4,7 @@ import { Icon } from "../Icon";
 import { ColorPalette, currentTheme } from "./ColorPalette";
 import { EVENT_TYPE_KEYS, eventColorStyle, eventTypeIcon, eventTypeLabel, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "../../lib/eventColors";
 import { withTypeColor } from "../../lib/eventEditor";
-import { TYPE_COLORS_TEXT } from "../../lib/labels";
+import { TYPE_COLORS_TEXT } from "../../lib/labels/calendar";
 
 /**
  * "Colori delle tipologie": una riga per tipologia (icona, colore attuale nel tema attuale,

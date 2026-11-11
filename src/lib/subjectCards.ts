@@ -2,7 +2,7 @@
 // materia): senza DOM, testabili.
 import type { Subject } from "../types";
 import { SEMESTER_FILTERS, SEMESTER_IDS, SEMESTER_LABEL, type SemesterId } from "./semesters";
-import { SUBJECTS_TEXT } from "./labels";
+import { SUBJECTS_TEXT } from "./labels/subjects";
 
 export type SemesterFilter = SemesterId | "tutti";
 

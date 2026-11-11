@@ -23,7 +23,7 @@ import { SEMESTER_LABEL, SEMESTER_SHORT, SEMESTER_TONE, SEMESTER_IDS } from "../
 import { resolveBarbCourse } from "../lib/university/examSessions";
 import { weekdayLabel } from "../lib/university/normalize";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
-import { BARB_CHARACTER_LABEL, BARB_HELP, BARB_TEXT, UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels";
+import { BARB_CHARACTER_LABEL, BARB_HELP, BARB_TEXT, UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels/barb";
 import {
   NO_BARB_FILTER,
   isBarbSemesterFilter,

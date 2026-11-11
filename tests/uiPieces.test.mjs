@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 
 const { placeFloating, menuIndexForKey, FLOATING_MARGIN, FLOATING_GAP } = await import("../src/lib/uiPieces.ts");
 const { quickAddDefaults, quickAddTaskDates } = await import("../src/lib/quickAdd.ts");
-const { UI_TEXT, OFFICIAL_EXAMS_ADD_LABEL } = await import("../src/lib/labels.ts");
+const { UI_TEXT } = await import("../src/lib/labels.ts");
+const { OFFICIAL_EXAMS_ADD_LABEL } = await import("../src/lib/labels/exams.ts");
 
 const phone = { width: 375, height: 812 };
 const rect = (left, top, size = 24) => ({ left, top, right: left + size, bottom: top + size });

@@ -12,7 +12,7 @@ import {
   touchedEntities
 } from "../src/lib/shareHistory.ts";
 import { createRecheckCadence } from "../src/lib/shareRecheck.ts";
-import { REVERT_TEXT } from "../src/lib/labels.ts";
+import { REVERT_TEXT } from "../src/lib/labels/sharing.ts";
 
 const at = (day, hour = 10) => `2026-11-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00.000Z`;
 const since = at(3, 0);

@@ -5,7 +5,8 @@ import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { studyDaysUntil, studyStreak, subjectColor, subjectName } from "../lib/selectors";
-import { SESSION_SOURCE_LABEL, STATS_PERIOD_LABEL, STATS_TEXT, capitalizeFirst, formatHours, formatMinutes } from "../lib/labels";
+import { SESSION_SOURCE_LABEL, capitalizeFirst, formatHours, formatMinutes } from "../lib/labels";
+import { STATS_PERIOD_LABEL, STATS_TEXT } from "../lib/labels/stats";
 import { SEMESTER_LABEL } from "../lib/semesters";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import {

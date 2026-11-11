@@ -2,7 +2,7 @@
 // accese o spente e, in Giorno e Agenda, le Attività senza data.
 import { useEffect, useRef } from "react";
 import { Icon } from "../Icon";
-import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT, HOLIDAYS_TOGGLE_LABEL } from "../../lib/labels";
+import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT, HOLIDAYS_TOGGLE_LABEL } from "../../lib/labels/calendar";
 import { safeCssColor } from "../../lib/sharing";
 import { selectableSubjects } from "../../lib/selectors";
 import type { Subjects } from "./types";

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const render = await import("../src/lib/calendarRender.ts");
-const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels.ts");
+const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels/calendar.ts");
 const { EVENT_TYPE_COLORS } = await import("../src/lib/eventColors.ts");
 
 // Date locali del dispositivo: i test valgono in ogni fuso (Roma, New York, UTC).

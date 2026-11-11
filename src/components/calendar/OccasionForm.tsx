@@ -7,7 +7,8 @@ import type { OccasionKind } from "../../types";
 import { eventTypeIcon, eventTypeKey, typeDefaultColor, type TypeColorOverrides } from "../../lib/eventColors";
 import { occurrenceDayText } from "../../lib/eventEditor";
 import { nextOccasion, occasionError, OCCASION_KINDS, type OccasionDraft } from "../../lib/occasionForms";
-import { EVENT_EDITOR_TEXT, MONTH_NAME, OCCASION_FORM_TEXT, OCCASION_KIND_LABEL, occasionAgeText } from "../../lib/labels";
+import { MONTH_NAME, occasionAgeText } from "../../lib/labels";
+import { EVENT_EDITOR_TEXT, OCCASION_FORM_TEXT, OCCASION_KIND_LABEL } from "../../lib/labels/calendar";
 
 /**
  * Cornice dei percorsi semplici (ricorrenza, vacanza): Drawer con Salva e Annulla sempre visibili,

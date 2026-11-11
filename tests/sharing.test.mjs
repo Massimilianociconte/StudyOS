@@ -60,14 +60,8 @@ import {
   PROTECTED_ENTITY_TYPES
 } from "../src/lib/sharing.ts";
 import { readFileSync } from "node:fs";
-import {
-  SHARED_ENTITY_LABEL,
-  SHARE_PERMISSION_LABEL,
-  SHARE_SCOPE_LABEL,
-  revisionListIntro,
-  scopesSummary,
-  sharedEntityLabel
-} from "../src/lib/labels.ts";
+import { SHARED_ENTITY_LABEL, SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary, sharedEntityLabel } from "../src/lib/labels.ts";
+import { revisionListIntro } from "../src/lib/labels/sharing.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
 
 // Stessi casi provati in SQL da scripts/supabase/sharing-check.mjs (studyos_scope_covers).

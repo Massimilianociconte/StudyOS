@@ -69,21 +69,20 @@ import { applyRepeatFields, isOccurrenceRow, normalizeRepeat, type OccurrenceSco
 import { civilDateOf, deviceTimeZone, isCivilDate, parseCivil } from "../lib/tz";
 import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents } from "../lib/recurrence";
+import { EXAM_STATUS_LABEL, REPEAT_PICKER_TEXT } from "../lib/labels";
 import {
   CALENDAR_HELP,
   CALENDAR_TEXT,
   CALENDAR_VIEW_TEXT,
   EVENT_EDITOR_TEXT,
-  EXAM_STATUS_LABEL,
   OCCASION_FORM_TEXT,
   OCCASION_KIND_LABEL,
-  OFFICIAL_EXAMS_ADD_LABEL,
-  REPEAT_PICKER_TEXT,
   SCOPE_TEXT,
-  SHARE_TEXT,
   TYPE_COLORS_TEXT,
   VACATION_FORM_TEXT
-} from "../lib/labels";
+} from "../lib/labels/calendar";
+import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
+import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { CourseIcon } from "../components/CourseIcon";
 import { BARB_DATASET } from "../data/university/barb.dataset";

@@ -6,7 +6,7 @@ import { ReminderList } from "./ReminderList";
 import { SimpleFormDrawer } from "./OccasionForm";
 import { eventTypeIcon, typeDefaultColor, type TypeColorOverrides } from "../../lib/eventColors";
 import { vacationDays, vacationError, type VacationDraft } from "../../lib/occasionForms";
-import { EVENT_EDITOR_TEXT, VACATION_FORM_TEXT } from "../../lib/labels";
+import { EVENT_EDITOR_TEXT, VACATION_FORM_TEXT } from "../../lib/labels/calendar";
 
 /**
  * "Nuova vacanza" (e modifica): nome, dal… al… (giorni compresi), destinazione, note, promemoria.

@@ -3,7 +3,8 @@
 import { isBefore, parseISO } from "date-fns";
 import type { Exam, Task } from "../../types";
 import { Icon } from "../Icon";
-import { CALENDAR_VIEW_TEXT, PRIORITY_TONE } from "../../lib/labels";
+import { PRIORITY_TONE } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { subjectColor, subjectName } from "../../lib/selectors";
 import { EVENT_TYPE_COLORS, eventColorStyle, eventTypeIcon } from "../../lib/eventColors";
 import { safeCssColor } from "../../lib/sharing";

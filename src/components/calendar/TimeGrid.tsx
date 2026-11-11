@@ -9,7 +9,7 @@ import { SharedMark } from "../SharedMark";
 import { Drawer } from "../ui";
 import { useNow } from "../../hooks/useNow";
 import { timeLabel } from "../../lib/selectors";
-import { CALENDAR_LAYOUT_TEXT, CALENDAR_VIEW_TEXT } from "../../lib/labels";
+import { CALENDAR_LAYOUT_TEXT, CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { dayOfSpan } from "../../lib/calendarLayout";
 import { todayYmd } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";

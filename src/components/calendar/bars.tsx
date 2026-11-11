@@ -5,7 +5,7 @@ import { Icon } from "../Icon";
 import { SharedMark } from "../SharedMark";
 import { selectPreferences, useStudyStore } from "../../store/useStudyStore";
 import type { Holiday } from "../../lib/holidays";
-import { CALENDAR_VIEW_TEXT, HOLIDAY_KIND_LABEL } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT, HOLIDAY_KIND_LABEL } from "../../lib/labels/calendar";
 import { barSource, eventPaint, holidayPaint, occasionText, spanText, type EventPaint } from "../../lib/calendarRender";
 import type { DayRangeItem } from "../../lib/calendarLayout";
 import { formatDateField, todayYmd } from "../../lib/datePicker";

@@ -36,11 +36,9 @@ import {
   capitalizeFirst,
   formatHours,
   formatMinutes,
-  HOME_HELP,
-  HOME_OCCASIONS_TEXT,
-  HOME_TEXT,
   occasionAgeText
 } from "../lib/labels";
+import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT } from "../lib/labels/home";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";

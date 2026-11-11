@@ -10,14 +10,8 @@ import { usePendingShare } from "../hooks/useShareInviteLinks";
 import { clearPendingShare } from "../lib/shareInvite";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { oneOf, useUiState } from "../lib/uiState";
-import {
-  SHARE_INVITE_BLOCKED,
-  SHARE_INVITE_STATUS_LABEL,
-  SHARE_PERMISSION_LABEL,
-  SHARE_SCOPE_LABEL,
-  SHARING_TAB_LABEL,
-  scopesSummary
-} from "../lib/labels";
+import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../lib/labels";
+import { SHARE_INVITE_BLOCKED, SHARE_INVITE_STATUS_LABEL, SHARING_TAB_LABEL } from "../lib/labels/sharing";
 import {
   SUBJECTLESS_SCOPES,
   VIEW_ONLY_SCOPES,

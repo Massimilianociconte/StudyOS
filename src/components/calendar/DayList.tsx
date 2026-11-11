@@ -7,7 +7,7 @@ import type { Exam, Task } from "../../types";
 import { Icon } from "../Icon";
 import { SharedMark } from "../SharedMark";
 import { Tag } from "../ui";
-import { CALENDAR_VIEW_TEXT } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { isAllDayEvent, timeLabel } from "../../lib/selectors";
 import { todayYmd } from "../../lib/datePicker";
 import { eventTypeLabel } from "../../lib/eventColors";

@@ -2,7 +2,7 @@
 // "Nuova vacanza" (un evento su più giorni): bozza ↔ campi dell'evento, errori, prossima volta. Puro.
 import type { CalendarEvent, EventReminder, OccasionKind } from "../types";
 import { eventTypeKey, typeDefaultColor, type TypeColorOverrides } from "./eventColors";
-import { EVENT_EDITOR_TEXT, OCCASION_FORM_TEXT, VACATION_FORM_TEXT } from "./labels";
+import { EVENT_EDITOR_TEXT, OCCASION_FORM_TEXT, VACATION_FORM_TEXT } from "./labels/calendar";
 import { ageOn, sanitizeOccasion, sanitizeReminders } from "./repeat";
 import { civilAddDays, civilDateOf, civilDaysBetween, civilFromParts, daysInMonth, isCivilDate, localMidnight, parseCivil } from "./tz";
 

@@ -28,15 +28,8 @@ import { normalizeExternalUrl, safeHref } from "../../lib/safeUrl";
 import { safeCssColor, type SharedOrigin } from "../../lib/sharing";
 import { selectableSubjects } from "../../lib/selectors";
 import { isValidTimeZone } from "../../lib/tz";
-import {
-  EVENT_CATEGORY_LABEL,
-  EVENT_EDITOR_TEXT,
-  EVENT_STATUS_LABEL,
-  NO_SUBJECT_LABEL,
-  PRIORITY_LABEL,
-  eventLinkLabel,
-  formatMinutes
-} from "../../lib/labels";
+import { EVENT_CATEGORY_LABEL, EVENT_STATUS_LABEL, NO_SUBJECT_LABEL, PRIORITY_LABEL, formatMinutes } from "../../lib/labels";
+import { EVENT_EDITOR_TEXT, eventLinkLabel } from "../../lib/labels/calendar";
 
 /** Calendario di un'altra persona in cui posso aggiungere eventi, con le sue materie condivise. */
 export interface EditorCalendar {

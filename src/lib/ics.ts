@@ -37,7 +37,8 @@ import {
   utcToZonedParts,
   zonedToUtc
 } from "./tz";
-import { EVENT_CATEGORY_LABEL, ICS_TEXT } from "./labels";
+import { EVENT_CATEGORY_LABEL } from "./labels";
+import { ICS_TEXT } from "./labels/ics";
 import { safeCssColor } from "./sharing";
 
 const DAY_MS = 86_400_000;

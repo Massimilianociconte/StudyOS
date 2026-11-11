@@ -15,7 +15,7 @@ import { scopeOptions, weekdaysText } from "../src/lib/eventEditor.ts";
 import { findOccurrence } from "../src/lib/occurrenceLookup.ts";
 import { applyEditPlan, expandEvents, isOccurrenceRow, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { customFromRule, repeatPresets, ruleFromCustom } from "../src/lib/repeatPicker.ts";
-import { SCOPE_TEXT } from "../src/lib/labels.ts";
+import { SCOPE_TEXT } from "../src/lib/labels/calendar.ts";
 import { localMidnight } from "../src/lib/tz.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 

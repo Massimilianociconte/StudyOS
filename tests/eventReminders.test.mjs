@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const reminders = await import("../src/lib/eventReminders.ts");
-const { EVENT_REMINDER_TEXT } = await import("../src/lib/labels.ts");
+const { EVENT_REMINDER_TEXT } = await import("../src/lib/labels/eventReminders.ts");
 
 // Date locali del dispositivo: i test valgono in ogni fuso (Roma, New York, UTC).
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);

@@ -9,15 +9,14 @@ import { selectableSubjects, studyMinutesThisWeek, studyStreak, subjectColor, su
 import {
   SESSION_FORM_TEXT,
   SESSION_TEMPLATE_LABEL,
-  STUDY_SIDE_TEXT,
   TIMER_KIND_LABEL,
   TIMER_PHASE_LABEL,
-  TIMER_SETTINGS_TEXT,
   TIMER_TEXT,
   capitalizeFirst,
   formatHours,
   formatMinutes
 } from "../lib/labels";
+import { STUDY_SIDE_TEXT, TIMER_SETTINGS_TEXT } from "../lib/labels/study";
 import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, type ReviewRating } from "../lib/review";
 import { Button, Drawer, Field, HelpTip, IconButton, Panel, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";

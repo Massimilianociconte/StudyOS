@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import type { ShareScope } from "../lib/sharing";
 import { cloudConfigured } from "../lib/cloudSyncState";
-import { SHARE_ACTION_LABEL, SHARE_TEXT } from "../lib/labels";
+import { SHARE_ACTION_LABEL, SHARE_TEXT } from "../lib/labels/sharing";
 import type { PageAction } from "./ui";
 
 // Come ShareButton: il pannello (e supabase-js) si scarica solo al tocco, le viste restano leggere.

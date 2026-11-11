@@ -1,6 +1,6 @@
 // Festività e ricorrenze italiane, calcolate (mai salvate, mai esportate, fuori dai riepiloghi).
 // Date civili YYYY-MM-DD: lo stesso giorno in ogni fuso.
-import { HOLIDAY_NAME } from "./labels";
+import { HOLIDAY_NAME } from "./labels/calendar";
 import { civilAddDays, civilDateOf, civilFromParts, civilWeekday, daysInMonth, parseCivil } from "./tz";
 
 export type HolidayKind = "national" | "celebration" | "clock";
