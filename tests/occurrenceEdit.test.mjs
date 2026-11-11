@@ -328,14 +328,17 @@ test("Nit 2. «La serie ora inizia…» solo se il primo giorno cambia davvero",
   );
 });
 
+/** Mezzogiorno a Roma del 2 novembre: per le serie con il fuso di Roma, stessi giorni da ogni dispositivo. */
+const ROME_NOON = { start: "2026-11-02T11:00:00.000Z", end: "2026-11-02T12:00:00.000Z" };
+
 test("R1-B1. tutta la serie spostata a un altro giorno (evento di un'altra persona, agente senza giorno): la regola segue", () => {
-  const series = { ...MONDAYS(), recurrence: "weekly", repeatLegacy: "weekly|", timeZone: "Europe/Rome" };
+  const series = { ...MONDAYS(), ...ROME_NOON, recurrence: "weekly", repeatLegacy: "weekly|", timeZone: "Europe/Rome" };
   const start = new Date(Date.parse(series.start) + DAY).toISOString();
   const end = new Date(Date.parse(series.end) + DAY).toISOString();
   const patch = seriesMovePatch(series, start, end);
   assert.deepEqual(patch, { start, end, repeat: { freq: "weekly", byWeekday: ["TU"] }, recurrence: "weekly", recurrenceUntil: undefined, repeatLegacy: "weekly|" });
   const after = { ...series, ...patch };
-  assert.deepEqual(shown([after], "2026-11-01", "2026-11-25"), ["2026-11-03 Lezione", "2026-11-10 Lezione", "2026-11-17 Lezione", "2026-11-24 Lezione"]);
+  assert.deepEqual(shown([after], "2026-11-01", "2026-11-26"), ["2026-11-03 Lezione", "2026-11-10 Lezione", "2026-11-17 Lezione", "2026-11-24 Lezione"]);
   // Stessa settimana dell'ora: solo gli orari. Regola senza giorno scritto, o nessuna regola: solo gli orari.
   const later = new Date(Date.parse(series.start) + 3600e3).toISOString();
   assert.deepEqual(seriesMovePatch(series, later, end), { start: later, end });
@@ -429,7 +432,7 @@ test("R2-S1. editor «Questo e i successivi»: dal 16 le date passano a mar–sa
 });
 
 test("R2-S1. tutta la serie spostata (agente senza giorno, evento di un'altra persona): ogni giorno della regola dello stesso scarto", () => {
-  const series = { ...event({ repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } }), recurrence: "weekly", repeatLegacy: "weekly|", timeZone: "Europe/Rome" };
+  const series = { ...event({ repeat: { freq: "weekly", byWeekday: ["MO", "WE"] }, ...ROME_NOON }), recurrence: "weekly", repeatLegacy: "weekly|", timeZone: "Europe/Rome" };
   const start = new Date(Date.parse(series.start) + DAY).toISOString();
   const end = new Date(Date.parse(series.end) + DAY).toISOString();
   const patch = seriesMovePatch(series, start, end);

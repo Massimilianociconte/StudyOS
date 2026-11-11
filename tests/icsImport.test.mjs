@@ -391,6 +391,20 @@ const LEGACY_FILE = ics(
   "SUMMARY:Anatomia",
   "END:VEVENT"
 );
+/**
+ * I vecchi import non hanno un fuso: si leggono nel fuso del dispositivo. Questi sono di chi sta a Roma
+ * (lunedì alle 9), quindi il test fissa il dispositivo a Roma: a Honolulu le 8:00Z sono domenica sera.
+ */
+const inRome = (run) => {
+  const previous = process.env.TZ;
+  process.env.TZ = "Europe/Rome";
+  try {
+    return run();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+};
 const legacyEvent = (weekday, start, extra = {}) => ({
   id: `old-${weekday}`,
   createdAt: T0,
@@ -415,7 +429,7 @@ const legacyEvent = (weekday, start, extra = {}) => ({
   ...extra
 });
 
-test("adozione dei vecchi import: giorni cancellati e modificati, note, materia e liste passano alla serie tenuta", () => {
+test("adozione dei vecchi import: giorni cancellati e modificati, note, materia e liste passano alla serie tenuta", () => inRome(() => {
   let events = [
     legacyEvent(1, "2026-11-02T08:00:00.000Z", { notes: "Portare il camice", tags: ["uni"], checklist: [{ id: "c1", text: "Camice", done: false }] }),
     legacyEvent(3, "2026-11-04T08:00:00.000Z", {
@@ -465,9 +479,9 @@ test("adozione dei vecchi import: giorni cancellati e modificati, note, materia 
   // Reimportare dopo l'adozione non cambia nulla.
   const again = merge(after, parseIcs(LEGACY_FILE, { timeZone: "America/New_York" }));
   assert.deepEqual({ added: again.added, updated: again.updated, puts: again.puts.length, deletes: again.deletes.length }, { added: 0, updated: 0, puts: 0, deletes: 0 });
-});
+}));
 
-test("adozione dei vecchi import: se una serie non si unisce senza perdere nulla, il gruppo resta com'era", () => {
+test("adozione dei vecchi import: se una serie non si unisce senza perdere nulla, il gruppo resta com'era", () => inRome(() => {
   // Materie diverse sui due giorni: unirle ne perderebbe una.
   const subjects = [legacyEvent(1, "2026-11-02T08:00:00.000Z", { subjectId: "anat" }), legacyEvent(3, "2026-11-04T08:00:00.000Z", { subjectId: "fisio" })];
   const plan = merge(subjects, parseIcs(LEGACY_FILE, { timeZone: "Europe/Rome" }));
@@ -494,7 +508,7 @@ test("adozione dei vecchi import: se una serie non si unisce senza perdere nulla
   assert.ok(third.deletes.includes("old-3"));
   assert.ok(third.deletes.includes("old-3@2027-01-13"));
   assert.deepEqual(third.warnings, []);
-});
+}));
 
 const SPLIT = ics(
   "X-WR-TIMEZONE:Europe/Rome",
