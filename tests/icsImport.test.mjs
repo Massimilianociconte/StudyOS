@@ -294,7 +294,9 @@ test("parti di regola non gestite: avviso che le elenca, regola originale conser
   assert.deepEqual(events[0].unsupported, ["BYDAY=MO,TU,WE,TH,FR", "BYSETPOS=2"]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /Secondo giorno feriale/);
-  assert.match(warnings[0], /BYSETPOS=2/);
+  // Le parti della regola sono dette a parole, non in codice.
+  assert.match(warnings[0], /giorni della settimana, la scelta per posizione/);
+  assert.doesNotMatch(warnings[0], /BYSETPOS/);
 });
 
 // ------------------------------------------------------------------------------------------

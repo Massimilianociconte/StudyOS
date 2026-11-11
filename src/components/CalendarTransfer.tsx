@@ -1,248 +1,555 @@
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { EventCategory } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { buildIcs, icsImportItems, matchSubject, parseIcs, type IcsParseResult } from "../lib/ics";
+import type { IcsImportedEvent, IcsParseResult } from "../lib/ics";
 import { downloadBlob } from "../lib/backup";
-import { EVENT_CATEGORY_LABEL } from "../lib/labels";
-import { RECURRENCE_LABEL } from "../lib/recurrence";
+import { CALENDAR_GUIDE_TEXT as T, EVENT_CATEGORY_LABEL } from "../lib/labels";
+import { describeRule } from "../lib/repeat";
+import { civilDateOf, isValidTimeZone } from "../lib/tz";
 import { selectableSubjects } from "../lib/selectors";
-import { Button, Drawer, Field, inputClass } from "./ui";
+import {
+  GUIDE_DEVICES,
+  appsFor,
+  detectDevice,
+  guideFor,
+  isPhone,
+  type GuideApp,
+  type GuideDevice,
+  type GuideDirection,
+  type GuideStep
+} from "../lib/calendarGuide";
+import { Button, Drawer, Field, inputClass, type PageAction } from "./ui";
 import { Icon } from "./Icon";
+import { DeviceGlyph, GuideArtView } from "./CalendarGuideArt";
 
 const MAX_ICS_BYTES = 5 * 1024 * 1024;
 
-/** Comandi per aprire importazione ed esportazione da fuori (es. il menu "Altre azioni"). */
+type IcsModule = typeof import("../lib/ics");
+type Stage = "direction" | "device" | "app" | "steps" | "preview" | "result";
+const PREVIOUS: Partial<Record<Stage, Stage>> = { device: "direction", app: "device", steps: "app", preview: "steps" };
+
+/** Comandi per aprire la guida da fuori (il menu "Altre azioni" del Calendario). */
 export interface CalendarTransferHandle {
-  /** Apre la scelta del file da importare: va chiamato dentro un tocco o un clic. */
-  chooseFile: () => void;
-  exportFile: () => void;
+  /** Apre la guida; con `direction` salta la prima domanda. */
+  open: (direction?: GuideDirection) => void;
 }
 
+/** Voce "Importa o esporta" per il menu "Altre azioni". */
+export const transferMenuItem = (onClick: () => void): PageAction => ({ label: T.menuItem, icon: "Import", onClick });
+
+const readHints = () => {
+  if (typeof navigator === "undefined") return {};
+  const data = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  return { userAgent: navigator.userAgent, platform: data?.platform || navigator.platform, maxTouchPoints: navigator.maxTouchPoints };
+};
+
+const ICS_TYPE = "text/calendar";
+const canShareFiles = () => {
+  try {
+    return typeof navigator !== "undefined" && typeof navigator.canShare === "function" && navigator.canShare({ files: [new File([""], "studyos.ics", { type: ICS_TYPE })] });
+  } catch {
+    return false;
+  }
+};
+
+/** Giorno dell'evento (YYYY-MM-DD) nel suo fuso: serve alla frase della regola di ripetizione. */
+const civilStart = (event: IcsImportedEvent) =>
+  event.allDay ? event.start.slice(0, 10) : civilDateOf(new Date(event.start), isValidTimeZone(event.timeZone) ? event.timeZone : undefined);
+const startDate = (event: IcsImportedEvent) => (event.allDay ? parseISO(event.start) : new Date(event.start));
+
 /**
- * Pulsanti Importa/Esporta .ics del calendario (Google, Apple, orario delle lezioni). L'import
- * mostra un'anteprima prima di scrivere: tipo predefinito, abbinamento alle materie, avvisi.
- * Con `buttons={false}` non mostra i pulsanti: si comanda con `ref` (anteprima e avvisi restano qui).
+ * Guida per portare il calendario da StudyOS a un'altra app e viceversa (file .ics): direzione,
+ * dispositivo (riconosciuto, si può cambiare), app, passi numerati con il pulsante dentro il passo
+ * che lo chiede. L'importazione mostra un'anteprima (regole di ripetizione, avvisi) prima di scrivere.
  */
-export function CalendarTransfer({ ref, buttons = true }: { ref?: Ref<CalendarTransferHandle>; buttons?: boolean } = {}) {
+export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } = {}) {
   const { events, exams, tasks, subjects, importEvents } = useStudyStore();
   const fileInput = useRef<HTMLInputElement>(null);
+  const top = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [open, setOpen] = useState(false);
+  const [stage, setStage] = useState<Stage>("direction");
+  const [direction, setDirection] = useState<GuideDirection>("export");
+  const [detected, setDetected] = useState<GuideDevice>("windows");
+  const [device, setDevice] = useState<GuideDevice>("windows");
+  const [app, setApp] = useState<GuideApp>("outlook");
+  const [ics, setIcs] = useState<IcsModule | null>(null);
+  const [downloaded, setDownloaded] = useState("");
   const [parsed, setParsed] = useState<(IcsParseResult & { fileName: string }) | null>(null);
   const [category, setCategory] = useState<EventCategory>("lesson");
   const [matchSubjects, setMatchSubjects] = useState(true);
-  const [result, setResult] = useState("");
   const [error, setError] = useState("");
+  const [result, setResult] = useState("");
+  const [busy, setBusy] = useState(false);
+  const shareable = useMemo(() => (open ? canShareFiles() : false), [open]);
 
-  // Esito dell'import/export come avviso temporaneo (la barra del titolo non ha spazio per il testo).
-  useEffect(() => {
-    if (!result && !error) return;
-    const timer = window.setTimeout(() => {
-      setResult("");
-      setError("");
-    }, 7000);
-    return () => window.clearTimeout(timer);
-  }, [result, error]);
-
-  const exportIcs = () => {
-    const text = buildIcs({ events, exams, tasks, subjects, categoryLabel: (value) => EVENT_CATEGORY_LABEL[value] });
-    downloadBlob(`studyos-calendario-${format(new Date(), "yyyy-MM-dd")}.ics`, new Blob([text], { type: "text/calendar;charset=utf-8" }));
+  const reset = () => {
+    setStage("direction");
+    setDownloaded("");
+    setParsed(null);
+    setCategory("lesson");
+    setMatchSubjects(true);
     setError("");
-    setResult("File del calendario scaricato: aprilo con Google Calendar o Apple Calendario per aggiungere eventi, esami e scadenze.");
+    setResult("");
+    setBusy(false);
   };
 
-  useImperativeHandle(ref, () => ({ chooseFile: () => fileInput.current?.click(), exportFile: exportIcs }));
+  const openGuide = (next?: GuideDirection) => {
+    reset();
+    const found = detectDevice(readHints());
+    setDetected(found);
+    setDevice(found);
+    setApp(appsFor(found)[0]);
+    setDirection(next ?? "export");
+    setStage(next ? "device" : "direction");
+    setOpen(true);
+  };
+
+  const close = () => {
+    setOpen(false);
+    reset();
+  };
+
+  useImperativeHandle(ref, () => ({ open: openGuide }));
+
+  // Il modulo dei file .ics si carica all'apertura: download e condivisione partono subito al tocco.
+  useEffect(() => {
+    if (!open || ics) return;
+    let alive = true;
+    void import("../lib/ics")
+      .then((module) => {
+        if (alive) setIcs(module);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [open, ics]);
+
+  // A ogni passaggio si riparte dall'inizio del pannello, con il titolo della domanda a fuoco.
+  useEffect(() => {
+    if (!open) return;
+    top.current?.scrollIntoView({ block: "start" });
+    heading.current?.focus({ preventScroll: true });
+  }, [stage]);
+
+  const go = (next: Stage) => {
+    setError("");
+    setStage(next);
+  };
+
+  const fileName = () => `studyos-calendario-${format(new Date(), "yyyy-MM-dd")}.ics`;
+  const buildText = (module: IcsModule) =>
+    module.buildIcs({ events, exams, tasks, subjects, categoryLabel: (value) => EVENT_CATEGORY_LABEL[value] });
+
+  const download = () => {
+    if (!ics) return;
+    const name = fileName();
+    downloadBlob(name, new Blob([buildText(ics)], { type: `${ICS_TYPE};charset=utf-8` }));
+    setDownloaded(name);
+  };
+
+  const share = async () => {
+    if (!ics) return;
+    const name = fileName();
+    try {
+      await navigator.share({ files: [new File([buildText(ics)], name, { type: ICS_TYPE })], title: name });
+      setDownloaded(name);
+    } catch {
+      // Condivisione annullata: resta il pulsante per scaricare.
+    }
+  };
 
   const readFile = async (file?: File) => {
     setError("");
-    setResult("");
     if (!file) return;
     if (file.size > MAX_ICS_BYTES) {
-      setError("Il file è troppo grande (massimo 5 MB). Esporta un periodo più breve dal tuo calendario e riprova.");
+      setError(T.tooBig);
       return;
     }
     let text = "";
     try {
       text = await file.text();
     } catch {
-      setError("Non è stato possibile leggere il file. Riprova o scegli un altro file .ics.");
+      setError(T.unreadable);
       return;
     }
-    const outcome = parseIcs(text);
+    let loaded = ics;
+    try {
+      loaded ??= await import("../lib/ics");
+    } catch {
+      setError(T.unreadable);
+      return;
+    }
+    setIcs(loaded);
+    const outcome = loaded.parseIcs(text);
     if (!outcome.events.length) {
-      setError(
-        `Nel file non ci sono eventi da importare.${outcome.warnings[0] ? ` ${outcome.warnings[0]}` : ""} Scegli un file .ics esportato da Google Calendar, Apple Calendario o dall'orario delle lezioni.`
-      );
+      setError(T.empty(outcome.warnings[0]));
       return;
     }
     setParsed({ ...outcome, fileName: file.name });
+    go("preview");
   };
 
   const candidates = useMemo(() => selectableSubjects(subjects), [subjects]);
   const preview = useMemo(() => {
-    if (!parsed) return null;
-    const sorted = [...parsed.events].sort((a, b) => a.start.localeCompare(b.start));
-    const matched = parsed.events.filter((event) => matchSubject(event.title, candidates)).length;
+    if (!parsed || !ics) return null;
+    const masters = parsed.events.filter((event) => !event.recurrenceId);
+    const sorted = [...masters].sort((a, b) => startDate(a).getTime() - startDate(b).getTime());
+    const first = sorted[0];
+    const last = sorted.at(-1);
     return {
-      first: sorted[0]?.start,
-      last: sorted[sorted.length - 1]?.start,
-      recurring: parsed.events.filter((event) => event.recurrence !== "none").length,
-      matched,
+      count: masters.length,
+      changed: parsed.events.length - masters.length,
+      recurring: masters.filter((event) => event.repeat).length,
+      matched: masters.filter((event) => ics.matchSubject(event.title, candidates)).length,
+      from: first ? format(startDate(first), "d MMM yyyy", { locale: it }) : "",
+      to: last && last !== first ? format(startDate(last), "d MMM yyyy", { locale: it }) : undefined,
       sample: sorted.slice(0, 6)
     };
-  }, [parsed, candidates]);
+  }, [parsed, ics, candidates]);
 
   const confirmImport = async () => {
-    if (!parsed) return;
-    // Serie, date escluse, occorrenze modificate e promemoria passano così come sono nel file.
-    const payload = icsImportItems(parsed.events, { defaultCategory: category, subjects: candidates, matchSubjects });
-    const { added, updated } = await importEvents(payload);
-    setParsed(null);
-    const parts = [
-      added ? `${added} ${added === 1 ? "evento aggiunto" : "eventi aggiunti"}` : "",
-      updated ? `${updated} ${updated === 1 ? "evento aggiornato" : "eventi aggiornati"}` : ""
-    ].filter(Boolean);
-    setResult(
-      parts.length
-        ? `Fatto: ${parts.join(", ")} nel calendario. Puoi modificarli o eliminarli come gli altri.`
-        : "Nessuna novità: gli eventi di questo file erano già tutti nel calendario."
-    );
+    if (!parsed || !ics || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      // Serie, date escluse, giorni modificati e promemoria passano così come sono nel file.
+      const payload = ics.icsImportItems(parsed.events, { defaultCategory: category, subjects: candidates, matchSubjects });
+      const { added, updated } = await importEvents(payload);
+      setResult(T.result(added, updated));
+      setParsed(null);
+      go("result");
+    } catch {
+      setError(T.importFailed);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const input = (
-    <input
-      ref={fileInput}
-      type="file"
-      accept=".ics,text/calendar"
-      className="sr-only"
-      tabIndex={buttons ? undefined : -1}
-      aria-hidden={buttons ? undefined : true}
-      onChange={(event) => {
-        const file = event.target.files?.[0];
-        event.target.value = "";
-        void readFile(file);
-      }}
-    />
-  );
+  const guide = guideFor(direction, device, app);
+  const previous = PREVIOUS[stage];
 
-  return (
-    <>
-      {buttons ? (
-        <>
-          <label
-            className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-transparent px-4 text-sm font-extrabold text-[var(--text)] hover:bg-[var(--surface)] focus-within:outline focus-within:outline-2 focus-within:outline-[var(--accent)]"
-            title="Scegli un file .ics esportato da Google Calendar, Apple Calendario o dall'orario delle lezioni: prima di aggiungere vedrai un'anteprima"
-          >
-            <Icon name="Import" className="h-4 w-4" />
-            <span className="hidden sm:inline">Importa da Google/Apple</span>
-            <span className="sr-only sm:hidden">Importa da Google o Apple (file .ics)</span>
-            {input}
-          </label>
-          <Button
-            variant="ghost"
-            icon="Download"
-            onClick={exportIcs}
-            title="Scarica eventi, esami e scadenze in un file .ics da aprire in Google Calendar o Apple Calendario"
-            aria-label="Esporta il calendario in un file .ics"
-          >
-            <span className="hidden sm:inline">Esporta</span>
-          </Button>
-        </>
-      ) : (
-        input
-      )}
-
-      {error || result ? (
-        <div
-          role="status"
-          style={{ bottom: "calc(7rem + env(safe-area-inset-bottom))" }}
-          className={`fixed left-1/2 z-50 flex w-[min(92vw,460px)] -translate-x-1/2 items-start gap-2 rounded-[18px] border p-3 text-sm font-bold shadow-soft backdrop-blur-xl sm:!bottom-6 ${
-            error ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]" : "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-text)]"
-          }`}
-        >
-          <p className="min-w-0 flex-1">{error || result}</p>
-          <button
-            type="button"
-            aria-label="Chiudi avviso"
-            onClick={() => {
-              setError("");
-              setResult("");
-            }}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-black/10"
-          >
-            <Icon name="X" className="h-4 w-4" />
-          </button>
-        </div>
-      ) : null}
-
-      <Drawer
-        open={Boolean(parsed)}
-        onClose={() => setParsed(null)}
-        eyebrow="Importa da Google/Apple"
-        title={parsed?.fileName ?? ""}
-        width="max-w-[560px]"
-        footer={
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="ghost" onClick={() => setParsed(null)}>
-              Annulla
+  const stepAction = (item: GuideStep) => {
+    if (item.action === "download")
+      return (
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" icon="Download" onClick={download} disabled={!ics}>
+              {ics ? T.download : T.loading}
             </Button>
-            <Button variant="primary" icon="Check" onClick={() => void confirmImport()}>
-              {parsed?.events.length === 1 ? "Aggiungi 1 evento al calendario" : `Aggiungi ${parsed?.events.length ?? 0} eventi al calendario`}
-            </Button>
-          </div>
-        }
-      >
-        {parsed && preview ? (
-          <div className="grid grid-cols-1 gap-4">
-            <p className="text-sm font-bold text-[var(--muted)]">
-              Nel file ci sono {parsed.events.length === 1 ? "1 evento" : `${parsed.events.length} eventi`}
-              {preview.recurring ? ` (${preview.recurring} si ripetono)` : ""}
-              {preview.first ? `, dal ${format(parseISO(preview.first), "d MMM yyyy", { locale: it })}` : ""}
-              {preview.last && preview.last !== preview.first ? ` al ${format(parseISO(preview.last), "d MMM yyyy", { locale: it })}` : ""}. Controlla l'anteprima e
-              aggiungili al calendario: se importi di nuovo lo stesso file, gli eventi già presenti vengono aggiornati, non duplicati.
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <Field label="Tipo di evento">
-                  <select className={inputClass} value={category} onChange={(event) => setCategory(event.target.value as EventCategory)}>
-                    {(Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => (
-                      <option key={id} value={id}>
-                        {EVENT_CATEGORY_LABEL[id]}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <p className="mt-1 text-xs font-bold text-[var(--muted)]">Usato quando il titolo non fa capire il tipo (es. «Esame», «Laboratorio»).</p>
-              </div>
-              <label className="flex min-h-11 items-center gap-2 self-end text-sm font-bold">
-                <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={matchSubjects} onChange={(event) => setMatchSubjects(event.target.checked)} />
-                Collega alle mie materie in base al titolo ({preview.matched} {preview.matched === 1 ? "riconosciuto" : "riconosciuti"})
-              </label>
-            </div>
-            <ul className="grid grid-cols-1 gap-1 rounded-[18px] bg-[var(--surface-soft)] p-2">
-              {preview.sample.map((event, index) => (
-                <li key={`${event.uid ?? event.title}-${index}`} className="flex min-w-0 items-center gap-2 px-1.5 py-1 text-sm">
-                  <span className="shrink-0 text-xs font-black tabular-nums text-[var(--muted)]">
-                    {format(parseISO(event.start), event.allDay ? "d MMM" : "d MMM HH:mm", { locale: it })}
-                  </span>
-                  <span className="one-line-safe min-w-0 flex-1 font-bold">{event.title}</span>
-                  {event.recurrence !== "none" ? <span className="shrink-0 text-[11px] font-black text-[var(--accent-ink)]">{RECURRENCE_LABEL[event.recurrence]}</span> : null}
-                </li>
-              ))}
-              {parsed.events.length > preview.sample.length ? (
-                <li className="px-1.5 text-xs font-bold text-[var(--faint)]">…e altri {parsed.events.length - preview.sample.length}</li>
-              ) : null}
-            </ul>
-            {parsed.warnings.length ? (
-              <ul className="grid grid-cols-1 gap-1 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-xs font-bold text-[var(--warning-text)]">
-                {parsed.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
+            {shareable && isPhone(detected) ? (
+              <Button variant="soft" icon="Share2" onClick={() => void share()} disabled={!ics}>
+                {T.share}
+              </Button>
             ) : null}
           </div>
+          {downloaded ? (
+            <p role="status" className="flex items-start gap-1.5 text-xs font-bold text-[var(--success-text)]">
+              <Icon name="Check" className="mt-px h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 break-words">{T.downloaded(downloaded)}</span>
+            </p>
+          ) : null}
+        </div>
+      );
+    if (item.action === "chooseFile")
+      return (
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <div>
+            <Button variant="primary" icon="Import" onClick={() => fileInput.current?.click()}>
+              {T.chooseFile}
+            </Button>
+          </div>
+          {error ? <Alert>{error}</Alert> : null}
+        </div>
+      );
+    return null;
+  };
+
+  const choice = (selected: boolean) =>
+    `motion-safe flex min-h-11 w-full items-center gap-3 rounded-[18px] border p-3 text-left transition-colors hover:bg-[var(--surface-strong)] ${
+      selected ? "border-[var(--accent)] bg-[var(--surface-soft)]" : "border-[var(--border)] bg-[var(--surface)]"
+    }`;
+
+  const question = (text: ReactNode, sub?: ReactNode) => (
+    <div className="grid grid-cols-1 gap-1">
+      <h3 ref={heading} tabIndex={-1} className="break-words text-base font-black outline-none">
+        {text}
+      </h3>
+      {sub ? <p className="text-sm font-bold text-[var(--muted)]">{sub}</p> : null}
+    </div>
+  );
+
+  let body: ReactNode = null;
+  if (stage === "direction")
+    body = (
+      <>
+        {question(T.directionQuestion)}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {(["export", "import"] as const).map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`${choice(false)} sm:flex-col sm:items-start`}
+              onClick={() => {
+                setDirection(id);
+                go("device");
+              }}
+            >
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--accent-ink)]">
+                <Icon name={id === "export" ? "Send" : "Import"} className="h-5 w-5" />
+              </span>
+              <span className="grid min-w-0 grid-cols-1 gap-0.5">
+                <span className="text-sm font-black">{T.direction[id].title}</span>
+                <span className="text-xs font-bold text-[var(--muted)]">{T.direction[id].text}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </>
+    );
+  else if (stage === "device")
+    body = (
+      <>
+        {question(T.deviceQuestion, T.direction[direction].title)}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {GUIDE_DEVICES.map((id) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={id === device}
+              className={choice(id === device)}
+              onClick={() => {
+                if (id !== device) setApp(appsFor(id)[0]);
+                setDevice(id);
+                go("app");
+              }}
+            >
+              <DeviceGlyph device={id} className="h-9 w-9 shrink-0 text-[var(--text)]" />
+              <span className="min-w-0 flex-1 text-sm font-black">{T.device[id]}</span>
+              {id === detected ? (
+                <span className="shrink-0 rounded-full bg-[var(--surface-strong)] px-2 py-0.5 text-[11px] font-black text-[var(--accent-ink)]">{T.thisDevice}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      </>
+    );
+  else if (stage === "app")
+    body = (
+      <>
+        {question(T.appQuestion, T.device[device])}
+        <div className="grid grid-cols-1 gap-2">
+          {appsFor(device).map((id) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={id === app}
+              className={choice(id === app)}
+              onClick={() => {
+                setApp(id);
+                go("steps");
+              }}
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)]">
+                <Icon name="CalendarDays" className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 text-sm font-black">{T.app[id]}</span>
+              <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+            </button>
+          ))}
+        </div>
+        <p className="text-xs font-bold text-[var(--muted)]">{T.otherApp}</p>
+      </>
+    );
+  else if (stage === "steps")
+    body = (
+      <>
+        {question(
+          T.route(direction, T.app[app], T.device[device]),
+          guide.kind === "steps" && guide.needsComputer ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2.5 py-0.5 text-xs font-black text-[var(--warning-text)]">
+              <DeviceGlyph device="windows" className="h-4 w-4" />
+              {T.needsComputer}
+            </span>
+          ) : undefined
+        )}
+        {guide.kind === "redirect" ? (
+          <div className="grid grid-cols-1 gap-3 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-4 text-[var(--warning-text)]">
+            <p className="flex items-center gap-2 text-sm font-black">
+              <Icon name="AlertTriangle" className="h-4 w-4 shrink-0" />
+              {T.redirectTitle}
+            </p>
+            <p className="text-sm font-bold">{guide.reason}</p>
+            <button
+              type="button"
+              className="motion-safe inline-flex min-h-11 items-center gap-2 justify-self-start rounded-full bg-[var(--accent)] px-4 py-2 text-left text-sm font-extrabold text-[#10131d] shadow-lift hover:scale-[1.02]"
+              onClick={() => {
+                setDevice(guide.to.device);
+                setApp(guide.to.app);
+                setError("");
+                top.current?.scrollIntoView({ block: "start" });
+              }}
+            >
+              <Icon name="ChevronRight" className="h-4 w-4 shrink-0" />
+              <span className="min-w-0">{T.redirectButton(T.app[guide.to.app], T.device[guide.to.device])}</span>
+            </button>
+          </div>
+        ) : (
+          <ol className="grid grid-cols-1 gap-3">
+            {guide.steps.map((item, index) => (
+              <li key={item.text} className="grid grid-cols-1 gap-3 rounded-[18px] border border-[var(--border)] bg-[var(--surface)] p-3 sm:grid-cols-[minmax(0,1fr)_168px] sm:items-start">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-sm font-black tabular-nums" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-start gap-2 text-sm font-bold leading-relaxed">
+                      <Icon name={item.icon} className="mt-1 h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+                      <span className="min-w-0 break-words">{item.text}</span>
+                    </p>
+                    {stepAction(item)}
+                  </div>
+                </div>
+                {item.art ? (
+                  <GuideArtView art={item.art} app={app} device={device} className="mx-auto h-auto w-full max-w-[200px] sm:max-w-none" />
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        )}
+      </>
+    );
+  else if (stage === "preview" && parsed && preview)
+    body = (
+      <>
+        {question(parsed.fileName, `${T.previewSummary(preview.count, preview.recurring, preview.changed)} ${preview.from ? T.previewRange(preview.from, preview.to) : ""}`)}
+        <p className="text-xs font-bold text-[var(--muted)]">{T.previewNoDuplicates}</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <Field label={T.categoryLabel}>
+              <select className={inputClass} value={category} onChange={(event) => setCategory(event.target.value as EventCategory)}>
+                {(Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => (
+                  <option key={id} value={id}>
+                    {EVENT_CATEGORY_LABEL[id]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <p className="mt-1 text-xs font-bold text-[var(--muted)]">{T.categoryHint}</p>
+          </div>
+          <label className="flex min-h-11 items-center gap-2 self-end text-sm font-bold">
+            <input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" checked={matchSubjects} onChange={(event) => setMatchSubjects(event.target.checked)} />
+            {T.matchSubjects(preview.matched)}
+          </label>
+        </div>
+        <ul className="grid grid-cols-1 gap-1 rounded-[18px] bg-[var(--surface-soft)] p-2">
+          {preview.sample.map((event, index) => (
+            <li key={`${event.uid ?? event.title}-${index}`} className="grid min-w-0 grid-cols-1 gap-0.5 px-1.5 py-1 text-sm">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 text-xs font-black tabular-nums text-[var(--muted)]">
+                  {format(startDate(event), event.allDay ? "d MMM" : "d MMM HH:mm", { locale: it })}
+                </span>
+                <span className="one-line-safe min-w-0 flex-1 font-bold">{event.title}</span>
+              </span>
+              {event.repeat ? (
+                <span className="flex min-w-0 items-start gap-1 text-xs font-black text-[var(--accent-ink)]">
+                  <Icon name="RefreshCw" className="mt-px h-3 w-3 shrink-0" />
+                  <span className="min-w-0 break-words">{describeRule(event.repeat, civilStart(event))}</span>
+                </span>
+              ) : null}
+            </li>
+          ))}
+          {preview.count > preview.sample.length ? <li className="px-1.5 text-xs font-bold text-[var(--faint)]">{T.previewMore(preview.count - preview.sample.length)}</li> : null}
+        </ul>
+        {parsed.warnings.length ? (
+          <div className="grid grid-cols-1 gap-1.5 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-[var(--warning-text)]">
+            <p className="flex items-center gap-1.5 text-xs font-black">
+              <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0" />
+              {T.warningsTitle}
+            </p>
+            <ul className="grid grid-cols-1 gap-1 text-xs font-bold">
+              {parsed.warnings.map((warning) => (
+                <li key={warning} className="break-words">
+                  {warning}
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
-      </Drawer>
-    </>
+        {error ? <Alert>{error}</Alert> : null}
+      </>
+    );
+  else if (stage === "result")
+    body = (
+      <>
+        {question(T.resultTitle)}
+        <p role="status" className="flex items-start gap-2 rounded-[18px] border border-[var(--success-border)] bg-[var(--success-bg)] p-4 text-sm font-bold text-[var(--success-text)]">
+          <Icon name="CheckCheck" className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0">{result}</span>
+        </p>
+      </>
+    );
+
+  const footer =
+    stage === "direction" ? undefined : (
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {previous ? (
+          <Button variant="ghost" icon="ChevronLeft" onClick={() => go(previous)}>
+            {T.back}
+          </Button>
+        ) : stage === "result" ? (
+          <Button variant="ghost" icon="Import" onClick={() => go("steps")}>
+            {T.importAnother}
+          </Button>
+        ) : (
+          <span />
+        )}
+        {stage === "preview" && preview ? (
+          <Button variant="primary" icon="Check" onClick={() => void confirmImport()} disabled={busy}>
+            {T.add(preview.count || preview.changed)}
+          </Button>
+        ) : stage === "steps" || stage === "result" ? (
+          <Button variant={stage === "result" ? "primary" : "soft"} icon="Check" onClick={close}>
+            {T.done}
+          </Button>
+        ) : null}
+      </div>
+    );
+
+  return (
+    <Drawer open={open} onClose={close} eyebrow={T.eyebrow} title={T.title} width="max-w-[600px]" footer={footer}>
+      <div ref={top} className="grid scroll-mt-4 grid-cols-1 gap-4">
+        <p className="flex items-start gap-2 rounded-[14px] bg-[var(--surface-soft)] p-3 text-xs font-bold text-[var(--muted)]">
+          <Icon name="Info" className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0">{T.honesty}</span>
+        </p>
+        {body}
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".ics,text/calendar"
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            void readFile(file);
+          }}
+        />
+      </div>
+    </Drawer>
+  );
+}
+
+function Alert({ children }: { children: ReactNode }) {
+  return (
+    <p role="alert" className="flex items-start gap-2 rounded-[14px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-xs font-bold text-[var(--danger-text)]">
+      <Icon name="AlertTriangle" className="mt-px h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0">{children}</span>
+    </p>
   );
 }
