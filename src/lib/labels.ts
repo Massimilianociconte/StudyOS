@@ -1142,7 +1142,15 @@ export const ICS_TEXT = {
   legacyKept: (titles: readonly string[]) =>
     titles.length === 1
       ? `${quotedTitles(titles)} era già stato importato in più parti, con modifiche che non si possono unire senza perderne qualcuna: è rimasto com'era. Se vuoi la versione del file, elimina quelle parti e importa di nuovo.`
-      : `${quotedTitles(titles)} erano già stati importati in più parti, con modifiche che non si possono unire senza perderne qualcuna: sono rimasti com'erano. Se vuoi la versione del file, elimina quelle parti e importa di nuovo.`
+      : `${quotedTitles(titles)} erano già stati importati in più parti, con modifiche che non si possono unire senza perderne qualcuna: sono rimasti com'erano. Se vuoi la versione del file, elimina quelle parti e importa di nuovo.`,
+  /** Il file divide una serie che c'era già: `date` (YYYY-MM-DD) è il primo giorno della parte nuova. */
+  splitsExisting: (title: string, date: string) => {
+    const [year, month, day] = date.split("-").map(Number);
+    return `${quotedTitles([title])}: questo file divide una serie che hai già. Dal ${day} ${MONTH_NAME[month - 1] ?? ""} ${year} i giorni li decide la parte nuova, e importare di nuovo il calendario ufficiale non lo annulla. Per tornare indietro elimina la parte nuova.`;
+  },
+  /** Il file ha una parte (RELATED-TO) di una serie che c'era già, ma non si collega: resta un evento a sé. */
+  partKeptApart: (title: string) =>
+    `${quotedTitles([title])}: questo file ha una parte di una serie che hai già, ma non combacia con la tua: è stata aggiunta a parte. Se vedi giorni doppi, elimina quella che non ti serve.`
 };
 
 // --- Guida a importazione ed esportazione (components/CalendarTransfer, lib/calendarGuide) ---

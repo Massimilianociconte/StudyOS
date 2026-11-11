@@ -344,6 +344,14 @@ const truncatedRule = (rule: RepeatRule, startDate: string, date: string): Repea
   return { ...rule, end: { type: "until", date: civilAddDays(date, -1) } };
 };
 
+/** La regola ha ancora occorrenze dal giorno `date` in poi (senza regola: l'evento è da `date` in poi). */
+const runsInto = (rule: RepeatRule | null, startDate: string, date: string) => {
+  if (!rule) return startDate >= date;
+  if (rule.end?.type === "until") return rule.end.date >= date;
+  if (rule.end?.type === "count") return countBefore(rule, startDate, date) < rule.end.count;
+  return true;
+};
+
 /** Finestra di un'espansione: la regola dà al più un'occorrenza al giorno, sotto il limite del motore (1000). */
 const WINDOW_DAYS = 999;
 /** Oltre questo vuoto tra due date si apre una finestra nuova: date sparse in secoli non si espandono tutte. */
@@ -1810,6 +1818,12 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   /** Serie locale di ogni UID del file, e le figlie che nel file dicono chi è la madre. */
   const masterOf = new Map<string, string>();
   const parentLinks: [string, string][] = [];
+  /** Figlie nuove (create da questo import) di una serie che c'era già: non sono una copia nuova. */
+  const joinsExisting = new Set<string>();
+  /** Serie che avevi già, divise da questo file: titolo e giorno da cui decide la parte nuova. */
+  const splitExisting: [string, string][] = [];
+  /** Serie che avevi già con una parte nuova nel file che non si collega (resta a sé). */
+  const keptApart: string[] = [];
   const nowMs = Date.parse(now);
   const today = civilDateOf(Number.isNaN(nowMs) ? Date.now() : nowMs, fallbackZone);
   const put = (event: CalendarEvent) => puts.set(event.id, event);
@@ -2036,7 +2050,9 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         continue;
       }
       const fromFile = rowFor(home.member, home.timing, date, uid, rid, change, current);
-      const desired = edited && (received || created.has(home.member.id)) ? { ...fromFile, sourceEdited: true as const } : fromFile;
+      // Copia nuova = tutta la famiglia nasce con questo import: una figlia nuova di una serie che avevi già no.
+      const fresh = created.has(home.member.id) && !joinsExisting.has(home.member.id);
+      const desired = edited && (received || fresh) ? { ...fromFile, sourceEdited: true as const } : fromFile;
       placed.add(desired.id);
       if (current && current.id === desired.id && sameRow(current, desired)) continue;
       put(desired);
@@ -2206,7 +2222,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       master = next ?? existing;
     } else master = create(item);
     masterOf.set(uid, master.id);
-    if (item.parentUid && uid.endsWith("@studyos")) parentLinks.push([uid, item.parentUid]);
+    if (item.parentUid && uid.endsWith("@studyos")) {
+      parentLinks.push([uid, item.parentUid]);
+      if (created.has(master.id) && localMaster(item.parentUid)) joinsExisting.add(master.id);
+    }
     applyRows(master, uid, item.exdates ?? [], changes.get(uid) ?? [], true, item.editedExdates);
     changes.delete(uid);
   }
@@ -2228,26 +2247,44 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   }
 
   // Figlie di una divisione fatta in StudyOS (RELATED-TO verso la madre): tornano nella famiglia anche in
-  // un altro calendario, così il file della madre non ne ripete i giorni.
-  for (const [uid, parentUid] of parentLinks) {
-    const childId = masterOf.get(uid) as string;
+  // un altro calendario, così il file della madre non ne ripete i giorni. True se la figlia è collegata.
+  const linkChild = (childId: string, parentUid: string) => {
     // Solo con la madre nello stesso file: un file con la sola figlia non taglia una serie che hai già.
     const parentId = masterOf.get(parentUid);
     const child = puts.get(childId) ?? byId.get(childId);
     const parent = parentId ? puts.get(parentId) ?? byId.get(parentId) : undefined;
-    if (!child || !parent || parent.id === child.id || parentIdOf(child) || isOccurrenceRow(parent)) continue;
+    if (!child || !parent || parent.id === child.id || parentIdOf(child) || isOccurrenceRow(parent)) return false;
     const childTiming = timingOf(child, fallbackZone);
     const parentTiming = timingOf(parent, fallbackZone);
-    if (!childTiming || !parentTiming || parentTiming.startDate >= childTiming.startDate) continue;
+    if (!childTiming || !parentTiming || parentTiming.startDate >= childTiming.startDate) return false;
     // Niente giri: la madre non può discendere dalla figlia.
     let ancestor: CalendarEvent | undefined = parent;
     for (let steps = 0; ancestor && ancestor.id !== child.id && steps < 100; steps += 1) {
       const next = parentIdOf(ancestor);
       ancestor = next ? puts.get(next) ?? byId.get(next) : undefined;
     }
-    if (ancestor?.id === child.id) continue;
+    if (ancestor?.id === child.id) return false;
+    const existed = !created.has(parent.id);
+    if (existed) {
+      // Una serie che avevi già si divide solo se nel file finisce da sé prima della parte nuova (come la
+      // esporta StudyOS dopo una divisione): il file non la taglia oltre quello che dice la sua stessa riga.
+      // Il collegamento serve perché il calendario ufficiale, reimportato, non ne raddoppi i giorni (S6).
+      const parentRule = normalizeRepeat(parent);
+      const cut = cuts.get(parent.id);
+      if (!parentRule) return false;
+      if (runsInto(parentRule, parentTiming.startDate, childTiming.startDate) && !(cut !== undefined && cut <= childTiming.startDate)) return false;
+    }
     put({ ...child, splitFrom: parent.id, originalDate: childTiming.startDate, ...(created.has(child.id) ? {} : { updatedAt: now }) });
     if (!created.has(child.id)) touched.add(child.id);
+    if (existed) splitExisting.push([String(parent.title ?? ""), childTiming.startDate]);
+    return true;
+  };
+  for (const [uid, parentUid] of parentLinks) {
+    const childId = masterOf.get(uid) as string;
+    if (linkChild(childId, parentUid) || !created.has(childId)) continue;
+    // Parte nuova di una serie che hai già, rimasta a sé: lo si dice, perché può ripeterne i giorni.
+    const yours = localMaster(parentUid);
+    if (yours) keptApart.push(String(yours.title ?? ""));
   }
 
   // Righe importate che nessuna serie del file ha messo: ora si possono togliere.
@@ -2263,5 +2300,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   const byRead = new Map<number, string[]>();
   for (const { title, read } of capped) byRead.set(read, [...(byRead.get(read) ?? []), title]);
   for (const [read, titles] of byRead) warnings.push(ICS_TEXT.tooManyRows([...new Set(titles)], read));
+  for (const [title, date] of splitExisting) warnings.push(ICS_TEXT.splitsExisting(title, date));
+  for (const title of new Set(keptApart)) warnings.push(ICS_TEXT.partKeptApart(title));
   return { puts: [...puts.values()], deletes: [...deletes].filter((id) => !puts.has(id)), added: created.size, updated: touched.size, relinked, warnings };
 };

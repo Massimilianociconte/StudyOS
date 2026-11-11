@@ -801,6 +801,98 @@ test("X-STUDYOS-EDITED su un giorno modificato conta solo con il valore TRUE", (
   for (const value of ["FALSE", "1", "", undefined]) assert.equal(change(value), undefined, String(value));
 });
 
+const COURSE_VEVENT = COURSE.split("\r\n").slice(COURSE.split("\r\n").indexOf("BEGIN:VEVENT"), COURSE.split("\r\n").indexOf("END:VEVENT") + 1);
+const courseChild = (extra, rows = []) =>
+  ics(
+    "X-WR-TIMEZONE:Europe/Rome",
+    ...COURSE_VEVENT,
+    "BEGIN:VEVENT",
+    "UID:altro@studyos",
+    "RELATED-TO;RELTYPE=PARENT:corso@univ.example",
+    ...extra,
+    "SUMMARY:Anatomia",
+    "END:VEVENT",
+    ...rows
+  );
+const lessonsOn = (events, date) => window(events).filter((line) => line.startsWith(date));
+/** Avviso: il file ha una parte di una tua serie che non si collega (resta un evento a sé). */
+const APART = (title) =>
+  `«${title}»: questo file ha una parte di una serie che hai già, ma non combacia con la tua: è stata aggiunta a parte. Se vedi giorni doppi, elimina quella che non ti serve.`;
+
+test("la tua serie ripetuta com'è più una parte nuova (RELATED-TO): la serie non si divide e il segno non vale", () => {
+  const marked = courseChild(
+    [
+      "DTSTART;TZID=Europe/Rome:20261123T090000",
+      "DTEND;TZID=Europe/Rome:20261123T110000",
+      "RRULE:FREQ=WEEKLY;BYDAY=MO",
+      "EXDATE;TZID=Europe/Rome:20261130T090000",
+      "X-STUDYOS-EDITED;TZID=Europe/Rome:20261130T090000"
+    ],
+    [
+      "BEGIN:VEVENT",
+      "UID:altro@studyos",
+      "RECURRENCE-ID;TZID=Europe/Rome:20261207T090000",
+      "X-STUDYOS-EDITED:TRUE",
+      "DTSTART;TZID=Europe/Rome:20261207T180000",
+      "DTEND;TZID=Europe/Rome:20261207T190000",
+      "SUMMARY:Anatomia (spostata)",
+      "END:VEVENT"
+    ]
+  );
+  const once = courseChild(["DTSTART;TZID=Europe/Rome:20261130T090000", "DTEND;TZID=Europe/Rome:20261130T110000", "RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=1"]);
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    for (const [label, file] of [["segnata", marked], ["COUNT=1", once]]) {
+      let events = apply([], merge([], parseIcs(COURSE, { timeZone: device }), { timeZone: device }));
+      const mondays = window(events).filter((line) => line.startsWith("2026-12-"));
+      assert.equal(mondays.length, 4, device);
+      const plan = merge(events, parseIcs(file, { timeZone: device }), { timeZone: device });
+      assert.equal(plan.added, 1, `${device} ${label}`);
+      assert.deepEqual(plan.warnings, [APART("Anatomia")], `${device} ${label}`);
+      events = apply(events, plan);
+      // Il file dice che la tua serie continua: la parte nuova resta a sé, e i suoi giorni segnati non sono "a mano".
+      assert.ok(!events.some((event) => event.splitFrom), `${device} ${label}`);
+      assert.ok(!events.some((event) => event.sourceEdited), `${device} ${label}`);
+      const yours = ["2026-11-30", "2026-12-07", "2026-12-14", "2026-12-21", "2026-12-28"];
+      for (const date of yours) assert.ok(lessonsOn(events, date).includes(`${date}T08:00:00.000Z Anatomia`), `${device} ${label} ${date}`);
+      // Il calendario ufficiale, due volte: la tua serie resta intera e non cambia più.
+      for (let index = 0; index < 2; index += 1) events = apply(events, merge(events, parseIcs(COURSE, { timeZone: device }), { timeZone: device }));
+      for (const date of yours) assert.ok(lessonsOn(events, date).includes(`${date}T08:00:00.000Z Anatomia`), `${device} ${label} ${date}`);
+      assert.deepEqual(counts(merge(events, parseIcs(COURSE, { timeZone: device }), { timeZone: device })), NOTHING, `${device} ${label}`);
+    }
+  }
+});
+
+test("copia aggiornata dopo una divisione fatta nell'originale: la parte nuova si collega, con un avviso, e Google non raddoppia i giorni", () => {
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    const exportOf = (events) => buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
+    const into = (events, text) => merge(events, parseIcs(text, { timeZone: device }), { timeZone: device });
+    let original = apply([], into([], COURSE));
+    let copy = apply([], into([], exportOf(original)));
+    const series = original.find((event) => !event.seriesId);
+    original = apply(original, planEdit(series, original, "2026-11-23", "following", { title: "Anatomia (secondo modulo)" }, { now: NOW }));
+    const newer = exportOf(original);
+    const plan = into(copy, newer);
+    assert.deepEqual(
+      plan.warnings,
+      ["«Anatomia»: questo file divide una serie che hai già. Dal 23 novembre 2026 i giorni li decide la parte nuova, e importare di nuovo il calendario ufficiale non lo annulla. Per tornare indietro elimina la parte nuova."],
+      device
+    );
+    copy = apply(copy, plan);
+    const copyParent = copy.find((event) => event.sourceUid === "corso@univ.example" && !event.seriesId);
+    assert.ok(copy.some((event) => event.splitFrom === copyParent.id), device);
+    assert.deepEqual(window(copy), window(original), device);
+    // Di nuovo lo stesso file: niente da fare e nessun avviso.
+    const again = into(copy, newer);
+    assert.deepEqual(counts(again), NOTHING, device);
+    assert.deepEqual(again.warnings, [], device);
+    // Il calendario ufficiale (serie senza fine) nella copia: un giorno solo per lunedì, come nell'originale.
+    copy = apply(copy, into(copy, COURSE));
+    original = apply(original, into(original, COURSE));
+    assert.deepEqual(lessonsOn(copy, "2026-11-30"), ["2026-11-30T08:00:00.000Z Anatomia (secondo modulo)"], device);
+    assert.deepEqual(window(copy), window(original), device);
+  }
+});
+
 test("RELATED-TO verso una serie che non è nel file: non divide le serie che hai già", () => {
   for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
     const mine = apply([], merge([], parseIcs(SPLIT, { timeZone: device }), { timeZone: device }));
@@ -817,6 +909,7 @@ test("RELATED-TO verso una serie che non è nel file: non divide le serie che ha
     const plan = merge(mine, parseIcs(only, { timeZone: device }), { timeZone: device });
     assert.equal(plan.added, 1, device);
     assert.equal(plan.updated, 0, device);
+    assert.deepEqual(plan.warnings, [APART("Fisica")], device);
     const after = apply(mine, plan);
     assert.ok(!after.some((event) => event.splitFrom), device);
     const mondays = (events) => window(events).filter((line) => line.startsWith("2026-12-") && line.endsWith(" Fisica"));
