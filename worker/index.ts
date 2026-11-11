@@ -1,8 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import { PUBLISHED_HOST } from "../src/agent/hubEndpoint";
 import { HttpHub, type HubSnapshot } from "../src/agent/httpHub";
+import { handlePush, type PushEnv } from "./push";
 
-interface Env {
+interface Env extends PushEnv {
   HUB: DurableObjectNamespace<StudyHubObject>;
   STUDYOS_PAIR_KEY: string;
 }
@@ -60,6 +61,8 @@ export class StudyHubObject extends DurableObject<Env> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // POST /push arriva dal database (pg_net): non sveglia il Durable Object dell'hub MCP.
+    if (new URL(request.url).pathname === "/push") return handlePush(request, env);
     return env.HUB.getByName("owner").fetch(request);
   }
 };
