@@ -1503,7 +1503,6 @@ const ruleParts = (parts: readonly string[]) => [...new Set(parts.map(rulePartTe
 export const ICS_TEXT = {
   calendarName: "StudyOS",
   untitled: "Evento importato",
-  location: (place: string) => `Luogo: ${place}`,
   examTitle: (subject: string) => `Esame: ${subject}`,
   examFallback: "materia",
   examCategory: "Esame",

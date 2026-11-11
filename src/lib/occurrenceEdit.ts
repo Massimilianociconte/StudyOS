@@ -4,6 +4,7 @@
 import type { CalendarEvent, RepeatRule, Weekday } from "../types";
 import {
   applyEditPlan,
+  countBefore,
   expandEvents,
   expandRule,
   isOccurrenceRow,
@@ -172,6 +173,17 @@ export const weekdayShift = (before: RepeatRule | null | undefined, after: Repea
 const followedRule = (series: CalendarEvent, date: string, picked: string) => movedRule(normalizeRepeat(series), date, picked);
 
 /**
+ * "Questo e i successivi" con la regola che segue lo spostamento: la parte nuova ha solo le volte
+ * rimaste, così una serie di N volte finisce quando finiva prima (le volte prima di `date` restano
+ * alla parte vecchia). Una regola scelta a mano non passa di qui.
+ */
+const remainingCount = (rule: RepeatRule, series: CalendarEvent, date: string): RepeatRule => {
+  if (rule.end?.type !== "count") return rule;
+  const before = countBefore(normalizeRepeat(series), startDayOf(series.start, series.allDay, zoneOf(series)), date);
+  return { ...rule, end: { ...rule.end, count: Math.max(1, rule.end.count - before) } };
+};
+
+/**
  * La modifica cambia la regola per scelta? Non se la regola nuova è solo quella che segue il giorno
  * spostato: allora c'è ancora "Solo questo" (e la regola non va su quel giorno da solo).
  */
@@ -211,7 +223,10 @@ export const occurrenceEditCalls = ({
   const shifted = followed ? weekdayShift(normalizeRepeat(series), followed) : undefined;
   const weekdays = shifted ? { weekdays: shifted } : {};
   const ruled = moved.repeat ? { ...moved, repeat: explicitRule(moved.repeat, picked) } : moved;
-  if (scope === "following") return { calls: [{ scope, patch: followingPatch(shown, ruled, target.row) }], ...weekdays };
+  if (scope === "following") {
+    const counted = followed && ruled.repeat ? { ...ruled, repeat: remainingCount(ruled.repeat, series, target.date) } : ruled;
+    return { calls: [{ scope, patch: followingPatch(shown, counted, target.row) }], ...weekdays };
+  }
   let patch = allScopePatch(ruled, { occurrence: item, series, date: target.date });
   let newStart: string | undefined;
   if (ruled.repeat) {

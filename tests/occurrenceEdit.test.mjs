@@ -543,3 +543,45 @@ test("B1. «Tutti» con una regola nuova scelta da un altro fuso: la serie parte
     });
   }
 });
+
+test("R3-S1 (revisione finale). «Questo e i successivi» a un altro giorno su una serie di N volte: la serie finisce quando finiva prima", () => {
+  const cases = [
+    {
+      name: "lun ×6",
+      repeat: { freq: "weekly", byWeekday: ["MO"], end: { type: "count", count: 6 } },
+      date: "2026-11-16",
+      expected: ["2026-11-02", "2026-11-09", "2026-11-17", "2026-11-24", "2026-12-01", "2026-12-08"],
+      rule: { freq: "weekly", byWeekday: ["TU"], end: { type: "count", count: 4 } }
+    },
+    {
+      name: "lun e mer ×6",
+      repeat: { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "count", count: 6 } },
+      date: "2026-11-16",
+      expected: ["2026-11-02", "2026-11-04", "2026-11-09", "2026-11-11", "2026-11-17", "2026-11-19"],
+      rule: { freq: "weekly", byWeekday: ["TU", "TH"], end: { type: "count", count: 2 } }
+    },
+    {
+      name: "primo lunedì del mese ×4",
+      repeat: { freq: "monthly", monthly: { by: "weekday", nth: 1, weekday: "MO" }, end: { type: "count", count: 4 } },
+      date: "2026-12-07",
+      // Dal 7 dicembre all'8 (secondo martedì): le 3 date rimaste diventano "il secondo martedì".
+      expected: ["2026-11-02", "2026-12-08", "2027-01-12", "2027-02-09"],
+      rule: { freq: "monthly", monthly: { by: "weekday", nth: 2, weekday: "TU" }, end: { type: "count", count: 3 } }
+    }
+  ];
+  for (const { name, repeat, date, expected, rule } of cases) {
+    const series = event({ repeat });
+    assert.equal(dates([series], "2026-11-01", "2027-12-31").length, expected.length, name);
+    const item = findOccurrence([series], "s", date);
+    const { calls } = occurrenceEditCalls({ item, series, scope: "following", changes: shiftMs(item, DAY), shown: item });
+    const after = simulateOccurrenceEdit([series], "s", date, calls, NOW).events;
+    assert.deepEqual(dates(after, "2026-11-01", "2027-12-31"), expected, name);
+    assert.deepEqual(seriesOf(after, `s~${date}`).repeat, rule, name);
+  }
+  // Una regola scelta a mano con le sue volte resta com'è (la scelta è di chi la scrive).
+  const series = event({ repeat: { freq: "weekly", byWeekday: ["MO"], end: { type: "count", count: 6 } } });
+  const item = findOccurrence([series], "s", "2026-11-16");
+  const chosen = { freq: "weekly", byWeekday: ["FR"], end: { type: "count", count: 6 } };
+  const { calls } = occurrenceEditCalls({ item, series, scope: "following", changes: { repeat: chosen }, shown: item });
+  assert.deepEqual(calls[0].patch.repeat, chosen);
+});

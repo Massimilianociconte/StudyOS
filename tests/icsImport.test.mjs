@@ -198,7 +198,9 @@ test("Google: una serie su più giorni, EXDATE, RECURRENCE-ID, VALARM, tutto il 
   assert.deepEqual(master.repeat, { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "until", date: "2026-12-18" } });
   assert.deepEqual(master.exdates, ["20261209T080000Z"]);
   assert.deepEqual(master.reminders, [{ minutesBefore: 30 }]);
-  assert.match(master.description, /Luogo: Aula G21/);
+  // R3-F1: il luogo va nel suo campo, non nella descrizione.
+  assert.equal(master.location, "Aula G21");
+  assert.doesNotMatch(master.description, /Luogo/);
   assert.equal(override.uid, master.uid);
   assert.equal(override.recurrenceId, "20261118T080000Z");
   assert.equal(override.start, "2026-11-18T13:00:00.000Z");
@@ -862,6 +864,51 @@ test("la tua serie ripetuta com'è più una parte nuova (RELATED-TO): la serie n
   }
 });
 
+test("R3 residuo (revisione finale). Serie importata prima come vecchio import (uid#1): gli stessi controlli sulle parti nuove", () => {
+  const markedRows = [
+    "BEGIN:VEVENT",
+    "UID:altro@studyos",
+    "RECURRENCE-ID;TZID=Europe/Rome:20261207T090000",
+    "X-STUDYOS-EDITED:TRUE",
+    "DTSTART;TZID=Europe/Rome:20261207T180000",
+    "DTEND;TZID=Europe/Rome:20261207T190000",
+    "SUMMARY:Anatomia (spostata)",
+    "END:VEVENT"
+  ];
+  const markedPart = [
+    "DTSTART;TZID=Europe/Rome:20261123T090000",
+    "DTEND;TZID=Europe/Rome:20261123T110000",
+    "RRULE:FREQ=WEEKLY;BYDAY=MO",
+    "EXDATE;TZID=Europe/Rome:20261130T090000",
+    "X-STUDYOS-EDITED;TZID=Europe/Rome:20261130T090000"
+  ];
+  // La tua serie, importata prima di R3 come una serie per giorno della settimana.
+  const old = () => [legacyEvent(1, "2026-11-02T08:00:00.000Z", { sourceUid: "corso@univ.example#1", recurrenceUntil: undefined, timeZone: "Europe/Rome" })];
+  const restated = courseChild(markedPart, markedRows).replace("RRULE:FREQ=WEEKLY;BYDAY=MO\r\n", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20261122T225959Z\r\n");
+  const unchanged = courseChild(markedPart, markedRows);
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    const into = (events, text) => merge(events, parseIcs(text, { timeZone: device }), { timeZone: device });
+    // 4a: la serie nel file finisce prima della parte nuova: si divide con l'avviso, ma i segni del file non valgono.
+    let events = old();
+    let plan = into(events, restated);
+    assert.equal(plan.warnings.length, 1, device);
+    assert.match(plan.warnings[0], /divide una serie che hai già/, device);
+    events = apply(events, plan);
+    assert.ok(events.some((event) => event.splitFrom), device);
+    assert.ok(!events.some((event) => event.sourceEdited), `${device}: 4a, segni di un file estraneo`);
+    // Il calendario ufficiale riporta i giorni della parte nuova come li dice lui.
+    for (let index = 0; index < 2; index += 1) events = apply(events, into(events, COURSE));
+    for (const date of ["2026-11-30", "2026-12-07"]) assert.deepEqual(lessonsOn(events, date), [`${date}T08:00:00.000Z Anatomia`], `${device} 4a ${date}`);
+    // 4b: la serie nel file continua: la parte nuova resta a sé, con l'avviso, e i suoi segni non valgono.
+    events = old();
+    plan = into(events, unchanged);
+    assert.deepEqual(plan.warnings, [APART("Anatomia")], `${device} 4b`);
+    events = apply(events, plan);
+    assert.ok(!events.some((event) => event.splitFrom), `${device} 4b`);
+    assert.ok(!events.some((event) => event.sourceEdited), `${device}: 4b, segni di un file estraneo`);
+  }
+});
+
 test("copia aggiornata dopo una divisione fatta nell'originale: la parte nuova si collega, con un avviso, e Google non raddoppia i giorni", () => {
   for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
     const exportOf = (events) => buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
@@ -1078,6 +1125,60 @@ test("compleanni e anniversari: tipo, anno e persona tornano uguali in un altro 
   // Un valore strano non entra.
   const odd = parseIcs(ics("BEGIN:VEVENT", "UID:o", "DTSTART;VALUE=DATE:20260314", "X-STUDYOS-OCCASION;KIND=PARTY;YEAR=abc:x", "SUMMARY:x", "END:VEVENT"));
   assert.equal(odd.events[0].occasion, undefined);
+});
+
+test("R3-F1 + N6 (revisione finale). Luogo e colore scelto: esportati e reimportati uguali, anche su un giorno cambiato", () => {
+  const base = { createdAt: T0, updatedAt: T0, archived: false, tags: [], description: "Portare il camice", category: "lesson", priority: "medium", recurrence: "none", status: "planned", checklist: [], attachmentIds: [], notes: "", links: [], timeZone: "Europe/Rome" };
+  let events = [
+    applyRepeatFields(
+      { ...base, id: "loc", title: "Anatomia", location: "Aula G21, via Celoria 26; piano 2", color: "#ff6347", colorCustom: true, start: "2026-11-02T08:00:00.000Z", end: "2026-11-02T10:00:00.000Z", repeat: { freq: "weekly", byWeekday: ["MO"], end: { type: "count", count: 4 } } },
+      { repeatChanged: true }
+    ),
+    { ...base, id: "hex", title: "Ricevimento", color: "#3a7bd5", colorCustom: true, start: "2026-11-04T15:00:00.000Z", end: "2026-11-04T16:00:00.000Z" },
+    { ...base, id: "auto", title: "Seminario", color: "#7CF7C8", start: "2026-11-05T15:00:00.000Z", end: "2026-11-05T16:00:00.000Z" }
+  ];
+  // Un giorno della serie in un'altra aula.
+  events = apply(events, planEdit(events[0], events, "2026-11-16", "this", { location: "Aula Magna" }, { now: T0 }));
+  const text = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: "Europe/Rome", now: new Date(NOW) });
+  assert.ok(text.includes("LOCATION:Aula G21\\, via Celoria 26\\; piano 2"));
+  assert.ok(text.includes("LOCATION:Aula Magna"));
+  assert.ok(text.includes("COLOR:tomato"), "un colore con un nome CSS va in COLOR (RFC 7986)");
+  assert.ok(text.includes("X-STUDYOS-COLOR:#3a7bd5"), "gli altri con il valore esatto");
+  assert.equal((text.match(/COLOR:/g) ?? []).length, 3, "il colore della tipologia non si esporta (serie, giorno cambiato, ricevimento)");
+  assert.ok(!/Luogo/.test(text));
+  for (const device of ["Europe/Rome", "America/New_York"]) {
+    // Stesso calendario: niente da cambiare.
+    const again = merge(events, parseIcs(text, { timeZone: device }), { timeZone: device });
+    assert.deepEqual(counts(again), NOTHING, device);
+    // Un altro account: stessi luoghi e colori, la descrizione senza il luogo dentro.
+    const fresh = apply([], merge([], parseIcs(text, { timeZone: device }), { timeZone: device }));
+    const series = fresh.find((event) => event.title === "Anatomia" && !event.seriesId);
+    assert.equal(series.location, "Aula G21, via Celoria 26; piano 2", device);
+    assert.equal(series.description, "Portare il camice", device);
+    assert.deepEqual([series.color, series.colorCustom], ["#ff6347", true], device);
+    const row = fresh.find((event) => event.seriesId === series.id && event.originalDate === "2026-11-16");
+    assert.equal(row.location, "Aula Magna", device);
+    const hex = fresh.find((event) => event.title === "Ricevimento");
+    assert.deepEqual([hex.color, hex.colorCustom, hex.location], ["#3a7bd5", true, undefined], device);
+    const auto = fresh.find((event) => event.title === "Seminario");
+    assert.equal(auto.colorCustom, undefined, device);
+    assert.deepEqual(counts(merge(fresh, parseIcs(text, { timeZone: device }), { timeZone: device })), NOTHING, `${device}: secondo import`);
+  }
+  // Un file estraneo: LOCATION nel suo campo, COLOR con un nome, valori strani ignorati.
+  const foreign = parseIcs(
+    ics(
+      "BEGIN:VEVENT", "UID:f1", "DTSTART:20261102T080000Z", "DTEND:20261102T090000Z", "SUMMARY:Lab", "LOCATION:Edificio 3", "DESCRIPTION:Note", "COLOR:DarkOrange", "END:VEVENT",
+      "BEGIN:VEVENT", "UID:f2", "DTSTART:20261103T080000Z", "DTEND:20261103T090000Z", "SUMMARY:Altro", "COLOR:url(javascript:alert(1))", "X-STUDYOS-COLOR:red;background:url(x)", "END:VEVENT"
+    )
+  );
+  assert.deepEqual([foreign.events[0].location, foreign.events[0].description, foreign.events[0].color], ["Edificio 3", "Note", "#ff8c00"]);
+  assert.deepEqual([foreign.events[1].location, foreign.events[1].color], [undefined, undefined]);
+  const [lab] = apply([], merge([], foreign));
+  assert.deepEqual([lab.location, lab.color, lab.colorCustom], ["Edificio 3", "#ff8c00", true]);
+  // Il file cambia luogo: l'evento si aggiorna.
+  const moved = merge([lab], parseIcs(ics("BEGIN:VEVENT", "UID:f1", "DTSTART:20261102T080000Z", "DTEND:20261102T090000Z", "SUMMARY:Lab", "LOCATION:Edificio 4", "DESCRIPTION:Note", "COLOR:DarkOrange", "END:VEVENT")));
+  assert.equal(moved.updated, 1);
+  assert.equal(apply([lab], moved)[0].location, "Edificio 4");
 });
 
 test("una serie salvata in UTC, esportata da un altro fuso e reimportata ovunque, resta uguale (giorno cancellato compreso)", () => {

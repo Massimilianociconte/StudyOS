@@ -1169,6 +1169,28 @@ test("Regola 1. 'questa e le successive' assorbe le divisioni successive della s
   assert.deepEqual([all.filter((item) => item.title === "Nuovo").length, all.at(-1).occurrenceDate], [8, "2027-01-04"]);
 });
 
+test("R1 N2 (revisione finale). Assorbendo una divisione spostata e poi fermata, si contano i suoi giorni veri, non la data di fine", () => {
+  // Divisa dal 30/11 e spostata al martedì (o alla domenica), poi fermata con "elimina i successivi":
+  // la fine salvata (lunedì 11/1, sabato 9/1) non è un giorno della serie. Il nuovo titolo dal 16/11 tiene 8 lezioni.
+  for (const [moved, stop, lastShown] of [
+    ["2026-12-01", "2027-01-12", "2027-01-05"],
+    ["2026-11-29", "2027-01-10", "2027-01-03"]
+  ]) {
+    let events = [weeklySeries({ id: "P" })];
+    events = applyEditPlan(events, planEdit(events[0], events, "2026-11-30", "following", { start: `${moved}T09:00:00.000Z`, end: `${moved}T10:00:00.000Z` }, { now: NOW })).events;
+    events = applyEditPlan(events, planDelete(events, "P~2026-11-30", stop, "following", { now: NOW })).events;
+    const shown = (list) => expandWithRules(list, utc("2026-11-10T00:00:00Z"), utc("2027-06-01T00:00:00Z")).map((item) => item.occurrenceDate);
+    const before = shown(events);
+    assert.deepEqual([before.length, before.at(-1)], [8, lastShown], moved);
+    const renamed = applyEditPlan(events, planEdit(events.find((item) => item.id === "P"), events, "2026-11-16", "following", { title: "Nuovo" }, { now: NOW })).events;
+    eachDeviceZone((zone) => {
+      const after = shown(renamed);
+      assert.deepEqual(after, ["2026-11-16", "2026-11-23", "2026-11-30", "2026-12-07", "2026-12-14", "2026-12-21", "2026-12-28", "2027-01-04"], `${moved} ${zone}`);
+    });
+    assert.deepEqual(renamed.find((item) => item.id === "P~2026-11-16").repeat, { freq: "weekly", end: { type: "until", date: "2027-01-04" } }, moved);
+  }
+});
+
 test("R2-A. assorbendo una divisione, le sue cancellate passano alla serie nuova e le modifiche restano se l'ora non cambia", () => {
   const window = [utc("2026-11-01T00:00:00Z"), utc("2027-01-01T00:00:00Z")];
   const view = (events) => expandWithRules(events, ...window).map((item) => [item.occurrenceDate, item.title, item.start.slice(11, 16)]);
@@ -1219,18 +1241,19 @@ test("R2-B. la serie nuova finisce dove finiva la famiglia (senza fine solo se u
   const middle = merged.find((item) => item.id === "P~2026-11-16");
   eachDeviceZone((zone) => {
     assert.equal(expandWithRules(merged, ...window).at(-1).occurrenceDate, "2026-12-07", zone);
-    // Rinomina dal 23/11: lun e mer fino al 13/12, non oltre.
+    // Rinomina dal 23/11: lun e mer fino all'ultimo giorno che la famiglia mostrava (lunedì 7/12, non
+    // la fine salvata 13/12: R1 N2), non oltre.
     const plan = planEdit(middle, merged, "2026-11-23", "following", { title: "C" }, { now: NOW });
-    assert.deepEqual(plan.puts.find((item) => item.splitFrom === middle.id).repeat, { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "until", date: "2026-12-13" } }, zone);
+    assert.deepEqual(plan.puts.find((item) => item.splitFrom === middle.id).repeat, { freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "until", date: "2026-12-07" } }, zone);
     assert.deepEqual(
       expandWithRules(applyEditPlan(merged, plan).events, ...window).filter((item) => item.occurrenceDate >= "2026-11-23").map((item) => item.occurrenceDate),
-      ["2026-11-23", "2026-11-25", "2026-11-30", "2026-12-02", "2026-12-07", "2026-12-09"],
+      ["2026-11-23", "2026-11-25", "2026-11-30", "2026-12-02", "2026-12-07"],
       zone
     );
-    // Dalla prima occorrenza (tutta la serie): la regola senza fine diventa "fino al 13/12".
+    // Dalla prima occorrenza (tutta la serie): la regola senza fine diventa "fino al 7/12".
     const first = planEdit(middle, merged, "2026-11-16", "following", { title: "C" }, { now: NOW });
-    assert.deepEqual(first.puts.find((item) => item.id === middle.id).repeat.end, { type: "until", date: "2026-12-13" }, zone);
-    assert.equal(expandWithRules(applyEditPlan(merged, first).events, ...window).at(-1).occurrenceDate, "2026-12-09", zone);
+    assert.deepEqual(first.puts.find((item) => item.id === middle.id).repeat.end, { type: "until", date: "2026-12-07" }, zone);
+    assert.equal(expandWithRules(applyEditPlan(merged, first).events, ...window).at(-1).occurrenceDate, "2026-12-07", zone);
   });
 });
 

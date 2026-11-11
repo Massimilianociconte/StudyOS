@@ -588,6 +588,25 @@ const lastDate = (rule: RepeatRule, startDate: string) => {
   return last;
 };
 
+/**
+ * Ultimo giorno vero della regola, non oltre `limit` (assente = senza fine, null = nessun giorno).
+ * Con UNTIL è l'ultima data che cade entro quel giorno, non UNTIL stesso: una serie del martedì che
+ * finisce lunedì 11 mostra per ultimo martedì 5.
+ */
+const lastShownDate = (rule: RepeatRule, startDate: string, limit?: string): string | undefined | null => {
+  const until = rule.end?.type === "until" ? rule.end.date : undefined;
+  const bound = until !== undefined && limit !== undefined ? (until < limit ? until : limit) : until ?? limit;
+  const count = countOf(rule);
+  if (bound === undefined && count === undefined) return undefined;
+  let last: string | null = null;
+  for (const item of ruleDates(rule, startDate)) {
+    if (count !== undefined && item.index >= count) break;
+    if (bound !== undefined && item.date > bound) break;
+    last = item.date;
+  }
+  return last;
+};
+
 // ---------------------------------------------------------------------------------------
 // Espansione di elenchi di eventi (con occorrenze modificate e divisioni)
 // ---------------------------------------------------------------------------------------
@@ -1032,10 +1051,26 @@ const rowIdsOf = (events: readonly CalendarEvent[], ids: ReadonlySet<string>) =>
 
 /**
  * Ultimo giorno mostrato dalle serie `ids` con i tagli di adesso (assente = senza fine, null =
- * nessun giorno): fin dove arrivava ciò che una modifica "questa e le successive" assorbe.
+ * nessun giorno): fin dove arrivava ciò che una modifica "questa e le successive" assorbe. È l'ultimo
+ * giorno vero (non la data di UNTIL, R1 N2), riportato sullo schema di `rootId`: una divisione spostata
+ * al martedì che finisce martedì 5 conta come lunedì 4, una spostata alla domenica 3 come lunedì 4.
+ * Così la serie che assorbe ha tante lezioni quante ne mostrava la famiglia, né una in più né una in meno.
  */
-const shownUntil = (events: readonly CalendarEvent[], ids: ReadonlySet<string>): string | undefined | null => {
+const shownUntil = (events: readonly CalendarEvent[], ids: ReadonlySet<string>, rootId: string): string | undefined | null => {
   const cuts = splitCuts(events, defaultGroupKey);
+  const byId = new Map(events.filter((item) => !isOccurrenceRow(item)).map((item) => [item.id, item]));
+  /** Giorni di cui la divisione `item` (e le divisioni da cui viene, fino a `rootId`) ha spostato lo schema. */
+  const shiftOf = (item: CalendarEvent) => {
+    let total = 0;
+    let current: CalendarEvent | undefined = item;
+    for (let steps = 0; current && current.id !== rootId && ids.has(current.id) && steps < 100; steps += 1) {
+      const series = seriesOf(current);
+      const from = current.originalDate;
+      if (series && typeof from === "string" && isCivilDate(from)) total += civilDaysBetween(from, series.startDate);
+      current = typeof current.splitFrom === "string" ? byId.get(current.splitFrom) : undefined;
+    }
+    return total;
+  };
   let last: string | null = null;
   for (const item of events) {
     if (isOccurrenceRow(item) || item.archived || !ids.has(item.id)) continue;
@@ -1043,9 +1078,10 @@ const shownUntil = (events: readonly CalendarEvent[], ids: ReadonlySet<string>):
     if (!series) continue;
     const cut = cuts.get(keyOf(defaultGroupKey(item), item.id));
     if (cut !== undefined && cut <= series.startDate) continue;
-    let end = series.rule ? lastDate(series.rule, series.startDate) : series.startDate;
-    if (cut !== undefined && (end === undefined || end >= cut)) end = civilAddDays(cut, -1);
-    if (end === undefined) return undefined;
+    const shown = series.rule ? lastShownDate(series.rule, series.startDate, cut === undefined ? undefined : civilAddDays(cut, -1)) : series.startDate;
+    if (shown === undefined) return undefined;
+    if (shown === null) continue;
+    const end = civilAddDays(shown, -shiftOf(item));
     if (last === null || end > last) last = end;
   }
   return last;
@@ -1128,7 +1164,7 @@ const planAll = (
   const before = withSeries(overrides, event);
   const current = seriesOf(next);
   if (absorbed.size && !chosen && current?.rule) {
-    const shown = shownUntil(before, new Set([event.id, ...absorbed]));
+    const shown = shownUntil(before, new Set([event.id, ...absorbed]), event.id);
     const rule = endingOn(current.rule, current.startDate, shown, civilDaysBetween(series.startDate, current.startDate));
     if (rule !== current.rule) next = applyRepeatFields({ ...next, repeat: rule, repeatLegacy: undefined }, { repeatChanged: true, timeZone: current.zone });
   }
@@ -1278,7 +1314,7 @@ export const planSplit = (
   const absorbed = followingSplits(overrides, target, originalDate);
   const before = withSeries(overrides, event);
   if (absorbed.size && !newRule && !legacyPatch && childSeries?.rule) {
-    const shown = shownUntil(before, new Set([event.id, ...absorbed]));
+    const shown = shownUntil(before, new Set([event.id, ...absorbed]), event.id);
     const fitted = endingOn(childSeries.rule, childSeries.startDate, shown, civilDaysBetween(originalDate, childSeries.startDate));
     if (fitted !== childSeries.rule) {
       child = withRule(fitted);

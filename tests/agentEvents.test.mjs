@@ -327,6 +327,17 @@ test("R2-S1. update_event sposta Giorni feriali dal lunedì al martedì: mar–s
   assert.equal(following.data.seriesStart, "2026-11-17T09:00:00.000Z");
 });
 
+test("R3-S1 (revisione finale). update_event «following» a un altro giorno su una serie di 6 volte: restano 6 date", async () => {
+  useStudyStore.setState({ events: [{ ...MONDAYS, repeat: { freq: "weekly", byWeekday: ["MO"], end: { type: "count", count: 6 } } }] });
+  const moved = await executeAgentTool("studyos_update_event", { id: "m", occurrenceDate: "2026-11-16", scope: "following", start: "2026-11-17T09:00:00.000Z" });
+  assert.equal(moved.ok, true, JSON.stringify(moved));
+  const all = expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date("2027-03-01T00:00:00.000Z"))
+    .filter((item) => item.recurring)
+    .map((item) => new Date(item.start).toLocaleDateString("sv-SE", { timeZone: "Europe/Rome" }));
+  assert.deepEqual(all, ["2026-11-02", "2026-11-09", "2026-11-17", "2026-11-24", "2026-12-01", "2026-12-08"]);
+  assert.deepEqual(events().find((item) => item.splitFrom === "m").repeat, { freq: "weekly", byWeekday: ["TU"], end: { type: "count", count: 4 } });
+});
+
 test("N1. update_event con occurrenceDate e «all» da un giorno dopo: il risultato dice il nuovo inizio della serie", async () => {
   // Ogni giorno dal 2; dal mercoledì 18 diventa "ogni settimana": la serie parte mercoledì 4.
   useStudyStore.setState({ events: [event({ id: "d", recurrence: "daily", repeat: { freq: "daily" }, repeatLegacy: "daily|", timeZone: "Europe/Rome" })] });
