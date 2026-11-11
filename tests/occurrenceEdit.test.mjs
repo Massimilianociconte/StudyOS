@@ -12,7 +12,7 @@ import {
   userRuleChange
 } from "../src/lib/occurrenceEdit.ts";
 import { scopeOptions, shortDatesText, weekdaysText } from "../src/lib/eventEditor.ts";
-import { findOccurrence } from "../src/lib/occurrenceLookup.ts";
+import { findOccurrence, startDayOf } from "../src/lib/occurrenceLookup.ts";
 import { applyEditPlan, expandEvents, isOccurrenceRow, normalizeRepeat, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { customFromRule, repeatPresets, ruleFromCustom } from "../src/lib/repeatPicker.ts";
 import { SCOPE_TEXT } from "../src/lib/labels/calendar.ts";
@@ -721,12 +721,14 @@ test("R1-S1 bis (A). Giorni cambiati nel modulo (lun → lun e mer) dopo una div
   assert.deepEqual([ruled.impact.absorbed, ruled.impact.gone.slice(0, 3), ruled.impact.goneMore], [1, ["2026-12-04", "2026-12-11", "2026-12-18"], true]);
   assert.deepEqual(ruled.lines, [SCOPE_TEXT.followingSplits, "Spariscono: ven 4, 11, 18, 25 dic, ven 1, 8 gen e altre date dopo."]);
 
-  // La famiglia finisce: con «fino al» la parte nuova finisce lì; con le volte, all'ultima data.
+  // La famiglia finisce: la parte nuova finisce alla sua ultima data (con «fino al» domenica 10/1,
+  // lunedì 4/1: niente mercoledì 6/1 in più); con le volte, lo stesso.
   let ended = [MONDAYS()];
   ended = following(ended, "s", "2026-11-30", { title: "A" }).after;
   ended = apply(ended, planDelete(ended, "s~2026-11-30", "2027-01-11", "following", { now: NOW }));
   const endedAfter = following(ended, "s", "2026-11-16", { repeat: { ...normalizeRepeat(seriesOf(ended)), byWeekday: ["MO", "WE"] } }, "edit", true);
-  assert.deepEqual(normalizeRepeat(seriesOf(endedAfter.after, "s~2026-11-16")).end, { type: "until", date: "2027-01-10" });
+  assert.deepEqual(normalizeRepeat(seriesOf(endedAfter.after, "s~2026-11-16")).end, { type: "until", date: "2027-01-04" });
+  assert.equal(weekdayView(endedAfter.after, "2026-11-01", "2027-06-01").at(-1), "2027-01-04 Mon Lezione");
   assert.deepEqual(endedAfter.impact.gone, []);
   let counted = [event({ repeat: { freq: "weekly", byWeekday: ["MO"], end: { type: "count", count: 10 } } })];
   counted = following(counted, "s", "2026-11-30", { title: "A" }).after;
@@ -855,4 +857,110 @@ test("R1-S1 bis (C). Tutto il giorno da uno a due giorni: lo prende la parte dop
   assert.deepEqual(spans(after, "2026-11-14", "2026-12-22"), ["2026-11-16 2", "2026-11-23 2", "2026-11-30 2", "2026-12-07 2", "2026-12-14 3", "2026-12-21 3"]);
   assert.deepEqual([impact.laterParts, impact.laterOwnTime], [2, 1]);
   assert.deepEqual(lines, [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingSplitsOwnTime, SCOPE_TEXT.followingKeepsEnd]);
+});
+
+// ---------------------------------------------------------------------------------------
+// R1-S1, terza revisione: spostando non sparisce nulla (la parte spostata tiene la sua ultima data
+// spostata, anche sul primo giorno di una parte con un programma suo); «il 2° lunedì» spostato al
+// martedì: la parte dopo parte dal 2° martedì del suo mese; eliminare «Questo e i successivi» toglie
+// tutte le parti dopo.
+// ---------------------------------------------------------------------------------------
+
+const hoursView = (events, from, to) =>
+  expandEvents(events, localMidnight(from), localMidnight(to)).map((item) => `${item.occurrenceDate} ${new Date(item.start).getHours()} ${item.title}`);
+
+test("R1-S1 ter (1). Ogni giorno alle 12 con una parte alle 13 dal 30/11: il 16/11 al 17/11 non nasconde il 30/11 spostato", () => {
+  let events = [event({ repeat: { freq: "daily" } })];
+  events = following(events, "s", "2026-11-30", shiftMs(findOccurrence(events, "s", "2026-11-30"), 3600e3)).after;
+  const before = hoursView(events, "2026-11-14", "2026-12-03");
+  const { after, impact, lines } = following(events, "s", "2026-11-16", shiftMs(findOccurrence(events, "s", "2026-11-16"), DAY), "move");
+  const now = hoursView(after, "2026-11-14", "2026-12-03");
+  assert.equal(now.length, before.length, "nessuna data sparisce");
+  assert.equal(now.includes("2026-11-16 12 Lezione"), false);
+  assert.deepEqual(now.slice(-5), ["2026-11-29 12 Lezione", "2026-11-30 12 Lezione", "2026-11-30 13 Lezione", "2026-12-01 13 Lezione", "2026-12-02 13 Lezione"]);
+  assert.deepEqual(normalizeRepeat(seriesOf(after, "s~2026-11-16")).end, { type: "until", date: "2026-11-30" });
+  assert.deepEqual(laterOf(impact), [0, [], 1, 0, 1]);
+  // «La serie finisce quando finiva prima» resta vero.
+  assert.deepEqual(lines, [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingKeepsEnd]);
+});
+
+test("R1-S1 ter (1). Ogni lunedì con lunedì e venerdì dal 30/11: il 16/11 una settimana dopo tiene il 30/11 spostato", () => {
+  let events = [MONDAYS()];
+  events = following(events, "s", "2026-11-30", { repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } }, "edit", true).after;
+  const { after, impact } = following(events, "s", "2026-11-16", shiftMs(findOccurrence(events, "s", "2026-11-16"), 7 * DAY), "move");
+  assert.deepEqual(weekdayView(after, "2026-11-01", "2026-12-08"), [
+    "2026-11-02 Mon Lezione",
+    "2026-11-09 Mon Lezione",
+    "2026-11-23 Mon Lezione",
+    "2026-11-30 Mon Lezione",
+    "2026-11-30 Mon Lezione",
+    "2026-12-04 Fri Lezione",
+    "2026-12-07 Mon Lezione"
+  ]);
+  assert.equal(weekdayView(after, "2026-11-01", "2027-03-01").length, weekdayView(events, "2026-11-01", "2027-03-01").length);
+  assert.deepEqual(laterOf(impact), [0, [], 1, 0, 1]);
+});
+
+test("R1-S1 ter (1). Spostando indietro, la parte uguale dopo una parte con un orario suo si sposta senza nascondere quella", () => {
+  // Ogni giorno alle 12; dal 30/11 alle 13 (D); dal 7/12 di nuovo alle 12 (X, come la serie).
+  let events = [event({ repeat: { freq: "daily" } })];
+  events = following(events, "s", "2026-11-30", shiftMs(findOccurrence(events, "s", "2026-11-30"), 3600e3)).after;
+  events = following(events, "s~2026-11-30", "2026-12-07", { title: "X", ...shiftMs(findOccurrence(events, "s~2026-11-30", "2026-12-07"), -3600e3) }).after;
+  const { after, impact, lines } = following(events, "s", "2026-11-16", shiftMs(findOccurrence(events, "s", "2026-11-16"), -DAY), "move");
+  assert.deepEqual(hoursView(after, "2026-11-27", "2026-12-09"), [
+    "2026-11-27 12 Lezione",
+    "2026-11-28 12 Lezione",
+    ...["2026-11-30", "2026-12-01", "2026-12-02", "2026-12-03", "2026-12-04", "2026-12-05"].map((day) => `${day} 13 Lezione`),
+    "2026-12-06 12 X",
+    "2026-12-06 13 Lezione",
+    "2026-12-07 12 X",
+    "2026-12-08 12 X"
+  ]);
+  const x = seriesOf(after, "s~2026-11-30~2026-12-07");
+  assert.equal(x.originalDate, "2026-12-07", "X ferma D solo dopo la sua ultima data (6/12)");
+  assert.deepEqual(laterOf(impact), [0, [], 2, 1, 1]);
+  assert.deepEqual(lines, [SCOPE_TEXT.followingMovesSplits, SCOPE_TEXT.followingSplitsOwnDays, SCOPE_TEXT.followingKeepsEnd]);
+});
+
+test("R1-S1 ter (3). «Il 2° lunedì» spostato al martedì: la parte dopo parte dal 2° martedì del suo mese e quella prima finisce prima", () => {
+  const secondMonday = (month, day) => event({ start: local(2026, month, day), end: local(2026, month, day, 13), repeat: { freq: "monthly", monthly: { by: "weekday", nth: 2, weekday: "MO" } } });
+  const tuesdays = ["2026-12-08 Tue A", "2027-01-12 Tue A", "2027-02-09 Tue A", "2027-03-09 Tue A"];
+  // Dal primo giorno (9/11) e da un giorno dopo (la serie parte il 12/10): stesso risultato dal 9/11.
+  for (const [label, series, head] of [
+    ["dal primo giorno", secondMonday(11, 9), []],
+    ["da un giorno dopo", secondMonday(10, 12), ["2026-10-12 Mon Lezione"]]
+  ]) {
+    let events = [series];
+    events = following(events, "s", "2026-12-14", { title: "A" }).after;
+    const before = weekdayView(events, "2026-10-01", "2027-03-31").length;
+    const { after, impact } = following(events, "s", "2026-11-09", shiftMs(findOccurrence(events, "s", "2026-11-09"), DAY), "move");
+    assert.deepEqual(weekdayView(after, "2026-10-01", "2027-03-31"), [...head, "2026-11-10 Tue Lezione", ...tuesdays], label);
+    assert.equal(weekdayView(after, "2026-10-01", "2027-03-31").length, before, label);
+    const a = seriesOf(after, "s~2026-12-14");
+    assert.equal(startDayOf(a.start, false), "2026-12-08", label);
+    assert.equal(a.originalDate, "2026-12-08", label);
+    assert.deepEqual(normalizeRepeat(a), { freq: "monthly", monthly: { by: "weekday", nth: 2, weekday: "TU" } }, label);
+    assert.deepEqual(laterOf(impact), [0, [], 1, 1, 0], label);
+  }
+});
+
+test("R1-S1 ter (4). Eliminare «Questo e i successivi» toglie tutte le parti dopo, anche quella divisa dall'antenato", async () => {
+  // P ogni lunedì; R dal 30/11, Q dal 9/11 (si ferma a R), E dal 16/11 della parte Q.
+  let events = [MONDAYS()];
+  events = following(events, "s", "2026-11-30", { title: "R" }).after;
+  events = following(events, "s", "2026-11-09", { title: "Q" }).after;
+  events = following(events, "s~2026-11-09", "2026-11-16", { title: "E" }).after;
+  const e = "s~2026-11-09~2026-11-16";
+  const after = apply(events, planDelete(events, e, "2026-11-23", "following", { now: NOW }));
+  assert.equal(after.some((item) => item.id === "s~2026-11-30"), false);
+  assert.deepEqual(weekdayView(after, "2026-11-01", "2027-06-01"), ["2026-11-02 Mon Lezione", "2026-11-09 Mon Q", "2026-11-16 Mon E"]);
+  // Dal primo giorno di E: anche E.
+  const fromFirst = apply(events, planDelete(events, e, "2026-11-16", "following", { now: NOW }));
+  assert.deepEqual(weekdayView(fromFirst, "2026-11-01", "2027-06-01"), ["2026-11-02 Mon Lezione", "2026-11-09 Mon Q"]);
+  // Nel calendario (lo store) lo stesso, e la scelta lo dice.
+  useStudyStore.setState({ loading: true, events, attachments: [], notes: [], reminders: [] });
+  await useStudyStore.getState().deleteOccurrence(e, "2026-11-23", "following");
+  assert.deepEqual(weekdayView(useStudyStore.getState().events, "2026-11-01", "2027-06-01"), ["2026-11-02 Mon Lezione", "2026-11-09 Mon Q", "2026-11-16 Mon E"]);
+  const details = scopeOptions({ action: "delete", date: "2026-11-23" }).find((option) => option.id === "following").details;
+  assert.match(details[0], /e tutti quelli dopo/);
 });

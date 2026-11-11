@@ -658,6 +658,12 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   // Come nel calendario: start ed end sono i nuovi orari di quel giorno, con le stesse chiamate
   // (la regola segue il giorno spostato; da un giorno già cambiato da solo, con «all», anche lui).
   const { scope, occurrence, target, series } = day;
+  // Una repeat senza end tiene la fine che la parte mostra, come nel modulo: con «following» una
+  // regola nuova arriva così alla fine dell'intera serie. Senza fine solo con end.type=never.
+  const given = args.repeat;
+  const endGiven = typeof given === "object" && given !== null && "end" in given;
+  const shownEnd = normalizeRepeat(series)?.end;
+  if (scope === "following" && changes.repeat && !endGiven && shownEnd) changes.repeat = { ...changes.repeat, end: shownEnd };
   const { calls } = occurrenceEditCalls({ item: occurrence, series, scope, changes });
   // «following» con una regola nuova assorbe tutte le parti dopo della famiglia: le date che
   // spariscono si dicono, come nella scelta del calendario (R1-S1 bis, A). Uno spostamento sposta
