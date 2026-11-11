@@ -27,7 +27,11 @@ Gli strumenti coprono lo stato, la panoramica, la ricerca e la gestione di
 materie, task, eventi, esami personali, sessioni, ripasso, materiali (solo
 link), note, obiettivi, preferenze di studio, notifiche, bacheca dei gruppi,
 libretto con medie e proiezione di laurea, insegnamenti e appelli BARB. Gli
-eventi ripetuti compaiono come singole occorrenze. Ogni risposta riporta il nome
+eventi ripetuti compaiono come singole occorrenze. «Tutta la serie» fa come «Tutti» nel
+calendario: eliminando una serie senza indicare il giorno spariscono anche le parti divise
+prima con «Questo e i successivi»; modificandola (senza giorno o con `scope=all`) quelle parti
+restano come sono e la risposta le elenca in `keptParts`. I link della bacheca dei gruppi
+arrivano all'agente solo se sono http, https o mailto. Ogni risposta riporta il nome
 della materia accanto all'id, e `studyos_status` e `studyos_overview` danno data,
 ora e fuso orario della persona. Le letture, di base, passano. Modifiche ed eliminazioni chiedono
 conferma nell'app. Si può consentire le sole modifiche per 15 minuti. Le
@@ -163,7 +167,8 @@ Collegamento, come per il primo connettore e senza password:
 Da quel momento StudyOS può restare chiuso. L'hub legge le righe dell'account con
 `studyos_agent_pull` e scrive con `studyos_agent_push`, con le stesse regole della
 sincronizzazione (vince la modifica più recente). Le date usano il fuso del browser che
-ha dato il consenso. L'app vede le modifiche alla sincronizzazione successiva.
+ha dato il consenso, anche il fuso che le serie nuove e le divisioni si portano dietro: una
+lezione alle 9 resta alle 9 dopo il cambio d'ora. L'app vede le modifiche alla sincronizzazione successiva.
 
 Differenze dal primo connettore:
 
