@@ -63,16 +63,30 @@ const matchesPattern = (rule: RepeatRule, day: string, picked: string) => {
   return parts.day === anchor.day;
 };
 
+/** Giorni in cui si cerca il primo della regola (il 2° mercoledì o l'ultimo venerdì arrivano entro un mese). */
+const MATCH_WINDOW_DAYS = 400;
+
+/** Primo giorno dal giorno `from` in poi che è uno di quelli della regola scelta da `picked`. */
+const firstMatching = (rule: RepeatRule, picked: string, from: string) => {
+  for (let step = 0, day = from; step < MATCH_WINDOW_DAYS; step += 1, day = civilAddDays(day, 1)) {
+    if (matchesPattern(rule, day, picked)) return day;
+  }
+  return null;
+};
+
 /**
  * Primo giorno, dall'inizio della serie `seriesStart` in poi, da cui la regola scelta dal giorno
  * `picked` comincia davvero: un giorno della regola, con lo stesso passo che arriva a `picked`. Così
  * "Ogni settimana il mercoledì" scelto da un mercoledì resta il mercoledì, "Ogni mese il 18" resta il
  * 18, e non resta un primo giorno in più che la regola non ha. `earliest`: si cerca anche da lì, se è
  * prima (la serie spostata indietro: "Tutti" dal lunedì alla domenica tiene la domenica prima).
+ * Se `picked` non è un giorno della regola (da lunedì 16 "ogni martedì e giovedì"): il primo giorno
+ * della regola dal primo giorno della serie in poi (martedì 3), mai un giorno che la regola non ha.
  */
 export const alignedSeriesStart = (rule: RepeatRule, picked: string, seriesStart: string, earliest: string = seriesStart): string => {
   if (!isCivilDate(picked) || !isCivilDate(seriesStart)) return seriesStart;
   const from = isCivilDate(earliest) && earliest < seriesStart ? earliest : seriesStart;
+  if (!matchesPattern(rule, picked, picked)) return firstMatching(rule, picked, picked < from ? picked : from) ?? picked;
   if (picked <= from) return picked < seriesStart ? picked : seriesStart;
   const open: RepeatRule = { ...rule };
   delete open.end;

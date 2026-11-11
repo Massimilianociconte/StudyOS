@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   alignedSeriesStart,
+  draggedTimes,
   explicitRule,
   movedRule,
   occurrenceEditCalls,
@@ -206,7 +207,9 @@ test("B2. alignedSeriesStart: primo giorno della regola dall'inizio della serie 
   assert.equal(alignedSeriesStart({ freq: "daily", interval: 3 }, "2026-11-18", "2026-11-02"), "2026-11-03");
   assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["MO", "WE"] }, "2026-11-18", "2026-11-02"), "2026-11-02");
   assert.equal(alignedSeriesStart({ freq: "weekly", interval: 2, byWeekday: ["WE"] }, "2026-11-18", "2026-11-02"), "2026-11-04");
-  assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["WE"] }, "2026-11-02", "2026-11-02"), "2026-11-02", "dal primo giorno nulla da spostare");
+  assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["WE"] }, "2026-11-18", "2026-11-18"), "2026-11-18", "dal primo giorno nulla da spostare");
+  // Dal primo giorno con una regola che non lo ha: il primo giorno della regola (mai un lunedì in più).
+  assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["WE"] }, "2026-11-02", "2026-11-02"), "2026-11-04");
 });
 
 test("B2. regola scelta da un giorno dopo il primo e salvata con «Tutti»: resta quella scelta, senza un primo giorno in più", () => {
@@ -969,4 +972,48 @@ test("R1-S1 ter (4). Eliminare «Questo e i successivi» toglie tutte le parti d
   assert.deepEqual(weekdayView(useStudyStore.getState().events, "2026-11-01", "2027-06-01"), ["2026-11-02 Mon Lezione", "2026-11-09 Mon Q", "2026-11-16 Mon E"]);
   const details = scopeOptions({ action: "delete", date: "2026-11-23" }).find((option) => option.id === "following").details;
   assert.match(details[0], /e tutti quelli dopo/);
+});
+
+// ---------------------------------------------------------------------------------------
+// Ricontrollo finale: «Tutti» con una regola nuova e date vere nelle scelte
+// ---------------------------------------------------------------------------------------
+
+/** Ogni lunedì alle 9 a Roma dal 2 novembre (come la crea un dispositivo a Roma). */
+const romeNine = (repeat = { freq: "weekly", byWeekday: ["MO"] }) => ({
+  ...event({ start: "2026-11-02T08:00:00.000Z", end: "2026-11-02T09:00:00.000Z" }),
+  recurrence: "weekly",
+  repeat,
+  repeatLegacy: "weekly|",
+  timeZone: "Europe/Rome"
+});
+
+test("S2 (ricontrollo). «Tutti» con una regola nuova che non ha il giorno aperto: parte dal primo giorno della regola dal primo giorno della serie, e la scelta lo dice", () => {
+  const series = romeNine();
+  const cases = [
+    { rule: { freq: "weekly", byWeekday: ["TU", "TH"] }, first: "2026-11-03", text: "martedì 3 novembre", head: ["2026-11-03", "2026-11-05", "2026-11-10", "2026-11-12", "2026-11-17"] },
+    { rule: { freq: "weekly", byWeekday: ["WE"] }, first: "2026-11-04", text: "mercoledì 4 novembre", head: ["2026-11-04", "2026-11-11", "2026-11-18"] },
+    { rule: { freq: "monthly", monthly: { by: "weekday", nth: 2, weekday: "WE" } }, first: "2026-11-11", text: "mercoledì 11 novembre", head: ["2026-11-11", "2026-12-09", "2027-01-13"] }
+  ];
+  for (const opened of ["2026-11-16", "2026-11-02"]) {
+    const item = findOccurrence([series], "s", opened);
+    for (const { rule, first, text, head } of cases) {
+      const label = `${opened} ${JSON.stringify(rule)}`;
+      // Il modulo manda orari e regola insieme (CALENDAR_EVENT_FIELD_GROUPS).
+      const changes = { repeat: rule, start: item.start, end: item.end, allDay: false };
+      const { calls, newStart } = occurrenceEditCalls({ item, series, scope: "all", changes });
+      assert.equal(newStart, first, label);
+      const after = simulateOccurrenceEdit([series], "s", opened, calls, NOW).events;
+      const list = dates(after, "2026-10-01", "2027-02-01");
+      assert.deepEqual(list.slice(0, head.length), head, label);
+      assert.ok(!list.includes(opened), `${label}: nessun lunedì che la regola non ha`);
+      // Stessa ora (9:00 a Roma).
+      assert.equal(new Date(seriesOf(after).start).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" }), "09:00", label);
+      const all = scopeOptions({ action: "edit", date: opened, ruleChanged: true, newStart }).find((option) => option.id === "all");
+      assert.ok(all.details.includes(SCOPE_TEXT.newStart(text)), label);
+    }
+  }
+  // La regola che ha il giorno aperto resta com'era (B2): dal 16 "ogni lunedì e mercoledì" parte ancora il 2.
+  assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["MO", "WE"] }, "2026-11-16", "2026-11-02"), "2026-11-02");
+  assert.equal(alignedSeriesStart({ freq: "weekly", byWeekday: ["TU", "TH"] }, "2026-11-16", "2026-11-02"), "2026-11-03");
+  assert.equal(alignedSeriesStart({ freq: "monthly", monthly: { by: "weekday", nth: -1, weekday: "FR" } }, "2026-11-16", "2026-11-02"), "2026-11-27");
 });

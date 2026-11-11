@@ -234,6 +234,10 @@
   arrotondata, come `timingOf` in ics.ts. Le occorrenze espanse invece stanno alla mezzanotte del
   DISPOSITIVO dei loro giorni (la griglia legge così): `allDayDays` le riconosce da `occurrenceKey`,
   `startDayOf(…, true, zona)` è per inizi salvati e modifiche, `shownDayOf` per l'occorrenza mostrata.
+- «Tutti» con una regola nuova che non comprende il giorno aperto (da lunedì 16 «mar e gio»): la
+  serie parte dal primo giorno della regola nuova dal suo primo giorno di prima in poi (martedì 3,
+  `alignedSeriesStart`), mai un giorno in più che la regola non ha; la scelta dice quel giorno
+  (`newStart`). Vale anche aprendo dal primo giorno.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`
