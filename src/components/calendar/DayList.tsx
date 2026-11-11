@@ -10,7 +10,9 @@ import { Tag } from "../ui";
 import { CALENDAR_VIEW_TEXT, EVENT_CATEGORY_LABEL } from "../../lib/labels";
 import { isAllDayEvent, timeLabel } from "../../lib/selectors";
 import { todayYmd } from "../../lib/datePicker";
-import { listDayOf, spanText } from "../../lib/calendarRender";
+import type { Holiday } from "../../lib/holidays";
+import { holidaysByDay, listDayOf, spanText } from "../../lib/calendarRender";
+import { HolidayChip, HolidaysNote, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
 import { allDayEventLabel, defaultStartFor, editOccurrence, eventColor, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
@@ -36,6 +38,7 @@ export function DayList({
   occurrences,
   tasks,
   exams,
+  holidays = [],
   handlers,
   empty: emptyWeek
 }: {
@@ -43,21 +46,33 @@ export function DayList({
   occurrences: CalendarOccurrence[];
   tasks: Task[];
   exams: Exam[];
+  /** Festività del periodo: in cima al loro giorno; non contano per lo stato vuoto. */
+  holidays?: Holiday[];
   handlers: Handlers;
   /** Al posto di sette "Nessun impegno" quando tutta la settimana è vuota. */
   empty?: ReactNode;
 }) {
+  const theme = useEventTheme();
   const events = eventsByListDay(occurrences, days);
+  const holidaysOn = holidaysByDay(holidays);
   const perDay = days.map((day) => {
-    const dayEvents = events.get(todayYmd(day)) ?? [];
+    const ymd = todayYmd(day);
+    const dayEvents = events.get(ymd) ?? [];
     const dayTasks = tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day));
     const dayExams = exams.filter((exam) => isSameDay(parseISO(exam.date), day));
-    return { day, dayEvents, dayTasks, dayExams, empty: !dayEvents.length && !dayTasks.length && !dayExams.length };
+    const dayHolidays = holidaysOn.get(ymd) ?? [];
+    return { day, dayEvents, dayTasks, dayExams, dayHolidays, empty: !dayEvents.length && !dayTasks.length && !dayExams.length };
   });
-  if (perDay.every((entry) => entry.empty)) return <>{emptyWeek}</>;
+  if (perDay.every((entry) => entry.empty))
+    return (
+      <>
+        {emptyWeek}
+        <HolidaysNote holidays={holidays} />
+      </>
+    );
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
-      {perDay.map(({ day, dayEvents, dayTasks, dayExams, empty }) => {
+      {perDay.map(({ day, dayEvents, dayTasks, dayExams, dayHolidays, empty }) => {
         return (
           <section key={day.toISOString()} aria-label={format(day, "EEEE d MMMM", { locale: it })}>
             <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -72,6 +87,13 @@ export function DayList({
                 <Icon name="Plus" className="h-4 w-4" />
               </button>
             </div>
+            {dayHolidays.length ? (
+              <div className="mb-1.5 flex flex-wrap gap-1">
+                {dayHolidays.map((holiday) => (
+                  <HolidayChip key={holiday.name} holiday={holiday} theme={theme} />
+                ))}
+              </div>
+            ) : null}
             {empty ? (
               <p className="rounded-[14px] border border-dashed border-[var(--border)] px-3 py-2 text-xs font-bold text-[var(--faint)]">{CALENDAR_VIEW_TEXT.noItems}</p>
             ) : (

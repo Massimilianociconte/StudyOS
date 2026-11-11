@@ -58,6 +58,7 @@ import {
   ALL_DAY_LABEL,
   CALENDAR_HELP,
   CALENDAR_TEXT,
+  CALENDAR_VIEW_TEXT,
   EVENT_CATEGORY_LABEL,
   EVENT_STATUS_LABEL,
   EXAM_STATUS_LABEL,
@@ -87,7 +88,11 @@ import {
 } from "../lib/calendarFilter";
 import { Agenda } from "../components/calendar/Agenda";
 import { CalendarHoverPreview } from "../components/calendar/CalendarHoverPreview";
-import { SubjectFilterBar } from "../components/calendar/CalendarFilters";
+import { CalendarFilterRow } from "../components/calendar/CalendarFilters";
+import { UndatedTasksDrawer } from "../components/calendar/UndatedTasks";
+import { holidaysInRange } from "../lib/holidays";
+import { undatedDueDate, undatedTasks } from "../lib/calendarRender";
+import { todayYmd } from "../lib/datePicker";
 import { DayList } from "../components/calendar/DayList";
 import { MonthGrid } from "../components/calendar/MonthGrid";
 import { TimeGrid } from "../components/calendar/TimeGrid";
@@ -313,6 +318,19 @@ export function CalendarView() {
     return [...result.values()];
   }, [received, labels]);
   const calendarTasks = useMemo(() => tasks.filter((task) => task.dueDate && task.status !== "archived"), [tasks]);
+  // Festività italiane: calcolate per il periodo visibile, mai salvate né esportate; non contano negli
+  // stati vuoti e il filtro per materia non le tocca. "Festività" le spegne (scelta del dispositivo).
+  const [showHolidays, setShowHolidays] = useUiState<boolean>("calendar.holidays", true, {
+    scope: "device",
+    validate: (value) => typeof value === "boolean"
+  });
+  // Attività senza data ("Senza data · N" in Giorno e Agenda), con lo stesso filtro per materia.
+  const [undatedOpen, setUndatedOpen] = useState(false);
+  const undated = useMemo(() => filterCalendarItems({ tasks: undatedTasks(tasks) }, subjectFilter).tasks, [tasks, subjectFilter]);
+  const placeUndated = (taskId: string, day: string) => {
+    const dueDate = undatedDueDate(day);
+    if (dueDate) void updateTask(taskId, { dueDate });
+  };
   const editingEvent = editingEventId ? events.find((event) => event.id === editingEventId) ?? null : null;
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
 
@@ -349,6 +367,7 @@ export function CalendarView() {
     () => filterCalendarItems({ occurrences, tasks: calendarTasks, exams }, subjectFilter),
     [occurrences, calendarTasks, exams, subjectFilter]
   );
+  const holidays = useMemo(() => (showHolidays ? holidaysInRange(todayYmd(range.from), todayYmd(range.to)) : []), [showHolidays, range]);
   const rangeEmpty = !hasItemsInRange(visible, range.from, range.to);
   const subjectSummary = useMemo(() => subjectCalendarSummary({ subjects, events, exams, tasks }), [subjects, events, exams, tasks]);
   const addForSubject = () => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)));
@@ -507,33 +526,51 @@ export function CalendarView() {
               <IconButton icon="ChevronRight" label="Periodo successivo" onClick={() => navigate(1)} />
             </div>
           </div>
-          <SubjectFilterBar subjects={subjects} active={filterSubject} onChange={setStoredSubject} />
+          <CalendarFilterRow
+            subjects={subjects}
+            active={filterSubject}
+            onChange={setStoredSubject}
+            showHolidays={showHolidays}
+            onToggleHolidays={() => setShowHolidays((value) => !value)}
+            undatedCount={undated.length}
+            onOpenUndated={mode === "day" || mode === "agenda" ? () => setUndatedOpen(true) : undefined}
+          />
         </>
       )}
 
       {calendarOwners.length && !summary ? (
-        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Calendari di altre persone">
+        // Con «Solo» attivo gli eventi altrui non si vedono (usano le materie del proprietario): i
+        // pulsanti restano, spenti, con una riga che lo spiega.
+        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label={CALENDAR_VIEW_TEXT.sharedGroup}>
           <span className="inline-flex items-center gap-1.5 text-xs font-black text-[var(--muted)]">
             {CALENDAR_TEXT.sharedCalendars}
             <HelpTip {...CALENDAR_HELP.shared} />
           </span>
           {calendarOwners.map((owner) => {
             const hidden = hiddenOwners.includes(owner.id);
+            const name = owner.name || CALENDAR_VIEW_TEXT.unknownOwner;
             return (
               <button
                 key={owner.id}
                 type="button"
                 aria-pressed={!hidden}
+                disabled={Boolean(filterSubject)}
+                aria-describedby={filterSubject ? "calendar-shared-filtered" : undefined}
                 onClick={() => useSharedStore.getState().toggleOwner(owner.id)}
-                className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border border-dashed px-3 text-xs font-black ${hidden ? "opacity-50" : ""}`}
+                className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40 ${hidden ? "opacity-50" : ""}`}
                 style={{ borderColor: ownerColor(owner.id) }}
-                title={hidden ? `Mostra gli eventi di ${owner.name}` : `Nascondi gli eventi di ${owner.name}`}
+                title={hidden ? CALENDAR_VIEW_TEXT.showOwner(name) : CALENDAR_VIEW_TEXT.hideOwner(name)}
               >
                 <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: ownerColor(owner.id) }} />
-                {owner.name}
+                {name}
               </button>
             );
           })}
+          {filterSubject ? (
+            <p id="calendar-shared-filtered" className="basis-full text-xs font-bold text-[var(--muted)]">
+              {CALENDAR_VIEW_TEXT.sharedFiltered}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -551,7 +588,7 @@ export function CalendarView() {
         {mode === "week" ? (
           <>
             <div className="hidden md:block">
-              <TimeGrid days={weekDays} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} handlers={handlers} onPickDay={(day) => {
+              <TimeGrid days={weekDays} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} holidays={holidays} handlers={handlers} onPickDay={(day) => {
                 setCursor(day);
                 setMode("day");
               }} />
@@ -562,6 +599,7 @@ export function CalendarView() {
                 occurrences={visible.occurrences}
                 tasks={visible.tasks}
                 exams={visible.exams}
+                holidays={holidays}
                 handlers={handlers}
                 // Settimana vuota sul telefono: un messaggio solo (con un filtro, quello sopra).
                 empty={
@@ -580,6 +618,7 @@ export function CalendarView() {
             occurrences={visible.occurrences}
             tasks={visible.tasks}
             exams={visible.exams}
+            holidays={holidays}
             handlers={handlers}
             hourHeight={dayFocus ? 64 : 52}
             fixedHours={dayFocus ? [8, 19] : undefined}
@@ -594,6 +633,7 @@ export function CalendarView() {
             occurrences={visible.occurrences}
             tasks={visible.tasks}
             exams={visible.exams}
+            holidays={holidays}
             handlers={handlers}
             onPickDay={(day) => {
               setCursor(day);
@@ -603,7 +643,16 @@ export function CalendarView() {
         ) : null}
 
         {mode === "agenda" ? (
-          <Agenda from={range.from} to={range.to} occurrences={visible.occurrences} tasks={visible.tasks} exams={visible.exams} handlers={handlers} empty={subjectEmpty} />
+          <Agenda
+            from={range.from}
+            to={range.to}
+            occurrences={visible.occurrences}
+            tasks={visible.tasks}
+            exams={visible.exams}
+            holidays={holidays}
+            handlers={handlers}
+            empty={subjectEmpty}
+          />
         ) : null}
         {mode === "exam" ? <ExamSession exams={exams} subjects={subjects} onGoExams={() => setActiveView("exams")} onOpenExam={openExam} /> : null}
         {mode === "semester" ? (
@@ -621,6 +670,18 @@ export function CalendarView() {
           />
         ) : null}
       </Panel>
+
+      <UndatedTasksDrawer
+        open={undatedOpen}
+        onClose={() => setUndatedOpen(false)}
+        tasks={undated}
+        subjects={subjects}
+        onPlace={placeUndated}
+        onOpenTask={(id) => {
+          setUndatedOpen(false);
+          setEditingTaskId(id);
+        }}
+      />
 
       {editingEvent ? (
         <EventEditorModal
@@ -1438,7 +1499,8 @@ function ExamSession({
               key={exam.id}
               type="button"
               onClick={() => onOpenExam(exam.id)}
-              aria-label={`${CALENDAR_TEXT.openExamAria(name)} · ${days} ${days === 1 ? "giorno" : "giorni"}`}
+              // Nome accessibile = il testo della scheda (numero, giorni, materia); l'azione nel title.
+              title={CALENDAR_TEXT.openExamAria(name)}
               className="quiet-panel motion-safe group block min-w-0 p-4 text-left hover:border-[var(--accent-ink)] hover:bg-[var(--surface)]"
               style={{ boxShadow: `inset 0 3px 0 ${color}` }}
             >
@@ -1472,7 +1534,7 @@ function ExamSession({
                 <button
                   type="button"
                   onClick={() => onOpenExam(exam.id)}
-                  aria-label={CALENDAR_TEXT.openExamAria(subjectName(subjects, exam.subjectId))}
+                  title={CALENDAR_TEXT.openExamAria(subjectName(subjects, exam.subjectId))}
                   className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[14px] px-2 text-left text-sm text-[var(--muted)] hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
                 >
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: subjectColor(subjects, exam.subjectId) }} />
@@ -1533,7 +1595,8 @@ function SemesterMap({
               <button
                 type="button"
                 onClick={() => onFilter(subject.id)}
-                aria-label={`${CALENDAR_TEXT.summaryShow(subject.name)} · ${CALENDAR_TEXT.summaryItems(row.items)}`}
+                // Nome accessibile = il testo della scheda (materia, voci); l'azione nel title.
+                title={CALENDAR_TEXT.summaryShow(subject.name)}
                 className="motion-safe group flex min-w-0 items-center gap-3 rounded-[14px] p-2 text-left hover:bg-[var(--surface)]"
               >
                 <span className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-super" style={{ background: safeCssColor(subject.color) || "var(--accent)" }}>
@@ -1553,7 +1616,8 @@ function SemesterMap({
               <button
                 type="button"
                 onClick={() => onOpenSubject(subject.id)}
-                aria-label={CALENDAR_TEXT.openSubjectAria(subject.name)}
+                aria-label={`${CALENDAR_TEXT.openSubject} · ${subject.name}`}
+                title={CALENDAR_TEXT.openSubjectAria(subject.name)}
                 className="inline-flex min-h-11 items-center gap-1 self-start rounded-full px-2.5 text-xs font-extrabold text-[var(--accent-ink)] hover:underline"
               >
                 {CALENDAR_TEXT.openSubject}

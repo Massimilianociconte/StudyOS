@@ -12,17 +12,20 @@ import { timeLabel } from "../../lib/selectors";
 import { CALENDAR_LAYOUT_TEXT, CALENDAR_VIEW_TEXT } from "../../lib/labels";
 import { dayOfSpan } from "../../lib/calendarLayout";
 import { todayYmd } from "../../lib/datePicker";
+import type { Holiday } from "../../lib/holidays";
 import {
   MIN_EVENT_HEIGHT_PX,
   MORE_GUTTER_PX,
   dayPieces,
+  holidayBars,
+  holidayId,
   laneRows,
   layoutTimedDay,
   weekStartsOf,
   type MoreBand,
   type PlacedPiece
 } from "../../lib/calendarRender";
-import { EventBar, eventBars } from "./bars";
+import { EventBar, HolidayChip, eventBars, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
 import { EventRow } from "./DayList";
 import { canDrag, editOccurrence, eventColor, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
@@ -50,6 +53,7 @@ export function TimeGrid({
   occurrences,
   tasks,
   exams,
+  holidays = [],
   handlers,
   hourHeight = 46,
   fixedHours,
@@ -60,6 +64,8 @@ export function TimeGrid({
   occurrences: CalendarOccurrence[];
   tasks: Task[];
   exams: Exam[];
+  /** Festività del periodo (vuoto con "Festività" spento): voci grigie nella fascia in alto. */
+  holidays?: Holiday[];
   handlers: Handlers;
   hourHeight?: number;
   fixedHours?: [number, number];
@@ -85,10 +91,12 @@ export function TimeGrid({
   const columnWidth = containerWidth ? (containerWidth - HOURS_COLUMN_PX - days.length * COLUMN_GAP_PX) / days.length : 200;
 
   // Eventi di tutto il giorno o su più giorni: barre nella fascia in alto, non nella griglia oraria.
+  const theme = useEventTheme();
   const bars = eventBars(occurrences);
   const barById = new Map(bars.map((bar) => [bar.id, bar]));
-  // Settimana: barre continue da un giorno all'altro, al più WEEK_LANES corsie.
-  const laneRow = days.length === 7 ? laneRows(bars, weekStartsOf(days), WEEK_LANES)[0] : undefined;
+  const holidayById = new Map(holidays.map((holiday) => [holidayId(holiday), holiday]));
+  // Settimana: barre continue da un giorno all'altro (prima le festività), al più WEEK_LANES corsie.
+  const laneRow = days.length === 7 ? laneRows([...holidayBars(holidays), ...bars], weekStartsOf(days), WEEK_LANES)[0] : undefined;
   const lanes = laneRow?.lanes ?? 0;
 
   const perDay = days.map((day) => {
@@ -103,6 +111,7 @@ export function TimeGrid({
       ymd,
       // Vista Giorno: le barre che toccano il giorno, come striscia con "giorno 2 di 3".
       bars: laneRow ? [] : bars.filter((bar) => bar.startDay <= ymd && bar.endDay >= ymd),
+      holidays: laneRow ? [] : holidays.filter((holiday) => holiday.date === ymd),
       pieces,
       layout: layoutTimedDay(pieces, { hourHeight, columnWidth }),
       tasks: tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)).sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? "")),
@@ -133,7 +142,7 @@ export function TimeGrid({
 
   const hours = Array.from({ length: hourEnd - hourStart }, (_, index) => hourStart + index);
   const gridHeight = hours.length * hourHeight;
-  const hasAllDay = Boolean(laneRow?.segments.length) || perDay.some((entry) => entry.bars.length || entry.tasks.length || entry.exams.length);
+  const hasAllDay = Boolean(laneRow?.segments.length) || perDay.some((entry) => entry.bars.length || entry.holidays.length || entry.tasks.length || entry.exams.length);
   // Fascia fissa (Focus 8–19): eventi interamente fuori fascia, che la griglia taglia.
   const outside = (test: (minutes: { startMin: number; endMin: number }) => boolean) =>
     fixedHours ? perDay.reduce((sum, entry) => sum + entry.pieces.filter((piece) => test(minutesOf(piece.startMs, piece.endMs, entry.dayStart))).length, 0) : 0;
@@ -207,6 +216,9 @@ export function TimeGrid({
             {CALENDAR_VIEW_TEXT.allDayRow}
           </span>
           {laneRow?.segments.map((segment) => {
+            const place = { gridColumn: `${segment.startCol + 2} / ${segment.endCol + 3}`, gridRow: segment.lane + 1 };
+            const holiday = holidayById.get(segment.id);
+            if (holiday) return <HolidayChip key={segment.id} holiday={holiday} theme={theme} style={place} />;
             const bar = barById.get(segment.id);
             return bar ? (
               <EventBar
@@ -215,7 +227,7 @@ export function TimeGrid({
                 handlers={handlers}
                 roundStart={!segment.continuesBefore}
                 roundEnd={!segment.continuesAfter}
-                style={{ gridColumn: `${segment.startCol + 2} / ${segment.endCol + 3}`, gridRow: segment.lane + 1 }}
+                style={place}
               />
             ) : null;
           })}
@@ -230,6 +242,9 @@ export function TimeGrid({
             const longDay = format(entry.day, "EEEE d MMMM", { locale: it });
             return (
               <div key={dayKey} className="grid grid-cols-1 min-w-0 content-start gap-1" style={{ gridColumn: index + 2, gridRow: lanes + 1 }}>
+                {entry.holidays.map((holiday) => (
+                  <HolidayChip key={holidayId(holiday)} holiday={holiday} theme={theme} />
+                ))}
                 {entry.bars.map((bar) => {
                   const position = dayOfSpan(entry.ymd, bar.startDay, bar.endDay);
                   return (

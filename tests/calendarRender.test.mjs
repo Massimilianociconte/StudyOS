@@ -199,3 +199,69 @@ test("spanText: 'ven 4 – dom 6 dic' per le voci su più giorni, niente per le 
   assert.equal(render.spanText(timed("conf", [2026, 12, 4, 9], [2026, 12, 6, 18]), today), "ven 4 – dom 6 dic");
 });
 
+test("overdueForAgenda: le attività in ritardo solo se l'Agenda parte da oggi", () => {
+  const now = local(2026, 12, 10, 9);
+  const tasks = [
+    { id: "late", status: "todo", dueDate: iso(2026, 12, 8, 18) },
+    { id: "done", status: "done", dueDate: iso(2026, 12, 8, 18) },
+    { id: "today", status: "todo", dueDate: iso(2026, 12, 10, 18) },
+    { id: "nodate", status: "todo" }
+  ];
+  assert.deepEqual(
+    render.overdueForAgenda(tasks, local(2026, 12, 10), now).map((task) => task.id),
+    ["late"]
+  );
+  // A1: con solo attività in ritardo e l'Agenda spostata in avanti, niente elenco (e quindi lo stato vuoto).
+  assert.deepEqual(render.overdueForAgenda(tasks, local(2026, 12, 24), now), []);
+});
+
+/* ------------------------------------------------------------------ */
+/* Attività senza data                                                  */
+/* ------------------------------------------------------------------ */
+
+test("undatedTasks: da fare e senza data; undatedDueDate alle 18 del giorno scelto", () => {
+  const tasks = [
+    { id: "a", status: "todo", title: "Leggere" },
+    { id: "b", status: "done", title: "Fatta" },
+    { id: "c", status: "archived", title: "Archiviata" },
+    { id: "d", status: "todo", title: "Con data", dueDate: iso(2026, 12, 4, 18) },
+    { id: "e", status: "doing", title: "In corso", archived: false }
+  ];
+  assert.deepEqual(
+    render.undatedTasks(tasks).map((task) => task.id),
+    ["a", "e"]
+  );
+  const due = new Date(render.undatedDueDate("2026-12-04"));
+  assert.deepEqual([due.getFullYear(), due.getMonth(), due.getDate(), due.getHours(), due.getMinutes()], [2026, 11, 4, 18, 0]);
+  assert.equal(render.undatedDueDate("non è una data"), null);
+});
+
+/* ------------------------------------------------------------------ */
+/* Festività, ricorrenze, colori                                        */
+/* ------------------------------------------------------------------ */
+
+test("holidaysByDay: festività di aprile 2027 raggruppate per giorno (Pasqua il 28 marzo)", async () => {
+  const { holidaysInRange } = await import("../src/lib/holidays.ts");
+  const list = holidaysInRange("2027-03-22", "2027-05-03");
+  const byDay = render.holidaysByDay(list);
+  assert.deepEqual(
+    byDay.get("2027-03-28").map((holiday) => holiday.name),
+    ["Pasqua", "Inizia l'ora legale (lancette avanti di un'ora)"]
+  );
+  assert.equal(byDay.get("2027-03-29")[0].kind, "national");
+  assert.equal(byDay.get("2027-04-25")[0].name, "Festa della Liberazione");
+  assert.equal(byDay.get("2027-04-26"), undefined);
+  // Festività come barre di un giorno: id stabili e diversi per due voci nello stesso giorno.
+  const sources = render.holidayBars(byDay.get("2027-03-28"));
+  assert.equal(new Set(sources.map((item) => item.id)).size, 2);
+  assert.ok(sources.every((item) => item.startDay === "2027-03-28" && item.endDay === "2027-03-28"));
+});
+
+
+test("holidayPaint: le feste nazionali un po' più marcate delle ricorrenze", () => {
+  const national = render.holidayPaint("national", "dark");
+  const celebration = render.holidayPaint("celebration", "dark");
+  assert.notEqual(national.background, celebration.background);
+  assert.ok(national.strong && !celebration.strong);
+  assert.equal(render.holidayPaint("clock", "light").strong, false);
+});

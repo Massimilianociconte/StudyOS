@@ -9,8 +9,9 @@ import { SharedMark } from "../SharedMark";
 import { timeLabel } from "../../lib/selectors";
 import { CALENDAR_VIEW_TEXT } from "../../lib/labels";
 import { addDays as addYmdDays, daysInclusive } from "../../lib/datePicker";
-import { isBarEvent, laneRows, monthItemBudget, weekStartsOf } from "../../lib/calendarRender";
-import { EventBar, eventBars } from "./bars";
+import type { Holiday } from "../../lib/holidays";
+import { holidayBars, holidayId, holidayPaint, isBarEvent, laneRows, monthItemBudget, weekStartsOf } from "../../lib/calendarRender";
+import { EventBar, HolidayChip, eventBars, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
 import { canDrag, defaultStartFor, editOccurrence, eventColor, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
@@ -28,6 +29,7 @@ export function MonthGrid({
   occurrences,
   tasks,
   exams,
+  holidays = [],
   handlers,
   onPickDay
 }: {
@@ -36,15 +38,19 @@ export function MonthGrid({
   occurrences: CalendarOccurrence[];
   tasks: Task[];
   exams: Exam[];
+  /** Festività del periodo (vuoto con "Festività" spento): voci grigie tra le barre. */
+  holidays?: Holiday[];
   handlers: Handlers;
   onPickDay: (day: Date) => void;
 }) {
   const [dropDay, setDropDay] = useState<string | null>(null);
   const grab = useRef<Grab | null>(null);
+  const theme = useEventTheme();
   const now = new Date();
   const bars = eventBars(occurrences);
   const barById = new Map(bars.map((bar) => [bar.id, bar]));
-  const rows = laneRows(bars, weekStartsOf(days), MONTH_LANES);
+  const holidayById = new Map(holidays.map((holiday) => [holidayId(holiday), holiday]));
+  const rows = laneRows([...holidayBars(holidays), ...bars], weekStartsOf(days), MONTH_LANES);
   const timed = occurrences.filter((item) => !isBarEvent(item));
 
   /** Click, trascinamento e rilascio su un giorno (fondo, numero e voci della cella). */
@@ -149,13 +155,25 @@ export function MonthGrid({
 
             {/* barre: continue da un giorno all'altro; sul telefono solo un filo colorato */}
             {row.segments.map((segment) => {
-              const bar = barById.get(segment.id);
-              if (!bar) return null;
               const place = {
                 gridColumn: `${segment.startCol + 1} / ${segment.endCol + 2}`,
                 gridRow: segment.lane + 2
               };
               const inset = `${segment.continuesBefore ? "" : "ml-1"} ${segment.continuesAfter ? "" : "mr-1"}`;
+              const holiday = holidayById.get(segment.id);
+              if (holiday) {
+                const paint = holidayPaint(holiday.kind, theme);
+                return (
+                  <div key={segment.id} className={`relative min-w-0 ${inset}`} style={place}>
+                    <span aria-hidden="true" className="block h-1 rounded-full sm:hidden" style={{ background: paint.strong ? paint.border : "var(--border)" }} />
+                    <div className="hidden sm:block">
+                      <HolidayChip holiday={holiday} theme={theme} />
+                    </div>
+                  </div>
+                );
+              }
+              const bar = barById.get(segment.id);
+              if (!bar) return null;
               return (
                 <div key={segment.id} className={`relative min-w-0 ${inset}`} style={place}>
                   <span

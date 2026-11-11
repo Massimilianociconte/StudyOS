@@ -1,8 +1,10 @@
 // Calcoli puri per disegnare il calendario (niente React né DOM): cosa va nella griglia oraria e cosa
 // nella fascia "tutto il giorno", pezzi di un giorno affiancati, barre su più giorni con un tetto di
 // corsie, voci degli elenchi per giorno, festività, Attività senza data, colori e icone per tipologia.
+import type { Holiday, HolidayKind } from "./holidays";
 import { collapseForWidth, eventDaySpan, layoutDayColumns, multiDaySegments, type DayRangeItem, type WeekSegment } from "./calendarLayout";
-import { formatRangeField, todayYmd } from "./datePicker";
+import { formatRangeField, parseYmd, todayYmd } from "./datePicker";
+import { EVENT_TYPE_COLORS, eventColorStyle, type EventTheme } from "./eventColors";
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -155,4 +157,80 @@ export function spanText(item: Timed, today: string = todayYmd()): string | null
   const span = eventDaySpan(item);
   if (!span || span.startDay === span.endDay) return null;
   return formatRangeField(span.startDay, span.endDay, today);
+}
+
+type DatedTask = { status: string; dueDate?: string; archived?: boolean };
+
+/**
+ * Attività in ritardo che l'Agenda elenca in cima: solo se l'Agenda parte da oggi (spostata in avanti
+ * non c'è il riquadro, e quindi nemmeno conta per lo stato vuoto).
+ */
+export function overdueForAgenda<T extends DatedTask>(tasks: readonly T[], from: Date, now: Date = new Date()): T[] {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (todayYmd(from) !== todayYmd(today)) return [];
+  return tasks
+    .filter((task) => task.status !== "done" && task.status !== "archived" && task.dueDate && msOf(task.dueDate) < today.getTime())
+    .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
+}
+
+/* ------------------------------------------------------------------ */
+/* Attività senza data                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Attività ancora da fare senza data: le raccoglie "Senza data · N". */
+export const undatedTasks = <T extends DatedTask>(tasks: readonly T[]) =>
+  tasks.filter((task) => !task.dueDate && !task.archived && task.status !== "done" && task.status !== "archived");
+
+/** Scadenza di un'attività messa in un giorno: alle 18:00 locali (come l'aggiunta rapida); null se la data non va. */
+export function undatedDueDate(ymd: string, hour = 18): string | null {
+  const parts = parseYmd(ymd);
+  if (!parts) return null;
+  return new Date(parts.year, parts.month, parts.day, hour, 0, 0, 0).toISOString();
+}
+
+/* ------------------------------------------------------------------ */
+/* Festività                                                            */
+/* ------------------------------------------------------------------ */
+
+/** Festività per giorno, nell'ordine ricevuto (festa nazionale prima del cambio dell'ora). */
+export function holidaysByDay(list: readonly Holiday[]): Map<string, Holiday[]> {
+  const map = new Map<string, Holiday[]>();
+  for (const holiday of list) {
+    const day = map.get(holiday.date) ?? [];
+    day.push(holiday);
+    map.set(holiday.date, day);
+  }
+  return map;
+}
+
+/** Id di una festività come barra: stabile, diverso per due voci dello stesso giorno. */
+export const holidayId = (holiday: Pick<Holiday, "date" | "name">) => `holiday:${holiday.date}:${holiday.name}`;
+
+/** Festività come barre di un giorno nella fascia in alto. */
+export const holidayBars = (list: readonly Holiday[]): DayRangeItem[] =>
+  list.map((holiday) => ({ id: holidayId(holiday), startDay: holiday.date, endDay: holiday.date }));
+
+export type HolidayPaint = { background: string; border: string; text: string; strong: boolean };
+
+/**
+ * Aspetto di una festività: grigio chiaro e leggero; le feste nazionali con fondo e bordo (un po' più
+ * marcate), ricorrenze e cambi dell'ora solo in testo attenuato.
+ */
+export function holidayPaint(kind: HolidayKind, theme: EventTheme): HolidayPaint {
+  if (kind === "national") return { ...styleOf(EVENT_TYPE_COLORS.holiday, theme), strong: true };
+  return { background: "var(--surface-soft)", border: "transparent", text: "var(--muted)", strong: false };
+}
+
+
+const styleCache = new Map<string, { background: string; border: string; text: string }>();
+
+/** eventColorStyle con una cache: lo stesso colore nello stesso tema si calcola una volta. */
+function styleOf(hex: string, theme: EventTheme) {
+  const key = `${hex}|${theme}`;
+  let style = styleCache.get(key);
+  if (!style) {
+    style = eventColorStyle(hex, theme);
+    styleCache.set(key, style);
+  }
+  return style;
 }

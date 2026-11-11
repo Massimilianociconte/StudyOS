@@ -3,7 +3,7 @@
 import { isBefore, parseISO } from "date-fns";
 import type { Exam, Task } from "../../types";
 import { Icon } from "../Icon";
-import { CALENDAR_TEXT, PRIORITY_TONE } from "../../lib/labels";
+import { CALENDAR_VIEW_TEXT, PRIORITY_TONE } from "../../lib/labels";
 import { subjectColor, subjectName } from "../../lib/selectors";
 import { pointerPoint } from "./shared";
 import type { Handlers, Subjects } from "./types";
@@ -18,8 +18,7 @@ export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers })
     >
       <button
         type="button"
-        aria-label={done ? `Segna "${task.title}" come da fare` : `Segna "${task.title}" come fatta`}
-        onClick={(event) => {
+        aria-label={done ? CALENDAR_VIEW_TEXT.markTodo(task.title) : CALENDAR_VIEW_TEXT.markDone(task.title)}        onClick={(event) => {
           event.stopPropagation();
           handlers.onToggleTask(task.id);
         }}
@@ -37,7 +36,7 @@ export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers })
         onMouseEnter={(event) => handlers.onPreviewTask(task, pointerPoint(event))}
         onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
         onMouseLeave={handlers.onPreviewHide}
-        aria-label={`Apri l'attività "${task.title}"`}
+        aria-label={CALENDAR_VIEW_TEXT.openTask(task.title)}
         className={`min-w-0 flex-1 truncate text-left ${done ? "line-through" : ""} ${overdue ? "text-[var(--danger-text)]" : ""}`}
       >
         {task.title}
@@ -54,8 +53,7 @@ export function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Sub
       type="button"
       className="flex w-full min-w-0 items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-left text-[11px] font-black hover:brightness-110"
       style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))` }}
-      title={`Esame di ${name} · preparazione al ${exam.preparation}%`}
-      aria-label={CALENDAR_TEXT.openExamAria(name)}
+      title={CALENDAR_VIEW_TEXT.examTitle(name, exam.preparation)}
       onClick={(event) => {
         // Nella cella del mese e nella griglia oraria il click crea un evento: aprire un esame non deve farlo.
         event.stopPropagation();
@@ -63,7 +61,9 @@ export function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Sub
       }}
     >
       <Icon name="GraduationCap" className="h-3 w-3 shrink-0" />
-      <span className="min-w-0 truncate">Esame · {name}</span>
+      {/* Nome accessibile = testo visibile ("Esame · Analisi"), poi l'azione detta solo a voce. */}
+      <span className="min-w-0 truncate">{CALENDAR_VIEW_TEXT.exam(name)}</span>
+      <span className="sr-only">, {CALENDAR_VIEW_TEXT.openAction}</span>
     </button>
   );
 }

@@ -1,12 +1,62 @@
 // Barre della fascia "tutto il giorno": eventi di tutto il giorno o su più giorni, continue da un giorno
 // all'altro (Settimana, Mese) oppure come striscia del giorno con "giorno 2 di 3" (vista Giorno).
 import type { CSSProperties, DragEvent as ReactDragEvent } from "react";
+import { Icon } from "../Icon";
 import { SharedMark } from "../SharedMark";
-import { CALENDAR_VIEW_TEXT } from "../../lib/labels";
-import { barSource, spanText } from "../../lib/calendarRender";
+import { useStudyStore } from "../../store/useStudyStore";
+import type { Holiday } from "../../lib/holidays";
+import { CALENDAR_VIEW_TEXT, HOLIDAY_KIND_LABEL } from "../../lib/labels";
+import { barSource, holidayPaint, spanText } from "../../lib/calendarRender";
 import type { DayRangeItem } from "../../lib/calendarLayout";
+import { formatDateField, todayYmd } from "../../lib/datePicker";
+import { themeTone, type EventTheme } from "../../lib/eventColors";
 import { allDayEventLabel, canDrag, editOccurrence, eventColor, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
+
+/**
+ * Elenchi vuoti (Agenda, Settimana sul telefono): le festività non contano come impegni, quindi resta lo
+ * stato vuoto e sotto, in una riga, le festività del periodo.
+ */
+export function HolidaysNote({ holidays }: { holidays: readonly Holiday[] }) {
+  if (!holidays.length) return null;
+  const today = todayYmd();
+  return (
+    <p className="mt-3 text-xs font-bold text-[var(--muted)]">
+      {CALENDAR_VIEW_TEXT.holidaysOfPeriod} {holidays.map((holiday) => `${holiday.name} (${formatDateField(holiday.date, today)})`).join(", ")}
+    </p>
+  );
+}
+
+/** Tema chiaro o scuro, per i colori leggibili delle voci del calendario. */
+export const useEventTheme = (): EventTheme => themeTone(useStudyStore((state) => state.settings.themeMode));
+
+/**
+ * Festività come voce grigia della fascia in alto: solo testo con una piccola icona (non si apre, non si
+ * sposta); le feste nazionali con fondo e bordo, un po' più marcate di ricorrenze e cambi dell'ora.
+ */
+export function HolidayChip({
+  holiday,
+  theme,
+  style,
+  className = ""
+}: {
+  holiday: Holiday;
+  theme: EventTheme;
+  style?: CSSProperties;
+  className?: string;
+}) {
+  const paint = holidayPaint(holiday.kind, theme);
+  return (
+    <div
+      className={`flex min-h-6 min-w-0 items-center gap-1 rounded-[8px] px-1.5 py-0.5 text-[11px] leading-tight ${paint.strong ? "border font-black" : "font-bold"} ${className}`}
+      style={{ background: paint.background, borderColor: paint.border, color: paint.text, ...style }}
+      title={`${HOLIDAY_KIND_LABEL[holiday.kind]} · ${holiday.name}`}
+    >
+      <Icon name={holiday.icon} className="h-3 w-3 shrink-0" />
+      <span className="min-w-0 truncate">{holiday.name}</span>
+    </div>
+  );
+}
 
 /** Barra di un evento: giorni (ultimo compreso) e occorrenza; `id` = chiave dell'occorrenza. */
 export type CalendarBar = DayRangeItem & { item: CalendarOccurrence };
