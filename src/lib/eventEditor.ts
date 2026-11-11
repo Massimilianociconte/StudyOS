@@ -2,7 +2,7 @@
 // da salvare, orari e "tutto il giorno", errori, promemoria, scelta "solo questo / successivi / tutti".
 import type { CalendarEvent, EventCategory, EventReminder, RepeatRule, Weekday } from "../types";
 import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, sanitizeTypeColorOverrides, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "./eventColors";
-import { MONTH_NAME, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
+import { DATE_PICKER_TEXT, MONTH_NAME, WEEKDAY_NAME, WEEKDAY_SHORT } from "./labels";
 import { EVENT_EDITOR_TEXT, SCOPE_TEXT } from "./labels/calendar";
 import { applyRepeatFields, changesRepeat, describeReminder, isOccurrenceRow, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
@@ -424,6 +424,52 @@ export const occurrenceDayText = (date: string) => {
   return `${WEEKDAY_NAME[weekdayOf(date)]} ${parts.day} ${MONTH_NAME[parts.month - 1]}`;
 };
 
+/**
+ * Date in breve, per mese: "ven 4, 11, 18 dic, ven 1 gen" (il giorno della settimana solo quando
+ * cambia, il mese alla fine dei suoi giorni).
+ */
+export const shortDatesText = (dates: readonly string[]) => {
+  const groups: string[] = [];
+  let items: string[] = [];
+  let group = "";
+  let month = "";
+  let weekday = "";
+  const close = () => {
+    if (items.length) groups.push(`${items.join(", ")} ${month}`);
+    items = [];
+  };
+  for (const date of dates) {
+    const parts = parseCivil(date);
+    if (!parts) continue;
+    if (`${parts.year}-${parts.month}` !== group) {
+      close();
+      group = `${parts.year}-${parts.month}`;
+      month = DATE_PICKER_TEXT.monthsShort[parts.month - 1];
+      weekday = "";
+    }
+    const day = WEEKDAY_SHORT[weekdayOf(date)];
+    items.push(day === weekday ? String(parts.day) : `${day} ${parts.day}`);
+    weekday = day;
+  }
+  close();
+  return groups.join(", ");
+};
+
+/** Date che spariscono dette per nome: le prime, poi "e altre date dopo". */
+const GONE_SHOWN = 6;
+
+/** Che cosa fa "Questo e i successivi" alle parti cambiate prima (assorbite con una regola nuova, o lasciate). */
+const splitLines = (impact: ScopeImpact | undefined) => {
+  if (!impact) return [];
+  if (impact.absorbed) {
+    const gone = impact.gone ?? [];
+    const more = gone.length > GONE_SHOWN || impact.goneMore === true;
+    return [SCOPE_TEXT.followingSplits, ...(gone.length ? [SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), more)] : [])];
+  }
+  if (!impact.laterParts) return [];
+  return [SCOPE_TEXT.followingKeepsSplits, ...(impact.laterOwnTime ? [SCOPE_TEXT.followingSplitsOwnTime] : [])];
+};
+
 /** Righe sui giorni cambiati o annullati da soli: quanti perdono la modifica, quanti restano. */
 const rowLines = (impact: ScopeImpact | undefined) => {
   if (!impact) return [];
@@ -540,8 +586,9 @@ export const scopeOptions = ({
           ...(shift ? [SCOPE_TEXT.followingDaysShift(shift.from, shift.to)] : []),
           ...(rowContent ? [SCOPE_TEXT.followingTakesDay] : []),
           ...rowLines(impacts.following),
-          ...(impacts.following?.absorbed ? [SCOPE_TEXT.followingSplits] : []),
-          ...(ruleChanged ? [] : [SCOPE_TEXT.followingKeepsEnd]),
+          ...splitLines(impacts.following),
+          // Se spariscono date, la fine di prima non vale più per tutto ciò che viene dopo.
+          ...(ruleChanged || impacts.following?.gone?.length ? [] : [SCOPE_TEXT.followingKeepsEnd]),
           ...pin
         ];
   const firstDay = span?.start === date && span.parts === 1;

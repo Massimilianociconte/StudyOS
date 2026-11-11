@@ -9,7 +9,7 @@ import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/gr
 import { createId, nowIso } from "../lib/id";
 import { expandEvents, type EventOccurrence } from "../lib/recurrence";
 import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
-import { occurrenceEditCalls, seriesMovePatch } from "../lib/occurrenceEdit";
+import { occurrenceEditCalls, scopeImpact, seriesMovePatch } from "../lib/occurrenceEdit";
 import { isOccurrenceRow, normalizeRepeat, sanitizeOccasion, sanitizeReminders, validateRepeat, type OccurrenceScope } from "../lib/repeat";
 import { safeCssColor } from "../lib/sharing";
 import { dueTopics } from "../lib/review";
@@ -614,6 +614,9 @@ const createEvent = async (args: Args): Promise<AgentCallResult> => {
   return ok({ id, start: span.start, end: span.end });
 };
 
+/** Date che spariscono elencate nel risultato di update_event (le altre: removedDatesMore). */
+const REMOVED_DATES_SHOWN = 50;
+
 const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
   const event = state().events.find((item) => item.id === id);
@@ -656,6 +659,11 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   // (la regola segue il giorno spostato; da un giorno già cambiato da solo, con «all», anche lui).
   const { scope, occurrence, target, series } = day;
   const { calls } = occurrenceEditCalls({ item: occurrence, series, scope, changes });
+  // «following» con una regola nuova sostituisce le parti divise prima: le date che spariscono si
+  // dicono, come nella scelta del calendario (R1-S1). Senza regola nuova quelle parti restano.
+  const impact = scope === "following" ? scopeImpact(state().events, occurrence, scope, calls, undefined, changes) : null;
+  const gone = impact?.gone ?? [];
+  const goneMore = gone.length > REMOVED_DATES_SHOWN || impact?.goneMore === true;
   for (const call of calls) await state().editOccurrence(target.seriesId, target.date, call.scope, call.patch);
   // Nuovo inizio della serie (con «following», della parte nuova, `${serie}~${giorno}` come la crea
   // planEdit): l'agente vede se la prima data è cambiata.
@@ -668,7 +676,8 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
     scope,
     start: changes.start ?? occurrence.start,
     end: changes.end ?? occurrence.end,
-    ...(holder ? { seriesStart: holder.start } : {})
+    ...(holder ? { seriesStart: holder.start } : {}),
+    ...(gone.length ? { removedDates: gone.slice(0, REMOVED_DATES_SHOWN), ...(goneMore ? { removedDatesMore: true } : {}) } : {})
   });
 };
 

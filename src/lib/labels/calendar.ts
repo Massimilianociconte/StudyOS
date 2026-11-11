@@ -191,7 +191,13 @@ export const SCOPE_TEXT = {
   followingEdit: (day: string) => `Cambia l'evento di ${day} e tutti quelli dopo; quelli prima restano come sono.`,
   followingMove: (day: string) => `Sposta l'evento di ${day} e tutti quelli dopo; quelli prima restano dove sono.`,
   followingDelete: (day: string) => `Elimina l'evento di ${day} e tutti quelli dopo, comprese le modifiche fatte ai singoli giorni.`,
-  followingSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: vale questa modifica.",
+  /** Regola nuova: le parti cambiate prima con "Questo e i successivi" prendono la ripetizione nuova. */
+  followingSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: la ripetizione nuova vale anche per quelle date.",
+  /** Le date di quelle parti che la ripetizione nuova non ha (es. "ven 4, 11, 18 dic"). */
+  followingGone: (dates: string, more: boolean) => `Spariscono: ${dates}${more ? " e altre date dopo" : ""}.`,
+  /** Senza regola nuova le parti cambiate prima restano (R1-S1). */
+  followingKeepsSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: quelle date restano nei loro giorni e prendono solo ciò che hai cambiato qui.",
+  followingSplitsOwnTime: "Dove avevi già cambiato l'orario, resta quello.",
   followingKeepsEnd: "La serie finisce quando finiva prima.",
   /** Da un giorno cambiato da solo: i successivi prendono ciò che quel giorno ha di suo (vedi followingPatch). */
   followingTakesDay: "Anche i giorni dopo prendono il titolo e i dettagli che questo giorno aveva solo per sé.",

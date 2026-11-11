@@ -8,11 +8,13 @@ import {
   expandEvents,
   expandRule,
   isOccurrenceRow,
+  laterParts,
   legacyProjection,
   normalizeRepeat,
   planDelete,
   planEdit,
   repeatLegacyKey,
+  sameClock,
   type OccurrenceScope
 } from "./repeat";
 import { allScopePatch, occurrenceTarget, shiftPatchDays, startDayOf } from "./occurrenceLookup";
@@ -279,15 +281,57 @@ export interface ScopeImpact {
   kept: number;
   /** Il giorno aperto era cambiato da solo e perde la sua modifica. */
   ownLost: boolean;
-  /** Divisioni successive (un "Questo e i successivi" di prima) che la modifica sostituisce. */
+  /** Divisioni successive (un "Questo e i successivi" di prima) che la modifica sostituisce (solo con una regola nuova). */
   absorbed: number;
+  /** Date di quelle divisioni che spariscono (nell'anno dopo il giorno aperto), in ordine. */
+  gone: string[];
+  /** Ne spariscono anche dopo quell'anno. */
+  goneMore: boolean;
+  /** Parti successive (divise prima) che una modifica senza regola nuova lascia nei loro giorni, con i campi cambiati. */
+  laterParts: number;
+  /** Di queste, quante tengono un orario loro mentre la modifica cambia l'ora. */
+  laterOwnTime: number;
 }
+
+/** Giorni dopo quello aperto in cui si cercano le date che spariscono. */
+const GONE_WINDOW_DAYS = 366;
+
+/** Serie a cui appartiene un'occorrenza espansa (una riga: la sua serie). */
+const ownerOf = (item: CalendarEvent) => (isOccurrenceRow(item) ? (item.seriesId as string) : item.id);
+
+/**
+ * Date delle serie `absorbed` (dal giorno `date`, nell'anno dopo) che dopo la modifica non ci sono
+ * più: né lo stesso giorno né quello spostato quanto il giorno aperto (`shift`) è una data delle serie
+ * toccate. Una lezione spostata con la serie non conta, una che la regola nuova non ha sì. `more`: ne
+ * spariscono anche nell'anno dopo (una parte senza fine), così non si dice un elenco come se fosse tutto.
+ */
+const goneDates = (
+  before: readonly CalendarEvent[],
+  after: readonly CalendarEvent[],
+  absorbed: ReadonlySet<string>,
+  touched: ReadonlySet<string>,
+  date: string,
+  shift: number
+) => {
+  const from = localMidnight(civilAddDays(date, -1));
+  const limit = civilAddDays(date, GONE_WINDOW_DAYS);
+  const was = expandEvents(before, from, localMidnight(civilAddDays(date, 2 * GONE_WINDOW_DAYS)))
+    .filter((item) => absorbed.has(ownerOf(item)) && item.occurrenceDate >= date)
+    .map((item) => item.occurrenceDate);
+  const now = new Set(
+    expandEvents(after, from, localMidnight(civilAddDays(date, 2 * GONE_WINDOW_DAYS + Math.abs(shift) + 1)))
+      .filter((item) => touched.has(ownerOf(item)))
+      .map((item) => item.occurrenceDate)
+  );
+  const gone = [...new Set(was)].filter((day) => !now.has(day) && !now.has(civilAddDays(day, shift))).sort();
+  return { dates: gone.filter((day) => day < limit), more: gone.some((day) => day >= limit) };
+};
 
 /** Gli eventi dopo le chiamate, come le farebbe lo store (stesse funzioni, stesso ordine). */
 export const simulateOccurrenceEdit = (events: readonly CalendarEvent[], seriesId: string, date: string, calls: readonly OccurrenceCall[], now = new Date().toISOString()) => {
   let current: CalendarEvent[] = [...events];
   const touched = new Set<string>([seriesId]);
-  let absorbed = 0;
+  const absorbedIds = new Set<string>();
   for (const call of calls) {
     const series = current.find((event) => event.id === seriesId && !isOccurrenceRow(event));
     if (!series) break;
@@ -297,12 +341,12 @@ export const simulateOccurrenceEdit = (events: readonly CalendarEvent[], seriesI
       const gone = byId.get(id);
       if (!gone || isOccurrenceRow(gone)) continue;
       touched.add(id);
-      if (id !== seriesId) absorbed += 1;
+      if (id !== seriesId) absorbedIds.add(id);
     }
     for (const put of plan.puts) if (!isOccurrenceRow(put)) touched.add(put.id);
     current = applyEditPlan(current, plan).events;
   }
-  return { events: current, touched, absorbed };
+  return { events: current, touched, absorbed: absorbedIds.size, absorbedIds };
 };
 
 /**
@@ -339,7 +383,29 @@ export const scopeImpact = (
   const rows = events.filter(
     (event) => isOccurrenceRow(event) && isCivilDate(event.originalDate) && after.touched.has(event.seriesId as string) && (scope !== "following" || (event.originalDate as string) >= target.date)
   );
-  const impact: ScopeImpact = { changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: after.absorbed };
+  const impact: ScopeImpact = {
+    changedLost: 0,
+    changedGone: 0,
+    cancelledLost: 0,
+    kept: 0,
+    ownLost: false,
+    absorbed: after.absorbed,
+    gone: [],
+    goneMore: false,
+    laterParts: 0,
+    laterOwnTime: 0
+  };
+  if (scope === "following" && after.absorbed) {
+    const gone = goneDates(events, after.events, after.absorbedIds, after.touched, target.date, shift);
+    impact.gone = gone.dates;
+    impact.goneMore = gone.more;
+  } else if (scope === "following") {
+    // Senza regola nuova le parti successive restano (R1-S1): quante, e quante tengono un orario loro.
+    const later = laterParts(events, target.seriesId, target.date);
+    impact.laterParts = later.length;
+    const part = after.events.find((event) => event.id === `${target.seriesId}~${target.date}` && !isOccurrenceRow(event)) ?? after.events.find((event) => event.id === target.seriesId);
+    if (later.length && part && !sameClock(part, series)) impact.laterOwnTime = later.filter((event) => !sameClock(event, series)).length;
+  }
   for (const row of rows) {
     const own = target.row && row.id === item.id;
     if (own && scope === "following") continue;

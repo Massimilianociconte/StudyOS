@@ -397,3 +397,28 @@ test("B1 (revisione finale). update_event da Honolulu: martedì 17 alle 10 a Rom
     });
   }
 });
+
+test("R1-S1 (revisione finale). update_event «following»: senza regola nuova la parte divisa dopo resta; con una regola nuova si dicono le date che spariscono", async () => {
+  // Lunedì alle 10 a Roma; dal 30/11 lunedì e venerdì (un «following» di prima).
+  useStudyStore.setState({ events: [MONDAYS] });
+  assert.equal((await executeAgentTool("studyos_update_event", { id: "m", occurrenceDate: "2026-11-30", scope: "following", repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } })).ok, true);
+  const days = () =>
+    expandEvents(events(), new Date("2026-11-01T00:00:00.000Z"), new Date("2026-12-12T00:00:00.000Z")).map((item) => [
+      new Date(item.start).toLocaleDateString("sv-SE", { timeZone: "Europe/Rome" }),
+      item.title
+    ]);
+  const renamed = await executeAgentTool("studyos_update_event", { id: "m", occurrenceDate: "2026-11-16", scope: "following", title: "Nuovo" });
+  assert.equal(renamed.ok, true, JSON.stringify(renamed));
+  assert.equal("removedDates" in renamed.data, false);
+  assert.deepEqual(days(), [
+    ["2026-11-02", "Lezione"],
+    ["2026-11-09", "Lezione"],
+    ...["2026-11-16", "2026-11-23", "2026-11-30", "2026-12-04", "2026-12-07", "2026-12-11"].map((date) => [date, "Nuovo"])
+  ]);
+  // Lunedì e mercoledì dal 16/11 (ora della parte nata dal rinomina): la parte del 30/11 si sostituisce e i venerdì spariscono.
+  const ruled = await executeAgentTool("studyos_update_event", { id: "m~2026-11-16", occurrenceDate: "2026-11-16", scope: "following", repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } });
+  assert.equal(ruled.ok, true, JSON.stringify(ruled));
+  assert.deepEqual(ruled.data.removedDates.slice(0, 3), ["2026-12-04", "2026-12-11", "2026-12-18"]);
+  assert.equal(ruled.data.removedDates.every((date) => new Date(`${date}T12:00:00Z`).getUTCDay() === 5), true);
+  assert.equal(ruled.data.removedDatesMore, true);
+});

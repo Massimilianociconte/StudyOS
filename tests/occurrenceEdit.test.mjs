@@ -11,7 +11,7 @@ import {
   simulateOccurrenceEdit,
   userRuleChange
 } from "../src/lib/occurrenceEdit.ts";
-import { scopeOptions, weekdaysText } from "../src/lib/eventEditor.ts";
+import { scopeOptions, shortDatesText, weekdaysText } from "../src/lib/eventEditor.ts";
 import { findOccurrence } from "../src/lib/occurrenceLookup.ts";
 import { applyEditPlan, expandEvents, isOccurrenceRow, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { customFromRule, repeatPresets, ruleFromCustom } from "../src/lib/repeatPicker.ts";
@@ -72,7 +72,7 @@ const impactsFor = (events, item, changes, shownFields = item) => {
   }
   return result;
 };
-const NO_IMPACT = { changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: 0 };
+const NO_IMPACT = { changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: 0, gone: [], goneMore: false, laterParts: 0, laterOwnTime: 0 };
 
 test("B1. spostare un giorno a un altro giorno con «Questo e i successivi» o «Tutti»: si dice che le modifiche e gli annullamenti si perdono", () => {
   const events = withChangedDays();
@@ -587,4 +587,45 @@ test("R3-S1 (revisione finale). «Questo e i successivi» a un altro giorno su u
   const chosen = { freq: "weekly", byWeekday: ["FR"], end: { type: "count", count: 6 } };
   const { calls } = occurrenceEditCalls({ item, series, scope: "following", changes: { repeat: chosen }, shown: item });
   assert.deepEqual(calls[0].patch.repeat, chosen);
+});
+
+test("R1-S1 (revisione finale). La scelta dice che le parti divise prima restano, o quali date spariscono con una regola nuova", () => {
+  // Ogni lunedì; dal 30/11 lunedì e venerdì (un «Questo e i successivi» di prima).
+  let events = [WEEKLY];
+  events = apply(events, planEdit(WEEKLY, events, "2026-11-30", "following", { repeat: { freq: "weekly", byWeekday: ["MO", "FR"] } }, { now: NOW }));
+  const item = findOccurrence(events, "s", "2026-11-16");
+  // Solo il titolo: la parte del 30/11 resta, nessuna data sparisce.
+  const title = impactsFor(events, item, { title: "Nuovo" });
+  assert.deepEqual(title.following, { ...NO_IMPACT, laterParts: 1 });
+  const titleLines = scopeOptions({ action: "edit", date: "2026-11-16", impacts: title }).find((option) => option.id === "following").details;
+  assert.deepEqual(titleLines.slice(1), [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingKeepsEnd]);
+  // Un'ora dopo: la parte del 30/11 aveva la stessa ora e la prende (nessuna riga sul suo orario).
+  assert.equal(impactsFor(events, item, shiftMs(item, 3600e3)).following.laterOwnTime, 0);
+  // Lunedì e mercoledì: la parte si sostituisce e i venerdì spariscono, detti per nome.
+  const rule = { repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } };
+  const ruled = impactsFor(events, item, rule).following;
+  assert.deepEqual([ruled.absorbed, ruled.goneMore], [1, true], "la parte non aveva fine: i venerdì spariscono anche dopo un anno");
+  assert.deepEqual(ruled.gone.slice(0, 6), ["2026-12-04", "2026-12-11", "2026-12-18", "2026-12-25", "2027-01-01", "2027-01-08"]);
+  const ruleLines = scopeOptions({ action: "edit", date: "2026-11-16", ruleChanged: true, impacts: { following: ruled } }).find((option) => option.id === "following").details;
+  assert.deepEqual(ruleLines.slice(1), [SCOPE_TEXT.followingSplits, "Spariscono: ven 4, 11, 18, 25 dic, ven 1, 8 gen e altre date dopo."]);
+
+  // Una parte con un orario suo: con l'ora nuova lo tiene, e lo si dice.
+  let timed = [WEEKLY];
+  const late = findOccurrence(timed, "s", "2026-11-30");
+  timed = apply(timed, planEdit(WEEKLY, timed, "2026-11-30", "following", shiftMs(late, 2 * 3600e3), { now: NOW }));
+  const first = findOccurrence(timed, "s", "2026-11-16");
+  const moved = impactsFor(timed, first, shiftMs(first, 3600e3)).following;
+  assert.deepEqual([moved.laterParts, moved.laterOwnTime], [1, 1]);
+  const movedLines = scopeOptions({ action: "move", date: "2026-11-16", impacts: { following: moved } }).find((option) => option.id === "following").details;
+  assert.deepEqual(movedLines.slice(1, 3), [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingSplitsOwnTime]);
+  const after = simulateOccurrenceEdit(timed, "s", "2026-11-16", [{ scope: "following", patch: shiftMs(first, 3600e3) }], NOW).events;
+  assert.deepEqual(
+    expandEvents(after, localMidnight("2026-11-16"), localMidnight("2026-12-08")).map((occurrence) => [occurrence.occurrenceDate, new Date(occurrence.start).getHours()]),
+    [["2026-11-16", 13], ["2026-11-23", 13], ["2026-11-30", 14], ["2026-12-07", 14]]
+  );
+});
+
+test("date in breve per mese: il giorno della settimana solo quando cambia", () => {
+  assert.equal(shortDatesText(["2026-12-04", "2026-12-11", "2026-12-18", "2027-01-01", "2027-01-04"]), "ven 4, 11, 18 dic, ven 1, lun 4 gen");
+  assert.equal(shortDatesText([]), "");
 });

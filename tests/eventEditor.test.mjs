@@ -243,11 +243,17 @@ test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
   // Cambiando la regola non si può scegliere "Solo questo".
   assert.deepEqual(scopeOptions({ action: "edit", date: "2026-11-12", ruleChanged: true }).map((option) => option.id), ["following", "all"]);
   // Ciò che si dice dei giorni cambiati viene da `impacts` (vedi occurrenceEdit.test).
-  const lost = scopeOptions({ action: "edit", date: "2026-11-12", impacts: { following: { changedLost: 2, cancelledLost: 0, kept: 1, ownLost: false, absorbed: 1 } } });
-  assert.deepEqual(lost.find((option) => option.id === "following").details.slice(1, 4), [
+  const lost = scopeOptions({
+    action: "edit",
+    date: "2026-11-12",
+    ruleChanged: true,
+    impacts: { following: { changedLost: 2, cancelledLost: 0, kept: 1, ownLost: false, absorbed: 1, gone: ["2026-12-04", "2026-12-11"], goneMore: false, laterParts: 0, laterOwnTime: 0 } }
+  });
+  assert.deepEqual(lost.find((option) => option.id === "following").details.slice(1), [
     "2 giorni che avevi cambiato da soli perdono le loro modifiche e tornano come il resto della serie.",
     "Gli altri giorni che avevi cambiato o annullato da soli restano così.",
-    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: vale questa modifica."
+    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: la ripetizione nuova vale anche per quelle date.",
+    "Spariscono: ven 4, 11 dic."
   ]);
   const remove = scopeOptions({ action: "delete", date: "2026-11-12" });
   assert.ok(remove.find((option) => option.id === "all").details[0].includes("tutta la serie"));
