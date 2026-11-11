@@ -17,6 +17,7 @@ import { GlobalSearch } from "./GlobalSearch";
 import { TaskTimerReminder } from "./TaskTimerReminder";
 import { AgentDock } from "./AgentDesk";
 import { StudyTimerWatcher } from "./StudyTimerWatcher";
+import { PeopleNotice } from "./PeopleNotice";
 import { requestSettingsSection } from "../lib/settingsJump";
 import { QUICK_ADD_EVENT } from "../lib/quickAdd";
 
@@ -311,6 +312,11 @@ export function AppShell({ children }: PropsWithChildren) {
                 </Button>
               </div>
             ) : null}
+          </div>
+
+          {/* Avviso una tantum della ricerca persone (trovabili di default): solo con l'account. */}
+          <div className="mx-auto max-w-[1380px]">
+            <PeopleNotice onOpenProfile={() => openSettings("profilo")} />
           </div>
 
           <div className="mx-auto max-w-[1380px]">{children}</div>

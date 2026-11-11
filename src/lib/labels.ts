@@ -461,6 +461,7 @@ export const peopleLabels = {
   searching: "Cerco…",
   invite: "Invita",
   inviting: "Invito…",
+  wait: "Un attimo…",
   noName: "Nome non impostato",
   noHandle: "Senza @nome",
   somebody: "una persona",

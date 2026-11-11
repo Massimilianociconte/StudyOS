@@ -16,8 +16,10 @@ import {
   SHARE_PERMISSION_LABEL,
   SHARE_SCOPE_LABEL,
   SHARING_TAB_LABEL,
+  peopleLabels,
   scopesSummary
 } from "../lib/labels";
+import { isExpiredEmailInvite, shareInviteRecipient } from "../lib/people";
 import {
   SUBJECTLESS_SCOPES,
   VIEW_ONLY_SCOPES,
@@ -133,7 +135,9 @@ export function SharingView() {
   const waitingForLink = Boolean(pending) && openedId === undefined;
   const incoming = waitingForLink
     ? []
-    : invites.filter((invite) => invite.ownerId !== me && invite.status === "pending" && !(pending && invite.id === openedId));
+    : invites.filter(
+        (invite) => invite.ownerId !== me && invite.status === "pending" && !isExpiredEmailInvite(invite) && !(pending && invite.id === openedId)
+      );
   const sent = invites.filter((invite) => invite.ownerId === me);
   const connecting = availability !== "ready" && availability !== "missing";
 
@@ -896,15 +900,21 @@ function SentInvites({ invites, onCancel }: { invites: ShareInviteSummary[]; onC
             <span className="min-w-0 flex-1 text-sm font-bold">
               {scopesSummary(invite.offers)}
               <span className="block text-xs text-[var(--muted)]">
-                {invite.recipientEmail ?? "Con link"} · {SHARE_INVITE_STATUS_LABEL[invite.status]}
-                {invite.status === "pending" && shortDate(invite.expiresAt) ? ` fino al ${shortDate(invite.expiresAt)}` : ""}
+                {isExpiredEmailInvite(invite) ? (
+                  `${invite.recipientEmail} · ${peopleLabels.expiredEmailInvite}`
+                ) : (
+                  <>
+                    {shareInviteRecipient(invite)} · {SHARE_INVITE_STATUS_LABEL[invite.status]}
+                    {invite.status === "pending" && shortDate(invite.expiresAt) ? ` fino al ${shortDate(invite.expiresAt)}` : ""}
+                  </>
+                )}
               </span>
             </span>
             {invite.status === "pending" ? (
               <Button
                 variant="ghost"
                 icon="X"
-                aria-label={`Annulla l'invito: ${scopesSummary(invite.offers)}, ${invite.recipientEmail ?? "con link"}`}
+                aria-label={`Annulla l'invito: ${scopesSummary(invite.offers)}, ${shareInviteRecipient(invite)}`}
                 onClick={() => setConfirmId(invite.id)}
               >
                 Annulla l'invito

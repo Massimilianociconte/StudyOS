@@ -4,7 +4,8 @@ import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { useSharedStore } from "../store/useSharedStore";
 import { useCloudSession } from "../hooks/useCloudSession";
 import { cloudConfigured } from "../lib/cloudSyncState";
-import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_HINT, SHARE_SCOPE_LABEL, SHARE_TEXT, scopesSummary } from "../lib/labels";
+import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_HINT, SHARE_SCOPE_LABEL, SHARE_TEXT, peopleLabels, scopesSummary } from "../lib/labels";
+import { personName, type FoundPerson } from "../lib/people";
 import {
   SHARE_SCOPES,
   SUBJECTLESS_SCOPES,
@@ -21,9 +22,11 @@ import {
 import { Button, Drawer, Field, Segmented, inputClass } from "./ui";
 import { Icon } from "./Icon";
 import { CloudPanel } from "./CloudPanel";
+import { FindPerson } from "./FindPerson";
 import { ShareLinkPanel } from "./ShareLinkPanel";
 
-type Target = "invite" | `user:${string}` | `group:${string}`;
+/** invite: link da mandare; person: invito nell'app a una persona trovata con la ricerca. */
+type Target = "invite" | "person" | `user:${string}` | `group:${string}`;
 
 const toggle = <T,>(list: readonly T[], value: T) => (list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value]);
 
@@ -64,7 +67,10 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
   // (condivisione revocata, uscita dal gruppo), non si prova una condivisione diretta che il
   // server rifiuterebbe: si torna all'invito.
   const chosen: Target =
-    target === "invite" || people.some((person) => `user:${person.userId}` === target) || groups.some((group) => `group:${group.id}` === target)
+    target === "invite" ||
+    target === "person" ||
+    people.some((person) => `user:${person.userId}` === target) ||
+    groups.some((group) => `group:${group.id}` === target)
       ? target
       : "invite";
   // Lo stato non resta sul bersaglio sparito: se la persona torna raggiungibile non si riseleziona da sola.
@@ -85,8 +91,29 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
       ? people.find((person) => `user:${person.userId}` === chosen)?.name ?? "Persona"
       : groups.find((group) => `group:${group.id}` === chosen)?.name ?? "Gruppo";
 
+  const requestsFor = (list: ShareOffer[]) => (askBack ? list.map((offer) => ({ scope: offer.scope, permission: offer.permission })) : []);
+
+  /** "Invita" sulla scheda della persona trovata: l'invito compare nella sua app (niente link). */
+  const invitePerson = async (person: FoundPerson): Promise<string | null> => {
+    if (busy) return peopleLabels.wait;
+    if (!scopes.length) return peopleLabels.needsScopes;
+    setError("");
+    setBusy(true);
+    try {
+      const sync = await import("../lib/peopleSync");
+      const list = offers();
+      await sync.invitePersonToShare(person.personId, list, requestsFor(list));
+      setDone(peopleLabels.shareInvited(personName(person), scopesSummary(list)));
+      return null;
+    } catch (cause) {
+      return shareActionErrorText("invite", cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async () => {
-    if (busy) return;
+    if (busy || chosen === "person") return;
     if (!scopes.length) return setError("Scegli almeno una cosa da condividere.");
     setError("");
     setBusy(true);
@@ -94,8 +121,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
       const sync = await import("../lib/shareSync");
       const list = offers();
       if (chosen === "invite") {
-        const requests = askBack ? list.map((offer) => ({ scope: offer.scope, permission: offer.permission })) : [];
-        const { token } = await sync.createShareInvite({ offers: list, requests });
+        const { token } = await sync.createShareInvite({ offers: list, requests: requestsFor(list) });
         setCreated({ link: shareInviteLink(token), offers: list });
       } else {
         const name = targetName();
@@ -121,9 +147,12 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
       <Button variant="soft" onClick={onClose} disabled={busy}>
         Annulla
       </Button>
-      <Button variant="primary" icon={chosen === "invite" ? "UserPlus" : "Share2"} onClick={() => void submit()} disabled={busy || !scopes.length}>
-        {busy ? "Un attimo…" : chosen === "invite" ? "Crea l'invito" : "Condividi"}
-      </Button>
+      {/* Per una persona trovata l'invito parte da "Invita" sulla sua scheda. */}
+      {chosen === "person" ? null : (
+        <Button variant="primary" icon={chosen === "invite" ? "UserPlus" : "Share2"} onClick={() => void submit()} disabled={busy || !scopes.length}>
+          {busy ? "Un attimo…" : chosen === "invite" ? "Crea l'invito" : "Condividi"}
+        </Button>
+      )}
     </div>
   );
 
@@ -225,6 +254,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
           <Field label="Con chi">
             <select className={inputClass} value={chosen} onChange={(event) => setTarget(event.target.value as Target)}>
               <option value="invite">Una persona nuova (con un link di invito)</option>
+              <option value="person">{peopleLabels.shareTarget}</option>
               {people.length ? (
                 <optgroup label="Persone collegate">
                   {people.map((person) => (
@@ -246,7 +276,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
             </select>
           </Field>
 
-          {chosen === "invite" ? (
+          {chosen === "invite" || chosen === "person" ? (
             <div className="grid grid-cols-1 gap-3">
               <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-[18px] bg-[var(--surface-soft)] p-3">
                 <input
@@ -286,6 +316,13 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
               </p>
             </div>
           )}
+
+          {chosen === "person" ? (
+            <section aria-label={peopleLabels.findTitle} className="grid grid-cols-1 gap-2">
+              <span className="text-sm font-black">{peopleLabels.findTitle}</span>
+              <FindPerson onInvite={invitePerson} disabled={!scopes.length} disabledHint={peopleLabels.needsScopes} />
+            </section>
+          ) : null}
 
           {error ? (
             <p role="alert" className="text-sm font-bold text-[var(--danger-text)]">

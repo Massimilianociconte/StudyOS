@@ -206,6 +206,7 @@ const notifyFreshInvites = async (fresh: GroupInvite[], me: string) => {
   for (const invite of invitesToNotify(fresh, me)) {
     await state
       .addNotification({
+        id: `notif-group-invite-${invite.id}`,
         kind: "invite",
         title: `Invito al gruppo "${invite.groupName}"`,
         body: `${invite.fromDisplayName} ti ha invitato${invite.groupDescription ? `: ${invite.groupDescription}` : "."} Apri per accettare o rifiutare.`,
@@ -643,6 +644,7 @@ const startInviteSubscription = (userId: string) => {
         void applyShared({ groupInvites: [invite, ...state.groupInvites] });
         void state
           .addNotification({
+            id: `notif-group-invite-${invite.id}`,
             kind: "invite",
             title: `Invito al gruppo "${invite.groupName}"`,
             body: `${invite.fromDisplayName} ti ha invitato. Apri per accettare o rifiutare.`,
