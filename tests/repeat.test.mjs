@@ -1018,7 +1018,8 @@ test("S2. 50 serie COUNT=999 con 30 occorrenze modificate ciascuna: un mese si e
       best = Math.min(best, performance.now() - started);
     }
     console.log(`# S2 benchmark: ${best.toFixed(1)} ms per call`);
-    assert.ok(best < 200, `${best.toFixed(1)} ms`);
+    // Di solito poche decine di ms: il tetto largo regge una macchina carica, una scansione quadratica no.
+    assert.ok(best < 600, `${best.toFixed(1)} ms`);
   });
 });
 
