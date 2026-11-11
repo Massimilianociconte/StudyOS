@@ -25,7 +25,83 @@ const SHARE_SCOPE = {
 } as const satisfies JsonSchema;
 const PERMISSION = { type: "string", enum: ["view", "edit"], description: "view = può vedere; edit = può modificare. Gli appelli ufficiali sono sempre view." } as const satisfies JsonSchema;
 const SUBJECT_IDS = { type: "array", maxItems: 50, items: ID, description: "Id delle tue materie (studyos_list_subjects). Vuoto = tutte le materie." } as const satisfies JsonSchema;
-const EVENT_CATEGORY = ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other"] as const;
+const EVENT_CATEGORY = ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other", "vacation"] as const;
+// Campi nuovi degli eventi (ripetizione, ricorrenze, promemoria, colore, luogo): tutti facoltativi.
+const WEEKDAY = { type: "string", enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] } as const satisfies JsonSchema;
+const EVENT_REPEAT = {
+  type: "object",
+  additionalProperties: false,
+  description:
+    'Come si ripete (sottoinsieme di RRULE), nel fuso dell\'evento. Es. ogni lunedì e mercoledì {"freq":"weekly","byWeekday":["MO","WE"]}; ogni 2 settimane {"freq":"weekly","interval":2}; il secondo martedì del mese {"freq":"monthly","monthly":{"by":"weekday","nth":2,"weekday":"TU"}}; ogni anno {"freq":"yearly"}; 10 volte "end":{"type":"count","count":10}. Vince su recurrence e recurrenceUntil. Per non ripetere più: recurrence=none.',
+  properties: {
+    freq: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"] },
+    interval: { type: "integer", minimum: 1, maximum: 99, description: "Ogni quante unità (1–99, assente = 1)." },
+    byWeekday: { type: "array", minItems: 1, maxItems: 7, items: WEEKDAY, description: "Solo weekly: i giorni della settimana." },
+    monthly: {
+      type: "object",
+      additionalProperties: false,
+      description: "Solo monthly. by=day: stesso giorno del mese (i mesi senza quel giorno si saltano); lastDay: ultimo giorno; weekday: nth (1–4, -1 = ultimo) weekday del mese.",
+      properties: {
+        by: { type: "string", enum: ["day", "lastDay", "weekday"] },
+        nth: { type: "integer", minimum: -1, maximum: 4, description: "1–4 oppure -1 (ultimo); non 0." },
+        weekday: WEEKDAY
+      },
+      required: ["by"]
+    },
+    yearlyLeap: { type: "string", enum: ["feb28", "mar1", "skip"], description: "Solo yearly con inizio il 29 febbraio: negli altri anni il 28 febbraio, il 1° marzo o niente." },
+    end: {
+      type: "object",
+      additionalProperties: false,
+      description: "Fine: never; until con date (ultimo giorno compreso); count con count (quante volte, 1–999).",
+      properties: {
+        type: { type: "string", enum: ["never", "until", "count"] },
+        date: { type: "string", format: "date", description: DAY },
+        count: { type: "integer", minimum: 1, maximum: 999 }
+      },
+      required: ["type"]
+    }
+  },
+  required: ["freq"]
+} as const satisfies JsonSchema;
+const EVENT_OCCASION = {
+  type: "object",
+  additionalProperties: false,
+  description: "Ricorrenza: compleanno, anniversario, festa o giorno da ricordare ogni anno. Senza repeat né recurrence l'evento si ripete ogni anno; di solito allDay=true e category=personal.",
+  properties: {
+    kind: { type: "string", enum: ["birthday", "anniversary", "holiday", "recurring-day"] },
+    person: { type: "string", maxLength: 120, description: "Di chi è il compleanno, o il nome della ricorrenza." },
+    birthYear: { type: "integer", minimum: 1, maximum: 9999, description: "Anno di nascita o di inizio: l'app mostra gli anni compiuti." }
+  },
+  required: ["kind"]
+} as const satisfies JsonSchema;
+const EVENT_REMINDERS = {
+  type: "array",
+  maxItems: 10,
+  description: "Promemoria (sostituiscono quelli che ci sono; [] = nessuno). Con orario: minutesBefore. Tutto il giorno: at (HH:mm) con daysBefore facoltativo.",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      minutesBefore: { type: "integer", minimum: 0, maximum: 40320 },
+      daysBefore: { type: "integer", minimum: 0, maximum: 28 },
+      at: { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$", description: "Ora HH:mm." }
+    }
+  }
+} as const satisfies JsonSchema;
+const EVENT_COLOR = { type: "string", pattern: "^#[0-9A-Fa-f]{6}$", description: "Colore scelto a mano (#RRGGBB). Senza, l'evento ha il colore della sua tipologia." } as const satisfies JsonSchema;
+const EVENT_COLOR_CUSTOM = { type: "boolean", description: "false = torna al colore della tipologia. Con color è true." } as const satisfies JsonSchema;
+const EVENT_LOCATION = { type: "string", maxLength: 200, description: "Luogo o destinazione. Stringa vuota = nessuno." } as const satisfies JsonSchema;
+const OCCURRENCE_DATE = {
+  type: "string",
+  format: "date",
+  description: "Solo eventi ripetuti: il giorno dell'occorrenza (occurrenceDate di studyos_list_events, YYYY-MM-DD). Con scope sceglie quali giorni."
+} as const satisfies JsonSchema;
+const OCCURRENCE_SCOPE = {
+  type: "string",
+  enum: ["this", "following", "all"],
+  description: "Con occurrenceDate: this = solo quel giorno; following = quel giorno e i successivi; all = tutta la serie (predefinito)."
+} as const satisfies JsonSchema;
+const NEW_EVENT_FIELDS = { repeat: EVENT_REPEAT, occasion: EVENT_OCCASION, reminders: EVENT_REMINDERS, color: EVENT_COLOR, colorCustom: EVENT_COLOR_CUSTOM, location: EVENT_LOCATION };
 
 const scopeWords = (value: unknown) =>
   Array.isArray(value) && value.length
@@ -239,7 +315,9 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_events",
     title: "Elenco eventi",
-    description: "Elenca gli eventi del calendario personale tra from e to, in ordine di inizio. Senza from parte da oggi; senza to copre 60 giorni (massimo 400). Gli eventi ripetuti compaiono una volta per occorrenza con recurring=true: l'id è quello della serie, e modificarlo cambia tutte le occorrenze." + MINE,
+    description:
+      "Elenca gli eventi del calendario personale tra from e to, in ordine di inizio. Senza from parte da oggi; senza to copre 60 giorni (massimo 400). Gli eventi ripetuti compaiono una volta per occorrenza con recurring=true, la regola (repeat) e occurrenceDate: l'id è quello della serie. Per cambiare o eliminare solo alcuni giorni passa id, occurrenceDate e scope a studyos_update_event o studyos_delete_event; senza occurrenceDate la modifica vale per tutta la serie." +
+      MINE,
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
@@ -262,37 +340,40 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_event",
     title: "Crea evento",
-    description: "Crea un evento nel calendario personale. Senza end dura un'ora. Con allDay=true basta il giorno in start (YYYY-MM-DD): occupa quella giornata intera. recurrence ripete l'evento fino a recurrenceUntil. Restituisce l'id.",
+    description:
+      "Crea un evento nel calendario personale. Senza end dura un'ora. Con allDay=true basta il giorno in start (YYYY-MM-DD): occupa quella giornata intera (con end, fino a quel giorno compreso). repeat (o, più semplice, recurrence fino a recurrenceUntil) lo ripete. Compleanni e anniversari: occasion e allDay=true. Vacanza: category=vacation, allDay=true, start ed end il primo e l'ultimo giorno, destinazione in location. Restituisce l'id.",
     risk: "write",
     idempotent: false,
     additive: true,
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 200 },
       start: { type: "string", format: "date-time", description: `Inizio. ${WHEN}` },
-      end: { type: "string", format: "date-time", description: `Fine, dopo start. ${WHEN}` },
-      category: { type: "string", enum: ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other"], default: "study" },
+      end: { type: "string", format: "date-time", description: `Fine, dopo start. ${WHEN} Con allDay=true: l'ultimo giorno, compreso (YYYY-MM-DD; una mezzanotte vale come fine esclusiva).` },
+      category: { type: "string", enum: EVENT_CATEGORY, default: "study" },
       description: { type: "string", maxLength: 4000, default: "" },
       notes: { type: "string", maxLength: 8000, default: "" },
       subjectId: ID,
       allDay: { type: "boolean", default: false },
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
       recurrence: { type: "string", enum: ["none", "daily", "weekly", "monthly"], default: "none" },
-      recurrenceUntil: { type: "string", format: "date", description: `Ultimo giorno della serie. ${DAY}` }
+      recurrenceUntil: { type: "string", format: "date", description: `Ultimo giorno della serie. ${DAY}` },
+      ...NEW_EVENT_FIELDS
     }, ["title", "start"]),
     summary: (args) => `Creare l'evento «${text(args.title, "senza titolo")}»`
   }),
   tool({
     name: "studyos_update_event",
     title: "Aggiorna evento",
-    description: "Aggiorna un evento. Se cambi solo start, la durata resta la stessa. Su una serie la modifica vale per tutte le occorrenze, come nell'app.",
+    description:
+      "Aggiorna un evento. Se cambi solo start, la durata resta la stessa. Su una serie, senza occurrenceDate, la modifica vale per tutte le occorrenze. Con occurrenceDate (un giorno della serie) start ed end sono i nuovi orari di quel giorno e scope dice cosa cambia: this = solo quel giorno (non la regola); following = quel giorno e i successivi (la serie si divide in due); all = tutta la serie (predefinito), spostata dello stesso scarto. Spostando a un altro giorno della settimana, i giorni scritti nella regola si spostano tutti dello stesso scarto (lun–ven un giorno dopo diventa mar–sab), salvo una repeat data qui. Con following o all il risultato ha anche seriesStart: il primo inizio della serie dopo la modifica (con following, della parte nuova).",
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
       id: ID,
       title: { type: "string", minLength: 1, maxLength: 200 },
       start: { type: "string", format: "date-time", description: WHEN },
-      end: { type: "string", format: "date-time", description: WHEN },
-      category: { type: "string", enum: ["study", "lesson", "lab", "exam", "review", "deadline", "project", "gym", "personal", "work", "relax", "other"] },
+      end: { type: "string", format: "date-time", description: `${WHEN} Con allDay=true: l'ultimo giorno, compreso (YYYY-MM-DD; una mezzanotte vale come fine esclusiva).` },
+      category: { type: "string", enum: EVENT_CATEGORY },
       description: { type: "string", maxLength: 4000 },
       notes: { type: "string", maxLength: 8000 },
       subjectId: { type: "string", maxLength: 120 },
@@ -300,18 +381,29 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
       status: { type: "string", enum: ["planned", "in-progress", "done", "skipped"] },
       recurrence: { type: "string", enum: ["none", "daily", "weekly", "monthly"] },
-      recurrenceUntil: { type: "string", maxLength: 10, description: `${DAY} Stringa vuota = serie senza fine.` }
+      recurrenceUntil: { type: "string", maxLength: 10, description: `${DAY} Stringa vuota = serie senza fine.` },
+      ...NEW_EVENT_FIELDS,
+      occurrenceDate: OCCURRENCE_DATE,
+      scope: OCCURRENCE_SCOPE
     }, ["id"]),
     summary: () => "Aggiornare un evento"
   }),
   tool({
     name: "studyos_delete_event",
     title: "Elimina evento",
-    description: "Elimina un evento del calendario personale. Su una serie elimina l'intera serie. Richiede confirm=true e la conferma in StudyOS.",
+    description:
+      "Elimina un evento del calendario personale. Su una serie, senza occurrenceDate, elimina l'intera serie. Con occurrenceDate (un giorno della serie) scope dice quali giorni: this = solo quel giorno; following = quel giorno e i successivi; all = tutta la serie, comprese le parti nate dividendola (predefinito). Richiede confirm=true e la conferma in StudyOS.",
     risk: "destructive",
     idempotent: true,
-    inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
-    summary: () => "Eliminare un evento"
+    // Oltre all'id, solo quali giorni eliminare: nient'altro che ne cambi l'effetto.
+    inputSchema: objectSchema({ id: ID, confirm: CONFIRM, occurrenceDate: OCCURRENCE_DATE, scope: OCCURRENCE_SCOPE }, ["id", "confirm"]),
+    summary: (args) => {
+      const day = typeof args.occurrenceDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.occurrenceDate) ? args.occurrenceDate : "";
+      if (!day) return "Eliminare un evento";
+      if (args.scope === "this") return `Eliminare un evento ripetuto, solo il ${day}`;
+      if (args.scope === "following") return `Eliminare un evento ripetuto dal ${day} in poi`;
+      return "Eliminare un evento ripetuto, tutta la serie";
+    }
   }),
   tool({
     name: "studyos_list_exams",

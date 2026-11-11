@@ -888,7 +888,8 @@ export const EVENT_CATEGORY_LABEL: Record<CalendarEvent["category"], string> = {
   personal: "Personale",
   work: "Lavoro",
   relax: "Relax",
-  other: "Altro"
+  other: "Altro",
+  vacation: "Vacanza"
 };
 
 export const EVENT_STATUS_LABEL: Record<CalendarEvent["status"], string> = {
@@ -1005,6 +1006,312 @@ export const EVENT_TYPE_EXTRA_LABEL = {
   anniversary: "Anniversario",
   holiday: "Festività"
 } as const;
+
+// --- Modulo evento, ripetizioni, scelta "solo questo / successivi / tutti", ricorrenze, vacanze, colori ---
+
+/** Un solo modulo per creare e modificare un evento (Principali · Aspetto e collocazione · Altre opzioni). */
+export const EVENT_EDITOR_TEXT = {
+  newEvent: "Nuovo evento",
+  newTask: "Nuova attività",
+  editEvent: "Modifica evento",
+  viewShared: (name: string) => `Evento di ${name}`,
+  editShared: (name: string) => `Modifica evento di ${name}`,
+  kindLabel: "Cosa vuoi aggiungere",
+  kindEvent: "Evento",
+  kindEventTitle: "Un impegno con giorno e orario: lezione, studio, laboratorio…",
+  kindTask: "Attività con scadenza",
+  kindTaskTitle: "Una cosa da fare entro una data, da spuntare quando è fatta",
+  taskHint: "Comparirà nel calendario il giorno della scadenza e nella sezione Attività.",
+  calendarOf: "Nel calendario di",
+  myCalendar: "Il mio calendario",
+  calendarGone: "Non puoi più aggiungere eventi in quel calendario: l'evento andrà nel tuo.",
+  sectionMain: "Principali",
+  sectionLook: "Aspetto e collocazione",
+  sectionMore: "Altre opzioni",
+  sectionMoreHint: "ripetizione, promemoria, descrizione, luogo, collegamenti",
+  /** Senza collegamenti (calendario di un'altra persona, evento importato): la sezione non li ha. */
+  sectionMoreHintNoLinks: "ripetizione, promemoria, descrizione, luogo",
+  title: "Titolo",
+  titlePlaceholder: "Es. Lezione di Anatomia",
+  taskTitlePlaceholder: "Es. Consegnare la relazione di laboratorio",
+  start: "Inizio",
+  end: "Fine",
+  day: "Giorno",
+  firstDay: "Dal",
+  lastDay: "Al",
+  due: "Scadenza",
+  duration: "Durata",
+  durationCustom: "Altra durata",
+  durationLabel: (text: string) => `Durata: ${text}`,
+  daysLabel: (count: number) => (count === 1 ? "1 giorno" : `${count} giorni`),
+  allDay: "Tutto il giorno",
+  allDayHint: "Occupa giornate intere, senza orari",
+  endFollows: "Se cambi l'inizio, la fine si sposta e la durata resta la stessa.",
+  type: "Tipologia",
+  typeOccasions: "Ogni anno",
+  color: "Colore",
+  colorAuto: (type: string) => `Colore di «${type}»`,
+  colorAutoHint: "Segue la tipologia e la materia",
+  colorCustom: "Scegli un altro colore",
+  colorPreview: "Anteprima",
+  subject: "Materia",
+  subjectOptional: "Materia (facoltativa)",
+  subjectNone: "Nessuna",
+  subjectChoose: "Scegli una materia",
+  subjectNoneShared: "Nessuna materia condivisa",
+  subjectOwner: "La materia è di chi ha creato l'evento: da qui non si cambia.",
+  priority: "Priorità",
+  status: "Stato",
+  description: "Descrizione (facoltativa)",
+  descriptionPlaceholder: "Es. Aula 3, portare gli appunti del capitolo 2",
+  location: "Luogo (facoltativo)",
+  locationPlaceholder: "Es. Aula Magna, via Celoria 26",
+  links: "Collegamenti",
+  /** Nel calendario di un'altra persona il server non accetta collegamenti in un evento nuovo. */
+  linksOtherCalendar: "Nel calendario di un'altra persona un evento nuovo si crea senza collegamenti.",
+  linkPlaceholder: "https://…",
+  linkAdd: "Aggiungi il collegamento",
+  linkRemove: (label: string) => `Togli il collegamento ${label}`,
+  linkInvalid: "Questo collegamento non funziona: copia l'indirizzo completo, che inizia con https://",
+  importedTitle: "Appello ufficiale aggiunto al tuo calendario",
+  importedTitleShared: "Appello ufficiale",
+  importedHint: "Qui modifichi solo il tuo promemoria: la data ufficiale resta visibile in Esami › Date ufficiali.",
+  sharedReadOnly: "Puoi solo vedere questo evento.",
+  sharedEditable: (name: string) => `Le modifiche arrivano subito a ${name}, che le vede nella cronologia e può ripristinarle.`,
+  sharedSeries: "Si ripete: le modifiche valgono per tutte le sue date.",
+  occurrenceOf: (day: string) => `Si ripete · stai guardando ${day}`,
+  save: "Salva",
+  saveCreate: "Aggiungi evento",
+  saveTask: "Aggiungi attività",
+  cancel: "Annulla",
+  close: "Chiudi",
+  delete: "Elimina evento",
+  deleteConfirm: (title: string) => `Eliminare l'evento «${title}»? Non si può annullare.`,
+  deleteShared: (title: string, owner: string) => `Eliminare «${title}» dal calendario di ${owner}? Resta nella sua cronologia e può ripristinarlo.`,
+  deleteSeriesConfirm: (title: string) => `Eliminare l'evento «${title}»? Si ripete: verranno eliminate tutte le sue date. Non si può annullare.`,
+  deleteAction: "Elimina",
+  unsavedTitle: "Chiudere senza salvare?",
+  unsavedText: "Le modifiche fatte in questo modulo andranno perse.",
+  unsavedDiscard: "Chiudi senza salvare",
+  unsavedKeep: "Continua a modificare",
+  simpleForm: "Modulo completo",
+  simpleFormHint: "Materia, priorità, ripetizione e il resto",
+  titleMissing: "Scrivi un titolo per l'evento.",
+  dateMissing: "Scegli una data valida.",
+  endBeforeStart: "La fine viene prima dell'inizio: sposta «Fine» dopo l'inizio.",
+  lastDayBeforeFirst: "L'ultimo giorno viene prima del primo: scegli un giorno uguale o successivo.",
+  repeatEndsEarly: "La ripetizione finisce prima dell'inizio: scegli una fine dopo il primo giorno.",
+  subjectMissing: "Scegli una materia per continuare.",
+  saveFailed: "Modifiche non salvate. Riprova.",
+  addFailed: "Evento non aggiunto. Riprova.",
+  deleteFailed: "Evento non eliminato. Riprova.",
+  moveFailed: (title: string) => `«${title}» non è stato spostato. Riprova.`,
+  sharedGone: "Questo evento non è più condiviso con te.",
+  sharedGoneDraft: "L'evento che stavi modificando non è più condiviso con te: le modifiche non salvate sono andate perse."
+} as const;
+
+/** Riga "Non si ripete ▾" e sezione "Personalizza". Le frasi delle regole sono in REPEAT_TEXT (lib/repeat.ts). */
+export const REPEAT_PICKER_TEXT = {
+  label: "Ripetizione",
+  workdays: "Giorni feriali (lun–ven)",
+  custom: "Personalizza…",
+  customTitle: "Ripetizione personalizzata",
+  every: "Ogni",
+  interval: "Ogni quanto",
+  unit: "Unità",
+  units: { day: "giorni", week: "settimane", month: "mesi", year: "anni" },
+  unitsOne: { day: "giorno", week: "settimana", month: "mese", year: "anno" },
+  quarterly: "Ogni 3 mesi",
+  halfYearly: "Ogni 6 mesi",
+  weekdays: "Nei giorni",
+  monthlyMode: "Quale giorno del mese",
+  monthlyDay: (day: number) => `Il giorno ${day}`,
+  monthlyLastDay: "L'ultimo giorno del mese",
+  monthlyWeekday: "Un giorno della settimana",
+  clamp: "Nei mesi senza questo giorno, l'ultimo del mese",
+  nth: "Quale",
+  nthOptions: { 1: "primo", 2: "secondo", 3: "terzo", 4: "quarto", [-1]: "ultimo" } as Record<number, string>,
+  weekdayField: "Giorno della settimana",
+  end: "Fine della ripetizione",
+  endNever: "Mai",
+  endUntil: "Il giorno",
+  endCount: "Dopo un numero di volte",
+  untilField: "Ultimo giorno (compreso)",
+  countField: "Quante volte",
+  countSuffix: (count: number) => (count === 1 ? "volta" : "volte"),
+  summary: "Si ripete così",
+  intervalInvalid: "Scrivi un numero tra 1 e 99.",
+  weekdaysMissing: "Scegli almeno un giorno della settimana.",
+  untilInvalid: "La ripetizione deve finire dopo l'inizio: scegli un giorno successivo.",
+  countInvalid: "Scrivi un numero di volte tra 1 e 999.",
+  onlyForSeries: "Per cambiare la ripetizione scegli poi «Questo e i successivi» o «Tutti».",
+  /** Aggiunta veloce: solo le scelte pronte; il resto dal modulo completo. */
+  quickMore: "Per cambiare la durata, scegliere altri giorni o la fine della ripetizione, apri poi l'evento dal Calendario."
+} as const;
+
+/** Scelta "Solo questo · Questo e i successivi · Tutti" per modifica, spostamento ed eliminazione. */
+export const SCOPE_TEXT = {
+  titleEdit: (title: string) => `Salvare le modifiche a «${title}»?`,
+  titleMove: (title: string) => `Spostare «${title}»?`,
+  titleDelete: (title: string) => `Eliminare «${title}»?`,
+  intro: "Questo evento si ripete. A quali date vuoi applicarlo?",
+  this: "Solo questo",
+  following: "Questo e i successivi",
+  all: "Tutti",
+  thisEdit: (day: string) => `Cambia solo l'evento di ${day}; gli altri restano come sono.`,
+  thisMove: (day: string) => `Sposta solo l'evento di ${day}; gli altri restano dove sono.`,
+  thisDelete: (day: string) => `Elimina solo l'evento di ${day}; gli altri restano.`,
+  thisSubject: "La materia però cambia per tutta la serie.",
+  followingEdit: (day: string) => `Cambia l'evento di ${day} e tutti quelli dopo; quelli prima restano come sono.`,
+  followingMove: (day: string) => `Sposta l'evento di ${day} e tutti quelli dopo; quelli prima restano dove sono.`,
+  followingDelete: (day: string) => `Elimina l'evento di ${day} e tutti quelli dopo, comprese le modifiche fatte ai singoli giorni.`,
+  followingSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: vale questa modifica.",
+  followingKeepsEnd: "La serie finisce quando finiva prima.",
+  /** Da un giorno cambiato da solo: i successivi prendono ciò che quel giorno ha di suo (vedi followingPatch). */
+  followingTakesDay: "Anche i giorni dopo prendono il titolo e i dettagli che questo giorno aveva solo per sé.",
+  /** Regola con più giorni della settimana spostata: tutti i giorni dello stesso scarto (es. "lun–ven", "mar–sab"). */
+  followingDaysShift: (from: string, to: string) => `Da questo giorno in poi le date passano da ${from} a ${to}.`,
+  allDaysShift: (from: string, to: string) => `Tutte le date passano da ${from} a ${to}.`,
+  /** "Tutti": le date che cambiano davvero (una parte di una serie divisa, o tutta la serie). */
+  allEdit: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
+    from && until
+      ? `Cambia le date di questa serie da ${from} a ${until}; le altre restano come sono.`
+      : from
+        ? `Cambia tutte le date di questa serie da ${from} in poi; quelle prima restano come sono.`
+        : until
+          ? `Cambia le date di questa serie fino a ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano come sono.`
+          : past
+            ? "Cambia tutte le date della serie, anche quelle passate."
+            : "Cambia tutte le date della serie.",
+  allMove: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
+    from && until
+      ? `Sposta allo stesso modo le date di questa serie da ${from} a ${until}; le altre restano dove sono.`
+      : from
+        ? `Sposta allo stesso modo tutte le date di questa serie da ${from} in poi; quelle prima restano dove sono.`
+        : until
+          ? `Sposta allo stesso modo le date di questa serie fino a ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano dove sono.`
+          : past
+            ? "Sposta tutte le date della serie allo stesso modo, anche quelle passate."
+            : "Sposta tutte le date della serie allo stesso modo.",
+  allDelete: (past: boolean) => (past ? "Elimina tutta la serie, con tutte le sue date, anche quelle passate." : "Elimina tutta la serie, con tutte le sue date."),
+  allDeleteFamily: "Elimina tutta la serie, comprese le parti modificate in precedenza con «Questo e i successivi».",
+  /** Che cosa succede ai giorni cambiati o annullati da soli (calcolato prima di salvare). */
+  changedLost: (count: number) =>
+    count === 1
+      ? "1 giorno che avevi cambiato da solo perde la sua modifica e torna come il resto della serie."
+      : `${count} giorni che avevi cambiato da soli perdono le loro modifiche e tornano come il resto della serie.`,
+  changedGone: (count: number) =>
+    count === 1
+      ? "1 giorno che avevi cambiato da solo non fa più parte della serie: sparisce, con la sua modifica."
+      : `${count} giorni che avevi cambiato da soli non fanno più parte della serie: spariscono, con le loro modifiche.`,
+  cancelledBack: (count: number) => (count === 1 ? "1 giorno che avevi annullato torna nel calendario." : `${count} giorni che avevi annullato tornano nel calendario.`),
+  rowsKept: "I giorni che avevi cambiato o annullato da soli restano così.",
+  othersKept: "Gli altri giorni che avevi cambiato o annullato da soli restano così.",
+  ownLost: "Questo giorno perde la modifica fatta solo a lui e diventa come il resto della serie.",
+  newStart: (day: string) => `La serie ora inizia ${day}, il primo giorno che corrisponde alla nuova ripetizione.`,
+  sharedAll: "Negli eventi di altre persone si cambiano tutte le date insieme.",
+  pinZone: (zone: string) => `Da adesso gli orari di questa serie restano quelli del fuso orario ${zone}, anche se apri StudyOS da un altro paese.`,
+  cancel: "Annulla"
+} as const;
+
+/** Promemoria nel modulo: scelte pronte, personalizzati, onestà su dove suonano. */
+export const REMINDER_PICKER_TEXT = {
+  label: "Promemoria",
+  none: "Nessun promemoria",
+  add: "Aggiungi promemoria",
+  remove: (text: string) => `Togli il promemoria «${text}»`,
+  custom: "Personalizzato",
+  amount: "Quanto prima",
+  unit: "Unità",
+  units: { minutes: "minuti prima", hours: "ore prima", days: "giorni prima" },
+  at: "Alle (facoltativo)",
+  addCustom: "Aggiungi",
+  invalid: "Scrivi un numero valido: fino a 4 settimane prima.",
+  where: "Suonano dentro StudyOS quando è aperta, e in Google o Apple Calendar se esporti il calendario. Ad app chiusa non arrivano: quelli persi nelle ultime 24 ore compaiono nella campanella quando la riapri."
+} as const;
+
+/** Percorso "Nuova ricorrenza": compleanni, anniversari e altre date di ogni anno. */
+export const OCCASION_FORM_TEXT = {
+  menu: "Nuova ricorrenza",
+  newTitle: "Nuova ricorrenza",
+  editTitle: "Modifica ricorrenza",
+  kind: "Che cosa ricordi",
+  name: (kind: string) => (kind === "birthday" ? "Di chi è il compleanno" : "Nome"),
+  namePlaceholder: (kind: string) =>
+    kind === "birthday" ? "Es. Giulia" : kind === "anniversary" ? "Es. Anniversario di matrimonio" : kind === "holiday" ? "Es. Festa del paese" : "Es. Rinnovo dell'abbonamento",
+  birthdayTitle: (name: string) => `Compleanno di ${name}`,
+  /** Inizi di titolo che non fanno parte del nome (ricorrenze create senza nome, es. dall'agente). */
+  titlePrefixes: ["Compleanno di ", "Onomastico di "],
+  day: "Giorno",
+  month: "Mese",
+  year: "Anno (facoltativo)",
+  yearPlaceholder: "Es. 2001",
+  yearHint: (kind: string) => (kind === "birthday" ? "Con l'anno di nascita vedi quanti anni compie." : "Con l'anno di inizio vedi quanti anni sono."),
+  notes: "Note (facoltative)",
+  notesPlaceholder: "Es. idea regalo: un libro di cucina",
+  next: (day: string, age: string) => (age ? `Prossima volta: ${day} · ${age}` : `Prossima volta: ${day}`),
+  automatic: "Ogni anno, tutto il giorno. Chi è nato il 29 febbraio lo festeggia il 28 negli anni non bisestili.",
+  nameMissing: "Scrivi un nome.",
+  dayInvalid: "Questo giorno non esiste in quel mese.",
+  yearInvalid: "Scrivi un anno a quattro cifre, non nel futuro (es. 2001).",
+  save: "Salva ricorrenza",
+  delete: "Elimina ricorrenza",
+  deleteConfirm: (title: string) => `Eliminare «${title}» da tutti gli anni? Non si può annullare.`
+} as const;
+
+/** Percorso "Nuova vacanza": un solo evento su più giorni. */
+export const VACATION_FORM_TEXT = {
+  menu: "Nuova vacanza",
+  newTitle: "Nuova vacanza",
+  editTitle: "Modifica vacanza",
+  name: "Nome",
+  namePlaceholder: "Es. Vacanza a Lisbona",
+  days: "Dal… al…",
+  daysHint: "Partenza e ritorno compresi, tutto il giorno.",
+  destination: "Destinazione (facoltativa)",
+  destinationPlaceholder: "Es. Lisbona",
+  notes: "Note (facoltative)",
+  notesPlaceholder: "Es. volo alle 7:40 da Malpensa",
+  nameMissing: "Scrivi un nome per la vacanza.",
+  daysMissing: "Scegli il primo e l'ultimo giorno.",
+  save: "Salva vacanza",
+  delete: "Elimina vacanza",
+  deleteConfirm: (title: string) => `Eliminare la vacanza «${title}»? Spariscono tutti i suoi giorni. Non si può annullare.`
+} as const;
+
+/** "Altre azioni › Colori delle tipologie": colore predefinito di ogni tipologia, sincronizzato. */
+export const TYPE_COLORS_TEXT = {
+  menu: "Colori delle tipologie",
+  title: "Colori delle tipologie",
+  intro: "Ogni tipologia ha un colore. Gli eventi lo prendono da soli, tranne quelli a cui hai scelto un colore a mano.",
+  subjectNote: "Lezione, Studio, Laboratorio e Ripasso con una materia usano il colore della materia.",
+  reset: "Ripristina",
+  resetAria: (type: string) => `Ripristina il colore predefinito di ${type}`,
+  isDefault: "Predefinito",
+  chooseFor: (type: string) => `Colore di ${type}`,
+  saveFailed: "Colore non salvato. Riprova."
+} as const;
+
+/** Nomi dei colori della tavolozza per i lettori di schermo (i codici esadecimali non dicono nulla). */
+export const EVENT_COLOR_NAME: Record<string, string> = {
+  "#EF4444": "rosso",
+  "#F97316": "arancione",
+  "#FACC15": "giallo",
+  "#A3E635": "verde lime",
+  "#22C55E": "verde",
+  "#14B8A6": "verde petrolio",
+  "#7CF7C8": "verde acqua",
+  "#06B6D4": "azzurro",
+  "#3B82F6": "blu",
+  "#6366F1": "indaco",
+  "#A855F7": "viola",
+  "#D946EF": "fucsia",
+  "#EC4899": "rosa",
+  "#B45309": "marrone",
+  "#FFFFFF": "bianco",
+  "#D4D4D4": "grigio chiaro"
+};
+export const colorName = (hex: string) => `Colore ${EVENT_COLOR_NAME[hex.toUpperCase()] ?? hex}`;
 
 /**
  * Calendario come si vede (griglie, Mese, Agenda, elenco del telefono, anteprima): fascia "tutto il

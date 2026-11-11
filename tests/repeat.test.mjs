@@ -687,6 +687,20 @@ test("planEdit 'all': orario spostato da un'occorrenza, materia riscritta nelle 
   assert.deepEqual(subject.puts.map((item) => [item.id, item.subjectId]).sort(), [["s", "sub3"], ["s@2026-11-16", "sub3"], ["s@2026-11-23", "sub3"]]);
 });
 
+test("planEdit 'all': una serie salvata senza il campo allDay e una modifica con allDay false non è un cambio", () => {
+  // Eventi vecchi e creati dall'agente non hanno il campo: assente vale false, come nel modulo.
+  const series = weeklySeries();
+  assert.equal("allDay" in series, false);
+  const plan = planEdit(series, [], "2026-11-16", "all", { allDay: false, start: "2026-11-16T09:00:00.000Z", end: "2026-11-16T10:00:00.000Z", title: "X" }, { now: NOW });
+  const next = plan.puts.find((item) => item.id === "s");
+  assert.equal(next.start, "2026-11-02T09:00:00.000Z", "la serie resta dal 2 novembre");
+  assert.equal(next.end, "2026-11-02T10:00:00.000Z");
+  assert.equal(next.title, "X");
+  // Con un'ora diversa la serie si sposta solo di ora, non al giorno aperto.
+  const later = planEdit(series, [], "2026-11-16", "all", { allDay: false, start: "2026-11-16T11:00:00.000Z", end: "2026-11-16T12:00:00.000Z" }, { now: NOW });
+  assert.equal(later.puts.find((item) => item.id === "s").start, "2026-11-02T11:00:00.000Z");
+});
+
 test("planEdit 'following' alla prima occorrenza = tutta la serie; poi divide e sposta le righe successive", () => {
   const series = weeklySeries();
   const first = planEdit(series, [], "2026-11-02", "following", { title: "Tutte" }, { now: NOW });
@@ -742,8 +756,10 @@ test("planDelete: solo questa, questa e le successive, tutta la serie (con o sen
   const events = [...split.puts, childOverride, modified, base({ id: "other" })];
   assert.deepEqual(planDelete(events, "s", "2026-11-09", "all", { now: NOW }).deletes.sort(), ["s", "s@2026-11-30"]);
   assert.deepEqual(planDelete(events, child.id, "2026-11-23", "all", { now: NOW, includeSplits: true }).deletes.sort(), [child.id, `${child.id}@2026-11-23`, "s", "s@2026-11-30"].sort());
-  // Un evento singolo: "solo questa" lo elimina.
-  assert.deepEqual(planDelete([base({ id: "single" })], "single", "2026-09-28", "this", { now: NOW }), { puts: [], deletes: ["single"] });
+  // Un evento singolo: "solo questa" lo elimina. Senza fuso il suo giorno è quello del dispositivo
+  // (a Honolulu le 09:00Z del 28 sono ancora il 27).
+  const single = base({ id: "single" });
+  assert.deepEqual(planDelete([single], "single", civilDateOf(new Date(single.start)), "this", { now: NOW }), { puts: [], deletes: ["single"] });
 });
 
 test("applyRepeatFields: salva regola, impronta, fuso e proiezione; senza regola non tocca nulla", () => {

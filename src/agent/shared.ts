@@ -103,9 +103,10 @@ const safeLinks = (value: unknown) =>
  * resta fuori. Colore, link e indirizzo esterno passano a parte, già controllati.
  */
 const SHARED_FIELDS: Record<string, readonly string[]> = {
-  // Ripetizione nuova: regola, fuso, giorno dell'occorrenza, ricorrenza e promemoria. Restano fuori gli
-  // id interni (seriesId, splitFrom), l'impronta repeatLegacy e la chiave d'importazione sourceRecurrenceId.
-  calendarEvent: ["title", "description", "category", "priority", "start", "end", "allDay", "recurrence", "recurrenceUntil", "status", "checklist", "notes", "repeat", "timeZone", "originalDate", "cancelled", "occasion", "reminders"],
+  // Ripetizione nuova: regola, fuso, giorno dell'occorrenza, ricorrenza e promemoria; luogo (testo, es. la
+  // destinazione di una vacanza). Restano fuori gli id interni (seriesId, splitFrom), l'impronta
+  // repeatLegacy e la chiave d'importazione sourceRecurrenceId.
+  calendarEvent: ["title", "description", "category", "priority", "start", "end", "allDay", "recurrence", "recurrenceUntil", "status", "checklist", "notes", "repeat", "timeZone", "originalDate", "cancelled", "occasion", "reminders", "location"],
   task: ["title", "description", "priority", "dueDate", "status", "subtasks", "notes", "estimatedMinutes", "actualMinutes", "completedAt", "energy", "difficulty", "importance"],
   studySession: ["title", "template", "plannedMinutes", "actualMinutes", "start", "end", "topics", "perceivedDifficulty", "focusLevel", "status", "notes"],
   studyTopic: ["title", "firstStudiedAt", "comprehension", "memorization", "difficulty", "nextReviewDate", "completedReviews", "lastReviewedAt", "questions", "notes"],

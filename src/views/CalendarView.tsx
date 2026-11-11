@@ -5,13 +5,11 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
-  type ReactNode
+  useState
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   addDays,
-  addMinutes,
   addMonths,
   addWeeks,
   eachDayOfInterval,
@@ -25,17 +23,14 @@ import {
   startOfWeek
 } from "date-fns";
 import { it } from "date-fns/locale";
-import { useStudyStore } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { sharedOfTypes, useSharedStore } from "../store/useSharedStore";
-import { changedFields, originOf, ownerColor, safeCssColor, sharedKey, ShareUserError, type SharedEntity, type SharedOrigin } from "../lib/sharing";
-import { SharedMark } from "../components/SharedMark";
+import { originOf, ownerColor, safeCssColor, sharedKey, ShareUserError, type SharedEntity } from "../lib/sharing";
 import { createId } from "../lib/id";
-import type { CalendarEvent, EventCategory, Exam, Task } from "../types";
+import type { CalendarEvent, EventOccasion, Exam, OccasionKind } from "../types";
 import {
   Button,
-  DIMMED_DISABLED_FIELDS,
   EmptyState,
-  Field,
   HelpTip,
   IconButton,
   PageActions,
@@ -43,31 +38,51 @@ import {
   SectionTitle,
   Segmented,
   Tag,
-  inputClass,
   type PageAction
 } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
-import { safeHref } from "../lib/safeUrl";
 import { CalendarTransfer, transferMenuItem, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
-import { allDayRange, daysUntil, selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
-import { expandEvents, RECURRENCE_LABEL, type EventOccurrence } from "../lib/recurrence";
+import { EventEditor } from "../components/calendar/EventEditor";
+import { ScopeChoice } from "../components/calendar/ScopeChoice";
+import { OccasionForm, occasionIcon } from "../components/calendar/OccasionForm";
+import { VacationForm } from "../components/calendar/VacationForm";
+import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
+import { sanitizeTypeColorOverrides } from "../lib/eventColors";
+import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, rowHasOwnContent, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
+import { occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, weekdayShift, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
-  ALL_DAY_LABEL,
+  newOccasionDraft,
+  newVacationDraft,
+  OCCASION_KINDS,
+  occasionChanges,
+  occasionDraftFromEvent,
+  occasionFields,
+  vacationChanges,
+  vacationDraftFromEvent,
+  vacationFields
+} from "../lib/occasionForms";
+import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
+import { applyRepeatFields, changesRepeat, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
+import { civilDateOf, deviceTimeZone, isCivilDate, parseCivil } from "../lib/tz";
+import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
+import { expandEvents } from "../lib/recurrence";
+import {
   CALENDAR_HELP,
   CALENDAR_TEXT,
   CALENDAR_VIEW_TEXT,
-  EVENT_CATEGORY_LABEL,
-  EVENT_STATUS_LABEL,
+  EVENT_EDITOR_TEXT,
   EXAM_STATUS_LABEL,
-  NO_SUBJECT_LABEL,
+  OCCASION_FORM_TEXT,
+  OCCASION_KIND_LABEL,
   OFFICIAL_EXAMS_ADD_LABEL,
-  PRIORITY_LABEL,
+  REPEAT_PICKER_TEXT,
+  SCOPE_TEXT,
   SHARE_TEXT,
-  eventLinkLabel,
-  formatMinutes
+  TYPE_COLORS_TEXT,
+  VACATION_FORM_TEXT
 } from "../lib/labels";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { CourseIcon } from "../components/CourseIcon";
@@ -97,19 +112,21 @@ import { DayList } from "../components/calendar/DayList";
 import { MonthGrid } from "../components/calendar/MonthGrid";
 import { TimeGrid } from "../components/calendar/TimeGrid";
 import { defaultStartFor } from "../components/calendar/shared";
+import type {
+  CalendarOccurrence,
+  CalendarPreviewState,
+  Handlers,
+  SharedCalendarEvent,
+  ShownEvent,
+  Subjects
+} from "../components/calendar/types";
 
 // Pannello Condividi (e CloudPanel con supabase-js) caricato solo quando si apre dal menu.
 const loadShareDrawer = () => import("../components/ShareDrawer");
 const ShareDrawer = lazy(() => loadShareDrawer().then((module) => ({ default: module.ShareDrawer })));
 
 type StoredCalendarMode = (typeof STORED_CALENDAR_MODES)[number];
-type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
 
-/** Occorrenza del calendario: propria, oppure di un'altra persona (`sharedFrom`). */
-type CalendarOccurrence = EventOccurrence & { sharedFrom?: SharedOrigin };
-type SharedCalendarEvent = CalendarEvent & { sharedFrom: SharedOrigin };
-/** Evento mostrato (chip, anteprima, editor): proprio o di un'altra persona. */
-type ShownEvent = CalendarEvent & { sharedFrom?: SharedOrigin };
 /** Calendario di un'altra persona in cui posso aggiungere eventi, con le sue materie condivise. */
 interface WritableCalendar {
   ownerId: string;
@@ -143,12 +160,6 @@ const sharedCalendarEvent = (entity: SharedEntity): CalendarEvent | null => {
   };
 };
 
-/** Campi dell'evento che cambiano insieme: se ne cambia uno, una modifica a un evento altrui li manda tutti. */
-const LINKED_EVENT_FIELDS = [
-  ["start", "end", "allDay"],
-  ["recurrence", "recurrenceUntil"]
-] as const;
-
 /** Errore di una scrittura sui dati altrui: il testo dello store (già in italiano) o quello di riserva. */
 const sharedFailure = (cause: unknown, fallback: string) => (cause instanceof ShareUserError ? cause.message : fallback);
 
@@ -162,34 +173,27 @@ const modes: { id: CalendarViewId; label: string; title: string }[] = [
   { id: "agenda", label: "Agenda", title: "Elenco di eventi, scadenze ed esami delle prossime due settimane" }
 ];
 
-const categories = (Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => ({ id, label: EVENT_CATEGORY_LABEL[id] }));
+/** Titolo accorciato per le conferme. */
+const shortTitle = (title: string) => (title.length > 80 ? `${title.slice(0, 77)}…` : title);
+const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
-const toDatetimeLocal = (date: string | Date) => {
-  const value = typeof date === "string" ? new Date(date) : date;
-  return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+/** Campi per un evento nuovo dal modulo: niente campi vuoti in più; il fuso è quello del dispositivo. */
+const newEventFields = (patch: Partial<CalendarEvent>) => {
+  const { allDay, reminders, repeat, location, ...rest } = patch;
+  return {
+    ...rest,
+    title: patch.title ?? "",
+    start: patch.start ?? "",
+    end: patch.end ?? "",
+    ...(allDay ? { allDay: true } : {}),
+    ...(reminders?.length ? { reminders } : {}),
+    ...(repeat ? { repeat } : {}),
+    ...(location ? { location } : {}),
+    timeZone: deviceTimeZone()
+  };
 };
 
-type PreviewPoint = { x: number; y: number };
-type CalendarPreviewState =
-  | { kind: "event"; event: ShownEvent; x: number; y: number }
-  | { kind: "task"; task: Task; x: number; y: number };
-
 const supportsHoverPreview = () => typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-
-interface Handlers {
-  subjects: Subjects;
-  onEditEvent: (id: string, ownerId?: string) => void;
-  onEditTask: (id: string) => void;
-  onToggleTask: (id: string) => void;
-  onCreate: (at: Date, kind?: "event" | "task") => void;
-  /** Apre l'esame nella sezione Esami. */
-  onOpenExam: (id: string) => void;
-  onMoveEvent: (occurrence: CalendarOccurrence, nextStart: Date) => void;
-  onPreviewEvent: (event: ShownEvent, point: PreviewPoint) => void;
-  onPreviewTask: (task: Task, point: PreviewPoint) => void;
-  onPreviewMove: (point: PreviewPoint) => void;
-  onPreviewHide: () => void;
-}
 
 export function CalendarView() {
   // Valori salvati di prima ancora validi: "focus" diventa Giorno con "Solo 8–19", "exam" e
@@ -219,14 +223,58 @@ export function CalendarView() {
     [setCursorIso]
   );
   const [editingEventId, setEditingEventId] = useUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
+  // Giorno dell'occorrenza aperta di una serie (YYYY-MM-DD): con l'id la ritrova anche dopo un refresh.
+  const [editingDate, setEditingDate] = useUiState<string | null>("calendar.editingDate", null, {
+    scope: "tab",
+    validate: (value): value is string | null => value === null || isCivilDate(value)
+  });
+  const closeEventEditor = () => {
+    setEditingEventId(null);
+    setEditingDate(null);
+    setFullForm(null);
+  };
+  // Scelta "Solo questo · Questo e i successivi · Tutti" in attesa di risposta.
+  const [scopeRequest, setScopeRequest] = useState<{ heading: string; options: ScopeOption[]; danger: boolean; resolve: (scope: OccurrenceScope | null) => void } | null>(null);
+  const askScope = (heading: string, options: ScopeOption[], danger = false) =>
+    new Promise<OccurrenceScope | null>((resolve) => setScopeRequest({ heading, options, danger, resolve }));
+  const answerScope = (scope: OccurrenceScope | null) => {
+    scopeRequest?.resolve(scope);
+    setScopeRequest(null);
+  };
   const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
-  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string } | null>(null);
+  // `draft` / `occasion`: dal modulo semplice ("Modulo completo"), con ciò che si era già scritto.
+  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string; draft?: EventDraft; occasion?: EventOccasion } | null>(null);
+  // Percorsi semplici nuovi: ricorrenza (compleanno, anniversario…) o vacanza.
+  const [simpleNew, setSimpleNew] = useState<{ form: "occasion"; kind?: OccasionKind; name?: string } | { form: "vacation"; title?: string } | null>(null);
+  // Ricorrenza o vacanza aperta nel modulo completo, con le modifiche fatte nel modulo semplice.
+  const [fullForm, setFullForm] = useState<{ id: string; draft: EventDraft } | null>(null);
+  const [typeColorsOpen, setTypeColorsOpen] = useState(false);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const [barbImportOpen, setBarbImportOpen] = useState(false);
   const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
   const transfer = useRef<CalendarTransferHandle>(null);
-  const { events, subjects, exams, tasks, loading, locked, updateEvent, addEvent, deleteEvent, addTask, updateTask, toggleTask, deleteTask, setActiveView } =
-    useStudyStore();
+  const {
+    events,
+    subjects,
+    exams,
+    tasks,
+    loading,
+    locked,
+    updateEvent,
+    addEvent,
+    deleteEvent,
+    editOccurrence,
+    deleteOccurrence,
+    addTask,
+    updateTask,
+    toggleTask,
+    deleteTask,
+    setActiveView,
+    preferences,
+    updatePreferences
+  } = useStudyStore();
+  // "Colori delle tipologie" (preferenza sincronizzata: ripulita prima dell'uso).
+  const typeOverrides = useMemo(() => sanitizeTypeColorOverrides(selectPreferences({ preferences }).eventTypeColors), [preferences]);
   // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
   // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
   const [storedSubject, setStoredSubject] = useUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
@@ -295,7 +343,7 @@ export function CalendarView() {
     const ownerId = editingSharedKey.slice(0, editingSharedKey.indexOf(":"));
     if (calendarOwners.some((owner) => owner.id === ownerId)) return;
     if (!received.length && !seenOwners.current.has(ownerId)) return;
-    if (sharedDraftDirty.current) setNotice("L'evento che stavi modificando non è più condiviso con te: le modifiche non salvate sono andate perse.");
+    if (sharedDraftDirty.current) setNotice(EVENT_EDITOR_TEXT.sharedGoneDraft);
     closeSharedEditor();
   }, [calendarOwners, received, editingSharedKey]);
   // L'avviso riguarda la vista in cui è nato: cambiando vista sparisce.
@@ -332,7 +380,27 @@ export function CalendarView() {
     if (dueDate) void updateTask(taskId, { dueDate });
   };
   const editingEvent = editingEventId ? events.find((event) => event.id === editingEventId) ?? null : null;
+  // Giorno aperto di una serie: la sua riga (se cambiato da solo) o la serie con gli orari di quel giorno.
+  const editingOccurrence = useMemo(
+    () => (editingEventId && editingDate ? findOccurrence(events, editingEventId, editingDate) : null),
+    [events, editingEventId, editingDate]
+  );
+  const editingSeries = editingOccurrence
+    ? events.find((event) => event.id === occurrenceTarget(editingOccurrence).seriesId && !isOccurrenceRow(event)) ?? null
+    : null;
+  /** Modulo dell'evento aperto: ricorrenza e vacanza hanno il loro, salvo "Modulo completo". */
+  const editingForm = editingEvent && !editingDate && fullForm?.id !== editingEvent.id ? editorFormFor(editingEvent) : "event";
+  const todayCivil = civilDateOf(new Date());
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
+  /** Colore della materia per il modulo (le tipologie con materia ne prendono il colore). */
+  const ownColorContext = (subjectId?: string) => ({ subjectColor: subjects.find((subject) => subject.id === subjectId)?.color, overrides: typeOverrides });
+  /** Bozza del modulo completo da campi già pronti (dal modulo semplice), sopra l'evento salvato se c'è. */
+  const draftFromFields = (fields: Partial<CalendarEvent>, saved?: CalendarEvent) =>
+    draftFromEvent({ links: [], priority: "medium", status: "planned", description: "", ...saved, ...fields } as CalendarEvent, ownColorContext(saved?.subjectId));
+  const startYearOf = (event: CalendarEvent) => parseCivil(civilDateOf(new Date(event.start)))?.year;
+  /** Colore scelto a mano per l'evento (per l'anteprima dei moduli semplici), se c'è. */
+  const customColorOf = (event: CalendarEvent) =>
+    initialColorCustom(event, ownColorContext(event.subjectId).subjectColor) ? safeCssColor(event.color) || undefined : undefined;
 
   const monthDays = useMemo(() => {
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 });
@@ -369,7 +437,11 @@ export function CalendarView() {
   );
   const holidays = useMemo(() => (showHolidays ? holidaysInRange(todayYmd(range.from), todayYmd(range.to)) : []), [showHolidays, range]);
   const rangeEmpty = !hasItemsInRange(visible, range.from, range.to);
-  const subjectSummary = useMemo(() => subjectCalendarSummary({ subjects, events, exams, tasks }), [subjects, events, exams, tasks]);
+  // Le righe dei giorni cambiati da soli non sono eventi in più.
+  const subjectSummary = useMemo(
+    () => subjectCalendarSummary({ subjects, events: events.filter((event) => !isOccurrenceRow(event)), exams, tasks }),
+    [subjects, events, exams, tasks]
+  );
   const addForSubject = () => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)));
   const subjectEmpty = filterSubject ? (
     <SubjectEmptyNotice name={filterSubject.name} onAdd={addForSubject} onClear={() => setStoredSubject(null)} />
@@ -396,30 +468,126 @@ export function CalendarView() {
             : "";
   const summary = isCalendarSummary(mode);
 
+  /** La serie di un mio evento che si ripete (non la riga di un giorno) e il fuso che la modifica le fisserà. */
+  const ownSeriesOf = (seriesId: string) => {
+    const series = useStudyStore.getState().events.find((event) => event.id === seriesId && !isOccurrenceRow(event));
+    return series ? { series, pinsZone: series.timeZone || series.allDay ? undefined : deviceTimeZone() } : null;
+  };
+
+  /**
+   * Modifica di un giorno di una mia serie con la portata scelta (vedi `occurrenceEditCalls`). "Tutti"
+   * da un giorno cambiato da solo: la serie cambia e quel giorno, se c'è ancora, prende anche lui la
+   * modifica (lo si sta guardando).
+   */
+  const applyOccurrenceEdit = async (
+    item: CalendarOccurrence,
+    scope: OccurrenceScope,
+    changes: Partial<CalendarEvent>,
+    shown: Partial<CalendarEvent> = {}
+  ) => {
+    const target = occurrenceTarget(item);
+    const own = ownSeriesOf(target.seriesId);
+    if (!own) throw new Error("series missing");
+    const { calls } = occurrenceEditCalls({ item, series: own.series, scope, changes, shown });
+    for (const call of calls) await editOccurrence(target.seriesId, target.date, call.scope, call.patch);
+  };
+
+  /**
+   * Scelta della portata per modificare o spostare un giorno di una mia serie: ciò che ogni portata fa
+   * ai giorni cambiati o annullati da soli si calcola prima con il motore, così il testo dice il vero.
+   */
+  const occurrenceScopeOptions = (
+    item: CalendarOccurrence,
+    action: "edit" | "move",
+    changes: Partial<CalendarEvent>,
+    shown: Partial<CalendarEvent>,
+    flags: { ruleChanged?: boolean; subjectChanged?: boolean } = {}
+  ) => {
+    const target = occurrenceTarget(item);
+    const own = ownSeriesOf(target.seriesId);
+    const current = useStudyStore.getState().events;
+    const impacts: Partial<Record<"following" | "all", ScopeImpact>> = {};
+    let newStart: string | undefined;
+    let daysShift: ReturnType<typeof weekdayShift>;
+    if (own) {
+      for (const scope of ["following", "all"] as const) {
+        const plan = occurrenceEditCalls({ item, series: own.series, scope, changes, shown });
+        impacts[scope] = scopeImpact(current, item, scope, plan.calls, undefined, changes);
+        if (scope === "all") {
+          newStart = plan.newStart;
+          daysShift = plan.weekdays;
+        }
+      }
+    }
+    return scopeOptions({
+      action,
+      date: target.date,
+      ...flags,
+      pinsZone: own?.pinsZone,
+      impacts,
+      span: seriesSpan(current, target.seriesId, target.date, civilDateOf(new Date())),
+      newStart,
+      rowContent: Boolean(own && target.row && rowHasOwnContent(item, own.series)),
+      daysShift
+    });
+  };
+
   const moveEvent = async (item: CalendarOccurrence, nextStart: Date) => {
     const origin = item.sharedFrom;
     if (origin && !origin.canEdit) return;
+    if (Number.isNaN(nextStart.getTime())) return;
+    const delta = nextStart.getTime() - parseISO(item.start).getTime();
+    if (!delta) return;
+    if (!origin && item.recurring) {
+      // Un giorno di una mia serie: solo questo, questo e i successivi, o tutti.
+      const target = occurrenceTarget(item);
+      const own = ownSeriesOf(target.seriesId);
+      const start = new Date(parseISO(item.start).getTime() + delta);
+      const end = new Date(parseISO(item.end).getTime() + delta);
+      if (!own || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+      const moved = { start: start.toISOString(), end: end.toISOString() };
+      // Il giorno porta con sé ciò che mostra (per "Questo e i successivi" da un giorno cambiato da solo).
+      const scope = await askScope(SCOPE_TEXT.titleMove(shortTitle(item.title)), occurrenceScopeOptions(item, "move", moved, item));
+      if (!scope) return;
+      try {
+        await applyOccurrenceEdit(item, scope, moved, item);
+        setNotice("");
+      } catch {
+        setNotice(EVENT_EDITOR_TEXT.moveFailed(shortTitle(item.title)));
+      }
+      return;
+    }
     const series: ShownEvent | undefined = origin
       ? sharedEvents.find((event) => event.id === item.id && event.sharedFrom.ownerId === origin.ownerId)
       : events.find((event) => event.id === item.id);
-    if (!series || Number.isNaN(nextStart.getTime())) return;
-    // Spostare un'occorrenza sposta l'intera serie dello stesso scarto (niente eccezioni per singola data).
-    const delta = nextStart.getTime() - parseISO(item.start).getTime();
-    if (!delta) return;
-    if (item.recurring && !window.confirm(`"${series.title}" si ripete: spostando questa data si spostano allo stesso modo anche tutte le altre. Continuare?`)) return;
+    if (!series) return;
     const start = new Date(parseISO(series.start).getTime() + delta);
     const end = new Date(parseISO(series.end).getTime() + delta);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    // Evento altrui che si ripete: si sposta tutta la serie dello stesso scarto (lo si dice prima, con i
+    // giorni della settimana nuovi se la regola ne ha più d'uno).
+    if (item.recurring) {
+      const preview = seriesMovePatch(series, start.toISOString(), end.toISOString());
+      const daysShift = preview.repeat ? weekdayShift(normalizeRepeat(series), preview.repeat) : undefined;
+      const scope = await askScope(
+        SCOPE_TEXT.titleMove(shortTitle(series.title)),
+        scopeOptions({ action: "move", date: item.occurrenceDate, sharedOnly: true, daysShift })
+      );
+      if (scope !== "all") return;
+    }
     if (origin) {
       // Solo dallo store dei dati altrui (controlla il permesso e mette in coda la scrittura), sull'ultima
-      // versione salvata: cambiano solo gli orari, il resto resta com'è per il proprietario.
+      // versione salvata: cambiano gli orari (e i giorni della settimana scritti nella regola, che si
+      // spostano dello stesso scarto), il resto resta com'è per il proprietario.
       const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(origin.ownerId, "calendarEvent", series.id))?.entity;
-      if (!latest) return;
+      const current = latest ? sharedCalendarEvent(latest) : null;
+      if (!latest || !current) return;
+      const moved = seriesMovePatch(current, start.toISOString(), end.toISOString());
       try {
-        await useSharedStore.getState().saveSharedItem(origin.ownerId, "calendarEvent", { ...latest, start: start.toISOString(), end: end.toISOString() });
+        await useSharedStore.getState().saveSharedItem(origin.ownerId, "calendarEvent", { ...latest, ...moved } as SharedEntity);
         setNotice("");
       } catch (cause) {
-        setNotice(sharedFailure(cause, `"${series.title}" non è stato spostato. Riprova.`));
+        setNotice(sharedFailure(cause, EVENT_EDITOR_TEXT.moveFailed(shortTitle(series.title))));
       }
       return;
     }
@@ -429,7 +597,24 @@ export function CalendarView() {
 
   const handlers: Handlers = {
     subjects,
-    onEditEvent: (id, ownerId) => (ownerId ? setEditingSharedKey(sharedKey(ownerId, "calendarEvent", id)) : setEditingEventId(id)),
+    onEditEvent: (id, ownerId, occurrence) => {
+      if (ownerId) {
+        setEditingSharedKey(sharedKey(ownerId, "calendarEvent", id));
+        return;
+      }
+      // Ricorrenze e vacanze si aprono nel loro modulo semplice, per tutta la serie.
+      const stored = events.find((event) => event.id === id);
+      const seriesId = stored && isOccurrenceRow(stored) ? (stored.seriesId as string) : id;
+      const series = events.find((event) => event.id === seriesId);
+      const simple = series ? editorFormFor(series) !== "event" : false;
+      // Un giorno di una serie (anche già cambiato da solo, il cui occurrenceDate è il giorno originale)
+      // si apre come tale: al salvataggio si sceglie a quali date vale. Un evento singolo no.
+      const date = occurrence?.occurrenceDate;
+      const recurring = Boolean(series && isCivilDate(date) && (seriesId !== id || normalizeRepeat(series)));
+      setFullForm(null);
+      setEditingEventId(simple ? seriesId : id);
+      setEditingDate(!simple && recurring ? (date as string) : null);
+    },
     onEditTask: setEditingTaskId,
     onToggleTask: (id) => void toggleTask(id),
     onCreate: (at, kind = "event") => openCreator(at, kind),
@@ -459,6 +644,8 @@ export function CalendarView() {
               </Button>
             }
             more={[
+              { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
+              { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
               { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
               transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
@@ -471,13 +658,17 @@ export function CalendarView() {
                 }
               },
               { label: CALENDAR_TEXT.subjectSummary, icon: "BookOpen", onClick: () => openSummary("semester") },
-              { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") }
+              { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") },
+              { label: TYPE_COLORS_TEXT.menu, icon: "Palette", onClick: () => setTypeColorsOpen(true) }
             ]}
           />
         }
       />
       <CalendarTransfer ref={transfer} />
       {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
+      {typeColorsOpen ? (
+        <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
+      ) : null}
       {sharePhase === "open" ? (
         <Suspense fallback={null}>
           <ShareDrawer open onClose={() => setSharePhase("idle")} initialScopes={["calendar"]} />
@@ -682,35 +873,179 @@ export function CalendarView() {
         }}
       />
 
-      {editingEvent ? (
-        <EventEditorModal
-          event={editingEvent}
+      {editingDate && editingOccurrence ? (
+        <EventEditor
+          overrides={typeOverrides}
+          key={`${editingEventId}@${editingDate}`}
+          heading={EVENT_EDITOR_TEXT.editEvent}
+          initial={draftFromEvent(editingOccurrence, {
+            ...ownColorContext(editingOccurrence.subjectId),
+            // Una riga non ha la regola: si mostra quella della sua serie.
+            repeat: normalizeRepeat(editingSeries ?? editingOccurrence)
+          })}
+          event={editingOccurrence}
+          occurrenceDate={occurrenceTarget(editingOccurrence).date}
           subjects={subjects}
-          onClose={() => setEditingEventId(null)}
-          onSave={async (patch) => {
-            await updateEvent(editingEvent.id, patch);
-            setEditingEventId(null);
+          repeatNote={REPEAT_PICKER_TEXT.onlyForSeries}
+          onClose={closeEventEditor}
+          onSubmit={async ({ changes, patch }) => {
+            const item = editingOccurrence;
+            const target = occurrenceTarget(item);
+            const own = ownSeriesOf(target.seriesId);
+            if (!own) return EVENT_EDITOR_TEXT.saveFailed;
+            const scope = await askScope(
+              SCOPE_TEXT.titleEdit(shortTitle(patch.title || item.title)),
+              occurrenceScopeOptions(item, "edit", changes, patch, {
+                ruleChanged: userRuleChange({ item, series: own.series, changes }),
+                subjectChanged: "subjectId" in changes
+              })
+            );
+            // Annullato: il modulo resta aperto con le modifiche.
+            if (!scope) return;
+            try {
+              await applyOccurrenceEdit(item, scope, changes, patch);
+              closeEventEditor();
+            } catch {
+              return EVENT_EDITOR_TEXT.saveFailed;
+            }
           }}
           onDelete={async () => {
-            const label = editingEvent.title.length > 80 ? `${editingEvent.title.slice(0, 77)}…` : editingEvent.title;
-            const series = editingEvent.recurrence && editingEvent.recurrence !== "none" ? " Si ripete: verranno eliminate tutte le sue date." : "";
-            if (!window.confirm(`Eliminare l'evento "${label}"?${series} Non si può annullare.`)) return;
+            const item = editingOccurrence;
+            const target = occurrenceTarget(item);
+            const span = seriesSpan(useStudyStore.getState().events, target.seriesId, target.date, civilDateOf(new Date()));
+            const scope = await askScope(SCOPE_TEXT.titleDelete(shortTitle(item.title)), scopeOptions({ action: "delete", date: target.date, span }), true);
+            if (!scope) return;
+            try {
+              // "Tutti": tutta la serie come la si vede, anche le parti nate da "Questo e i successivi".
+              await deleteOccurrence(target.seriesId, target.date, scope, scope === "all" ? { includeSplits: true } : undefined);
+              closeEventEditor();
+            } catch {
+              return EVENT_EDITOR_TEXT.deleteFailed;
+            }
+          }}
+        />
+      ) : null}
+
+      {editingEvent && !editingDate && editingForm === "occasion" ? (
+        <OccasionForm
+          overrides={typeOverrides}
+          customColor={customColorOf(editingEvent)}
+          key={editingEvent.id}
+          initial={occasionDraftFromEvent(editingEvent)}
+          editing
+          today={todayCivil}
+          onClose={closeEventEditor}
+          onSave={async (draft) => {
+            // Solo ciò che il modulo ha cambiato: la regola, la categoria e il colore restano quelli salvati.
+            const changes = occasionChanges(editingEvent, occasionDraftFromEvent(editingEvent), draft, { today: todayCivil, baseYear: startYearOf(editingEvent) });
+            if (Object.keys(changes).length) await updateEvent(editingEvent.id, changes);
+            closeEventEditor();
+          }}
+          onDelete={async () => {
             await deleteEvent(editingEvent.id);
-            setEditingEventId(null);
+            closeEventEditor();
+          }}
+          onFullForm={(draft) => {
+            const changes = occasionChanges(editingEvent, occasionDraftFromEvent(editingEvent), draft, { today: todayCivil, baseYear: startYearOf(editingEvent) });
+            setFullForm({ id: editingEvent.id, draft: draftFromFields(changes, editingEvent) });
+          }}
+        />
+      ) : null}
+
+      {editingEvent && !editingDate && editingForm === "vacation" ? (
+        <VacationForm
+          overrides={typeOverrides}
+          customColor={customColorOf(editingEvent)}
+          key={editingEvent.id}
+          initial={vacationDraftFromEvent(editingEvent)}
+          editing
+          onClose={closeEventEditor}
+          onSave={async (draft) => {
+            const changes = vacationChanges(editingEvent, vacationDraftFromEvent(editingEvent), draft);
+            if (Object.keys(changes).length) await updateEvent(editingEvent.id, changes);
+            closeEventEditor();
+          }}
+          onDelete={async () => {
+            await deleteEvent(editingEvent.id);
+            closeEventEditor();
+          }}
+          onFullForm={(draft) => setFullForm({ id: editingEvent.id, draft: draftFromFields(vacationChanges(editingEvent, vacationDraftFromEvent(editingEvent), draft), editingEvent) })}
+        />
+      ) : null}
+
+      {simpleNew?.form === "occasion" ? (
+        <OccasionForm
+          overrides={typeOverrides}
+          initial={newOccasionDraft({ today: todayCivil, kind: simpleNew.kind, name: simpleNew.name })}
+          editing={false}
+          today={todayCivil}
+          onClose={() => setSimpleNew(null)}
+          onSave={async (draft) => {
+            await addEvent(newEventFields(occasionFields(draft, { today: todayCivil, overrides: typeOverrides })));
+            setSimpleNew(null);
+          }}
+          onFullForm={(draft) => {
+            const { occasion, ...fields } = occasionFields(draft, { today: todayCivil, overrides: typeOverrides });
+            setSimpleNew(null);
+            setCreator({ at: new Date(), kind: "event", draft: draftFromFields({ ...fields, occasion }), occasion });
+          }}
+        />
+      ) : null}
+
+      {simpleNew?.form === "vacation" ? (
+        <VacationForm
+          overrides={typeOverrides}
+          initial={newVacationDraft(todayCivil, simpleNew.title)}
+          editing={false}
+          onClose={() => setSimpleNew(null)}
+          onSave={async (draft) => {
+            await addEvent(newEventFields(vacationFields(draft, { overrides: typeOverrides })));
+            setSimpleNew(null);
+          }}
+          onFullForm={(draft) => {
+            setSimpleNew(null);
+            setCreator({ at: new Date(), kind: "event", draft: draftFromFields(vacationFields(draft, { overrides: typeOverrides })) });
+          }}
+        />
+      ) : null}
+
+      {editingEvent && !editingDate && editingForm === "event" ? (
+        <EventEditor
+          overrides={typeOverrides}
+          key={editingEvent.id}
+          heading={EVENT_EDITOR_TEXT.editEvent}
+          initial={fullForm?.id === editingEvent.id ? fullForm.draft : draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
+          base={draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
+          event={editingEvent}
+          subjects={subjects}
+          deleteConfirmText={(normalizeRepeat(editingEvent) ? EVENT_EDITOR_TEXT.deleteSeriesConfirm : EVENT_EDITOR_TEXT.deleteConfirm)(shortTitle(editingEvent.title))}
+          onClose={closeEventEditor}
+          onSubmit={async ({ changes }) => {
+            await updateEvent(editingEvent.id, changes);
+            closeEventEditor();
+          }}
+          onDelete={async () => {
+            await deleteEvent(editingEvent.id);
+            closeEventEditor();
           }}
         />
       ) : null}
 
       {editingShared ? (
-        <EventEditorModal
+        <EventEditor
+          overrides={typeOverrides}
+          key={editingSharedKey ?? editingShared.id}
+          heading={(editingShared.sharedFrom.canEdit ? EVENT_EDITOR_TEXT.editShared : EVENT_EDITOR_TEXT.viewShared)(firstName(editingShared.sharedFrom.ownerName))}
+          initial={draftFromEvent(editingShared, { subjectColor: editingShared.sharedFrom.subjectColor, overrides: typeOverrides })}
           event={editingShared}
           subjects={subjects}
           sharedFrom={editingShared.sharedFrom}
+          deleteConfirmText={EVENT_EDITOR_TEXT.deleteShared(shortTitle(editingShared.title), editingShared.sharedFrom.ownerName)}
           onClose={closeSharedEditor}
           onDirtyChange={(dirty) => {
             sharedDraftDirty.current = dirty;
           }}
-          onSave={async (_patch, changes) => {
+          onSubmit={async ({ changes }) => {
             const ownerId = editingShared.sharedFrom.ownerId;
             // Solo i campi cambiati qui, sopra l'ultima versione nello store: ciò che il proprietario ha
             // cambiato nel frattempo resta. La materia è sua e da qui non cambia.
@@ -721,92 +1056,108 @@ export function CalendarView() {
               return;
             }
             const latest = useSharedStore.getState().items.find((entry) => entry.key === sharedKey(ownerId, "calendarEvent", editingShared.id))?.entity;
-            if (!latest) return "Questo evento non è più condiviso con te.";
+            if (!latest) return EVENT_EDITOR_TEXT.sharedGone;
+            // Ripetizione cambiata: regola pulita più i campi vecchi, così la vedono anche le app vecchie.
+            const merged = { ...latest, ...update } as unknown as CalendarEvent;
+            const next = "repeat" in update ? applyRepeatFields(merged, { repeatChanged: changesRepeat(latest as unknown as CalendarEvent, update) }) : merged;
             try {
               // Solo dallo store dei dati altrui: mai nel mio calendario.
-              await useSharedStore.getState().saveSharedItem(ownerId, "calendarEvent", { ...latest, ...update });
+              await useSharedStore.getState().saveSharedItem(ownerId, "calendarEvent", { ...next } as unknown as SharedEntity);
               closeSharedEditor();
             } catch (cause) {
-              return sharedFailure(cause, "Modifiche non salvate. Riprova.");
+              return sharedFailure(cause, EVENT_EDITOR_TEXT.saveFailed);
             }
           }}
           onDelete={async () => {
-            const owner = editingShared.sharedFrom.ownerName;
-            if (!window.confirm(`Eliminare "${editingShared.title}" dal calendario di ${owner}? Resta nella sua cronologia e può ripristinarlo.`)) return;
             try {
               await useSharedStore.getState().deleteSharedItem(editingShared.sharedFrom.ownerId, "calendarEvent", editingShared.id);
               closeSharedEditor();
             } catch (cause) {
-              return sharedFailure(cause, "Evento non eliminato. Riprova.");
+              return sharedFailure(cause, EVENT_EDITOR_TEXT.deleteFailed);
             }
           }}
         />
       ) : null}
 
       {creator ? (
-        <CreateModal
-          initial={creator}
+        <EventEditor
+          overrides={typeOverrides}
+          heading={EVENT_EDITOR_TEXT.newEvent}
+          occasionKind={creator.occasion?.kind}
+          initial={creator.draft ?? newEventDraft({ start: defaultStartFor(creator.at), subjectId: creator.subjectId ?? "", ...ownColorContext(creator.subjectId) })}
+          typeExtra={(draft) => (
+            <div className="min-w-0">
+              <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">{EVENT_EDITOR_TEXT.typeOccasions}</span>
+              <div className="flex flex-wrap gap-1.5">
+                {OCCASION_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => {
+                      // Percorso semplice della ricorrenza, con il titolo già scritto.
+                      setCreator(null);
+                      setSimpleNew({ form: "occasion", kind, name: draft.title.trim() });
+                    }}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-full border border-[var(--border)] px-3 text-sm font-extrabold text-[var(--muted)] hover:text-[var(--text)]"
+                  >
+                    <Icon name={occasionIcon(kind)} className="h-4 w-4 shrink-0" />
+                    {OCCASION_KIND_LABEL[kind]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           subjects={subjects}
           calendars={writableCalendars}
+          createKind={creator.kind}
           onClose={() => setCreator(null)}
-          onSubmit={async (draft) => {
-            if (draft.kind === "task") {
+          onSubmit={async ({ kind, ownerId, draft, patch }) => {
+            if (kind === "task") {
               await addTask({
-                title: draft.title,
-                dueDate: draft.start.toISOString(),
-                subjectId: draft.subjectId || undefined,
+                title: patch.title ?? "",
+                dueDate: new Date(draft.start).toISOString(),
+                subjectId: patch.subjectId,
                 priority: draft.priority,
                 importance: draft.priority === "urgent" ? 5 : draft.priority === "high" ? 4 : 3
               });
-            } else {
-              const range = draft.allDay ? allDayRange(draft.start) : { start: draft.start.toISOString(), end: addMinutes(draft.start, draft.duration).toISOString() };
-              if (draft.ownerId) {
-                // Nel calendario di un'altra persona: solo dallo store dei dati altrui, mai nel mio calendario.
-                const now = new Date().toISOString();
-                const calendar = writableCalendars.find((entry) => entry.ownerId === draft.ownerId);
-                const color = calendar?.subjects.find((subject) => subject.id === draft.subjectId)?.color || "#7CF7C8";
-                const created: CalendarEvent = {
+              setCreator(null);
+              return;
+            }
+            const fields = newEventFields(patch);
+            if (ownerId) {
+              // Nel calendario di un'altra persona: solo dallo store dei dati altrui, mai nel mio calendario.
+              const now = new Date().toISOString();
+              const created = applyRepeatFields(
+                {
+                  ...fields,
                   id: createId("event"),
                   createdAt: now,
                   updatedAt: now,
                   archived: false,
                   tags: [],
-                  title: draft.title,
-                  description: "",
-                  category: draft.category,
-                  subjectId: draft.subjectId || undefined,
-                  color,
-                  priority: draft.priority,
-                  start: range.start,
-                  end: range.end,
-                  allDay: draft.allDay || undefined,
-                  recurrence: draft.recurrence,
-                  status: "planned",
+                  description: fields.description ?? "",
+                  category: fields.category ?? "study",
+                  color: fields.color ?? "#7CF7C8",
+                  priority: fields.priority ?? "medium",
+                  recurrence: "none",
+                  status: fields.status ?? "planned",
                   checklist: [],
                   attachmentIds: [],
                   notes: "",
+                  // Il server non accetta collegamenti in un evento nuovo altrui (il modulo lo dice).
                   links: []
-                };
-                try {
-                  await useSharedStore.getState().saveSharedItem(draft.ownerId, "calendarEvent", { ...created });
-                  setCreator(null);
-                } catch (cause) {
-                  return sharedFailure(cause, "Evento non aggiunto. Riprova.");
-                }
-                return;
+                },
+                { repeatChanged: fields.repeat !== undefined }
+              );
+              try {
+                await useSharedStore.getState().saveSharedItem(ownerId, "calendarEvent", { ...created } as unknown as SharedEntity);
+                setCreator(null);
+              } catch (cause) {
+                return sharedFailure(cause, EVENT_EDITOR_TEXT.addFailed);
               }
-              await addEvent({
-                title: draft.title,
-                start: range.start,
-                end: range.end,
-                allDay: draft.allDay || undefined,
-                subjectId: draft.subjectId || undefined,
-                color: subjectColor(subjects, draft.subjectId, "#7CF7C8"),
-                priority: draft.priority,
-                category: draft.category,
-                recurrence: draft.recurrence
-              });
+              return;
             }
+            await addEvent(creator.occasion ? { ...fields, occasion: creator.occasion } : fields);
             setCreator(null);
           }}
         />
@@ -828,627 +1179,12 @@ export function CalendarView() {
         />
       ) : null}
 
+      {scopeRequest ? (
+        <ScopeChoice heading={scopeRequest.heading} options={scopeRequest.options} danger={scopeRequest.danger} onChoose={answerScope} onCancel={() => answerScope(null)} />
+      ) : null}
+
       {preview ? <CalendarHoverPreview preview={preview} subjects={subjects} /> : null}
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Modali                                                               */
-/* ------------------------------------------------------------------ */
-
-const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
-
-function ModalShell({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
-      }}
-    >
-      <section className="soft-panel scrollbar-soft max-h-[90dvh] w-full max-w-2xl overflow-y-auto p-4 sm:p-5">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="safe-text text-2xl font-black">{title}</h3>
-            {subtitle ? <p className="two-line-safe text-sm text-[var(--muted)]">{subtitle}</p> : null}
-          </div>
-          <IconButton icon="X" label="Chiudi" onClick={onClose} className="h-10 w-10" />
-        </div>
-        {children}
-      </section>
-    </div>
-  );
-}
-
-function EventEditorModal({
-  event,
-  subjects,
-  sharedFrom,
-  onClose,
-  onSave,
-  onDelete,
-  onDirtyChange
-}: {
-  event: CalendarEvent;
-  subjects: Subjects;
-  /** Evento di un'altra persona: sola lettura senza `canEdit`, materia del proprietario non modificabile. */
-  sharedFrom?: SharedOrigin;
-  onClose: () => void;
-  /**
-   * `patch` ha tutti i campi del modulo, `changes` solo quelli cambiati da quando l'editor è aperto
-   * (orari e ripetizione insieme). Un testo restituito è un errore da mostrare accanto ai pulsanti.
-   */
-  onSave: (patch: Partial<CalendarEvent>, changes: Partial<CalendarEvent>) => Promise<string | void>;
-  onDelete: () => Promise<string | void>;
-  /** Ci sono modifiche non salvate nel modulo. */
-  onDirtyChange?: (dirty: boolean) => void;
-}) {
-  const readOnly = Boolean(sharedFrom && !sharedFrom.canEdit);
-  const ownerFirstName = sharedFrom ? sharedFrom.ownerName.trim().split(/\s+/)[0] || sharedFrom.ownerName : "";
-  // Colore di riserva: per un evento altrui quello della sua materia (dal proprietario), poi quello della
-  // persona; mai di una delle mie materie.
-  const fallbackColor = (subjectId?: string) => (sharedFrom ? sharedFrom.subjectColor || sharedFrom.color : subjectColor(subjects, subjectId));
-  // Bozza all'apertura: il confronto con questa dice cosa è stato cambiato qui.
-  const [initialDraft] = useState(() => ({
-    title: event.title,
-    description: event.description,
-    category: event.category,
-    subjectId: event.subjectId ?? "",
-    priority: event.priority,
-    status: event.status,
-    start: toDatetimeLocal(event.start),
-    end: toDatetimeLocal(event.end),
-    allDay: event.allDay === true,
-    // Orari precedenti: togliendo "Tutto il giorno" si ritrovano gli orari di prima.
-    prevStart: "",
-    prevEnd: "",
-    color: event.color || fallbackColor(event.subjectId),
-    recurrence: event.recurrence ?? "none",
-    recurrenceUntil: event.recurrenceUntil ?? ""
-  }));
-  const [draft, setDraft] = useState(initialDraft);
-  const [error, setError] = useState("");
-  const recurring = draft.recurrence !== "none";
-  // Gli orari precedenti servono solo a "Tutto il giorno": non contano come modifiche.
-  const dirty = Object.keys(changedFields({ ...initialDraft, prevStart: "", prevEnd: "" }, { ...draft, prevStart: "", prevEnd: "" })).length > 0;
-  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
-
-  // Da bozza a campi dell'evento. La stessa conversione vale per la bozza iniziale e per quella attuale,
-  // così il confronto vede solo ciò che è stato cambiato qui (le date si validano prima, in save).
-  const toPatch = (value: typeof draft): Partial<CalendarEvent> => {
-    const iso = (local: string) => {
-      const at = new Date(local);
-      return Number.isNaN(at.getTime()) ? local : at.toISOString();
-    };
-    const day = new Date(`${value.start.slice(0, 10)}T00:00`);
-    const times = !value.allDay ? { start: iso(value.start), end: iso(value.end) } : Number.isNaN(day.getTime()) ? { start: value.start, end: value.end } : allDayRange(day);
-    return {
-      title: value.title.trim(),
-      description: value.description.trim(),
-      category: value.category,
-      subjectId: value.subjectId || undefined,
-      priority: value.priority,
-      status: value.status,
-      start: times.start,
-      end: times.end,
-      allDay: value.allDay,
-      color: value.color || fallbackColor(value.subjectId),
-      recurrence: value.recurrence,
-      recurrenceUntil: value.recurrence !== "none" && value.recurrenceUntil ? value.recurrenceUntil : undefined
-    };
-  };
-
-  const setAllDay = (value: boolean) => {
-    setDraft((v) => {
-      if (value) return { ...v, allDay: true, prevStart: v.start, prevEnd: v.end };
-      const day = v.start.slice(0, 10) || toDatetimeLocal(new Date()).slice(0, 10);
-      const sameDay = v.prevStart.slice(0, 10) === day && v.prevEnd > v.prevStart;
-      return {
-        ...v,
-        allDay: false,
-        start: sameDay ? v.prevStart : `${day}T09:00`,
-        end: sameDay ? v.prevEnd : `${day}T10:00`
-      };
-    });
-  };
-
-  const remove = async () => {
-    const failure = await onDelete();
-    if (failure) setError(failure);
-  };
-
-  const save = async () => {
-    if (!draft.title.trim()) {
-      setError("Scrivi un titolo per l'evento.");
-      return;
-    }
-    const day = draft.start.slice(0, 10);
-    if (recurring && draft.recurrenceUntil && draft.recurrenceUntil < day) {
-      setError("La data in «Fino al» deve venire dopo il giorno dell'evento.");
-      return;
-    }
-    if (draft.allDay) {
-      const at = new Date(`${day}T00:00`);
-      if (!day || Number.isNaN(at.getTime())) {
-        setError("Scegli il giorno dell'evento.");
-        return;
-      }
-    } else {
-      const start = new Date(draft.start);
-      const end = new Date(draft.end);
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
-        setError("L'orario di fine deve venire dopo l'inizio: correggi «Fine».");
-        return;
-      }
-    }
-    const patch = toPatch(draft);
-    const failure = await onSave(patch, changedFields(toPatch(initialDraft), patch, LINKED_EVENT_FIELDS));
-    if (failure) setError(failure);
-  };
-
-  return (
-    <ModalShell
-      title={sharedFrom ? (readOnly ? `Evento di ${ownerFirstName}` : `Modifica evento di ${ownerFirstName}`) : "Modifica evento"}
-      subtitle={
-        readOnly
-          ? undefined
-          : recurring
-            ? "Si ripete: le modifiche valgono per tutte le sue date."
-            : "Cambia orario e dettagli, oppure elimina l'evento."
-      }
-      onClose={onClose}
-    >
-      <div className="grid grid-cols-1 gap-3">
-        {sharedFrom ? (
-          <p className="flex flex-wrap items-center gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
-            <SharedMark origin={sharedFrom} />
-            <span className="min-w-0 flex-1">
-              {readOnly
-                ? "Puoi solo vedere questo evento."
-                : `Le modifiche arrivano subito a ${ownerFirstName}, che le vede nella cronologia e può ripristinarle.`}
-            </span>
-          </p>
-        ) : null}
-        <fieldset disabled={readOnly} className={`m-0 grid min-w-0 grid-cols-1 gap-3 border-0 p-0 ${DIMMED_DISABLED_FIELDS}`}>
-          {event.tags?.includes("appello-importato") ? (
-            <Panel className="p-3">
-              <h4 className="font-black">{sharedFrom ? "Appello ufficiale" : "Appello ufficiale aggiunto al tuo calendario"}</h4>
-              <p className="mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{event.description}</p>
-              <p className="mt-2 whitespace-pre-line text-xs text-[var(--muted)]">{event.notes}</p>
-              {event.links.map((url) => {
-                const href = safeHref(url);
-                // «Ufficiale UniMi» solo se il link porta davvero a unimi.it.
-                return <a key={url} href={href} target="_blank" rel="noreferrer" className="safe-text mt-2 inline-block text-sm font-bold text-[var(--accent-ink)] underline">{eventLinkLabel(href)}</a>;
-              })}
-              {sharedFrom ? null : (
-                <p className="mt-2 text-xs text-[var(--muted)]">Qui modifichi solo il tuo promemoria: la data ufficiale resta visibile in Esami › Date ufficiali.</p>
-              )}
-            </Panel>
-          ) : null}
-          <Field label="Titolo">
-            <input className={inputClass} value={draft.title} placeholder="Es. Lezione di Anatomia" onChange={(e) => setDraft((v) => ({ ...v, title: e.target.value }))} />
-          </Field>
-          <label className={`flex min-h-11 items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 py-2 text-sm font-bold ${readOnly ? "cursor-not-allowed" : "cursor-pointer"}`}>
-            <input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" checked={draft.allDay} onChange={(e) => setAllDay(e.target.checked)} />
-            <span className="min-w-0 flex-1">
-              {ALL_DAY_LABEL}
-              <span className="block text-xs font-bold text-[var(--muted)]">Occupa l'intera giornata, senza orari</span>
-            </span>
-          </label>
-          {draft.allDay ? (
-            <Field label="Giorno">
-              <input
-                className={inputClass}
-                type="date"
-                value={draft.start.slice(0, 10)}
-                onChange={(e) => setDraft((v) => ({ ...v, start: e.target.value ? `${e.target.value}T00:00` : "" }))}
-              />
-            </Field>
-          ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Inizio">
-                <input
-                  className={inputClass}
-                  type="datetime-local"
-                  value={draft.start}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setDraft((v) => {
-                      // Spostando l'inizio la durata resta invariata.
-                      const previousStart = new Date(v.start);
-                      const previousEnd = new Date(v.end);
-                      const nextStart = new Date(value);
-                      const duration = previousEnd.getTime() - previousStart.getTime();
-                      const nextEnd = Number.isFinite(duration) && duration > 0 && !Number.isNaN(nextStart.getTime()) ? toDatetimeLocal(new Date(nextStart.getTime() + duration)) : v.end;
-                      return { ...v, start: value, end: nextEnd };
-                    });
-                  }}
-                />
-              </Field>
-              <Field label="Fine">
-                <input className={inputClass} type="datetime-local" value={draft.end} onChange={(e) => setDraft((v) => ({ ...v, end: e.target.value }))} />
-              </Field>
-              <p className="-mt-1 text-xs font-bold text-[var(--muted)] sm:col-span-2">Se cambi l'inizio, la fine si sposta e la durata resta la stessa.</p>
-            </div>
-          )}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label={sharedFrom ? "Materia" : "Materia (facoltativa)"}>
-              {sharedFrom ? (
-                // La materia è del proprietario e decide cosa è condiviso: si mostra, non si cambia.
-                <span className={`${inputClass} flex items-center text-[var(--muted)] opacity-60`}>{sharedFrom.subjectName ?? NO_SUBJECT_LABEL}</span>
-              ) : (
-                <select
-                  className={inputClass}
-                  value={draft.subjectId}
-                  onChange={(e) => setDraft((v) => ({ ...v, subjectId: e.target.value, color: subjectColor(subjects, e.target.value, v.color) }))}
-                >
-                  <option value="">Nessuna</option>
-                  {selectableSubjects(subjects, draft.subjectId).map((subject) => (
-                    <option key={subject.id} value={subject.id}>
-                      {subject.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </Field>
-            <Field label="Tipo di evento">
-              <select className={inputClass} value={draft.category} onChange={(e) => setDraft((v) => ({ ...v, category: e.target.value as EventCategory }))}>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Ripetizione">
-              <select className={inputClass} value={draft.recurrence} onChange={(e) => setDraft((v) => ({ ...v, recurrence: e.target.value as NonNullable<CalendarEvent["recurrence"]> }))}>
-                {(Object.keys(RECURRENCE_LABEL) as NonNullable<CalendarEvent["recurrence"]>[]).map((key) => (
-                  <option key={key} value={key}>
-                    {RECURRENCE_LABEL[key]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {recurring ? (
-              <Field label="Fino al (facoltativo)">
-                <input className={inputClass} type="date" value={draft.recurrenceUntil} onChange={(e) => setDraft((v) => ({ ...v, recurrenceUntil: e.target.value }))} />
-              </Field>
-            ) : null}
-          </div>
-          <Field label="Descrizione (facoltativa)">
-            <textarea
-              className={`${inputClass} min-h-20 py-3`}
-              value={draft.description}
-              placeholder="Es. Aula 3, portare gli appunti del capitolo 2"
-              onChange={(e) => setDraft((v) => ({ ...v, description: e.target.value }))}
-            />
-          </Field>
-          <details className="quiet-panel p-4">
-            <summary className="cursor-pointer text-sm font-extrabold">
-              Altre opzioni <span className="font-bold text-[var(--muted)]">· priorità, stato, colore</span>
-            </summary>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Field label="Priorità">
-                <select className={inputClass} value={draft.priority} onChange={(e) => setDraft((v) => ({ ...v, priority: e.target.value as CalendarEvent["priority"] }))}>
-                  {(Object.keys(PRIORITY_LABEL) as CalendarEvent["priority"][]).map((key) => (
-                    <option key={key} value={key}>
-                      {PRIORITY_LABEL[key]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Stato">
-                <select className={inputClass} value={draft.status} onChange={(e) => setDraft((v) => ({ ...v, status: e.target.value as CalendarEvent["status"] }))}>
-                  {(Object.keys(EVENT_STATUS_LABEL) as CalendarEvent["status"][]).map((key) => (
-                    <option key={key} value={key}>
-                      {EVENT_STATUS_LABEL[key]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Colore">
-                <input
-                  className="h-11 w-full rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-1"
-                  type="color"
-                  value={draft.color.startsWith("#") ? draft.color : "#7CF7C8"}
-                  onChange={(e) => setDraft((v) => ({ ...v, color: e.target.value }))}
-                />
-              </Field>
-            </div>
-          </details>
-        </fieldset>
-        {error ? (
-          <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
-            {error}
-          </p>
-        ) : null}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {readOnly ? (
-            <>
-              <span className="flex-1" />
-              <Button variant="primary" onClick={onClose}>
-                Chiudi
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="danger" icon="Trash2" onClick={() => void remove()}>
-                Elimina evento
-              </Button>
-              <span className="flex-1" />
-              <Button variant="soft" onClick={onClose}>
-                Annulla
-              </Button>
-              <Button variant="primary" icon="Check" onClick={save}>
-                Salva modifiche
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-    </ModalShell>
-  );
-}
-
-interface CreateDraft {
-  kind: "event" | "task";
-  title: string;
-  subjectId: string;
-  start: Date;
-  duration: number;
-  allDay: boolean;
-  priority: Task["priority"];
-  category: EventCategory;
-  recurrence: NonNullable<CalendarEvent["recurrence"]>;
-  /** Calendario in cui aggiungere l'evento: "" = il mio, altrimenti l'id del proprietario. */
-  ownerId: string;
-}
-
-function CreateModal({
-  initial,
-  subjects,
-  calendars = [],
-  onClose,
-  onSubmit
-}: {
-  /** `subjectId`: materia già scelta (es. con il filtro per materia attivo). */
-  initial: { at: Date; kind: "event" | "task"; subjectId?: string };
-  subjects: Subjects;
-  /** Calendari di altre persone in cui posso aggiungere eventi ("Nel calendario di"). */
-  calendars?: WritableCalendar[];
-  onClose: () => void;
-  /** Un testo restituito è un errore da mostrare accanto ai pulsanti (il modulo resta aperto). */
-  onSubmit: (draft: CreateDraft) => Promise<string | void>;
-}) {
-  const [kind, setKind] = useState(initial.kind);
-  const [ownerId, setOwnerId] = useState("");
-  const [ownerNotice, setOwnerNotice] = useState("");
-  const [error, setError] = useState("");
-  const [title, setTitle] = useState("");
-  const [subjectId, setSubjectId] = useState(initial.subjectId ?? "");
-  const [startsAt, setStartsAt] = useState(toDatetimeLocal(defaultStartFor(initial.at)));
-  const [duration, setDuration] = useState<number | "allday">(60);
-  const [priority, setPriority] = useState<Task["priority"]>("medium");
-  const [category, setCategory] = useState<EventCategory>("study");
-  const [recurrence, setRecurrence] = useState<NonNullable<CalendarEvent["recurrence"]>>("none");
-  const allDay = kind === "event" && duration === "allday";
-  const start = new Date(startsAt);
-  // Calendario scelto non più modificabile (permesso tolto a modulo aperto): si torna al mio, senza la
-  // materia dell'altra persona, e lo si dice. Il menu resta utilizzabile.
-  const target = ownerId ? calendars.find((calendar) => calendar.ownerId === ownerId) : undefined;
-  if (ownerId && !target) {
-    setOwnerId("");
-    setSubjectId("");
-    setOwnerNotice("Non puoi più aggiungere eventi in quel calendario: l'evento andrà nel tuo.");
-  }
-  // Evento nel calendario di un'altra persona: si scelgono solo le sue materie, mai le mie. Se mi ha
-  // condiviso solo alcune materie, un evento senza materia non passerebbe: allora va scelta.
-  const inOtherCalendar = kind === "event" && Boolean(target);
-  const subjectRequired = inOtherCalendar && Boolean(target?.subjectRequired);
-  const subjectOptions = inOtherCalendar && target ? target.subjects : selectableSubjects(subjects, subjectId);
-  const validDate = !Number.isNaN(start.getTime());
-  const valid = Boolean(title.trim()) && validDate && (!subjectRequired || Boolean(subjectId));
-
-  const submit = async () => {
-    if (!valid) return;
-    setError("");
-    const failure = await onSubmit({
-      kind,
-      title: title.trim(),
-      subjectId,
-      start,
-      duration: typeof duration === "number" ? duration : 60,
-      allDay,
-      priority,
-      category,
-      recurrence,
-      ownerId: inOtherCalendar ? ownerId : ""
-    });
-    if (failure) setError(failure);
-  };
-
-  const subjectField = (
-    <Field label={subjectRequired ? "Materia" : "Materia (facoltativa)"}>
-      <select className={inputClass} value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-        {subjectRequired ? (
-          <option value="" disabled>
-            {subjectOptions.length ? "Scegli una materia" : "Nessuna materia condivisa"}
-          </option>
-        ) : (
-          <option value="">Nessuna</option>
-        )}
-        {subjectOptions.map((subject) => (
-          <option key={subject.id} value={subject.id}>
-            {subject.name}
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
-
-  return (
-    <ModalShell
-      title={`${kind === "event" ? "Nuovo evento" : "Nuova attività"} · ${format(Number.isNaN(start.getTime()) ? initial.at : start, "EEEE d MMMM", { locale: it })}`}
-      subtitle={kind === "task" ? "Comparirà nel calendario il giorno della scadenza e nella sezione Attività." : undefined}
-      onClose={onClose}
-    >
-      <form
-        className="grid grid-cols-1 gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <Segmented
-          label="Cosa vuoi aggiungere"
-          value={kind}
-          onChange={(next) => {
-            setKind(next);
-            // Una materia di un'altra persona non resta su un'attività mia (né viceversa).
-            if (ownerId) setSubjectId("");
-          }}
-          className="justify-self-start"
-          options={[
-            { id: "event", label: "Evento", icon: "CalendarDays", title: "Un impegno con giorno e orario: lezione, studio, laboratorio…" },
-            { id: "task", label: "Attività con scadenza", icon: "Check", title: "Una cosa da fare entro una data, da spuntare quando è fatta" }
-          ]}
-        />
-        {kind === "event" && calendars.length ? (
-          <Field label="Nel calendario di">
-            <select
-              className={inputClass}
-              value={ownerId}
-              onChange={(e) => {
-                setOwnerId(e.target.value);
-                setSubjectId("");
-                setError("");
-                setOwnerNotice("");
-              }}
-            >
-              <option value="">Il mio calendario</option>
-              {calendars.map((calendar) => (
-                <option key={calendar.ownerId} value={calendar.ownerId}>
-                  {calendar.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : null}
-        {ownerNotice && kind === "event" ? (
-          <p role="status" className="text-xs font-bold text-[var(--muted)]">
-            {ownerNotice}
-          </p>
-        ) : null}
-        <Field label="Titolo">
-          <input
-            className={inputClass}
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            autoFocus
-            placeholder={kind === "event" ? "Es. Lezione di Anatomia" : "Es. Consegnare la relazione di laboratorio"}
-          />
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label={allDay ? "Giorno" : kind === "event" ? "Inizio" : "Scadenza"}>
-            {allDay ? (
-              <input
-                className={inputClass}
-                type="date"
-                value={startsAt.slice(0, 10)}
-                onChange={(e) => setStartsAt(e.target.value ? `${e.target.value}T${startsAt.slice(11, 16) || "09:00"}` : "")}
-              />
-            ) : (
-              <input className={inputClass} type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
-            )}
-          </Field>
-          {kind === "event" ? (
-            <Field label="Durata">
-              <select
-                className={inputClass}
-                value={String(duration)}
-                onChange={(e) => setDuration(e.target.value === "allday" ? "allday" : Number(e.target.value))}
-              >
-                {DURATIONS.map((minutes) => (
-                  <option key={minutes} value={minutes}>
-                    {formatMinutes(minutes)}
-                  </option>
-                ))}
-                <option value="allday">{ALL_DAY_LABEL}</option>
-              </select>
-            </Field>
-          ) : (
-            subjectField
-          )}
-        </div>
-        {kind === "event" ? subjectField : null}
-        <details className="quiet-panel p-4">
-          <summary className="cursor-pointer text-sm font-extrabold">
-            Altre opzioni <span className="font-bold text-[var(--muted)]">· {kind === "event" ? "tipo di evento, ripetizione" : "priorità"}</span>
-          </summary>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {kind === "event" ? (
-              <>
-                <Field label="Tipo di evento">
-                  <select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value as EventCategory)}>
-                    {categories.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Ripetizione">
-                  <select className={inputClass} value={recurrence} onChange={(e) => setRecurrence(e.target.value as NonNullable<CalendarEvent["recurrence"]>)}>
-                    {(Object.keys(RECURRENCE_LABEL) as NonNullable<CalendarEvent["recurrence"]>[]).map((key) => (
-                      <option key={key} value={key}>
-                        {RECURRENCE_LABEL[key]}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </>
-            ) : (
-              <Field label="Priorità">
-                <select className={inputClass} value={priority} onChange={(e) => setPriority(e.target.value as Task["priority"])}>
-                  {(Object.keys(PRIORITY_LABEL) as Task["priority"][]).map((key) => (
-                    <option key={key} value={key}>
-                      {PRIORITY_LABEL[key]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-          </div>
-        </details>
-        {!valid ? (
-          <p className="text-xs font-bold text-[var(--muted)]">
-            {!title.trim() ? "Scrivi un titolo per continuare." : !validDate ? "Scegli una data valida." : "Scegli una materia per continuare."}
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
-            {error}
-          </p>
-        ) : null}
-        <div className="mt-2 flex justify-end gap-2">
-          <Button variant="soft" onClick={onClose}>
-            Annulla
-          </Button>
-          <Button variant="primary" icon="Plus" type="submit" disabled={!valid}>
-            {kind === "event" ? "Aggiungi evento" : "Aggiungi attività"}
-          </Button>
-        </div>
-      </form>
-    </ModalShell>
   );
 }
 

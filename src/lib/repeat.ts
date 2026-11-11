@@ -832,6 +832,9 @@ export const legacyProjection = (rule: RepeatRule | null, startDate: string): { 
   return { recurrence, recurrenceUntil: lastDate(rule, startDate) };
 };
 
+/** Chiavi del file che un giorno importato perde quando l'utente lo cambia o lo elimina a mano. */
+const IMPORTED_DAY_KEYS = ["sourceRecurrenceId", "sourceEdited"] as const;
+
 const withoutKeys = <T extends object>(value: T, keys: readonly string[]): T => {
   const copy = { ...value } as Record<string, unknown>;
   for (const key of keys) delete copy[key];
@@ -992,7 +995,7 @@ const rowsOf = (series: CalendarEvent, overrides: readonly CalendarEvent[]) => o
 /** Nuovo inizio/fine della serie quando si sposta l'occorrenza `date`: stesso spostamento di giorni, nuova ora. */
 const shiftedSeriesTimes = (event: CalendarEvent, series: Series, date: string, patch: Partial<CalendarEvent>) => {
   if (patch.start === undefined && patch.end === undefined) return {};
-  if (date === series.startDate || (patch.allDay !== undefined && patch.allDay !== event.allDay)) {
+  if (date === series.startDate || (patch.allDay !== undefined && patch.allDay !== (event.allDay ?? false))) {
     return { ...(patch.start !== undefined ? { start: patch.start } : {}), ...(patch.end !== undefined ? { end: patch.end } : {}) };
   }
   const original = instanceFields(series, date);
@@ -1183,7 +1186,8 @@ export const planEdit = (
   const rows = rowsOf(event, overrides);
   const now = nowOf(options);
   const existing = rows.find((row) => row.originalDate === originalDate);
-  const base = existing ?? occurrenceSnapshot(fixed.target, fixed.series, originalDate, options);
+  // Un giorno importato (sourceRecurrenceId) cambiato a mano diventa dell'utente: la reimportazione lo tiene.
+  const base = existing ? withoutKeys(existing, IMPORTED_DAY_KEYS) : occurrenceSnapshot(fixed.target, fixed.series, originalDate, options);
   const row: CalendarEvent = { ...base, ...pickPatch(patch, OCCURRENCE_LOCKED), updatedAt: now };
   const pin = fixed.pin ? [{ ...fixed.target, updatedAt: now }] : [];
   if (!("subjectId" in patch) || patch.subjectId === event.subjectId) return { puts: [...pin, row], deletes: [] };
@@ -1405,7 +1409,8 @@ export const planDelete = (
   const now = nowOf(options);
   if (scope === "this") {
     const existing = rows.find((row) => row.originalDate === originalDate);
-    const base = existing ?? occurrenceSnapshot(target, kept, originalDate, options);
+    // Come per la modifica: un giorno importato eliminato a mano resta eliminato alla reimportazione.
+    const base = existing ? withoutKeys(existing, IMPORTED_DAY_KEYS) : occurrenceSnapshot(target, kept, originalDate, options);
     const row = { ...base, cancelled: true as const, archived: true, updatedAt: now };
     return { puts: fixed.pin ? [{ ...target, updatedAt: now }, row] : [row], deletes: [] };
   }

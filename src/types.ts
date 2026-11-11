@@ -125,7 +125,9 @@ export type EventCategory =
   | "personal"
   | "work"
   | "relax"
-  | "other";
+  | "other"
+  /** Vacanza (più giorni, tutto il giorno): le versioni vecchie mostrano solo un'etichetta vuota. */
+  | "vacation";
 
 export interface CalendarEvent extends BaseEntity {
   title: string;
@@ -189,6 +191,13 @@ export interface CalendarEvent extends BaseEntity {
    * segnato con lo stesso `sourceUid`; gli altri file non la toccano. Assente per tutte le altre righe.
    */
   sourceEdited?: true;
+  /**
+   * true = colore scelto a mano (resta anche cambiando tipologia); false = colore della tipologia.
+   * Assente (eventi salvati prima): vedi `resolveEventColor`.
+   */
+  colorCustom?: boolean;
+  /** Luogo o destinazione (facoltativo). */
+  location?: string;
 }
 
 export type Weekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
@@ -416,6 +425,11 @@ export interface Preferences extends BaseEntity {
   abroad?: boolean;
   /** Durate del timer per tutte le materie senza durate proprie. */
   timer?: TimerSettings;
+  /**
+   * "Colori delle tipologie": colore scelto per una tipologia (chiavi di EVENT_TYPE_COLORS, es.
+   * "exam", "birthday"). Arriva dalla sincronizzazione: leggerlo con `sanitizeTypeColorOverrides`.
+   */
+  eventTypeColors?: Partial<Record<string, string>>;
 }
 
 /** Notifica dell'account: segue l'utente su ogni dispositivo (collezione sincronizzata). */
