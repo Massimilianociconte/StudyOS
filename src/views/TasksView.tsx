@@ -16,6 +16,7 @@ import {
   formatMinutes
 } from "../lib/labels";
 import { Button, EmptyState, HelpTip, IconButton, PageActions, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { DateField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { TaskModal } from "../components/TaskModal";
@@ -400,14 +401,7 @@ function QuickTaskBar({
               </option>
             ))}
           </select>
-          <input
-            className={`${selectClass} min-w-0`}
-            type="date"
-            value={dueDate}
-            onChange={(event) => setDueDate(event.target.value)}
-            aria-label={TASKS_TEXT.dueOptional}
-            title={TASKS_TEXT.dueOptional}
-          />
+          <DateField label={TASKS_TEXT.dueOptional} value={dueDate} onChange={setDueDate} optional compact />
         </div>
       ) : null}
       {/* Sempre presente: il lettore di schermo annuncia il testo appena compare. */}

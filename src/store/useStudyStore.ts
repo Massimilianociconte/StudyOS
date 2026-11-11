@@ -42,6 +42,7 @@ import { DEFAULT_PREFERENCES, PREFERENCES_ID, SETTINGS_SCHEMA_VERSION, createEmp
 import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState";
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
+import { isReminderNotificationId } from "../lib/reminderIds";
 import { makeGroupInviteCode } from "../lib/groups";
 import { ShareUserError, isRestorableEntity, restoredPayload, restoredUpdatedAt, type RestoreVersion } from "../lib/sharing";
 import { RESTORE_TEXT } from "../lib/labels";
@@ -753,10 +754,14 @@ export const useStudyStore = create<StudyState>((set, get) => {
       // Id stabile (es. notif-share-<id>): più dispositivi dello stesso account non la duplicano.
       if (notification.id && get().notifications.some((entry) => entry.id === notification.id)) return notification.id;
       const now = nowIso();
+      // Un istante passato dato da chi chiama (es. l'ora del promemoria): una lettura o eliminazione fatta
+      // dopo su un altro dispositivo resta più recente e vince la sync. Mai nel futuro.
+      const asked = Date.parse(notification.createdAt ?? "");
+      const stamp = Number.isFinite(asked) && asked < Date.parse(now) ? new Date(asked).toISOString() : now;
       const created: AppNotification = {
         id: notification.id ?? createId("notification"),
-        createdAt: now,
-        updatedAt: now,
+        createdAt: stamp,
+        updatedAt: stamp,
         archived: false,
         tags: notification.tags ?? [],
         kind: notification.kind,
@@ -828,7 +833,13 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     deleteNotification: async (id) => {
-      set((state) => ({ notifications: state.notifications.filter((item) => item.id !== id) }));
+      // I promemoria si archiviano: l'id resta, così un altro dispositivo che li recupera dopo non li rimette.
+      const now = nowIso();
+      set((state) => ({
+        notifications: isReminderNotificationId(id)
+          ? state.notifications.map((item) => (item.id === id && !item.archived ? { ...item, archived: true, updatedAt: now } : item))
+          : state.notifications.filter((item) => item.id !== id)
+      }));
       await commit();
     },
 
