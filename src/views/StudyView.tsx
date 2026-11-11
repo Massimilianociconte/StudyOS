@@ -27,7 +27,7 @@ import { ManualSessionDrawer, UNDO_MS, useSessionEditor } from "../components/St
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
-import { isNullableString, oneOf, useUiState } from "../lib/uiState";
+import { isNullableString, oneOf, readUiState, useUiState } from "../lib/uiState";
 import { requestSettingsSection } from "../lib/settingsJump";
 import {
   TIMER_KINDS,
@@ -81,6 +81,25 @@ export function StudyView() {
   const { sessions, topics, subjects, reviewTopic, setActiveView } = store;
   const weeklyTarget = selectPreferences(store).weeklyTargetMinutes;
   const [topicsOpen, setTopicsOpen] = useUiState("study.topicsOpen", false, { scope: "tab" });
+  // Materia degli argomenti nel riquadro: "" tutte. null quando lo apre un collegamento da un'altra
+  // sezione (es. "argomenti" della scheda d'esame): vale la materia scritta in "study.subject",
+  // letta qui prima che un timer già avviato la sostituisca con la sua.
+  const [topicsFilter, setTopicsFilter] = useUiState<string | null>("study.topicsFilter", null, { scope: "tab", validate: isNullableString });
+  const [linkedSubject] = useState(() => {
+    const value = readUiState("study.subject", "device");
+    return typeof value === "string" ? value : "";
+  });
+  useEffect(() => {
+    if (topicsOpen && topicsFilter === null) setTopicsFilter(linkedSubject);
+  }, [topicsOpen, topicsFilter, linkedSubject, setTopicsFilter]);
+  const openTopics = (subjectId = "") => {
+    setTopicsFilter(subjectId);
+    setTopicsOpen(true);
+  };
+  const closeTopics = () => {
+    setTopicsOpen(false);
+    setTopicsFilter(null);
+  };
   const [logOpen, setLogOpen] = useUiState("study.logOpen", false, { scope: "tab" });
   const [notice, setNotice] = useState("");
   const sessionEditor = useSessionEditor();
@@ -121,7 +140,7 @@ export function StudyView() {
               totalTopics={topics.filter((topic) => !topic.archived).length}
               subjects={subjects}
               onRate={(id, rating) => void reviewTopic(id, rating)}
-              onManage={() => setTopicsOpen(true)}
+              onManage={() => openTopics()}
             />
 
             <Panel>
@@ -198,7 +217,7 @@ export function StudyView() {
           <Panel>
             <div className="mb-3 flex items-center justify-between gap-2">
               <h3 className="text-lg font-black">{STUDY_SIDE_TEXT.upcoming}</h3>
-              <button type="button" onClick={() => setTopicsOpen(true)} className="text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
+              <button type="button" onClick={() => openTopics()} className="text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
                 {STUDY_SIDE_TEXT.seeAll}
               </button>
             </div>
@@ -208,7 +227,7 @@ export function StudyView() {
                   <li key={topic.id}>
                     <button
                       type="button"
-                      onClick={() => setTopicsOpen(true)}
+                      onClick={() => openTopics(topic.subjectId)}
                       className="flex w-full min-w-0 items-center justify-between gap-3 rounded-[14px] px-2 py-1.5 text-left hover:bg-[var(--surface-soft)]"
                     >
                       <span className="min-w-0">
@@ -227,9 +246,9 @@ export function StudyView() {
         </aside>
       </div>
 
-      <Drawer open={topicsOpen} onClose={() => setTopicsOpen(false)} eyebrow="Ripasso" title="Argomenti da ripassare" width="max-w-[560px]">
+      <Drawer open={topicsOpen} onClose={closeTopics} eyebrow="Ripasso" title="Argomenti da ripassare" width="max-w-[560px]">
         <p className="mb-3 text-sm text-[var(--muted)]">Ti ricordiamo quando ripassare ogni argomento: all'inizio spesso, poi sempre più di rado man mano che lo ricordi.</p>
-        <TopicManager subjects={subjects} />
+        <TopicManager subjects={subjects} filter={topicsFilter ?? linkedSubject} onFilterChange={setTopicsFilter} />
       </Drawer>
 
       <ManualSessionDrawer

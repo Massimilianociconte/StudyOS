@@ -748,6 +748,45 @@ export const SESSION_FORM_TEXT = {
   editAria: (title: string) => `Modifica la sessione "${title}"`
 } as const;
 
+/** Sessioni senza argomento (tempo per argomento). */
+export const NO_TOPIC_LABEL = "Senza argomento";
+
+export const SUBJECT_STUDY_UNIT_LABEL: Record<"day" | "week" | "month", string> = {
+  day: "Giorni",
+  week: "Settimane",
+  month: "Mesi"
+};
+
+/** Studio nella pagina della materia (Materie → dettaglio). */
+export const SUBJECT_STUDY_TEXT = {
+  title: "Studio",
+  study: "Studia questa materia",
+  average: (minutes: string) => `in media ${minutes}`,
+  today: "Oggi",
+  week: "Settimana",
+  month: "Mese",
+  unitAria: "Andamento per",
+  trendAria: (unit: string, hours: string) => `Ore di studio di questa materia, ${unit}: ${hours} ore in tutto`,
+  trendTooltip: "Studio",
+  weekOf: (date: string) => `settimana dal ${date}`,
+  byTopic: "Tempo per argomento",
+  topicRow: (count: number, minutes: string) => `${minutes} · ${count} ${count === 1 ? "sessione" : "sessioni"}`,
+  sessions: "Sessioni",
+  showAll: (count: number) => `Mostra tutte (${count})`,
+  showLess: "Mostra meno",
+  empty: "Nessuna sessione per questa materia. Avvia il timer in Studio scegliendo questa materia: il tempo comparirà qui."
+} as const;
+
+/** Argomenti da ripassare: filtro per materia (Studio → Argomenti). */
+const topicCount = (count: number) => `${count} ${count === 1 ? "argomento" : "argomenti"}`;
+export const TOPIC_FILTER_TEXT = {
+  aria: "Filtra per materia",
+  all: (count: number) => `Tutte le materie · ${topicCount(count)}`,
+  option: (name: string, count: number) => `${name} · ${topicCount(count)}`,
+  showAll: "Mostra tutti",
+  emptyFiltered: "Nessun argomento per questa materia. Scrivine uno qui sopra oppure importa il programma dell'esame dalla sezione Esami."
+} as const;
+
 /** Colonna laterale di Studio: i numeri portano dove servono. */
 export const STUDY_SIDE_TEXT = {
   week: "Questa settimana",
@@ -784,22 +823,24 @@ export const STATS_TEXT = {
   sessionsHint: (average: string) => `in media ${average} l'una`,
   noSessionsHint: "Nessuna in questo periodo",
   streak: "Giorni di fila",
-  streakHint: (streak: number) => (streak ? (streak === 1 ? "giorno di studio" : "giorni consecutivi") : "Studia oggi per iniziare"),
+  streakHint: (streak: number) => (streak ? "fino a oggi" : "Studia oggi per iniziare"),
   streakHelp: {
     title: "Giorni di fila",
     text: "Giorni consecutivi con almeno una sessione di studio salvata.",
     example: "hai studiato lunedì, martedì e mercoledì → 3."
   },
   tasksDone: "Attività fatte",
-  tasksDoneHint: (done: number, total: number) => `${done} su ${total}`,
   tasksEmptyHint: "Aggiungile in Attività",
   tasksHelp: {
     title: "Attività fatte",
-    text: "Percentuale delle attività completate su tutte quelle non archiviate."
+    text: "Attività segnate come fatte nel periodo scelto."
   },
   reviews: "Ripassi fatti",
-  reviewsHint: (topics: number) => `su ${topics} ${topics === 1 ? "argomento" : "argomenti"}`,
   reviewsEmptyHint: "Aggiungi argomenti in Studio",
+  reviewsHelp: {
+    title: "Ripassi fatti",
+    text: "Argomenti ripassati nel periodo scelto. Conta l'ultimo ripasso di ogni argomento: se lo ripassi più volte, conta una volta sola."
+  },
   trendDay: "Ore al giorno",
   trendWeek: "Ore a settimana",
   trendTotal: (hours: string) => `${hours} h in tutto`,

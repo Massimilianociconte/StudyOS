@@ -4,6 +4,7 @@ import { it } from "date-fns/locale";
 import type { StudyTopic, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { subjectColor, subjectName } from "../lib/selectors";
+import { TOPIC_FILTER_TEXT } from "../lib/labels";
 import { Field, IconButton, inputClass } from "./ui";
 import { Icon } from "./Icon";
 
@@ -22,30 +23,61 @@ export const reviewDueLabel = (iso: string, now: Date = new Date()) => {
 /**
  * Elenco e gestione degli argomenti da ripassare. Con `subjectId` mostra e crea solo gli
  * argomenti di quella materia (dettaglio materia), altrimenti tutti con filtro per materia.
+ * Il filtro può arrivare da fuori (`filter` + `onFilterChange`, es. Studio aperto dalla scheda
+ * d'esame): "" sono tutte le materie, una materia che non c'è più vale come "tutte".
  */
-export function TopicManager({ subjects, subjectId }: { subjects: Subject[]; subjectId?: string }) {
+export function TopicManager({
+  subjects,
+  subjectId,
+  filter: filterProp,
+  onFilterChange
+}: {
+  subjects: Subject[];
+  subjectId?: string;
+  filter?: string;
+  onFilterChange?: (subjectId: string) => void;
+}) {
   const { topics, addTopics, updateTopic, deleteTopic } = useStudyStore();
-  const [filter, setFilter] = useState(subjectId ?? "");
+  const [ownFilter, setOwnFilter] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const activeSubjects = subjects.filter((subject) => !subject.archived);
+  const wanted = filterProp ?? ownFilter;
+  const filter = wanted && subjects.some((subject) => subject.id === wanted) ? wanted : "";
+  const setFilter = (next: string) => (onFilterChange ? onFilterChange(next) : setOwnFilter(next));
   const scope = subjectId ?? filter;
-  const list = topics
-    .filter((topic) => !topic.archived && (!scope || topic.subjectId === scope))
-    .sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate));
+  const live = topics.filter((topic) => !topic.archived);
+  const list = live.filter((topic) => !scope || topic.subjectId === scope).sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate));
+  // Una materia archiviata scelta da fuori resta tra le opzioni, così il filtro si vede.
+  const filterSubjects = activeSubjects.some((subject) => subject.id === filter)
+    ? activeSubjects
+    : [...activeSubjects, ...subjects.filter((subject) => subject.id === filter)];
+  const countOf = (id: string) => live.filter((topic) => topic.subjectId === id).length;
 
   return (
     <div className="grid grid-cols-1 gap-3">
-      <NewTopicForm subjects={activeSubjects} fixedSubjectId={subjectId} defaultSubjectId={filter} onAdd={(title, target) => addTopics([{ title, subjectId: target }])} />
+      <NewTopicForm
+        subjects={activeSubjects}
+        fixedSubjectId={subjectId}
+        defaultSubjectId={activeSubjects.some((subject) => subject.id === filter) ? filter : undefined}
+        onAdd={(title, target) => addTopics([{ title, subjectId: target }])}
+      />
 
-      {!subjectId && activeSubjects.length > 1 ? (
-        <select className={`${inputClass} min-h-10`} value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Filtra per materia">
-          <option value="">Tutte le materie · {topics.filter((topic) => !topic.archived).length} argomenti</option>
-          {activeSubjects.map((subject) => (
-            <option key={subject.id} value={subject.id}>
-              {subject.name}
-            </option>
-          ))}
-        </select>
+      {!subjectId && (filterSubjects.length > 1 || filter) ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <select className={`${inputClass} min-h-10 min-w-0 flex-1`} value={filter} onChange={(event) => setFilter(event.target.value)} aria-label={TOPIC_FILTER_TEXT.aria}>
+            <option value="">{TOPIC_FILTER_TEXT.all(live.length)}</option>
+            {filterSubjects.map((subject) => (
+              <option key={subject.id} value={subject.id}>
+                {TOPIC_FILTER_TEXT.option(subject.name, countOf(subject.id))}
+              </option>
+            ))}
+          </select>
+          {filter ? (
+            <button type="button" onClick={() => setFilter("")} className="min-h-10 shrink-0 px-2 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline">
+              {TOPIC_FILTER_TEXT.showAll}
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {list.length ? (
@@ -87,7 +119,9 @@ export function TopicManager({ subjects, subjectId }: { subjects: Subject[]; sub
         </ul>
       ) : (
         <p className="rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
-          Ancora nessun argomento. Scrivine uno qui sopra oppure importa il programma di un esame dalla sezione Esami.
+          {scope && live.length
+            ? TOPIC_FILTER_TEXT.emptyFiltered
+            : "Ancora nessun argomento. Scrivine uno qui sopra oppure importa il programma di un esame dalla sezione Esami."}
         </p>
       )}
     </div>

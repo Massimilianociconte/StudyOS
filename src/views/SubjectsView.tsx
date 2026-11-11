@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { shortDate, studyDaysUntil } from "../lib/selectors";
@@ -42,6 +42,8 @@ const STATUS_ICON: Record<Subject["status"], string> = {
   archived: "Archive"
 };
 const subjectColor = (subject: Subject) => safeCssColor(subject.color) || "var(--accent)";
+// Studio della materia (grafico con recharts): si carica solo aprendo il dettaglio.
+const SubjectStudyStats = lazy(() => import("../components/SubjectStudyStats"));
 
 /** Porta all'esame aperto in Esami (la sezione legge `exams.editing`). */
 const openExam = (examId: string) => goToView("exams", [["exams.editing", examId, "tab"]]);
@@ -537,6 +539,10 @@ function SubjectDrawer({
           </div>
 
           {course ? <BarbExamSessions course={course} /> : null}
+
+          <Suspense fallback={null}>
+            <SubjectStudyStats subject={subject} />
+          </Suspense>
 
           <section className="grid grid-cols-1 gap-3">
             <h4 className="text-xs font-black uppercase text-[var(--faint)]">Dati della materia</h4>

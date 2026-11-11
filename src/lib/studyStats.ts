@@ -1,6 +1,6 @@
 import { addDays, addMonths, addWeeks, isValid, parseISO, startOfDay, startOfMonth, startOfWeek } from "date-fns";
 import type { StudySession, Subject } from "../types";
-import { NO_SUBJECT_LABEL } from "./labels";
+import { NO_SUBJECT_LABEL, NO_TOPIC_LABEL } from "./labels";
 import { NO_SUBJECT_COLOR } from "./selectors";
 
 /**
@@ -195,4 +195,120 @@ export function sessionSummary(sessions: StudySession[]): SessionSummary {
     count += 1;
   }
   return { count, totalMinutes, averageMinutes: count ? Math.round(totalMinutes / count) : 0, bySource };
+}
+
+/**
+ * Percentuali intere che sommano sempre a 100 (metodo dei resti più grandi): prima la parte intera,
+ * poi un punto in più ai resti maggiori. Senza minuti tutte 0.
+ */
+export function largestRemainderPercents(values: readonly number[]): number[] {
+  const total = values.reduce((sum, value) => sum + Math.max(0, value), 0);
+  if (!total) return values.map(() => 0);
+  const exact = values.map((value) => (Math.max(0, value) / total) * 100);
+  const result = exact.map(Math.floor);
+  let missing = 100 - result.reduce((sum, value) => sum + value, 0);
+  const order = exact.map((value, index) => ({ index, rest: value - Math.floor(value) })).sort((a, b) => b.rest - a.rest || a.index - b.index);
+  for (const { index } of order) {
+    if (missing <= 0) break;
+    result[index] += 1;
+    missing -= 1;
+  }
+  return result;
+}
+
+/** Sessioni completate di una materia, dalla più recente. */
+export function subjectSessions(sessions: StudySession[], subjectId: string): StudySession[] {
+  return completed(sessions)
+    .filter((session) => session.subjectId === subjectId)
+    .sort((a, b) => startTime(b) - startTime(a));
+}
+
+export interface StudyTotals {
+  total: number;
+  today: number;
+  /** Da lunedì. */
+  week: number;
+  month: number;
+  count: number;
+}
+
+/** Minuti in tutto, oggi, questa settimana e questo mese (ogni sessione nel giorno in cui è iniziata). */
+export function studyTotals(sessions: StudySession[], now: Date): StudyTotals {
+  const day = startOfDay(now).getTime();
+  const week = startOfWeek(now, WEEK).getTime();
+  const month = startOfMonth(now).getTime();
+  const totals: StudyTotals = { total: 0, today: 0, week: 0, month: 0, count: 0 };
+  for (const session of completed(sessions)) {
+    const minutes = sessionMinutes(session);
+    const time = startTime(session);
+    totals.total += minutes;
+    totals.count += 1;
+    if (time >= day) totals.today += minutes;
+    if (time >= week) totals.week += minutes;
+    if (time >= month) totals.month += minutes;
+  }
+  return totals;
+}
+
+export const RECENT_TREND_UNITS = ["day", "week", "month"] as const;
+export type RecentTrendUnit = (typeof RECENT_TREND_UNITS)[number];
+/** Quanti punti mostra l'andamento: due settimane di giorni, tre mesi di settimane, un anno di mesi. */
+const RECENT_COUNT: Record<RecentTrendUnit, number> = { day: 14, week: 12, month: 12 };
+
+/** Andamento recente fino a oggi: gli ultimi giorni, settimane (da lunedì) o mesi. */
+export function recentTrend(sessions: StudySession[], unit: RecentTrendUnit, now: Date, count: number = RECENT_COUNT[unit]): TrendBucket[] {
+  const current = unit === "day" ? startOfDay(now) : unit === "week" ? startOfWeek(now, WEEK) : startOfMonth(now);
+  const step = (date: Date, amount: number) => (unit === "day" ? addDays(date, amount) : unit === "week" ? addWeeks(date, amount) : addMonths(date, amount));
+  const buckets: TrendBucket[] = [];
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const start = step(current, -index);
+    buckets.push({ start, end: step(start, 1), minutes: 0 });
+  }
+  if (!buckets.length) return buckets;
+  const from = buckets[0].start.getTime();
+  const to = buckets[buckets.length - 1].end.getTime();
+  for (const session of completed(sessions)) {
+    const time = startTime(session);
+    if (!(time >= from && time < to)) continue;
+    const bucket = buckets.find((item) => time >= item.start.getTime() && time < item.end.getTime());
+    if (bucket) bucket.minutes += sessionMinutes(session);
+  }
+  return buckets;
+}
+
+export interface TopicMinutes {
+  /** null = "Senza argomento" (nessuno o argomento eliminato). */
+  id: string | null;
+  title: string;
+  minutes: number;
+  count: number;
+}
+
+/** Tempo per argomento, dal più studiato; le sessioni senza argomento in fondo. */
+export function minutesByTopic(sessions: StudySession[], topics: ReadonlyArray<{ id: string; title: string }>): TopicMinutes[] {
+  const byId = new Map(topics.map((topic) => [topic.id, topic]));
+  const rows = new Map<string, TopicMinutes>();
+  const none: TopicMinutes = { id: null, title: NO_TOPIC_LABEL, minutes: 0, count: 0 };
+  for (const session of completed(sessions)) {
+    const topic = session.topicId ? byId.get(session.topicId) : undefined;
+    const row = topic ? (rows.get(topic.id) ?? { id: topic.id, title: topic.title, minutes: 0, count: 0 }) : none;
+    row.minutes += sessionMinutes(session);
+    row.count += 1;
+    if (topic) rows.set(topic.id, row);
+  }
+  const sorted = [...rows.values()].sort((a, b) => b.minutes - a.minutes || a.title.localeCompare(b.title, "it"));
+  return none.count ? [...sorted, none] : sorted;
+}
+
+/** Quante date (ISO) cadono nel periodo: attività completate (`completedAt`), ripassi (`lastReviewedAt`). */
+export function countInRange(dates: ReadonlyArray<string | undefined>, range: Pick<PeriodRange, "start" | "end">): number {
+  const from = range.start.getTime();
+  const to = range.end.getTime();
+  let count = 0;
+  for (const value of dates) {
+    if (!value) continue;
+    const date = parseISO(value);
+    if (isValid(date) && date.getTime() >= from && date.getTime() < to) count += 1;
+  }
+  return count;
 }

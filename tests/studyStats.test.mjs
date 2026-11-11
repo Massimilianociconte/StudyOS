@@ -2,16 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   STATS_PERIODS,
+  countInRange,
+  largestRemainderPercents,
   minutesBySubject,
+  minutesByTopic,
   periodRange,
+  recentTrend,
   semesterRange,
   sessionSummary,
   sessionsInRange,
+  studyTotals,
+  subjectSessions,
   trendBuckets,
   trendUnit
 } from "../src/lib/studyStats.ts";
 import { workloadBySubject } from "../src/lib/selectors.ts";
-import { NO_SUBJECT_LABEL } from "../src/lib/labels.ts";
+import { NO_SUBJECT_LABEL, NO_TOPIC_LABEL } from "../src/lib/labels.ts";
 
 // Date locali: i periodi seguono il calendario della persona, non UTC.
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
@@ -228,4 +234,90 @@ test("workloadBySubject non perde più le sessioni senza materia", () => {
   const none = workload.find((item) => item.name === NO_SUBJECT_LABEL);
   assert.equal(none?.minutes, 55);
   assert.equal(workloadBySubject(subjects, [list[0]]).some((item) => item.name === NO_SUBJECT_LABEL), false, "nessuna riga vuota in più");
+});
+
+// ---------- percentuali, materia, argomenti ----------
+
+test("largestRemainderPercents: la somma fa sempre 100", () => {
+  assert.deepEqual(largestRemainderPercents([1, 1, 1]), [34, 33, 33]);
+  assert.deepEqual(largestRemainderPercents([50, 30, 20]), [50, 30, 20]);
+  assert.deepEqual(largestRemainderPercents([2, 1]), [67, 33]);
+  assert.deepEqual(largestRemainderPercents([0, 0]), [0, 0], "senza minuti nessuna percentuale");
+  assert.deepEqual(largestRemainderPercents([]), []);
+  const many = largestRemainderPercents([13, 27, 7, 7, 46, 1]);
+  assert.equal(many.reduce((sum, value) => sum + value, 0), 100);
+  assert.ok(many.every((value) => Number.isInteger(value) && value >= 0));
+});
+
+test("subjectSessions e studyTotals: solo le sessioni completate della materia, una volta sola", () => {
+  const now = local(2026, 11, 11, 18);
+  const list = [
+    session(local(2026, 11, 11, 9), 50, { subjectId: "an" }),
+    session(local(2026, 11, 11, 14), 25, { subjectId: "an" }),
+    session(local(2026, 11, 10, 9), 60, { subjectId: "an" }),
+    session(local(2026, 11, 3, 9), 40, { subjectId: "an" }),
+    session(local(2026, 10, 30, 9), 30, { subjectId: "an" }),
+    session(local(2026, 11, 11, 10), 90, { subjectId: "chim" }),
+    session(local(2026, 11, 11, 11), 45, { subjectId: "an", status: "planned" })
+  ];
+  const mine = subjectSessions(list, "an");
+  assert.equal(mine.length, 5);
+  assert.deepEqual(mine.map((item) => item.actualMinutes), [25, 50, 60, 40, 30], "dalla più recente");
+  assert.deepEqual(studyTotals(mine, now), { total: 205, today: 75, week: 135, month: 175, count: 5 });
+  assert.deepEqual(studyTotals([], now), { total: 0, today: 0, week: 0, month: 0, count: 0 });
+});
+
+test("recentTrend: ultimi giorni, settimane o mesi fino a oggi", () => {
+  const now = local(2026, 11, 11, 18);
+  const list = [
+    session(local(2026, 11, 11, 9), 50),
+    session(local(2026, 11, 10, 9), 60),
+    session(local(2026, 11, 2, 9), 30),
+    session(local(2026, 10, 15, 9), 20),
+    session(local(2025, 12, 1, 9), 99)
+  ];
+  const days = recentTrend(list, "day", now);
+  assert.equal(days.length, 14);
+  assert.equal(day(days.at(-1).start), "2026-11-11");
+  assert.equal(day(days[0].start), "2026-10-29");
+  assert.deepEqual(days.slice(-2).map((bucket) => bucket.minutes), [60, 50]);
+  const weeks = recentTrend(list, "week", now);
+  assert.equal(weeks.length, 12);
+  assert.equal(day(weeks.at(-1).start), "2026-11-09", "da lunedì");
+  assert.equal(weeks.at(-1).minutes, 110);
+  assert.equal(weeks.at(-2).minutes, 30);
+  const months = recentTrend(list, "month", now);
+  assert.equal(months.length, 12);
+  assert.equal(day(months.at(-1).start), "2026-11-01");
+  assert.equal(day(months[0].start), "2025-12-01");
+  assert.deepEqual([months[0].minutes, months.at(-2).minutes, months.at(-1).minutes], [99, 20, 140]);
+  assert.equal(months.reduce((sum, bucket) => sum + bucket.minutes, 0), 259, "ogni sessione in un solo mese");
+  assert.equal(recentTrend(list, "day", now, 3).length, 3);
+});
+
+test("minutesByTopic: tempo per argomento, 'Senza argomento' in fondo", () => {
+  const topics = [
+    { id: "lim", subjectId: "an", title: "Limiti" },
+    { id: "der", subjectId: "an", title: "Derivate" }
+  ];
+  const list = [
+    session(local(2026, 11, 11, 9), 50, { topicId: "der" }),
+    session(local(2026, 11, 11, 10), 30, { topicId: "lim" }),
+    session(local(2026, 11, 11, 11), 40, { topicId: "lim" }),
+    session(local(2026, 11, 11, 12), 15),
+    session(local(2026, 11, 11, 13), 5, { topicId: "gone" }),
+    session(local(2026, 11, 11, 14), 99, { topicId: "lim", status: "planned" })
+  ];
+  assert.deepEqual(minutesByTopic(list, topics), [
+    { id: "lim", title: "Limiti", minutes: 70, count: 2 },
+    { id: "der", title: "Derivate", minutes: 50, count: 1 },
+    { id: null, title: NO_TOPIC_LABEL, minutes: 20, count: 2 }
+  ]);
+  assert.deepEqual(minutesByTopic([], topics), []);
+});
+
+test("countInRange: attività completate e ripassi nel periodo scelto", () => {
+  const range = periodRange("week", local(2026, 11, 11, 12));
+  const dates = [local(2026, 11, 9, 0).toISOString(), local(2026, 11, 15, 23, 59).toISOString(), local(2026, 11, 16).toISOString(), undefined, "rotto"];
+  assert.equal(countInRange(dates, range), 2);
 });
