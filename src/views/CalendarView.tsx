@@ -43,7 +43,7 @@ import {
 import { Icon } from "../components/Icon";
 import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
-import { CalendarTransfer, type CalendarTransferHandle } from "../components/CalendarTransfer";
+import { CalendarTransfer, transferMenuItem, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { EventEditor } from "../components/calendar/EventEditor";
 import { ScopeChoice } from "../components/calendar/ScopeChoice";
@@ -636,8 +636,7 @@ export function CalendarView() {
               { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
               { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
               { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
-              { label: CALENDAR_TEXT.importFile, icon: "Import", onClick: () => transfer.current?.chooseFile() },
-              { label: CALENDAR_TEXT.exportFile, icon: "Download", onClick: () => transfer.current?.exportFile() },
+              transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
               {
                 label: CALENDAR_TEXT.officialDates,
@@ -654,7 +653,7 @@ export function CalendarView() {
           />
         }
       />
-      <CalendarTransfer ref={transfer} buttons={false} />
+      <CalendarTransfer ref={transfer} />
       {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
       {typeColorsOpen ? (
         <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
