@@ -8,23 +8,49 @@ import { it } from "date-fns/locale";
 import type { StudySession, StudyTopic, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects } from "../lib/selectors";
-import { SESSION_FORM_TEXT, SESSION_SOURCE_LABEL, SESSION_TEMPLATE_LABEL, TIMER_KIND_LABEL, formatMinutes } from "../lib/labels";
+import { SESSION_FORM_TEXT, SESSION_TEMPLATE_LABEL, TIMER_KIND_LABEL, formatMinutes } from "../lib/labels";
 import {
   LONG_SESSION_MINUTES,
+  UNDO_MS,
   draftFromSession,
   matchTopic,
+  parseSessionMinutes,
   readSessionDraft,
   sessionEditPatch,
+  sessionSourceLabel,
   topicsOfSubject,
   type SessionDraft,
-  type SessionDraftError
+  type SessionDraftError,
+  type SessionLinks
 } from "../lib/studySessions";
 import { finishedSession, timerUnsavedSeconds, type TimerState } from "../lib/studyTimer";
+import { createId } from "../lib/id";
 import { Button, Drawer, Field, inputClass } from "./ui";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
-/** Quanto resta visibile "Annulla" dopo aver eliminato o scartato. */
-export const UNDO_MS = 15_000;
+
+/**
+ * Un solo Salva / Scarta / Elimina per volta: il Drawer che si chiude resta cliccabile per l'animazione
+ * e un doppio tocco rifarebbe l'azione. Il ref blocca subito (stesso tocco), lo stato disattiva il pulsante.
+ * `release` dopo un errore del modulo; `reset` quando il Drawer si riapre per un'altra sessione.
+ */
+const useOnce = () => {
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
+  return {
+    busy,
+    take: () => {
+      if (busyRef.current) return false;
+      busyRef.current = true;
+      setBusy(true);
+      return true;
+    },
+    release: () => {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+};
 
 const normalize = (text: string) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase("it");
 
@@ -149,14 +175,28 @@ function SessionFields({
 }
 
 /** Conferma in riga (Scarta, Elimina): niente finestre del browser. */
-function InlineConfirm({ text, yes, no, onYes, onNo }: { text: string; yes: string; no: string; onYes: () => void; onNo: () => void }) {
+function InlineConfirm({
+  text,
+  yes,
+  no,
+  busy = false,
+  onYes,
+  onNo
+}: {
+  text: string;
+  yes: string;
+  no: string;
+  busy?: boolean;
+  onYes: () => void;
+  onNo: () => void;
+}) {
   return (
     <div role="alert" className="flex flex-wrap items-center gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3">
       <p className="safe-text min-w-[12rem] flex-1 text-sm font-bold">{text}</p>
-      <Button variant="ghost" onClick={onNo}>
+      <Button variant="ghost" onClick={onNo} disabled={busy}>
         {no}
       </Button>
-      <Button variant="danger" icon="Trash2" onClick={onYes}>
+      <Button variant="danger" icon="Trash2" onClick={onYes} disabled={busy}>
         {yes}
       </Button>
     </div>
@@ -226,35 +266,69 @@ export function TimerReviewDrawer({
   const [error, setError] = useState<SessionDraftError | "">("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [openFor, setOpenFor] = useState<string | undefined>(undefined);
+  const [draftFor, setDraftFor] = useState<string | undefined>(undefined);
+  const once = useOnce();
   const minutesRef = useRef<HTMLInputElement>(null);
-  // Ogni sessione da rivedere riparte dai dati del timer.
+  // Ogni sessione da rivedere riparte dai dati del timer; chiudendo e riaprendo la stessa (sfondo,
+  // Esc) le correzioni già scritte restano.
   const key = open ? `${timer.sessionId ?? ""}:${timer.pausedAt ?? ""}` : undefined;
   if (key !== openFor) {
     setOpenFor(key);
     if (key) {
-      setDraft(initial());
+      if (key !== draftFor) {
+        setDraftFor(key);
+        setDraft(initial());
+      }
       setError("");
       setConfirmDiscard(false);
+      once.release();
     }
   }
+
+  // Chiuso perché la sessione è stata salvata altrove (agente, "Termina e salva"): si dice, con Modifica.
+  const reviewing = useRef<string | null>(null);
+  const acted = useRef(false);
+  const savedElsewhere = useRef(onSaved);
+  useEffect(() => {
+    savedElsewhere.current = onSaved;
+  });
+  useEffect(() => {
+    if (open) {
+      acted.current = false;
+      reviewing.current = timer.sessionId ?? null;
+      return;
+    }
+    const id = reviewing.current;
+    reviewing.current = null;
+    if (!id || acted.current) return;
+    const saved = useStudyStore.getState().sessions.find((session) => session.id === id);
+    if (saved) savedElsewhere.current(saved);
+  }, [open, timer.sessionId]);
 
   if (!block) return <Drawer open={false} onClose={() => setTimerReviewOpen(false)} title={SESSION_FORM_TEXT.reviewTitle} />;
 
   const studied = formatMinutes(block.actualMinutes);
-  const long = block.actualMinutes > LONG_SESSION_MINUTES;
+  // L'avviso segue i minuti scritti: corretti a 90, sparisce.
+  const long = (parseSessionMinutes(draft.minutes).value ?? block.actualMinutes) > LONG_SESSION_MINUTES;
 
   const save = () => {
+    if (!once.take()) return;
     const result = readSessionDraft(draft, { subjects, topics, now: Date.now() });
     if (!result.ok) {
       setError(result.error);
+      once.release();
       return;
     }
+    acted.current = true;
     const saved = saveTimerReview(result.value);
     if (saved.status === "saved") onSaved(saved.session);
   };
 
   const discard = () => {
     const previous = useStudyStore.getState().timer;
+    // Già scartata o salvata (doppio tocco, altra scheda): niente da scartare e "Annulla" resta quello di prima.
+    if (!previous.ended || !once.take()) return;
+    acted.current = true;
     const lost = timerUnsavedSeconds(previous, Date.now());
     resetStudyTimer();
     onDiscarded(previous, formatMinutes(Math.floor(lost / 60)));
@@ -273,15 +347,16 @@ export function TimerReviewDrawer({
             text={SESSION_FORM_TEXT.discardConfirm(studied)}
             yes={SESSION_FORM_TEXT.discardYes}
             no={SESSION_FORM_TEXT.discardNo}
+            busy={once.busy}
             onYes={discard}
             onNo={() => setConfirmDiscard(false)}
           />
         ) : (
-          <div className="flex items-center justify-between gap-2">
-            <Button variant="ghost" icon="Trash2" onClick={() => setConfirmDiscard(true)}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button variant="ghost" icon="Trash2" onClick={() => setConfirmDiscard(true)} disabled={once.busy}>
               {SESSION_FORM_TEXT.discard}
             </Button>
-            <Button variant="primary" icon="Check" onClick={save}>
+            <Button variant="primary" icon="Check" onClick={save} disabled={once.busy}>
               {SESSION_FORM_TEXT.save}
             </Button>
           </div>
@@ -338,7 +413,7 @@ export function SessionEditorDrawer({
   sessionId: string | null;
   onClose: () => void;
   onSaved?: (session: StudySession) => void;
-  onDeleted: (session: StudySession) => void;
+  onDeleted: (session: StudySession, links: SessionLinks) => void;
 }) {
   const { subjects, topics } = useSessionData();
   const session = useStudyStore((state) => (sessionId ? state.sessions.find((item) => item.id === sessionId) : undefined));
@@ -348,19 +423,22 @@ export function SessionEditorDrawer({
   const [error, setError] = useState<SessionDraftError | "">("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [openFor, setOpenFor] = useState<string | null>(null);
+  const once = useOnce();
   const open = Boolean(session);
   if ((session?.id ?? null) !== openFor) {
     setOpenFor(session?.id ?? null);
     setDraft(session ? draftFromSession(session, subjects, topics) : null);
     setError("");
     setConfirmDelete(false);
+    if (session) once.release();
   }
 
   const save = async () => {
-    if (!session || !draft) return;
+    if (!session || !draft || !once.take()) return;
     const result = readSessionDraft(draft, { subjects, topics, now: Date.now() });
     if (!result.ok) {
       setError(result.error);
+      once.release();
       return;
     }
     const patch = sessionEditPatch(session, result.value);
@@ -370,11 +448,12 @@ export function SessionEditorDrawer({
   };
 
   const remove = async () => {
-    if (!session) return;
+    if (!session || !once.take()) return;
     const removed = session;
     onClose();
-    await deleteSession(removed.id);
-    onDeleted(removed);
+    // I collegamenti tolti tornano con "Annulla".
+    const links = await deleteSession(removed.id);
+    onDeleted(removed, links);
   };
 
   return (
@@ -390,19 +469,20 @@ export function SessionEditorDrawer({
             text={SESSION_FORM_TEXT.deleteConfirm}
             yes={SESSION_FORM_TEXT.deleteYes}
             no={SESSION_FORM_TEXT.deleteNo}
+            busy={once.busy}
             onYes={() => void remove()}
             onNo={() => setConfirmDelete(false)}
           />
         ) : (
-          <div className="flex items-center justify-between gap-2">
-            <Button variant="ghost" icon="Trash2" onClick={() => setConfirmDelete(true)}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button variant="ghost" icon="Trash2" onClick={() => setConfirmDelete(true)} disabled={once.busy}>
               {SESSION_FORM_TEXT.delete}
             </Button>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="ghost" onClick={onClose}>
                 {SESSION_FORM_TEXT.cancel}
               </Button>
-              <Button variant="primary" icon="Check" onClick={() => void save()}>
+              <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
                 {SESSION_FORM_TEXT.save}
               </Button>
             </div>
@@ -412,7 +492,9 @@ export function SessionEditorDrawer({
     >
       {session && draft ? (
         <div className="grid grid-cols-1 gap-4">
-          {session.source ? <p className="text-xs font-bold text-[var(--muted)]">{SESSION_FORM_TEXT.savedWith(SESSION_SOURCE_LABEL[session.source])}</p> : null}
+          {sessionSourceLabel(session.source) ? (
+            <p className="text-xs font-bold text-[var(--muted)]">{SESSION_FORM_TEXT.savedWith(sessionSourceLabel(session.source) ?? "")}</p>
+          ) : null}
           <SessionFields
             draft={draft}
             onChange={(next) => {
@@ -460,23 +542,31 @@ export function ManualSessionDrawer({
   const [draft, setDraft] = useState<SessionDraft>(initial);
   const [error, setError] = useState<SessionDraftError | "">("");
   const [wasOpen, setWasOpen] = useState(open);
+  // Id deciso all'apertura: anche se Salva partisse due volte, lo store aggiunge una sola sessione.
+  const [sessionId, setSessionId] = useState(() => createId("session"));
+  const once = useOnce();
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
       setDraft(initial());
       setError("");
+      setSessionId(createId("session"));
+      once.release();
     }
   }
 
   const save = async () => {
+    if (!once.take()) return;
     const result = readSessionDraft(draft, { subjects, topics, now: Date.now() });
     if (!result.ok) {
       setError(result.error);
+      once.release();
       return;
     }
     const { value } = result;
     const start = value.start ?? Date.now() - value.minutes * 60_000;
     await addSession({
+      id: sessionId,
       title: value.title,
       subjectId: value.subjectId,
       topicId: value.topicId,
@@ -505,7 +595,7 @@ export function ManualSessionDrawer({
           <Button variant="ghost" onClick={onClose}>
             {SESSION_FORM_TEXT.cancel}
           </Button>
-          <Button variant="primary" icon="Check" onClick={() => void save()}>
+          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
             {SESSION_FORM_TEXT.saveAdd}
           </Button>
         </div>
@@ -544,7 +634,7 @@ export function UndoNotice({ text, onUndo, onDone }: { text: string; onUndo: () 
       <span className="safe-text min-w-0">{text}</span>
       <button
         type="button"
-        className="font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+        className="inline-flex min-h-11 items-center px-1 font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
         onClick={() => {
           onUndo();
           onDone();
@@ -562,16 +652,20 @@ export function UndoNotice({ text, onUndo, onDone }: { text: string; onUndo: () 
  */
 export function useSessionEditor(): { edit: (id: string) => void; drawer: ReactNode; undoNotice: ReactNode } {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [deleted, setDeleted] = useState<StudySession | null>(null);
+  const [deleted, setDeleted] = useState<{ session: StudySession; links: SessionLinks } | null>(null);
   const restoreSession = useStudyStore((state) => state.restoreSession);
   return {
     edit: (id: string) => {
       setDeleted(null);
       setEditingId(id);
     },
-    drawer: <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onDeleted={setDeleted} />,
+    drawer: <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onDeleted={(session, links) => setDeleted({ session, links })} />,
     undoNotice: deleted ? (
-      <UndoNotice text={SESSION_FORM_TEXT.deleted(deleted.title)} onUndo={() => void restoreSession(deleted)} onDone={() => setDeleted(null)} />
+      <UndoNotice
+        text={SESSION_FORM_TEXT.deleted(deleted.session.title)}
+        onUndo={() => void restoreSession(deleted.session, deleted.links)}
+        onDone={() => setDeleted(null)}
+      />
     ) : null
   };
 }

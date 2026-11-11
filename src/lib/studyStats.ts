@@ -234,18 +234,24 @@ export interface StudyTotals {
 
 /** Minuti in tutto, oggi, questa settimana e questo mese (ogni sessione nel giorno in cui è iniziata). */
 export function studyTotals(sessions: StudySession[], now: Date): StudyTotals {
-  const day = startOfDay(now).getTime();
-  const week = startOfWeek(now, WEEK).getTime();
-  const month = startOfMonth(now).getTime();
+  // Intervalli di calendario [inizio, inizio successivo): una sessione con l'orologio avanti
+  // (altro dispositivo) non finisce in "oggi"; date-fns tiene conto dei giorni di 23 o 25 ore.
+  const dayStart = startOfDay(now);
+  const weekStart = startOfWeek(now, WEEK);
+  const monthStart = startOfMonth(now);
+  const within = (time: number, start: Date, end: Date) => time >= start.getTime() && time < end.getTime();
+  const nextDay = addDays(dayStart, 1);
+  const nextWeek = addWeeks(weekStart, 1);
+  const nextMonth = addMonths(monthStart, 1);
   const totals: StudyTotals = { total: 0, today: 0, week: 0, month: 0, count: 0 };
   for (const session of completed(sessions)) {
     const minutes = sessionMinutes(session);
     const time = startTime(session);
     totals.total += minutes;
     totals.count += 1;
-    if (time >= day) totals.today += minutes;
-    if (time >= week) totals.week += minutes;
-    if (time >= month) totals.month += minutes;
+    if (within(time, dayStart, nextDay)) totals.today += minutes;
+    if (within(time, weekStart, nextWeek)) totals.week += minutes;
+    if (within(time, monthStart, nextMonth)) totals.month += minutes;
   }
   return totals;
 }

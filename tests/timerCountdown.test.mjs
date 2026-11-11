@@ -364,16 +364,97 @@ test("store: Salva dal riepilogo usa i campi corretti; i minuti corretti spostan
   assert.equal(store.getState().sessions[0].end, new Date(now - 10 * MIN).toISOString(), "fine reale del Timer");
 });
 
-test("store: restoreSession rimette la sessione eliminata (Annulla)", async () => {
+test("store: restoreSession rimette la sessione eliminata (Annulla) con updatedAt nuovo", async () => {
   seedStore();
   await store.getState().addSession({ title: "Da eliminare", status: "completed", actualMinutes: 30, source: "manual" });
   const [session] = store.getState().sessions;
-  await store.getState().deleteSession(session.id);
+  const old = { ...session, updatedAt: OLD };
+  store.setState({ sessions: [old] });
+  await store.getState().deleteSession(old.id);
   assert.equal(store.getState().sessions.length, 0);
-  await store.getState().restoreSession(session);
-  assert.deepEqual(store.getState().sessions, [session]);
-  await store.getState().restoreSession(session);
+  await store.getState().restoreSession(old);
+  const [restored] = store.getState().sessions;
+  // Con l'updatedAt di prima la cancellazione già inviata al cloud vincerebbe per LWW e la sync la toglierebbe di nuovo.
+  assert.ok(Date.parse(restored.updatedAt) > Date.parse(OLD), "updatedAt più recente");
+  const { updatedAt: _restoredAt, ...rest } = restored;
+  const { updatedAt: _oldAt, ...expected } = old;
+  assert.deepEqual(rest, expected, "gli altri campi restano quelli di prima");
+  await store.getState().restoreSession(old);
   assert.equal(store.getState().sessions.length, 1, "niente doppioni");
+});
+
+test("store: Elimina e poi Annulla rimettono anche obiettivi, file, note e promemoria collegati", async () => {
+  const linked = (id) => ({ id, title: id, linkedEntityType: "studySession", linkedEntityId: "sx", createdAt: OLD, updatedAt: OLD });
+  seedStore({
+    sessions: [{ id: "sx", title: "Studio", status: "completed", actualMinutes: 40, start: OLD, attachmentIds: ["a1"], createdAt: OLD, updatedAt: OLD }],
+    goals: [{ id: "g1", title: "Ore", linkedSessionIds: ["sx"], createdAt: OLD, updatedAt: OLD }],
+    attachments: [linked("a1")],
+    notes: [linked("n1"), linked("n2")],
+    reminders: [linked("r1")]
+  });
+  const session = store.getState().sessions[0];
+  const links = await store.getState().deleteSession("sx");
+  assert.deepEqual(links, { goalIds: ["g1"], attachmentIds: ["a1"], noteIds: ["n1", "n2"], reminderIds: ["r1"] });
+  assert.deepEqual(store.getState().goals[0].linkedSessionIds, []);
+  assert.equal(store.getState().notes[0].linkedEntityId, undefined);
+  // Nel frattempo una nota è stata eliminata: non torna.
+  store.setState({ notes: store.getState().notes.filter((note) => note.id !== "n2") });
+  await store.getState().restoreSession(session, links);
+  const state = store.getState();
+  assert.deepEqual(state.goals[0].linkedSessionIds, ["sx"]);
+  assert.equal(state.attachments[0].linkedEntityId, "sx");
+  assert.deepEqual(state.notes.map((note) => [note.id, note.linkedEntityType, note.linkedEntityId]), [["n1", "studySession", "sx"]]);
+  assert.equal(state.reminders[0].linkedEntityId, "sx");
+  for (const item of [state.goals[0], state.attachments[0], state.notes[0], state.reminders[0]]) {
+    assert.ok(Date.parse(item.updatedAt) > Date.parse(OLD), `${item.id}: updatedAt nuovo`);
+  }
+});
+
+test("store: addSession con un id già salvato non crea un doppione (doppio tocco su Salva)", async () => {
+  seedStore();
+  const fields = { id: "session_manual_1", title: "Biblioteca", status: "completed", actualMinutes: 60, source: "manual" };
+  await Promise.all([store.getState().addSession(fields), store.getState().addSession(fields)]);
+  assert.deepEqual(store.getState().sessions.map((session) => session.id), ["session_manual_1"]);
+  await store.getState().addSession({ title: "Senza id" });
+  assert.equal(store.getState().sessions.length, 2);
+  assert.notEqual(store.getState().sessions[0].id, "session_manual_1");
+});
+
+test("store: il previsto di un cronometro senza obiettivo segue i minuti corretti", () => {
+  const now = Date.now();
+  const started = { ...defaultTimer("pomodoro", { kind: "stopwatch", subjectId: "s1" }), durationSeconds: 0, running: true, startedAt: now - 540 * MIN, runningSince: now - 540 * MIN, sessionId: "session_pl" };
+  seedStore({ timer: started });
+  store.getState().endStudyTimer();
+  store.getState().saveTimerReview({ subjectId: "s1", title: "Limiti", notes: "", template: "review", minutes: 90 });
+  const [session] = store.getState().sessions;
+  assert.equal(session.actualMinutes, 90);
+  assert.equal(session.plannedMinutes, 90);
+});
+
+test("store: una scheda rimasta indietro non salva né azzera sopra lo stato più recente", () => {
+  const storage = memoryStorage();
+  globalThis.localStorage = storage;
+  try {
+    const now = Date.now();
+    const stale = { ...startCountdownState(now - 40 * MIN, { minutes: 30, subjectId: "s1", sessionId: "session_stale" }), changedAt: now - 5 * MIN };
+    seedStore({ timer: stale });
+    store.getState().endStudyTimer();
+    const ended = store.getState().timer;
+    // Un'altra scheda ha già salvato e avviato un cronometro, ma questa non ha ricevuto l'evento.
+    const newer = { ...defaultTimer("pomodoro", { kind: "stopwatch", subjectId: "s2" }), running: true, startedAt: now, runningSince: now, sessionId: "session_y", changedAt: (ended.changedAt ?? now) + 1000 };
+    storage.setItem(TIMER_STORAGE_KEY, JSON.stringify(newer));
+    assert.equal(store.getState().saveTimerReview({ subjectId: "s1", title: "x", notes: "", template: "review", minutes: 30 }).status, "idle");
+    assert.equal(store.getState().sessions.length, 0, "niente sessione salvata sopra quella dell'altra scheda");
+    assert.equal(store.getState().timer.sessionId, "session_y");
+    assert.equal(store.getState().timerReview, false);
+    // Azzera: stessa regola, il cronometro dell'altra scheda resta.
+    store.setState({ timer: { ...newer, changedAt: newer.changedAt - 2000 } });
+    store.getState().resetStudyTimer();
+    assert.equal(store.getState().timer.running, true);
+    assert.equal(JSON.parse(storage.getItem(TIMER_STORAGE_KEY)).sessionId, "session_y");
+  } finally {
+    delete globalThis.localStorage;
+  }
 });
 
 test("store: il timer vecchio in localStorage si carica come prima (kind assente = Pomodoro)", () => {

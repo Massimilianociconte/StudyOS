@@ -6,7 +6,12 @@ import {
   editedSessionTimes,
   parseSessionMinutes,
   readSessionDraft,
-  sessionEditPatch
+  relinkSession,
+  reviewedSessionTimes,
+  sessionEditPatch,
+  sessionLinksOf,
+  sessionSourceLabel,
+  sessionTopicId
 } from "../src/lib/studySessions.ts";
 
 const MIN = 60_000;
@@ -130,4 +135,81 @@ test("draftFromSession: i campi del modulo, senza ripetere titoli automatici", (
   assert.equal(draftFromSession({ ...base, title: "Ripasso · Analisi 1" }, SUBJECTS, TOPICS).title, "", "titolo automatico: campo vuoto");
   assert.equal(draftFromSession({ ...base, title: "limiti  NOTEVOLI", topicId: "lim" }, SUBJECTS, TOPICS).title, "", "uguale all'argomento: campo vuoto");
   assert.equal(draftFromSession({ ...base, subjectId: undefined, title: "x" }, SUBJECTS, TOPICS).subjectId, "");
+});
+
+test("sessionEditPatch: un inizio nello stesso minuto non sposta inizio e fine (si cambiano solo le note)", () => {
+  // Salvata dal timer con i secondi: il modulo mostra solo ore e minuti.
+  const session = { start: new Date(2026, 10, 10, 9, 5, 42).toISOString(), end: new Date(2026, 10, 10, 10, 37, 13).toISOString(), actualMinutes: 80 };
+  const draft = draftFromSession({ ...session, id: "s", title: "x", subjectId: "an", template: "review", notes: "" }, SUBJECTS, TOPICS);
+  const read = readSessionDraft({ ...draft, notes: "solo note" }, { subjects: SUBJECTS, topics: TOPICS, now: Date.now() });
+  assert.equal(read.ok, true);
+  const patch = sessionEditPatch(session, read.value);
+  assert.equal(patch.start, session.start);
+  assert.equal(patch.end, session.end);
+  assert.equal(patch.notes, "solo note");
+  // Un minuto dopo è un cambio vero.
+  const moved = sessionEditPatch(session, { ...read.value, start: new Date(2026, 10, 10, 9, 6).getTime() });
+  assert.equal(moved.start, new Date(2026, 10, 10, 9, 6).toISOString());
+});
+
+test("reviewedSessionTimes: minuti invariati = misurati; corretti = fine spostata con le sole pause vere", () => {
+  // Cronometro acceso 540 minuti e 0,4 secondi (millisecondi tra avvio e "Termina"), senza pause.
+  const block = { start: at(21), end: at(21) + 540 * MIN + 400, actualMinutes: 540 };
+  assert.deepEqual(reviewedSessionTimes(block, 540 * 60, 540), { start: block.start, end: block.end }, "invariati: inizio e fine veri");
+  assert.deepEqual(reviewedSessionTimes(block, 540 * 60, 90), { start: at(21), end: at(22, 30) }, "il resto dell'arrotondamento non è una pausa");
+  // 52 minuti e 40 secondi di studio con 10 minuti di pausa: corretti a 45, la pausa resta.
+  const paused = { start: at(9), end: at(9) + (52 * 60 + 40) * 1000 + 10 * MIN, actualMinutes: 53 };
+  assert.deepEqual(reviewedSessionTimes(paused, 52 * 60 + 40, 45), { start: at(9), end: at(9, 55) });
+});
+
+test("sessionSourceLabel e sessionTopicId: valori da dati condivisi non diventano etichette o argomenti", () => {
+  assert.equal(sessionSourceLabel("timer"), "Timer");
+  assert.equal(sessionSourceLabel("stopwatch"), "Cronometro");
+  for (const value of ["constructor", "__proto__", "toString", "", 42, null, undefined, {}, ["timer"]]) {
+    assert.equal(sessionSourceLabel(value), undefined, String(value));
+  }
+  assert.equal(sessionTopicId({ topicId: "lim" }), "lim");
+  for (const value of [42, "", null, undefined, { id: "lim" }]) assert.equal(sessionTopicId({ topicId: value }), undefined);
+  const odd = { id: "s", title: "x", subjectId: "an", topicId: 42, template: "review", actualMinutes: 5, start: new Date().toISOString(), notes: "" };
+  assert.equal(draftFromSession(odd, SUBJECTS, TOPICS).topicId, "");
+});
+
+test("sessionLinksOf e relinkSession: Annulla rimette obiettivi, file, note e promemoria ancora liberi", () => {
+  const OLD = "2026-01-01T00:00:00.000Z";
+  const NOW = "2026-11-11T10:00:00.000Z";
+  const linked = (id) => ({ id, linkedEntityType: "studySession", linkedEntityId: "s1", updatedAt: OLD });
+  const before = {
+    goals: [
+      { id: "g1", linkedSessionIds: ["s0", "s1"], updatedAt: OLD },
+      { id: "g2", linkedSessionIds: ["s0"], updatedAt: OLD }
+    ],
+    attachments: [linked("a1"), { id: "a2", linkedEntityType: "task", linkedEntityId: "t1", updatedAt: OLD }],
+    notes: [linked("n1"), linked("n2")],
+    reminders: [linked("r1")]
+  };
+  const links = sessionLinksOf(before, "s1");
+  assert.deepEqual(links, { goalIds: ["g1"], attachmentIds: ["a1"], noteIds: ["n1", "n2"], reminderIds: ["r1"] });
+
+  // Dopo Elimina tutto è scollegato; nel frattempo n2 è stata eliminata e r1 collegato a un'attività.
+  const unlink = (item) => ({ ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: "2026-11-11T09:59:00.000Z" });
+  const after = {
+    goals: [{ ...before.goals[0], linkedSessionIds: ["s0"] }, before.goals[1]],
+    attachments: [unlink(before.attachments[0]), before.attachments[1]],
+    notes: [unlink(before.notes[0])],
+    reminders: [{ ...unlink(before.reminders[0]), linkedEntityType: "task", linkedEntityId: "t9" }]
+  };
+  const restored = relinkSession(after, "s1", links, NOW);
+  assert.deepEqual(restored.goals[0], { id: "g1", linkedSessionIds: ["s0", "s1"], updatedAt: NOW });
+  assert.equal(restored.goals[1], after.goals[1], "obiettivo non collegato: stesso oggetto");
+  assert.deepEqual(restored.attachments[0], { id: "a1", linkedEntityType: "studySession", linkedEntityId: "s1", updatedAt: NOW });
+  assert.equal(restored.attachments[1], after.attachments[1]);
+  assert.deepEqual(restored.notes, [{ id: "n1", linkedEntityType: "studySession", linkedEntityId: "s1", updatedAt: NOW }], "la nota eliminata non torna");
+  assert.equal(restored.reminders, after.reminders, "collegato ad altro: resta com'è");
+  // Niente da rimettere: stesse liste.
+  const none = relinkSession(after, "s1", { goalIds: [], attachmentIds: [], noteIds: [], reminderIds: [] }, NOW);
+  for (const key of ["goals", "attachments", "notes", "reminders"]) assert.equal(none[key], after[key]);
+  // Già ricollegato (doppio Annulla): niente doppioni.
+  const twice = relinkSession(restored, "s1", links, NOW);
+  assert.deepEqual(twice.goals[0].linkedSessionIds, ["s0", "s1"]);
+  assert.equal(twice.goals, restored.goals);
 });

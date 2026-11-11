@@ -8,7 +8,8 @@ import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
 import type { Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { SESSION_SOURCE_LABEL, SUBJECT_STUDY_TEXT, SUBJECT_STUDY_UNIT_LABEL, capitalizeFirst, formatHours, formatMinutes } from "../lib/labels";
+import { SUBJECT_STUDY_TEXT, SUBJECT_STUDY_UNIT_LABEL, capitalizeFirst, formatHours, formatMinutes } from "../lib/labels";
+import { sessionSourceLabel, sessionTopicId } from "../lib/studySessions";
 import { RECENT_TREND_UNITS, minutesByTopic, recentTrend, studyTotals, subjectSessions, type RecentTrendUnit } from "../lib/studyStats";
 import { oneOf, useUiState } from "../lib/uiState";
 import { safeCssColor } from "../lib/sharing";
@@ -53,7 +54,7 @@ export default function SubjectStudyStats({ subject }: { subject: Subject }) {
         <button
           type="button"
           onClick={() => goToView("study", [["study.subject", subject.id, "device"]])}
-          className="inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+          className="inline-flex min-h-11 items-center gap-1 px-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
         >
           <Icon name="Timer" className="h-3.5 w-3.5" />
           {SUBJECT_STUDY_TEXT.study}
@@ -73,7 +74,6 @@ export default function SubjectStudyStats({ subject }: { subject: Subject }) {
           <div className="rounded-[20px] border border-[var(--border)] p-3">
             <Segmented
               label={SUBJECT_STUDY_TEXT.unitAria}
-              size="sm"
               value={unit}
               onChange={setUnit}
               options={RECENT_TREND_UNITS.map((id) => ({ id, label: SUBJECT_STUDY_UNIT_LABEL[id] }))}
@@ -117,11 +117,11 @@ export default function SubjectStudyStats({ subject }: { subject: Subject }) {
             <h5 className="mb-1 text-sm font-black">{SUBJECT_STUDY_TEXT.sessions}</h5>
             <ul className="grid grid-cols-1 gap-0.5">
               {visible.map((session) => {
-                const topic = topicTitle(session.topicId);
+                const topic = topicTitle(sessionTopicId(session));
                 const details = [
                   capitalizeFirst(format(parseISO(session.start), "EEE d MMM · HH:mm", { locale: it })),
                   topic && topic.toLocaleLowerCase("it") !== session.title.toLocaleLowerCase("it") ? topic : null,
-                  session.source ? SESSION_SOURCE_LABEL[session.source] : null
+                  sessionSourceLabel(session.source) ?? null
                 ].filter(Boolean);
                 return (
                   <li key={session.id}>
@@ -142,7 +142,7 @@ export default function SubjectStudyStats({ subject }: { subject: Subject }) {
               })}
             </ul>
             {mine.length > FIRST_SESSIONS ? (
-              <button type="button" onClick={() => setShowAll((value) => !value)} className="mt-1 min-h-8 px-2 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline">
+              <button type="button" onClick={() => setShowAll((value) => !value)} className="mt-1 min-h-11 px-2 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline">
                 {showAll ? SUBJECT_STUDY_TEXT.showLess : SUBJECT_STUDY_TEXT.showAll(mine.length)}
               </button>
             ) : null}

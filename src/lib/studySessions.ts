@@ -2,10 +2,91 @@
 // moduli che creano, riepilogano o modificano una sessione. Funzioni pure, testate con node --test
 // (tests/timerCountdown.test.mjs, tests/studySessions.test.mjs).
 import type { StudySession, StudyTopic } from "../types";
-import { SESSION_TEMPLATE_LABEL } from "./labels";
+import { SESSION_SOURCE_LABEL, SESSION_TEMPLATE_LABEL } from "./labels";
 
 /** Origini di una sessione salvata (StudySession.source; assente = vecchia o aggiunta a mano). */
 export const SESSION_SOURCE_VALUES = ["pomodoro", "timer", "stopwatch", "manual"] as const satisfies ReadonlyArray<NonNullable<StudySession["source"]>>;
+
+/** Quanto resta visibile "Annulla" dopo aver eliminato o scartato. */
+export const UNDO_MS = 15_000;
+
+/**
+ * Nome dell'origine ("Timer", "Cronometro"…) o undefined. Le sessioni arrivano anche da dati
+ * condivisi: un valore sconosciuto o non di testo non diventa mai un'etichetta.
+ */
+export const sessionSourceLabel = (source: unknown): string | undefined =>
+  typeof source === "string" && (SESSION_SOURCE_VALUES as readonly string[]).includes(source)
+    ? SESSION_SOURCE_LABEL[source as keyof typeof SESSION_SOURCE_LABEL]
+    : undefined;
+
+/** Argomento di una sessione; un valore non di testo (dati condivisi) vale come nessun argomento. */
+export const sessionTopicId = (session: { topicId?: unknown }): string | undefined =>
+  typeof session.topicId === "string" && session.topicId ? session.topicId : undefined;
+
+/** Cosa puntava a una sessione prima di eliminarla: obiettivi, file, note e promemoria. */
+export interface SessionLinks {
+  goalIds: string[];
+  attachmentIds: string[];
+  noteIds: string[];
+  reminderIds: string[];
+}
+
+type GoalLike = { id: string; linkedSessionIds: string[]; updatedAt: string };
+type LinkedLike = { id: string; linkedEntityType?: string; linkedEntityId?: string; updatedAt: string };
+interface LinkCollections<G extends GoalLike, A extends LinkedLike, N extends LinkedLike, R extends LinkedLike> {
+  goals: G[];
+  attachments: A[];
+  notes: N[];
+  reminders: R[];
+}
+
+const linkedTo = (id: string) => (item: LinkedLike) => item.linkedEntityType === "studySession" && item.linkedEntityId === id;
+
+/** I collegamenti di una sessione, da conservare per "Annulla" dopo Elimina. */
+export const sessionLinksOf = (
+  collections: { goals: readonly GoalLike[]; attachments: readonly LinkedLike[]; notes: readonly LinkedLike[]; reminders: readonly LinkedLike[] },
+  sessionId: string
+): SessionLinks => ({
+  goalIds: collections.goals.filter((goal) => goal.linkedSessionIds.includes(sessionId)).map((goal) => goal.id),
+  attachmentIds: collections.attachments.filter(linkedTo(sessionId)).map((item) => item.id),
+  noteIds: collections.notes.filter(linkedTo(sessionId)).map((item) => item.id),
+  reminderIds: collections.reminders.filter(linkedTo(sessionId)).map((item) => item.id)
+});
+
+/**
+ * "Annulla" dopo Elimina: rimette i collegamenti salvati. Salta ciò che nel frattempo è stato
+ * eliminato e ciò che è stato collegato ad altro; gli elementi toccati prendono `updatedAt` = now
+ * (così vincono per LWW sulla versione scollegata). Le liste senza cambi restano le stesse.
+ */
+export const relinkSession = <G extends GoalLike, A extends LinkedLike, N extends LinkedLike, R extends LinkedLike>(
+  collections: LinkCollections<G, A, N, R>,
+  sessionId: string,
+  links: SessionLinks,
+  now: string
+): LinkCollections<G, A, N, R> => {
+  const relink = <T extends LinkedLike>(list: T[], ids: string[]): T[] => {
+    if (!ids.length) return list;
+    let changed = false;
+    const next = list.map((item) => {
+      if (!ids.includes(item.id) || item.linkedEntityType || item.linkedEntityId) return item;
+      changed = true;
+      return { ...item, linkedEntityType: "studySession", linkedEntityId: sessionId, updatedAt: now };
+    });
+    return changed ? next : list;
+  };
+  let goalsChanged = false;
+  const goals = collections.goals.map((goal) => {
+    if (!links.goalIds.includes(goal.id) || goal.linkedSessionIds.includes(sessionId)) return goal;
+    goalsChanged = true;
+    return { ...goal, linkedSessionIds: [...goal.linkedSessionIds, sessionId], updatedAt: now };
+  });
+  return {
+    goals: goalsChanged ? goals : collections.goals,
+    attachments: relink(collections.attachments, links.attachmentIds),
+    notes: relink(collections.notes, links.noteIds),
+    reminders: relink(collections.reminders, links.reminderIds)
+  };
+};
 
 type TopicLike = Pick<StudyTopic, "id" | "subjectId" | "title" | "archived">;
 
@@ -42,6 +123,21 @@ export const editedSessionTimes = (
   if (start === original.start && minutes === original.minutes) return { start, end };
   const pauses = Math.max(0, end - original.start - original.minutes * MINUTE);
   return { start, end: start + minutes * MINUTE + pauses };
+};
+
+/**
+ * Inizio e fine dal riepilogo di Timer e Cronometro (epoch ms). Minuti come misurati: inizio e fine
+ * veri. Minuti corretti: la fine si sposta e restano solo le pause vere, in secondi interi dal tempo
+ * misurato (il resto dell'arrotondamento ai minuti non è una pausa).
+ */
+export const reviewedSessionTimes = (
+  block: { start: number; end: number; actualMinutes: number },
+  elapsedSeconds: number,
+  minutes: number
+): { start: number; end: number } => {
+  if (minutes === block.actualMinutes) return { start: block.start, end: block.end };
+  const pauses = Math.max(0, Math.floor((block.end - block.start) / 1000 - elapsedSeconds)) * 1000;
+  return { start: block.start, end: block.start + minutes * MINUTE + pauses };
 };
 
 /** Titolo di una sessione senza descrizione: tipo di sessione e materia ("Ripasso · Analisi 1"). */
@@ -134,9 +230,12 @@ export const sessionEditPatch = (
   const parsedStart = Date.parse(session.start);
   const parsedEnd = session.end ? Date.parse(session.end) : Number.NaN;
   const originalStart = Number.isFinite(parsedStart) ? parsedStart : (edit.start ?? Date.now());
+  // Il modulo ha ore e minuti, non i secondi: un inizio nello stesso minuto è l'inizio di prima
+  // (cambiando solo le note, inizio e fine restano quelli salvati).
+  const sameMinute = edit.start !== undefined && Math.floor(edit.start / MINUTE) === Math.floor(originalStart / MINUTE);
   const times = editedSessionTimes(
     { start: originalStart, end: Number.isFinite(parsedEnd) ? parsedEnd : undefined, minutes: session.actualMinutes },
-    { start: edit.start, minutes: edit.minutes }
+    { start: sameMinute ? undefined : edit.start, minutes: edit.minutes }
   );
   return {
     subjectId: edit.subjectId,
@@ -162,7 +261,8 @@ export const draftFromSession = (
   topics: readonly TopicLike[]
 ): SessionDraft => {
   const subject = subjects.find((item) => item.id === session.subjectId);
-  const topic = subject ? topics.find((item) => item.id === session.topicId && item.subjectId === subject.id) : undefined;
+  const topicId = sessionTopicId(session);
+  const topic = subject && topicId ? topics.find((item) => item.id === topicId && item.subjectId === subject.id) : undefined;
   const title = session.title ?? "";
   const automatic = normalize(title) === normalize(defaultSessionTitle(session.template, subject?.name)) || (topic !== undefined && normalize(title) === normalize(topic.title));
   const start = new Date(session.start);

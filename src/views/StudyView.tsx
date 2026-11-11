@@ -8,7 +8,6 @@ import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, studyMinutesThisWeek, studyStreak, subjectColor, subjectName } from "../lib/selectors";
 import {
   SESSION_FORM_TEXT,
-  SESSION_SOURCE_LABEL,
   SESSION_TEMPLATE_LABEL,
   STUDY_SIDE_TEXT,
   TIMER_KIND_LABEL,
@@ -23,7 +22,7 @@ import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, type R
 import { Button, Drawer, Field, HelpTip, IconButton, Panel, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TopicManager, reviewDueLabel } from "../components/TopicManager";
-import { ManualSessionDrawer, UNDO_MS, useSessionEditor } from "../components/StudySessionDrawers";
+import { ManualSessionDrawer, useSessionEditor } from "../components/StudySessionDrawers";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
@@ -53,7 +52,7 @@ import {
   splitMinutes,
   type TimerSettingKey
 } from "../lib/timerPrefs";
-import { matchTopic, topicsOfSubject } from "../lib/studySessions";
+import { UNDO_MS, matchTopic, sessionSourceLabel, topicsOfSubject } from "../lib/studySessions";
 import {
   TIMER_SOUND_KEY,
   TIMER_VIBRATE_KEY,
@@ -67,7 +66,7 @@ import {
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
 
 const pillClass = (active: boolean) =>
-  `min-h-9 rounded-full px-3 text-xs font-black ${
+  `min-h-11 rounded-full px-3 text-xs font-black ${
     active ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)] hover:text-[var(--text)]"
   }`;
 
@@ -161,7 +160,6 @@ export function StudyView() {
                       <button
                         type="button"
                         onClick={() => sessionEditor.edit(session.id)}
-                        aria-label={SESSION_FORM_TEXT.editAria(session.title)}
                         className="flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]"
                       >
                         <span className="grid grid-cols-1 h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: `color-mix(in srgb, ${subjectColor(subjects, session.subjectId)} 30%, transparent)` }}>
@@ -171,7 +169,7 @@ export function StudyView() {
                           <span className="one-line-safe block text-sm font-extrabold">{session.title}</span>
                           <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
                             {capitalizeFirst(format(parseISO(session.start), "EEE d MMM · HH:mm", { locale: it }))} · {SESSION_TEMPLATE_LABEL[session.template]}
-                            {session.source && session.source !== "manual" ? ` · ${SESSION_SOURCE_LABEL[session.source]}` : ""}
+                            {session.source !== "manual" && sessionSourceLabel(session.source) ? ` · ${sessionSourceLabel(session.source)}` : ""}
                           </span>
                         </span>
                         <span className="shrink-0 text-sm font-black tabular-nums">{formatMinutes(session.actualMinutes || session.plannedMinutes)}</span>
@@ -590,7 +588,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           <span>{TIMER_TEXT.discarded(undo.studied)}</span>
           <button
             type="button"
-            className={linkClass}
+            className={`${linkClass} inline-flex min-h-11 items-center px-1`}
             onClick={() => {
               // Non si torna indietro se nel frattempo è partita un'altra sessione.
               if (!restoreStudyTimer(undo.previous)) setNotice(TIMER_TEXT.switchBlocked);

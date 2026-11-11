@@ -744,8 +744,7 @@ export const SESSION_FORM_TEXT = {
     minutes: "Scrivi i minuti di studio: un numero intero da 1 a 960 (16 ore).",
     start: "Controlla il giorno e l'ora di inizio.",
     future: "L'ora di inizio è nel futuro: scegli un momento già passato."
-  },
-  editAria: (title: string) => `Modifica la sessione "${title}"`
+  }
 } as const;
 
 /** Sessioni senza argomento (tempo per argomento). */

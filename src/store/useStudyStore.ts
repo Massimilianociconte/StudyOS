@@ -72,6 +72,7 @@ import {
   startStopwatchState,
   startTimerState,
   syncTimerDurations,
+  timerElapsedSeconds,
   timerUnsavedSeconds,
   toggleTimerState,
   type FinishedBlock,
@@ -81,7 +82,7 @@ import {
   type TimerMode,
   type TimerState
 } from "../lib/studyTimer";
-import { editedSessionTimes, type SessionEdit } from "../lib/studySessions";
+import { relinkSession, reviewedSessionTimes, sessionLinksOf, type SessionEdit, type SessionLinks } from "../lib/studySessions";
 import { resolveTimerDurations } from "../lib/timerPrefs";
 import type { TimerSettings } from "../types";
 import { useSharedStore } from "./useSharedStore";
@@ -161,11 +162,13 @@ interface StudyState {
   addExam: (exam: Partial<Exam> & Pick<Exam, "subjectId" | "date">) => Promise<void>;
   updateExam: (id: string, patch: Partial<Exam>) => Promise<void>;
   deleteExam: (id: string) => Promise<void>;
+  /** Con `id` (modulo "Aggiungi studio fatto") una sessione già presente non si aggiunge di nuovo. */
   addSession: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
   updateSession: (id: string, patch: Partial<StudySession>) => Promise<void>;
-  deleteSession: (id: string) => Promise<void>;
-  /** Annulla dopo Elimina: la sessione torna com'era (senza doppioni). */
-  restoreSession: (session: StudySession) => Promise<void>;
+  /** Restituisce i collegamenti tolti (obiettivi, file, note, promemoria) per "Annulla". */
+  deleteSession: (id: string) => Promise<SessionLinks>;
+  /** Annulla dopo Elimina: la sessione torna (updatedAt nuovo, vince sulla sync) con i suoi collegamenti, senza doppioni. */
+  restoreSession: (session: StudySession, links?: SessionLinks) => Promise<void>;
   /** Crea argomenti da ripassare; restituisce quanti sono stati aggiunti (i duplicati per materia vengono saltati). */
   addTopics: (topics: Array<Partial<StudyTopic> & Pick<StudyTopic, "title" | "subjectId">>) => Promise<number>;
   updateTopic: (id: string, patch: Partial<StudyTopic>) => Promise<void>;
@@ -466,6 +469,17 @@ export const useStudyStore = create<StudyState>((set, get) => {
       }
     }
     set(rollback as Partial<StoreState>);
+  };
+
+  /**
+   * Un'altra scheda ha cambiato il timer dopo questa (evento "storage" perso, scheda tornata dalla
+   * cache): si prende il suo stato e l'azione chiesta qui non si fa (true). Come reloadStudyTimer.
+   */
+  const adoptNewerTimer = () => {
+    const stored = loadTimer();
+    if ((stored.changedAt ?? 0) <= (get().timer.changedAt ?? 0)) return false;
+    set(stored.ended ? { timer: stored } : { timer: stored, timerReview: false });
+    return true;
   };
 
   /** Blocco di studio finito → sessione completata. Id già presente (altra scheda, ricarica) → nulla. */
@@ -1215,8 +1229,10 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     addSession: async (session) => {
+      // Stesso id (doppio tocco su Salva, salvataggio ripetuto): una sola sessione.
+      if (session.id && get().sessions.some((item) => item.id === session.id)) return;
       const created: StudySession = {
-        id: createId("session"),
+        id: session.id || createId("session"),
         createdAt: nowIso(),
         updatedAt: nowIso(),
         archived: false,
@@ -1253,6 +1269,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     deleteSession: async (id) => {
       const detach = detachLinked("studySession", id);
+      const links = sessionLinksOf(get(), id);
       set((state) => ({
         sessions: state.sessions.filter((session) => session.id !== id),
         goals: state.goals.map((goal) =>
@@ -1265,11 +1282,18 @@ export const useStudyStore = create<StudyState>((set, get) => {
         reminders: state.reminders.map(detach)
       }));
       await commit();
+      return links;
     },
 
-    restoreSession: async (session) => {
-      if (get().sessions.some((item) => item.id === session.id)) return;
-      set((state) => ({ sessions: [session, ...state.sessions] }));
+    restoreSession: async (session, links) => {
+      const state = get();
+      if (state.sessions.some((item) => item.id === session.id)) return;
+      // Come restoreEntities: updatedAt nuovo, così la sessione vince per LWW sulla cancellazione già
+      // inviata al cloud (con quello vecchio la sync la eliminerebbe di nuovo poco dopo).
+      const now = nowIso();
+      const restored: StudySession = { ...session, updatedAt: restoredUpdatedAt(now, session.updatedAt) };
+      const relinked = links ? relinkSession(state, session.id, links, now) : null;
+      set((current) => ({ sessions: [restored, ...current.sessions], ...(relinked ?? {}) }));
       await commit();
     },
 
@@ -1642,6 +1666,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       if (!next.ended && state.timerReview) set({ timerReview: false });
     },
     resetStudyTimer: (mode) => {
+      if (adoptNewerTimer()) return;
       const state = get();
       const current = state.timer;
       const subjectId = knownSubjectId(state, current.subjectId);
@@ -1748,10 +1773,12 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const now = Date.now();
       const timer = state.timer;
       if (state.loading || state.locked || timer.kind === "pomodoro" || !timer.ended) return { status: "idle" };
+      // Scheda rimasta indietro (in background, evento "storage" perso): vince lo stato più recente.
+      if (adoptNewerTimer()) return { status: "idle" };
       const block = finishedSession(timer, now);
       if (!block) return { status: "too-short" };
       // Minuti corretti (cronometro rimasto acceso): la fine si sposta, l'inizio resta quello vero.
-      const times = editedSessionTimes({ start: block.start, end: block.end, minutes: block.actualMinutes }, { minutes: edit.minutes });
+      const times = reviewedSessionTimes(block, timerElapsedSeconds(timer, now), edit.minutes);
       const subjectId = knownSubjectId(state, edit.subjectId);
       const session =
         saveTimerBlock({
@@ -1759,6 +1786,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
           start: times.start,
           end: times.end,
           actualMinutes: edit.minutes,
+          // Cronometro senza obiettivo: il previsto è il tempo studiato, quindi quello corretto.
+          plannedMinutes: timer.kind === "stopwatch" && timer.durationSeconds <= 0 ? edit.minutes : block.plannedMinutes,
           subjectId,
           topicId: topicFor(state, subjectId, edit.topicId),
           title: edit.title,

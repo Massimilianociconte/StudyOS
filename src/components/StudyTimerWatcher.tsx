@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../store/useStudyStore";
 import { useNow } from "../hooks/useNow";
 import { TIMER_STORAGE_KEY, formatTimerClock, isTimerIdle, timerElapsedSeconds, timerRemainingSeconds, type TimerEvent, type TimerState } from "../lib/studyTimer";
 import { SESSION_FORM_TEXT, TIMER_ALERT_TEXT, TIMER_KIND_LABEL, TIMER_PHASE_LABEL, TIMER_TEXT, formatMinutes } from "../lib/labels";
+import { UNDO_MS, type SessionLinks } from "../lib/studySessions";
 import { playTimerBeep, primeTimerSound, showSystemNotification, vibrateTimer } from "../lib/timerAlerts";
 import type { StudySession } from "../types";
 import { Button } from "./ui";
 import { Icon } from "./Icon";
-import { SessionEditorDrawer, TimerReviewDrawer, UNDO_MS } from "./StudySessionDrawers";
+
+// Riepilogo e modifica delle sessioni: caricati alla prima apertura, fuori dal bundle d'ingresso.
+const TimerReviewDrawer = lazy(() => import("./StudySessionDrawers").then((module) => ({ default: module.TimerReviewDrawer })));
+const SessionEditorDrawer = lazy(() => import("./StudySessionDrawers").then((module) => ({ default: module.SessionEditorDrawer })));
 
 const BASE_TITLE = "StudyOS";
 
@@ -53,9 +57,11 @@ export function StudyTimerWatcher() {
     skipBreak,
     setTimerReviewOpen,
     restoreStudyTimer,
-    restoreSession
+    restoreSession,
+    reviewWanted
   } = useStudyStore(
     useShallow((state) => ({
+      reviewWanted: state.timerReview && state.timer.ended === true,
       timer: state.timer,
       subjects: state.subjects,
       loading: state.loading,
@@ -74,6 +80,11 @@ export function StudyTimerWatcher() {
   const now = useNow(1000, timer.running).getTime();
   const [alert, setAlert] = useState<TimerAlert | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Una volta caricati restano montati: servono per l'animazione di chiusura e per i doppi tocchi.
+  const [reviewMounted, setReviewMounted] = useState(false);
+  const [editorMounted, setEditorMounted] = useState(false);
+  if (reviewWanted && !reviewMounted) setReviewMounted(true);
+  if (editingId && !editorMounted) setEditorMounted(true);
   const remaining = timerRemainingSeconds(timer, now);
   const elapsed = timerElapsedSeconds(timer, now);
   // Pomodoro e Timer contano alla rovescia: a zero si chiude la fase.
@@ -98,12 +109,22 @@ export function StudyTimerWatcher() {
   );
 
   // Un'altra scheda ha cambiato il timer: si allinea subito (niente doppio salvataggio dei blocchi).
+  // Anche tornando sulla scheda (o dalla cache del browser): l'evento "storage" può essersi perso.
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key === TIMER_STORAGE_KEY) reloadStudyTimer();
     };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadStudyTimer();
+    };
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    window.addEventListener("pageshow", reloadStudyTimer);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("pageshow", reloadStudyTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [reloadStudyTimer]);
 
   // Il suono si può usare solo dopo un gesto: il primo tocco o tasto nell'app lo sblocca.
@@ -202,15 +223,15 @@ export function StudyTimerWatcher() {
       }
     });
   };
-  const onSessionDeleted = (session: StudySession) => {
-    setAlert({ title: SESSION_FORM_TEXT.deleted(session.title), icon: "Trash2", autoClose: true, undo: () => void restoreSession(session) });
+  const onSessionDeleted = (session: StudySession, links: SessionLinks) => {
+    setAlert({ title: SESSION_FORM_TEXT.deleted(session.title), icon: "Trash2", autoClose: true, undo: () => void restoreSession(session, links) });
   };
 
   const drawers = (
-    <>
-      <TimerReviewDrawer onSaved={onReviewSaved} onDiscarded={onReviewDiscarded} />
-      <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onDeleted={onSessionDeleted} />
-    </>
+    <Suspense fallback={null}>
+      {reviewMounted ? <TimerReviewDrawer onSaved={onReviewSaved} onDiscarded={onReviewDiscarded} /> : null}
+      {editorMounted ? <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onDeleted={onSessionDeleted} /> : null}
+    </Suspense>
   );
 
   if (!alert) return drawers;

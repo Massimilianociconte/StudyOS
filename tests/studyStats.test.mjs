@@ -321,3 +321,39 @@ test("countInRange: attività completate e ripassi nel periodo scelto", () => {
   const dates = [local(2026, 11, 9, 0).toISOString(), local(2026, 11, 15, 23, 59).toISOString(), local(2026, 11, 16).toISOString(), undefined, "rotto"];
   assert.equal(countInRange(dates, range), 2);
 });
+
+test("recentTrend e studyTotals: 23:30 e 00:30 nei giorni del cambio d'ora (Roma 25/10, New York 1/11) restano nel giorno giusto", () => {
+  // Date locali: vale in qualunque fuso con cui girano i test (Europe/Rome, America/New_York, UTC).
+  const list = [
+    session(local(2026, 10, 24, 23, 30), 10),
+    session(local(2026, 10, 25, 0, 30), 15),
+    session(local(2026, 10, 25, 23, 30), 5),
+    session(local(2026, 10, 26, 0, 30), 7),
+    session(local(2026, 10, 31, 23, 30), 20),
+    session(local(2026, 11, 1, 0, 30), 25),
+    session(local(2026, 11, 1, 23, 30), 30),
+    session(local(2026, 11, 2, 0, 30), 40)
+  ];
+  const now = local(2026, 11, 2, 12);
+  const days = recentTrend(list, "day", now);
+  // Un secchio per giorno di calendario, senza buchi né doppioni anche nei giorni di 23 o 25 ore.
+  const labels = days.map((bucket) => day(bucket.start));
+  assert.equal(labels[0], "2026-10-20");
+  assert.equal(labels.at(-1), "2026-11-02");
+  assert.equal(new Set(labels).size, 14);
+  const byDay = Object.fromEntries(days.map((bucket) => [day(bucket.start), bucket.minutes]));
+  assert.deepEqual(
+    ["2026-10-24", "2026-10-25", "2026-10-26", "2026-10-31", "2026-11-01", "2026-11-02"].map((key) => byDay[key]),
+    [10, 20, 7, 20, 55, 40]
+  );
+  for (const bucket of days) assert.equal(bucket.start.getHours(), 0, `${day(bucket.start)} inizia a mezzanotte`);
+  const weeks = recentTrend(list, "week", now);
+  assert.deepEqual(weeks.slice(-3).map((bucket) => [day(bucket.start), bucket.minutes]), [
+    ["2026-10-19", 30],
+    ["2026-10-26", 82],
+    ["2026-11-02", 40]
+  ]);
+  assert.equal(days.reduce((sum, bucket) => sum + bucket.minutes, 0), 152, "ogni sessione contata una volta");
+  const totals = studyTotals(list, local(2026, 11, 1, 12));
+  assert.equal(totals.today, 55, "il 1° novembre: 00:30 e 23:30");
+});

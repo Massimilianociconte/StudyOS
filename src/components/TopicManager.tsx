@@ -64,7 +64,7 @@ export function TopicManager({
 
       {!subjectId && (filterSubjects.length > 1 || filter) ? (
         <div className="flex min-w-0 items-center gap-2">
-          <select className={`${inputClass} min-h-10 min-w-0 flex-1`} value={filter} onChange={(event) => setFilter(event.target.value)} aria-label={TOPIC_FILTER_TEXT.aria}>
+          <select className={`${inputClass} min-h-11 min-w-0 flex-1`} value={filter} onChange={(event) => setFilter(event.target.value)} aria-label={TOPIC_FILTER_TEXT.aria}>
             <option value="">{TOPIC_FILTER_TEXT.all(live.length)}</option>
             {filterSubjects.map((subject) => (
               <option key={subject.id} value={subject.id}>
@@ -73,7 +73,7 @@ export function TopicManager({
             ))}
           </select>
           {filter ? (
-            <button type="button" onClick={() => setFilter("")} className="min-h-10 shrink-0 px-2 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline">
+            <button type="button" onClick={() => setFilter("")} className="min-h-11 shrink-0 px-2 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline">
               {TOPIC_FILTER_TEXT.showAll}
             </button>
           ) : null}

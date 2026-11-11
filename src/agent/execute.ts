@@ -150,7 +150,9 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
       case "studyos_update_session":
         return updateSession(args);
       case "studyos_delete_session":
-        return remove("sessions", text(args.id), "Sessione non trovata.", () => state().deleteSession(text(args.id)));
+        return remove("sessions", text(args.id), "Sessione non trovata.", async () => {
+          await state().deleteSession(text(args.id));
+        });
       case "studyos_list_topics":
         return listTopics(args);
       case "studyos_add_topics":
