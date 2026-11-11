@@ -28,7 +28,8 @@ SUPABASE_URL=http://127.0.0.1:55421 SUPABASE_KEY=<ANON_KEY o PUBLISHABLE_KEY di 
 `people-check.mjs` usa anche `psql` (inviti vecchi per email, segreti in Vault, rilancio di
 `people.sql`) e avvia un Worker finto su `127.0.0.1:55428`: pg_net, dentro il container del
 database, lo raggiunge come `host.docker.internal:55428`. I segreti di prova restano in Vault
-dello stack locale; il Worker finto si chiude alla fine dello script.
+dello stack locale; il Worker finto si chiude alla fine dello script. Tra due esecuzioni di
+`people-check.mjs` aspetta più di un minuto: le prove sui limiti per IP usano IP fissi.
 
 Per l'app su due origini non creare `.env.local` (un file dimenticato punterebbe ogni
 `npm run dev` allo stack locale): passa le variabili in linea, una per origine.

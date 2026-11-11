@@ -243,12 +243,76 @@ Prova automatica sullo stack locale (porte 5542x, mai lo stack di altri progetti
 `scripts/supabase/local-stack.md` e `scripts/supabase/sharing-check.mjs`, che si rifiuta di
 girare fuori da localhost.
 
+## Persone, inviti all'account e notifiche push (`people.sql`)
+
+Serve `supabase/people.sql`, eseguito dopo `schema.sql`, `groups.sql` e `sharing.sql`. Decisione
+sulle push: [ADR](agent/decisions/2026-11-11-push-pg-net-worker.md); design:
+[spec](plans/2026-11-11-people-search-push-design.md).
+
+**Ordine di pubblicazione:** esegui `people.sql` sul progetto reale **prima** di pubblicare il
+nuovo client. Da questa versione il client legge `recipient_user_id`: senza la colonna la
+sincronizzazione dei gruppi si ferma.
+
+- **Conferma email spenta.** Dall'11/11/2026 gli account nuovi sono attivi alla registrazione:
+  l'email non è una prova di identità (chiunque può registrarsi con l'indirizzo di un altro; il
+  vero proprietario può solo riprenderlo con il recupero password). Perciò **nessun invito si
+  accetta in base all'email**: gli inviti in app (`invite_person_to_group`,
+  `invite_person_to_share`) hanno `recipient_user_id` e solo `auth.uid()` può accettarli o
+  rifiutarli. `create_share_invite` non crea più inviti per email; link, QR e codice restano.
+  Gli inviti per email già pendenti si legano una volta sola all'account con quell'indirizzo
+  (migrazione di `people.sql`); gli altri non sono accettabili e il mittente li vede "Scaduto".
+- **Profilo**: `studyos_profiles` (nome visibile, `@nome` facoltativo, unico, minuscolo,
+  `^[a-z0-9_.]{3,24}$`, interruttore «Gli altri possono trovarmi», acceso di default). RLS: ognuno
+  vede e modifica solo la propria riga. Una riga mancante vale «trovabile, senza nome né `@nome`».
+- **Ricerca**: `find_person` solo per email esatta o `@nome`, mai sé stessi, mai l'email nel
+  risultato; un account non trovabile e uno inesistente danno la stessa risposta. Limiti: 30
+  ricerche al minuto per account e 60 per indirizzo IP (`studyos_person_lookups`, senza policy).
+- **Notifiche push**: iscrizioni in `studyos_push_subscriptions` (RLS sulle proprie righe).
+  Trigger `AFTER` su inviti, accettazioni, ingressi nei gruppi e permessi chiamano
+  `studyos_push_notify`, che raccoglie le iscrizioni dei destinatari (mai di chi ha compiuto
+  l'azione) e con `pg_net` fa `POST` al Worker `/push` con l'intestazione
+  `x-studyos-push-secret`, in lotti di al massimo 40 iscrizioni (il Worker ne accetta al massimo
+  49 per richiesta: 49 push più una `push_gone` sono 50 sottorichieste sul piano Free). Segreto e
+  URL stanno in Vault (`studyos_push_secret`, `studyos_push_url`). Senza `pg_net` o senza segreti
+  non succede nulla e la scrittura che ha fatto scattare il trigger riesce lo stesso. Per chi
+  compie l'azione `studyos_push_notify` manda al massimo 30 notifiche all'ora (tabella
+  `studyos_push_sends`, le righe più vecchie di un'ora si cancellano): oltre salta la push in
+  silenzio e non blocca mai la scrittura, e gli avvisi in app arrivano comunque; serve a non
+  inondare qualcuno di push con inviti e annullamenti, o cambi di permessi, ripetuti. Il Worker
+  invia la notifica cifrata (RFC 8291, VAPID RFC 8292) e segnala con `push_gone` gli endpoint
+  spenti, che il database cancella.
+- **Client**: iscrizione e permesso solo dopo un tocco («Notifiche su questo dispositivo» in
+  Impostazioni → Profilo, o la proposta dopo il primo invito ricevuto); `src/lib/push.ts` si
+  carica con `import()`. Toccare la notifica apre `?apri=notifiche`, `?apri=condivisione` o
+  `?apri=gruppi`. Su iPhone e iPad le push funzionano solo con StudyOS aggiunto alla schermata Home.
+  Su un dispositivo condiviso, all'accesso l'iscrizione push lasciata da un altro account viene
+  tolta dal browser, così le notifiche di un altro account non continuano ad arrivare.
+- **Agenti MCP**: nessuno strumento nuovo; non ricevono email, `@nome` cercati né iscrizioni push.
+
+Prova automatica sullo stack locale: `scripts/supabase/local-stack.md` e
+`scripts/supabase/people-check.mjs` (ricerca esatta, non trovabile = inesistente, limiti, inviti
+solo al destinatario, email rifiutate, migrazione, trigger push verso un Worker finto).
+
 ## Limiti noti
 
 - I file condivisi sono riferimenti (nome come testo): nessun bucket Storage.
 - La proprietà non si trasferisce: il proprietario può solo eliminare il gruppo.
-- Le notifiche push/email non esistono: gli inviti arrivano nel pannello
-  Notifiche all'apertura dell'app (realtime se aperta) e via link/email manuale.
+- Le notifiche email non esistono. Le push funzionano solo con `people.sql`, `pg_net`, i
+  segreti in Vault e il Worker distribuito (vedi sopra); senza, gli inviti arrivano comunque
+  nel pannello Notifiche all'apertura dell'app (realtime se aperta) e via link, QR o codice.
+- Push: il servizio push può non consegnare (dispositivo spento da giorni, TTL di 24 ore):
+  l'avviso resta nella campanella. Un cambio della chiave VAPID invalida tutte le iscrizioni:
+  chi le aveva attivate si reiscrive al primo avvio, gli altri riattivano l'interruttore.
+- Il Worker invia a qualunque endpoint https salvato come iscrizione (nessun elenco dei servizi
+  push ammessi): lo limita il tetto di notifiche per chi agisce.
+- Se un `@nome` è già preso si può sapere anche salvando direttamente il profilo (vincolo di
+  unicità), non solo con `is_handle_available`.
+- Il tempo di CPU di un lotto grande di push sul piano Free dei Worker (10 ms) non è stato
+  misurato: controllalo con `wrangler tail` dopo il deploy.
+- I membri di un gruppo leggono l'email dell'account di ogni membro in `studyos_group_members`
+  (già così prima): chi è invitato per `@nome` rivela la propria email al gruppo quando accetta.
+- L'avviso una tantum (`peopleNoticeSeen`) si ricorda per dispositivo, quindi può comparire una
+  volta su ciascun dispositivo.
 - Enforce MFA/SSO: invariato rispetto a `schema.sql`.
 - Condivisione, limiti noti: il logout scarta le modifiche a dati altrui non ancora inviate;
   dopo lo sblocco con la password dell'app la prima sync non mostra le notifiche di

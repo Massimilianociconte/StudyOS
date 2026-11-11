@@ -229,3 +229,19 @@ corpo del trigger. Provato sullo stack locale: un `DELETE` vero non arriva mai s
 filtrato per proprietario. Verifiche: 249 test, lint, build, SQL due volte e verifica, 121 controlli,
 prova nel browser dell'annullamento (riepilogo cambiato tra controllo e conferma, elementi lasciati
 com'erano) e del ripristino di un obiettivo eliminato.
+
+Ricerca di persone, inviti all'account e notifiche push (11 novembre 2026): la conferma email è
+spenta sul progetto reale (account attivi alla registrazione), quindi nessun invito si accetta
+più per email. Chi ha un account si trova con l'email esatta o con `@nome` (profilo trovabile di
+default, si spegne in Impostazioni → Profilo) e si invita in un gruppo o a vedere i propri dati;
+l'invito è legato all'account del destinatario, che lo vede in Notifiche e lo accetta con un
+tocco. Link, QR e codice restano per chi non ha un account; gli inviti per email già pendenti
+vengono legati una volta sola o risultano "Scaduto". Notifiche push (browser, Android, iPhone e
+iPad con l'app nella schermata Home) per invito ricevuto, invito accettato e permesso cambiato:
+trigger SQL → `pg_net` → Worker `studyos-agent` `/push` (cifratura RFC 8291, VAPID, nessuna
+`service_role`) → servizio push → service worker; il permesso del browser si chiede solo dopo
+un tocco e toccare la notifica apre la pagina giusta (`?apri=`). Agenti MCP invariati (nessuno
+strumento nuovo). Sul progetto reale: rieseguire `groups.sql`, `sharing.sql` e `people.sql`
+(prima di pubblicare il nuovo client, che legge `recipient_user_id`), poi `people-verify.sql`;
+abilitare `pg_net`; `node scripts/push-keys.mjs`; segreti in Vault; quattro `wrangler secret put`
+e `wrangler deploy`; push su `main`.

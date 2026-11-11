@@ -38,7 +38,17 @@ Ordine esatto nel SQL Editor, una query alla volta:
 1. `schema.sql` (la prima volta o dopo una sua revisione);
 2. `groups.sql`;
 3. `sharing.sql`;
-4. `sharing-verify.sql`.
+4. `sharing-verify.sql`;
+5. `people.sql`;
+6. `people-verify.sql`.
+
+Dopo l'11/11/2026 **rieseguili tutti e tre** (`groups.sql`, `sharing.sql`, `people.sql`):
+`groups.sql` e `sharing.sql` contengono ora le stesse regole di `people.sql` sull'accettazione
+degli inviti, così rieseguirne uno non riapre l'accettazione per email.
+
+**Ordine di pubblicazione:** esegui `people.sql` sul progetto reale **prima** di pubblicare il
+nuovo client. Da questa versione il client legge `recipient_user_id`: senza la colonna la
+sincronizzazione dei gruppi si ferma.
 
 `sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
 dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha
@@ -53,6 +63,49 @@ resto dell'app non cambia. I link di invito usano `#condividi=` (e `?condividi=`
 conferma email): la regola `https://massimilianociconte.github.io/StudyOS/**` tra i
 Redirect URLs copre anche questi. Dettagli in
 [docs/groups-sync.md](../docs/groups-sync.md#condivisione-dei-propri-dati-sharingsql).
+
+`people.sql` (ricerca di persone, inviti legati all'account e notifiche push, opzionale) va
+eseguito dopo `schema.sql`, `groups.sql` e `sharing.sql`, come un unico script, e si può
+rieseguire. Poi incolla [people-verify.sql](people-verify.sql) in una nuova query: tutte le
+colonne `*_ready` devono essere `true`; quelle su `pg_net` e sui segreti restano `false` finché
+non fai i passi qui sotto, e in quel caso l'app funziona lo stesso, solo senza notifiche push.
+Dettagli in [docs/groups-sync.md](../docs/groups-sync.md#persone-inviti-allaccount-e-notifiche-push-peoplesql).
+
+**Conferma email spenta (11/11/2026).** Sul progetto reale, in **Authentication → Sign In /
+Providers → Email**, «Confirm email» è disattivato: un account nuovo è attivo subito. L'email
+non prova più chi sei, quindi nessun invito si accetta in base all'email: gli inviti in app
+vanno a un account trovato con la ricerca e solo quell'account può accettarli. Non riattivare
+«Confirm email» senza rileggere [docs/plans/2026-11-11-people-search-push-design.md](../docs/plans/2026-11-11-people-search-push-design.md).
+
+**Notifiche push: `pg_net`, chiavi, Vault e Worker.** Il database avvisa il Worker
+`studyos-agent` con `pg_net`; il Worker cifra e invia la notifica. Nessuna `service_role`.
+Per ogni persona che agisce il database manda al massimo 30 notifiche all'ora (tabella
+`studyos_push_sends`): oltre, salta la push senza errori e senza bloccare la scrittura; gli
+avvisi nella campanella arrivano comunque.
+
+1. **pg_net**: Dashboard → **Database → Extensions** → cerca `pg_net` → **Enable**.
+2. **Chiavi**: nella cartella del progetto lancia `node scripts/push-keys.mjs`. Genera la coppia
+   VAPID e il segreto condiviso; la chiave pubblica sta in `src/lib/pushKeys.ts` (è pubblica,
+   si committa), la privata e il segreto non vanno mai in un file del repository.
+3. **Vault** (SQL Editor, una volta; se un segreto esiste già, vedi sotto):
+
+```sql
+select vault.create_secret('<SEGRETO stampato da push-keys.mjs>', 'studyos_push_secret');
+select vault.create_secret('https://studyos-agent.nexify-api.workers.dev/push', 'studyos_push_url');
+```
+
+   Per cambiare un valore esistente:
+
+```sql
+select vault.update_secret((select id from vault.secrets where name = 'studyos_push_secret'), '<nuovo segreto>');
+```
+
+4. **Worker**: quattro secret e un deploy (vedi [docs/agent-mcp.md](../docs/agent-mcp.md#notifiche-push-route-push-del-worker)).
+5. Ripeti `people-verify.sql`: ora anche le colonne su `pg_net` e sui segreti devono essere `true`.
+
+Il segreto del Vault e `STUDYOS_PUSH_SECRET` del Worker devono essere lo stesso valore. Se una
+push non arriva: `select id, status_code, left(content, 120) from net._http_response order by id desc limit 5;`
+mostra le ultime risposte del Worker (401 = segreti diversi, 404 = URL sbagliato in Vault).
 
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.

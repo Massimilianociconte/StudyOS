@@ -55,7 +55,7 @@ Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
 salvo una policy impostata da te su «Consenti».
 
 Non sono esposti il vault, il reset, l'import di backup, l'ingresso nei gruppi,
-i codici di invito, gli inviti alla condivisione (creazione, link, accettazione) e il caricamento di file. Le risposte non includono file,
+i codici di invito, gli inviti alla condivisione (creazione, link, accettazione), la ricerca di persone, le iscrizioni push e il caricamento di file. Le risposte non includono file,
 foto, email dei membri o passphrase. Le note si possono leggere e scrivere, ma
 non hanno ancora una schermata dedicata nell'app.
 
@@ -192,12 +192,40 @@ includere quell'origine esatta: `https://*.workers.dev` non copre un nome con
 due etichette. Dopo una modifica alla CSP serve una nuova build, pubblicata
 dal workflow su `main`.
 
+## Notifiche push: route `/push` del Worker
+
+Lo stesso Worker `studyos-agent` espone `POST /push`: non è uno strumento MCP e gli agenti non
+lo vedono. Lo chiama solo il database (`pg_net`) con l'intestazione `x-studyos-push-secret`; il
+Worker cifra e invia le notifiche push e non legge né scrive altro. Accetta al massimo 49
+iscrizioni per richiesta (49 push più una `push_gone` sono 50 sottorichieste sul piano Free);
+il database ne manda al massimo 40 per volta. Servono quattro secret, da
+impostare una volta (ognuno dopo il via dell'utente; `wrangler` chiede il valore a terminale,
+mai nella riga di comando):
+
+```bash
+npx wrangler secret put STUDYOS_PUSH_SECRET -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_VAPID_PRIVATE_KEY -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_SUPABASE_URL -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_SUPABASE_KEY -c worker/wrangler.jsonc
+npx wrangler deploy -c worker/wrangler.jsonc
+```
+
+- `STUDYOS_PUSH_SECRET`: lo stesso valore del segreto `studyos_push_secret` in Vault.
+- `STUDYOS_VAPID_PRIVATE_KEY`: la chiave privata stampata da `node scripts/push-keys.mjs`
+  (la pubblica sta in `src/lib/pushKeys.ts`).
+- `STUDYOS_SUPABASE_URL` e `STUDYOS_SUPABASE_KEY`: URL del progetto e chiave publishable
+  (`sb_publishable_…`), usate solo per chiamare `push_gone`. Mai `service_role`. Se mancano, la
+  pulizia degli endpoint spenti si salta e le notifiche partono lo stesso.
+
+I secret `STUDYOS_PAIR_KEY` e lo stato del Durable Object non cambiano. Il Worker registra solo
+i conteggi `{ sent, gone }`, mai contenuti o endpoint.
+
 ## Ripubblicare dopo una modifica
 
 1. Verifica: `npm test`, `npm run lint`, `npm run build`.
 2. Hub: `npx wrangler deploy -c worker/wrangler.jsonc` (la prima volta
-   `npx wrangler login`). Il secret `STUDYOS_PAIR_KEY` e lo stato del Durable
-   Object restano: client OAuth e collegamento del browser non cambiano.
+   `npx wrangler login`). I secret (`STUDYOS_PAIR_KEY` e quelli delle push) e lo stato
+   del Durable Object restano: client OAuth e collegamento del browser non cambiano.
 3. Sito: push su `main`. Il workflow Pages costruisce con
    `VITE_AGENT_HUB_ORIGIN` delle variabili Actions.
 4. Ricarica la scheda del sito pubblicato collegata: è lei a eseguire gli
