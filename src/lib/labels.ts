@@ -168,6 +168,60 @@ export const TASKS_HELP = {
   }
 } as const;
 
+const daysText = (count: number) => `${count} ${count === 1 ? "giorno" : "giorni"}`;
+
+export const SUBJECTS_TEXT = {
+  /** "3 materie in corso · 21 CFU (1° semestre 15 CFU · 2° semestre 6 CFU)". */
+  subtitle: (count: number, cfu: number, bySemester: string) =>
+    `${count} ${count === 1 ? "materia in corso" : "materie in corso"} · ${cfu} CFU${bySemester ? ` (${bySemester})` : ""}. Tocca una materia per vederne esami, materiali e argomenti.`,
+  subtitleEmpty: "Aggiungi le materie che segui: ognuna raccoglie esami, attività, materiali e ore di studio.",
+  semesterFilter: "Filtra le materie per semestre",
+  allSemesters: "Tutte",
+  add: "Aggiungi materia",
+  nameField: "Nome della nuova materia",
+  namePlaceholder: "Nome della materia (Es. Biochimica)",
+  chooseFromCourse: "Scegli dal corso di laurea",
+  typeName: "Scrivi il nome",
+  emptyTitle: "Ancora nessuna materia",
+  emptyBodyCourse: "Scegli le materie dal piano del tuo corso di laurea, oppure scrivi il nome qui sopra. Es.: «Biochimica».",
+  emptyBody: "Scrivi il nome qui sopra e premi «Aggiungi materia»: qui vedrai CFU, esami e ore di studio. Es.: «Biochimica».",
+  noneInSemesterTitle: "Nessuna materia in questo periodo",
+  noneInSemesterBody: "Scegli un altro semestre oppure torna a tutte le materie.",
+  showAll: "Mostra tutte le materie",
+  cardMenu: (name: string) => `Azioni per ${name}`,
+  markAs: (status: string) => `Segna come ${status.toLowerCase()}`,
+  restore: "Ripristina",
+  restoreSubject: "Ripristina materia",
+  archiveSubject: "Archivia materia",
+  completed: "Superate",
+  archivedGroup: "Archiviate",
+  days: daysText,
+  /** Pillola dell'esame sulla scheda: "12 dic · 30 giorni". */
+  examPill: (date: string, count: number) => `${date} · ${daysText(count)}`,
+  openExam: (name: string) => `Apri l'esame di ${name}`,
+  examIn: "Esame tra",
+  openTask: (title: string) => `Apri l'attività «${title}»`,
+  allTasks: "Vedi le attività della materia",
+  noTasks: "Nessuna attività da fare per questa materia."
+} as const;
+
+export const SUBJECTS_HELP = {
+  cfu: {
+    title: "CFU",
+    text: "I crediti dell'esame: dicono quanto pesa.",
+    example: "nella media ponderata un esame da 9 CFU conta più di uno da 6."
+  },
+  archive: {
+    title: "Archivia",
+    text: "La materia sparisce dall'elenco, ma attività, esami e materiali restano. La ritrovi in «Archiviate», da dove puoi anche eliminarla per sempre."
+  },
+  semester: {
+    title: "Semestre",
+    text: "Se la segui in un periodo diverso da quello del piano ufficiale, sceglilo qui.",
+    example: "la recuperi nel secondo semestre."
+  }
+} as const;
+
 export const SESSION_STATUS_LABEL: Record<StudySession["status"], string> = {
   planned: "Pianificata",
   running: "In corso",
