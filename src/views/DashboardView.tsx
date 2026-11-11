@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { format, isSameDay, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
-import type { AppView } from "../types";
+import type { AppView, Subject } from "../types";
+import type { BarbCourse } from "../lib/university/types";
 import { openQuickAdd } from "../lib/quickAdd";
 import { requestSettingsSection } from "../lib/settingsJump";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -34,28 +35,100 @@ import {
   attachmentKind,
   capitalizeFirst,
   formatHours,
-  formatMinutes
+  formatMinutes,
+  HOME_HELP,
+  HOME_TEXT
 } from "../lib/labels";
 import { Icon } from "../components/Icon";
-import { Button, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
-import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
+import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
 import { CourseIcon } from "../components/CourseIcon";
-import { BARB_DATASET } from "../data/university/barb.dataset";
-import { resolveBarbCourse } from "../lib/university/examSessions";
 import { safeCssColor } from "../lib/sharing";
+import { goToView } from "../hooks/useLinkedUiState";
 
+type Help = { title: string; text: string; example?: string };
 
-function PanelHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
+/** Collegamento testuale della Home: uno solo stile, sia nelle intestazioni sia negli stati vuoti. */
+function TextLink({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+    >
+      {children} <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0" />
+    </button>
+  );
+}
+
+function PanelHeader({ title, action, onAction, help }: { title: string; action?: string; onAction?: () => void; help?: Help }) {
   return (
     <div className="mb-3 flex items-center justify-between gap-3">
-      <h3 className="text-lg font-black">{title}</h3>
-      {action && onAction ? (
-        <button type="button" onClick={onAction} className="inline-flex items-center gap-1 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-          {action} <Icon name="ChevronRight" className="h-3.5 w-3.5" />
-        </button>
-      ) : null}
+      <span className="flex min-w-0 items-center gap-1.5">
+        <h3 className="min-w-0 text-lg font-black">{title}</h3>
+        {help ? <HelpTip {...help} /> : null}
+      </span>
+      {action && onAction ? <TextLink onClick={onAction}>{action}</TextLink> : null}
     </div>
   );
+}
+
+/** Riquadro senza dati: una riga e un solo collegamento per aggiungere. */
+function EmptyLine({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-[var(--muted)]">
+      {text} <TextLink onClick={onAction}>{action}</TextLink>
+    </p>
+  );
+}
+
+/** Riga cliccabile: tutte le righe della Home aprono l'elemento, con lo stesso aspetto. */
+const ROW = "motion-safe flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]";
+const RowChevron = () => <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--faint)]" />;
+
+const openTask = (id: string) => goToView("tasks", [["tasks.editing", id, "tab"]]);
+const openExam = (id: string) => goToView("exams", [["exams.editing", id, "tab"]]);
+const openEvent = (id: string) => goToView("calendar", [["calendar.editingEvent", id, "tab"]]);
+const openSubject = (id: string) => goToView("subjects", [["subjects.open", id, "tab"]]);
+const openGoal = (id: string) => goToView("goals", [["goals.open", id, "tab"]]);
+// Il materiale si ritrova cercandolo per nome, con tipo e materia azzerati (altrimenti un filtro lo nasconderebbe).
+const findMaterial = (name: string) =>
+  goToView("materials", [
+    ["materials.query", name, "tab"],
+    ["materials.kind", "all", "device"],
+    ["materials.subject", "", "device"]
+  ]);
+
+type BarbLookup = {
+  course: (subject: Subject) => BarbCourse | null;
+  semester: (subject: Subject) => { label: string; tone: string };
+};
+
+/**
+ * Catalogo dei corsi (icone e semestri) caricato a parte con `import()`: la Home è la prima schermata e
+ * così il suo pacchetto non si porta dietro i dati BARB. Finché non arriva, le materie usano la loro icona.
+ */
+function useBarbLookup(enabled: boolean) {
+  const [lookup, setLookup] = useState<BarbLookup | null>(null);
+  useEffect(() => {
+    if (!enabled || lookup) return;
+    let alive = true;
+    void Promise.all([import("../lib/semesters"), import("../lib/university/examSessions"), import("../data/university/barb.dataset")])
+      .then(([semesters, sessions, data]) => {
+        if (!alive) return;
+        setLookup({
+          course: (subject) => sessions.resolveBarbCourse(subject, data.BARB_DATASET.courses),
+          semester: (subject) => {
+            const id = semesters.subjectSemester(subject, data.BARB_DATASET.courses);
+            return { label: semesters.SEMESTER_LABEL[id], tone: semesters.SEMESTER_TONE[id] };
+          }
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [enabled, lookup]);
+  return lookup;
 }
 
 export function DashboardView() {
@@ -79,6 +152,7 @@ export function DashboardView() {
   const welcomeName = displayName ? displayName.split(/[ @]/).filter(Boolean)[0] : "";
   const recentAttachments = [...attachments].sort((a, b) => b.addedAt.localeCompare(a.addedAt)).slice(0, 4);
   const reviewsDue = dueTopics(topics, now);
+  const barb = useBarbLookup(activeSubjects.length > 0);
 
   const nextExamDays = nextExams[0] ? studyDaysUntil(nextExams[0].date) : 0;
   const stats = [
@@ -179,17 +253,16 @@ export function DashboardView() {
         <div className="grid grid-cols-1 min-w-0 content-start gap-4">
           <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
             <Panel>
-              <PanelHeader title="Oggi" action="Apri calendario" onAction={() => setActiveView("calendar")} />
+              <PanelHeader title="Oggi" action={HOME_TEXT.openCalendar} onAction={() => setActiveView("calendar")} />
               {today.length || todayTasks.length || reviewsDue.length ? (
                 <ul className="grid grid-cols-[minmax(0,1fr)] gap-1">
                   {today.map((event) => (
                     <li key={event.occurrenceKey}>
                       <button
                         type="button"
-                        onClick={() => setActiveView("calendar")}
-                        className={`flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)] ${
-                          parseISO(event.end) < now ? "opacity-55" : ""
-                        }`}
+                        onClick={() => openEvent(event.id)}
+                        aria-label={`${event.title}: ${HOME_TEXT.openEvent(event.title)}`}
+                        className={`${ROW} ${parseISO(event.end) < now ? "opacity-55" : ""}`}
                       >
                         {isAllDayEvent(event) ? (
                           <span className="w-11 shrink-0 text-center text-xs font-black text-[var(--faint)]" title={ALL_DAY_LABEL} aria-hidden="true">
@@ -206,11 +279,12 @@ export function DashboardView() {
                             {event.subjectId ? subjectName(subjects, event.subjectId) : EVENT_CATEGORY_LABEL[event.category]}
                           </span>
                         </span>
+                        <RowChevron />
                       </button>
                     </li>
                   ))}
                   {todayTasks.map((task) => (
-                    <li key={task.id} className="flex min-w-0 items-center gap-3 rounded-[16px] px-2 py-1.5">
+                    <li key={task.id} className="flex min-w-0 items-center gap-1 rounded-[16px] px-2">
                       <button
                         type="button"
                         onClick={() => void toggleTask(task.id)}
@@ -221,53 +295,55 @@ export function DashboardView() {
                       >
                         {task.status === "done" ? <Icon name="Check" className="h-3 w-3" /> : null}
                       </button>
-                      <span className={`one-line-safe min-w-0 flex-1 pl-3 text-sm font-bold ${task.status === "done" ? "text-[var(--faint)] line-through" : ""}`}>
-                        {task.title}
-                      </span>
-                      <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-black text-[var(--muted)]">
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
-                        {PRIORITY_LABEL[task.priority]}
-                      </span>
+                      <button type="button" onClick={() => openTask(task.id)} aria-label={`${task.title}: ${HOME_TEXT.openTask(task.title)}`} className={`${ROW} ml-2 flex-1 pl-3`}>
+                        <span className={`one-line-safe min-w-0 flex-1 text-sm font-bold ${task.status === "done" ? "text-[var(--faint)] line-through" : ""}`}>
+                          {task.title}
+                        </span>
+                        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-black text-[var(--muted)]">
+                          <span className="h-1.5 w-1.5 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
+                          {PRIORITY_LABEL[task.priority]}
+                        </span>
+                        <RowChevron />
+                      </button>
                     </li>
                   ))}
                   {reviewsDue.length ? (
                     <li>
-                      <button
-                        type="button"
-                        onClick={() => setActiveView("study")}
-                        className="flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]"
-                      >
-                        <span className="grid w-11 shrink-0 place-items-center">
+                      <button type="button" onClick={() => goToView("study", [["study.topicsOpen", true, "tab"]])} className={ROW}>
+                        <span className="grid w-11 shrink-0 grid-cols-1 place-items-center">
                           <Icon name="Brain" className="h-4 w-4 text-[var(--accent-ink)]" />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="one-line-safe block text-sm font-extrabold">
-                            {reviewsDue.length} {reviewsDue.length === 1 ? "argomento da ripassare" : "argomenti da ripassare"}
+                            {HOME_TEXT.reviews(reviewsDue.length)}
                           </span>
                           <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
                             {reviewsDue.slice(0, 3).map((topic) => topic.title).join(" · ")}
                           </span>
                         </span>
-                        <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--faint)]" />
+                        <RowChevron />
                       </button>
                     </li>
                   ) : null}
                 </ul>
               ) : (
-                <p className="rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm font-bold text-[var(--muted)]">
-                  Niente in programma oggi.{" "}
-                  <button type="button" onClick={() => openQuickAdd("event")} className="font-black text-[var(--accent-ink)] hover:underline">
-                    Aggiungi un impegno →
-                  </button>
-                </p>
+                <EmptyLine text={HOME_TEXT.emptyToday} action={HOME_TEXT.addEvent} onAction={() => openQuickAdd("event")} />
               )}
             </Panel>
 
             <Panel>
-              <PanelHeader title="Cosa fare adesso" action="Tutte le attività" onAction={() => setActiveView("tasks")} />
+              <PanelHeader title="Cosa fare adesso" action={HOME_TEXT.allTasks} onAction={() => setActiveView("tasks")} help={HOME_HELP.next} />
               {nextTask ? (
                 <div>
-                  <p className="two-line-safe text-xl font-black leading-tight">{nextTask.title}</p>
+                  <button
+                    type="button"
+                    onClick={() => openTask(nextTask.id)}
+                    aria-label={`${nextTask.title}: ${HOME_TEXT.openTask(nextTask.title)}`}
+                    className="motion-safe -mx-2 flex w-[calc(100%+1rem)] min-w-0 items-start gap-2 rounded-[16px] px-2 py-1 text-left hover:bg-[var(--surface-soft)]"
+                  >
+                    <span className="two-line-safe min-w-0 flex-1 text-xl font-black leading-tight">{nextTask.title}</span>
+                    <Icon name="ChevronRight" className="mt-1 h-4 w-4 shrink-0 text-[var(--faint)]" />
+                  </button>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <Tag color={PRIORITY_TONE[nextTask.priority]}>{PRIORITY_LABEL[nextTask.priority]}</Tag>
                     {nextTask.dueDate ? (
@@ -277,184 +353,179 @@ export function DashboardView() {
                     ) : null}
                     {nextTask.subjectId ? <Tag color={subjectColor(subjects, nextTask.subjectId)}>{subjectName(subjects, nextTask.subjectId)}</Tag> : null}
                   </div>
-                  <p className="mt-2 text-xs font-bold text-[var(--muted)]">
-                    {formatMinutes(nextTask.estimatedMinutes)} · {ENERGY_LABEL[nextTask.energy]} · Importanza {nextTask.importance}/5
+                  <p className="mt-2 flex flex-wrap items-center gap-x-1 text-xs font-bold text-[var(--muted)]">
+                    {formatMinutes(nextTask.estimatedMinutes)} · {ENERGY_LABEL[nextTask.energy]} · {HOME_TEXT.importance(nextTask.importance)}
+                    <span className="-my-1 inline-flex">
+                      <HelpTip {...HOME_HELP.effort} />
+                    </span>
                   </p>
                   {urgent.length > 1 ? (
-                    <ul className="mt-3 grid gap-1 border-t border-[var(--border)] pt-3">
+                    <ul className="mt-3 grid grid-cols-1 gap-0.5 border-t border-[var(--border)] pt-2">
                       {urgent.slice(1).map((task) => (
-                        <li key={task.id} className="flex min-w-0 items-center gap-2 text-sm">
-                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
-                          <span className="one-line-safe min-w-0 flex-1 font-bold">{task.title}</span>
-                          {task.dueDate ? <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{shortDate(task.dueDate)}</span> : null}
+                        <li key={task.id}>
+                          <button type="button" onClick={() => openTask(task.id)} aria-label={`${task.title}: ${HOME_TEXT.openTask(task.title)}`} className={`${ROW} gap-2 py-1.5 text-sm`}>
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
+                            <span className="one-line-safe min-w-0 flex-1 font-bold">{task.title}</span>
+                            {task.dueDate ? <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{shortDate(task.dueDate)}</span> : null}
+                            <RowChevron />
+                          </button>
                         </li>
                       ))}
                     </ul>
                   ) : null}
                 </div>
               ) : (
-                <p className="text-sm text-[var(--muted)]">
-                  Qui comparirà la cosa più urgente da fare.{" "}
-                  <button type="button" onClick={() => openQuickAdd("task")} className="font-black text-[var(--accent-ink)] hover:underline">
-                    Aggiungi un'attività →
-                  </button>
-                </p>
+                <EmptyLine text={HOME_TEXT.emptyNext} action={HOME_TEXT.addTask} onAction={() => openQuickAdd("task")} />
               )}
             </Panel>
           </div>
 
           <Panel>
-            <PanelHeader title="Esami in arrivo" action="Tutti gli esami" onAction={() => setActiveView("exams")} />
+            <PanelHeader title="Esami in arrivo" action={HOME_TEXT.allExams} onAction={() => setActiveView("exams")} help={HOME_HELP.preparation} />
             {nextExams.length ? (
               <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {nextExams.map((exam) => {
                   const color = subjectColor(subjects, exam.subjectId);
                   const days = studyDaysUntil(exam.date);
                   return (
-                    <li key={exam.id} className="flex min-w-0 items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] p-3">
-                      <div className="grid grid-cols-1 w-14 shrink-0 place-items-center rounded-[14px] py-1.5 text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
-                        <span className="text-xl font-black leading-none tabular-nums">{days}</span>
-                        <span className="text-[10px] font-black uppercase text-[var(--muted)]">{days === 1 ? "giorno" : "giorni"}</span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="two-line-safe text-sm font-black leading-tight">{subjectName(subjects, exam.subjectId)}</p>
-                        <p className="text-xs font-bold text-[var(--muted)]">
-                          {capitalizeFirst(format(parseISO(exam.date), "EEE d MMM", { locale: it }))} · preparazione {exam.preparation}%
-                        </p>
-                        <div className="mt-1.5">
-                          <ProgressBar value={exam.preparation} color={color} />
-                        </div>
-                      </div>
+                    <li key={exam.id}>
+                      <button
+                        type="button"
+                        onClick={() => openExam(exam.id)}
+                        aria-label={`${subjectName(subjects, exam.subjectId)}: ${HOME_TEXT.openExam(subjectName(subjects, exam.subjectId))}`}
+                        className="motion-safe flex w-full min-w-0 items-center gap-3 rounded-[18px] border border-transparent bg-[var(--surface-soft)] p-3 text-left hover:border-[var(--border)] hover:bg-[var(--surface)]"
+                      >
+                        <span className="grid w-14 shrink-0 grid-cols-1 place-items-center rounded-[14px] py-1.5 text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
+                          <span className="text-xl font-black leading-none tabular-nums">{days}</span>
+                          <span className="text-[10px] font-black uppercase text-[var(--muted)]">{days === 1 ? "giorno" : "giorni"}</span>
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="two-line-safe block text-sm font-black leading-tight">{subjectName(subjects, exam.subjectId)}</span>
+                          <span className="block text-xs font-bold text-[var(--muted)]">
+                            {capitalizeFirst(format(parseISO(exam.date), "EEE d MMM", { locale: it }))} · {HOME_TEXT.preparation(exam.preparation)}
+                          </span>
+                          <span className="mt-1.5 block">
+                            <ProgressBar value={exam.preparation} color={color} />
+                          </span>
+                        </span>
+                        <RowChevron />
+                      </button>
                     </li>
                   );
                 })}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">
-                Nessun esame in programma.{" "}
-                <button type="button" onClick={() => setActiveView("exams")} className="font-black text-[var(--accent-ink)] hover:underline">
-                  Aggiungi il primo →
-                </button>
-              </p>
+              <EmptyLine text={HOME_TEXT.emptyExams} action={HOME_TEXT.addExam} onAction={() => setActiveView("exams")} />
             )}
           </Panel>
 
           <Panel>
-            <PanelHeader title={activeSubjects.length ? `Le tue materie · ${activeSubjects.length}` : "Le tue materie"} action="Tutte le materie" onAction={() => setActiveView("subjects")} />
+            <PanelHeader title={activeSubjects.length ? `Le tue materie · ${activeSubjects.length}` : "Le tue materie"} action={HOME_TEXT.allSubjects} onAction={() => setActiveView("subjects")} />
             {activeSubjects.length ? (
               <ul className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
-                {activeSubjects.map((subject) => (
-                  <li key={subject.id}>
-                    <button
-                      type="button"
-                      onClick={() => setActiveView("subjects")}
-                      className="flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]"
-                    >
-                      <span className="grid grid-cols-1 h-9 w-9 shrink-0 place-items-center rounded-super" style={{ background: subject.color }}>
-                        {resolveBarbCourse(subject, BARB_DATASET.courses) ? <CourseIcon course={resolveBarbCourse(subject, BARB_DATASET.courses)!} className="h-4 w-4 text-[#10131d]" /> : <Icon name={subject.icon} className="h-4 w-4 text-[#10131d]" />}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="one-line-safe block text-sm font-black">{subject.name}</span>
-                        <span className="text-xs font-bold text-[var(--muted)]">
-                          {SUBJECT_STATUS_LABEL[subject.status]} · {subject.cfu} CFU
+                {activeSubjects.map((subject) => {
+                  const course = barb?.course(subject) ?? null;
+                  const semester = barb?.semester(subject);
+                  return (
+                    <li key={subject.id}>
+                      <button type="button" onClick={() => openSubject(subject.id)} aria-label={`${subject.name}: ${HOME_TEXT.openSubject(subject.name)}`} className={ROW}>
+                        <span className="grid h-9 w-9 shrink-0 grid-cols-1 place-items-center rounded-super" style={{ background: safeCssColor(subject.color) || "var(--accent)" }}>
+                          {course ? <CourseIcon course={course} className="h-4 w-4 text-[#10131d]" /> : <Icon name={subject.icon} className="h-4 w-4 text-[#10131d]" />}
                         </span>
-                        <span className="mt-1 block"><Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag></span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
+                        <span className="min-w-0 flex-1">
+                          <span className="one-line-safe block text-sm font-black">{subject.name}</span>
+                          <span className="text-xs font-bold text-[var(--muted)]">
+                            {SUBJECT_STATUS_LABEL[subject.status]} · {subject.cfu} CFU
+                          </span>
+                          {semester ? (
+                            <span className="mt-1 block">
+                              <Tag color={semester.tone}>{semester.label}</Tag>
+                            </span>
+                          ) : null}
+                        </span>
+                        <RowChevron />
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">
-                Nessuna materia in corso.{" "}
-                <button type="button" onClick={() => setActiveView("subjects")} className="font-black text-[var(--accent-ink)] hover:underline">
-                  Aggiungi la prima →
-                </button>
-              </p>
+              <EmptyLine text={HOME_TEXT.emptySubjects} action={HOME_TEXT.addSubject} onAction={() => setActiveView("subjects")} />
             )}
           </Panel>
         </div>
 
         <aside className="grid grid-cols-1 min-w-0 content-start gap-4">
           <Panel>
-            <PanelHeader title="Prossimi giorni" action="Apri calendario" onAction={() => setActiveView("calendar")} />
+            {/* "Apri calendario" c'è già in «Oggi»: qui solo il titolo. */}
+            <PanelHeader title="Prossimi giorni" />
             {nextEvents.length ? (
-              <ul className="grid grid-cols-1 gap-2.5">
+              <ul className="grid grid-cols-1 gap-0.5">
                 {nextEvents.map((event) => (
-                  <li key={event.occurrenceKey} className="flex min-w-0 gap-3">
-                    <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: safeCssColor(event.color) || subjectColor(subjects, event.subjectId) }} />
-                    <div className="min-w-0 flex-1">
-                      <p className="one-line-safe text-sm font-black">{event.title}</p>
-                      <p className="text-xs font-bold text-[var(--muted)]">
-                        {capitalizeFirst(format(parseISO(event.start), "EEE d MMM", { locale: it }))} ·{" "}
-                        {isAllDayEvent(event) ? ALL_DAY_LABEL : timeLabel(event.start)}
-                        {event.category === "deadline" || event.category === "exam" ? ` · ${studyDaysLabel(event.start)}` : ""}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-[var(--muted)]">
-                Niente in programma nei prossimi giorni.{" "}
-                <button type="button" onClick={() => openQuickAdd("event")} className="font-black text-[var(--accent-ink)] hover:underline">
-                  Aggiungi un impegno →
-                </button>
-              </p>
-            )}
-          </Panel>
-
-          <Panel>
-            <PanelHeader title="Obiettivi" action="Tutti gli obiettivi" onAction={() => setActiveView("goals")} />
-            {goals.filter((goal) => goal.status === "active").length ? (
-              <ul className="grid grid-cols-1 gap-3">
-                {goals
-                  .filter((goal) => goal.status === "active")
-                  .slice(0, 3)
-                  .map((goal) => (
-                    <li key={goal.id}>
-                      <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <span className="one-line-safe text-sm font-bold">{goal.title}</span>
-                        <span className="shrink-0 text-xs font-black">{goal.progress}%</span>
-                      </div>
-                      <ProgressBar value={goal.progress} />
-                    </li>
-                  ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-[var(--muted)]">
-                Nessun obiettivo in corso.{" "}
-                <button type="button" onClick={() => setActiveView("goals")} className="font-black text-[var(--accent-ink)] hover:underline">
-                  Creane uno →
-                </button>
-              </p>
-            )}
-          </Panel>
-
-          <Panel>
-            <PanelHeader title="Ultimi materiali" action="Tutti i materiali" onAction={() => setActiveView("materials")} />
-            {recentAttachments.length ? (
-              <ul className="grid grid-cols-1 gap-1">
-                {recentAttachments.map((attachment) => (
-                  <li key={attachment.id}>
-                    <button
-                      type="button"
-                      onClick={() => setActiveView("materials")}
-                      className="flex w-full min-w-0 items-center gap-3 rounded-[14px] px-2 py-1.5 text-left hover:bg-[var(--surface-soft)]"
-                    >
-                      <Icon name={ATTACHMENT_KIND_ICON[attachmentKind(attachment)]} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
-                      <span className="one-line-safe min-w-0 flex-1 text-sm font-bold">{attachment.name}</span>
+                  <li key={event.occurrenceKey}>
+                    <button type="button" onClick={() => openEvent(event.id)} aria-label={`${event.title}: ${HOME_TEXT.openEvent(event.title)}`} className={`${ROW} items-start`}>
+                      <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: safeCssColor(event.color) || subjectColor(subjects, event.subjectId) }} />
+                      <span className="min-w-0 flex-1">
+                        <span className="one-line-safe block text-sm font-black">{event.title}</span>
+                        <span className="block text-xs font-bold text-[var(--muted)]">
+                          {capitalizeFirst(format(parseISO(event.start), "EEE d MMM", { locale: it }))} ·{" "}
+                          {isAllDayEvent(event) ? ALL_DAY_LABEL : timeLabel(event.start)}
+                          {event.category === "deadline" || event.category === "exam" ? ` · ${studyDaysLabel(event.start)}` : ""}
+                        </span>
+                      </span>
+                      <RowChevron />
                     </button>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">
-                Ancora nessun materiale.{" "}
-                <button type="button" onClick={() => setActiveView("materials")} className="font-black text-[var(--accent-ink)] hover:underline">
-                  Aggiungi PDF, slide o link →
-                </button>
-              </p>
+              <EmptyLine text={HOME_TEXT.emptyUpcoming} action={HOME_TEXT.addEvent} onAction={() => openQuickAdd("event")} />
+            )}
+          </Panel>
+
+          <Panel>
+            <PanelHeader title="Obiettivi" action={HOME_TEXT.allGoals} onAction={() => setActiveView("goals")} />
+            {goals.filter((goal) => goal.status === "active").length ? (
+              <ul className="grid grid-cols-1 gap-0.5">
+                {goals
+                  .filter((goal) => goal.status === "active")
+                  .slice(0, 3)
+                  .map((goal) => (
+                    <li key={goal.id}>
+                      <button type="button" onClick={() => openGoal(goal.id)} aria-label={`${goal.title}: ${HOME_TEXT.openGoal(goal.title)}`} className={ROW}>
+                        <span className="min-w-0 flex-1">
+                          <span className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="one-line-safe text-sm font-bold">{goal.title}</span>
+                            <span className="shrink-0 text-xs font-black">{goal.progress}%</span>
+                          </span>
+                          <ProgressBar value={goal.progress} />
+                        </span>
+                        <RowChevron />
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            ) : (
+              <EmptyLine text={HOME_TEXT.emptyGoals} action={HOME_TEXT.addGoal} onAction={() => setActiveView("goals")} />
+            )}
+          </Panel>
+
+          <Panel>
+            <PanelHeader title="Ultimi materiali" action={HOME_TEXT.allMaterials} onAction={() => setActiveView("materials")} />
+            {recentAttachments.length ? (
+              <ul className="grid grid-cols-1 gap-1">
+                {recentAttachments.map((attachment) => (
+                  <li key={attachment.id}>
+                    <button type="button" onClick={() => findMaterial(attachment.name)} aria-label={`${attachment.name}: ${HOME_TEXT.findMaterial(attachment.name)}`} className={`${ROW} py-1.5`}>
+                      <Icon name={ATTACHMENT_KIND_ICON[attachmentKind(attachment)]} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+                      <span className="one-line-safe min-w-0 flex-1 text-sm font-bold">{attachment.name}</span>
+                      <RowChevron />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <EmptyLine text={HOME_TEXT.emptyMaterials} action={HOME_TEXT.addMaterial} onAction={() => setActiveView("materials")} />
             )}
           </Panel>
         </aside>

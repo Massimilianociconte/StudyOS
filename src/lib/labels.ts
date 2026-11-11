@@ -222,6 +222,114 @@ export const SUBJECTS_HELP = {
   }
 } as const;
 
+export const MATERIALS_TEXT = {
+  upload: "Carica un file",
+  saveLink: "Salva un link",
+  /** La pillola della materia sulla scheda applica il filtro. */
+  filterBySubject: (name: string) => `Mostra solo i materiali di ${name}`,
+  /** L'etichetta sulla scheda va nella ricerca. */
+  searchTag: (tag: string) => `Cerca i materiali con l'etichetta «${tag}»`,
+  openLinked: (name: string) => `Apri ${name}`,
+  subjectFilter: "Filtra per materia",
+  allSubjects: "Tutte le materie",
+  emptyTitle: "Ancora nessun materiale",
+  emptyBody: "Qui ritrovi dispense, appunti e link. Es.: le slide di una lezione o il link a un video.",
+  noneFoundTitle: "Nessun materiale trovato",
+  noneFoundBody: "Nessun materiale corrisponde alla ricerca o ai filtri scelti.",
+  showAll: "Mostra tutti i materiali"
+} as const;
+
+export const MATERIALS_HELP = {
+  subject: {
+    title: "Materia",
+    text: "Collegalo a una materia e lo ritrovi anche nella sua scheda.",
+    example: "le slide di Anatomia."
+  },
+  tags: {
+    title: "Etichette",
+    text: "Parole per ritrovarlo con la ricerca.",
+    example: "«orale», «formulario»."
+  },
+  subjectFilter: {
+    title: "Filtro per materia",
+    text: "Mostra i materiali collegati alla materia. Quelli collegati a un suo esame, a un'attività o a un evento non compaiono qui: li trovi aprendo l'esame, l'attività o l'evento."
+  }
+} as const;
+
+export const GOALS_TEXT = {
+  subtitle: "Fissa i tuoi traguardi e segna a che punto sei.",
+  newField: "Titolo del nuovo obiettivo",
+  newPlaceholder: "Es. Finire il programma di Patologia",
+  create: "Crea obiettivo",
+  emptyTitle: "Ancora nessun obiettivo",
+  emptyBody: "Un traguardo da raggiungere, come finire un programma o studiare un tot di ore a settimana. Es.: «Finire il programma di Patologia».",
+  createFirst: "Crea il primo obiettivo",
+  noneActiveTitle: "Nessun obiettivo in corso",
+  noneActiveBody: "Quelli raggiunti o archiviati sono qui sotto. Puoi crearne uno nuovo quando vuoi.",
+  createOne: "Crea un obiettivo",
+  metric: "Come lo misuri (facoltativo)"
+} as const;
+
+export const GOALS_HELP = {
+  progress: {
+    label: "Come segno i progressi?",
+    title: "Progressi",
+    text: "Ogni tocco su + o − sposta il progresso del 5%. Al 100% l'obiettivo è raggiunto."
+  },
+  metric: {
+    title: "Come lo misuri",
+    text: "L'unità con cui conti i passi verso il traguardo.",
+    example: "ore a settimana, capitoli, esercizi."
+  }
+} as const;
+
+export const HOME_TEXT = {
+  openCalendar: "Apri calendario",
+  allTasks: "Tutte le attività",
+  allExams: "Tutti gli esami",
+  allSubjects: "Tutte le materie",
+  allGoals: "Tutti gli obiettivi",
+  allMaterials: "Tutti i materiali",
+  emptyToday: "Niente in programma oggi.",
+  addEvent: "Aggiungi un impegno",
+  emptyNext: "Qui comparirà la cosa più urgente da fare.",
+  addTask: "Aggiungi un'attività",
+  emptyExams: "Nessun esame in programma.",
+  addExam: "Aggiungi un esame",
+  emptySubjects: "Nessuna materia in corso.",
+  addSubject: "Aggiungi una materia",
+  emptyUpcoming: "Niente in programma nei prossimi giorni.",
+  emptyGoals: "Nessun obiettivo in corso.",
+  addGoal: "Crea un obiettivo",
+  emptyMaterials: "Ancora nessun materiale.",
+  addMaterial: "Aggiungi PDF, slide o link",
+  openTask: (title: string) => `Apri l'attività «${title}»`,
+  openEvent: (title: string) => `Apri l'evento «${title}»`,
+  openExam: (name: string) => `Apri l'esame di ${name}`,
+  openSubject: (name: string) => `Apri la materia ${name}`,
+  openGoal: (title: string) => `Apri l'obiettivo «${title}»`,
+  findMaterial: (name: string) => `Trova «${name}» nei materiali`,
+  reviews: (count: number) => `${count} ${count === 1 ? "argomento da ripassare" : "argomenti da ripassare"}`,
+  preparation: (value: number) => `preparazione ${value}%`,
+  importance: (value: number) => `Importanza ${value}/5`
+} as const;
+
+export const HOME_HELP = {
+  next: {
+    title: "Cosa fare adesso",
+    text: "In cima va l'attività che conta di più: pesano la priorità, l'importanza e quanto è vicina la scadenza."
+  },
+  effort: {
+    title: "Energia e importanza",
+    text: "L'energia dice quanta concentrazione serve; l'importanza, da 1 a 5, quanto conta per te. Le cambi aprendo l'attività.",
+    example: "ripassare le formule chiede poca energia, scrivere una relazione molta."
+  },
+  preparation: {
+    title: "Preparazione",
+    text: "Quanto ti senti pronto per l'esame, da 0 a 100%. La aggiorni tu in Esami."
+  }
+} as const;
+
 export const SESSION_STATUS_LABEL: Record<StudySession["status"], string> = {
   planned: "Pianificata",
   running: "In corso",

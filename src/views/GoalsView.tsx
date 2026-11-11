@@ -3,8 +3,9 @@ import { differenceInCalendarDays, format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Goal } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL } from "../lib/labels";
-import { Button, Drawer, EmptyState, Field, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL, GOALS_HELP, GOALS_TEXT } from "../lib/labels";
+import { Button, Drawer, EmptyState, Field, HelpTip, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { HelpField } from "../components/HelpField";
 import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
@@ -46,14 +47,22 @@ export function GoalsView() {
     <div>
       <SectionTitle
         title="Obiettivi"
-        subtitle="Fissa i tuoi traguardi e segna a che punto sei: ogni + o − sposta il progresso del 5%."
+        subtitle={GOALS_TEXT.subtitle}
         action={<ShareButton scopes={["goals"]} />}
       />
 
-      <NewGoalBar onAdd={(title, category) => addGoal({ title, category, progress: 0, metric: "%" })} />
+      {/* Solo il titolo: la categoria parte da «Studio» e si cambia nel dettaglio. */}
+      <NewGoalBar onAdd={(title) => addGoal({ title, category: "study", progress: 0, metric: "%" })} />
 
       {active.length ? (
-        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
+        // La regola di + e − sta in un "?" vicino alle schede, non nel sottotitolo.
+        <div className="mb-2 flex justify-end">
+          <HelpTip {...GOALS_HELP.progress} />
+        </div>
+      ) : null}
+
+      {active.length ? (
+        <div className="grid grid-cols-1 gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
           {active.map((goal) => (
             <GoalCard key={goal.id} goal={goal} onOpen={() => setOpenId(goal.id)} onProgress={(progress) => void updateGoal(goal.id, { progress, status: progress >= 100 ? "done" : goal.status })} />
           ))}
@@ -61,8 +70,13 @@ export function GoalsView() {
       ) : (
         <EmptyState
           icon="Target"
-          title={closed.length ? "Nessun obiettivo in corso" : "Ancora nessun obiettivo"}
-          body="Scrivi un traguardo nel campo qui sopra, scegli la categoria e premi «Crea obiettivo»."
+          title={closed.length ? GOALS_TEXT.noneActiveTitle : GOALS_TEXT.emptyTitle}
+          body={closed.length ? GOALS_TEXT.noneActiveBody : GOALS_TEXT.emptyBody}
+          action={
+            <Button variant="primary" icon="Plus" onClick={() => document.getElementById(NEW_GOAL_ID)?.focus()}>
+              {closed.length ? GOALS_TEXT.createOne : GOALS_TEXT.createFirst}
+            </Button>
+          }
         />
       )}
 
@@ -78,7 +92,7 @@ export function GoalsView() {
             Raggiunti e archiviati · {closed.length}
           </button>
           {showClosed ? (
-            <div className="grid gap-3 opacity-75 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
+            <div className="grid grid-cols-1 gap-3 opacity-75 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
               {closed.map((goal) => (
                 <GoalCard key={goal.id} goal={goal} onOpen={() => setOpenId(goal.id)} onProgress={(progress) => void updateGoal(goal.id, { progress })} />
               ))}
@@ -94,41 +108,26 @@ export function GoalsView() {
   );
 }
 
-function NewGoalBar({ onAdd }: { onAdd: (title: string, category: Goal["category"]) => Promise<void> }) {
+const NEW_GOAL_ID = "new-goal-title";
+
+function NewGoalBar({ onAdd }: { onAdd: (title: string) => Promise<void> }) {
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<Goal["category"]>("study");
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim()) return;
-    await onAdd(title.trim(), category);
+    await onAdd(title.trim());
     setTitle("");
   };
   return (
     <form onSubmit={submit} className="soft-panel mb-4 flex flex-col gap-2 p-2.5 sm:flex-row sm:items-center">
       <label className="relative block min-w-0 flex-1">
-        <span className="sr-only">Titolo del nuovo obiettivo</span>
+        <span className="sr-only">{GOALS_TEXT.newField}</span>
         <Icon name="Target" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Es. Finire il programma di Patologia" />
+        <input id={NEW_GOAL_ID} className={`${inputClass} pl-10`} value={title} onChange={(event) => setTitle(event.target.value)} placeholder={GOALS_TEXT.newPlaceholder} />
       </label>
-      <select
-        className="min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold"
-        value={category}
-        onChange={(event) => setCategory(event.target.value as Goal["category"])}
-        aria-label="Categoria dell'obiettivo"
-      >
-        {categories.map((id) => (
-          <option key={id} value={id}>
-            {GOAL_CATEGORY_LABEL[id]}
-          </option>
-        ))}
-      </select>
-      <button
-        type="submit"
-        disabled={!title.trim()}
-        className="motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
-      >
-        <Icon name="Plus" className="h-4 w-4" /> Crea obiettivo
-      </button>
+      <Button type="submit" variant="primary" icon="Plus" disabled={!title.trim()}>
+        {GOALS_TEXT.create}
+      </Button>
     </form>
   );
 }
@@ -271,9 +270,9 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
           <Field label="Scadenza (facoltativa)">
             <input className={inputClass} type="date" value={draft.deadline} onChange={(event) => setDraft((value) => ({ ...value, deadline: event.target.value }))} />
           </Field>
-          <Field label="Come lo misuri (facoltativo)">
-            <input className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="Es. ore a settimana" />
-          </Field>
+          <HelpField label={GOALS_TEXT.metric} help={GOALS_HELP.metric}>
+            {(id) => <input id={id} className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="Es. ore a settimana" />}
+          </HelpField>
         </div>
         <Field label={`A che punto sei · ${draft.progress}%`}>
           <input
