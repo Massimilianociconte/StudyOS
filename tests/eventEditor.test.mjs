@@ -79,6 +79,10 @@ test("cambiando tipologia il colore segue, se non è scelto a mano", () => {
   assert.equal(draftColor({ ...draft, category: "exam" }, { overrides: { exam: "#000000" } }), "#000000");
   assert.equal(draftColor({ ...draft, category: "exam", colorCustom: true, color: "#ABCDEF" }, {}), "#ABCDEF");
   assert.equal(draftColor({ ...draft, category: "vacation" }, {}), "#FACC15");
+  // Una ricorrenza segue il colore del suo tipo (compleanno, anniversario…), non quello di Personale.
+  assert.equal(draftColor({ ...draft, category: "personal" }, { occasionKind: "anniversary" }), "#EC4899");
+  assert.equal(draftColor({ ...draft, category: "personal" }, { occasionKind: "birthday", overrides: { birthday: "#000000" } }), "#000000");
+  assert.equal(draftColor({ ...draft, category: "personal" }, { occasionKind: "recurring-day" }), draftColor({ ...draft, category: "personal" }, {}));
 });
 
 test("da evento a modulo e ritorno: nessuna modifica se non si cambia nulla", () => {

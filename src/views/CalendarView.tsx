@@ -36,7 +36,7 @@ import { sharedOfTypes, useSharedStore } from "../store/useSharedStore";
 import { originOf, ownerColor, safeCssColor, sharedKey, ShareUserError, type SharedEntity, type SharedOrigin } from "../lib/sharing";
 import { SharedMark } from "../components/SharedMark";
 import { createId } from "../lib/id";
-import type { CalendarEvent, Exam, Task } from "../types";
+import type { CalendarEvent, EventOccasion, Exam, OccasionKind, Task } from "../types";
 import {
   Button,
   EmptyState,
@@ -56,10 +56,21 @@ import { CalendarTransfer, type CalendarTransferHandle } from "../components/Cal
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { EventEditor } from "../components/calendar/EventEditor";
 import { ScopeChoice } from "../components/calendar/ScopeChoice";
-import { allScopePatch, draftFromEvent, followingPatch, newEventDraft, scopeOptions, wallTimeChanged, type ScopeOption } from "../lib/eventEditor";
+import { OccasionForm, occasionIcon } from "../components/calendar/OccasionForm";
+import { VacationForm } from "../components/calendar/VacationForm";
+import { allScopePatch, draftFromEvent, editorFormFor, followingPatch, newEventDraft, scopeOptions, wallTimeChanged, type EventDraft, type ScopeOption } from "../lib/eventEditor";
+import {
+  newOccasionDraft,
+  newVacationDraft,
+  OCCASION_KINDS,
+  occasionDraftFromEvent,
+  occasionFields,
+  vacationDraftFromEvent,
+  vacationFields
+} from "../lib/occasionForms";
 import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
 import { applyRepeatFields, changesRepeat, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
-import { deviceTimeZone, isCivilDate } from "../lib/tz";
+import { civilDateOf, deviceTimeZone, isCivilDate, parseCivil } from "../lib/tz";
 import { daysUntil, eventMinutes, isAllDayEvent, selectableSubjects, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel } from "../lib/selectors";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { expandEvents, RECURRENCE_LABEL, type EventOccurrence } from "../lib/recurrence";
@@ -73,6 +84,8 @@ import {
   EVENT_STATUS_LABEL,
   EXAM_STATUS_LABEL,
   NO_SUBJECT_LABEL,
+  OCCASION_FORM_TEXT,
+  OCCASION_KIND_LABEL,
   OFFICIAL_EXAMS_ADD_LABEL,
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -80,6 +93,7 @@ import {
   SCOPE_TEXT,
   SHARE_TEXT,
   TASK_STATUS_LABEL,
+  VACATION_FORM_TEXT,
   capitalizeFirst,
   formatMinutes
 } from "../lib/labels";
@@ -281,6 +295,7 @@ export function CalendarView() {
   const closeEventEditor = () => {
     setEditingEventId(null);
     setEditingDate(null);
+    setFullForm(null);
   };
   // Scelta "Solo questo · Questo e i successivi · Tutti" in attesa di risposta.
   const [scopeRequest, setScopeRequest] = useState<{ heading: string; options: ScopeOption[]; danger: boolean; resolve: (scope: OccurrenceScope | null) => void } | null>(null);
@@ -291,7 +306,12 @@ export function CalendarView() {
     setScopeRequest(null);
   };
   const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
-  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string } | null>(null);
+  // `draft` / `occasion`: dal modulo semplice ("Modulo completo"), con ciò che si era già scritto.
+  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string; draft?: EventDraft; occasion?: EventOccasion } | null>(null);
+  // Percorsi semplici nuovi: ricorrenza (compleanno, anniversario…) o vacanza.
+  const [simpleNew, setSimpleNew] = useState<{ form: "occasion"; kind?: OccasionKind; name?: string } | { form: "vacation"; title?: string } | null>(null);
+  // Ricorrenza o vacanza aperta nel modulo completo, con le modifiche fatte nel modulo semplice.
+  const [fullForm, setFullForm] = useState<{ id: string; draft: EventDraft } | null>(null);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const [barbImportOpen, setBarbImportOpen] = useState(false);
   const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
@@ -414,9 +434,16 @@ export function CalendarView() {
   const editingSeries = editingOccurrence
     ? events.find((event) => event.id === occurrenceTarget(editingOccurrence).seriesId && !isOccurrenceRow(event)) ?? null
     : null;
+  /** Modulo dell'evento aperto: ricorrenza e vacanza hanno il loro, salvo "Modulo completo". */
+  const editingForm = editingEvent && !editingDate && fullForm?.id !== editingEvent.id ? editorFormFor(editingEvent) : "event";
+  const todayYmd = civilDateOf(new Date());
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
   /** Colore della materia per il modulo (le tipologie con materia ne prendono il colore). */
   const ownColorContext = (subjectId?: string) => ({ subjectColor: subjects.find((subject) => subject.id === subjectId)?.color });
+  /** Bozza del modulo completo da campi già pronti (dal modulo semplice), sopra l'evento salvato se c'è. */
+  const draftFromFields = (fields: Partial<CalendarEvent>, saved?: CalendarEvent) =>
+    draftFromEvent({ links: [], priority: "medium", status: "planned", description: "", ...saved, ...fields } as CalendarEvent, ownColorContext(saved?.subjectId));
+  const startYearOf = (event: CalendarEvent) => parseCivil(civilDateOf(new Date(event.start)))?.year;
 
   const monthDays = useMemo(() => {
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 });
@@ -573,9 +600,14 @@ export function CalendarView() {
         setEditingSharedKey(sharedKey(ownerId, "calendarEvent", id));
         return;
       }
-      setEditingEventId(id);
+      // Ricorrenze e vacanze si aprono nel loro modulo semplice, per tutta la serie.
+      const seriesId = occurrence?.recurring ? occurrenceTarget(occurrence).seriesId : id;
+      const series = events.find((event) => event.id === seriesId);
+      const simple = series ? editorFormFor(series) !== "event" : false;
+      setFullForm(null);
+      setEditingEventId(simple ? seriesId : id);
       // Un giorno di una serie si apre come tale: al salvataggio si sceglie a quali date vale.
-      setEditingDate(occurrence?.recurring ? occurrence.occurrenceDate : null);
+      setEditingDate(!simple && occurrence?.recurring ? occurrence.occurrenceDate : null);
     },
     onEditTask: setEditingTaskId,
     onToggleTask: (id) => void toggleTask(id),
@@ -606,6 +638,8 @@ export function CalendarView() {
               </Button>
             }
             more={[
+              { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
+              { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
               { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
               { label: CALENDAR_TEXT.importFile, icon: "Import", onClick: () => transfer.current?.chooseFile() },
               { label: CALENDAR_TEXT.exportFile, icon: "Download", onClick: () => transfer.current?.exportFile() },
@@ -843,11 +877,88 @@ export function CalendarView() {
         />
       ) : null}
 
-      {editingEvent && !editingDate ? (
+      {editingEvent && !editingDate && editingForm === "occasion" ? (
+        <OccasionForm
+          key={editingEvent.id}
+          initial={occasionDraftFromEvent(editingEvent)}
+          editing
+          today={todayYmd}
+          onClose={closeEventEditor}
+          onSave={async (draft) => {
+            // La regola resta quella salvata (ogni anno, o quella scelta nel modulo completo).
+            const { repeat: _repeat, ...fields } = occasionFields(draft, { today: todayYmd, baseYear: startYearOf(editingEvent), keepColor: true });
+            await updateEvent(editingEvent.id, fields);
+            closeEventEditor();
+          }}
+          onDelete={async () => {
+            await deleteEvent(editingEvent.id);
+            closeEventEditor();
+          }}
+          onFullForm={(draft) => {
+            const { repeat: _repeat, ...fields } = occasionFields(draft, { today: todayYmd, baseYear: startYearOf(editingEvent), keepColor: true });
+            setFullForm({ id: editingEvent.id, draft: draftFromFields(fields, editingEvent) });
+          }}
+        />
+      ) : null}
+
+      {editingEvent && !editingDate && editingForm === "vacation" ? (
+        <VacationForm
+          key={editingEvent.id}
+          initial={vacationDraftFromEvent(editingEvent)}
+          editing
+          onClose={closeEventEditor}
+          onSave={async (draft) => {
+            await updateEvent(editingEvent.id, vacationFields(draft, { keepColor: true }));
+            closeEventEditor();
+          }}
+          onDelete={async () => {
+            await deleteEvent(editingEvent.id);
+            closeEventEditor();
+          }}
+          onFullForm={(draft) => setFullForm({ id: editingEvent.id, draft: draftFromFields(vacationFields(draft, { keepColor: true }), editingEvent) })}
+        />
+      ) : null}
+
+      {simpleNew?.form === "occasion" ? (
+        <OccasionForm
+          initial={newOccasionDraft({ today: todayYmd, kind: simpleNew.kind, name: simpleNew.name })}
+          editing={false}
+          today={todayYmd}
+          onClose={() => setSimpleNew(null)}
+          onSave={async (draft) => {
+            await addEvent(newEventFields(occasionFields(draft, { today: todayYmd })));
+            setSimpleNew(null);
+          }}
+          onFullForm={(draft) => {
+            const { occasion, ...fields } = occasionFields(draft, { today: todayYmd });
+            setSimpleNew(null);
+            setCreator({ at: new Date(), kind: "event", draft: draftFromFields({ ...fields, occasion }), occasion });
+          }}
+        />
+      ) : null}
+
+      {simpleNew?.form === "vacation" ? (
+        <VacationForm
+          initial={newVacationDraft(todayYmd, simpleNew.title)}
+          editing={false}
+          onClose={() => setSimpleNew(null)}
+          onSave={async (draft) => {
+            await addEvent(newEventFields(vacationFields(draft)));
+            setSimpleNew(null);
+          }}
+          onFullForm={(draft) => {
+            setSimpleNew(null);
+            setCreator({ at: new Date(), kind: "event", draft: draftFromFields(vacationFields(draft)) });
+          }}
+        />
+      ) : null}
+
+      {editingEvent && !editingDate && editingForm === "event" ? (
         <EventEditor
           key={editingEvent.id}
           heading={EVENT_EDITOR_TEXT.editEvent}
-          initial={draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
+          initial={fullForm?.id === editingEvent.id ? fullForm.draft : draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
+          base={draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
           event={editingEvent}
           subjects={subjects}
           deleteConfirmText={(normalizeRepeat(editingEvent) ? EVENT_EDITOR_TEXT.deleteSeriesConfirm : EVENT_EDITOR_TEXT.deleteConfirm)(shortTitle(editingEvent.title))}
@@ -913,7 +1024,30 @@ export function CalendarView() {
       {creator ? (
         <EventEditor
           heading={EVENT_EDITOR_TEXT.newEvent}
-          initial={newEventDraft({ start: defaultStartFor(creator.at), subjectId: creator.subjectId ?? "", ...ownColorContext(creator.subjectId) })}
+          occasionKind={creator.occasion?.kind}
+          initial={creator.draft ?? newEventDraft({ start: defaultStartFor(creator.at), subjectId: creator.subjectId ?? "", ...ownColorContext(creator.subjectId) })}
+          typeExtra={(draft) => (
+            <div className="min-w-0">
+              <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">{EVENT_EDITOR_TEXT.typeOccasions}</span>
+              <div className="flex flex-wrap gap-1.5">
+                {OCCASION_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => {
+                      // Percorso semplice della ricorrenza, con il titolo già scritto.
+                      setCreator(null);
+                      setSimpleNew({ form: "occasion", kind, name: draft.title.trim() });
+                    }}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-full border border-[var(--border)] px-3 text-sm font-extrabold text-[var(--muted)] hover:text-[var(--text)]"
+                  >
+                    <Icon name={occasionIcon(kind)} className="h-4 w-4 shrink-0" />
+                    {OCCASION_KIND_LABEL[kind]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           subjects={subjects}
           calendars={writableCalendars}
           createKind={creator.kind}
@@ -963,7 +1097,7 @@ export function CalendarView() {
               }
               return;
             }
-            await addEvent(fields);
+            await addEvent(creator.occasion ? { ...fields, occasion: creator.occasion } : fields);
             setCreator(null);
           }}
         />

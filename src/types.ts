@@ -125,7 +125,9 @@ export type EventCategory =
   | "personal"
   | "work"
   | "relax"
-  | "other";
+  | "other"
+  /** Vacanza (più giorni, tutto il giorno): le versioni vecchie mostrano solo un'etichetta vuota. */
+  | "vacation";
 
 export interface CalendarEvent extends BaseEntity {
   title: string;

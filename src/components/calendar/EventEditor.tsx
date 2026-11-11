@@ -66,10 +66,12 @@ const CATEGORY_OPTIONS = (Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).
 export function EventEditor({
   heading,
   initial,
+  base: baseDraft,
   event,
   occurrenceDate,
   subjects,
   overrides,
+  occasionKind: occasionKindProp,
   sharedFrom,
   calendars = [],
   createKind,
@@ -83,12 +85,16 @@ export function EventEditor({
 }: {
   heading: string;
   initial: EventDraft;
+  /** Bozza dell'evento salvato, se il modulo parte già con modifiche (es. dal modulo semplice). */
+  base?: EventDraft;
   /** Evento modificato (assente in creazione): per l'appello importato e l'id. */
   event?: CalendarEvent;
   /** Giorno dell'occorrenza aperta di una serie (YYYY-MM-DD). */
   occurrenceDate?: string;
   subjects: Subject[];
   overrides?: TypeColorOverrides;
+  /** Tipo della ricorrenza in creazione (dal modulo semplice): il colore automatico è il suo. */
+  occasionKind?: string;
   /** Evento di un'altra persona: sola lettura senza `canEdit`, materia del proprietario non modificabile. */
   sharedFrom?: SharedOrigin;
   /** Creazione: calendari altrui in cui posso aggiungere eventi ("Nel calendario di"). */
@@ -97,8 +103,8 @@ export function EventEditor({
   createKind?: "event" | "task";
   /** Avviso sotto la ripetizione. */
   repeatNote?: string;
-  /** Scelte in più accanto alla tipologia (es. ricorrenze e vacanza). */
-  typeExtra?: ReactNode;
+  /** Scelte in più accanto alla tipologia (es. ricorrenze), con la bozza attuale (titolo già scritto). */
+  typeExtra?: (draft: EventDraft) => ReactNode;
   /** Testo della conferma prima di `onDelete`; assente = `onDelete` chiede da sé (es. scelta della portata). */
   deleteConfirmText?: string;
   onClose: () => void;
@@ -111,7 +117,7 @@ export function EventEditor({
   const readOnly = Boolean(sharedFrom && !sharedFrom.canEdit);
   // Bozza all'apertura: il confronto con questa dice cosa è stato cambiato qui (anche se l'evento
   // cambia nello store mentre il modulo è aperto).
-  const [base] = useState(initial);
+  const [base] = useState(baseDraft ?? initial);
   const [draft, setDraft] = useState(initial);
   const [kind, setKind] = useState<"event" | "task">(createKind ?? "event");
   const [ownerId, setOwnerId] = useState("");
@@ -135,10 +141,11 @@ export function EventEditor({
   const inOtherCalendar = kind === "event" && Boolean(target);
   const subjectRequired = inOtherCalendar && Boolean(target?.subjectRequired);
 
+  const occasionKind = event?.occasion?.kind ?? occasionKindProp;
   const colorContext = (subjectId: string): ColorContext => {
-    if (sharedFrom) return { subjectColor: sharedFrom.subjectColor, overrides };
-    if (target) return { subjectColor: target.subjects.find((subject) => subject.id === subjectId)?.color, overrides };
-    return { subjectColor: subjects.find((subject) => subject.id === subjectId)?.color, overrides };
+    if (sharedFrom) return { subjectColor: sharedFrom.subjectColor, overrides, occasionKind };
+    if (target) return { subjectColor: target.subjects.find((subject) => subject.id === subjectId)?.color, overrides, occasionKind };
+    return { subjectColor: subjects.find((subject) => subject.id === subjectId)?.color, overrides, occasionKind };
   };
   const subjectOptions = inOtherCalendar && target ? target.subjects : selectableSubjects(subjects, draft.subjectId);
 
@@ -166,7 +173,7 @@ export function EventEditor({
   };
   // Spostare un giorno di una serie non ne cambia la regola (la cambia solo chi la sceglie).
   const moveStart = (current: EventDraft, value: string) => (occurrenceDate ? { ...changeStart(current, value), repeat: current.repeat } : changeStart(current, value));
-  const setCategory =(category: EventCategory) => update((value) => ({ ...value, category, color: draftColor({ ...value, category }, colorContext(value.subjectId)) }));
+  const setCategory = (category: EventCategory) => update((value) => ({ ...value, category, color: draftColor({ ...value, category }, colorContext(value.subjectId)) }));
   const setSubject = (subjectId: string) => update((value) => ({ ...value, subjectId, color: draftColor(value, colorContext(subjectId)) }));
 
   const submit = async () => {
@@ -224,7 +231,7 @@ export function EventEditor({
     if (!draft.links.includes(url)) update((value) => ({ ...value, links: [...value.links, url] }));
   };
 
-  const typeKey = eventTypeKey({ category: draft.category, occasionKind: event?.occasion?.kind });
+  const typeKey = eventTypeKey({ category: draft.category, occasionKind });
   const autoColor = draftColor({ ...draft, colorCustom: false }, colorContext(draft.subjectId));
   const duration = draftDuration(draft);
   const imported = event?.tags?.includes("appello-importato");
@@ -508,7 +515,7 @@ export function EventEditor({
                   </Field>
                   {subjectField}
                 </div>
-                {typeExtra}
+                {typeExtra?.(draft)}
                 <ColorPalette
                   label={EVENT_EDITOR_TEXT.color}
                   value={draft.color}

@@ -888,7 +888,8 @@ export const EVENT_CATEGORY_LABEL: Record<CalendarEvent["category"], string> = {
   personal: "Personale",
   work: "Lavoro",
   relax: "Relax",
-  other: "Altro"
+  other: "Altro",
+  vacation: "Vacanza"
 };
 
 export const EVENT_STATUS_LABEL: Record<CalendarEvent["status"], string> = {

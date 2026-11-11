@@ -49,6 +49,8 @@ export interface EventDraft {
 export interface ColorContext {
   subjectColor?: string;
   overrides?: TypeColorOverrides;
+  /** Tipo della ricorrenza (compleanno, anniversario…): il suo colore vale più di quello della categoria. */
+  occasionKind?: string;
 }
 
 /** Tavolozza del modulo e di "Colori delle tipologie" (ogni colore ha un nome in EVENT_COLOR_NAME). */
@@ -113,7 +115,7 @@ export const initialColorCustom = (event: Pick<CalendarEvent, "color" | "colorCu
 
 /** Colore della bozza dopo un cambio di tipologia o materia: segue la tipologia se non è scelto a mano. */
 export const draftColor = (draft: Pick<EventDraft, "category" | "color" | "colorCustom">, context: ColorContext) =>
-  draft.colorCustom && safeCssColor(draft.color) ? safeCssColor(draft.color) : typeDefaultColor(eventTypeKey({ category: draft.category }), context);
+  draft.colorCustom && safeCssColor(draft.color) ? safeCssColor(draft.color) : typeDefaultColor(eventTypeKey({ category: draft.category, occasionKind: context.occasionKind }), context);
 
 /** Ultimo giorno (compreso) di un tutto il giorno salvato con fine esclusiva. */
 const lastDayOf = (startLocal: string, endLocal: string) => {
