@@ -4,13 +4,15 @@ import { addDays, format, isBefore, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
-import { completionRate, studyDaysUntil, studyStreak, subjectColor, subjectName } from "../lib/selectors";
+import { studyDaysUntil, studyStreak, subjectColor, subjectName } from "../lib/selectors";
 import { SESSION_SOURCE_LABEL, STATS_PERIOD_LABEL, STATS_TEXT, capitalizeFirst, formatHours, formatMinutes } from "../lib/labels";
 import { SEMESTER_LABEL } from "../lib/semesters";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import {
   SESSION_SOURCES,
   STATS_PERIODS,
+  countInRange,
+  largestRemainderPercents,
   minutesBySubject,
   periodRange,
   sessionSummary,
@@ -30,6 +32,7 @@ const tooltipStyle = { background: "var(--bg-2)", border: "1px solid var(--borde
 const SOURCE_LABEL: Record<SessionSourceKey, string> = { ...SESSION_SOURCE_LABEL, unknown: STATS_TEXT.sourceUnknown };
 const SOURCE_COLOR: Record<SessionSourceKey, string> = {
   pomodoro: "var(--accent)",
+  timer: "var(--accent-3)",
   stopwatch: "var(--accent-2)",
   manual: "var(--warning)",
   unknown: "var(--faint)"
@@ -72,6 +75,8 @@ export function StatsView() {
   const inPeriod = useMemo(() => sessionsInRange(sessions, range), [sessions, range]);
   const summary = useMemo(() => sessionSummary(inPeriod), [inPeriod]);
   const bySubject = useMemo(() => minutesBySubject(subjects, inPeriod), [subjects, inPeriod]);
+  // Percentuali arrotondate che sommano sempre a 100 (resto più grande).
+  const subjectPercents = useMemo(() => largestRemainderPercents(bySubject.map((entry) => entry.minutes)), [bySubject]);
   const trend = useMemo(() => {
     const unit = trendUnit(range.period);
     return trendBuckets(inPeriod, range, unit).map((bucket) => ({
@@ -97,10 +102,17 @@ export function StatsView() {
   );
 
   const visibleTasks = tasks.filter((task) => task.status !== "archived");
-  const taskRate = completionRate(visibleTasks);
-  const doneTasks = visibleTasks.filter((task) => task.status === "done").length;
+  // Attività e ripassi seguono il periodo scelto, come le ore; i giorni di fila contano fino a oggi.
+  const doneTasks = countInRange(
+    visibleTasks.filter((task) => task.status === "done").map((task) => task.completedAt),
+    range
+  );
   const streak = studyStreak(sessions);
-  const reviewsDone = topics.reduce((sum, topic) => sum + topic.completedReviews, 0);
+  const reviewedTopics = countInRange(
+    topics.map((topic) => topic.lastReviewedAt),
+    range
+  );
+  const periodHint = offset === 0 ? CURRENT_LABEL[period] : rangeLabel(range);
   const today = startOfDay(new Date());
   const overdue = visibleTasks.filter((task) => task.status !== "done" && task.dueDate && isBefore(parseISO(task.dueDate), today)).length;
   const blocked = visibleTasks.filter((task) => task.status === "blocked").length;
@@ -159,7 +171,7 @@ export function StatsView() {
         <StatTile
           label={STATS_TEXT.studied}
           value={STATS_TEXT.hoursValue(formatHours(total))}
-          hint={isWeekNow ? STATS_TEXT.ofTarget(formatHours(weeklyTarget)) : offset === 0 ? CURRENT_LABEL[period] : rangeLabel(range)}
+          hint={isWeekNow ? STATS_TEXT.ofTarget(formatHours(weeklyTarget)) : periodHint}
           icon="Timer"
           onClick={() => goTo(setActiveView, "study")}
         />
@@ -176,19 +188,25 @@ export function StatsView() {
         <WithHelp help={<HelpTip title={STATS_TEXT.tasksHelp.title} text={STATS_TEXT.tasksHelp.text} />}>
           <StatTile
             label={STATS_TEXT.tasksDone}
-            value={visibleTasks.length ? `${taskRate}%` : "—"}
-            hint={visibleTasks.length ? STATS_TEXT.tasksDoneHint(doneTasks, visibleTasks.length) : STATS_TEXT.tasksEmptyHint}
+            value={visibleTasks.length ? `${doneTasks}` : "—"}
+            hint={visibleTasks.length ? periodHint : STATS_TEXT.tasksEmptyHint}
             icon="CheckCheck"
             onClick={() => goTo(setActiveView, "tasks")}
           />
         </WithHelp>
-        <StatTile
-          label={STATS_TEXT.reviews}
-          value={`${reviewsDone}`}
-          hint={topics.length ? STATS_TEXT.reviewsHint(topics.length) : STATS_TEXT.reviewsEmptyHint}
-          icon="Brain"
-          onClick={() => goTo(setActiveView, "study", ["study.topicsOpen", true, "tab"])}
-        />
+        <WithHelp help={<HelpTip title={STATS_TEXT.reviewsHelp.title} text={STATS_TEXT.reviewsHelp.text} />}>
+          <StatTile
+            label={STATS_TEXT.reviews}
+            value={topics.length ? `${reviewedTopics}` : "—"}
+            hint={topics.length ? periodHint : STATS_TEXT.reviewsEmptyHint}
+            icon="Brain"
+            onClick={() => {
+              // Tutte le materie, come il conteggio del riquadro.
+              writeUiState("study.topicsFilter", "", "tab");
+              goTo(setActiveView, "study", ["study.topicsOpen", true, "tab"]);
+            }}
+          />
+        </WithHelp>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -236,13 +254,13 @@ export function StatsView() {
                 </ResponsiveContainer>
               </div>
               <ul className="grid grid-cols-1 gap-0.5">
-                {bySubject.map((entry) => {
+                {bySubject.map((entry, index) => {
                   const row = (
                     <>
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: entry.color }} />
                       <span className="one-line-safe min-w-0 flex-1 font-bold">{entry.name}</span>
                       <span className="shrink-0 text-xs font-black tabular-nums">{formatHours(entry.minutes)} h</span>
-                      <span className="w-10 shrink-0 text-right text-xs font-bold text-[var(--muted)] tabular-nums">{Math.round((entry.minutes / total) * 100)}%</span>
+                      <span className="w-10 shrink-0 text-right text-xs font-bold text-[var(--muted)] tabular-nums">{subjectPercents[index]}%</span>
                     </>
                   );
                   return (

@@ -60,6 +60,7 @@ import {
 import {
   advanceTimerState,
   defaultTimer,
+  endTimerState,
   finishedSession,
   isTimerIdle,
   loadTimer,
@@ -67,9 +68,12 @@ import {
   saveTimer,
   sessionFromBlock,
   skipBreakState,
+  startCountdownState,
   startStopwatchState,
   startTimerState,
   syncTimerDurations,
+  timerElapsedSeconds,
+  timerUnsavedSeconds,
   toggleTimerState,
   type FinishedBlock,
   type TimerEvent,
@@ -78,6 +82,7 @@ import {
   type TimerMode,
   type TimerState
 } from "../lib/studyTimer";
+import { relinkSession, reviewedSessionTimes, sessionLinksOf, type SessionEdit, type SessionLinks } from "../lib/studySessions";
 import { resolveTimerDurations } from "../lib/timerPrefs";
 import type { TimerSettings } from "../types";
 import { useSharedStore } from "./useSharedStore";
@@ -123,6 +128,8 @@ interface StudyState {
   groupResources: GroupResource[];
   groupActivities: GroupActivity[];
   timer: TimerState;
+  /** Riepilogo aperto di un Timer o Cronometro finito (Salva / Scarta); si riapre dal timer. */
+  timerReview: boolean;
   error?: string;
   /** Ultimo errore di salvataggio su IndexedDB (undefined = tutto salvato). */
   persistError?: string;
@@ -155,9 +162,13 @@ interface StudyState {
   addExam: (exam: Partial<Exam> & Pick<Exam, "subjectId" | "date">) => Promise<void>;
   updateExam: (id: string, patch: Partial<Exam>) => Promise<void>;
   deleteExam: (id: string) => Promise<void>;
+  /** Con `id` (modulo "Aggiungi studio fatto") una sessione già presente non si aggiunge di nuovo. */
   addSession: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
   updateSession: (id: string, patch: Partial<StudySession>) => Promise<void>;
-  deleteSession: (id: string) => Promise<void>;
+  /** Restituisce i collegamenti tolti (obiettivi, file, note, promemoria) per "Annulla". */
+  deleteSession: (id: string) => Promise<SessionLinks>;
+  /** Annulla dopo Elimina: la sessione torna (updatedAt nuovo, vince sulla sync) con i suoi collegamenti, senza doppioni. */
+  restoreSession: (session: StudySession, links?: SessionLinks) => Promise<void>;
   /** Crea argomenti da ripassare; restituisce quanti sono stati aggiunti (i duplicati per materia vengono saltati). */
   addTopics: (topics: Array<Partial<StudyTopic> & Pick<StudyTopic, "title" | "subjectId">>) => Promise<number>;
   updateTopic: (id: string, patch: Partial<StudyTopic>) => Promise<void>;
@@ -220,17 +231,28 @@ interface StudyState {
   startStudyTimer: (mode: TimerMode, options?: { subjectId?: string | null }) => void;
   /** Avvia (da fermo, con le durate attuali della materia), mette in pausa o riprende. */
   toggleStudyTimer: () => void;
-  /** Scarta il blocco o la sessione in corso: timer fermo, stessa materia. */
-  resetStudyTimer: (mode?: TimerMode) => void;
+  /**
+   * Scarta il blocco o la sessione in corso: timer fermo, stessa materia. false = non ha azzerato
+   * (un'altra scheda aveva uno stato più recente, preso al suo posto): niente "Annulla".
+   */
+  resetStudyTimer: (mode?: TimerMode) => boolean;
   /** Chiude la fase scaduta; a fine blocco Pomodoro salva la sessione (una volta sola). */
   settleStudyTimer: () => TimerEvent | null;
   startStopwatch: (subjectId?: string | null) => void;
-  /** "Termina e salva": salva il tempo studiato e azzera il timer in un colpo solo. */
+  /** Avvia il Timer (conto alla rovescia): `minutes` esplicito (agenti) o la durata ricordata. */
+  startCountdown: (minutes?: number, subjectId?: string | null) => void;
+  /** "Termina e salva": salva il tempo studiato e azzera il timer in un colpo solo (agenti, Pomodoro). */
   finishStudyTimer: () => TimerFinish;
+  /** "Termina" di Timer e Cronometro: il tempo si ferma e si apre il riepilogo prima di salvare. */
+  endStudyTimer: () => { status: "review" | "too-short" | "idle" };
+  setTimerReviewOpen: (open: boolean) => void;
+  /** "Salva" del riepilogo di Timer e Cronometro: i campi corretti vincono su quelli del timer. */
+  saveTimerReview: (edit: SessionEdit) => { status: "saved"; session: StudySession } | { status: "too-short" } | { status: "idle" };
   skipBreak: () => void;
   setTimerKind: (kind: TimerKind) => void;
   setTimerSubject: (subjectId: string | null) => void;
-  setTimerDetails: (details: { title?: string; template?: StudySession["template"] }) => void;
+  /** "Cosa studi?" e tipo di sessione; `topicId` null toglie l'argomento (che deve essere della materia scelta). */
+  setTimerDetails: (details: { title?: string; template?: StudySession["template"]; topicId?: string | null }) => void;
   markTimerTargetNotified: () => void;
   /** "Annulla" dopo Scarta: rimette lo stato precedente se nel frattempo non è partito altro. */
   restoreStudyTimer: (previous: TimerState) => boolean;
@@ -413,6 +435,10 @@ const timerDurationsFor = (state: Pick<StoreState, "subjects" | "preferences">, 
 const knownSubjectId = (state: Pick<StoreState, "subjects">, subjectId?: string | null) =>
   subjectId && state.subjects.some((subject) => subject.id === subjectId) ? subjectId : undefined;
 
+/** Argomento valido per il timer: esiste ed è della materia scelta (senza materia nessun argomento). */
+const topicFor = (state: Pick<StoreState, "topics">, subjectId?: string, topicId?: string) =>
+  subjectId && topicId && state.topics.some((topic) => topic.id === topicId && topic.subjectId === subjectId) ? topicId : undefined;
+
 /**
  * La persona sceglie materia o durate: un blocco non ancora avviato torna sulle sue durate anche
  * se un agente l'aveva preparato da 45 o 90 minuti (`mode` classic / deep-focus).
@@ -448,6 +474,17 @@ export const useStudyStore = create<StudyState>((set, get) => {
     set(rollback as Partial<StoreState>);
   };
 
+  /**
+   * Un'altra scheda ha cambiato il timer dopo questa (evento "storage" perso, scheda tornata dalla
+   * cache): si prende il suo stato e l'azione chiesta qui non si fa (true). Come reloadStudyTimer.
+   */
+  const adoptNewerTimer = () => {
+    const stored = loadTimer();
+    if ((stored.changedAt ?? 0) <= (get().timer.changedAt ?? 0)) return false;
+    set(stored.ended ? { timer: stored } : { timer: stored, timerReview: false });
+    return true;
+  };
+
   /** Blocco di studio finito → sessione completata. Id già presente (altra scheda, ricarica) → nulla. */
   const saveTimerBlock = (block: FinishedBlock): StudySession | null => {
     const state = get();
@@ -466,6 +503,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
     settings: defaultSettings(),
     ...applySnapshot(createEmptySnapshot()),
     timer: typeof window === "undefined" ? defaultTimer() : loadTimer(),
+    // Un Timer o Cronometro finito prima di chiudere l'app riapre il riepilogo (lo fa il watcher all'avvio).
+    timerReview: false,
 
     init: async () => {
       set({ loading: true, error: undefined });
@@ -1193,8 +1232,10 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     addSession: async (session) => {
+      // Stesso id (doppio tocco su Salva, salvataggio ripetuto): una sola sessione.
+      if (session.id && get().sessions.some((item) => item.id === session.id)) return;
       const created: StudySession = {
-        id: createId("session"),
+        id: session.id || createId("session"),
         createdAt: nowIso(),
         updatedAt: nowIso(),
         archived: false,
@@ -1213,6 +1254,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
         attachmentIds: session.attachmentIds ?? [],
         status: session.status ?? "planned"
       };
+      // Origine e argomento solo se ci sono (niente chiavi vuote nel JSON sincronizzato).
+      if (session.source) created.source = session.source;
+      if (session.topicId) created.topicId = session.topicId;
       set((state) => ({ sessions: [created, ...state.sessions] }));
       await commit();
     },
@@ -1228,6 +1272,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     deleteSession: async (id) => {
       const detach = detachLinked("studySession", id);
+      const links = sessionLinksOf(get(), id);
       set((state) => ({
         sessions: state.sessions.filter((session) => session.id !== id),
         goals: state.goals.map((goal) =>
@@ -1239,6 +1284,19 @@ export const useStudyStore = create<StudyState>((set, get) => {
         notes: state.notes.map(detach),
         reminders: state.reminders.map(detach)
       }));
+      await commit();
+      return links;
+    },
+
+    restoreSession: async (session, links) => {
+      const state = get();
+      if (state.sessions.some((item) => item.id === session.id)) return;
+      // Come restoreEntities: updatedAt nuovo, così la sessione vince per LWW sulla cancellazione già
+      // inviata al cloud (con quello vecchio la sync la eliminerebbe di nuovo poco dopo).
+      const now = nowIso();
+      const restored: StudySession = { ...session, updatedAt: restoredUpdatedAt(now, session.updatedAt) };
+      const relinked = links ? relinkSession(state, session.id, links, now) : null;
+      set((current) => ({ sessions: [restored, ...current.sessions], ...(relinked ?? {}) }));
       await commit();
     },
 
@@ -1555,11 +1613,13 @@ export const useStudyStore = create<StudyState>((set, get) => {
         startTimerState(mode, Date.now(), {
           durations: timerDurationsFor(state, subjectId),
           subjectId,
+          topicId: topicFor(state, subjectId, current.topicId),
           title: current.title,
           template: current.template,
           sessionId: createId("session")
         })
       );
+      set({ timerReview: false });
     },
     startStopwatch: (subjectId) => {
       const state = get();
@@ -1570,21 +1630,46 @@ export const useStudyStore = create<StudyState>((set, get) => {
         startStopwatchState(Date.now(), {
           mode: current.mode,
           subjectId: id,
+          topicId: topicFor(state, id, current.topicId),
           title: current.title,
           template: current.template,
           targetMinutes: timerDurationsFor(state, id).stopwatchTargetMinutes,
           sessionId: createId("session")
         })
       );
+      set({ timerReview: false });
+    },
+    startCountdown: (minutes, subjectId) => {
+      const state = get();
+      const current = state.timer;
+      const id = knownSubjectId(state, subjectId === undefined ? current.subjectId : subjectId);
+      setTimerState(
+        set,
+        startCountdownState(Date.now(), {
+          mode: current.mode,
+          subjectId: id,
+          topicId: topicFor(state, id, current.topicId),
+          title: current.title,
+          template: current.template,
+          minutes: minutes ?? timerDurationsFor(state, id).timerMinutes,
+          sessionId: createId("session")
+        })
+      );
+      set({ timerReview: false });
     },
     toggleStudyTimer: () => {
       const state = get();
       const now = Date.now();
       // Da fermo parte con le durate attuali della materia (il giro del Pomodoro continua).
       const timer = syncTimerDurations(state.timer, timerDurationsFor(state, state.timer.subjectId), now);
-      setTimerState(set, toggleTimerState(timer, now, { sessionId: createId("session") }));
+      const next = toggleTimerState(timer, now, { sessionId: createId("session") });
+      // Timer arrivato a zero: non riparte da capo (resta il riepilogo).
+      if (next === state.timer) return;
+      setTimerState(set, next);
+      if (!next.ended && state.timerReview) set({ timerReview: false });
     },
     resetStudyTimer: (mode) => {
+      if (adoptNewerTimer()) return false;
       const state = get();
       const current = state.timer;
       const subjectId = knownSubjectId(state, current.subjectId);
@@ -1595,11 +1680,14 @@ export const useStudyStore = create<StudyState>((set, get) => {
           kind: mode ? "pomodoro" : current.kind,
           durations,
           subjectId,
+          topicId: topicFor(state, subjectId, current.topicId),
           title: current.title,
           template: current.template,
           targetMinutes: durations.stopwatchTargetMinutes
         })
       );
+      set({ timerReview: false });
+      return true;
     },
     settleStudyTimer: () => {
       const state = get();
@@ -1613,6 +1701,17 @@ export const useStudyStore = create<StudyState>((set, get) => {
       if (result.timer === timer) {
         if (timer !== state.timer) set({ timer });
         return null;
+      }
+      // Timer a zero: nessuna sessione automatica, si apre il riepilogo con la fine reale.
+      if (result.timerEnded) {
+        setTimerState(set, result.timer);
+        set({ timerReview: true });
+        return {
+          type: "timer-done",
+          minutes: Math.max(1, Math.round(timer.durationSeconds / 60)),
+          subjectId: knownSubjectId(state, timer.subjectId),
+          endedAt: result.timer.pausedAt ?? Date.now()
+        };
       }
       const block = result.finishedBlock;
       const session = block ? saveTimerBlock(block) : null;
@@ -1641,6 +1740,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
           kind: timer.kind,
           durations,
           subjectId,
+          topicId: topicFor(state, subjectId, timer.topicId),
           title: timer.title,
           template: timer.template,
           targetMinutes: durations.stopwatchTargetMinutes
@@ -1648,13 +1748,73 @@ export const useStudyStore = create<StudyState>((set, get) => {
       // Pausa del Pomodoro: i blocchi finiti sono già salvati, la pausa non è studio.
       if (timer.phase !== "focus") {
         setTimerState(set, ready());
+        set({ timerReview: false });
         return { status: "ended" };
       }
       const block = finishedSession(timer, now);
       if (!block) return { status: "too-short" };
       const session = saveTimerBlock(block) ?? get().sessions.find((item) => item.id === block.sessionId);
       setTimerState(set, ready());
+      set({ timerReview: false });
       return session ? { status: "saved", session } : { status: "ended" };
+    },
+    endStudyTimer: () => {
+      const state = get();
+      const now = Date.now();
+      const timer = state.timer;
+      if (timer.kind === "pomodoro" || isTimerIdle(timer, now)) return { status: "idle" };
+      if (!timer.ended && timerUnsavedSeconds(timer, now) < 60) return { status: "too-short" };
+      const ended = endTimerState(timer, now);
+      if (ended !== timer) setTimerState(set, ended);
+      set({ timerReview: true });
+      return { status: "review" };
+    },
+    setTimerReviewOpen: (open) => {
+      if (get().timerReview !== open) set({ timerReview: open });
+    },
+    saveTimerReview: (edit) => {
+      const state = get();
+      const now = Date.now();
+      const timer = state.timer;
+      if (state.loading || state.locked || timer.kind === "pomodoro" || !timer.ended) return { status: "idle" };
+      // Scheda rimasta indietro (in background, evento "storage" perso): vince lo stato più recente.
+      if (adoptNewerTimer()) return { status: "idle" };
+      const block = finishedSession(timer, now);
+      if (!block) return { status: "too-short" };
+      // Minuti corretti (cronometro rimasto acceso): la fine si sposta, l'inizio resta quello vero.
+      const times = reviewedSessionTimes(block, timerElapsedSeconds(timer, now), edit.minutes);
+      const subjectId = knownSubjectId(state, edit.subjectId);
+      const session =
+        saveTimerBlock({
+          ...block,
+          start: times.start,
+          end: times.end,
+          actualMinutes: edit.minutes,
+          // Cronometro senza obiettivo: il previsto è il tempo studiato, quindi quello corretto.
+          plannedMinutes: timer.kind === "stopwatch" && timer.durationSeconds <= 0 ? edit.minutes : block.plannedMinutes,
+          subjectId,
+          topicId: topicFor(state, subjectId, edit.topicId),
+          title: edit.title,
+          notes: edit.notes,
+          template: edit.template
+        }) ?? get().sessions.find((item) => item.id === block.sessionId);
+      // Il timer resta nella sua modalità, pronto per la prossima sessione.
+      const nextSubjectId = knownSubjectId(state, timer.subjectId);
+      const durations = timerDurationsFor(state, nextSubjectId);
+      setTimerState(
+        set,
+        defaultTimer(timer.mode, {
+          kind: timer.kind,
+          durations,
+          subjectId: nextSubjectId,
+          topicId: topicFor(state, nextSubjectId, timer.topicId),
+          title: timer.title,
+          template: timer.template,
+          targetMinutes: durations.stopwatchTargetMinutes
+        })
+      );
+      set({ timerReview: false });
+      return session ? { status: "saved", session } : { status: "idle" };
     },
     skipBreak: () => {
       const state = get();
@@ -1670,19 +1830,39 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const durations = timerDurationsFor(state, subjectId);
       setTimerState(
         set,
-        defaultTimer("pomodoro", { kind, durations, subjectId, title: current.title, template: current.template, targetMinutes: durations.stopwatchTargetMinutes })
+        defaultTimer("pomodoro", {
+          kind,
+          durations,
+          subjectId,
+          topicId: topicFor(state, subjectId, current.topicId),
+          title: current.title,
+          template: current.template,
+          targetMinutes: durations.stopwatchTargetMinutes
+        })
       );
+      set({ timerReview: false });
     },
     setTimerSubject: (subjectId) => {
       const state = get();
       const id = knownSubjectId(state, subjectId);
       if (state.timer.subjectId === id) return;
-      setTimerState(set, syncTimerDurations(chosenByUser({ ...state.timer, subjectId: id }), timerDurationsFor(state, id)));
+      // L'argomento è della materia: cambiandola si stacca (il testo scritto resta).
+      const next: TimerState = { ...state.timer, subjectId: id, topicId: topicFor(state, id, state.timer.topicId) };
+      if (next.topicId === undefined) delete next.topicId;
+      setTimerState(set, syncTimerDurations(chosenByUser(next), timerDurationsFor(state, id)));
     },
     setTimerDetails: (details) => {
-      const current = get().timer;
-      const next = { ...current, ...details };
-      if (next.title === current.title && next.template === current.template) return;
+      const state = get();
+      const current = state.timer;
+      const next: TimerState = { ...current };
+      if (details.title !== undefined) next.title = details.title;
+      if (details.template !== undefined) next.template = details.template;
+      if (details.topicId !== undefined) {
+        const topicId = details.topicId ? topicFor(state, current.subjectId, details.topicId) : undefined;
+        if (topicId) next.topicId = topicId;
+        else delete next.topicId;
+      }
+      if (next.title === current.title && next.template === current.template && next.topicId === current.topicId) return;
       setTimerState(set, next);
     },
     markTimerTargetNotified: () => {
@@ -1693,12 +1873,15 @@ export const useStudyStore = create<StudyState>((set, get) => {
     restoreStudyTimer: (previous) => {
       if (!isTimerIdle(get().timer)) return false;
       setTimerState(set, previous);
+      // Annulla dopo Scarta dal riepilogo: il riepilogo torna aperto.
+      set({ timerReview: previous.ended === true });
       return true;
     },
     reloadStudyTimer: () => {
       const stored = loadTimer();
       // Solo `set`: riscriverlo in localStorage farebbe rimbalzare l'evento tra le schede.
-      if ((stored.changedAt ?? 0) > (get().timer.changedAt ?? 0)) set({ timer: stored });
+      // Se un'altra scheda ha salvato o scartato la sessione, il riepilogo qui si chiude.
+      if ((stored.changedAt ?? 0) > (get().timer.changedAt ?? 0)) set(stored.ended ? { timer: stored } : { timer: stored, timerReview: false });
     },
     saveTimerSettings: async ({ subjectId, subject, defaults }) => {
       const writes: Array<Promise<void>> = [];

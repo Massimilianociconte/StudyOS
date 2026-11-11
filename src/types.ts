@@ -203,8 +203,10 @@ export interface StudySession extends BaseEntity {
   notes: string;
   attachmentIds: ID[];
   status: "planned" | "running" | "completed" | "skipped";
-  /** Da dove arriva: blocco Pomodoro, cronometro o aggiunta a mano (assente = vecchia o a mano). */
-  source?: "pomodoro" | "stopwatch" | "manual";
+  /** Da dove arriva: blocco Pomodoro, Timer, cronometro o aggiunta a mano (assente = vecchia o a mano). */
+  source?: "pomodoro" | "timer" | "stopwatch" | "manual";
+  /** Argomento da ripassare studiato in questa sessione (StudyTopic della stessa materia). */
+  topicId?: ID;
 }
 
 /**
@@ -217,6 +219,8 @@ export interface TimerSettings {
   longBreakMinutes?: number;
   longBreakEvery?: number;
   stopwatchTargetMinutes?: number;
+  /** Timer (conto alla rovescia): ultima durata scelta, in minuti. */
+  timerMinutes?: number;
 }
 
 export interface StudyTopic extends BaseEntity {

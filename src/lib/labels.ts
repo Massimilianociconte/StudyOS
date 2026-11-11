@@ -537,9 +537,10 @@ export const SESSION_TEMPLATE_LABEL: Record<StudySession["template"], string> = 
   "oral-prep": "Preparazione orale"
 };
 
-/** Le due modalità del timer di studio. */
-export const TIMER_KIND_LABEL: Record<"pomodoro" | "stopwatch", string> = {
+/** Le tre modalità del timer di studio. */
+export const TIMER_KIND_LABEL: Record<"pomodoro" | "timer" | "stopwatch", string> = {
   pomodoro: "Pomodoro",
+  timer: "Timer",
   stopwatch: "Cronometro"
 };
 
@@ -558,8 +559,9 @@ export const TIMER_MODE_LABEL: Record<"classic" | "pomodoro" | "deep-focus", str
 };
 
 /** Da dove arriva una sessione di studio (assente = vecchia o aggiunta a mano). */
-export const SESSION_SOURCE_LABEL: Record<"pomodoro" | "stopwatch" | "manual", string> = {
+export const SESSION_SOURCE_LABEL: Record<"pomodoro" | "timer" | "stopwatch" | "manual", string> = {
   pomodoro: "Pomodoro",
+  timer: "Timer",
   stopwatch: "Cronometro",
   manual: "Aggiunta a mano"
 };
@@ -568,15 +570,19 @@ export const SESSION_SOURCE_LABEL: Record<"pomodoro" | "stopwatch" | "manual", s
 export const TIMER_TEXT = {
   kindAria: "Modalità del timer",
   kindHelp: {
-    title: "Pomodoro o Cronometro?",
-    text: "Pomodoro: blocchi di studio con una pausa breve dopo ognuno e una pausa lunga ogni tanto; ogni blocco finito si salva da solo nelle tue ore. Cronometro: il tempo conta in avanti finché non premi «Termina e salva».",
-    example: "25 minuti di studio, 5 di pausa; dopo 4 blocchi una pausa di 15."
+    title: "Pomodoro, Timer o Cronometro?",
+    text: "Pomodoro: blocchi di studio con una pausa breve dopo ognuno e una pausa lunga ogni tanto; ogni blocco finito si salva da solo nelle tue ore. Timer: scegli quanto vuoi studiare e il tempo conta alla rovescia; alla fine controlli e salvi. Cronometro: il tempo conta in avanti finché non premi «Termina».",
+    example: "Pomodoro: 25 minuti di studio e 5 di pausa. Timer: 1 h 30 min."
   },
   blockOf: (block: number, every: number) => `Blocco ${block} di ${every}`,
   idle: {
     pomodoro: "Scegli la materia e avvia: a fine blocco parte la pausa.",
+    timer: "Scegli quanto vuoi studiare: il tempo conta alla rovescia.",
     stopwatch: "Studia quanto vuoi: il tempo conta in avanti."
   },
+  timerEnded: (studied: string) => `Tempo finito · ${studied} di studio da salvare`,
+  stoppedToSave: (studied: string) => `Fermo · ${studied} di studio da salvare`,
+  timerPhase: (total: string) => `Timer · ${total}`,
   running: (studied: string) => `In corso · ${studied} di studio`,
   paused: (studied: string) => `In pausa · ${studied} di studio`,
   onBreak: "Alzati, bevi un bicchiere d'acqua, riposa gli occhi.",
@@ -587,6 +593,9 @@ export const TIMER_TEXT = {
   pause: "Pausa",
   resume: "Riprendi",
   finish: "Termina e salva",
+  endEarly: "Termina prima",
+  end: "Termina",
+  saveEnded: "Rivedi e salva",
   finishHint: "Disponibile dopo almeno 1 minuto di studio",
   endCycle: "Termina il Pomodoro",
   skipBreak: "Salta la pausa",
@@ -609,16 +618,23 @@ export const TIMER_TEXT = {
   focusQuick: "Blocco di studio",
   minutes: (minutes: number) => `${minutes} min`,
   otherDuration: "Altra durata",
+  timerDurationFor: (name: string) => `Durata per ${name}`,
+  timerDurationDefault: "Durata per tutte le materie",
+  timerQuick: "Durata del timer",
+  hoursField: "Ore",
+  minutesField: "Minuti",
+  customApply: "Usa",
+  customInvalid: "Scrivi una durata da 1 minuto a 10 ore.",
+  whatField: "Cosa studi?",
+  whatPlaceholder: "Argomento, capitolo o lezione (facoltativo)",
+  whatTopic: "Argomento della materia",
+  templateLine: (template: string) => `Tipo di sessione: ${template}`,
   breaksSummary: (short: number, long: number, every: number) => `Pausa ${short} min · lunga ${long} min ogni ${every} ${every === 1 ? "blocco" : "blocchi"}`,
   noTarget: "Nessun obiettivo",
   durationsFor: (name: string) => `Durate di ${name}`,
   defaultDurations: "Durate per tutte le materie",
   change: "Cambia",
   settings: "Impostazioni timer",
-  details: "Dettagli sessione",
-  detailsSummary: (title: string, template: string) => (title ? `${title} · ${template}` : template),
-  titleField: "Titolo (facoltativo)",
-  titlePlaceholder: "Es. Capitolo 4, infiammazione",
   templateField: "Tipo di sessione",
   templateHelp: {
     title: "Tipo di sessione",
@@ -640,6 +656,7 @@ export const TIMER_SETTINGS_TEXT = {
   longBreak: "Pausa lunga (minuti)",
   longBreakEvery: "Pausa lunga ogni (blocchi)",
   target: "Obiettivo del cronometro (minuti)",
+  timer: "Timer (minuti)",
   targetHint: "Facoltativo: ti avvisa al traguardo e il cronometro continua.",
   invalid: (field: string, min: number, max: number) => `${field}: scrivi un numero intero da ${min} a ${max}.`,
   alsoDefaults: "Usa queste durate anche per le altre materie",
@@ -663,6 +680,8 @@ export const TIMER_ALERT_TEXT = {
   focusDone: (subject?: string) => `Blocco finito${subject ? ` · ${subject}` : ""}`,
   focusDoneBody: (studied: string, breakLabel: string, breakLength: string) => `${studied} salvati nelle tue ore. Ora ${breakLabel.toLowerCase()} di ${breakLength}.`,
   focusDoneBreakOver: (studied: string) => `${studied} salvati nelle tue ore. Anche la pausa è finita: avvia il prossimo blocco quando vuoi.`,
+  timerDone: (subject?: string) => `Tempo finito${subject ? ` · ${subject}` : ""}`,
+  timerDoneBody: (studied: string) => `${studied} di studio: controlla cosa hai fatto e salva.`,
   breakDone: "Pausa finita",
   breakDoneBody: "Pronto per il prossimo blocco?",
   targetReached: "Obiettivo raggiunto",
@@ -670,7 +689,105 @@ export const TIMER_ALERT_TEXT = {
   close: "Chiudi",
   goToStudy: "Vai a Studio",
   startNext: "Avvia il blocco",
-  skipBreak: "Salta la pausa"
+  skipBreak: "Salta la pausa",
+  edit: "Modifica",
+  undo: "Annulla"
+} as const;
+
+/** Riepilogo di Timer e Cronometro, modifica di una sessione salvata e "Aggiungi studio fatto". */
+export const SESSION_FORM_TEXT = {
+  eyebrow: "Studio",
+  reviewTitle: "Riepilogo della sessione",
+  reviewWhen: (kind: string, start: string, end: string) => `${kind} · dalle ${start} alle ${end}`,
+  reviewWhenDays: (kind: string, start: string, end: string) => `${kind} · da ${start} a ${end}`,
+  reviewStudied: (studied: string) => `${studied} di studio, pause escluse`,
+  reviewIntro: "Controlla materia, argomento e minuti: puoi correggere tutto prima di salvare.",
+  longTitle: (studied: string) => `${studied} senza salvare: sono più di 4 ore.`,
+  longText: "Se il cronometro è rimasto acceso dopo lo studio, scrivi i minuti che hai studiato davvero: la fine si sposta di conseguenza.",
+  longFix: "Correggi i minuti",
+  editTitle: "Modifica sessione",
+  addTitle: "Aggiungi studio fatto",
+  addIntro: "Hai studiato senza timer, in biblioteca, a lezione o in gruppo? Aggiungilo qui: conterà nelle tue ore.",
+  subject: "Materia",
+  noSubject: "Nessuna materia",
+  topic: "Argomento",
+  noTopic: "Nessun argomento",
+  title: "Descrizione (facoltativa)",
+  titlePlaceholder: "Es. Capitolo 4, esercizi 3–5",
+  notes: "Note (facoltative)",
+  notesPlaceholder: "Cosa rivedere, dubbi da chiedere…",
+  minutes: "Minuti di studio",
+  minutesPlaceholder: "Es. 60",
+  date: "Giorno",
+  time: "Ora di inizio",
+  template: "Tipo di sessione",
+  savedWith: (source: string) => `Salvata con: ${source}`,
+  endsAt: (time: string) => `Fine alle ${time}`,
+  save: "Salva",
+  saveAdd: "Salva sessione",
+  cancel: "Annulla",
+  discard: "Scarta",
+  discardConfirm: (studied: string) => `Scartare ${studied} di studio? Non verranno salvati.`,
+  discardYes: "Sì, scarta",
+  discardNo: "No",
+  discarded: (studied: string) => `Sessione scartata (${studied}).`,
+  delete: "Elimina",
+  deleteConfirm: "Eliminare la sessione? Le ore verranno tolte dalle statistiche.",
+  deleteYes: "Sì, elimina",
+  deleteNo: "No",
+  deleted: (title: string) => `Sessione eliminata: ${title}.`,
+  loadFailedReview: "Non riesco ad aprire il riepilogo",
+  loadFailedReviewBody: "Il tempo studiato non è perso: controlla la connessione e tocca «Rivedi e salva» in Studio. Se succede ancora, ricarica la pagina.",
+  loadFailedEdit: "Non riesco ad aprire la sessione",
+  loadFailedEditBody: "Controlla la connessione e riprova. Se succede ancora, ricarica la pagina.",
+  undo: "Annulla",
+  saved: (studied: string) => `Sessione salvata: ${studied}.`,
+  updated: "Sessione aggiornata.",
+  added: (studied: string) => `Studio aggiunto: ${studied}.`,
+  error: {
+    minutes: "Scrivi i minuti di studio: un numero intero da 1 a 960 (16 ore).",
+    start: "Controlla il giorno e l'ora di inizio.",
+    future: "L'ora di inizio è nel futuro: scegli un momento già passato."
+  }
+} as const;
+
+/** Sessioni senza argomento (tempo per argomento). */
+export const NO_TOPIC_LABEL = "Senza argomento";
+
+export const SUBJECT_STUDY_UNIT_LABEL: Record<"day" | "week" | "month", string> = {
+  day: "Giorni",
+  week: "Settimane",
+  month: "Mesi"
+};
+
+/** Studio nella pagina della materia (Materie → dettaglio). */
+export const SUBJECT_STUDY_TEXT = {
+  title: "Studio",
+  study: "Studia questa materia",
+  average: (minutes: string) => `in media ${minutes}`,
+  today: "Oggi",
+  week: "Settimana",
+  month: "Mese",
+  unitAria: "Andamento per",
+  trendAria: (unit: string, hours: string) => `Ore di studio di questa materia, ${unit}: ${hours} ore in tutto`,
+  trendTooltip: "Studio",
+  weekOf: (date: string) => `settimana dal ${date}`,
+  byTopic: "Tempo per argomento",
+  topicRow: (count: number, minutes: string) => `${minutes} · ${count} ${count === 1 ? "sessione" : "sessioni"}`,
+  sessions: "Sessioni",
+  showAll: (count: number) => `Mostra tutte (${count})`,
+  showLess: "Mostra meno",
+  empty: "Nessuna sessione per questa materia. Avvia il timer in Studio scegliendo questa materia: il tempo comparirà qui."
+} as const;
+
+/** Argomenti da ripassare: filtro per materia (Studio → Argomenti). */
+const topicCount = (count: number) => `${count} ${count === 1 ? "argomento" : "argomenti"}`;
+export const TOPIC_FILTER_TEXT = {
+  aria: "Filtra per materia",
+  all: (count: number) => `Tutte le materie · ${topicCount(count)}`,
+  option: (name: string, count: number) => `${name} · ${topicCount(count)}`,
+  showAll: "Mostra tutti",
+  emptyFiltered: "Nessun argomento per questa materia. Scrivine uno qui sopra oppure importa il programma dell'esame dalla sezione Esami."
 } as const;
 
 /** Colonna laterale di Studio: i numeri portano dove servono. */
@@ -709,22 +826,24 @@ export const STATS_TEXT = {
   sessionsHint: (average: string) => `in media ${average} l'una`,
   noSessionsHint: "Nessuna in questo periodo",
   streak: "Giorni di fila",
-  streakHint: (streak: number) => (streak ? (streak === 1 ? "giorno di studio" : "giorni consecutivi") : "Studia oggi per iniziare"),
+  streakHint: (streak: number) => (streak ? "fino a oggi" : "Studia oggi per iniziare"),
   streakHelp: {
     title: "Giorni di fila",
     text: "Giorni consecutivi con almeno una sessione di studio salvata.",
     example: "hai studiato lunedì, martedì e mercoledì → 3."
   },
   tasksDone: "Attività fatte",
-  tasksDoneHint: (done: number, total: number) => `${done} su ${total}`,
   tasksEmptyHint: "Aggiungile in Attività",
   tasksHelp: {
     title: "Attività fatte",
-    text: "Percentuale delle attività completate su tutte quelle non archiviate."
+    text: "Attività segnate come fatte nel periodo scelto."
   },
   reviews: "Ripassi fatti",
-  reviewsHint: (topics: number) => `su ${topics} ${topics === 1 ? "argomento" : "argomenti"}`,
   reviewsEmptyHint: "Aggiungi argomenti in Studio",
+  reviewsHelp: {
+    title: "Ripassi fatti",
+    text: "Argomenti ripassati nel periodo scelto. Conta l'ultimo ripasso di ogni argomento: se lo ripassi più volte, conta una volta sola."
+  },
   trendDay: "Ore al giorno",
   trendWeek: "Ore a settimana",
   trendTotal: (hours: string) => `${hours} h in tutto`,
@@ -741,7 +860,7 @@ export const STATS_TEXT = {
   sessionsCount: (count: number) => `${count} ${count === 1 ? "sessione" : "sessioni"}`,
   sourceUnknown: "Senza indicazione",
   sourceRow: (count: number, minutes: string) => `${count} ${count === 1 ? "sessione" : "sessioni"} · ${minutes}`,
-  howEmpty: "Qui vedrai quanto durano le tue sessioni e se le salvi con il Pomodoro, il cronometro o a mano.",
+  howEmpty: "Qui vedrai quanto durano le tue sessioni e se le salvi con il Pomodoro, il Timer, il cronometro o a mano.",
   exams: "Preparazione esami",
   examsOrder: "Dal più vicino",
   examReady: (prep: number) => `${prep}% pronto`,

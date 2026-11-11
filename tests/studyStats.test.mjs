@@ -2,16 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   STATS_PERIODS,
+  countInRange,
+  largestRemainderPercents,
   minutesBySubject,
+  minutesByTopic,
   periodRange,
+  recentTrend,
   semesterRange,
   sessionSummary,
   sessionsInRange,
+  studyTotals,
+  subjectSessions,
   trendBuckets,
   trendUnit
 } from "../src/lib/studyStats.ts";
 import { workloadBySubject } from "../src/lib/selectors.ts";
-import { NO_SUBJECT_LABEL } from "../src/lib/labels.ts";
+import { NO_SUBJECT_LABEL, NO_TOPIC_LABEL } from "../src/lib/labels.ts";
 
 // Date locali: i periodi seguono il calendario della persona, non UTC.
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
@@ -195,16 +201,18 @@ test("riepilogo: numero di sessioni, media e provenienza", () => {
     session(local(2026, 11, 9, 9), 25, { source: "pomodoro" }),
     session(local(2026, 11, 9, 10), 25, { source: "pomodoro" }),
     session(local(2026, 11, 9, 14), 70, { source: "stopwatch" }),
+    session(local(2026, 11, 9, 16), 90, { source: "timer" }),
     session(local(2026, 11, 10, 9), 60, { source: "manual" }),
     session(local(2026, 11, 10, 15), 21),
     session(local(2026, 11, 10, 18), 500, { status: "planned", source: "manual" })
   ];
   const summary = sessionSummary(list);
-  assert.equal(summary.count, 5);
-  assert.equal(summary.totalMinutes, 201);
-  assert.equal(summary.averageMinutes, 40, "201 / 5 = 40,2 → 40");
+  assert.equal(summary.count, 6);
+  assert.equal(summary.totalMinutes, 291);
+  assert.equal(summary.averageMinutes, 49, "291 / 6 = 48,5 → 49");
   assert.deepEqual(summary.bySource, {
     pomodoro: { count: 2, minutes: 50 },
+    timer: { count: 1, minutes: 90 },
     stopwatch: { count: 1, minutes: 70 },
     manual: { count: 1, minutes: 60 },
     unknown: { count: 1, minutes: 21 }
@@ -226,4 +234,126 @@ test("workloadBySubject non perde più le sessioni senza materia", () => {
   const none = workload.find((item) => item.name === NO_SUBJECT_LABEL);
   assert.equal(none?.minutes, 55);
   assert.equal(workloadBySubject(subjects, [list[0]]).some((item) => item.name === NO_SUBJECT_LABEL), false, "nessuna riga vuota in più");
+});
+
+// ---------- percentuali, materia, argomenti ----------
+
+test("largestRemainderPercents: la somma fa sempre 100", () => {
+  assert.deepEqual(largestRemainderPercents([1, 1, 1]), [34, 33, 33]);
+  assert.deepEqual(largestRemainderPercents([50, 30, 20]), [50, 30, 20]);
+  assert.deepEqual(largestRemainderPercents([2, 1]), [67, 33]);
+  assert.deepEqual(largestRemainderPercents([0, 0]), [0, 0], "senza minuti nessuna percentuale");
+  assert.deepEqual(largestRemainderPercents([]), []);
+  const many = largestRemainderPercents([13, 27, 7, 7, 46, 1]);
+  assert.equal(many.reduce((sum, value) => sum + value, 0), 100);
+  assert.ok(many.every((value) => Number.isInteger(value) && value >= 0));
+});
+
+test("subjectSessions e studyTotals: solo le sessioni completate della materia, una volta sola", () => {
+  const now = local(2026, 11, 11, 18);
+  const list = [
+    session(local(2026, 11, 11, 9), 50, { subjectId: "an" }),
+    session(local(2026, 11, 11, 14), 25, { subjectId: "an" }),
+    session(local(2026, 11, 10, 9), 60, { subjectId: "an" }),
+    session(local(2026, 11, 3, 9), 40, { subjectId: "an" }),
+    session(local(2026, 10, 30, 9), 30, { subjectId: "an" }),
+    session(local(2026, 11, 11, 10), 90, { subjectId: "chim" }),
+    session(local(2026, 11, 11, 11), 45, { subjectId: "an", status: "planned" })
+  ];
+  const mine = subjectSessions(list, "an");
+  assert.equal(mine.length, 5);
+  assert.deepEqual(mine.map((item) => item.actualMinutes), [25, 50, 60, 40, 30], "dalla più recente");
+  assert.deepEqual(studyTotals(mine, now), { total: 205, today: 75, week: 135, month: 175, count: 5 });
+  assert.deepEqual(studyTotals([], now), { total: 0, today: 0, week: 0, month: 0, count: 0 });
+});
+
+test("recentTrend: ultimi giorni, settimane o mesi fino a oggi", () => {
+  const now = local(2026, 11, 11, 18);
+  const list = [
+    session(local(2026, 11, 11, 9), 50),
+    session(local(2026, 11, 10, 9), 60),
+    session(local(2026, 11, 2, 9), 30),
+    session(local(2026, 10, 15, 9), 20),
+    session(local(2025, 12, 1, 9), 99)
+  ];
+  const days = recentTrend(list, "day", now);
+  assert.equal(days.length, 14);
+  assert.equal(day(days.at(-1).start), "2026-11-11");
+  assert.equal(day(days[0].start), "2026-10-29");
+  assert.deepEqual(days.slice(-2).map((bucket) => bucket.minutes), [60, 50]);
+  const weeks = recentTrend(list, "week", now);
+  assert.equal(weeks.length, 12);
+  assert.equal(day(weeks.at(-1).start), "2026-11-09", "da lunedì");
+  assert.equal(weeks.at(-1).minutes, 110);
+  assert.equal(weeks.at(-2).minutes, 30);
+  const months = recentTrend(list, "month", now);
+  assert.equal(months.length, 12);
+  assert.equal(day(months.at(-1).start), "2026-11-01");
+  assert.equal(day(months[0].start), "2025-12-01");
+  assert.deepEqual([months[0].minutes, months.at(-2).minutes, months.at(-1).minutes], [99, 20, 140]);
+  assert.equal(months.reduce((sum, bucket) => sum + bucket.minutes, 0), 259, "ogni sessione in un solo mese");
+  assert.equal(recentTrend(list, "day", now, 3).length, 3);
+});
+
+test("minutesByTopic: tempo per argomento, 'Senza argomento' in fondo", () => {
+  const topics = [
+    { id: "lim", subjectId: "an", title: "Limiti" },
+    { id: "der", subjectId: "an", title: "Derivate" }
+  ];
+  const list = [
+    session(local(2026, 11, 11, 9), 50, { topicId: "der" }),
+    session(local(2026, 11, 11, 10), 30, { topicId: "lim" }),
+    session(local(2026, 11, 11, 11), 40, { topicId: "lim" }),
+    session(local(2026, 11, 11, 12), 15),
+    session(local(2026, 11, 11, 13), 5, { topicId: "gone" }),
+    session(local(2026, 11, 11, 14), 99, { topicId: "lim", status: "planned" })
+  ];
+  assert.deepEqual(minutesByTopic(list, topics), [
+    { id: "lim", title: "Limiti", minutes: 70, count: 2 },
+    { id: "der", title: "Derivate", minutes: 50, count: 1 },
+    { id: null, title: NO_TOPIC_LABEL, minutes: 20, count: 2 }
+  ]);
+  assert.deepEqual(minutesByTopic([], topics), []);
+});
+
+test("countInRange: attività completate e ripassi nel periodo scelto", () => {
+  const range = periodRange("week", local(2026, 11, 11, 12));
+  const dates = [local(2026, 11, 9, 0).toISOString(), local(2026, 11, 15, 23, 59).toISOString(), local(2026, 11, 16).toISOString(), undefined, "rotto"];
+  assert.equal(countInRange(dates, range), 2);
+});
+
+test("recentTrend e studyTotals: 23:30 e 00:30 nei giorni del cambio d'ora (Roma 25/10, New York 1/11) restano nel giorno giusto", () => {
+  // Date locali: vale in qualunque fuso con cui girano i test (Europe/Rome, America/New_York, UTC).
+  const list = [
+    session(local(2026, 10, 24, 23, 30), 10),
+    session(local(2026, 10, 25, 0, 30), 15),
+    session(local(2026, 10, 25, 23, 30), 5),
+    session(local(2026, 10, 26, 0, 30), 7),
+    session(local(2026, 10, 31, 23, 30), 20),
+    session(local(2026, 11, 1, 0, 30), 25),
+    session(local(2026, 11, 1, 23, 30), 30),
+    session(local(2026, 11, 2, 0, 30), 40)
+  ];
+  const now = local(2026, 11, 2, 12);
+  const days = recentTrend(list, "day", now);
+  // Un secchio per giorno di calendario, senza buchi né doppioni anche nei giorni di 23 o 25 ore.
+  const labels = days.map((bucket) => day(bucket.start));
+  assert.equal(labels[0], "2026-10-20");
+  assert.equal(labels.at(-1), "2026-11-02");
+  assert.equal(new Set(labels).size, 14);
+  const byDay = Object.fromEntries(days.map((bucket) => [day(bucket.start), bucket.minutes]));
+  assert.deepEqual(
+    ["2026-10-24", "2026-10-25", "2026-10-26", "2026-10-31", "2026-11-01", "2026-11-02"].map((key) => byDay[key]),
+    [10, 20, 7, 20, 55, 40]
+  );
+  for (const bucket of days) assert.equal(bucket.start.getHours(), 0, `${day(bucket.start)} inizia a mezzanotte`);
+  const weeks = recentTrend(list, "week", now);
+  assert.deepEqual(weeks.slice(-3).map((bucket) => [day(bucket.start), bucket.minutes]), [
+    ["2026-10-19", 30],
+    ["2026-10-26", 82],
+    ["2026-11-02", 40]
+  ]);
+  assert.equal(days.reduce((sum, bucket) => sum + bucket.minutes, 0), 152, "ogni sessione contata una volta");
+  const totals = studyTotals(list, local(2026, 11, 1, 12));
+  assert.equal(totals.today, 55, "il 1° novembre: 00:30 e 23:30");
 });
