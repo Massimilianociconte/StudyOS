@@ -158,7 +158,7 @@ export function EventBar({
           </span>
         ) : null}
         {item.title}
-        {extra ? <span className="font-bold opacity-80"> · {extra}</span> : null}
+        {extra ? <span className={`font-bold ${item.status === "done" ? "" : "opacity-80"}`}> · {extra}</span> : null}
       </span>
     </button>
   );

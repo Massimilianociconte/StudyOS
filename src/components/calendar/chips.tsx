@@ -11,12 +11,18 @@ import { useEventTheme } from "./bars";
 import { pointerPoint } from "./shared";
 import type { Handlers, Subjects } from "./types";
 
-export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers }) {
+/**
+ * Nelle griglie (Settimana, Mese) la voce è fitta: area di tocco di 26 px (WCAG 2.5.8) che non copre il
+ * titolo accanto né la voce sopra. Negli elenchi (telefono, Agenda) `roomy`: riga e area di 44 px.
+ */
+export function TaskChip({ task, handlers, roomy = false }: { task: Task; handlers: Handlers; roomy?: boolean }) {
   const done = task.status === "done";
   const overdue = !done && task.dueDate ? isBefore(parseISO(task.dueDate), new Date()) : false;
   return (
     <div
-      className={`flex min-w-0 items-center gap-1.5 rounded-[10px] bg-[var(--surface-soft)] px-1.5 py-1 text-[11px] font-bold hover:bg-[var(--surface)] ${done ? "opacity-55" : ""}`}
+      className={`flex min-w-0 items-center bg-[var(--surface-soft)] font-bold hover:bg-[var(--surface)] ${
+        roomy ? "min-h-11 gap-3 rounded-[12px] px-3 py-1 text-xs" : "gap-1.5 rounded-[10px] px-1.5 py-1 text-[11px]"
+      } ${done ? "opacity-55" : ""}`}
       title={task.title}
     >
       <button
@@ -26,11 +32,14 @@ export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers })
           event.stopPropagation();
           handlers.onToggleTask(task.id);
         }}
-        // Area di tocco di 26 px (WCAG 2.5.8): non copre il titolo accanto né la voce sopra.
-        className="relative grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border-[1.5px] after:absolute after:-inset-1.5 after:content-['']"
+        // L'area (::after) parte dal bordo interno: 14 − 3 + 2 × 7,5 = 26 px; 20 − 3 + 2 × 13,5 = 44 px.
+        // Fuori dal cerchio sporge quanto lo spazio prima del titolo (6 e 12 px), non oltre.
+        className={`relative grid shrink-0 place-items-center rounded-full border-[1.5px] after:absolute after:content-[''] ${
+          roomy ? "h-5 w-5 after:-inset-[13.5px]" : "h-3.5 w-3.5 after:-inset-[7.5px]"
+        }`}
         style={{ borderColor: PRIORITY_TONE[task.priority], background: done ? PRIORITY_TONE[task.priority] : "transparent" }}
       >
-        {done ? <Icon name="Check" className="h-2.5 w-2.5 text-[#10131d]" /> : null}
+        {done ? <Icon name="Check" className={`${roomy ? "h-3 w-3" : "h-2.5 w-2.5"} text-[#10131d]`} /> : null}
       </button>
       <button
         type="button"

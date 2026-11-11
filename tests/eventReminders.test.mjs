@@ -158,6 +158,21 @@ test("missedReminders: persi ad app chiusa, solo se l'evento non è ancora comin
   assert.deepEqual(reminders.missedReminders([event({})], NOW), []);
 });
 
+test("splitMissed: il tetto conta solo i non ancora avvisati; gli altri si ricordano senza notifica", () => {
+  const missed = Array.from({ length: 8 }, (_, index) => ({ key: `k${index}`, at: index, eventId: `e${index}`, title: "", startMs: 0, allDay: false }));
+  // I 5 più recenti erano già stati avvisati (dal vivo): il tetto non deve nascondere i più vecchi.
+  const fired = new Set(["k3", "k4", "k5", "k6", "k7"]);
+  const first = reminders.splitMissed(missed, (key) => fired.has(key));
+  assert.deepEqual(first.show.map((item) => item.key), ["k0", "k1", "k2"]);
+  assert.deepEqual(first.skip, []);
+  // Otto nuovi: i 5 più recenti in campanella, i 3 più vecchi segnati come avvisati.
+  const all = reminders.splitMissed(missed, () => false);
+  assert.deepEqual(all.show.map((item) => item.key), ["k3", "k4", "k5", "k6", "k7"]);
+  assert.deepEqual(all.skip.map((item) => item.key), ["k0", "k1", "k2"]);
+  assert.equal(reminders.splitMissed(missed, () => false, 0).show.length, 0);
+  assert.deepEqual(reminders.splitMissed([], () => false), { show: [], skip: [] });
+});
+
 test("parseFired e pruneFired: dati rovinati ignorati, vecchi tolti", () => {
   assert.deepEqual(reminders.parseFired(null), {});
   assert.deepEqual(reminders.parseFired("not json"), {});

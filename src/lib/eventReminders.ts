@@ -130,6 +130,20 @@ export function missedReminders(
   });
 }
 
+/**
+ * Persi da avvisare ora: tolti quelli già avvisati (su questo dispositivo), i `max` più recenti in
+ * `show`; gli altri in `skip`, da segnare come avvisati senza notifica, così non tornano a un riavvio.
+ */
+export function splitMissed(
+  missed: readonly PlannedReminder[],
+  isFired: (key: string) => boolean,
+  max = MISSED_MAX
+): { show: PlannedReminder[]; skip: PlannedReminder[] } {
+  const fresh = missed.filter((item) => !isFired(item.key));
+  const cut = Math.max(0, fresh.length - Math.max(0, max));
+  return { show: fresh.slice(cut), skip: fresh.slice(0, cut) };
+}
+
 /** Chiavi già avvisate (dal localStorage): qualsiasi dato rovinato vale "nessuna". */
 export function parseFired(raw: string | null): Record<string, number> {
   if (!raw) return {};
@@ -154,8 +168,7 @@ export function pruneFired(fired: Record<string, number>, nowMs: number, keepMs 
   return result;
 }
 
-/** Id stabile della notifica in app: un secondo avviso della stessa chiave non la duplica. */
-export const notificationIdOf = (key: string) => `notif-reminder-${key.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+export { notificationIdOf } from "./reminderIds";
 
 const dayText = (ms: number) => capitalizeFirst(format(ms, "EEEE d MMMM", { locale: it }));
 

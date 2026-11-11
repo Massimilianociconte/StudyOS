@@ -476,6 +476,8 @@ function TimedEvent({
   const subject = occurrenceSubject(item, handlers.subjects);
   const showSubject = lineCount >= 5 && Boolean(subject);
   const titleLines = Math.min(5, Math.max(1, lineCount - (showTime ? 1 : 0) - (showSubject ? 1 : 0)));
+  // Le righe secondarie si attenuano, ma non in un evento fatto: è già attenuato tutto (contrasto ≥ 4,5:1).
+  const secondary = item.status === "done" ? "" : "opacity-80";
   return (
     <button
       type="button"
@@ -530,12 +532,12 @@ function TimedEvent({
         {item.title}
       </span>
       {showTime ? (
-        <span className="one-line-safe block font-bold opacity-80">
+        <span className={`one-line-safe block font-bold ${secondary}`}>
           {timeLabel(item.start)}–{timeLabel(item.end)}
           {occasion ? ` · ${occasion}` : ""}
         </span>
       ) : null}
-      {showSubject ? <span className="one-line-safe block font-bold opacity-80">{subject}</span> : null}
+      {showSubject ? <span className={`one-line-safe block font-bold ${secondary}`}>{subject}</span> : null}
     </button>
   );
 }

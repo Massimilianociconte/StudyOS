@@ -90,7 +90,7 @@ export function Agenda({
           <ul className="grid grid-cols-[minmax(0,1fr)] gap-1 sm:grid-cols-2">
             {overdue.map((task) => (
               <li key={task.id}>
-                <TaskChip task={task} handlers={handlers} />
+                <TaskChip task={task} handlers={handlers} roomy />
               </li>
             ))}
           </ul>
@@ -126,7 +126,7 @@ export function Agenda({
               {section.tasks.length ? (
                 <li className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2.5 py-1 sm:grid-cols-2">
                   {section.tasks.map((task) => (
-                    <TaskChip key={task.id} task={task} handlers={handlers} />
+                    <TaskChip key={task.id} task={task} handlers={handlers} roomy />
                   ))}
                 </li>
               ) : null}

@@ -42,7 +42,7 @@ import {
   occasionAgeText
 } from "../lib/labels";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
-import { eventPaint, upcomingAfterToday } from "../lib/calendarRender";
+import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
 import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
 import { CourseIcon } from "../components/CourseIcon";
@@ -493,7 +493,7 @@ export function DashboardView() {
                       <span className="min-w-0 flex-1">
                         <span className="one-line-safe block text-sm font-black">{event.title}</span>
                         <span className="block text-xs font-bold text-[var(--muted)]">
-                          {capitalizeFirst(format(parseISO(event.start), "EEE d MMM", { locale: it }))} ·{" "}
+                          {capitalizeFirst(format(parseISO(daySpanOf(event)?.startDay ?? event.start), "EEE d MMM", { locale: it }))} ·{" "}
                           {isAllDayEvent(event) ? ALL_DAY_LABEL : timeLabel(event.start)}
                           {event.category === "deadline" || event.category === "exam" ? ` · ${studyDaysLabel(event.start)}` : ""}
                         </span>

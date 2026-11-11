@@ -111,7 +111,7 @@ export function DayList({
                 ))}
                 {dayTasks.map((task) => (
                   <li key={task.id}>
-                    <TaskChip task={task} handlers={handlers} />
+                    <TaskChip task={task} handlers={handlers} roomy />
                   </li>
                 ))}
               </ul>

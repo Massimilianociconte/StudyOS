@@ -9,7 +9,6 @@ import { useStudyStore } from "../../store/useStudyStore";
 import { EVENT_REMINDER_TEXT } from "../../lib/labels";
 import {
   FIRED_STORAGE_KEY,
-  MISSED_MAX,
   REMINDER_GRACE_MS,
   missedReminders,
   notificationIdOf,
@@ -17,6 +16,7 @@ import {
   planReminders,
   pruneFired,
   reminderWhenText,
+  splitMissed,
   type PlannedReminder
 } from "../../lib/eventReminders";
 import { systemNotificationState } from "../../lib/timerAlerts";
@@ -93,18 +93,27 @@ export function EventReminderWatcher() {
       const body = reminderWhenText(item.startMs, item.allDay, new Date(nowMs));
       firedHere.add(item.key);
       writeFired(pruneFired({ ...fired, [item.key]: nowMs }, nowMs));
-      void addNotification({ id: notificationIdOf(item.key), kind: "system", title, body, linkView: "calendar" }).catch(() => undefined);
+      // Datata all'ora del promemoria, non di adesso: con la sync, una lettura o un'eliminazione fatta
+      // dopo su un altro dispositivo è più recente e vince (e nell'elenco sta al suo posto).
+      const createdAt = new Date(Math.min(item.at, nowMs)).toISOString();
+      void addNotification({ id: notificationIdOf(item.key), kind: "system", title, body, linkView: "calendar", createdAt }).catch(() => undefined);
       if (system) void showSystemReminder(item.key, title, body);
     };
     // Sta fuori dai riquadri d'errore delle viste: un dato strano non deve far cadere l'app.
     let plan: PlannedReminder[] = [];
     try {
       const now = new Date();
+      const nowMs = now.getTime();
       plan = planReminders(events, now);
-      // Persi ad app chiusa: solo nella campanella (niente notifica di sistema), i più recenti, una volta.
-      const missed = missedReminders(events, now);
-      for (const item of missed.slice(-MISSED_MAX)) notify(item, now.getTime(), false);
-      for (const item of missed.slice(0, -MISSED_MAX)) firedHere.add(item.key);
+      // Persi ad app chiusa: solo nella campanella (niente notifica di sistema), i più recenti non ancora
+      // avvisati, una volta. Gli altri si ricordano come avvisati, anche dopo un riavvio.
+      const fired = readFired();
+      const { show, skip } = splitMissed(missedReminders(events, now), (key) => firedHere.has(key) || Boolean(fired[key]));
+      if (skip.length) {
+        for (const item of skip) firedHere.add(item.key);
+        writeFired(pruneFired({ ...fired, ...Object.fromEntries(skip.map((item) => [item.key, nowMs])) }, nowMs));
+      }
+      for (const item of show) notify(item, nowMs, false);
     } catch {
       return undefined;
     }

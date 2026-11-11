@@ -17,7 +17,7 @@ import {
   capitalizeFirst,
   formatMinutes
 } from "../../lib/labels";
-import { occasionText, spanText } from "../../lib/calendarRender";
+import { daySpanOf, occasionText, spanText } from "../../lib/calendarRender";
 import { eventTypeLabel } from "../../lib/eventColors";
 import { TypeIcon, useEventPaint } from "./bars";
 import { allDayEventLabel } from "./shared";
@@ -66,7 +66,7 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
               </>
             ) : (
               <>
-                {capitalizeFirst(format(parseISO(preview.event.start), "EEEE d MMM", { locale: it }))} ·{" "}
+                {capitalizeFirst(format(parseISO(daySpanOf(preview.event)?.startDay ?? preview.event.start), "EEEE d MMM", { locale: it }))} ·{" "}
                 {isAllDayEvent(preview.event) ? allDayEventLabel(preview.event) : `${timeLabel(preview.event.start)}–${timeLabel(preview.event.end)} · ${formatMinutes(eventMinutes(preview.event))}`}
               </>
             )}

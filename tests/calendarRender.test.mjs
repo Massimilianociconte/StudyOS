@@ -404,3 +404,75 @@ test("upcomingAfterToday: i prossimi giorni anche con tanti eventi oggi", () => 
   assert.equal(render.upcomingAfterToday([...today, ...later], now, 2).length, 2);
   assert.deepEqual(render.upcomingAfterToday(today, now, 5), []);
 });
+
+/* ------------------------------------------------------------------ */
+/* Revisione 2                                                          */
+/* ------------------------------------------------------------------ */
+
+const { applyRepeatFields } = await import("../src/lib/repeat.ts");
+
+const withTz = (zone, run) => {
+  const previous = process.env.TZ;
+  process.env.TZ = zone;
+  try {
+    return run();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+};
+
+test("daySpanOf: per gli eventi di tutto il giorno con fuso il primo giorno è occurrenceDate di R1, da ogni fuso", () => {
+  const zoned = (patch, zone) => withTz(zone, () => applyRepeatFields(legacyAllDay({ recurrence: "none", ...patch }), { repeatChanged: true, timeZone: zone }));
+  const events = [
+    // Serie con regola (fuso salvato), a cavallo di entrambi i cambi dell'ora.
+    zoned({ id: "rome-weekly", start: "2026-03-01T00:00:00", end: "2026-03-02T00:00:00", repeat: { freq: "weekly" } }, "Europe/Rome"),
+    zoned({ id: "rome-3-weekly", start: "2026-03-27T00:00:00", end: "2026-03-30T00:00:00", repeat: { freq: "weekly" } }, "Europe/Rome"),
+    zoned({ id: "ny-daily", start: "2026-10-28T00:00:00", end: "2026-10-29T00:00:00", repeat: { freq: "daily" } }, "America/New_York"),
+    // Singoli con fuso: data senza ora e istante della mezzanotte del fuso.
+    legacyAllDay({ id: "rome-single", start: "2026-03-29T00:00:00", end: "2026-03-30T00:00:00", timeZone: "Europe/Rome" }),
+    legacyAllDay({ id: "rome-single-z", start: "2026-03-28T23:00:00.000Z", end: "2026-03-29T22:00:00.000Z", timeZone: "Europe/Rome" }),
+    legacyAllDay({ id: "rome-3-z", start: "2026-10-23T22:00:00.000Z", end: "2026-10-26T23:00:00.000Z", timeZone: "Europe/Rome" }),
+    legacyAllDay({ id: "ny-single-z", start: "2026-11-14T05:00:00.000Z", end: "2026-11-15T05:00:00.000Z", timeZone: "America/New_York" })
+  ];
+  const days = { "rome-3-weekly": 3, "rome-3-z": 3 };
+  for (const zone of ["Europe/Rome", "Europe/London", "America/New_York", "UTC", "Asia/Tokyo"]) {
+    withTz(zone, () => {
+      for (const event of events) {
+        const occurrences = expandEvents([event], new Date("2026-02-25T00:00:00Z"), new Date("2026-11-20T00:00:00Z"));
+        assert.ok(occurrences.length, `${zone} ${event.id}`);
+        for (const item of occurrences) {
+          const span = render.daySpanOf(item);
+          assert.equal(span?.startDay, item.occurrenceDate, `${zone} ${event.id} ${item.occurrenceDate}`);
+          const last = new Date(`${item.occurrenceDate}T12:00:00Z`);
+          last.setUTCDate(last.getUTCDate() + (days[event.id] ?? 1) - 1);
+          assert.equal(span?.endDay, last.toISOString().slice(0, 10), `${zone} ${event.id} ${item.occurrenceDate}: giorni`);
+        }
+      }
+    });
+  }
+});
+
+test("laneRows: le festività nascoste non contano nel +N (non sono impegni)", () => {
+  const items = [
+    { id: "a", startDay: "2026-12-08", endDay: "2026-12-08" },
+    { id: "b", startDay: "2026-12-08", endDay: "2026-12-08" },
+    ...render.holidayBars([{ date: "2026-12-08", name: "Immacolata Concezione" }])
+  ];
+  const [row] = render.laneRows(items, ["2026-12-07"], 1);
+  assert.deepEqual(row.hidden, [0, 1, 0, 0, 0, 0, 0], "solo l'evento nascosto, non la festa");
+  const [holidaysFirst] = render.laneRows([...items].reverse(), ["2026-12-07"], 1);
+  assert.equal(holidaysFirst.hidden[1], 2, "con la festa in corsia i due eventi nascosti contano");
+});
+
+test("upcomingAfterToday: un tutto il giorno di domani che qui comincia la sera prima resta nei prossimi giorni", () => {
+  const now = local(2026, 11, 12, 18);
+  // Salvato in un fuso un'ora avanti: in ora locale va dalle 23 di oggi alle 23 di domani. È di domani.
+  const ahead = legacyAllDay({ id: "ahead", start: iso(2026, 11, 12, 23), end: iso(2026, 11, 13, 23) });
+  const [item] = render.upcomingAfterToday([ahead], now, 5);
+  assert.equal(item?.id, "ahead");
+  assert.equal(render.daySpanOf(item).startDay, "2026-11-13");
+  // E uno di oggi che finisce domani mattina no.
+  const tonight = legacyAllDay({ id: "tonight", allDay: false, start: iso(2026, 11, 12, 22), end: iso(2026, 11, 13, 2) });
+  assert.deepEqual(render.upcomingAfterToday([tonight], now, 5), []);
+});

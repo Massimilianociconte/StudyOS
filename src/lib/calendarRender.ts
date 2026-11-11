@@ -167,7 +167,8 @@ export type LaneRow = { weekStart: string; segments: WeekSegment[]; lanes: numbe
 
 /**
  * Barre per riga-settimana con al più `cap` corsie: le barre oltre il tetto non si disegnano e ogni
- * giorno conta quante ne nasconde (`hidden`, lunedì … domenica) per il suo "+N".
+ * giorno conta quante ne nasconde (`hidden`, lunedì … domenica) per il suo "+N". Le festività nascoste
+ * non contano: il "+N" dice "altri impegni", e una festa non lo è.
  */
 export function laneRows(items: readonly DayRangeItem[], weekStarts: readonly string[], cap: number): LaneRow[] {
   return multiDaySegments([...items], [...weekStarts]).map(({ weekStart, segments, lanes }) => {
@@ -178,6 +179,7 @@ export function laneRows(items: readonly DayRangeItem[], weekStarts: readonly st
         visible.push(segment);
         continue;
       }
+      if (isHolidayId(segment.id)) continue;
       for (let column = segment.startCol; column <= segment.endCol; column += 1) hidden[column] += 1;
     }
     return { weekStart, segments: visible, lanes: Math.min(lanes, cap), hidden };
@@ -214,10 +216,13 @@ export function spanText(item: Timed, today: string = todayYmd()): string | null
  * prossimi 120 giorni, al più `count`. Anche con tanti eventi oggi l'elenco non resta vuoto.
  */
 export function upcomingAfterToday<T extends CalendarEvent>(events: readonly T[], now: Date, count: number): (T & EventOccurrence)[] {
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  const until = new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate() + 120);
-  return expandEvents(events, tomorrow, until)
-    .filter((item) => msOf(item.start) >= tomorrow.getTime())
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = todayYmd(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1));
+  const until = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 121);
+  // Il giorno è quello della barra (daySpanOf): un evento di tutto il giorno salvato in un altro fuso
+  // può cominciare la sera prima in ora locale, ma è di domani.
+  return expandEvents(events, today, until)
+    .filter((item) => (daySpanOf(item)?.startDay ?? "") >= tomorrow)
     .slice(0, count);
 }
 
@@ -265,8 +270,11 @@ export function holidaysByDay(list: readonly Holiday[]): Map<string, Holiday[]> 
   return map;
 }
 
+const HOLIDAY_ID_PREFIX = "holiday:";
+const isHolidayId = (id: string) => id.startsWith(HOLIDAY_ID_PREFIX);
+
 /** Id di una festività come barra: stabile, diverso per due voci dello stesso giorno. */
-export const holidayId = (holiday: Pick<Holiday, "date" | "name">) => `holiday:${holiday.date}:${holiday.name}`;
+export const holidayId =(holiday: Pick<Holiday, "date" | "name">) => `${HOLIDAY_ID_PREFIX}${holiday.date}:${holiday.name}`;
 
 /** Festività come barre di un giorno nella fascia in alto. */
 export const holidayBars = (list: readonly Holiday[]): DayRangeItem[] =>
