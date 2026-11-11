@@ -11,6 +11,7 @@ import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
 import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useDialogLayer } from "../components/ui";
+import { DateTimeField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { BarbExamCalendar } from "../components/BarbExamCalendar";
@@ -159,9 +160,10 @@ function PersonalExamsView({
   }
   const formOpen = creating || editingExam !== null;
   const dialogRef = useRef<HTMLElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
 
   // Pagina sotto bloccata, focus nel modulo (anche se aperto da un'altra schermata) e restituito alla chiusura.
-  useDialogLayer(formOpen, { panelRef: dialogRef, onEscape: () => closeForm() });
+  useDialogLayer(formOpen, { panelRef: dialogRef, areaRef, onEscape: () => closeForm() });
   const sorted = useMemo(() => [...exams].sort((a, b) => a.date.localeCompare(b.date)), [exams]);
   const today = startOfDay(new Date());
   const upcoming = sorted.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today));
@@ -431,6 +433,7 @@ function PersonalExamsView({
 
       {formOpen ? (
         <div
+          ref={areaRef}
           className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
           role="dialog"
           aria-modal="true"
@@ -460,9 +463,7 @@ function PersonalExamsView({
                     ))}
                   </select>
                 </Field>
-                <Field label="Giorno e ora dell'esame">
-                  <input className={inputClass} type="datetime-local" value={draft.date} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
-                </Field>
+                <DateTimeField label="Giorno e ora dell'esame" value={draft.date} onChange={(date) => setDraft((value) => ({ ...value, date }))} />
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

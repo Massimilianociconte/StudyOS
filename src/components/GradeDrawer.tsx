@@ -3,6 +3,7 @@ import { format, parseISO } from "date-fns";
 import type { Exam, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { MAX_GRADE, MIN_GRADE, isValidGrade } from "../lib/grades";
+import { DateField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
 import { CAREER_HELP } from "../lib/labels";
 
@@ -179,9 +180,7 @@ export function GradeDrawer({
               ))}
             </select>
           </Field>
-          <Field label="Data dell'esame">
-            <input className={inputClass} type="date" value={draft.date} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
-          </Field>
+          <DateField label="Data dell'esame" value={draft.date} onChange={(date) => setDraft((value) => ({ ...value, date }))} />
         </div>
         {/* Il "?" sta accanto all'etichetta, non dentro: un tocco sul "?" non spunta la casella. */}
         <div className="flex flex-wrap gap-x-4">

@@ -5,6 +5,7 @@ import type { Goal } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL, GOALS_HELP, GOALS_TEXT } from "../lib/labels";
 import { Button, Drawer, EmptyState, Field, HelpTip, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { DateField } from "../components/DatePicker";
 import { HelpField } from "../components/HelpField";
 import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
@@ -268,9 +269,7 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
               ))}
             </select>
           </Field>
-          <Field label="Scadenza (facoltativa)">
-            <input className={inputClass} type="date" value={draft.deadline} onChange={(event) => setDraft((value) => ({ ...value, deadline: event.target.value }))} />
-          </Field>
+          <DateField label="Scadenza (facoltativa)" value={draft.deadline} onChange={(deadline) => setDraft((value) => ({ ...value, deadline }))} optional />
           <HelpField label={GOALS_TEXT.metric} help={GOALS_HELP.metric}>
             {(id) => <input id={id} className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="Es. ore a settimana" />}
           </HelpField>

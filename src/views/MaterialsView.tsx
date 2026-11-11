@@ -63,7 +63,8 @@ export function MaterialsView() {
 
   const fileInput = useRef<HTMLInputElement>(null);
   const editPanelRef = useRef<HTMLElement>(null);
-  useDialogLayer(editingAttachment !== null, { panelRef: editPanelRef, onEscape: () => setEditingAttachment(null) });
+  const editAreaRef = useRef<HTMLDivElement>(null);
+  useDialogLayer(editingAttachment !== null, { panelRef: editPanelRef, areaRef: editAreaRef, onEscape: () => setEditingAttachment(null) });
   const uploadFile = async (file: File) => {
     setUploadError("");
     try {
@@ -322,6 +323,7 @@ export function MaterialsView() {
 
       {editingAttachment ? (
         <div
+          ref={editAreaRef}
           className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
           role="dialog"
           aria-modal="true"

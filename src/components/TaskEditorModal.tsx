@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, HelpTip, IconButton, Pill, inputClass, useDialogLayer } from "./ui";
+import { DateTimeField } from "./DatePicker";
 import { HelpField } from "./HelpField";
 import { DurationField } from "./DurationField";
 import { durationToMinutes, minutesToDuration } from "../lib/duration";
@@ -66,7 +67,8 @@ export function TaskEditorModal({
   const titleId = useId();
 
   const panelRef = useRef<HTMLElement>(null);
-  useDialogLayer(true, { panelRef, onEscape: onClose });
+  const areaRef = useRef<HTMLDivElement>(null);
+  useDialogLayer(true, { panelRef, areaRef, onEscape: onClose });
 
   const showMore = () => {
     if (moreRef.current) moreRef.current.open = true;
@@ -143,6 +145,7 @@ export function TaskEditorModal({
   // Portal su body come Drawer: dentro la vista la barra in basso del telefono restava sopra la finestra.
   return createPortal(
     <div
+      ref={areaRef}
       className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
       role="dialog"
       aria-modal="true"
@@ -172,9 +175,13 @@ export function TaskEditorModal({
           </Field>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Field label="Scadenza (facoltativa)">
-              <input className={inputClass} type="datetime-local" value={draft.dueDate} onChange={(event) => setDraft((value) => ({ ...value, dueDate: event.target.value }))} />
-            </Field>
+            <DateTimeField
+              label="Scadenza (facoltativa)"
+              value={draft.dueDate}
+              onChange={(dueDate) => setDraft((value) => ({ ...value, dueDate }))}
+              optional
+              defaultTime="18:00"
+            />
             <Field label="Materia (facoltativa)">
               <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
                 <option value="">Nessuna materia</option>

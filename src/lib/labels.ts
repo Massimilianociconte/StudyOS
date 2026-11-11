@@ -718,7 +718,7 @@ export const SESSION_FORM_TEXT = {
   notesPlaceholder: "Cosa rivedere, dubbi da chiedere…",
   minutes: "Minuti di studio",
   minutesPlaceholder: "Es. 60",
-  date: "Giorno",
+  date: "Giorno e ora di inizio",
   time: "Ora di inizio",
   template: "Tipo di sessione",
   savedWith: (source: string) => `Salvata con: ${source}`,

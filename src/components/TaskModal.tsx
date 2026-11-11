@@ -5,6 +5,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects } from "../lib/selectors";
 import { PRIORITY_LABEL } from "../lib/labels";
 import { Button, Field, inputClass, useDialogLayer } from "./ui";
+import { DateField } from "./DatePicker";
 import { DurationField, type DurationUnit } from "./DurationField";
 import { durationToMinutes } from "../lib/duration";
 
@@ -34,7 +35,8 @@ export function TaskModal({
   const [error, setError] = useState("");
   const moreRef = useRef<HTMLDetailsElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  useDialogLayer(true, { panelRef, onEscape: () => { if (!busy) onClose(); } });
+  const areaRef = useRef<HTMLDivElement>(null);
+  useDialogLayer(true, { panelRef, areaRef, onEscape: () => { if (!busy) onClose(); } });
 
   const save = async () => {
     if (busy) return;
@@ -76,6 +78,7 @@ export function TaskModal({
   // Portal su body come Drawer: dentro la vista la barra in basso del telefono restava sopra la finestra.
   return createPortal(
     <div
+      ref={areaRef}
       className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
       role="dialog"
       aria-modal="true"
@@ -108,9 +111,7 @@ export function TaskModal({
           </Field>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Scadenza (facoltativa)">
-              <input className={inputClass} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-            </Field>
+            <DateField label="Scadenza (facoltativa)" value={dueDate} onChange={setDueDate} optional />
             <Field label="Materia (facoltativa)">
               <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
                 <option value="">Nessuna materia</option>
