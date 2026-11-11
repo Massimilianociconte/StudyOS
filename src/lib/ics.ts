@@ -472,6 +472,8 @@ const sameTiming = (a: Timing | null, b: Timing | null) =>
 const isShared = (event: unknown) => isRecord(event) && isRecord(event.sharedFrom);
 
 const parentIdOf = (event: CalendarEvent) => (typeof event.splitFrom === "string" && event.splitFrom && event.splitFrom !== event.id ? event.splitFrom : undefined);
+/** Giorno cambiato a mano: in questo calendario (niente sourceRecurrenceId) o ricevuto così con una copia. */
+const isHandChange = (row: CalendarEvent | undefined) => Boolean(row && (!row.sourceRecurrenceId || row.sourceEdited === true));
 /** UID con cui l'evento esce nel file: quello d'origine, o `id@studyos`. */
 const exportUidOf = (event: CalendarEvent) => (typeof event.sourceUid === "string" && event.sourceUid ? event.sourceUid : `${event.id}@studyos`);
 
@@ -1120,9 +1122,9 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
       else overrides.push([date, row]);
     }
     exdates.sort();
-    // Giorni cambiati a mano (righe senza sourceRecurrenceId): X-STUDYOS-EDITED, così chi importa il file
-    // li tiene come suoi. Le date restano anche in EXDATE per le altre app.
-    const edited = exdates.filter((date) => !rows?.get(date)?.sourceRecurrenceId);
+    // Giorni cambiati a mano (qui, o ricevuti così con una copia): X-STUDYOS-EDITED, così una copia nuova li
+    // tiene come modifiche a mano. Le date restano anche in EXDATE per le altre app.
+    const edited = exdates.filter((date) => isHandChange(rows?.get(date)));
     vevent(uid, [
       ...startEnd(timing),
       `RRULE:${rruleOf(rule, timing)}`,
@@ -1137,7 +1139,7 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
       vevent(uid, [
         dateLine("RECURRENCE-ID", timing, [instant(timing, date)]),
         ...startEnd(rowTiming),
-        ...(row.sourceRecurrenceId ? [] : ["X-STUDYOS-EDITED:TRUE"]),
+        ...(isHandChange(row) ? ["X-STUDYOS-EDITED:TRUE"] : []),
         ...content(row, rowTiming)
       ]);
     }
@@ -1480,7 +1482,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         event.recurrenceId = canonical(rid);
         if (ridProp.params.RANGE?.toUpperCase() === "THISANDFUTURE") thisAndFuture = true;
         if (cancelled) event.cancelled = true;
-        if (propOf(vevent, "X-STUDYOS-EDITED")) event.edited = true;
+        if (propOf(vevent, "X-STUDYOS-EDITED")?.value.trim().toUpperCase() === "TRUE") event.edited = true;
       }
 
       if (recurring) {
@@ -1509,13 +1511,14 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
             .map(canonical)
         );
         if (exdates.length) event.exdates = [...new Set(exdates)].sort();
+        const excluded = new Set(exdates);
         const edited = propsOf(vevent, "X-STUDYOS-EDITED").flatMap((property) =>
           property.value
             .split(",")
             .map((value) => readDate(property, value.trim(), zone))
             .filter((value): value is DateValue => value !== null)
             .map(canonical)
-            .filter((value) => exdates.includes(value))
+            .filter((value) => excluded.has(value))
         );
         if (edited.length) event.editedExdates = [...new Set(edited)].sort();
         if (propOf(vevent, "RDATE") || propOf(vevent, "EXRULE")) extraDates = true;
@@ -1726,7 +1729,7 @@ const joinNotes = (a: unknown, b: unknown) => {
 /** Campi di una sola scelta: nell'unione dei vecchi import passano se la serie tenuta non li ha, se diversi non si unisce. */
 const FILLED_FIELDS = ["subjectId", "goalId", "cover"] as const;
 
-const ROW_DROPPED = ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "splitFrom", "cancelled"] as const;
+const ROW_DROPPED = ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "sourceEdited", "splitFrom", "cancelled"] as const;
 
 const withoutKeys = <T extends object>(value: T, keys: readonly string[]): T => {
   const copy = { ...value } as Record<string, unknown>;
@@ -1927,7 +1930,12 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   };
 
   const sameRow = (current: CalendarEvent, desired: CalendarEvent) => {
-    if (Boolean(current.cancelled) !== Boolean(desired.cancelled) || current.sourceRecurrenceId !== desired.sourceRecurrenceId) return false;
+    if (
+      Boolean(current.cancelled) !== Boolean(desired.cancelled) ||
+      current.sourceRecurrenceId !== desired.sourceRecurrenceId ||
+      Boolean(current.sourceEdited) !== Boolean(desired.sourceEdited)
+    )
+      return false;
     if (desired.cancelled) return Boolean(current.archived);
     return (
       !current.archived &&
@@ -1955,7 +1963,9 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   /**
    * Righe della serie dal file (date escluse e giorni modificati). Un giorno dopo una divisione fatta
    * in StudyOS va alla figlia che lo mostra. `owned`: la serie è nel file, le righe importate non più
-   * presenti si tolgono. I giorni segnati come cambiati a mano (X-STUDYOS-EDITED) diventano dell'utente.
+   * presenti si tolgono. Un giorno segnato come cambiato a mano (X-STUDYOS-EDITED) diventa una modifica
+   * ricevuta (`sourceEdited`) solo se la serie nasce con questo import (una copia nuova) o se lo era già
+   * con lo stesso UID; altrimenti è una modifica come le altre (un file estraneo non blocca giorni).
    */
   const applyRows = (
     master: CalendarEvent,
@@ -1978,9 +1988,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       return civilDateOf(utcMs(Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)), timing.zone);
     };
     const entries = new Map<string, { rid: string; change: IcsImportItem | null; item?: IcsImportItem; edited: boolean }>();
+    const editedSet = new Set(editedExdates);
     for (const rid of exdates) {
       const date = dateOf(rid);
-      if (date) entries.set(date, { rid, change: null, edited: editedExdates.includes(rid) });
+      if (date) entries.set(date, { rid, change: null, edited: editedSet.has(rid) });
     }
     for (const change of changes) {
       const date = dateOf(change.sourceRecurrenceId);
@@ -2012,15 +2023,20 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       }
       const id = occurrenceId(home.member.id, date);
       const current = puts.get(id) ?? byId.get(id) ?? home.rows.find((row) => row.originalDate === date);
-      // Una modifica fatta in StudyOS a quel giorno vince sul file.
+      // Una modifica fatta a mano in questo calendario vince su ogni file.
       if (current && !current.sourceRecurrenceId) {
         placed.add(current.id);
         continue;
       }
-      // Cambiato a mano in StudyOS (anche in un altro calendario): riga dell'utente, senza sourceRecurrenceId,
-      // che i file dopo non toccano. Il resto segue l'ultimo file.
+      // Una modifica a mano ricevuta con una copia: la cambia solo un file segnato con lo stesso UID (una
+      // copia più recente dell'originale); Google e gli altri file non la toccano.
+      const received = current?.sourceEdited === true;
+      if (current && received && !(edited && current.sourceUid === uid)) {
+        placed.add(current.id);
+        continue;
+      }
       const fromFile = rowFor(home.member, home.timing, date, uid, rid, change, current);
-      const desired = edited ? withoutKeys(fromFile, ["sourceRecurrenceId"]) : fromFile;
+      const desired = edited && (received || created.has(home.member.id)) ? { ...fromFile, sourceEdited: true as const } : fromFile;
       placed.add(desired.id);
       if (current && current.id === desired.id && sameRow(current, desired)) continue;
       put(desired);
@@ -2030,7 +2046,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       // Anche nelle figlie, qualunque file le abbia messe: vale l'ultimo file della famiglia.
       for (const entry of family) {
         for (const row of entry.rows) {
-          if (!row.sourceRecurrenceId || placed.has(row.id) || puts.has(row.id)) continue;
+          // Le modifiche ricevute con una copia restano finché un file segnato non le cambia.
+          if (!row.sourceRecurrenceId || row.sourceEdited === true || placed.has(row.id) || puts.has(row.id)) continue;
           stale.set(row.id, master.id);
         }
       }

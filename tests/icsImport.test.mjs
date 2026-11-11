@@ -603,12 +603,12 @@ test("serie divisa copiata in un altro calendario: resta una famiglia, e il file
     assert.equal(copyChild.splitFrom, copyParent.id, device);
     assert.equal(copyChild.originalDate, "2026-11-23", device);
     assert.deepEqual(window(copy), window(events), device);
-    // Nella copia i giorni cambiati a mano sono dell'utente (senza sourceRecurrenceId), gli altri del file.
+    // Nella copia appena creata i giorni cambiati a mano sono modifiche ricevute (sourceEdited), gli altri del file.
     const copyRow = (date) => copy.find((event) => event.seriesId === copyChild.id && event.originalDate === date);
-    assert.equal(copyRow("2026-12-21").sourceRecurrenceId, undefined, device);
-    assert.equal(copyRow("2026-12-28").sourceRecurrenceId, undefined, device);
+    assert.equal(copyRow("2026-12-21").sourceEdited, true, device);
+    assert.equal(copyRow("2026-12-28").sourceEdited, true, device);
     assert.equal(copyRow("2026-12-28").cancelled, true, device);
-    assert.ok(copyRow("2026-12-07").sourceRecurrenceId, device);
+    assert.equal(copyRow("2026-12-07").sourceEdited, undefined, device);
     // Il file originale di Google nella copia: niente giorni doppi, niente cambia.
     const plan = merge(copy, parseIcs(google, { timeZone: device }), { timeZone: device });
     assert.deepEqual(counts(plan), NOTHING, device);
@@ -692,6 +692,113 @@ test("serie divisa copiata da un vecchio export: le modifiche successive di Goog
     step(SPLIT);
     assert.deepEqual(december(copy), AFTER_PLAIN, `${device} Google senza modifiche`);
   }
+});
+
+const COURSE = ics(
+  "X-WR-TIMEZONE:Europe/Rome",
+  "BEGIN:VEVENT",
+  "UID:corso@univ.example",
+  "DTSTART;TZID=Europe/Rome:20261102T090000",
+  "DTEND;TZID=Europe/Rome:20261102T110000",
+  "RRULE:FREQ=WEEKLY;BYDAY=MO",
+  "SUMMARY:Anatomia",
+  "END:VEVENT"
+);
+const novemberLines = (events) => window(events).filter((line) => line >= "2026-11-16" && line < "2026-12-01");
+
+test("segno di modifica a mano in un file estraneo: non blocca i giorni contro il calendario ufficiale", () => {
+  const marked = COURSE.replace(
+    "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+    "RRULE:FREQ=WEEKLY;BYDAY=MO\r\nEXDATE;TZID=Europe/Rome:20261116T090000\r\nX-STUDYOS-EDITED;TZID=Europe/Rome:20261116T090000\r\n"
+  ).replace(
+    "END:VEVENT\r\nEND:VCALENDAR",
+    [
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:corso@univ.example",
+      "RECURRENCE-ID;TZID=Europe/Rome:20261123T090000",
+      "X-STUDYOS-EDITED:TRUE",
+      "DTSTART;TZID=Europe/Rome:20261123T180000",
+      "DTEND;TZID=Europe/Rome:20261123T190000",
+      "SUMMARY:Anatomia (spostata)",
+      "END:VEVENT",
+      "END:VCALENDAR"
+    ].join("\r\n")
+  );
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    let events = apply([], merge([], parseIcs(COURSE, { timeZone: device }), { timeZone: device }));
+    const official = novemberLines(events);
+    events = apply(events, merge(events, parseIcs(marked, { timeZone: device }), { timeZone: device }));
+    assert.deepEqual(novemberLines(events), ["2026-11-23T17:00:00.000Z Anatomia (spostata)", "2026-11-30T08:00:00.000Z Anatomia"], device);
+    // La serie c'era già: i giorni segnati sono modifiche come le altre, e il file ufficiale le toglie.
+    assert.ok(!events.some((event) => event.sourceEdited), device);
+    events = apply(events, merge(events, parseIcs(COURSE, { timeZone: device }), { timeZone: device }));
+    assert.deepEqual(novemberLines(events), official, device);
+    assert.deepEqual(counts(merge(events, parseIcs(COURSE, { timeZone: device }), { timeZone: device })), NOTHING, device);
+  }
+});
+
+test("copia aggiornata da un export più recente: segue le nuove modifiche a mano dell'originale, Google no", () => {
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    const exportOf = (events) => buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
+    const into = (events, text) => apply(events, merge(events, parseIcs(text, { timeZone: device }), { timeZone: device }));
+    const seriesOf = (events) => events.find((event) => !event.seriesId);
+    let original = into([], COURSE);
+    original = apply(original, planEdit(seriesOf(original), original, "2026-11-23", "this", { title: "Anatomia (aula B)" }, { now: NOW }));
+    original = apply(original, planDelete(original, seriesOf(original).id, "2026-11-30", "this", { now: NOW }));
+    let copy = into([], exportOf(original));
+    assert.deepEqual(novemberLines(copy), ["2026-11-16T08:00:00.000Z Anatomia", "2026-11-23T08:00:00.000Z Anatomia (aula B)"], device);
+    // Più tardi, nell'originale: il 23/11 cambiato di nuovo, il 16/11 cambiato per la prima volta.
+    original = apply(original, planEdit(seriesOf(original), original, "2026-11-23", "this", { title: "Anatomia (aula C)" }, { now: NOW }));
+    original = apply(original, planEdit(seriesOf(original), original, "2026-11-16", "this", { title: "Anatomia (laboratorio)" }, { now: NOW }));
+    const newer = exportOf(original);
+    copy = into(copy, newer);
+    const refreshed = ["2026-11-16T08:00:00.000Z Anatomia (laboratorio)", "2026-11-23T08:00:00.000Z Anatomia (aula C)"];
+    assert.deepEqual(novemberLines(copy), refreshed, device);
+    assert.deepEqual(counts(merge(copy, parseIcs(newer, { timeZone: device }), { timeZone: device })), NOTHING, `${device} di nuovo`);
+    assert.deepEqual(counts(merge(copy, parseIcs(exportOf(copy), { timeZone: device }), { timeZone: device })), NOTHING, `${device} proprio export`);
+    // Il file ufficiale (senza segni) non tocca le modifiche ricevute con la copia (23/11, 30/11); il 16/11
+    // è arrivato su una serie che c'era già, quindi è una modifica come le altre e segue il file.
+    copy = into(copy, COURSE);
+    assert.deepEqual(novemberLines(copy), ["2026-11-16T08:00:00.000Z Anatomia", "2026-11-23T08:00:00.000Z Anatomia (aula C)"], device);
+    // Le modifiche fatte a mano nella copia vincono su ogni file, anche su un export più recente dell'originale.
+    copy = apply(copy, planEdit(seriesOf(copy), copy, "2026-12-07", "this", { title: "Anatomia (mia)" }, { now: NOW }));
+    const mine = planEdit(seriesOf(copy), copy, "2026-11-23", "this", { title: "Anatomia (aula mia)" }, { now: NOW });
+    // Come la salva l'editor (c3626fe): un giorno ricevuto cambiato a mano perde sourceRecurrenceId.
+    const handMade = (row) => Object.fromEntries(Object.entries(row).filter(([key]) => key !== "sourceRecurrenceId"));
+    copy = apply(copy, { ...mine, puts: mine.puts.map((row) => (row.seriesId ? handMade(row) : row)) });
+    original = apply(original, planEdit(seriesOf(original), original, "2026-11-23", "this", { title: "Anatomia (aula D)" }, { now: NOW }));
+    for (const file of [exportOf(original), COURSE]) {
+      copy = into(copy, file);
+      const shown = window(copy);
+      assert.ok(shown.includes("2026-11-23T08:00:00.000Z Anatomia (aula mia)"), device);
+      assert.ok(shown.includes("2026-12-07T08:00:00.000Z Anatomia (mia)"), device);
+      assert.ok(!shown.some((line) => line.startsWith("2026-11-30")), device);
+    }
+  }
+});
+
+test("X-STUDYOS-EDITED su un giorno modificato conta solo con il valore TRUE", () => {
+  const change = (value) =>
+    parseIcs(
+      COURSE.replace(
+        "END:VEVENT\r\nEND:VCALENDAR",
+        [
+          "END:VEVENT",
+          "BEGIN:VEVENT",
+          "UID:corso@univ.example",
+          "RECURRENCE-ID;TZID=Europe/Rome:20261123T090000",
+          ...(value === undefined ? [] : [`X-STUDYOS-EDITED:${value}`]),
+          "DTSTART;TZID=Europe/Rome:20261123T180000",
+          "SUMMARY:Anatomia (spostata)",
+          "END:VEVENT",
+          "END:VCALENDAR"
+        ].join("\r\n")
+      )
+    ).events.find((event) => event.recurrenceId).edited;
+  assert.equal(change("TRUE"), true);
+  assert.equal(change("true"), true);
+  for (const value of ["FALSE", "1", "", undefined]) assert.equal(change(value), undefined, String(value));
 });
 
 test("RELATED-TO verso una serie che non è nel file: non divide le serie che hai già", () => {
@@ -782,6 +889,8 @@ test("file ostile: 18.000 date escluse si leggono e si uniscono in meno di un se
     "DTSTART:19750101T090000Z",
     "RRULE:FREQ=DAILY",
     `EXDATE:${dates.join(",")}`,
+    // Le stesse 18.000 date anche come "cambiate a mano": il confronto delle due liste non cresce al quadrato.
+    `X-STUDYOS-EDITED:${dates.join(",")}`,
     "SUMMARY:Flood",
     "END:VEVENT",
     "BEGIN:VEVENT",
@@ -792,12 +901,13 @@ test("file ostile: 18.000 date escluse si leggono e si uniscono in meno di un se
     "SUMMARY:Sparse",
     "END:VEVENT"
   );
-  assert.ok(text.length > 290_000, `${text.length}`);
+  assert.ok(text.length > 580_000, `${text.length}`);
   const started = performance.now();
   const parsed = parseIcs(text, { timeZone: "Europe/Rome" });
   const plan = merge([], parsed, { timeZone: "Europe/Rome" });
   const elapsed = performance.now() - started;
   assert.ok(elapsed < 1000, `${Math.round(elapsed)} ms`);
+  assert.equal(parsed.events.find((event) => event.uid === "flood").editedExdates.length, 18000);
   assert.equal(plan.added, 2);
   assert.ok(plan.puts.length <= 2 + 2 * 1000, `${plan.puts.length} righe`);
   assert.ok(plan.puts.filter((event) => event.seriesId).length >= 1000);
