@@ -215,7 +215,11 @@
   - Nulla sparisce spostando (R1-S1 ter): ogni parte ferma quella prima (`originalDate`) solo
     dopo l'ultimo giorno che quella mostrava, spostato con lei se si sposta. Una parte con un
     programma suo può quindi avere `originalDate` dopo il suo inizio, e sul suo primo giorno
-    c'è anche la lezione spostata (voluto).
+    c'è anche la lezione spostata (voluto). La scelta dice quei giorni (`scopeImpact.both`).
+    Nel file .ics la figlia porta quel giorno in `X-STUDYOS-FROM;VALUE=DATE` (solo se diverso
+    dal giorno di DTSTART); l'import lo usa in `linkChild` se è un giorno dopo il primo della
+    madre ed entro un anno dal primo della figlia, altrimenti (e nei file vecchi) il primo
+    giorno della figlia.
   - C. I giorni di un tutto il giorno (`spanDays`) contano come ora (`sameTime`).
   - In B e C tutte le parti dopo prendono i campi cambiati (`laterPartsPlan`).
 - Eliminare «Questo e i successivi» (`planDelete`) toglie tutte le parti dopo della famiglia
