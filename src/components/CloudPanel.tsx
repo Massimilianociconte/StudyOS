@@ -180,6 +180,9 @@ export function CloudPanel() {
     setBusy(true);
     setInfo(null);
     try {
+      // Prima dell'uscita serve ancora la sessione: toglie l'iscrizione push di questo dispositivo,
+      // così le notifiche di questo account non continuano ad arrivare a chi usa il dispositivo dopo.
+      await import("../lib/push").then((module) => module.disablePush()).catch(() => undefined);
       const result = await signOut();
       if (result.localOnly) {
         setInfo({ kind: "pending", text: "Server non raggiungibile: sei uscito solo su questo dispositivo. Ricarico la pagina…" });

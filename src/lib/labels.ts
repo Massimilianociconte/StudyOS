@@ -536,3 +536,24 @@ export const peopleLabels = {
     generic: "Il server ha risposto con un errore. Riprova tra poco."
   }
 } as const;
+
+/** Notifiche push del dispositivo: interruttore in Impostazioni → Profilo e proposta dopo il primo invito. */
+export const pushLabels = {
+  toggle: "Notifiche su questo dispositivo",
+  hint: "Ricevi un avviso anche con l'app chiusa: inviti, inviti accettati e permessi cambiati.",
+  checking: "Controllo…",
+  on: "Attive su questo dispositivo. Puoi spegnerle quando vuoi.",
+  off: "Spente su questo dispositivo.",
+  needAccount: "Accedi con il tuo account per ricevere le notifiche.",
+  unsupported: "Questo browser non supporta le notifiche. Gli avvisi restano nella campanella dell'app.",
+  iosInstall: "Aggiungi StudyOS alla schermata Home per ricevere le notifiche",
+  denied: "Hai bloccato le notifiche per StudyOS. Riattivale dalle impostazioni del browser o del telefono, poi torna qui.",
+  failed: "Non sono riuscito ad attivare le notifiche. Riprova tra poco.",
+  promptTitle: "Vuoi un avviso quando ricevi un invito?",
+  promptBody:
+    "Ti mandiamo una notifica anche quando StudyOS è chiuso: inviti, inviti accettati e permessi cambiati. Puoi spegnerla in Impostazioni → Profilo.",
+  promptAccept: "Attiva le notifiche",
+  promptLater: "Non ora",
+  promptFailed: "Non è stato possibile attivarle. Puoi riprovare da Impostazioni → Profilo.",
+  promptClose: "Chiudi"
+} as const;

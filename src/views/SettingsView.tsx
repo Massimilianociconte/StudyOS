@@ -18,6 +18,7 @@ import { Button, Field, Panel, Pill, SectionTitle, fileInputClass, inputClass } 
 import { Icon } from "../components/Icon";
 import { CloudPanel } from "../components/CloudPanel";
 import { AgentSettings } from "../components/AgentDesk";
+import { PushToggle } from "../components/PushToggle";
 import { ProfileOnlineCard } from "../components/ProfileOnlineCard";
 
 const palettes: { id: PaletteName; label: string; colors: string[] }[] = [
@@ -345,7 +346,7 @@ export function SettingsView() {
             />
             <span className="min-w-0 flex-1">Mostra la sezione Corso di laurea (BARB · UNIMI)</span>
           </label>
-          <ProfileOnlineCard />
+          <ProfileOnlineCard extra={<PushToggle />} />
         </Panel>
         </section>
 
