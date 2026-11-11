@@ -6,6 +6,7 @@ import { expandEvents } from "../src/lib/recurrence.ts";
 import {
   MAX_OCCURRENCES,
   ageOn,
+  applyEditPlan,
   applyRepeatFields,
   countBefore,
   describeReminder,
@@ -196,12 +197,53 @@ test("13. le occorrenze conservano i campi extra (es. sharedFrom) e hanno il gio
   });
 });
 
-test("13. differenza voluta: una serie giornaliera alle 02:30 non resta alle 03:30 dopo il buco del cambio d'ora", () => {
+test("13. alle 02:30 col cambio d'ora: gli eventi già salvati come prima, quelli con il fuso restano alle 02:30", () => {
   withTz("Europe/Rome", () => {
-    const event = base({ id: "night", recurrence: "daily", start: new Date(2026, 2, 27, 2, 30).toISOString(), end: new Date(2026, 2, 27, 3, 0).toISOString() });
-    const hours = expandEvents([event], new Date(2026, 2, 27), new Date(2026, 3, 1)).map((item) => new Date(item.start).getHours());
-    // Prima: 2, 2, 3 (buco), poi 3, 3 per sempre (dipendeva dalla finestra). Ora: solo il giorno del buco è alle 3.
-    assert.deepEqual(hours, [2, 2, 3, 2, 2]);
+    const fields = { recurrence: "daily", start: new Date(2026, 2, 27, 2, 30).toISOString(), end: new Date(2026, 2, 27, 3, 0).toISOString() };
+    const hoursOf = (event) => expandWithRules([event], new Date(2026, 2, 27), new Date(2026, 3, 1)).map((item) => new Date(item.start).getHours());
+    // Senza fuso né regola nuova: esattamente come prima (2, 2, 3 nel buco, poi 3, 3: dipende dalla finestra).
+    assert.deepEqual(hoursOf(base({ id: "night", ...fields })), [2, 2, 3, 3, 3]);
+    // Con il fuso: solo il giorno del buco è alle 3.
+    assert.deepEqual(hoursOf(ruled({ id: "night", ...fields, repeat: { freq: "daily" }, timeZone: "Europe/Rome" })), [2, 2, 3, 2, 2]);
+  });
+});
+
+test("13. eventi già salvati, casi limite: 02:30 al cambio d'ora, tutto il giorno fluttuanti, 'fino al' con l'ora, serie mensili molto vecchie", () => {
+  const fixtures = [
+    base({ id: "night-rome", recurrence: "daily", start: "2026-03-27T01:30:00.000Z", end: "2026-03-27T02:00:00.000Z" }),
+    base({ id: "night-ny", recurrence: "daily", start: "2026-03-05T07:30:00.000Z", end: "2026-03-05T08:00:00.000Z" }),
+    base({ id: "night-weekly", recurrence: "weekly", start: "2026-03-15T01:30:00.000Z", end: "2026-03-15T03:00:00.000Z" }),
+    base({ id: "float-2359", allDay: true, start: "2027-02-10T00:00:00", end: "2027-02-10T23:59:59" }),
+    base({ id: "float-same", allDay: true, start: "2026-10-25T00:00:00", end: "2026-10-25T00:00:00" }),
+    base({ id: "float-daily", allDay: true, recurrence: "daily", start: "2026-10-22T00:00:00", end: "2026-10-23T00:00:00" }),
+    base({ id: "float-weekly", allDay: true, recurrence: "weekly", start: "2026-03-01T00:00:00", end: "2026-03-02T00:00:00" }),
+    base({ id: "until-iso", recurrence: "daily", start: "2026-10-20T21:30:00.000Z", end: "2026-10-20T22:00:00.000Z", recurrenceUntil: "2026-10-26T18:00:00.000Z" }),
+    base({ id: "monthly-1930", recurrence: "monthly", start: "1930-01-31T09:00:00.000Z", end: "1930-01-31T10:00:00.000Z" }),
+    base({ id: "empty-recurrence", recurrence: "", start: "2026-10-31T09:00:00.000Z", end: "2026-10-31T10:00:00.000Z" })
+  ];
+  const windows = [
+    ...legacyWindows(),
+    [new Date(2026, 2, 1), new Date(2026, 3, 1)],
+    [new Date(2026, 2, 27), new Date(2026, 3, 1)],
+    [new Date(2026, 2, 30), new Date(2026, 3, 6)],
+    [new Date(2026, 3, 5), new Date(2026, 3, 12)],
+    [new Date(2026, 2, 8), new Date(2026, 2, 15)],
+    [new Date(2026, 2, 1), new Date(2027, 2, 1)]
+  ];
+  const shape = (items) => items.map((item) => [item.id, item.occurrenceKey, item.start, item.end, item.recurring]);
+  eachDeviceZone((zone) => {
+    for (const [from, to] of windows) assert.deepEqual(shape(expandEvents(fixtures, from, to)), shape(legacyExpand(fixtures, from, to)), `${zone} ${from.toISOString()}`);
+  });
+});
+
+test("13. differenza voluta: un evento ripetuto più lungo del passo si vede in ogni finestra in cui è in corso", () => {
+  // Ogni giorno alle 08:00Z per 50 ore: il 10/11 alle 07:00Z sono in corso quelli dell'8 e del 9.
+  const long = base({ id: "long", recurrence: "daily", start: "2026-11-02T08:00:00.000Z", end: "2026-11-04T10:00:00.000Z" });
+  const window = [utc("2026-11-10T07:00:00Z"), utc("2026-11-10T07:30:00Z")];
+  eachDeviceZone((zone) => {
+    assert.deepEqual(iso(expandEvents([long], ...window)), ["2026-11-08T08:00:00.000Z", "2026-11-09T08:00:00.000Z"], zone);
+    // Prima si saltava quello dell'8 (dipendeva da dove iniziava la finestra).
+    assert.deepEqual(iso(legacyExpand([long], ...window)), ["2026-11-09T08:00:00.000Z"], zone);
   });
 });
 
@@ -801,4 +843,159 @@ test("condivisione: i campi della ripetizione si mandano insieme", () => {
   // Modifica dal dettaglio di un elemento altrui: con l'inizio partono anche fine e tutto il giorno.
   const latest = { ...before, end: "z" };
   assert.equal(sharedEditResult("calendarEvent", before, { start: "c" }, latest)?.end, "b");
+});
+
+// ---------------------------------------------------------------------------------------
+// Revisione: chiavi stabili tra fusi, divisioni ordinate, eliminazione delle successive, velocità
+// ---------------------------------------------------------------------------------------
+
+const viewIn = (zone, events, window) => withTz(zone, () => expandWithRules(events, ...window).map((item) => [item.start, item.title, item.occurrenceDate]));
+
+test("B1. 'solo questa' su una serie senza fuso: si fissa il fuso del dispositivo e la riga vale per la stessa occorrenza ovunque", () => {
+  // Salvata prima del nuovo motore: ogni lunedì alle 00:30 di Roma (domenica sera a New York).
+  const legacy = base({ id: "L", recurrence: "weekly", start: "2026-11-15T23:30:00.000Z", end: "2026-11-16T00:30:00.000Z" });
+  const window = [utc("2026-11-14T00:00:00Z"), utc("2026-12-16T00:00:00Z")];
+  let events = [legacy];
+  withTz("Europe/Rome", () => {
+    const before = iso(expandWithRules([legacy], ...window));
+    const edit = planEdit(legacy, events, "2026-11-23", "this", { title: "Spostata" }, { now: NOW });
+    assert.equal(edit.puts.find((item) => item.id === "L")?.timeZone, "Europe/Rome", "il fuso si fissa sulla serie nello stesso salvataggio");
+    events = applyEditPlan(events, edit).events;
+    const removal = planDelete(events, "L", "2026-11-30", "this", { now: NOW });
+    assert.deepEqual(removal.puts.map((item) => item.id), ["L@2026-11-30"], "già fissato: la serie non si riscrive");
+    events = applyEditPlan(events, removal).events;
+    // Fissare il fuso non sposta nessuna occorrenza sul dispositivo che modifica.
+    assert.deepEqual(iso(expandWithRules([events.find((item) => item.id === "L")], ...window)), before);
+  });
+  const expected = [
+    ["2026-11-15T23:30:00.000Z", "Lezione", "2026-11-16"],
+    ["2026-11-22T23:30:00.000Z", "Spostata", "2026-11-23"],
+    ["2026-12-06T23:30:00.000Z", "Lezione", "2026-12-07"],
+    ["2026-12-13T23:30:00.000Z", "Lezione", "2026-12-14"]
+  ];
+  for (const zone of DEVICE_ZONES) assert.deepEqual(viewIn(zone, events, window), expected, zone);
+});
+
+test("B1. tutto il giorno senza fuso (mezzanotte di Roma in UTC): l'occorrenza cancellata resta nascosta in ogni fuso", () => {
+  const allDay = base({ id: "A", allDay: true, recurrence: "daily", recurrenceUntil: "2026-11-20", start: "2026-11-15T23:00:00.000Z", end: "2026-11-16T23:00:00.000Z" });
+  const window = [utc("2026-11-10T00:00:00Z"), utc("2026-11-30T00:00:00Z")];
+  let events = [allDay];
+  withTz("Europe/Rome", () => {
+    const before = expandWithRules([allDay], ...window).map((item) => [item.start, item.end]);
+    const plan = planDelete(events, "A", "2026-11-18", "this", { now: NOW });
+    assert.equal(plan.puts.find((item) => item.id === "A")?.timeZone, "Europe/Rome");
+    events = applyEditPlan(events, plan).events;
+    const after = expandWithRules([events.find((item) => item.id === "A")], ...window).map((item) => [item.start, item.end]);
+    assert.deepEqual(after, before, "stessi giorni interi a Roma");
+  });
+  for (const zone of DEVICE_ZONES) {
+    const dates = withTz(zone, () => expandWithRules(events, ...window).map((item) => item.occurrenceDate));
+    assert.deepEqual(dates, ["2026-11-16", "2026-11-17", "2026-11-19", "2026-11-20"], zone);
+  }
+});
+
+const splitFixture = () => {
+  const parent = weeklySeries({ id: "P" });
+  // Un dispositivo: "questa e le successive" dal 30/11 con un orario nuovo.
+  const late = planEdit(parent, [parent], "2026-11-30", "following", { start: "2026-11-30T10:00:00.000Z", end: "2026-11-30T11:00:00.000Z" }, { now: NOW });
+  // Un altro (prima di ricevere la prima divisione): dal 16/11 con una regola senza fine.
+  const early = planEdit(parent, [parent], "2026-11-16", "following", { repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } }, { now: NOW });
+  return {
+    lateParent: late.puts.find((item) => item.id === "P"),
+    earlyParent: early.puts.find((item) => item.id === "P"),
+    lateChild: late.puts.find((item) => item.splitFrom === "P"),
+    earlyChild: early.puts.find((item) => item.splitFrom === "P")
+  };
+};
+
+const SPLIT_EXPECTED = [
+  ["2026-11-02", "P", "2026-11-02T09:00:00.000Z"],
+  ["2026-11-09", "P", "2026-11-09T09:00:00.000Z"],
+  ["2026-11-16", "P~2026-11-16", "2026-11-16T09:00:00.000Z"],
+  ["2026-11-18", "P~2026-11-16", "2026-11-18T09:00:00.000Z"],
+  ["2026-11-23", "P~2026-11-16", "2026-11-23T09:00:00.000Z"],
+  ["2026-11-25", "P~2026-11-16", "2026-11-25T09:00:00.000Z"],
+  ["2026-11-30", "P~2026-11-30", "2026-11-30T10:00:00.000Z"],
+  ["2026-12-07", "P~2026-11-30", "2026-12-07T10:00:00.000Z"],
+  ["2026-12-14", "P~2026-11-30", "2026-12-14T10:00:00.000Z"]
+];
+
+test("B2. due divisioni della stessa serie, in tutti e due gli ordini: ogni figlia si ferma dove parte la successiva", () => {
+  const { lateParent, earlyParent, lateChild, earlyChild } = splitFixture();
+  const window = [utc("2026-11-01T00:00:00Z"), utc("2026-12-15T00:00:00Z")];
+  for (const parent of [lateParent, earlyParent]) {
+    for (const events of [[parent, lateChild, earlyChild], [earlyChild, lateChild, parent], [lateChild, parent, earlyChild]]) {
+      eachDeviceZone((zone) => {
+        const shown = expandWithRules(events, ...window).map((item) => [item.occurrenceDate, item.id, item.start]);
+        assert.deepEqual(shown, SPLIT_EXPECTED, zone);
+      });
+    }
+  }
+  // Stesso dispositivo, una dopo l'altra: prima dal 30/11, poi dal 16/11 sulla madre già fermata.
+  let events = [weeklySeries({ id: "P" })];
+  events = applyEditPlan(events, planEdit(events[0], events, "2026-11-30", "following", { start: "2026-11-30T10:00:00.000Z", end: "2026-11-30T11:00:00.000Z" }, { now: NOW })).events;
+  const parent = events.find((item) => item.id === "P");
+  events = applyEditPlan(events, planEdit(parent, events, "2026-11-16", "following", { repeat: { freq: "weekly", byWeekday: ["MO", "WE"] } }, { now: NOW })).events;
+  assert.deepEqual(expandWithRules(events, ...window).map((item) => [item.occurrenceDate, item.id, item.start]), SPLIT_EXPECTED);
+  // I piani non toccano giorni che l'espansione nasconde (dopo l'inizio della figlia successiva).
+  const all = [lateParent, lateChild, earlyChild];
+  assert.deepEqual(planEdit(earlyChild, all, "2026-12-02", "this", { title: "x" }, { now: NOW }), { puts: [], deletes: [] });
+  assert.deepEqual(planDelete(all, earlyChild.id, "2026-12-02", "this", { now: NOW }), { puts: [], deletes: [] });
+  assert.equal(planEdit(earlyChild, all, "2026-11-25", "this", { title: "x" }, { now: NOW }).puts.length, 1);
+});
+
+test("S3. 'questa e le successive' elimina sempre anche le serie figlie e sorelle che partono dopo", () => {
+  const parent = weeklySeries({ id: "P" });
+  const split = planEdit(parent, [parent], "2026-11-30", "following", { title: "Nuovo titolo" }, { now: NOW });
+  const child = split.puts.find((item) => item.splitFrom === "P");
+  const childRow = planDelete(split.puts, child.id, "2026-12-07", "this", { now: NOW }).puts[0];
+  const events = [...split.puts, childRow, base({ id: "other" })];
+  const plan = planDelete(events, "P", "2026-11-09", "following", { now: NOW });
+  assert.deepEqual(plan.deletes.sort(), [child.id, childRow.id].sort());
+  const window = [utc("2026-11-01T00:00:00Z"), utc("2026-12-31T00:00:00Z")];
+  assert.deepEqual(expandWithRules(applyEditPlan(events, plan).events, ...window).filter((item) => item.id !== "other").map((item) => item.occurrenceDate), ["2026-11-02"]);
+  // Dalla figlia di mezzo: va via anche la sorella che parte dopo.
+  const { lateParent, lateChild, earlyChild } = splitFixture();
+  const family = [lateParent, lateChild, earlyChild];
+  const fromMiddle = planDelete(family, earlyChild.id, "2026-11-23", "following", { now: NOW });
+  assert.deepEqual(fromMiddle.deletes, [lateChild.id]);
+  assert.deepEqual(expandWithRules(applyEditPlan(family, fromMiddle).events, ...window).map((item) => item.occurrenceDate), ["2026-11-02", "2026-11-09", "2026-11-16", "2026-11-18"]);
+});
+
+test("una riga con un inizio illeggibile non nasconde l'occorrenza della serie", () => {
+  const series = weeklySeries({ id: "S" });
+  const broken = base({ id: "S@2026-11-16", seriesId: "S", originalDate: "2026-11-16", title: "Rotta", start: "non-una-data" });
+  const found = expandWithRules([series, broken], utc("2026-11-16T00:00:00Z"), utc("2026-11-17T00:00:00Z"));
+  assert.deepEqual(found.map((item) => [item.id, item.title]), [["S", "Lezione"]]);
+});
+
+test("S2. 50 serie COUNT=999 con 30 occorrenze modificate ciascuna: un mese si espande in molto meno di 200 ms", () => {
+  withTz("Europe/Rome", () => {
+    const series = Array.from({ length: 50 }, (_, index) =>
+      ruled({
+        id: `c${index}`,
+        start: new Date(Date.UTC(2024, 8, 2 + (index % 5), 7)).toISOString(),
+        end: new Date(Date.UTC(2024, 8, 2 + (index % 5), 8)).toISOString(),
+        timeZone: "Europe/Rome",
+        repeat: { freq: "weekly", byWeekday: ["MO", "TU", "WE", "TH", "FR"], end: { type: "count", count: 999 } }
+      })
+    );
+    const rows = series.flatMap((item) =>
+      Array.from({ length: 30 }, (_, k) => {
+        const date = new Date(Date.UTC(2025, 0, 6 + k * 7)).toISOString().slice(0, 10);
+        return base({ id: occurrenceId(item.id, date), seriesId: item.id, originalDate: date, start: `${date}T10:00:00.000Z`, end: `${date}T11:00:00.000Z` });
+      })
+    );
+    const events = [...series, ...rows];
+    const window = [new Date(2026, 10, 1), new Date(2026, 11, 7)];
+    assert.equal(expandWithRules(events, ...window).length, 50 * 25);
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run += 1) {
+      const started = performance.now();
+      expandWithRules(events, ...window);
+      best = Math.min(best, performance.now() - started);
+    }
+    console.log(`# S2 benchmark: ${best.toFixed(1)} ms per call`);
+    assert.ok(best < 200, `${best.toFixed(1)} ms`);
+  });
 });

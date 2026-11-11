@@ -69,22 +69,8 @@ export const isValidTimeZone = (zone: unknown): zone is string => {
   }
 };
 
-/** Parti dell'ora da orologio di `instant` nel fuso (assente = fuso del dispositivo). */
-export const utcToZonedParts = (instant: Date | number, timeZone?: string): ZonedParts => {
-  const ms = typeof instant === "number" ? instant : instant.getTime();
-  if (!timeZone) {
-    const date = new Date(ms);
-    return {
-      year: date.getFullYear(),
-      month: date.getMonth() + 1,
-      day: date.getDate(),
-      hour: date.getHours(),
-      minute: date.getMinutes(),
-      second: date.getSeconds(),
-      millisecond: date.getMilliseconds(),
-      weekday: date.getDay()
-    };
-  }
+/** Parti lette da Intl (lento: usato per gli scarti e nei giorni in cui lo scarto cambia). */
+const intlParts = (ms: number, timeZone: string): ZonedParts => {
   const parts = formatterFor(timeZone).formatToParts(new Date(ms));
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   const rawYear = Number(get("year"));
@@ -111,8 +97,65 @@ const wallAsUtc = (year: number, month: number, day: number, hour = 0, minute = 
 /** Scarto (ms) del fuso nell'istante: ora da orologio - UTC (al secondo, come Intl). */
 export const timeZoneOffset = (instant: number, timeZone: string) => {
   const whole = Math.floor(instant / 1000) * 1000;
-  const parts = utcToZonedParts(whole, timeZone);
+  const parts = intlParts(whole, timeZone);
   return wallAsUtc(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second) - whole;
+};
+
+// Scarti in cache per (fuso, giorno UTC): un calendario chiede gli stessi giorni molte volte e Intl
+// è lento. Un giorno vale solo se lo scarto è lo stesso all'inizio e alla fine (nessun cambio d'ora).
+const dayOffsets = new Map<string, Map<number, number | null>>();
+const MAX_CACHED_DAYS = 50_000;
+/** Ultimo giorno (dal 1970) con l'intero giorno dentro le date valide di JavaScript. */
+const MAX_DAY = 99_999_998;
+
+/** Scarto costante per tutto il giorno UTC `day`, o null se in quel giorno cambia. */
+const dayOffset = (timeZone: string, day: number) => {
+  if (Math.abs(day) > MAX_DAY) return null;
+  let days = dayOffsets.get(timeZone);
+  if (!days) {
+    days = new Map();
+    dayOffsets.set(timeZone, days);
+  }
+  let offset = days.get(day);
+  if (offset === undefined) {
+    const first = timeZoneOffset(day * DAY_MS, timeZone);
+    offset = first === timeZoneOffset((day + 1) * DAY_MS - 1000, timeZone) ? first : null;
+    if (days.size >= MAX_CACHED_DAYS) days.clear();
+    days.set(day, offset);
+  }
+  return offset;
+};
+
+/** Parti dell'ora da orologio di `instant` nel fuso (assente = fuso del dispositivo). */
+export const utcToZonedParts = (instant: Date | number, timeZone?: string): ZonedParts => {
+  const ms = typeof instant === "number" ? instant : instant.getTime();
+  if (!timeZone) {
+    const date = new Date(ms);
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+      second: date.getSeconds(),
+      millisecond: date.getMilliseconds(),
+      weekday: date.getDay()
+    };
+  }
+  formatterFor(timeZone); // fuso sconosciuto: RangeError, come prima
+  const offset = Number.isFinite(ms) ? dayOffset(timeZone, Math.floor(ms / DAY_MS)) : null;
+  if (offset === null) return intlParts(ms, timeZone);
+  const shifted = new Date(ms + offset);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+    second: shifted.getUTCSeconds(),
+    millisecond: ((ms % 1000) + 1000) % 1000,
+    weekday: shifted.getUTCDay()
+  };
 };
 
 const isFieldList = (wall: readonly number[] | Partial<WallTime>): wall is readonly number[] => Array.isArray(wall);
@@ -136,6 +179,10 @@ export const zonedToUtc = (wall: readonly number[] | Partial<WallTime>, timeZone
   }
   formatterFor(timeZone); // fuso sconosciuto: RangeError subito
   const guess = wallAsUtc(year, month, day, hour, minute, second, millisecond);
+  // Via veloce: stesso scarto per tutto il giorno prima, quello e quello dopo -> un solo istante possibile.
+  const guessDay = Math.floor(guess / DAY_MS);
+  const steady = Number.isFinite(guess) ? dayOffset(timeZone, guessDay) : null;
+  if (steady !== null && dayOffset(timeZone, guessDay - 1) === steady && dayOffset(timeZone, guessDay + 1) === steady) return new Date(guess - steady);
   const before = timeZoneOffset(guess - DAY_MS, timeZone);
   const offsets = new Set([before, timeZoneOffset(guess, timeZone), timeZoneOffset(guess + DAY_MS, timeZone)]);
   let best: number | undefined;

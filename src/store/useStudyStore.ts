@@ -150,7 +150,10 @@ interface StudyState {
    * `repeat` nella modifica = regola scelta (vuota = non si ripete più). Un solo salvataggio.
    */
   editOccurrence: (seriesId: string, originalDate: string, scope: OccurrenceScope, patch: Partial<CalendarEvent>) => Promise<void>;
-  /** Eliminazione con le stesse portate; `includeSplits`: anche le serie nate da "questa e le successive". */
+  /**
+   * Eliminazione con le stesse portate. "following" toglie sempre anche le serie nate da divisioni
+   * che continuano dopo; `includeSplits` serve solo con "all" (tutta la famiglia, madre compresa).
+   */
   deleteOccurrence: (seriesId: string, originalDate: string, scope: OccurrenceScope, options?: { includeSplits?: boolean }) => Promise<void>;
   /** Crea una materia e ne restituisce l'id. */
   addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<string>;
@@ -1055,7 +1058,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
         const follow = !isOccurrenceRow(current) && next.subjectId !== current.subjectId;
         return {
           events: state.events.map((event) =>
-            event.id === id ? next : follow && event.seriesId === id ? { ...event, subjectId: next.subjectId, updatedAt: now } : event
+            event.id === id
+              ? next
+              : follow && event.seriesId === id && event.subjectId !== next.subjectId
+                ? { ...event, subjectId: next.subjectId, updatedAt: now }
+                : event
           )
         };
       });

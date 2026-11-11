@@ -227,6 +227,34 @@ test("addEvent scarta promemoria e ricorrenze non validi", async () => {
   assert.notEqual(created.timeZone, "Non/Esiste");
 });
 
+test("editOccurrence 'this' su una serie senza fuso: il fuso del dispositivo va sulla serie nello stesso salvataggio", async () => {
+  const legacy = event({ id: "old", recurrence: "weekly" });
+  store.setState({ events: [legacy, OTHER] });
+  await store.getState().editOccurrence("old", "2026-11-16", "this", { title: "Spostata" });
+  assert.equal(notifications, 2, "uno per lo stato iniziale, uno per la modifica");
+  assert.equal(typeof byId("old").timeZone, "string");
+  assert.equal(byId("old@2026-11-16").title, "Spostata");
+  await store.getState().deleteOccurrence("old", "2026-11-23", "this");
+  assert.equal(byId("old@2026-11-23").cancelled, true);
+});
+
+test("deleteOccurrence 'following' toglie le serie figlie che partono dopo, senza opzioni", async () => {
+  await store.getState().editOccurrence("s", "2026-11-30", "following", { title: "Figlia" });
+  const child = store.getState().events.find((item) => item.splitFrom === "s");
+  await store.getState().deleteOccurrence("s", "2026-11-16", "following");
+  assert.deepEqual(ids(), ["other", "s"]);
+  assert.equal(child !== undefined, true);
+});
+
+test("updateEvent: le righe che hanno già la materia nuova restano lo stesso oggetto", async () => {
+  const row = { ...event({ id: "s@2026-11-16", seriesId: "s", originalDate: "2026-11-16", subjectId: "sub2" }) };
+  const other = { ...event({ id: "s@2026-11-23", seriesId: "s", originalDate: "2026-11-23", subjectId: "sub1" }) };
+  store.setState({ events: [SERIES, row, other, OTHER] });
+  await store.getState().updateEvent("s", { subjectId: "sub2" });
+  assert.equal(byId("s@2026-11-16"), row);
+  assert.equal(byId("s@2026-11-23").subjectId, "sub2");
+});
+
 test("deleteEvent di una serie elimina anche le sue righe (non le altre serie)", async () => {
   await store.getState().editOccurrence("s", "2026-11-16", "this", { title: "Spostata" });
   await store.getState().deleteEvent("s");

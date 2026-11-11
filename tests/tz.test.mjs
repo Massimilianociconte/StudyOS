@@ -112,3 +112,33 @@ test("date civili: giorni, mesi (con giorno troncato), giorno della settimana, d
   assert.equal(isCivilDate("2026-1-01"), false);
   assert.equal(isCivilDate(20261101), false);
 });
+
+test("scarti in cache: stesse parti di Intl e stesso istante anche nei giorni del cambio d'ora, nei fusi strani e nel passato", () => {
+  const reference = (ms, zone) => {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms));
+    const get = (type) => Number(parts.find((part) => part.type === type).value);
+    return [get("year"), get("month"), get("day"), get("hour") % 24, get("minute"), get("second")];
+  };
+  const cases = [
+    ["Europe/Rome", "2026-03-27T00:00:00Z"],
+    ["Europe/Rome", "2026-10-23T00:00:00Z"],
+    ["America/New_York", "2026-03-06T00:00:00Z"],
+    ["Australia/Lord_Howe", "2026-04-03T00:00:00Z"],
+    ["Asia/Kathmandu", "2026-01-01T00:00:00Z"],
+    ["Pacific/Apia", "2011-12-28T00:00:00Z"],
+    ["America/Sao_Paulo", "2018-11-02T00:00:00Z"],
+    ["Europe/Rome", "1893-10-30T00:00:00Z"]
+  ];
+  for (const [zone, start] of cases) {
+    const from = Date.parse(start);
+    for (let ms = from; ms < from + 5 * 86_400_000; ms += 17 * 60_000) {
+      const parts = utcToZonedParts(ms, zone);
+      const wall = [parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second];
+      assert.deepEqual(wall, reference(ms, zone), `${zone} ${new Date(ms).toISOString()}`);
+      // Da orologio a istante: si torna allo stesso orologio (la prima volta, se l'ora si ripete).
+      const back = zonedToUtc([...wall, 0], zone).getTime();
+      assert.deepEqual(reference(back, zone), wall, `${zone} ritorno ${new Date(ms).toISOString()}`);
+      assert.ok(back <= ms - (ms % 1000), `${zone} prima delle due ${new Date(ms).toISOString()}`);
+    }
+  }
+});
