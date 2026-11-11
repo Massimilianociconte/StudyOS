@@ -1089,7 +1089,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     importEvents: async (incoming) => {
       // Unione caricata solo qui (import dinamico): fuori dal bundle iniziale.
-      const { mergeIcsImport } = await import("../lib/ics");
+      const { mergeIcsImport, relinkEvents } = await import("../lib/ics");
       const now = nowIso();
       // Appelli BARB: giorno fisso (date-only), id ed etichette di sempre.
       const items = incoming.map((item) =>
@@ -1108,11 +1108,12 @@ export const useStudyStore = create<StudyState>((set, get) => {
       if (!plan.puts.length && !plan.deletes.length) return { added: 0, updated: 0 };
       set((state) => {
         const result = applyEditPlan(state.events, { puts: plan.puts.map((event) => preserveBarbReminderDates(event)), deletes: plan.deletes });
+        // Eventi uniti a un altro (vecchi import): allegati, note e promemoria passano a quello; dagli altri tolti si staccano.
         return {
           events: result.events,
-          attachments: unlinkEvents(state.attachments, result.removed, now),
-          notes: unlinkEvents(state.notes, result.removed, now),
-          reminders: unlinkEvents(state.reminders, result.removed, now)
+          attachments: unlinkEvents(relinkEvents(state.attachments, plan.relinked, now), result.removed, now),
+          notes: unlinkEvents(relinkEvents(state.notes, plan.relinked, now), result.removed, now),
+          reminders: unlinkEvents(relinkEvents(state.reminders, plan.relinked, now), result.removed, now)
         };
       });
       await commit();

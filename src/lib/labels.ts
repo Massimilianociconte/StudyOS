@@ -1100,8 +1100,14 @@ const RULE_PART_TEXT: Record<string, string> = {
   RSCALE: "un calendario diverso da quello solito",
   SKIP: "un calendario diverso da quello solito"
 };
-const ruleParts = (parts: readonly string[]) =>
-  [...new Set(parts.map((part) => RULE_PART_TEXT[part.split("=")[0].trim().toUpperCase()] ?? "una regola scritta in modo particolare"))].join(", ");
+const rulePartText = (part: string) => {
+  const split = part.indexOf("=");
+  const key = (split < 0 ? part : part.slice(0, split)).trim().toUpperCase();
+  // INTERVAL=0 o non un numero: non è lungo, è sbagliato.
+  if (key === "INTERVAL" && !/^\s*0*[1-9]\d*\s*$/.test(split < 0 ? "" : part.slice(split + 1))) return "un intervallo non valido";
+  return RULE_PART_TEXT[key] ?? "una regola scritta in modo particolare";
+};
+const ruleParts = (parts: readonly string[]) => [...new Set(parts.map(rulePartText))].join(", ");
 
 export const ICS_TEXT = {
   calendarName: "StudyOS",
@@ -1125,7 +1131,15 @@ export const ICS_TEXT = {
   thisAndFuture: "Alcune modifiche nel file valgono per «questa e le successive»: sono state applicate solo al giorno indicato.",
   multipleRules: (titles: readonly string[]) => `${quotedTitles(titles)} ha più di una regola di ripetizione: è stata usata solo la prima.`,
   tasksIgnored: (count: number) =>
-    count === 1 ? "1 attività con scadenza non è stata importata: StudyOS importa solo gli eventi." : `${count} attività con scadenza non sono state importate: StudyOS importa solo gli eventi.`
+    count === 1 ? "1 attività con scadenza non è stata importata: StudyOS importa solo gli eventi." : `${count} attività con scadenza non sono state importate: StudyOS importa solo gli eventi.`,
+  tooLong: (titles: readonly string[]) =>
+    `${quotedTitles(titles)} ${titles.length === 1 ? "durava" : "duravano"} più di un anno: la fine è stata portata a un anno dopo l'inizio. Controlla le date.`,
+  tooManyRows: (titles: readonly string[], max: number) =>
+    `${quotedTitles(titles)} ${titles.length === 1 ? "ha" : "hanno"} troppi giorni esclusi o modificati: sono stati letti solo i primi ${max}.`,
+  legacyKept: (titles: readonly string[]) =>
+    titles.length === 1
+      ? `${quotedTitles(titles)} era già stato importato in più parti, con modifiche che non si possono unire senza perderne qualcuna: è rimasto com'era. Se vuoi la versione del file, elimina quelle parti e importa di nuovo.`
+      : `${quotedTitles(titles)} erano già stati importati in più parti, con modifiche che non si possono unire senza perderne qualcuna: sono rimasti com'erano. Se vuoi la versione del file, elimina quelle parti e importa di nuovo.`
 };
 
 // --- Guida a importazione ed esportazione (components/CalendarTransfer, lib/calendarGuide) ---
@@ -1164,19 +1178,16 @@ export const CALENDAR_GUIDE_TEXT = {
   redirectTitle: "Da qui non si può",
   redirectButton: (app: string, device: string) => `Mostra come fare con ${app} su ${device}`,
   back: "Indietro",
-  close: "Chiudi",
   done: "Fatto",
   download: "Scarica il file",
   share: "Condividi il file",
   downloaded: (fileName: string) => `Scaricato: ${fileName}. Ora segui i passi qui sotto.`,
   loading: "Un momento…",
   chooseFile: "Scegli il file",
-  fileBadge: ".ics",
   tooBig: "Il file è troppo grande (massimo 5 MB). Esporta un periodo più breve dal tuo calendario e riprova.",
   unreadable: "Non è stato possibile leggere il file. Riprova o scegli un altro file .ics.",
   empty: (warning?: string) =>
     `Nel file non ci sono eventi da importare.${warning ? ` ${warning}` : ""} Scegli il file .ics esportato dal tuo calendario.`,
-  previewEyebrow: "Anteprima",
   previewSummary: (count: number, recurring: number, changed: number) =>
     `Nel file ${count === 1 ? "c'è 1 evento" : `ci sono ${count} eventi`}${recurring ? ` (${recurring} si ${recurring === 1 ? "ripete" : "ripetono"})` : ""}${
       changed ? `, più ${changed === 1 ? "1 giorno modificato" : `${changed} giorni modificati`} di una serie` : ""
@@ -1188,8 +1199,17 @@ export const CALENDAR_GUIDE_TEXT = {
   categoryHint: "Usato quando il titolo non fa capire il tipo (es. «Esame», «Laboratorio»).",
   matchSubjects: (count: number) => `Collega alle mie materie in base al titolo (${count} ${count === 1 ? "riconosciuto" : "riconosciuti"})`,
   warningsTitle: "Da controllare",
-  cancel: "Annulla",
-  add: (count: number) => (count === 1 ? "Aggiungi 1 evento" : `Aggiungi ${count} eventi`),
+  /** Pulsante dell'anteprima, con i conti veri dell'unione con il calendario. */
+  apply: (added: number, updated: number) => {
+    const add = added === 1 ? "Aggiungi 1 evento" : `Aggiungi ${added} eventi`;
+    const update = updated === 1 ? "aggiorna 1 evento" : `aggiorna ${updated} eventi`;
+    if (added && updated) return `${add}, ${update}`;
+    if (added) return add;
+    if (updated) return `${update.charAt(0).toUpperCase()}${update.slice(1)}`;
+    return "Aggiorna il calendario";
+  },
+  nothingNew: "Nessuna novità",
+  nothingNewHint: "Gli eventi di questo file sono già nel calendario così come sono: non c'è niente da aggiungere o aggiornare.",
   importFailed: "Non è stato possibile aggiungere gli eventi. Riprova tra poco.",
   resultTitle: "Importazione completata",
   result: (added: number, updated: number) => {
@@ -1210,7 +1230,7 @@ export const CALENDAR_GUIDE_STEPS = {
   downloadPhone: "Scarica il file con il pulsante qui sotto: il telefono lo salva nella cartella Download.",
   downloadIos: "Scarica il file con il pulsante qui sotto: a seconda della versione, il Calendario lo apre subito oppure finisce nell'app File, nella cartella Download.",
   downloadToComputer:
-    "Scarica il file con il pulsante qui sotto e mandalo al computer, per esempio per email a te stesso. Oppure apri StudyOS dal computer e scaricalo da lì.",
+    "Scarica il file con il pulsante qui sotto e mandalo al computer, per esempio per email a te stesso. Se hai fatto l'accesso con il tuo account, i dati si sincronizzano: allora puoi anche aprire StudyOS dal computer, entrare con lo stesso account e scaricarlo da lì.",
   googleOwnCalendar: "Consiglio: su calendar.google.com crea prima un calendario «StudyOS» (accanto ad «Altri calendari», +). Se vuoi ricominciare, lo elimini e reimporti il file.",
   googleSettings: "Apri calendar.google.com nel browser, fai clic sull'ingranaggio in alto e scegli «Impostazioni».",
   googleOnComputer: "Sul computer apri calendar.google.com nel browser (l'app del telefono non ha questa funzione), fai clic sull'ingranaggio in alto e scegli «Impostazioni».",

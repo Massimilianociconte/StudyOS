@@ -6,17 +6,19 @@
 //   date escluse e occorrenze modificate diventano le stesse righe che crea il motore delle
 //   ripetizioni (lib/repeat.ts), e un secondo import dello stesso file non duplica nulla.
 // Tutto puro: niente store, niente DOM. Lo store carica `mergeIcsImport` solo quando serve.
-import type { CalendarEvent, EventCategory, EventReminder, Exam, RepeatRule, Subject, Task, Weekday } from "../types";
+import type { CalendarEvent, EventCategory, EventOccasion, EventReminder, Exam, RepeatRule, Subject, Task, Weekday } from "../types";
 import {
   MAX_COUNT,
   MAX_INTERVAL,
   applyRepeatFields,
   countBefore,
+  expandRule,
   isOccurrenceRow,
   legacyProjection,
   normalizeRepeat,
   occurrenceId,
   reminderInstants,
+  sanitizeOccasion,
   sanitizeReminders,
   validateRepeat
 } from "./repeat";
@@ -40,6 +42,11 @@ import { EVENT_CATEGORY_LABEL, ICS_TEXT } from "./labels";
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const MAX_EVENTS = 2000;
+/** Giorni esclusi o modificati letti per una serie, e in tutto il file: oltre, il file è sospetto. */
+const MAX_ROWS_PER_SERIES = 1000;
+const MAX_ROWS = 20_000;
+/** Durata massima di un evento letto da un file (giorni): oltre è quasi certamente un errore. */
+const MAX_SPAN_DAYS = 366;
 const DEFAULT_COLOR = "#7CF7C8";
 const WEEKDAY_BY_NUMBER: readonly Weekday[] = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 const WEEKDAY_CODES = new Set<string>(WEEKDAY_BY_NUMBER);
@@ -48,14 +55,19 @@ const pad = (value: number, size = 2) => String(Math.abs(value)).padStart(size, 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const isWeekday = (value: unknown): value is Weekday => typeof value === "string" && WEEKDAY_CODES.has(value);
 const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+/** Date.UTC anche per gli anni 0–99 (Date.UTC li porterebbe al 1900). */
+const utcMs = (year: number, month: number, day: number, hour = 0, minute = 0, second = 0) => {
+  if (year >= 100) return Date.UTC(year, month - 1, day, hour, minute, second);
+  const date = new Date(Date.UTC(2000, month - 1, day, hour, minute, second));
+  date.setUTCFullYear(year + date.getUTCFullYear() - 2000);
+  return date.getTime();
+};
 const timestamp = (value: unknown) => {
   const ms = typeof value === "string" ? Date.parse(value) : Number.NaN;
   return Number.isNaN(ms) ? 0 : ms;
 };
 const validZone = (zone: unknown) => (isValidTimeZone(zone) ? zone : undefined);
 const deviceZone = () => validZone(deviceTimeZone()) ?? "UTC";
-/** Fusi scritti come UTC puro (`…Z`), senza VTIMEZONE. */
-const UTC_ZONES = new Set(["UTC", "Etc/UTC", "GMT", "Etc/GMT", "Etc/Universal", "Etc/Zulu", "Universal", "Zulu"]);
 
 // ---------------------------------------------------------------------------------------
 // Testo
@@ -155,7 +167,7 @@ const untilDate = (value: string, ctx: RRuleContext) => {
   let wallDate = date;
   let seconds = Number(match[4]) * 3600 + Number(match[5]) * 60 + Number(match[6] ?? 0);
   if (match[7]) {
-    const parts = utcToZonedParts(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)), ctx.zone);
+    const parts = utcToZonedParts(utcMs(Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)), ctx.zone);
     wallDate = civilFromParts(parts.year, parts.month, parts.day);
     seconds = parts.hour * 3600 + parts.minute * 60 + parts.second;
   }
@@ -332,12 +344,33 @@ const truncatedRule = (rule: RepeatRule, startDate: string, date: string): Repea
   return { ...rule, end: { type: "until", date: civilAddDays(date, -1) } };
 };
 
-/** Il giorno è un'occorrenza della regola (prima del taglio `cut`)? */
-const isInstanceOf = (rule: RepeatRule | null, startDate: string, date: string, cut?: string) => {
-  if (!isCivilDate(date) || (cut !== undefined && date >= cut)) return false;
-  if (!rule) return date === startDate;
-  if (date < startDate) return false;
-  return countBefore(rule, startDate, civilAddDays(date, 1)) > countBefore(rule, startDate, date);
+/** Finestra di un'espansione: la regola dà al più un'occorrenza al giorno, sotto il limite del motore (1000). */
+const WINDOW_DAYS = 999;
+/** Oltre questo vuoto tra due date si apre una finestra nuova: date sparse in secoli non si espandono tutte. */
+const WINDOW_GAP_DAYS = 31;
+
+/**
+ * Quali tra `dates` sono occorrenze della regola (prima del taglio `cut`): una passata in ordine, a
+ * finestre che coprono solo i tratti con date da guardare. Migliaia di date costano come poche.
+ */
+const instanceDays = (rule: RepeatRule | null, startDate: string, dates: Iterable<string>, cut?: string) => {
+  const wanted = [...new Set(dates)].filter((date) => isCivilDate(date) && date >= startDate && (cut === undefined || date < cut)).sort(compareText);
+  const found = new Set<string>();
+  if (!rule) {
+    if (wanted[0] === startDate) found.add(startDate);
+    return found;
+  }
+  const wallStart = `${startDate}T00:00:00`;
+  for (let index = 0; index < wanted.length; ) {
+    const from = wanted[index];
+    const limit = civilAddDays(from, WINDOW_DAYS);
+    let last = index;
+    while (last + 1 < wanted.length && wanted[last + 1] < limit && civilDaysBetween(wanted[last], wanted[last + 1]) <= WINDOW_GAP_DAYS) last += 1;
+    const window = expandRule(rule, wallStart, "UTC", new Date(civilAt(from, [0, 0, 0], "UTC")), new Date(civilAt(civilAddDays(wanted[last], 1), [0, 0, 0], "UTC")));
+    for (const instance of window) found.add(instance.date);
+    index = last + 1;
+  }
+  return found;
 };
 
 // ---------------------------------------------------------------------------------------
@@ -644,8 +677,8 @@ interface Transition {
 /** Cambi d'ora del fuso tra l'inizio di `fromYear` e la fine di `toYear`, al secondo (da Intl). */
 const transitionsOf = (zone: string, fromYear: number, toYear: number): Transition[] => {
   const out: Transition[] = [];
-  const end = Date.UTC(toYear + 1, 0, 1);
-  let t = Date.UTC(fromYear, 0, 1);
+  const end = utcMs(toYear + 1, 1, 1);
+  let t = utcMs(fromYear, 1, 1);
   let previous = timeZoneOffset(t, zone);
   while (t < end && out.length < 1000) {
     const next = Math.min(t + 7 * DAY_MS, end);
@@ -678,7 +711,7 @@ export const buildVTimezone = (zone: string, fromYear: number, toYear: number): 
   const lines = ["BEGIN:VTIMEZONE", `TZID:${zone}`, `X-LIC-LOCATION:${zone}`];
   const transitions = transitionsOf(zone, fromYear, toYear);
   if (!transitions.length) {
-    const offset = offsetText(timeZoneOffset(Date.UTC(fromYear, 0, 1), zone));
+    const offset = offsetText(timeZoneOffset(utcMs(fromYear, 1, 1), zone));
     lines.push("BEGIN:STANDARD", `TZOFFSETFROM:${offset}`, `TZOFFSETTO:${offset}`, "DTSTART:19700101T000000", "END:STANDARD", "END:VTIMEZONE");
     return lines;
   }
@@ -825,7 +858,7 @@ const observancesOf = (component: Component): Observance[] => {
     const start = LOCAL_STAMP.exec(propOf(child, "DTSTART")?.value.trim() ?? "");
     if (from === null || to === null || !start) continue;
     const local = start.slice(1, 7).map((part) => Number(part ?? 0));
-    const firstMs = Date.UTC(local[0], local[1] - 1, local[2], local[3], local[4], local[5]) - from;
+    const firstMs = utcMs(local[0], local[1], local[2], local[3], local[4], local[5]) - from;
     const observance: Observance = { from, to, local, firstMs, extra: [] };
     const rrule = propOf(child, "RRULE")?.value;
     if (rrule) {
@@ -840,7 +873,7 @@ const observancesOf = (component: Component): Observance[] => {
         const byDay = parts.BYDAY ? /^([+-]?\d)?(MO|TU|WE|TH|FR|SA|SU)$/.exec(parts.BYDAY) : null;
         const until = parts.UNTIL ? /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(parts.UNTIL) : null;
         const untilMs = until
-          ? Date.UTC(Number(until[1]), Number(until[2]) - 1, Number(until[3]), Number(until[4] ?? 23), Number(until[5] ?? 59), Number(until[6] ?? 59)) - (until[7] ? 0 : from)
+          ? utcMs(Number(until[1]), Number(until[2]), Number(until[3]), Number(until[4] ?? 23), Number(until[5] ?? 59), Number(until[6] ?? 59)) - (until[7] ? 0 : from)
           : undefined;
         if (month >= 1 && month <= 12) {
           observance.rule = {
@@ -855,7 +888,7 @@ const observancesOf = (component: Component): Observance[] => {
     for (const rdate of propsOf(child, "RDATE")) {
       for (const value of rdate.value.split(",")) {
         const match = LOCAL_STAMP.exec(value.trim());
-        if (match) observance.extra.push(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)) - from);
+        if (match) observance.extra.push(utcMs(Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)) - from);
       }
     }
     out.push(observance);
@@ -881,7 +914,7 @@ const onsetIn = (observance: Observance, year: number) => {
   } else if (rule.monthDay !== undefined) day = rule.monthDay < 0 ? last + 1 + rule.monthDay : rule.monthDay;
   else day = observance.local[2];
   if (day < 1 || day > last) return null;
-  const ms = Date.UTC(year, rule.month - 1, day, observance.local[3], observance.local[4], observance.local[5]) - observance.from;
+  const ms = utcMs(year, rule.month, day, observance.local[3], observance.local[4], observance.local[5]) - observance.from;
   if (ms < observance.firstMs || (rule.untilMs !== undefined && ms > rule.untilMs)) return null;
   return ms;
 };
@@ -976,10 +1009,12 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     const known = zoneYears.get(zone);
     zoneYears.set(zone, known ? { min: Math.min(known.min, year), max: Math.max(known.max, year) } : { min: year, max: year });
   };
-  /** DTSTART/DTEND, RECURRENCE-ID, EXDATE: stesso tipo di valore e TZID dell'inizio della serie. */
+  /**
+   * DTSTART/DTEND, RECURRENCE-ID, EXDATE: stesso tipo di valore e TZID dell'inizio della serie.
+   * Anche UTC ha il suo TZID: un `…Z` di una serie si rilegge nel fuso del calendario (X-WR-TIMEZONE).
+   */
   const dateLine = (name: string, timing: Timing, values: readonly { date: string; ms: number }[]) => {
     if (timing.allDay) return `${name};VALUE=DATE:${values.map((value) => civilStamp(value.date)).join(",")}`;
-    if (UTC_ZONES.has(timing.zone)) return `${name}:${values.map((value) => utcStamp(value.ms)).join(",")}`;
     values.forEach((value) => useZone(timing.zone, value.ms));
     return `${name};TZID=${timing.zone}:${values
       .map((value) => {
@@ -1000,6 +1035,11 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     const categories = [event.category ? label(event.category) : "", subjectName(event.subjectId) ?? ""].filter(Boolean);
     if (categories.length) lines.push(`CATEGORIES:${categories.map((value) => escapeText(String(value))).join(",")}`);
     if (event.status === "skipped") lines.push("STATUS:CANCELLED");
+    // Compleanni e anniversari: tipo, anno e persona solo per StudyOS (le altre app ignorano le X-).
+    const occasion = sanitizeOccasion(event.occasion);
+    if (occasion) {
+      lines.push(`X-STUDYOS-OCCASION;KIND=${occasion.kind.toUpperCase()}${occasion.birthYear ? `;YEAR=${occasion.birthYear}` : ""}:${escapeText(occasion.person ?? "")}`);
+    }
     for (const reminder of sanitizeReminders(event.reminders)) {
       lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${escapeText(String(event.title ?? ""))}`, `TRIGGER:${triggerOf(reminder, timing)}`, "END:VALARM");
     }
@@ -1058,8 +1098,9 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     }
     const exdates: string[] = [];
     const overrides: [string, CalendarEvent][] = [];
+    const days = instanceDays(rule, timing.startDate, rows?.keys() ?? []);
     for (const [date, row] of rows ?? []) {
-      if (!isInstanceOf(rule, timing.startDate, date)) continue;
+      if (!days.has(date)) continue;
       if (row.cancelled || row.archived) exdates.push(date);
       else overrides.push([date, row]);
     }
@@ -1164,6 +1205,8 @@ export interface IcsImportedEvent {
   reminders?: EventReminder[];
   /** Occorrenza annullata (RECURRENCE-ID con STATUS:CANCELLED). */
   cancelled?: true;
+  /** Compleanno o anniversario esportato da StudyOS (X-STUDYOS-OCCASION). */
+  occasion?: EventOccasion;
 }
 
 export interface IcsParseResult {
@@ -1220,9 +1263,12 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
   let skipped = 0;
   let todos = 0;
   let tooMany = false;
+  const tooLong: string[] = [];
 
   for (const calendar of parseComponents(text.replace(/^\uFEFF/, "")).filter((component) => component.name === "VCALENDAR")) {
-    const vtimezones = new Map(calendar.children.filter((child) => child.name === "VTIMEZONE").map((child) => [propOf(child, "TZID")?.value.trim().replace(/^"(.*)"$/, "$1") ?? "", child]));
+    // TZID come testo (RFC 5545): le virgole di Exchange arrivano protette ("Amsterdam\, Berlino").
+    const tzidOf = (value: string | undefined) => unescapeText((value ?? "").trim().replace(/^"(.*)"$/, "$1")).trim();
+    const vtimezones = new Map(calendar.children.filter((child) => child.name === "VTIMEZONE").map((child) => [tzidOf(propOf(child, "TZID")?.value), child]));
     const plainZone = (name: string | undefined) => {
       const clean = (name ?? "").trim().replace(/^"(.*)"$/, "$1");
       if (!clean) return undefined;
@@ -1248,7 +1294,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         // Nome inventato (es. "Ora dell'Europa centrale"): il primo fuso con gli stessi scarti.
         const rules = zoneRules(definition);
         if (!rules.empty) {
-          const samples = [Date.UTC(year, 0, 15, 12), Date.UTC(year, 6, 15, 12), ...rules.onsets(year).flatMap((ms) => [ms - HOUR_MS, ms + HOUR_MS])];
+          const samples = [utcMs(year, 1, 15, 12), utcMs(year, 7, 15, 12), ...rules.onsets(year).flatMap((ms) => [ms - HOUR_MS, ms + HOUR_MS])];
           const candidates = [...new Set([calendarZone, fallbackZone, ...Object.values(WINDOWS_ZONES)].filter((item): item is string => Boolean(item && isValidTimeZone(item))))];
           zone = candidates.find((candidate) => samples.every((ms) => rules.offsetAt(ms) === timeZoneOffset(ms, candidate)));
         }
@@ -1274,8 +1320,8 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       if (!match) return null;
       const fields = [1, 2, 3, 4, 5, 6].map((index) => Number(match[index] ?? 0));
       if (!isCivilDate(civilFromParts(fields[0], fields[1], fields[2]))) return null;
-      if (match[7]) return { type: "time", ms: Date.UTC(fields[0], fields[1] - 1, fields[2], fields[3], fields[4], fields[5]), zone: "UTC", floating: false, utc: true };
-      const tzid = property.params.TZID?.trim();
+      if (match[7]) return { type: "time", ms: utcMs(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]), zone: "UTC", floating: false, utc: true };
+      const tzid = property.params.TZID === undefined ? "" : tzidOf(property.params.TZID);
       const zone = tzid ? resolveZone(tzid, fields[0]) : zoneHint ?? defaultZone;
       return { type: "time", ms: zonedToUtc(fields, zone).getTime(), zone, floating: !tzid, utc: false };
     };
@@ -1335,6 +1381,10 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
           if (parts.hour || parts.minute || parts.second) endDate = civilAddDays(endDate, 1);
         } else if (duration && duration.sign > 0) endDate = civilAddDays(startDate, duration.days + Math.ceil(duration.seconds / 86_400));
         if (!endDate || endDate <= startDate) endDate = civilAddDays(startDate, 1);
+        if (civilDaysBetween(startDate, endDate) > MAX_SPAN_DAYS) {
+          endDate = civilAddDays(startDate, MAX_SPAN_DAYS);
+          tooLong.push(title);
+        }
         start = `${startDate}T00:00:00`;
         end = `${endDate}T00:00:00`;
         startMs = civilAt(startDate, [0, 0, 0], zone);
@@ -1351,6 +1401,10 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
           endMs = shifted + duration.seconds * 1000;
         }
         if (!(endMs > startMs)) endMs = startMs + HOUR_MS;
+        if (endMs - startMs > MAX_SPAN_DAYS * DAY_MS) {
+          endMs = startMs + MAX_SPAN_DAYS * DAY_MS;
+          tooLong.push(title);
+        }
         start = new Date(startMs).toISOString();
         end = new Date(endMs).toISOString();
       }
@@ -1363,6 +1417,11 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         .map((value) => unescapeText(value).trim())
         .filter(Boolean);
 
+      const occasionProp = propOf(vevent, "X-STUDYOS-OCCASION");
+      const occasion = occasionProp
+        ? sanitizeOccasion({ kind: occasionProp.params.KIND?.toLowerCase(), birthYear: Number(occasionProp.params.YEAR), person: unescapeText(occasionProp.value) })
+        : undefined;
+
       const event: IcsImportedEvent = {
         uid: propOf(vevent, "UID")?.value.trim() || undefined,
         title,
@@ -1373,6 +1432,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         end,
         allDay,
         ...(allDay ? {} : { timeZone: zone }),
+        ...(occasion ? { occasion } : {}),
         recurrence: "none"
       };
 
@@ -1460,6 +1520,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
   if (thisAndFuture) warnings.push(ICS_TEXT.thisAndFuture);
   if (skipped) warnings.push(ICS_TEXT.skipped(skipped));
   if (todos) warnings.push(ICS_TEXT.tasksIgnored(todos));
+  if (tooLong.length) warnings.push(ICS_TEXT.tooLong([...new Set(tooLong)]));
   if (tooMany) warnings.push(ICS_TEXT.tooMany(MAX_EVENTS));
   return { events, warnings };
 };
@@ -1502,6 +1563,7 @@ export interface IcsImportItem {
   subjectId?: string;
   color?: string;
   tags?: string[];
+  occasion?: EventOccasion;
 }
 
 export interface IcsItemOptions {
@@ -1544,6 +1606,7 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.exdates?.length ? { exdates: event.exdates } : {}),
       ...(event.reminders ? { reminders: event.reminders } : {}),
       ...(event.cancelled ? { cancelled: true as const } : {}),
+      ...(event.occasion ? { occasion: event.occasion } : {}),
       category: categoryFromList(categories) ?? guessCategory(event.title, options.defaultCategory),
       ...(subject ? { subjectId: subject.id, color: subject.color } : {})
     };
@@ -1568,7 +1631,46 @@ export interface IcsMergePlan {
   deletes: string[];
   added: number;
   updated: number;
+  /** Eventi tolti perché uniti a un altro (vecchi import): id tolto -> id che lo continua. */
+  relinked: Map<string, string>;
+  /** Cose da dire prima di scrivere (righe oltre il limite, vecchi import lasciati com'erano). */
+  warnings: string[];
 }
+
+type Linked = { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string };
+
+/** Allegati, note o promemoria di eventi uniti a un altro (`relinked`): passano a quello. Nessuno = stesso array. */
+export const relinkEvents = <T extends Linked>(items: T[], relinked: ReadonlyMap<string, string>, now: string): T[] => {
+  const target = (item: T) => (item.linkedEntityType === "calendarEvent" && typeof item.linkedEntityId === "string" ? relinked.get(item.linkedEntityId) : undefined);
+  if (!relinked.size || !items.some((item) => target(item) !== undefined)) return items;
+  return items.map((item) => {
+    const to = target(item);
+    return to === undefined ? item : { ...item, linkedEntityId: to, updatedAt: now };
+  });
+};
+
+/** Due elenchi senza doppioni (per id, o per contenuto), nell'ordine: prima `a`. */
+const unionList = <T>(a: readonly T[] | undefined, b: readonly T[] | undefined): T[] | undefined => {
+  if (!Array.isArray(b) || !b.length) return a as T[] | undefined;
+  const keyOf = (item: T) => (isRecord(item) && typeof item.id === "string" ? `id:${item.id}` : `value:${JSON.stringify(item)}`);
+  const out = Array.isArray(a) ? [...a] : [];
+  const seen = new Set(out.map(keyOf));
+  for (const item of b) {
+    const key = keyOf(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+};
+
+/** Note di due eventi unite (la seconda in fondo, se non c'è già). */
+const joinNotes = (a: unknown, b: unknown) => {
+  const first = typeof a === "string" ? a : "";
+  const second = typeof b === "string" ? b.trim() : "";
+  if (!second || first.includes(second)) return first;
+  return first.trim() ? `${first.trimEnd()}\n\n${second}` : second;
+};
 
 const ROW_DROPPED = ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "splitFrom", "cancelled"] as const;
 
@@ -1626,15 +1728,23 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   }
   const reserved = new Set([...input.exams.map((exam) => exam.id), ...input.tasks.map((task) => task.id)]);
   const ownId = (uid: string) => (uid.endsWith("@studyos") ? uid.slice(0, -"@studyos".length) : undefined);
-  const cuts = splitCutsOf(
-    own.filter((event) => !isOccurrenceRow(event) && !event.archived),
-    fallbackZone
-  );
+  const liveMasters = own.filter((event) => !isOccurrenceRow(event) && !event.archived);
+  const cuts = splitCutsOf(liveMasters, fallbackZone);
+  // Divisioni fatte in StudyOS ("questa e le successive"): le figlie di ogni serie.
+  const childrenOf = new Map<string, CalendarEvent[]>();
+  for (const event of liveMasters) {
+    const parentId = parentIdOf(event);
+    if (parentId) childrenOf.set(parentId, [...(childrenOf.get(parentId) ?? []), event]);
+  }
 
   const puts = new Map<string, CalendarEvent>();
   const deletes = new Set<string>();
   const created = new Set<string>();
   const touched = new Set<string>();
+  const relinked = new Map<string, string>();
+  const capped: string[] = [];
+  const keptLegacy: string[] = [];
+  let rowBudget = MAX_ROWS;
   const put = (event: CalendarEvent) => puts.set(event.id, event);
 
   const localMaster = (uid: string) => {
@@ -1669,6 +1779,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       links: [],
       ...(item.sourceUid ? { sourceUid: item.sourceUid } : {}),
       ...(item.reminders?.length ? { reminders: item.reminders } : {}),
+      ...(item.occasion ? { occasion: item.occasion } : {}),
       ...extra
     };
     const event = item.repeat ? applyRepeatFields({ ...base, repeat: item.repeat }, { repeatChanged: true, timeZone: fallbackZone }) : base;
@@ -1763,56 +1874,162 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     );
   };
 
-  /** Righe della serie dal file. `owned`: la serie è nel file, le righe importate non più presenti si tolgono. */
+  /** La serie e le figlie delle sue divisioni fatte in StudyOS, dalla madre in giù. */
+  const familyOf = (master: CalendarEvent) => {
+    const family = [master];
+    const ids = new Set([master.id]);
+    for (let index = 0; index < family.length; index += 1) {
+      for (const child of childrenOf.get(family[index].id) ?? []) {
+        if (ids.has(child.id)) continue;
+        ids.add(child.id);
+        family.push(child);
+      }
+    }
+    return family;
+  };
+
+  /**
+   * Righe della serie dal file (date escluse e giorni modificati). Un giorno dopo una divisione fatta
+   * in StudyOS va alla figlia che lo mostra. `owned`: la serie è nel file, le righe importate non più
+   * presenti si tolgono.
+   */
   const applyRows = (master: CalendarEvent, uid: string, exdates: readonly string[], changes: readonly IcsImportItem[], owned: boolean) => {
     const timing = timingOf(master, fallbackZone);
     if (!timing) return;
-    const rule = normalizeRepeat(master);
-    const cut = cuts.get(master.id);
-    const dateOf = (rid: string) => {
-      const day = DATE_ONLY.exec(rid);
+    const dateOf = (rid: string | undefined) => {
+      const day = DATE_ONLY.exec(rid ?? "");
       if (day) {
         const date = civilFromParts(Number(day[1]), Number(day[2]), Number(day[3]));
         return isCivilDate(date) ? date : undefined;
       }
-      const match = DATE_TIME.exec(rid);
+      const match = DATE_TIME.exec(rid ?? "");
       if (!match) return undefined;
-      return civilDateOf(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)), timing.zone);
+      return civilDateOf(utcMs(Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)), timing.zone);
     };
-    const wanted = new Map<string, { rid: string; change: IcsImportItem | null }>();
+    const entries = new Map<string, { rid: string; change: IcsImportItem | null; item?: IcsImportItem }>();
     for (const rid of exdates) {
       const date = dateOf(rid);
-      if (date && isInstanceOf(rule, timing.startDate, date, cut)) wanted.set(date, { rid, change: null });
+      if (date) entries.set(date, { rid, change: null });
     }
     for (const change of changes) {
-      const rid = change.sourceRecurrenceId as string;
-      const date = dateOf(rid);
-      if (!date) continue;
-      if (isInstanceOf(rule, timing.startDate, date, cut)) wanted.set(date, { rid, change: change.cancelled ? null : change });
-      else if (!change.cancelled) standalone(uid, change);
+      const date = dateOf(change.sourceRecurrenceId);
+      if (date) entries.set(date, { rid: change.sourceRecurrenceId as string, change: change.cancelled ? null : change, item: change });
     }
+    // Troppi giorni per una serie (o per il file): si leggono i primi, con un avviso.
+    let dates = [...entries.keys()].sort(compareText);
+    const allowed = Math.max(0, Math.min(MAX_ROWS_PER_SERIES, rowBudget));
+    if (dates.length > allowed) {
+      dates = dates.slice(0, allowed);
+      capped.push(master.title);
+    }
+    rowBudget -= dates.length;
+    const family = familyOf(master).flatMap((member) => {
+      const memberTiming = member === master ? timing : timingOf(member, fallbackZone);
+      if (!memberTiming) return [];
+      const days = instanceDays(normalizeRepeat(member), memberTiming.startDate, dates, cuts.get(member.id));
+      return [{ member, timing: memberTiming, days, rows: rowsOf.get(member.id) ?? [] }];
+    });
     let changed = false;
-    const rows = rowsOf.get(master.id) ?? [];
-    for (const [date, { rid, change }] of wanted) {
-      const id = occurrenceId(master.id, date);
-      const current = byId.get(id) ?? rows.find((row) => row.originalDate === date);
+    const placed = new Set<string>();
+    for (const date of dates) {
+      const { rid, change, item } = entries.get(date) as { rid: string; change: IcsImportItem | null; item?: IcsImportItem };
+      const home = family.find((entry) => entry.days.has(date));
+      if (!home) {
+        // Non è un giorno della serie: una modifica diventa un evento singolo, una data esclusa non serve.
+        if (item && !item.cancelled) standalone(uid, item);
+        continue;
+      }
+      const id = occurrenceId(home.member.id, date);
+      const current = puts.get(id) ?? byId.get(id) ?? home.rows.find((row) => row.originalDate === date);
       // Una modifica fatta in StudyOS a quel giorno vince sul file.
-      if (current && !current.sourceRecurrenceId) continue;
-      const desired = rowFor(master, timing, date, uid, rid, change, current);
+      if (current && !current.sourceRecurrenceId) {
+        placed.add(current.id);
+        continue;
+      }
+      const desired = rowFor(home.member, home.timing, date, uid, rid, change, current);
+      placed.add(desired.id);
       if (current && current.id === desired.id && sameRow(current, desired)) continue;
       put(desired);
       changed = true;
     }
     if (owned) {
-      const rids = new Set([...wanted.values()].map((entry) => entry.rid));
-      for (const row of rows) {
-        if (row.sourceRecurrenceId && !rids.has(row.sourceRecurrenceId) && !puts.has(row.id)) {
+      for (const entry of family) {
+        for (const row of entry.rows) {
+          if (!row.sourceRecurrenceId || placed.has(row.id) || puts.has(row.id)) continue;
+          // Nelle figlie solo le righe venute da questo UID.
+          if (entry.member !== master && row.sourceUid !== uid) continue;
           deletes.add(row.id);
           changed = true;
         }
       }
     }
     if (changed && !created.has(master.id)) touched.add(master.id);
+  };
+
+  /**
+   * Vecchio import diviso per giorno della settimana (`uid#1`, `uid#3`): le altre serie si uniscono a
+   * quella tenuta (`next`, già con la regola del file). Giorni cancellati e modificati, note, materia,
+   * liste e collegamenti passano a lei. Null se qualcosa andrebbe perso: allora resta tutto com'era.
+   */
+  const adoptSiblings = (keeper: CalendarEvent, next: CalendarEvent, siblings: readonly CalendarEvent[], item: IcsImportItem) => {
+    // Divisioni fatte in StudyOS su un vecchio import: non si uniscono senza sorprese.
+    if ([keeper, ...siblings].some((event) => parentIdOf(event) || childrenOf.has(event.id))) return null;
+    const timing = timingOf(next, fallbackZone);
+    if (!timing) return null;
+    const rule = normalizeRepeat(next);
+    const cut = cuts.get(keeper.id);
+    const taken = new Set((rowsOf.get(keeper.id) ?? []).map((row) => row.originalDate));
+    const rows: CalendarEvent[] = [];
+    const removed: string[] = [];
+    const relink = new Map<string, string>();
+    let master = next;
+    for (const sibling of siblings) {
+      const differs = (key: "category" | "color" | "priority" | "status", fallback: string) => String(sibling[key] ?? fallback) !== String(master[key] ?? fallback);
+      if (differs("category", "lesson") || differs("color", DEFAULT_COLOR) || differs("priority", "medium") || differs("status", "planned")) return null;
+      if (sibling.subjectId && master.subjectId && sibling.subjectId !== master.subjectId) return null;
+      if (item.reminders === undefined && JSON.stringify(sibling.reminders ?? []) !== JSON.stringify(master.reminders ?? [])) return null;
+      const siblingTiming = timingOf(sibling, fallbackZone);
+      const siblingRows = rowsOf.get(sibling.id) ?? [];
+      // Le righe venute dal file tornano con il file; quelle dell'utente passano alla serie tenuta,
+      // sullo stesso istante letto nel suo fuso.
+      const mine = siblingRows.flatMap((row) => {
+        if (row.sourceRecurrenceId || !isCivilDate(row.originalDate)) return [];
+        const date =
+          timing.allDay || !siblingTiming || siblingTiming.allDay
+            ? row.originalDate
+            : civilDateOf(civilAt(row.originalDate, siblingTiming.wall, siblingTiming.zone), timing.zone);
+        return [{ row, date }];
+      });
+      const days = instanceDays(rule, timing.startDate, mine.map((entry) => entry.date), cut);
+      for (const { row, date } of mine) {
+        if (!days.has(date)) {
+          // Un giorno cancellato che la serie non ha più non si vedrebbe comunque; uno modificato sì.
+          if (row.cancelled) continue;
+          return null;
+        }
+        if (taken.has(date)) return null;
+        taken.add(date);
+        const id = occurrenceId(keeper.id, date);
+        rows.push({ ...row, id, seriesId: keeper.id, originalDate: date, updatedAt: now });
+        relink.set(row.id, id);
+      }
+      removed.push(sibling.id, ...siblingRows.map((row) => row.id));
+      relink.set(sibling.id, keeper.id);
+      const notes = joinNotes(master.notes, sibling.notes);
+      const lists = {
+        checklist: unionList(master.checklist, sibling.checklist),
+        links: unionList(master.links, sibling.links),
+        attachmentIds: unionList(master.attachmentIds, sibling.attachmentIds),
+        tags: unionList(master.tags, sibling.tags)
+      };
+      master = {
+        ...master,
+        ...(notes !== (master.notes ?? "") ? { notes } : {}),
+        ...(!master.subjectId && sibling.subjectId ? { subjectId: sibling.subjectId } : {}),
+        ...Object.fromEntries(Object.entries(lists).filter(([, value]) => value !== undefined))
+      };
+    }
+    return { master, rows, removed, relink };
   };
 
   /** Occorrenza senza la sua serie: un evento singolo, ritrovato con UID e RECURRENCE-ID. */
@@ -1859,11 +2076,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
 
   for (const [uid, item] of masters) {
     if (isReserved(uid)) continue;
-    let existing = localMaster(uid);
-    let adopt: string | undefined;
+    const existing = localMaster(uid);
     if (!existing) {
-      // Vecchio import: una serie per giorno della settimana. Se ne tiene una (quella del giorno
-      // d'inizio, o la prima), le altre si tolgono.
+      // Vecchio import: una serie per giorno della settimana. Si tiene quella del giorno d'inizio (o
+      // la prima) e le altre si uniscono a lei; se non si può senza perdere nulla, resta tutto com'era.
       const group = (legacyGroups.get(uid) ?? []).filter((event) => !deletes.has(event.id));
       if (group.length) {
         const startDay = timingOf(item, fallbackZone)?.startDate;
@@ -1872,18 +2088,27 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         const keeper =
           dated.find((entry) => entry.timing && civilWeekday(entry.timing.startDate) === weekday)?.event ??
           [...dated].sort((a, b) => (a.timing?.startMs ?? 0) - (b.timing?.startMs ?? 0))[0].event;
-        for (const event of group) {
-          if (event.id === keeper.id) continue;
-          deletes.add(event.id);
-          for (const row of rowsOf.get(event.id) ?? []) deletes.add(row.id);
+        const next = updated(keeper, item, { rule: true, adopt: uid });
+        const siblings = group.filter((event) => event.id !== keeper.id);
+        const adopted = next ? adoptSiblings(keeper, next, siblings, item) : null;
+        if (!adopted) {
+          keptLegacy.push(item.title);
+          changes.delete(uid);
+          continue;
         }
-        existing = keeper;
-        adopt = uid;
+        put(adopted.master);
+        touched.add(keeper.id);
+        for (const row of adopted.rows) put(row);
+        for (const id of adopted.removed) deletes.add(id);
+        for (const [from, to] of adopted.relink) relinked.set(from, to);
+        applyRows(adopted.master, uid, item.exdates ?? [], changes.get(uid) ?? [], true);
+        changes.delete(uid);
+        continue;
       }
     }
     let master: CalendarEvent;
     if (existing) {
-      const next = updated(existing, item, { rule: true, adopt });
+      const next = updated(existing, item, { rule: true });
       if (next) {
         put(next);
         touched.add(existing.id);
@@ -1911,5 +2136,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   }
 
   for (const id of created) touched.delete(id);
-  return { puts: [...puts.values()], deletes: [...deletes].filter((id) => !puts.has(id)), added: created.size, updated: touched.size };
+  const warnings: string[] = [];
+  if (keptLegacy.length) warnings.push(ICS_TEXT.legacyKept([...new Set(keptLegacy)]));
+  if (capped.length) warnings.push(ICS_TEXT.tooManyRows([...new Set(capped)], MAX_ROWS_PER_SERIES));
+  return { puts: [...puts.values()], deletes: [...deletes].filter((id) => !puts.has(id)), added: created.size, updated: touched.size, relinked, warnings };
 };

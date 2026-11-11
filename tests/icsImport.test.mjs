@@ -379,6 +379,301 @@ test("vecchi import divisi per giorno (uid#1, uid#3) adottati e sostituiti da un
   assert.equal(new Set(shown).size, shown.length);
 });
 
+const LEGACY_FILE = ics(
+  "X-WR-TIMEZONE:Europe/Rome",
+  "BEGIN:VEVENT",
+  "UID:legacy@google.com",
+  "DTSTART;TZID=Europe/Rome:20261102T090000",
+  "DTEND;TZID=Europe/Rome:20261102T110000",
+  "RRULE:FREQ=WEEKLY;UNTIL=20261218T225959Z;BYDAY=MO,WE",
+  "SUMMARY:Anatomia",
+  "END:VEVENT"
+);
+const legacyEvent = (weekday, start, extra = {}) => ({
+  id: `old-${weekday}`,
+  createdAt: T0,
+  updatedAt: T0,
+  archived: false,
+  tags: [],
+  title: "Anatomia",
+  description: "",
+  category: "lesson",
+  color: "#7CF7C8",
+  priority: "medium",
+  start,
+  end: start.replace("T08", "T10"),
+  recurrence: "weekly",
+  recurrenceUntil: "2026-12-18",
+  status: "planned",
+  checklist: [],
+  attachmentIds: [],
+  notes: "",
+  links: [],
+  sourceUid: `legacy@google.com#${weekday}`,
+  ...extra
+});
+
+test("adozione dei vecchi import: giorni cancellati e modificati, note, materia e liste passano alla serie tenuta", () => {
+  let events = [
+    legacyEvent(1, "2026-11-02T08:00:00.000Z", { notes: "Portare il camice", tags: ["uni"], checklist: [{ id: "c1", text: "Camice", done: false }] }),
+    legacyEvent(3, "2026-11-04T08:00:00.000Z", {
+      notes: "Solo il mercoledì: aula B",
+      subjectId: "anat",
+      tags: ["uni", "aula-b"],
+      checklist: [{ id: "c2", text: "Slide", done: true }],
+      links: [{ id: "l1", label: "Aula", url: "https://example.com/aula-b" }],
+      attachmentIds: ["a1"]
+    })
+  ];
+  events = apply(events, planDelete(events, "old-3", "2026-11-18", "this", { now: NOW }));
+  events = apply(events, planEdit(events.find((event) => event.id === "old-3"), events, "2026-11-25", "this", { title: "Anatomia (recupero)" }, { now: NOW }));
+  const plan = merge(events, parseIcs(LEGACY_FILE, { timeZone: "Europe/Rome" }));
+  assert.deepEqual(
+    plan.relinked,
+    new Map([
+      ["old-3", "old-1"],
+      ["old-3@2026-11-18", "old-1@2026-11-18"],
+      ["old-3@2026-11-25", "old-1@2026-11-25"]
+    ])
+  );
+  assert.deepEqual(plan.warnings, []);
+  const after = apply(events, plan);
+  assert.equal(after.some((event) => event.id.startsWith("old-3")), false);
+  const series = after.filter((event) => !event.seriesId);
+  assert.equal(series.length, 1);
+  const [kept] = series;
+  assert.equal(kept.id, "old-1");
+  assert.equal(kept.sourceUid, "legacy@google.com");
+  assert.equal(kept.notes, "Portare il camice\n\nSolo il mercoledì: aula B");
+  assert.equal(kept.subjectId, "anat");
+  assert.deepEqual(kept.tags, ["uni", "aula-b"]);
+  assert.deepEqual(kept.checklist.map((item) => item.id), ["c1", "c2"]);
+  assert.deepEqual(kept.links.map((item) => item.id), ["l1"]);
+  assert.deepEqual(kept.attachmentIds, ["a1"]);
+  const shown = window(after);
+  assert.ok(!shown.some((line) => line.startsWith("2026-11-18")), "il 18/11 resta cancellato");
+  assert.ok(shown.includes("2026-11-25T08:00:00.000Z Anatomia (recupero)"));
+  assert.ok(!shown.includes("2026-11-25T08:00:00.000Z Anatomia"));
+  assert.ok(shown.includes("2026-11-23T08:00:00.000Z Anatomia"));
+  assert.equal(new Set(shown).size, shown.length);
+  // Reimportare dopo l'adozione non cambia nulla.
+  const again = merge(after, parseIcs(LEGACY_FILE, { timeZone: "America/New_York" }));
+  assert.deepEqual({ added: again.added, updated: again.updated, puts: again.puts.length, deletes: again.deletes.length }, { added: 0, updated: 0, puts: 0, deletes: 0 });
+});
+
+test("adozione dei vecchi import: se una serie non si unisce senza perdere nulla, il gruppo resta com'era", () => {
+  // Materie diverse sui due giorni: unirle ne perderebbe una.
+  const subjects = [legacyEvent(1, "2026-11-02T08:00:00.000Z", { subjectId: "anat" }), legacyEvent(3, "2026-11-04T08:00:00.000Z", { subjectId: "fisio" })];
+  const plan = merge(subjects, parseIcs(LEGACY_FILE, { timeZone: "Europe/Rome" }));
+  assert.deepEqual({ added: plan.added, updated: plan.updated, puts: plan.puts.length, deletes: plan.deletes.length }, { added: 0, updated: 0, puts: 0, deletes: 0 });
+  assert.equal(plan.warnings.length, 1);
+  assert.match(plan.warnings[0], /«Anatomia»/);
+  // Un giorno spostato che la serie del file non ha più: resta tutto com'era.
+  let moved = [legacyEvent(1, "2026-11-02T08:00:00.000Z"), legacyEvent(3, "2026-11-04T08:00:00.000Z", { recurrenceUntil: undefined })];
+  moved = apply(moved, planEdit(moved.find((event) => event.id === "old-3"), moved, "2027-01-13", "this", { title: "Anatomia (gennaio)" }, { now: NOW }));
+  const second = merge(moved, parseIcs(LEGACY_FILE, { timeZone: "Europe/Rome" }));
+  assert.equal(second.puts.length + second.deletes.length, 0);
+  assert.equal(second.warnings.length, 1);
+  // Un giorno cancellato che la serie del file non ha più non conta: non si vedrebbe comunque.
+  let cancelled = [legacyEvent(1, "2026-11-02T08:00:00.000Z"), legacyEvent(3, "2026-11-04T08:00:00.000Z", { recurrenceUntil: undefined })];
+  cancelled = apply(cancelled, planDelete(cancelled, "old-3", "2027-01-13", "this", { now: NOW }));
+  const third = merge(cancelled, parseIcs(LEGACY_FILE, { timeZone: "Europe/Rome" }));
+  assert.ok(third.deletes.includes("old-3"));
+  assert.ok(third.deletes.includes("old-3@2027-01-13"));
+  assert.deepEqual(third.warnings, []);
+});
+
+test("serie divisa in StudyOS ('questa e le successive'): le modifiche del file dopo la divisione vanno alla figlia", () => {
+  const SPLIT = ics(
+    "X-WR-TIMEZONE:Europe/Rome",
+    "BEGIN:VEVENT",
+    "UID:split@google.com",
+    "DTSTART;TZID=Europe/Rome:20261102T090000",
+    "DTEND;TZID=Europe/Rome:20261102T100000",
+    "RRULE:FREQ=WEEKLY;BYDAY=MO",
+    "SUMMARY:Fisica",
+    "END:VEVENT"
+  );
+  let events = apply([], merge([], parseIcs(SPLIT, { timeZone: "Europe/Rome" })));
+  const master = events.find((event) => event.sourceUid === "split@google.com");
+  events = apply(events, planEdit(master, events, "2026-11-23", "following", { title: "Fisica (aula nuova)" }, { now: NOW }));
+  const child = events.find((event) => event.splitFrom === master.id);
+  assert.ok(child);
+  // In Google: il 7/12 al pomeriggio, il 14/12 cancellato, il 9/11 (prima della divisione) cancellato.
+  const changed = SPLIT.replace(
+    "END:VEVENT\r\nEND:VCALENDAR",
+    [
+      "EXDATE;TZID=Europe/Rome:20261109T090000,20261214T090000",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:split@google.com",
+      "RECURRENCE-ID;TZID=Europe/Rome:20261207T090000",
+      "DTSTART;TZID=Europe/Rome:20261207T150000",
+      "DTEND;TZID=Europe/Rome:20261207T160000",
+      "SUMMARY:Fisica (pomeriggio)",
+      "END:VEVENT",
+      "END:VCALENDAR"
+    ].join("\r\n")
+  );
+  for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+    const plan = merge(events, parseIcs(changed, { timeZone: device }), { timeZone: device });
+    assert.equal(plan.added, 0, device);
+    const after = apply(events, plan);
+    const shown = window(after);
+    assert.deepEqual(
+      shown.filter((line) => line.startsWith("2026-12-07")),
+      ["2026-12-07T14:00:00.000Z Fisica (pomeriggio)"],
+      device
+    );
+    assert.ok(!shown.some((line) => line.startsWith("2026-12-14")), device);
+    assert.ok(!shown.some((line) => line.startsWith("2026-11-09")), device);
+    assert.ok(shown.includes("2026-11-30T08:00:00.000Z Fisica (aula nuova)"), device);
+    assert.ok(after.some((event) => event.id === `${child.id}@2026-12-07` && event.sourceRecurrenceId === "20261207T080000Z"), device);
+    assert.ok(after.some((event) => event.id === `${child.id}@2026-12-14` && event.cancelled), device);
+    // Il secondo import non cambia nulla; togliere la modifica dal file la toglie anche qui.
+    const again = merge(after, parseIcs(changed, { timeZone: device }), { timeZone: device });
+    assert.equal(again.puts.length + again.deletes.length, 0, device);
+    const reverted = merge(after, parseIcs(SPLIT, { timeZone: device }), { timeZone: device });
+    assert.deepEqual([...reverted.deletes].sort(), [`${child.id}@2026-12-07`, `${child.id}@2026-12-14`, `${master.id}@2026-11-09`].sort(), device);
+  }
+});
+
+test("file ostile: 18.000 date escluse si leggono e si uniscono in meno di un secondo, con un limite di righe", () => {
+  const dates = [];
+  const day = new Date(Date.UTC(1975, 0, 1, 9));
+  while (dates.length < 18000) {
+    dates.push(`${day.toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`);
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  // Una serie settimanale con date escluse sparse in migliaia di anni: niente espansione enorme.
+  const sparse = Array.from({ length: 1500 }, (_, index) => `${String(1000 + index * 5).padStart(4, "0")}0105T090000Z`);
+  const text = ics(
+    "BEGIN:VEVENT",
+    "UID:flood",
+    "DTSTART:19750101T090000Z",
+    "RRULE:FREQ=DAILY",
+    `EXDATE:${dates.join(",")}`,
+    "SUMMARY:Flood",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:sparse",
+    "DTSTART:10000105T090000Z",
+    "RRULE:FREQ=WEEKLY",
+    `EXDATE:${sparse.join(",")}`,
+    "SUMMARY:Sparse",
+    "END:VEVENT"
+  );
+  assert.ok(text.length > 290_000, `${text.length}`);
+  const started = performance.now();
+  const parsed = parseIcs(text, { timeZone: "Europe/Rome" });
+  const plan = merge([], parsed, { timeZone: "Europe/Rome" });
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `${Math.round(elapsed)} ms`);
+  assert.equal(plan.added, 2);
+  assert.ok(plan.puts.length <= 2 + 2 * 1000, `${plan.puts.length} righe`);
+  assert.ok(plan.puts.filter((event) => event.seriesId).length >= 1000);
+  assert.equal(plan.warnings.length, 1);
+  assert.match(plan.warnings[0], /«Flood» e «Sparse»/);
+});
+
+test("fusi con le virgole protette (Outlook: «Amsterdam\\, Berlino\\, Roma»): riconosciuti", () => {
+  const zone = "(UTC+01:00) Amsterdam\\, Berlino\\, Berna\\, Roma\\, Stoccolma\\, Vienna";
+  const vtimezone = [
+    "BEGIN:VTIMEZONE",
+    `TZID:${zone}`,
+    "BEGIN:STANDARD",
+    "DTSTART:16011028T030000",
+    "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10",
+    "TZOFFSETFROM:+0200",
+    "TZOFFSETTO:+0100",
+    "END:STANDARD",
+    "BEGIN:DAYLIGHT",
+    "DTSTART:16010325T020000",
+    "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3",
+    "TZOFFSETFROM:+0100",
+    "TZOFFSETTO:+0200",
+    "END:DAYLIGHT",
+    "END:VTIMEZONE"
+  ];
+  // Il parametro di Outlook ha le virgole normali tra virgolette; qualcuno lo scrive protetto come il testo.
+  for (const param of [`"${zone.replace(/\\,/g, ",")}"`, `"${zone}"`]) {
+    const parsed = parseIcs(ics(vtimezone, "BEGIN:VEVENT", "UID:x", `DTSTART;TZID=${param}:20261103T100000`, "SUMMARY:Ricevimento", "END:VEVENT"), { timeZone: "America/New_York" });
+    assert.deepEqual(parsed.warnings, [], param);
+    assert.equal(parsed.events[0].start, "2026-11-03T09:00:00.000Z", param);
+    assert.equal(parsed.events[0].timeZone, "Europe/Berlin", param);
+  }
+});
+
+test("anni prima del 100, intervalli non validi e durate di millenni", () => {
+  const ancient = parseIcs(ics("BEGIN:VEVENT", "UID:a", "DTSTART:00010101T090000Z", "SUMMARY:Antico", "END:VEVENT"), { timeZone: "Europe/Rome" });
+  assert.equal(ancient.events[0].start, "0001-01-01T09:00:00.000Z");
+  const invalid = parseIcs(ics("BEGIN:VEVENT", "UID:b", "DTSTART:20261102T090000Z", "RRULE:FREQ=WEEKLY;INTERVAL=0", "SUMMARY:x", "END:VEVENT"), { timeZone: "Europe/Rome" });
+  assert.match(invalid.warnings.join(" "), /un intervallo non valido/);
+  const tooLong = parseIcs(ics("BEGIN:VEVENT", "UID:c", "DTSTART:20261102T090000Z", "RRULE:FREQ=WEEKLY;INTERVAL=500", "SUMMARY:x", "END:VEVENT"), { timeZone: "Europe/Rome" });
+  assert.match(tooLong.warnings.join(" "), /un intervallo troppo lungo/);
+  const forever = parseIcs(
+    ics(
+      "BEGIN:VEVENT",
+      "UID:d",
+      "DTSTART;VALUE=DATE:20261102",
+      "DTEND;VALUE=DATE:99991231",
+      "SUMMARY:Eterno",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:e",
+      "DTSTART:20261102T090000Z",
+      "DURATION:P99999D",
+      "SUMMARY:Lunghissimo",
+      "END:VEVENT"
+    ),
+    { timeZone: "Europe/Rome" }
+  );
+  assert.equal(forever.events[0].end, "2027-11-03T00:00:00");
+  assert.equal(forever.events[1].end, "2027-11-03T09:00:00.000Z");
+  assert.equal(forever.warnings.length, 1);
+  assert.match(forever.warnings[0], /«Eterno» e «Lunghissimo»/);
+});
+
+test("compleanni e anniversari: tipo, anno e persona tornano uguali in un altro account", () => {
+  const birthday = applyRepeatFields(
+    { id: "b", createdAt: T0, updatedAt: T0, archived: false, tags: [], title: "Compleanno di Anna", description: "", category: "other", color: "#7CF7C8", priority: "medium", recurrence: "none", status: "planned", checklist: [], attachmentIds: [], notes: "", links: [], allDay: true, start: "2026-03-14T00:00:00", end: "2026-03-15T00:00:00", repeat: { freq: "yearly" }, occasion: { kind: "birthday", birthYear: 2000, person: "Anna, la cugina" } },
+    { repeatChanged: true }
+  );
+  const text = buildIcs({ events: [birthday], exams: [], tasks: [], subjects: [], timeZone: "Europe/Rome", now: new Date(NOW) });
+  assert.ok(text.includes("X-STUDYOS-OCCASION;KIND=BIRTHDAY;YEAR=2000:Anna\\, la cugina"));
+  const fresh = apply([], merge([], parseIcs(text, { timeZone: "America/New_York" })));
+  assert.deepEqual(fresh[0].occasion, { kind: "birthday", birthYear: 2000, person: "Anna, la cugina" });
+  // Un valore strano non entra.
+  const odd = parseIcs(ics("BEGIN:VEVENT", "UID:o", "DTSTART;VALUE=DATE:20260314", "X-STUDYOS-OCCASION;KIND=PARTY;YEAR=abc:x", "SUMMARY:x", "END:VEVENT"));
+  assert.equal(odd.events[0].occasion, undefined);
+});
+
+test("una serie salvata in UTC, esportata da un altro fuso e reimportata ovunque, resta uguale (giorno cancellato compreso)", () => {
+  let events = [
+    applyRepeatFields(
+      { id: "u", createdAt: T0, updatedAt: T0, archived: false, tags: [], title: "Lab", description: "", category: "lab", color: "#7CF7C8", priority: "medium", recurrence: "none", status: "planned", checklist: [], attachmentIds: [], notes: "", links: [], timeZone: "UTC", start: "2026-03-23T02:30:00.000Z", end: "2026-03-23T03:30:00.000Z", repeat: { freq: "daily", end: { type: "count", count: 10 } } },
+      { repeatChanged: true }
+    )
+  ];
+  events = apply(events, planDelete(events, "u", "2026-03-29", "this", { now: NOW }));
+  const shown = (list) => window(list, "2026-03-20T00:00:00Z", "2026-04-10T00:00:00Z");
+  assert.equal(shown(events).length, 9);
+  for (const exportZone of ["Europe/Rome", "America/New_York", "UTC"]) {
+    const text = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: exportZone, now: new Date(NOW) });
+    assert.ok(text.includes("DTSTART;TZID=UTC:20260323T023000"), exportZone);
+    assert.ok(text.includes("EXDATE;TZID=UTC:20260329T023000"), exportZone);
+    assert.ok(text.includes("BEGIN:VTIMEZONE\r\nTZID:UTC"), exportZone);
+    for (const device of ["Europe/Rome", "America/New_York", "UTC"]) {
+      const items = icsImportItems(parseIcs(text, { timeZone: device }).events, { defaultCategory: "lesson" });
+      const plan = mergeIcsImport({ events, exams: [], tasks: [], items, now: NOW, newId, timeZone: device });
+      assert.deepEqual({ added: plan.added, updated: plan.updated, puts: plan.puts.length, deletes: plan.deletes.length }, { added: 0, updated: 0, puts: 0, deletes: 0 }, `${exportZone} -> ${device}`);
+      const fresh = apply([], mergeIcsImport({ events: [], exams: [], tasks: [], items, now: NOW, newId, timeZone: device }));
+      assert.equal(fresh.find((event) => !event.seriesId).timeZone, "UTC", `${exportZone} -> ${device}`);
+      assert.deepEqual(shown(fresh), shown(events), `${exportZone} -> ${device}`);
+    }
+  }
+});
+
 test("caso 12: esporta, reimporta nello stesso calendario: niente doppioni; esami e scadenze riconosciuti", () => {
   const weekly = applyRepeatFields(
     { id: "e1", createdAt: T0, updatedAt: T0, archived: false, tags: [], title: "Anatomia", description: "Aula G21", notes: "Portare il camice", category: "lesson", color: "#7CF7C8", priority: "medium", start: "2026-11-02T08:00:00.000Z", end: "2026-11-02T10:00:00.000Z", recurrence: "none", status: "planned", checklist: [], attachmentIds: [], links: [], timeZone: "Europe/Rome", repeat: { freq: "weekly", byWeekday: ["MO", "WE"] }, reminders: [{ minutesBefore: 15 }] },
@@ -441,17 +736,26 @@ test("store importEvents: crea serie e righe, il secondo import non cambia nulla
   assert.equal(useStudyStore.getState().events, before);
 });
 
-test("store importEvents: gli eventi tolti nell'adozione staccano allegati e note", async () => {
+test("store importEvents: adottando i vecchi import, allegati, note e promemoria passano alla serie tenuta", async () => {
   useStudyStore.setState({
     events: [
       { id: "old-1", title: "Anatomia", start: "2026-11-02T08:00:00.000Z", end: "2026-11-02T10:00:00.000Z", recurrence: "weekly", sourceUid: "5f3k2j1h0g@google.com#1", updatedAt: T0, createdAt: T0, archived: false, links: [], notes: "" },
       { id: "old-3", title: "Anatomia", start: "2026-11-04T08:00:00.000Z", end: "2026-11-04T10:00:00.000Z", recurrence: "weekly", sourceUid: "5f3k2j1h0g@google.com#3", updatedAt: T0, createdAt: T0, archived: false, links: [], notes: "" }
     ],
-    attachments: [{ id: "a1", name: "Slide", linkedEntityType: "calendarEvent", linkedEntityId: "old-3", updatedAt: T0 }]
+    attachments: [
+      { id: "a1", name: "Slide", linkedEntityType: "calendarEvent", linkedEntityId: "old-3", updatedAt: T0 },
+      { id: "a2", name: "Altro", linkedEntityType: "calendarEvent", linkedEntityId: "altro", updatedAt: T0 }
+    ],
+    notes: [{ id: "n1", title: "Appunti", linkedEntityType: "calendarEvent", linkedEntityId: "old-3", updatedAt: T0 }],
+    reminders: [{ id: "r1", title: "Ripasso", linkedEntityType: "calendarEvent", linkedEntityId: "old-3", updatedAt: T0 }]
   });
   const items = icsImportItems(parseIcs(GOOGLE, { timeZone: "Europe/Rome" }).events, { defaultCategory: "lesson" });
   await useStudyStore.getState().importEvents(items);
   const state = useStudyStore.getState();
   assert.equal(state.events.some((event) => event.id === "old-3"), false);
-  assert.equal(state.attachments[0].linkedEntityId, undefined);
+  assert.equal(state.attachments[0].linkedEntityType, "calendarEvent");
+  assert.equal(state.attachments[0].linkedEntityId, "old-1");
+  assert.equal(state.attachments[1].linkedEntityId, "altro");
+  assert.equal(state.notes[0].linkedEntityId, "old-1");
+  assert.equal(state.reminders[0].linkedEntityId, "old-1");
 });

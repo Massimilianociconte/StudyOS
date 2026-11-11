@@ -194,6 +194,21 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
   };
 
   const candidates = useMemo(() => selectableSubjects(subjects), [subjects]);
+  // Conti veri: la stessa unione dell'importazione, con il calendario di adesso (tipo e materie non li cambiano).
+  const plan = useMemo(() => {
+    if (!parsed || !ics) return null;
+    let next = 0;
+    return ics.mergeIcsImport({
+      events,
+      exams,
+      tasks,
+      items: ics.icsImportItems(parsed.events, { defaultCategory: "lesson" }),
+      now: new Date().toISOString(),
+      newId: () => `anteprima-${++next}`
+    });
+  }, [parsed, ics, events, exams, tasks]);
+  const nothingNew = plan !== null && !plan.puts.length && !plan.deletes.length;
+  const warnings = parsed ? [...parsed.warnings, ...(plan?.warnings ?? [])] : [];
   const preview = useMemo(() => {
     if (!parsed || !ics) return null;
     const masters = parsed.events.filter((event) => !event.recurrenceId);
@@ -298,7 +313,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
                 go("device");
               }}
             >
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--accent-ink)]">
+              <span className="grid h-10 w-10 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--accent-ink)]">
                 <Icon name={id === "export" ? "Send" : "Import"} className="h-5 w-5" />
               </span>
               <span className="grid min-w-0 grid-cols-1 gap-0.5">
@@ -353,7 +368,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
                 go("steps");
               }}
             >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)]">
+              <span className="grid h-9 w-9 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)]">
                 <Icon name="CalendarDays" className="h-4 w-4" />
               </span>
               <span className="min-w-0 flex-1 text-sm font-black">{T.app[id]}</span>
@@ -390,7 +405,9 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
                 setDevice(guide.to.device);
                 setApp(guide.to.app);
                 setError("");
+                // Stesso passo, nuova guida: il pulsante sparisce, il fuoco va al titolo (resta nel pannello).
                 top.current?.scrollIntoView({ block: "start" });
+                heading.current?.focus({ preventScroll: true });
               }}
             >
               <Icon name="ChevronRight" className="h-4 w-4 shrink-0" />
@@ -402,7 +419,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
             {guide.steps.map((item, index) => (
               <li key={item.text} className="grid grid-cols-1 gap-3 rounded-[18px] border border-[var(--border)] bg-[var(--surface)] p-3 sm:grid-cols-[minmax(0,1fr)_168px] sm:items-start">
                 <div className="flex min-w-0 items-start gap-3">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-sm font-black tabular-nums" aria-hidden="true">
+                  <span className="grid h-8 w-8 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] text-sm font-black tabular-nums" aria-hidden="true">
                     {index + 1}
                   </span>
                   <div className="min-w-0 flex-1">
@@ -426,7 +443,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
     body = (
       <>
         {question(parsed.fileName, `${T.previewSummary(preview.count, preview.recurring, preview.changed)} ${preview.from ? T.previewRange(preview.from, preview.to) : ""}`)}
-        <p className="text-xs font-bold text-[var(--muted)]">{T.previewNoDuplicates}</p>
+        <p className="text-xs font-bold text-[var(--muted)]">{nothingNew ? T.nothingNewHint : T.previewNoDuplicates}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <Field label={T.categoryLabel}>
@@ -464,14 +481,14 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
           ))}
           {preview.count > preview.sample.length ? <li className="px-1.5 text-xs font-bold text-[var(--faint)]">{T.previewMore(preview.count - preview.sample.length)}</li> : null}
         </ul>
-        {parsed.warnings.length ? (
+        {warnings.length ? (
           <div className="grid grid-cols-1 gap-1.5 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-[var(--warning-text)]">
             <p className="flex items-center gap-1.5 text-xs font-black">
               <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0" />
               {T.warningsTitle}
             </p>
             <ul className="grid grid-cols-1 gap-1 text-xs font-bold">
-              {parsed.warnings.map((warning) => (
+              {warnings.map((warning) => (
                 <li key={warning} className="break-words">
                   {warning}
                 </li>
@@ -508,8 +525,8 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
           <span />
         )}
         {stage === "preview" && preview ? (
-          <Button variant="primary" icon="Check" onClick={() => void confirmImport()} disabled={busy}>
-            {T.add(preview.count || preview.changed)}
+          <Button variant="primary" icon="Check" onClick={() => void confirmImport()} disabled={busy || !plan || nothingNew}>
+            {nothingNew ? T.nothingNew : plan ? T.apply(plan.added, plan.updated) : T.loading}
           </Button>
         ) : stage === "steps" || stage === "result" ? (
           <Button variant={stage === "result" ? "primary" : "soft"} icon="Check" onClick={close}>
