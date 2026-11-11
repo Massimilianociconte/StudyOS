@@ -439,7 +439,6 @@ set search_path = public
 as $$
 declare
   v_invite public.studyos_group_invites%rowtype;
-  v_email text := lower(auth.jwt() ->> 'email');
   v_name text := public.studyos_member_name(p_display_name, lower(auth.jwt() ->> 'email'));
 begin
   if auth.uid() is null then
@@ -460,7 +459,7 @@ begin
     set status = 'accepted', updated_at = now()
     where id = p_invite_id;
   insert into public.studyos_group_members (group_id, user_id, email, display_name, role)
-  values (v_invite.group_id, auth.uid()::text, v_email, v_name, 'member')
+  values (v_invite.group_id, auth.uid()::text, null, v_name, 'member')
   on conflict (group_id, user_id) do nothing;
   insert into public.studyos_group_activity (id, group_id, actor_display_name, text)
   values ('activity-' || p_invite_id, v_invite.group_id, v_name, 'è entrato nel gruppo')
@@ -1059,7 +1058,7 @@ begin
       left(coalesce(nullif(btrim(new.display_name), ''), 'Una persona'), 60)
         || ' ora fa parte del gruppo ' || left(coalesce(nullif(btrim(v_group_name), ''), 'senza nome'), 80),
       '?apri=gruppi',
-      'group-join:' || new.group_id || ':' || new.user_id
+      'group-join:' || md5(new.group_id) || ':' || new.user_id
     );
   exception when others then
     raise warning 'studyos_push_group_join: %', sqlerrm;

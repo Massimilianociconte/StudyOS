@@ -994,7 +994,7 @@ begin
       coalesce(v_item->>'permission', 'view'),
       auth.uid(),
       v_name,
-      v_email
+      case when v_invite.recipient_user_id is not null then null else v_email end
     )
     on conflict (owner_id, scope, (coalesce('u:' || grantee_user_id::text, 'g:' || grantee_group_id))) do update set
       permission = excluded.permission,

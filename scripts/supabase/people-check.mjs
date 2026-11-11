@@ -8,7 +8,7 @@
 // Solo contro lo stack Supabase LOCALE (porte 55421-55429): vedi scripts/supabase/local-stack.md.
 import { createClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -80,6 +80,7 @@ const stubTarget = process.env.PUSH_STUB_TARGET ?? "host.docker.internal";
 const secret = randomBytes(24).toString("hex");
 
 // psql per ciò che un client non può fare: segreti in Vault, inviti vecchi per email, rilancio di people.sql.
+const md5 = (value) => createHash("md5").update(value).digest("hex");
 const lit = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const psql = (args) => {
   try {
@@ -274,7 +275,7 @@ const main = async () => {
 
   const { error: joinError } = await carla.client.rpc("join_group_by_code", { p_code: code, p_display_name: "Carla" });
   check("Carla entra con il codice", !joinError, joinError?.message);
-  const carlaJoin = `group-join:${groupId}:${carla.id}`;
+  const carlaJoin = `group-join:${md5(groupId)}:${carla.id}`;
   await waitTag(carlaJoin);
   check("Push «nuovo membro» (codice) solo alla proprietaria", receivers(carlaJoin) === "alice", receivers(carlaJoin) || "nessuna push");
   check("La push arriva con segreto, JSON e percorso /push",
@@ -329,7 +330,9 @@ const main = async () => {
   const { error: bobAcceptError } = await bob.client.rpc("accept_group_invite", { p_invite_id: groupInvite.data, p_display_name: "Bob" });
   const { data: bobMember } = await bob.client.from("studyos_group_members").select("user_id").eq("group_id", groupId).eq("user_id", bob.id);
   check("Bob accetta ed è subito nel gruppo", !bobAcceptError && bobMember?.length === 1, bobAcceptError?.message);
-  const bobJoin = `group-join:${groupId}:${bob.id}`;
+  const bobMemberEmail = sql(`select coalesce(email, '<null>') from public.studyos_group_members where group_id = ${lit(groupId)} and user_id = ${lit(bob.id)}`);
+  check("Invito di gruppo accettato: l'email di Bob non resta nella riga del membro", bobMemberEmail === "<null>", bobMemberEmail);
+  const bobJoin = `group-join:${md5(groupId)}:${bob.id}`;
   await waitTag(bobJoin);
   check("Push «nuovo membro»: proprietaria (anche autrice dell'invito) e amministratrice, una a testa, mai a Bob",
     receivers(bobJoin) === "alice,carla", receivers(bobJoin) || "nessuna push");
@@ -342,7 +345,7 @@ const main = async () => {
   const { error: malloryAcceptError } = await mallory.client.rpc("accept_group_invite", { p_invite_id: secondForMallory.data, p_display_name: "Mallory" });
   check("Dopo un rifiuto si può invitare di nuovo, e Mallory accetta", !secondForMallory.error && !malloryAcceptError,
     secondForMallory.error?.message ?? malloryAcceptError?.message);
-  const malloryJoin = `group-join:${groupId}:${mallory.id}`;
+  const malloryJoin = `group-join:${md5(groupId)}:${mallory.id}`;
   await waitTag(malloryJoin);
   check("Push «nuovo membro»: Carla, amministratrice e autrice dell'invito, la riceve una volta sola",
     receivers(malloryJoin) === "alice,carla", receivers(malloryJoin) || "nessuna push");
@@ -379,6 +382,9 @@ const main = async () => {
     "Invito destinato a un altro account");
   const bobShareAccept = await bob.client.rpc("accept_share_invite", { p_invite_id: shareInvite.data.id, p_token: null, p_display_name: "Bob", p_reciprocal: [] });
   check("Bob accetta senza token", !bobShareAccept.error && bobShareAccept.data?.granted === 2, bobShareAccept.error?.message);
+  const bobShareEmails = sql(`select coalesce(grantee_email, '<null>') from public.studyos_shares where owner_id = ${lit(alice.id)} and grantee_user_id = ${lit(bob.id)}`);
+  check("Invito di condivisione accettato: l'email di Bob non resta nelle righe della condivisione",
+    bobShareEmails.length > 0 && bobShareEmails.split("\n").every((value) => value === "<null>"), bobShareEmails);
   const acceptedTag = `share-accepted:${shareInvite.data.id}`;
   await waitTag(acceptedTag);
   check("Push «invito accettato» ad Alice, mai a Bob", receivers(acceptedTag) === "alice", receivers(acceptedTag) || "nessuna push");
