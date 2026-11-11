@@ -44,7 +44,7 @@ export interface TrendBucket {
   minutes: number;
 }
 
-export const SESSION_SOURCES = ["pomodoro", "stopwatch", "manual", "unknown"] as const;
+export const SESSION_SOURCES = ["pomodoro", "timer", "stopwatch", "manual", "unknown"] as const;
 export type SessionSourceKey = (typeof SESSION_SOURCES)[number];
 
 export interface SessionSummary {
@@ -181,14 +181,14 @@ export function trendBuckets(sessions: StudySession[], range: PeriodRange, unit:
   return buckets;
 }
 
-/** Quante sessioni, quanto durano in media e da dove arrivano (Pomodoro, cronometro, a mano). */
+/** Quante sessioni, quanto durano in media e da dove arrivano (Pomodoro, timer, cronometro, a mano). */
 export function sessionSummary(sessions: StudySession[]): SessionSummary {
   const bySource = Object.fromEntries(SESSION_SOURCES.map((key) => [key, { count: 0, minutes: 0 }])) as SessionSummary["bySource"];
   let totalMinutes = 0;
   let count = 0;
   for (const session of completed(sessions)) {
     const minutes = sessionMinutes(session);
-    const key: SessionSourceKey = session.source === "pomodoro" || session.source === "stopwatch" || session.source === "manual" ? session.source : "unknown";
+    const key: SessionSourceKey = session.source && (SESSION_SOURCES as readonly string[]).includes(session.source) ? session.source : "unknown";
     bySource[key].count += 1;
     bySource[key].minutes += minutes;
     totalMinutes += minutes;

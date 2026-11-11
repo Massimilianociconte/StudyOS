@@ -12,6 +12,7 @@ import { dueTopics } from "../lib/review";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import { studyMinutesThisWeek, studyStreak, upcomingExams, urgentTasks } from "../lib/selectors";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, timerElapsedSeconds, timerRemainingSeconds, timerUnsavedSeconds } from "../lib/studyTimer";
+import { SESSION_SOURCE_VALUES, editedSessionTimes } from "../lib/studySessions";
 import { TIMER_KIND_LABEL, TIMER_MODE_LABEL } from "../lib/labels";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore, type PreferencesPatch } from "../store/useStudyStore";
@@ -611,9 +612,24 @@ const listSessions = (args: Args): AgentCallResult => {
   return ok(page(items.map((session) => publicEntity(session, { subjectName: nameOf(names, session.subjectId) }, ["notes"])), args));
 };
 
+const isOneOf = <T extends string>(values: readonly T[], value: unknown): value is T => typeof value === "string" && (values as readonly string[]).includes(value);
+
+const sessionSourceOf = (value: unknown): StudySession["source"] | false | undefined =>
+  value === undefined ? undefined : isOneOf(SESSION_SOURCE_VALUES, value) ? value : false;
+
 const createSession = async (args: Args): Promise<AgentCallResult> => {
-  const subject = requireSubject(args.subjectId);
+  let subject = requireSubject(args.subjectId);
   if (subject === false) return fail("not_found", "Materia non trovata.");
+  // L'argomento è di una materia: senza subjectId vale la sua, con un'altra materia è un errore.
+  let topic: StudyTopic | undefined;
+  if (args.topicId !== undefined) {
+    topic = state().topics.find((item) => item.id === text(args.topicId));
+    if (!topic) return fail("not_found", "Argomento non trovato. Leggi gli id da studyos_list_topics.");
+    if (subject && topic.subjectId !== subject.id) return fail("invalid", "L'argomento è di un'altra materia.");
+    subject ??= state().subjects.find((item) => item.id === topic?.subjectId) ?? null;
+  }
+  const source = sessionSourceOf(args.source);
+  if (source === false) return fail("invalid", "source deve essere pomodoro, timer, stopwatch o manual.");
   const start = args.start === undefined ? nowIso() : toIso(args.start);
   if (!start) return fail("invalid", "start non è una data valida.");
   const status = (args.status as StudySession["status"]) ?? "planned";
@@ -630,16 +646,55 @@ const createSession = async (args: Args): Promise<AgentCallResult> => {
     topics: Array.isArray(args.topics) ? args.topics.map(String) : [],
     notes: text(args.notes),
     perceivedDifficulty: Number(args.perceivedDifficulty ?? 3) as StudySession["perceivedDifficulty"],
-    focusLevel: Number(args.focusLevel ?? 3) as StudySession["focusLevel"]
+    focusLevel: Number(args.focusLevel ?? 3) as StudySession["focusLevel"],
+    topicId: topic && subject ? topic.id : undefined,
+    source
   }));
   return ok({ id, start, actualMinutes });
 };
 
 const updateSession = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
-  if (!state().sessions.some((item) => item.id === id)) return fail("not_found", "Sessione non trovata.");
-  const patch = pick(args, ["title", "actualMinutes", "plannedMinutes", "status", "notes", "perceivedDifficulty", "focusLevel", "topics"]);
-  await state().updateSession(id, patch as Partial<StudySession>);
+  const session = state().sessions.find((item) => item.id === id);
+  if (!session) return fail("not_found", "Sessione non trovata.");
+  const patch: Partial<StudySession> = pick(args, ["title", "actualMinutes", "plannedMinutes", "status", "notes", "perceivedDifficulty", "focusLevel", "topics"]);
+  // Materia: stringa vuota scollega; l'argomento di un'altra materia si toglie.
+  let subjectId = session.subjectId;
+  if (args.subjectId !== undefined) {
+    if (args.subjectId === "") subjectId = undefined;
+    else if (requireSubject(args.subjectId) === false) return fail("not_found", "Materia non trovata.");
+    else subjectId = text(args.subjectId);
+    patch.subjectId = subjectId;
+  }
+  let topicId = session.topicId;
+  if (args.topicId !== undefined) {
+    if (args.topicId === "") topicId = undefined;
+    else {
+      const topic = state().topics.find((item) => item.id === text(args.topicId));
+      if (!topic) return fail("not_found", "Argomento non trovato. Leggi gli id da studyos_list_topics.");
+      if (topic.subjectId !== subjectId) return fail("invalid", "L'argomento è di un'altra materia: cambia prima la materia della sessione.");
+      topicId = topic.id;
+    }
+  } else if (topicId && !state().topics.some((item) => item.id === topicId && item.subjectId === subjectId)) topicId = undefined;
+  if (topicId !== session.topicId) patch.topicId = topicId;
+  const source = sessionSourceOf(args.source);
+  if (source === false) return fail("invalid", "source deve essere pomodoro, timer, stopwatch o manual.");
+  if (source) patch.source = source;
+  // Inizio o minuti cambiati: la fine si sposta, le pause restano (come nella modifica dall'app).
+  const start = args.start === undefined ? undefined : instant(args.start);
+  if (args.start !== undefined && !start) return fail("invalid", "start non è una data valida.");
+  if (start || typeof args.actualMinutes === "number") {
+    const before = { start: Date.parse(session.start), end: session.end ? Date.parse(session.end) : undefined, minutes: session.actualMinutes };
+    if (Number.isFinite(before.start)) {
+      const times = editedSessionTimes(Number.isFinite(before.end) ? before : { ...before, end: undefined }, {
+        start: start?.getTime(),
+        minutes: typeof args.actualMinutes === "number" ? args.actualMinutes : undefined
+      });
+      patch.start = new Date(times.start).toISOString();
+      if (session.end || start) patch.end = new Date(times.end).toISOString();
+    } else if (start) patch.start = start.toISOString();
+  }
+  await state().updateSession(id, patch);
   return ok({ id });
 };
 
@@ -994,16 +1049,17 @@ const timerSnapshot = () => {
     running: timer.running,
     remainingSeconds: timerRemainingSeconds(timer, now),
     durationSeconds: timer.durationSeconds,
-    label: timer.kind === "stopwatch" ? TIMER_KIND_LABEL.stopwatch : TIMER_MODE_LABEL[timer.mode],
+    label: timer.kind === "pomodoro" ? TIMER_MODE_LABEL[timer.mode] : TIMER_KIND_LABEL[timer.kind],
     kind: timer.kind,
     phase: timer.phase,
     elapsedSeconds: timerElapsedSeconds(timer, now),
     subjectId: timer.subjectId ?? null,
-    cycle: timer.cycle
+    topicId: timer.topicId ?? null,
+    cycle: timer.cycle,
+    // Timer o cronometro finiti: il tempo aspetta il riepilogo (salva con action=finish).
+    awaitingReview: timer.ended === true
   };
 };
-
-const isOneOf = <T extends string>(values: readonly T[], value: unknown): value is T => typeof value === "string" && (values as readonly string[]).includes(value);
 
 const controlTimer = (args: Args): AgentCallResult => {
   const store = state();
@@ -1011,12 +1067,15 @@ const controlTimer = (args: Args): AgentCallResult => {
   if (!isOneOf(TIMER_CONTROL_ACTIONS, action)) return fail("invalid", "action deve essere start, toggle, reset o finish.");
   if (action === "start") {
     const kind = args.kind === undefined ? "pomodoro" : args.kind;
-    if (!isOneOf(TIMER_KINDS, kind)) return fail("invalid", "kind deve essere pomodoro o stopwatch.");
+    if (!isOneOf(TIMER_KINDS, kind)) return fail("invalid", "kind deve essere pomodoro, timer o stopwatch.");
+    const minutes = args.minutes;
+    if (minutes !== undefined && !(typeof minutes === "number" && Number.isInteger(minutes) && minutes >= 1 && minutes <= 600)) return fail("invalid", "minutes deve essere un numero intero da 1 a 600.");
     const subjectId = args.subjectId === undefined ? undefined : String(args.subjectId);
     if (subjectId !== undefined && !store.subjects.some((subject) => subject.id === subjectId)) return fail("not_found", "Materia non trovata. Leggi gli id da studyos_list_subjects.");
     // Il tempo di studio non salvato non si perde in silenzio.
     if (timerUnsavedSeconds(store.timer, Date.now()) >= 60) return fail("invalid", "C'è una sessione in corso: salvala con action=finish o scartala con action=reset, poi avvia.");
     if (kind === "stopwatch") store.startStopwatch(subjectId);
+    else if (kind === "timer") store.startCountdown(minutes as number | undefined, subjectId);
     else {
       const mode = args.mode === undefined && args.kind === "pomodoro" ? "pomodoro" : args.mode;
       if (!isOneOf(TIMER_MODES, mode)) return fail("invalid", "Per avviare il timer indica mode: classic, pomodoro o deep-focus.");

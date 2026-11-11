@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { format } from "date-fns";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../store/useStudyStore";
 import { useNow } from "../hooks/useNow";
@@ -19,10 +20,13 @@ interface TimerAlert {
   action?: AlertAction;
 }
 
+/** Un avviso arrivato più tardi (app chiusa, telefono bloccato) non suona: basta il banner. */
+const FRESH_MS = 15_000;
+
 /**
  * Sorveglia il timer di studio a livello di app (non solo nella vista Studio): a fine blocco
- * Pomodoro lo fa salvare come sessione e avvia la pausa, avvisa a fine pausa e quando il
- * cronometro raggiunge l'obiettivo (banner, suono, vibrazione, notifica se attivata), mostra il
+ * Pomodoro lo fa salvare come sessione e avvia la pausa, avvisa a fine pausa, a fine Timer e quando
+ * il cronometro raggiunge l'obiettivo (banner, suono, vibrazione, notifica se attivata), mostra il
  * tempo nel titolo della scheda e allinea il timer tra schede aperte insieme.
  */
 export function StudyTimerWatcher() {
@@ -43,12 +47,15 @@ export function StudyTimerWatcher() {
   const [alert, setAlert] = useState<TimerAlert | null>(null);
   const remaining = timerRemainingSeconds(timer, now);
   const elapsed = timerElapsedSeconds(timer, now);
-  const phaseDue = timer.kind === "pomodoro" && timer.running && remaining <= 0;
+  // Pomodoro e Timer contano alla rovescia: a zero si chiude la fase.
+  const phaseDue = timer.kind !== "stopwatch" && timer.running && remaining <= 0;
   const targetDue =
     timer.kind === "stopwatch" && timer.running && timer.durationSeconds > 0 && elapsed >= timer.durationSeconds && timer.targetNotifiedSeconds !== timer.durationSeconds;
 
-  const announce = useCallback((next: TimerAlert, notes = 2) => {
+  // `sound: false` quando un'altra scheda ha già avvisato (blocco salvato là) o l'avviso è vecchio.
+  const announce = useCallback((next: TimerAlert, notes = 2, sound = true) => {
     setAlert(next);
+    if (!sound) return;
     playTimerBeep(notes);
     vibrateTimer();
     void showSystemNotification(next.title, next.body);
@@ -84,6 +91,19 @@ export function StudyTimerWatcher() {
     }
     const studied = formatMinutes(event.minutes);
     const subject = subjects.find((item) => item.id === event.subjectId)?.name;
+    if (event.type === "timer-done") {
+      const late = Date.now() - event.endedAt > FRESH_MS;
+      announce(
+        {
+          title: TIMER_ALERT_TEXT.timerDone(subject),
+          body: late ? TIMER_ALERT_TEXT.timerDoneLate(studied, format(event.endedAt, "HH:mm")) : TIMER_ALERT_TEXT.timerDoneBody(studied),
+          icon: "Hourglass"
+        },
+        3,
+        !late
+      );
+      return;
+    }
     announce({
       title: TIMER_ALERT_TEXT.focusDone(subject),
       body: event.breakEnded
@@ -91,7 +111,7 @@ export function StudyTimerWatcher() {
         : TIMER_ALERT_TEXT.focusDoneBody(studied, TIMER_PHASE_LABEL[event.breakPhase], formatMinutes(event.breakMinutes)),
       icon: "Check",
       action: event.breakEnded ? "start-next" : "skip-break"
-    });
+    }, 2, event.session !== null);
     // `now` ritenta a ogni secondo finché la fase non si chiude.
   }, [phaseDue, now, settleStudyTimer, announce, subjects]);
 
@@ -106,7 +126,7 @@ export function StudyTimerWatcher() {
       document.title = BASE_TITLE;
       return;
     }
-    const label = timer.kind === "stopwatch" ? TIMER_KIND_LABEL.stopwatch : TIMER_PHASE_LABEL[timer.phase];
+    const label = timer.kind === "pomodoro" ? TIMER_PHASE_LABEL[timer.phase] : TIMER_KIND_LABEL[timer.kind];
     const clock = formatTimerClock(timer.kind === "stopwatch" ? elapsed : remaining);
     document.title = `${TIMER_TEXT.tabTitle(clock, label)} · ${BASE_TITLE}`;
   }, [timer.running, timer.kind, timer.phase, elapsed, remaining]);

@@ -3,6 +3,7 @@ import type { JsonSchema } from "./schema";
 import { SHARE_SCOPE_LABEL } from "../lib/labels";
 // Stesse costanti che usa execute.ts: azioni, durate e tipi del timer restano allineati.
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES } from "../lib/studyTimer";
+import { SESSION_SOURCE_VALUES } from "../lib/studySessions";
 import type { ShareScope } from "../lib/sharing";
 
 const ID = { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9_.:-]{1,120}$", description: "Id StudyOS restituito da una lettura precedente." } as const satisfies JsonSchema;
@@ -430,14 +431,16 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       topics: { type: "array", maxItems: 30, items: { type: "string", minLength: 1, maxLength: 200 } },
       notes: { type: "string", maxLength: 8000, default: "" },
       perceivedDifficulty: { type: "integer", minimum: 1, maximum: 5, default: 3 },
-      focusLevel: { type: "integer", minimum: 1, maximum: 5, default: 3 }
+      focusLevel: { type: "integer", minimum: 1, maximum: 5, default: 3 },
+      topicId: { ...ID, description: "Facoltativo: argomento da ripassare studiato (studyos_list_topics), della stessa materia. Senza subjectId vale la materia dell'argomento." },
+      source: { type: "string", enum: [...SESSION_SOURCE_VALUES], description: "Facoltativo: da dove arriva (pomodoro, timer, stopwatch = cronometro, manual = aggiunta a mano)." }
     }, ["title"]),
     summary: (args) => `Registrare la sessione «${text(args.title, "senza titolo")}»`
   }),
   tool({
     name: "studyos_update_session",
     title: "Aggiorna sessione",
-    description: "Aggiorna una sessione esistente: minuti reali, stato, note, focus.",
+    description: "Aggiorna una sessione esistente: minuti reali, stato, note, focus, materia, argomento e inizio. Cambiando inizio o actualMinutes la fine si sposta e le pause restano; cambiando materia l'argomento di un'altra materia si toglie.",
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
@@ -449,7 +452,11 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       notes: { type: "string", maxLength: 8000 },
       perceivedDifficulty: { type: "integer", minimum: 1, maximum: 5 },
       focusLevel: { type: "integer", minimum: 1, maximum: 5 },
-      topics: { type: "array", maxItems: 30, items: { type: "string", minLength: 1, maxLength: 200 } }
+      topics: { type: "array", maxItems: 30, items: { type: "string", minLength: 1, maxLength: 200 } },
+      subjectId: { type: "string", maxLength: 120, description: "Id materia, oppure stringa vuota per scollegare." },
+      topicId: { type: "string", maxLength: 120, description: "Id argomento della materia della sessione, oppure stringa vuota per toglierlo." },
+      start: { type: "string", format: "date-time", description: `Nuovo inizio. ${WHEN}` },
+      source: { type: "string", enum: [...SESSION_SOURCE_VALUES] }
     }, ["id"]),
     summary: () => "Aggiornare una sessione"
   }),
@@ -957,7 +964,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_timer_status",
     title: "Stato del timer",
-    description: "Legge il timer di studio di questo dispositivo, come lo mostra l'app. kind = pomodoro (blocchi di studio e pause) o stopwatch (cronometro); phase = focus (studio), short o long (pausa). remainingSeconds è arrotondato per eccesso ed elapsedSeconds per difetto, come in app; per il cronometro durationSeconds è l'obiettivo (0 = nessuno). mode e label restano per compatibilità.",
+    description: "Legge il timer di studio di questo dispositivo, come lo mostra l'app. kind = pomodoro (blocchi di studio e pause), timer (conto alla rovescia di durata scelta) o stopwatch (cronometro); phase = focus (studio), short o long (pausa). remainingSeconds è arrotondato per eccesso ed elapsedSeconds per difetto, come in app; per il cronometro durationSeconds è l'obiettivo (0 = nessuno). awaitingReview = Timer o cronometro finiti che aspettano il riepilogo nell'app (Salva o Scarta); topicId = argomento scelto. mode e label restano per compatibilità.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),
@@ -966,13 +973,14 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_timer_control",
     title: "Controlla il timer",
-    description: "Avvia, mette in pausa, azzera o termina il timer di questo dispositivo. action=start avvia un Pomodoro (richiede mode) oppure, con kind=stopwatch, il cronometro; subjectId facoltativo sceglie la materia. Se c'è una sessione in corso da almeno un minuto, start rifiuta: prima usa finish o reset. action=toggle mette in pausa o riprende; action=reset scarta il tempo non salvato; action=finish salva come sessione il tempo di studio fatto (almeno un minuto, pause escluse). Ogni blocco Pomodoro finito si salva già da solo come sessione.",
+    description: "Avvia, mette in pausa, azzera o termina il timer di questo dispositivo. action=start avvia un Pomodoro (richiede mode) oppure, con kind=timer, un conto alla rovescia (minutes facoltativo) o, con kind=stopwatch, il cronometro; subjectId facoltativo sceglie la materia. Se c'è una sessione in corso da almeno un minuto, start rifiuta: prima usa finish o reset. action=toggle mette in pausa o riprende; action=reset scarta il tempo non salvato; action=finish salva come sessione il tempo di studio fatto (almeno un minuto, pause escluse), anche un Timer finito che aspetta il riepilogo. Ogni blocco Pomodoro finito si salva già da solo come sessione; Timer e cronometro, nell'app, passano da un riepilogo modificabile.",
     risk: "write",
     idempotent: false,
     inputSchema: objectSchema({
       action: { type: "string", enum: [...TIMER_CONTROL_ACTIONS] },
-      mode: { type: "string", enum: [...TIMER_MODES], description: "Richiesto se action=start senza kind=stopwatch. pomodoro = durata di studio scelta dalla persona (25 minuti se non l'ha cambiata), classic = 45 minuti, deep-focus = 90 minuti." },
-      kind: { type: "string", enum: [...TIMER_KINDS], description: "Solo con action=start: pomodoro (predefinito) o stopwatch (cronometro)." },
+      mode: { type: "string", enum: [...TIMER_MODES], description: "Richiesto se action=start senza kind (o con kind=pomodoro senza mode vale la durata della persona). pomodoro = durata di studio scelta dalla persona (25 minuti se non l'ha cambiata), classic = 45 minuti, deep-focus = 90 minuti." },
+      kind: { type: "string", enum: [...TIMER_KINDS], description: "Solo con action=start: pomodoro (predefinito), timer (conto alla rovescia) o stopwatch (cronometro)." },
+      minutes: { type: "integer", minimum: 1, maximum: 600, description: "Solo con action=start e kind=timer: durata in minuti (1–600, es. 90 = 1 h 30). Senza, la durata ricordata per la materia (60 se mai scelta)." },
       subjectId: { ...ID, description: "Solo con action=start: id della materia (studyos_list_subjects). Senza, resta la materia già scelta nel timer." }
     }, ["action"]),
     summary: (args) => `Controllare il timer (${text(args.action, "")})`

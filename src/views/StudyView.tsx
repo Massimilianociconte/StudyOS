@@ -30,6 +30,7 @@ import { requestSettingsSection } from "../lib/settingsJump";
 import {
   TIMER_KINDS,
   formatTimerClock,
+  isCountdownOver,
   isTimerIdle,
   timerElapsedSeconds,
   timerRemainingSeconds,
@@ -37,7 +38,20 @@ import {
   type TimerKind,
   type TimerState
 } from "../lib/studyTimer";
-import { FOCUS_QUICK_PICKS, TIMER_LIMITS, TIMER_SETTING_KEYS, parseTimerInput, resolveTimerDurations, type TimerSettingKey } from "../lib/timerPrefs";
+import {
+  FOCUS_QUICK_PICKS,
+  TIMER_LIMITS,
+  TIMER_QUICK_PICKS,
+  TIMER_SETTING_KEYS,
+  changedTimerSettings,
+  cleanTimerSettings,
+  parseHoursMinutes,
+  parseTimerInput,
+  resolveTimerDurations,
+  splitMinutes,
+  type TimerSettingKey
+} from "../lib/timerPrefs";
+import { matchTopic, topicsOfSubject } from "../lib/studySessions";
 import {
   TIMER_SOUND_KEY,
   TIMER_VIBRATE_KEY,
@@ -58,6 +72,9 @@ const pillClass = (active: boolean) =>
   }`;
 
 const linkClass = "font-black text-[var(--accent-ink)] underline-offset-2 hover:underline";
+
+/** Icona di ogni modalità (selettore, anello, elenco delle sessioni). */
+const KIND_ICON: Record<TimerKind, string> = { pomodoro: "Timer", timer: "Hourglass", stopwatch: "Clock" };
 
 export function StudyView() {
   const store = useStudyStore();
@@ -121,7 +138,7 @@ export function StudyView() {
                   {history.map((session) => (
                     <li key={session.id} className="group flex min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 hover:bg-[var(--surface-soft)]">
                       <span className="grid grid-cols-1 h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: `color-mix(in srgb, ${subjectColor(subjects, session.subjectId)} 30%, transparent)` }}>
-                        <Icon name={session.source === "stopwatch" ? "Clock" : "Timer"} className="h-4 w-4" />
+                        <Icon name={session.source === "timer" || session.source === "stopwatch" ? KIND_ICON[session.source] : "Timer"} className="h-4 w-4" />
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="one-line-safe text-sm font-extrabold">{session.title}</p>
@@ -230,17 +247,20 @@ export function StudyView() {
 }
 
 /**
- * Timer di studio: Pomodoro (blocchi e pause, ogni blocco finito si salva da solo) o Cronometro.
- * Lo stato vero è nello store (persistito e condiviso tra schede); qui si ridisegna ogni secondo
- * solo questo pannello. Su telefono anello e tempo stanno affiancati e "Avvia" subito sotto.
+ * Timer di studio: Pomodoro (blocchi e pause, ogni blocco finito si salva da solo), Timer (conto
+ * alla rovescia con la durata scelta) o Cronometro. Lo stato vero è nello store (persistito e
+ * condiviso tra schede); qui si ridisegna ogni secondo solo questo pannello. Su telefono anello e
+ * tempo stanno affiancati e "Avvia" subito sotto: materia e "Cosa studi?" vengono dopo.
  */
 function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: string) => void }) {
   const {
     timer,
     subjects,
+    topics,
     preferences,
     toggleStudyTimer,
     finishStudyTimer,
+    endStudyTimer,
     resetStudyTimer,
     restoreStudyTimer,
     skipBreak,
@@ -253,9 +273,11 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
     useShallow((state) => ({
       timer: state.timer,
       subjects: state.subjects,
+      topics: state.topics,
       preferences: selectPreferences(state),
       toggleStudyTimer: state.toggleStudyTimer,
       finishStudyTimer: state.finishStudyTimer,
+      endStudyTimer: state.endStudyTimer,
       resetStudyTimer: state.resetStudyTimer,
       restoreStudyTimer: state.restoreStudyTimer,
       skipBreak: state.skipBreak,
@@ -269,7 +291,9 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
   // Il timer è basato su timestamp: qui serve solo ridisegnare ogni secondo.
   const now = useNow(1000, timer.running).getTime();
   const [settingsOpen, setSettingsOpen] = useUiState("study.timerSettingsOpen", false, { scope: "tab" });
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [custom, setCustom] = useState({ hours: "", minutes: "", error: "" });
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [undo, setUndo] = useState<{ previous: TimerState; studied: string } | null>(null);
   // Chiavi di sempre: ricordano le scelte e permettono ad altre sezioni di aprire Studio su una materia.
@@ -294,8 +318,11 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
     if (savedKind !== current.kind) state.setTimerKind(savedKind);
     const wanted = savedSubjectId && state.subjects.some((subject) => subject.id === savedSubjectId) ? savedSubjectId : "";
     if (wanted !== (current.subjectId ?? "")) state.setTimerSubject(wanted || null);
-    const details: { title?: string; template?: StudySession["template"] } = {};
-    if (current.title === undefined && savedTitle) details.title = savedTitle;
+    const details: { title?: string; template?: StudySession["template"]; topicId?: string | null } = {};
+    if (current.title === undefined && savedTitle) {
+      details.title = savedTitle;
+      details.topicId = matchTopic(savedTitle, state.topics, wanted)?.id ?? null;
+    }
     if (current.template === undefined) details.template = savedTemplate;
     if (details.title !== undefined || details.template !== undefined) state.setTimerDetails(details);
     // Solo all'apertura: dopo, la fonte è il timer.
@@ -310,14 +337,18 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
 
   const subjectId = timer.subjectId && subjects.some((subject) => subject.id === timer.subjectId) ? timer.subjectId : "";
   const subject = subjects.find((item) => item.id === subjectId);
+  const subjectTopics = topicsOfSubject(topics, subjectId);
   const durations = resolveTimerDurations(subject?.timer, preferences.timer);
   const stopwatch = timer.kind === "stopwatch";
+  const countdown = timer.kind === "timer";
   const studying = timer.phase === "focus";
   const idle = isTimerIdle(timer, now);
+  const ended = timer.ended === true;
+  const over = isCountdownOver(timer);
   const elapsed = timerElapsedSeconds(timer, now);
   const unsaved = timerUnsavedSeconds(timer, now);
   // Da fermo si mostrano le durate attuali (cambiano con materia e impostazioni).
-  const phaseSeconds = idle && !stopwatch && timer.mode === "pomodoro" ? durations.focusMinutes * 60 : timer.durationSeconds;
+  const phaseSeconds = idle && countdown ? durations.timerMinutes * 60 : idle && !stopwatch && timer.mode === "pomodoro" ? durations.focusMinutes * 60 : timer.durationSeconds;
   const remaining = idle && !stopwatch ? phaseSeconds : timerRemainingSeconds(timer, now);
   const target = stopwatch ? (idle ? (durations.stopwatchTargetMinutes ?? 0) * 60 : timer.durationSeconds) : 0;
   const clock = formatTimerClock(stopwatch ? elapsed : remaining);
@@ -325,21 +356,28 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
   const studied = formatMinutes(Math.floor(unsaved / 60));
   const title = timer.title ?? "";
   const template = timer.template ?? savedTemplate;
+  const linkedTopic = timer.topicId ? subjectTopics.find((topic) => topic.id === timer.topicId) : undefined;
 
   const phaseLine = stopwatch
     ? TIMER_KIND_LABEL.stopwatch
-    : studying
-      ? `${TIMER_PHASE_LABEL.focus} · ${TIMER_TEXT.blockOf(Math.min(timer.cycle + 1, durations.longBreakEvery), durations.longBreakEvery)}`
-      : TIMER_PHASE_LABEL[timer.phase];
+    : countdown
+      ? TIMER_TEXT.timerPhase(formatMinutes(phaseSeconds / 60))
+      : studying
+        ? `${TIMER_PHASE_LABEL.focus} · ${TIMER_TEXT.blockOf(Math.min(timer.cycle + 1, durations.longBreakEvery), durations.longBreakEvery)}`
+        : TIMER_PHASE_LABEL[timer.phase];
   const status = idle
     ? TIMER_TEXT.idle[timer.kind]
-    : !studying
-      ? timer.running
-        ? TIMER_TEXT.onBreak
-        : TIMER_TEXT.breakPaused
-      : timer.running
-        ? TIMER_TEXT.running(studied)
-        : TIMER_TEXT.paused(studied);
+    : ended
+      ? over
+        ? TIMER_TEXT.timerEnded(studied)
+        : TIMER_TEXT.stoppedToSave(studied)
+      : !studying
+        ? timer.running
+          ? TIMER_TEXT.onBreak
+          : TIMER_TEXT.breakPaused
+        : timer.running
+          ? TIMER_TEXT.running(studied)
+          : TIMER_TEXT.paused(studied);
   // Da fermo l'obiettivo è già nella riga sotto la materia.
   const targetLine = target && !idle ? (elapsed >= target ? TIMER_TEXT.targetReached(formatMinutes(target / 60)) : TIMER_TEXT.target(formatMinutes(target / 60))) : "";
 
@@ -357,6 +395,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
       return;
     }
     clearMessages();
+    setCustomOpen(false);
     setTimerKind(kind);
     setSavedKind(kind);
   };
@@ -364,6 +403,13 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
   const chooseSubject = (id: string) => {
     setTimerSubject(id || null);
     setSavedSubjectId(id);
+    // Lo stesso testo può essere un argomento della nuova materia.
+    if (title.trim()) setTimerDetails({ topicId: matchTopic(title, topics, id)?.id ?? null });
+  };
+
+  const writeWhat = (value: string) => {
+    setTimerDetails({ title: value, topicId: matchTopic(value, topics, subjectId)?.id ?? null });
+    setSavedTitle(value);
   };
 
   const onPrimary = () => {
@@ -378,6 +424,11 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
     if (result.status === "saved") setNotice(TIMER_TEXT.saved(formatMinutes(result.session.actualMinutes)));
     else if (result.status === "too-short") setNotice(TIMER_TEXT.tooShort);
     else if (result.status === "ended") setNotice(TIMER_TEXT.cycleEnded);
+  };
+
+  const onEnd = () => {
+    clearMessages();
+    if (endStudyTimer().status === "too-short") setNotice(TIMER_TEXT.tooShort);
   };
 
   const onSkip = () => {
@@ -395,36 +446,60 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
     if (lost >= 60) setUndo({ previous, studied: formatMinutes(Math.floor(lost / 60)) });
   };
 
-  const pickFocus = (minutes: number) => {
+  // Ogni materia ricorda solo i valori cambiati: gli altri continuano a seguire le durate generali.
+  const saveDuration = (key: "focusMinutes" | "timerMinutes", minutes: number) => {
     void saveTimerSettings(
-      subject ? { subjectId: subject.id, subject: { ...subject.timer, focusMinutes: minutes } } : { defaults: { ...preferences.timer, focusMinutes: minutes } }
+      subject ? { subjectId: subject.id, subject: { ...subject.timer, [key]: minutes } } : { defaults: { ...preferences.timer, [key]: minutes } }
     );
   };
 
-  const ringIcon = stopwatch ? "Clock" : studying ? "Timer" : "Coffee";
+  const openCustom = () => {
+    if (customOpen) {
+      setCustomOpen(false);
+      return;
+    }
+    const parts = splitMinutes(durations.timerMinutes);
+    setCustom({ hours: String(parts.hours), minutes: String(parts.minutes), error: "" });
+    setCustomOpen(true);
+  };
+
+  const applyCustom = () => {
+    const parsed = parseHoursMinutes(custom.hours, custom.minutes);
+    if (parsed.invalid || parsed.value === undefined) {
+      setCustom((value) => ({ ...value, error: TIMER_TEXT.customInvalid }));
+      return;
+    }
+    saveDuration("timerMinutes", parsed.value);
+    setCustomOpen(false);
+  };
+
+  const ringIcon = stopwatch ? "Clock" : countdown ? "Hourglass" : studying ? "Timer" : "Coffee";
   const ringColor = studying ? "var(--accent)" : "var(--accent-2)";
   const customFocus = !FOCUS_QUICK_PICKS.some((minutes) => minutes === durations.focusMinutes);
+  const customTimer = !TIMER_QUICK_PICKS.some((minutes) => minutes === durations.timerMinutes);
+  const canDiscard = !idle && studying;
 
   return (
     <Panel>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1">
-          <Segmented
-            label={TIMER_TEXT.kindAria}
-            size="sm"
-            value={timer.kind}
-            onChange={chooseKind}
-            options={TIMER_KINDS.map((kind) => ({ id: kind, label: TIMER_KIND_LABEL[kind], icon: kind === "pomodoro" ? "Timer" : "Clock" }))}
-          />
-          <HelpTip title={TIMER_TEXT.kindHelp.title} text={TIMER_TEXT.kindHelp.text} example={TIMER_TEXT.kindHelp.example} />
-        </div>
-        <IconButton icon="Settings" label={TIMER_TEXT.settings} onClick={() => setSettingsOpen(true)} className="h-10 w-10" />
+      <div className="flex items-center justify-between gap-2">
+        {/* Senza icone le tre modalità stanno in riga anche a 375 px: l'icona è nell'anello. */}
+        <Segmented
+          label={TIMER_TEXT.kindAria}
+          size="sm"
+          value={timer.kind}
+          onChange={chooseKind}
+          options={TIMER_KINDS.map((kind) => ({ id: kind, label: TIMER_KIND_LABEL[kind] }))}
+        />
+        <IconButton icon="Settings" label={TIMER_TEXT.settings} onClick={() => setSettingsOpen(true)} className="h-10 w-10 shrink-0" />
       </div>
 
       <div className="mt-4 grid grid-cols-[84px_minmax(0,1fr)] items-center gap-4 min-[420px]:grid-cols-[112px_minmax(0,1fr)] md:grid-cols-[168px_minmax(0,1fr)] md:gap-6">
         <TimerRing value={progress} icon={ringIcon} color={ringColor} />
         <div className="min-w-0">
-          <p className="one-line-safe text-xs font-black uppercase text-[var(--faint)]">{phaseLine}</p>
+          <div className="flex min-w-0 items-center gap-1">
+            <p className="one-line-safe text-xs font-black uppercase text-[var(--faint)]">{phaseLine}</p>
+            <HelpTip title={TIMER_TEXT.kindHelp.title} text={TIMER_TEXT.kindHelp.text} example={TIMER_TEXT.kindHelp.example} />
+          </div>
           <p className={`${clock.length > 5 ? "text-4xl" : "text-5xl"} mt-0.5 font-black leading-none tabular-nums sm:text-6xl`}>{clock}</p>
           <p className="safe-text mt-1.5 text-xs font-bold text-[var(--muted)]">{status}</p>
           {targetLine ? <p className="safe-text mt-0.5 text-xs font-black text-[var(--accent-ink)]">{targetLine}</p> : null}
@@ -432,12 +507,30 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button variant={timer.running ? "soft" : "primary"} icon={timer.running ? "Pause" : "Zap"} onClick={onPrimary} className="min-w-[120px]">
-          {timer.running ? TIMER_TEXT.pause : idle ? TIMER_TEXT.start : TIMER_TEXT.resume}
-        </Button>
-        {!idle && studying ? (
+        {ended ? (
+          <>
+            <Button variant="primary" icon="Check" onClick={onFinish} className="min-w-[120px]">
+              {TIMER_TEXT.saveEnded}
+            </Button>
+            {!over ? (
+              <Button variant="soft" icon="Zap" onClick={onPrimary}>
+                {TIMER_TEXT.resume}
+              </Button>
+            ) : null}
+          </>
+        ) : (
+          <Button variant={timer.running ? "soft" : "primary"} icon={timer.running ? "Pause" : "Zap"} onClick={onPrimary} className="min-w-[120px]">
+            {timer.running ? TIMER_TEXT.pause : idle ? TIMER_TEXT.start : TIMER_TEXT.resume}
+          </Button>
+        )}
+        {!idle && !ended && studying && !countdown ? (
           <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
             {TIMER_TEXT.finish}
+          </Button>
+        ) : null}
+        {!idle && !ended && countdown ? (
+          <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
+            {TIMER_TEXT.endEarly}
           </Button>
         ) : null}
         {!studying ? (
@@ -450,14 +543,14 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
             {TIMER_TEXT.endCycle}
           </Button>
         ) : null}
-        {!idle && studying ? (
+        {canDiscard ? (
           <Button variant="ghost" onClick={() => setConfirmDiscard(true)} title={TIMER_TEXT.discardHint} aria-expanded={confirmDiscard}>
             {TIMER_TEXT.discard}
           </Button>
         ) : null}
       </div>
 
-      {confirmDiscard && !idle && studying ? (
+      {confirmDiscard && canDiscard ? (
         <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3">
           <p className="safe-text min-w-[12rem] flex-1 text-sm font-bold">{unsaved >= 60 ? TIMER_TEXT.discardConfirm(studied) : TIMER_TEXT.discardConfirmShort}</p>
           <Button variant="ghost" onClick={() => setConfirmDiscard(false)}>
@@ -511,11 +604,34 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           ) : null}
         </div>
         <div className="min-w-0">
-          <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">{TIMER_TEXT.details}</span>
-          <button type="button" onClick={() => setDetailsOpen(true)} className={`${inputClass} flex items-center justify-between gap-2 text-left`}>
-            <span className="one-line-safe min-w-0">{TIMER_TEXT.detailsSummary(title.trim(), SESSION_TEMPLATE_LABEL[template])}</span>
-            <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
-          </button>
+          <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
+            <label htmlFor="study-what" className="text-xs font-black uppercase text-[var(--faint)]">
+              {TIMER_TEXT.whatField}
+            </label>
+            {linkedTopic ? (
+              <span className="inline-flex min-w-0 items-center gap-1 text-[11px] font-black text-[var(--accent-ink)]" title={TIMER_TEXT.whatTopic}>
+                <Icon name="Brain" className="h-3.5 w-3.5 shrink-0" />
+                <span className="one-line-safe">{TIMER_TEXT.whatTopic}</span>
+              </span>
+            ) : null}
+          </div>
+          <input
+            id="study-what"
+            className={inputClass}
+            list={subjectTopics.length ? "study-what-topics" : undefined}
+            value={title}
+            maxLength={160}
+            autoComplete="off"
+            onChange={(event) => writeWhat(event.target.value)}
+            placeholder={TIMER_TEXT.whatPlaceholder}
+          />
+          {subjectTopics.length ? (
+            <datalist id="study-what-topics">
+              {subjectTopics.map((topic) => (
+                <option key={topic.id} value={topic.title} />
+              ))}
+            </datalist>
+          ) : null}
         </div>
       </div>
 
@@ -526,6 +642,59 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
             {TIMER_TEXT.change}
           </button>
         </p>
+      ) : countdown ? (
+        idle ? (
+          <div className="mt-3">
+            <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">
+              {subject ? TIMER_TEXT.timerDurationFor(subject.name) : TIMER_TEXT.timerDurationDefault}
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={TIMER_TEXT.timerQuick}>
+              {TIMER_QUICK_PICKS.map((minutes) => (
+                <button
+                  key={minutes}
+                  type="button"
+                  aria-pressed={durations.timerMinutes === minutes}
+                  onClick={() => {
+                    setCustomOpen(false);
+                    saveDuration("timerMinutes", minutes);
+                  }}
+                  className={pillClass(durations.timerMinutes === minutes)}
+                >
+                  {formatMinutes(minutes)}
+                </button>
+              ))}
+              <button type="button" aria-pressed={customTimer} aria-expanded={customOpen} onClick={openCustom} className={pillClass(customTimer)}>
+                {customTimer ? formatMinutes(durations.timerMinutes) : TIMER_TEXT.otherDuration}
+              </button>
+            </div>
+            {customOpen ? (
+              <form
+                className="mt-2 flex flex-wrap items-end gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  applyCustom();
+                }}
+              >
+                <label className="grid w-20 grid-cols-1 gap-1 text-xs font-black uppercase text-[var(--faint)]">
+                  {TIMER_TEXT.hoursField}
+                  <input className={inputClass} inputMode="numeric" value={custom.hours} onChange={(event) => setCustom((value) => ({ ...value, hours: event.target.value, error: "" }))} />
+                </label>
+                <label className="grid w-20 grid-cols-1 gap-1 text-xs font-black uppercase text-[var(--faint)]">
+                  {TIMER_TEXT.minutesField}
+                  <input className={inputClass} inputMode="numeric" value={custom.minutes} onChange={(event) => setCustom((value) => ({ ...value, minutes: event.target.value, error: "" }))} />
+                </label>
+                <Button type="submit" variant="soft" icon="Check">
+                  {TIMER_TEXT.customApply}
+                </Button>
+                {custom.error ? (
+                  <p role="alert" className="basis-full text-xs font-bold text-[var(--danger-text)]">
+                    {custom.error}
+                  </p>
+                ) : null}
+              </form>
+            ) : null}
+          </div>
+        ) : null
       ) : (
         <div className="mt-3">
           <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">
@@ -533,7 +702,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           </span>
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={TIMER_TEXT.focusQuick}>
             {FOCUS_QUICK_PICKS.map((minutes) => (
-              <button key={minutes} type="button" aria-pressed={durations.focusMinutes === minutes} onClick={() => pickFocus(minutes)} className={pillClass(durations.focusMinutes === minutes)}>
+              <button key={minutes} type="button" aria-pressed={durations.focusMinutes === minutes} onClick={() => saveDuration("focusMinutes", minutes)} className={pillClass(durations.focusMinutes === minutes)}>
                 {TIMER_TEXT.minutes(minutes)}
               </button>
             ))}
@@ -550,56 +719,47 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         </div>
       )}
 
+      <p className="mt-2 text-xs font-bold text-[var(--muted)]">
+        {TIMER_TEXT.templateLine(SESSION_TEMPLATE_LABEL[template])} ·{" "}
+        <button type="button" className={linkClass} onClick={() => setTemplateOpen(true)}>
+          {TIMER_TEXT.change}
+        </button>
+      </p>
+
       <TimerSettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} subject={subject} defaults={preferences.timer} onSave={saveTimerSettings} />
 
       <Drawer
-        open={detailsOpen}
-        onClose={() => setDetailsOpen(false)}
+        open={templateOpen}
+        onClose={() => setTemplateOpen(false)}
         eyebrow={TIMER_SETTINGS_TEXT.eyebrow}
-        title={TIMER_TEXT.details}
+        title={TIMER_TEXT.templateField}
         width="max-w-[480px]"
         footer={
           <div className="flex justify-end">
-            <Button variant="primary" icon="Check" onClick={() => setDetailsOpen(false)}>
+            <Button variant="primary" icon="Check" onClick={() => setTemplateOpen(false)}>
               {TIMER_TEXT.detailsDone}
             </Button>
           </div>
         }
       >
-        <div className="grid grid-cols-1 gap-4">
-          <Field label={TIMER_TEXT.titleField}>
-            <input
-              className={inputClass}
-              value={title}
-              onChange={(event) => {
-                setTimerDetails({ title: event.target.value });
-                setSavedTitle(event.target.value);
-              }}
-              placeholder={TIMER_TEXT.titlePlaceholder}
-            />
-          </Field>
-          <div className="min-w-0">
-            <div className="mb-1.5 flex items-center gap-1">
-              <span className="text-xs font-black uppercase text-[var(--faint)]">{TIMER_TEXT.templateField}</span>
-              <HelpTip title={TIMER_TEXT.templateHelp.title} text={TIMER_TEXT.templateHelp.text} example={TIMER_TEXT.templateHelp.example} />
-            </div>
-            <select
-              className={inputClass}
-              aria-label={TIMER_TEXT.templateField}
-              value={template}
-              onChange={(event) => {
-                const value = event.target.value as StudySession["template"];
-                setTimerDetails({ template: value });
-                setSavedTemplate(value);
-              }}
-            >
-              {TEMPLATES.map((id) => (
-                <option key={id} value={id}>
-                  {SESSION_TEMPLATE_LABEL[id]}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="grid grid-cols-1 gap-3">
+          <p className="text-sm text-[var(--muted)]">{TIMER_TEXT.templateHelp.text}</p>
+          <select
+            className={inputClass}
+            aria-label={TIMER_TEXT.templateField}
+            value={template}
+            onChange={(event) => {
+              const value = event.target.value as StudySession["template"];
+              setTimerDetails({ template: value });
+              setSavedTemplate(value);
+            }}
+          >
+            {TEMPLATES.map((id) => (
+              <option key={id} value={id}>
+                {SESSION_TEMPLATE_LABEL[id]}
+              </option>
+            ))}
+          </select>
         </div>
       </Drawer>
     </Panel>
@@ -639,8 +799,11 @@ const SETTING_LABEL: Record<TimerSettingKey, string> = {
   shortBreakMinutes: TIMER_SETTINGS_TEXT.shortBreak,
   longBreakMinutes: TIMER_SETTINGS_TEXT.longBreak,
   longBreakEvery: TIMER_SETTINGS_TEXT.longBreakEvery,
-  stopwatchTargetMinutes: TIMER_SETTINGS_TEXT.target
+  stopwatchTargetMinutes: TIMER_SETTINGS_TEXT.target,
+  timerMinutes: TIMER_SETTINGS_TEXT.timer
 };
+/** Campi del modulo "Impostazioni timer" (la durata del Timer si sceglie nel pannello). */
+const FORM_KEYS = TIMER_SETTING_KEYS.filter((key) => key !== "timerMinutes");
 
 type SaveTimerSettings = (change: { subjectId?: string | null; subject?: TimerSettings | null; defaults?: TimerSettings | null }) => Promise<void>;
 
@@ -683,7 +846,7 @@ function TimerSettingsDrawer({
 
   const save = async () => {
     const values: TimerSettings = {};
-    for (const key of TIMER_SETTING_KEYS) {
+    for (const key of FORM_KEYS) {
       const parsed = parseTimerInput(key, draft[key]);
       if (parsed.invalid || (parsed.empty && key !== "stopwatchTargetMinutes")) {
         const [min, max] = TIMER_LIMITS[key];
@@ -692,9 +855,19 @@ function TimerSettingsDrawer({
       }
       if (parsed.value !== undefined) values[key] = parsed.value;
     }
-    if (!subject) await onSave({ defaults: values });
-    else if (alsoDefaults) await onSave({ subjectId: subject.id, subject: null, defaults: values });
-    else await onSave({ subjectId: subject.id, subject: values });
+    // La durata del Timer si sceglie dal pannello: il modulo non la tocca.
+    const shown = resolveTimerDurations(subject?.timer, defaults);
+    values.timerMinutes = shown.timerMinutes;
+    if (!subject) await onSave({ defaults: changedTimerSettings(values, shown, defaults) ?? null });
+    // Le stesse durate per tutte: la materia ricorda solo la sua durata del Timer.
+    else if (alsoDefaults)
+      await onSave({
+        subjectId: subject.id,
+        subject: subject.timer?.timerMinutes ? { timerMinutes: subject.timer.timerMinutes } : null,
+        defaults: cleanTimerSettings({ ...values, timerMinutes: defaults?.timerMinutes }) ?? null
+      });
+    // Per la materia restano solo i valori cambiati: gli altri seguono le durate generali.
+    else await onSave({ subjectId: subject.id, subject: changedTimerSettings(values, shown, subject.timer) ?? null });
     onClose();
   };
 

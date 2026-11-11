@@ -373,7 +373,7 @@ test("timerUnsavedSeconds e isTimerIdle", () => {
 
 test("resolveTimerDurations: materia → preferenze → predefiniti, campo per campo", () => {
   assert.deepEqual(resolveTimerDurations(), { ...DEFAULT_TIMER_DURATIONS, stopwatchTargetMinutes: undefined });
-  assert.deepEqual(DEFAULT_TIMER_DURATIONS, { focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, longBreakEvery: 4 });
+  assert.deepEqual(DEFAULT_TIMER_DURATIONS, { focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, longBreakEvery: 4, timerMinutes: 60 });
   const prefs = { focusMinutes: 45, shortBreakMinutes: 10, stopwatchTargetMinutes: 120 };
   const subject = { focusMinutes: 50 };
   assert.deepEqual(resolveTimerDurations(subject, prefs), {
@@ -381,7 +381,8 @@ test("resolveTimerDurations: materia → preferenze → predefiniti, campo per c
     shortBreakMinutes: 10,
     longBreakMinutes: 15,
     longBreakEvery: 4,
-    stopwatchTargetMinutes: 120
+    stopwatchTargetMinutes: 120,
+    timerMinutes: 60
   });
   assert.equal(resolveTimerDurations(undefined, prefs).focusMinutes, 45);
   assert.equal(resolveTimerDurations(null, null).focusMinutes, 25);
@@ -392,7 +393,7 @@ test("resolveTimerDurations: ogni valore è limitato; valori non numerici passan
     { focusMinutes: 0, shortBreakMinutes: 600, longBreakMinutes: -4, longBreakEvery: 40, stopwatchTargetMinutes: 5000 },
     { focusMinutes: 30 }
   );
-  assert.deepEqual(wild, { focusMinutes: 1, shortBreakMinutes: 60, longBreakMinutes: 1, longBreakEvery: 12, stopwatchTargetMinutes: 600 });
+  assert.deepEqual(wild, { focusMinutes: 1, shortBreakMinutes: 60, longBreakMinutes: 1, longBreakEvery: 12, stopwatchTargetMinutes: 600, timerMinutes: 60 });
   assert.equal(resolveTimerDurations({ focusMinutes: 400 }).focusMinutes, 240);
   assert.equal(resolveTimerDurations({ focusMinutes: 24.6 }).focusMinutes, 25);
   assert.equal(resolveTimerDurations({ focusMinutes: "40" }, { focusMinutes: 30 }).focusMinutes, 30);

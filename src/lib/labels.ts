@@ -537,9 +537,10 @@ export const SESSION_TEMPLATE_LABEL: Record<StudySession["template"], string> = 
   "oral-prep": "Preparazione orale"
 };
 
-/** Le due modalità del timer di studio. */
-export const TIMER_KIND_LABEL: Record<"pomodoro" | "stopwatch", string> = {
+/** Le tre modalità del timer di studio. */
+export const TIMER_KIND_LABEL: Record<"pomodoro" | "timer" | "stopwatch", string> = {
   pomodoro: "Pomodoro",
+  timer: "Timer",
   stopwatch: "Cronometro"
 };
 
@@ -558,8 +559,9 @@ export const TIMER_MODE_LABEL: Record<"classic" | "pomodoro" | "deep-focus", str
 };
 
 /** Da dove arriva una sessione di studio (assente = vecchia o aggiunta a mano). */
-export const SESSION_SOURCE_LABEL: Record<"pomodoro" | "stopwatch" | "manual", string> = {
+export const SESSION_SOURCE_LABEL: Record<"pomodoro" | "timer" | "stopwatch" | "manual", string> = {
   pomodoro: "Pomodoro",
+  timer: "Timer",
   stopwatch: "Cronometro",
   manual: "Aggiunta a mano"
 };
@@ -568,15 +570,19 @@ export const SESSION_SOURCE_LABEL: Record<"pomodoro" | "stopwatch" | "manual", s
 export const TIMER_TEXT = {
   kindAria: "Modalità del timer",
   kindHelp: {
-    title: "Pomodoro o Cronometro?",
-    text: "Pomodoro: blocchi di studio con una pausa breve dopo ognuno e una pausa lunga ogni tanto; ogni blocco finito si salva da solo nelle tue ore. Cronometro: il tempo conta in avanti finché non premi «Termina e salva».",
-    example: "25 minuti di studio, 5 di pausa; dopo 4 blocchi una pausa di 15."
+    title: "Pomodoro, Timer o Cronometro?",
+    text: "Pomodoro: blocchi di studio con una pausa breve dopo ognuno e una pausa lunga ogni tanto; ogni blocco finito si salva da solo nelle tue ore. Timer: scegli quanto vuoi studiare e il tempo conta alla rovescia; alla fine controlli e salvi. Cronometro: il tempo conta in avanti finché non premi «Termina».",
+    example: "Pomodoro: 25 minuti di studio e 5 di pausa. Timer: 1 h 30 min."
   },
   blockOf: (block: number, every: number) => `Blocco ${block} di ${every}`,
   idle: {
     pomodoro: "Scegli la materia e avvia: a fine blocco parte la pausa.",
+    timer: "Scegli quanto vuoi studiare: il tempo conta alla rovescia.",
     stopwatch: "Studia quanto vuoi: il tempo conta in avanti."
   },
+  timerEnded: (studied: string) => `Tempo finito · ${studied} di studio da salvare`,
+  stoppedToSave: (studied: string) => `Fermo · ${studied} di studio da salvare`,
+  timerPhase: (total: string) => `Timer · ${total}`,
   running: (studied: string) => `In corso · ${studied} di studio`,
   paused: (studied: string) => `In pausa · ${studied} di studio`,
   onBreak: "Alzati, bevi un bicchiere d'acqua, riposa gli occhi.",
@@ -587,6 +593,8 @@ export const TIMER_TEXT = {
   pause: "Pausa",
   resume: "Riprendi",
   finish: "Termina e salva",
+  endEarly: "Termina prima",
+  saveEnded: "Salva",
   finishHint: "Disponibile dopo almeno 1 minuto di studio",
   endCycle: "Termina il Pomodoro",
   skipBreak: "Salta la pausa",
@@ -609,16 +617,23 @@ export const TIMER_TEXT = {
   focusQuick: "Blocco di studio",
   minutes: (minutes: number) => `${minutes} min`,
   otherDuration: "Altra durata",
+  timerDurationFor: (name: string) => `Durata per ${name}`,
+  timerDurationDefault: "Durata per tutte le materie",
+  timerQuick: "Durata del timer",
+  hoursField: "Ore",
+  minutesField: "Minuti",
+  customApply: "Usa",
+  customInvalid: "Scrivi una durata da 1 minuto a 10 ore.",
+  whatField: "Cosa studi?",
+  whatPlaceholder: "Argomento, capitolo o lezione (facoltativo)",
+  whatTopic: "Argomento della materia",
+  templateLine: (template: string) => `Tipo di sessione: ${template}`,
   breaksSummary: (short: number, long: number, every: number) => `Pausa ${short} min · lunga ${long} min ogni ${every} ${every === 1 ? "blocco" : "blocchi"}`,
   noTarget: "Nessun obiettivo",
   durationsFor: (name: string) => `Durate di ${name}`,
   defaultDurations: "Durate per tutte le materie",
   change: "Cambia",
   settings: "Impostazioni timer",
-  details: "Dettagli sessione",
-  detailsSummary: (title: string, template: string) => (title ? `${title} · ${template}` : template),
-  titleField: "Titolo (facoltativo)",
-  titlePlaceholder: "Es. Capitolo 4, infiammazione",
   templateField: "Tipo di sessione",
   templateHelp: {
     title: "Tipo di sessione",
@@ -640,6 +655,7 @@ export const TIMER_SETTINGS_TEXT = {
   longBreak: "Pausa lunga (minuti)",
   longBreakEvery: "Pausa lunga ogni (blocchi)",
   target: "Obiettivo del cronometro (minuti)",
+  timer: "Timer (minuti)",
   targetHint: "Facoltativo: ti avvisa al traguardo e il cronometro continua.",
   invalid: (field: string, min: number, max: number) => `${field}: scrivi un numero intero da ${min} a ${max}.`,
   alsoDefaults: "Usa queste durate anche per le altre materie",
@@ -663,6 +679,9 @@ export const TIMER_ALERT_TEXT = {
   focusDone: (subject?: string) => `Blocco finito${subject ? ` · ${subject}` : ""}`,
   focusDoneBody: (studied: string, breakLabel: string, breakLength: string) => `${studied} salvati nelle tue ore. Ora ${breakLabel.toLowerCase()} di ${breakLength}.`,
   focusDoneBreakOver: (studied: string) => `${studied} salvati nelle tue ore. Anche la pausa è finita: avvia il prossimo blocco quando vuoi.`,
+  timerDone: (subject?: string) => `Tempo finito${subject ? ` · ${subject}` : ""}`,
+  timerDoneBody: (studied: string) => `${studied} di studio: controlla cosa hai fatto e salva.`,
+  timerDoneLate: (studied: string, time: string) => `Il timer è finito alle ${time}: ${studied} di studio da salvare.`,
   breakDone: "Pausa finita",
   breakDoneBody: "Pronto per il prossimo blocco?",
   targetReached: "Obiettivo raggiunto",
@@ -741,7 +760,7 @@ export const STATS_TEXT = {
   sessionsCount: (count: number) => `${count} ${count === 1 ? "sessione" : "sessioni"}`,
   sourceUnknown: "Senza indicazione",
   sourceRow: (count: number, minutes: string) => `${count} ${count === 1 ? "sessione" : "sessioni"} · ${minutes}`,
-  howEmpty: "Qui vedrai quanto durano le tue sessioni e se le salvi con il Pomodoro, il cronometro o a mano.",
+  howEmpty: "Qui vedrai quanto durano le tue sessioni e se le salvi con il Pomodoro, il Timer, il cronometro o a mano.",
   exams: "Preparazione esami",
   examsOrder: "Dal più vicino",
   examReady: (prep: number) => `${prep}% pronto`,

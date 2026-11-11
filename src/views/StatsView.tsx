@@ -30,6 +30,7 @@ const tooltipStyle = { background: "var(--bg-2)", border: "1px solid var(--borde
 const SOURCE_LABEL: Record<SessionSourceKey, string> = { ...SESSION_SOURCE_LABEL, unknown: STATS_TEXT.sourceUnknown };
 const SOURCE_COLOR: Record<SessionSourceKey, string> = {
   pomodoro: "var(--accent)",
+  timer: "var(--accent-3)",
   stopwatch: "var(--accent-2)",
   manual: "var(--warning)",
   unknown: "var(--faint)"

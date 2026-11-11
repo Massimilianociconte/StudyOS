@@ -195,16 +195,18 @@ test("riepilogo: numero di sessioni, media e provenienza", () => {
     session(local(2026, 11, 9, 9), 25, { source: "pomodoro" }),
     session(local(2026, 11, 9, 10), 25, { source: "pomodoro" }),
     session(local(2026, 11, 9, 14), 70, { source: "stopwatch" }),
+    session(local(2026, 11, 9, 16), 90, { source: "timer" }),
     session(local(2026, 11, 10, 9), 60, { source: "manual" }),
     session(local(2026, 11, 10, 15), 21),
     session(local(2026, 11, 10, 18), 500, { status: "planned", source: "manual" })
   ];
   const summary = sessionSummary(list);
-  assert.equal(summary.count, 5);
-  assert.equal(summary.totalMinutes, 201);
-  assert.equal(summary.averageMinutes, 40, "201 / 5 = 40,2 → 40");
+  assert.equal(summary.count, 6);
+  assert.equal(summary.totalMinutes, 291);
+  assert.equal(summary.averageMinutes, 49, "291 / 6 = 48,5 → 49");
   assert.deepEqual(summary.bySource, {
     pomodoro: { count: 2, minutes: 50 },
+    timer: { count: 1, minutes: 90 },
     stopwatch: { count: 1, minutes: 70 },
     manual: { count: 1, minutes: 60 },
     unknown: { count: 1, minutes: 21 }
