@@ -18,6 +18,7 @@ import {
   matchTopic,
   parseSessionMinutes,
   readSessionDraft,
+  sessionDraftEnd,
   sessionEditPatch,
   sessionSourceLabel,
   topicsOfSubject,
@@ -210,6 +211,13 @@ const whenLabel = (kind: string, start: number, end: number) =>
     ? SESSION_FORM_TEXT.reviewWhen(kind, format(start, "HH:mm"), format(end, "HH:mm"))
     : SESSION_FORM_TEXT.reviewWhenDays(kind, format(start, "EEE d HH:mm", { locale: it }), format(end, "EEE d HH:mm", { locale: it }));
 
+/** "Fine alle 10:40" sotto i minuti (con il giorno se è un altro): si vede subito se finirebbe nel futuro. */
+const endHint = (draft: SessionDraft, session?: StudySession) => {
+  const end = sessionDraftEnd(draft, session);
+  if (end === undefined) return undefined;
+  return SESSION_FORM_TEXT.endsAt(format(end, "HH:mm"), format(end, "yyyy-MM-dd") === draft.date ? undefined : format(end, "EEE d", { locale: it }));
+};
+
 /**
  * Riepilogo di Timer e Cronometro prima di salvare: si apre a fine Timer, con "Termina" e alla
  * riapertura dell'app se il Timer è finito mentre era chiusa (con l'ora di fine reale).
@@ -309,7 +317,9 @@ export function TimerReviewDrawer({
       onSaved(saved.session);
       return;
     }
-    // Non salvata (un'altra scheda era più avanti, troppo breve): Salva e Scarta tornano usabili.
+    // Minuti che la farebbero finire nel futuro: si dice nel modulo.
+    if (saved.status === "future") setError("reviewFuture");
+    // Non salvata (un'altra scheda era più avanti, troppo breve, nel futuro): Salva e Scarta tornano usabili.
     once.release();
   };
 
@@ -428,7 +438,8 @@ export function SessionEditorDrawer({
 
   const save = async () => {
     if (!session || !draft || !once.take()) return;
-    const result = readSessionDraft(draft, { subjects, topics, now: Date.now() });
+    // Con la sessione: la fine tiene le pause di prima (come nel salvataggio).
+    const result = readSessionDraft(draft, { subjects, topics, now: Date.now(), session });
     if (!result.ok) {
       setError(result.error);
       once.release();
@@ -497,6 +508,7 @@ export function SessionEditorDrawer({
             subjects={subjects}
             topics={topics}
             withStart
+            minutesHint={endHint(draft, session)}
           />
           <FormError error={error} />
         </div>
@@ -605,6 +617,7 @@ export function ManualSessionDrawer({
           subjects={subjects}
           topics={topics}
           withStart
+          minutesHint={endHint(draft)}
         />
         <FormError error={error} />
       </div>

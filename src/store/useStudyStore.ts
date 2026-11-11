@@ -96,7 +96,7 @@ import {
   type TimerMode,
   type TimerState
 } from "../lib/studyTimer";
-import { relinkSession, reviewedSessionTimes, sessionLinksOf, type SessionEdit, type SessionLinks } from "../lib/studySessions";
+import { relinkSession, reviewedSessionTimes, sessionEndsInFuture, sessionLinksOf, type SessionEdit, type SessionLinks } from "../lib/studySessions";
 import { resolveTimerDurations } from "../lib/timerPrefs";
 import type { TimerSettings } from "../types";
 import { useSharedStore } from "./useSharedStore";
@@ -274,8 +274,11 @@ interface StudyState {
   /** "Termina" di Timer e Cronometro: il tempo si ferma e si apre il riepilogo prima di salvare. */
   endStudyTimer: () => { status: "review" | "too-short" | "idle" };
   setTimerReviewOpen: (open: boolean) => void;
-  /** "Salva" del riepilogo di Timer e Cronometro: i campi corretti vincono su quelli del timer. */
-  saveTimerReview: (edit: SessionEdit) => { status: "saved"; session: StudySession } | { status: "too-short" } | { status: "idle" };
+  /**
+   * "Salva" del riepilogo di Timer e Cronometro: i campi corretti vincono su quelli del timer.
+   * "future": con i minuti corretti la sessione finirebbe dopo adesso (non si salva).
+   */
+  saveTimerReview: (edit: SessionEdit) => { status: "saved"; session: StudySession } | { status: "too-short" } | { status: "idle" } | { status: "future" };
   skipBreak: () => void;
   setTimerKind: (kind: TimerKind) => void;
   setTimerSubject: (subjectId: string | null) => void;
@@ -1865,6 +1868,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       if (!block) return { status: "too-short" };
       // Minuti corretti (cronometro rimasto acceso): la fine si sposta, l'inizio resta quello vero.
       const times = reviewedSessionTimes(block, timerElapsedSeconds(timer, now), edit.minutes);
+      if (sessionEndsInFuture(times.end, now)) return { status: "future" };
       const subjectId = knownSubjectId(state, edit.subjectId);
       const session =
         saveTimerBlock({

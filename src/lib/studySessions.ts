@@ -189,25 +189,68 @@ export interface SessionEdit {
   start?: number;
 }
 
-export type SessionDraftError = "minutes" | "start" | "future";
+/**
+ * "future": inizio nel futuro. "endsFuture": la sessione fatta finirebbe dopo adesso (inizio + minuti,
+ * con le pause di prima se è una modifica). "reviewFuture": lo stesso nel riepilogo del timer, dove
+ * l'inizio è quello vero e si possono solo togliere minuti.
+ */
+export type SessionDraftError = "minutes" | "start" | "future" | "endsFuture" | "reviewFuture";
+
+/** Una sessione fatta finisce al più adesso, con un minuto di margine (il modulo ha ore e minuti, non i secondi). */
+export const SESSION_END_TOLERANCE_MS = MINUTE;
+
+export const sessionEndsInFuture = (end: number, now: number) => end > now + SESSION_END_TOLERANCE_MS;
+
+type SavedTimes = Pick<StudySession, "start" | "end" | "actualMinutes">;
+
+/** Inizio e fine (epoch ms) di una sessione salvata con il nuovo inizio e i nuovi minuti: le pause restano. */
+const editTimes = (session: SavedTimes, start: number | undefined, minutes: number) => {
+  const parsedStart = Date.parse(session.start);
+  const parsedEnd = session.end ? Date.parse(session.end) : Number.NaN;
+  const originalStart = Number.isFinite(parsedStart) ? parsedStart : (start ?? Date.now());
+  // Il modulo ha ore e minuti, non i secondi: un inizio nello stesso minuto è l'inizio di prima
+  // (cambiando solo le note, inizio e fine restano quelli salvati).
+  const sameMinute = start !== undefined && Math.floor(start / MINUTE) === Math.floor(originalStart / MINUTE);
+  return editedSessionTimes(
+    { start: originalStart, end: Number.isFinite(parsedEnd) ? parsedEnd : undefined, minutes: session.actualMinutes },
+    { start: sameMinute ? undefined : start, minutes }
+  );
+};
+
+/** Fine della sessione con l'inizio e i minuti del modulo: nuova = inizio + minuti; modifica = con le pause di prima. */
+const draftEndOf = (start: number, minutes: number, session?: SavedTimes) => (session ? editTimes(session, start, minutes).end : start + minutes * MINUTE);
+
+/** Giorno e ora del modulo (epoch ms); undefined senza i due campi, NaN se non validi. */
+const draftStartOf = (draft: SessionDraft): number | undefined => {
+  if (draft.date === undefined && draft.time === undefined) return undefined;
+  const day = draft.date ?? "";
+  const time = draft.time ?? "";
+  return DAY.test(day) && TIME.test(time) ? new Date(`${day}T${time}`).getTime() : Number.NaN;
+};
+
+/** Fine (epoch ms) che il modulo salverebbe ("Fine alle …"), o undefined se inizio o minuti mancano o non valgono. */
+export const sessionDraftEnd = (draft: SessionDraft, session?: SavedTimes): number | undefined => {
+  const minutes = parseSessionMinutes(draft.minutes).value;
+  const start = draftStartOf(draft);
+  return minutes === undefined || start === undefined || !Number.isFinite(start) ? undefined : draftEndOf(start, minutes, session);
+};
 
 /**
  * Controlla il modulo. La materia deve esistere, l'argomento deve essere di quella materia (altrimenti
  * si toglie). Il titolo è la descrizione scritta, poi il titolo dell'argomento, poi tipo e materia.
+ * Con giorno e ora la sessione non inizia né finisce nel futuro; `session` è quella che si modifica.
  */
 export const readSessionDraft = (
   draft: SessionDraft,
-  context: { subjects: ReadonlyArray<{ id: string; name: string }>; topics: readonly TopicLike[]; now: number }
+  context: { subjects: ReadonlyArray<{ id: string; name: string }>; topics: readonly TopicLike[]; now: number; session?: SavedTimes }
 ): { ok: true; value: SessionEdit } | { ok: false; error: SessionDraftError } => {
   const minutes = parseSessionMinutes(draft.minutes).value;
   if (minutes === undefined) return { ok: false, error: "minutes" };
-  let start: number | undefined;
-  if (draft.date !== undefined || draft.time !== undefined) {
-    const day = draft.date ?? "";
-    const time = draft.time ?? "";
-    start = DAY.test(day) && TIME.test(time) ? new Date(`${day}T${time}`).getTime() : Number.NaN;
+  const start = draftStartOf(draft);
+  if (start !== undefined) {
     if (!Number.isFinite(start)) return { ok: false, error: "start" };
     if (start > context.now) return { ok: false, error: "future" };
+    if (sessionEndsInFuture(draftEndOf(start, minutes, context.session), context.now)) return { ok: false, error: "endsFuture" };
   }
   const subject = context.subjects.find((item) => item.id === draft.subjectId);
   const topic = subject ? context.topics.find((item) => item.id === draft.topicId && item.subjectId === subject.id) : undefined;
@@ -224,19 +267,10 @@ export const readSessionDraft = (
  * inizio e fine ricalcolati con `editedSessionTimes` (le pause restano).
  */
 export const sessionEditPatch = (
-  session: Pick<StudySession, "start" | "end" | "actualMinutes">,
+  session: SavedTimes,
   edit: SessionEdit
 ): Pick<StudySession, "subjectId" | "topicId" | "title" | "notes" | "template" | "actualMinutes" | "start" | "end"> => {
-  const parsedStart = Date.parse(session.start);
-  const parsedEnd = session.end ? Date.parse(session.end) : Number.NaN;
-  const originalStart = Number.isFinite(parsedStart) ? parsedStart : (edit.start ?? Date.now());
-  // Il modulo ha ore e minuti, non i secondi: un inizio nello stesso minuto è l'inizio di prima
-  // (cambiando solo le note, inizio e fine restano quelli salvati).
-  const sameMinute = edit.start !== undefined && Math.floor(edit.start / MINUTE) === Math.floor(originalStart / MINUTE);
-  const times = editedSessionTimes(
-    { start: originalStart, end: Number.isFinite(parsedEnd) ? parsedEnd : undefined, minutes: session.actualMinutes },
-    { start: sameMinute ? undefined : edit.start, minutes: edit.minutes }
-  );
+  const times = editTimes(session, edit.start, edit.minutes);
   return {
     subjectId: edit.subjectId,
     topicId: edit.subjectId ? edit.topicId : undefined,
