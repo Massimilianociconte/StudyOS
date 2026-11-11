@@ -1,8 +1,9 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Field, HelpTip, IconButton, Pill, inputClass } from "./ui";
+import { Button, Field, HelpTip, IconButton, Pill, inputClass, useDialogLayer } from "./ui";
+import { DateTimeField } from "./DatePicker";
 import { HelpField } from "./HelpField";
 import { DurationField } from "./DurationField";
 import { durationToMinutes, minutesToDuration } from "../lib/duration";
@@ -65,13 +66,9 @@ export function TaskEditorModal({
   const completedLate = isTaskCompletedLate(task);
   const titleId = useId();
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const panelRef = useRef<HTMLElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
+  useDialogLayer(true, { panelRef, areaRef, onEscape: onClose });
 
   const showMore = () => {
     if (moreRef.current) moreRef.current.open = true;
@@ -148,6 +145,7 @@ export function TaskEditorModal({
   // Portal su body come Drawer: dentro la vista la barra in basso del telefono restava sopra la finestra.
   return createPortal(
     <div
+      ref={areaRef}
       className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
       role="dialog"
       aria-modal="true"
@@ -156,7 +154,7 @@ export function TaskEditorModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-3xl overflow-y-auto p-4 sm:p-5">
+      <section ref={panelRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-3xl overflow-y-auto p-4 outline-none sm:p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-black uppercase text-[var(--faint)]">Attività</p>
@@ -172,14 +170,18 @@ export function TaskEditorModal({
               value={draft.title}
               onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))}
               placeholder="Es. Ripassare il capitolo 4 di fisiologia"
-              autoFocus
+              data-autofocus
             />
           </Field>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Field label="Scadenza (facoltativa)">
-              <input className={inputClass} type="datetime-local" value={draft.dueDate} onChange={(event) => setDraft((value) => ({ ...value, dueDate: event.target.value }))} />
-            </Field>
+            <DateTimeField
+              label="Scadenza (facoltativa)"
+              value={draft.dueDate}
+              onChange={(dueDate) => setDraft((value) => ({ ...value, dueDate }))}
+              optional
+              defaultTime="18:00"
+            />
             <Field label="Materia (facoltativa)">
               <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
                 <option value="">Nessuna materia</option>

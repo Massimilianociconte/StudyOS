@@ -287,7 +287,7 @@ export function Segmented<T extends string>({
       aria-label={label}
       onKeyDown={onKeyDown}
       style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
-      className={`no-scrollbar relative inline-flex max-w-full gap-1 overflow-x-auto rounded-full border border-[var(--border)] bg-[var(--surface-soft)] p-1 ${className}`}
+      className={`no-scrollbar relative inline-flex max-w-full gap-1 overflow-x-auto rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-1 ${className}`}
     >
       {options.map((option) => {
         const active = option.id === value;
@@ -299,14 +299,19 @@ export function Segmented<T extends string>({
             tabIndex={active ? 0 : -1}
             title={option.title}
             onClick={() => onChange(option.id)}
-            className={`motion-safe inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full font-extrabold ${
-              size === "sm" ? "min-h-8 px-3 text-xs" : "min-h-9 px-3.5 text-sm"
-            } ${active ? "bg-[var(--accent)] text-[#10131d]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"}`}
+            // Area di tocco alta 44 px; la pillola visibile resta compatta (before:) e sta dietro al testo.
+            className={`motion-safe relative inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full font-extrabold before:absolute before:inset-x-0 before:rounded-full before:content-[''] ${
+              size === "sm" ? "px-3 text-xs before:inset-y-1.5" : "px-3.5 text-sm before:inset-y-1"
+            } ${
+              active
+                ? "text-[#10131d] before:bg-[var(--accent)]"
+                : "text-[var(--muted)] hover:text-[var(--text)] hover:before:bg-[var(--surface)]"
+            }`}
           >
-            {option.icon ? <Icon name={option.icon} className="h-3.5 w-3.5" /> : null}
-            {option.label}
+            {option.icon ? <Icon name={option.icon} className="relative h-3.5 w-3.5" /> : null}
+            <span className="relative">{option.label}</span>
             {option.count !== undefined ? (
-              <span className={`rounded-full px-1.5 text-[11px] ${active ? "bg-black/10" : "bg-[var(--surface-strong)]"}`}>{option.count}</span>
+              <span className={`relative rounded-full px-1.5 text-[11px] ${active ? "bg-black/10" : "bg-[var(--surface-strong)]"}`}>{option.count}</span>
             ) : null}
           </button>
         );
@@ -429,7 +434,18 @@ const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), selec
  */
 export function useDialogLayer(
   open: boolean,
-  { panelRef, areaRef, onEscape }: { panelRef: RefObject<HTMLElement | null>; areaRef?: RefObject<HTMLElement | null>; onEscape?: () => void }
+  {
+    panelRef,
+    areaRef,
+    onEscape,
+    returnFocusRef
+  }: {
+    panelRef: RefObject<HTMLElement | null>;
+    areaRef?: RefObject<HTMLElement | null>;
+    onEscape?: () => void;
+    /** Chi riceve il focus alla chiusura al posto dell'elemento attivo all'apertura (es. il campo che ha aperto il selettore). */
+    returnFocusRef?: RefObject<HTMLElement | null>;
+  }
 ) {
   const escapeRef = useRef(onEscape);
   escapeRef.current = onEscape;
@@ -466,9 +482,9 @@ export function useDialogLayer(
     return () => {
       window.removeEventListener("keydown", onKey);
       dialogLayers.remove(token);
-      previousFocus?.focus({ preventScroll: true });
+      (returnFocusRef?.current ?? previousFocus)?.focus({ preventScroll: true });
     };
-  }, [open, panelRef]);
+  }, [open, panelRef, returnFocusRef]);
 }
 
 /**

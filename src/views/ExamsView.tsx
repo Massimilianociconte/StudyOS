@@ -10,7 +10,8 @@ import { readImageFile } from "../lib/files";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
-import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction } from "../components/ui";
+import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useDialogLayer } from "../components/ui";
+import { DateTimeField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { BarbExamCalendar } from "../components/BarbExamCalendar";
@@ -158,12 +159,11 @@ function PersonalExamsView({
     setDraftFor(null);
   }
   const formOpen = creating || editingExam !== null;
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
 
-  // Aperto anche da un'altra schermata: il focus entra nel modulo, così Esc lo chiude subito.
-  useEffect(() => {
-    if (formOpen) dialogRef.current?.focus({ preventScroll: true });
-  }, [formOpen]);
+  // Pagina sotto bloccata, focus nel modulo (anche se aperto da un'altra schermata) e restituito alla chiusura.
+  useDialogLayer(formOpen, { panelRef: dialogRef, areaRef, onEscape: () => closeForm() });
   const sorted = useMemo(() => [...exams].sort((a, b) => a.date.localeCompare(b.date)), [exams]);
   const today = startOfDay(new Date());
   const upcoming = sorted.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today));
@@ -433,20 +433,16 @@ function PersonalExamsView({
 
       {formOpen ? (
         <div
-          ref={dialogRef}
-          tabIndex={-1}
-          className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 outline-none backdrop-blur-sm sm:place-items-center"
+          ref={areaRef}
+          className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
           role="dialog"
           aria-modal="true"
           aria-label={editingExam ? "Modifica esame" : "Aggiungi esame"}
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) closeForm();
           }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") closeForm();
-          }}
         >
-          <section className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 sm:p-5">
+          <section ref={dialogRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 outline-none sm:p-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="safe-text text-2xl font-black">{editingExam ? "Modifica esame" : "Aggiungi esame"}</h3>
@@ -467,9 +463,7 @@ function PersonalExamsView({
                     ))}
                   </select>
                 </Field>
-                <Field label="Giorno e ora dell'esame">
-                  <input className={inputClass} type="datetime-local" value={draft.date} onChange={(event) => setDraft((value) => ({ ...value, date: event.target.value }))} />
-                </Field>
+                <DateTimeField label="Giorno e ora dell'esame" value={draft.date} onChange={(date) => setDraft((value) => ({ ...value, date }))} />
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

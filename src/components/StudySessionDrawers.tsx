@@ -2,6 +2,8 @@
 // sessione salvata (dall'elenco di Studio, dalla materia, dall'avviso "Blocco finito") e "Aggiungi
 // studio fatto". Stessi campi ovunque; i controlli sono funzioni pure in lib/studySessions.ts.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { DateTimeField } from "./DatePicker";
+import { joinDateTime, splitDateTime } from "../lib/datePicker";
 import { useShallow } from "zustand/react/shallow";
 import { format, isSameDay } from "date-fns";
 import { it } from "date-fns/locale";
@@ -139,13 +141,17 @@ function SessionFields({
         />
       </Field>
       {withStart ? (
-        <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-3">
-          <Field label={SESSION_FORM_TEXT.date}>
-            <input className={inputClass} type="date" value={draft.date ?? ""} max={format(new Date(), "yyyy-MM-dd")} onChange={(event) => set({ date: event.target.value })} />
-          </Field>
-          <Field label={SESSION_FORM_TEXT.time}>
-            <input className={inputClass} type="time" value={draft.time ?? ""} onChange={(event) => set({ time: event.target.value })} />
-          </Field>
+        <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
+          {/* Giorno e ora nello stesso selettore; non si sceglie un giorno futuro (l'ora la controlla il modulo). */}
+          <DateTimeField
+            label={SESSION_FORM_TEXT.date}
+            value={draft.date && draft.time ? joinDateTime(draft.date, draft.time) : ""}
+            max={format(new Date(), "yyyy-MM-dd")}
+            onChange={(value) => {
+              const parts = splitDateTime(value);
+              set({ date: parts?.date ?? "", time: parts?.time ?? "" });
+            }}
+          />
           {minutesField}
         </div>
       ) : (

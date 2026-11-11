@@ -80,7 +80,8 @@ function PickerTrigger({
   spoken,
   picker,
   onOpen,
-  icon = "CalendarDays"
+  icon = "CalendarDays",
+  compact = false
 }: {
   label: string;
   text: string;
@@ -89,11 +90,13 @@ function PickerTrigger({
   /** Prepara il pannello (giorno con il focus) e lo apre. */
   onOpen: () => void;
   icon?: string;
+  /** Etichetta solo per il lettore di schermo (riga compatta senza titoli sopra i campi). */
+  compact?: boolean;
 }) {
   const id = useId();
   return (
     <div className="min-w-0">
-      <span id={`${id}-label`} className={labelClass}>
+      <span id={`${id}-label`} className={compact ? "sr-only" : labelClass}>
         {label}
       </span>
       <button
@@ -147,7 +150,7 @@ function PickerShell({
   const backdropRef = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
   const position = useFloatingLayer(open, onClose, anchorRef, panelRef, "start", sheet);
-  useDialogLayer(open, { panelRef, areaRef: sheet ? backdropRef : panelRef });
+  useDialogLayer(open, { panelRef, areaRef: sheet ? backdropRef : panelRef, returnFocusRef: anchorRef });
 
   const heading = (
     <p id={titleId} className="one-line-safe mb-2 text-xs font-black uppercase text-[var(--faint)]">
@@ -611,7 +614,8 @@ export function DateField({
   min,
   max,
   label,
-  optional = false
+  optional = false,
+  compact = false
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -619,6 +623,8 @@ export function DateField({
   max?: string;
   label: string;
   optional?: boolean;
+  /** Il titolo resta solo per il lettore di schermo (per le righe compatte). */
+  compact?: boolean;
 }) {
   const picker = usePicker();
   const today = todayYmd();
@@ -642,6 +648,7 @@ export function DateField({
         spoken={valid ? formatDateLong(valid) : ""}
         picker={picker}
         onOpen={open}
+        compact={compact}
       />
       <PickerShell open={picker.open} sheet={picker.sheet} host={picker.host} onClose={picker.close} anchorRef={picker.buttonRef} title={label} width="20.5rem">
         <MonthCalendar focusDay={focusDay} onFocusDay={setFocusDay} onPick={choose} today={today} selected={valid || undefined} min={min} max={max} />
@@ -675,6 +682,7 @@ export function DateTimeField({
   value,
   onChange,
   min,
+  max,
   label,
   allDay = false,
   optional = false,
@@ -683,6 +691,8 @@ export function DateTimeField({
   value: string;
   onChange: (value: string) => void;
   min?: string;
+  /** Ultimo giorno selezionabile, "YYYY-MM-DD" (i giorni dopo non si scelgono). */
+  max?: string;
   label: string;
   allDay?: boolean;
   optional?: boolean;
@@ -708,7 +718,7 @@ export function DateTimeField({
   }, [currentTime]);
 
   const open = () => {
-    setFocusDay(clampYmd(parts?.date ?? today, minDate));
+    setFocusDay(clampYmd(parts?.date ?? today, minDate, max));
     setTyped(currentTime);
     setTimeError("");
     picker.openPicker();
@@ -766,6 +776,7 @@ export function DateTimeField({
             today={today}
             selected={parts?.date}
             min={minDate}
+            max={max}
           />
           {allDay ? null : (
             <TimeChooser
@@ -802,7 +813,7 @@ export function DateTimeField({
               {TEXT.clear}
             </Button>
           ) : null}
-          {!isOutOfRange(today, minDate) ? (
+          {!isOutOfRange(today, minDate, max) ? (
             <Button
               variant="soft"
               onClick={() => {
