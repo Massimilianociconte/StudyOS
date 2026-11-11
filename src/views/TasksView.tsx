@@ -1,35 +1,42 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { format, isBefore, parseISO, startOfDay } from "date-fns";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { daysUntil, selectableSubjects, subjectColor, subjectName, urgentTasks } from "../lib/selectors";
-import { PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
-import { Button, EmptyState, IconButton, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import {
+  FILTER_CHIP_TEXT,
+  NO_SUBJECT_LABEL,
+  PRIORITY_LABEL,
+  PRIORITY_TONE,
+  TASK_STATUS_LABEL,
+  TASKS_HELP,
+  TASKS_TEXT,
+  capitalizeFirst,
+  formatMinutes
+} from "../lib/labels";
+import { Button, EmptyState, HelpTip, IconButton, PageActions, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { TaskModal } from "../components/TaskModal";
-import { ShareButton } from "../components/ShareButton";
+import { FilterChip } from "../components/FilterChip";
+import { useShareAction } from "../components/ShareAction";
 import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 
 type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
 type SortMode = "deadline" | "priority" | "recent";
 type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
 
-const statuses: { id: Task["status"]; label: string }[] = [
-  { id: "todo", label: "Da fare" },
-  { id: "doing", label: "In corso" },
-  { id: "blocked", label: "Bloccata" },
-  { id: "done", label: "Completata" },
-  { id: "postponed", label: "Rimandata" }
-];
+const statuses = (["todo", "doing", "blocked", "done", "postponed"] as const).map((id) => ({ id, label: TASK_STATUS_LABEL[id] }));
 
-const isOpen = (task: Task) => task.status !== "done" && task.status !== "archived";
+const isOpen = isOpenTask;
 
-const isOverdue = (task: Task) => (task.dueDate ? isBefore(parseISO(task.dueDate), startOfDay(new Date())) && isOpen(task) : false);
+const isOverdue = (task: Task) => isOverdueTask(task);
 
 const dueLabel = (date: string, overdue = false) => {
   const days = daysUntil(date);
@@ -65,14 +72,38 @@ const stepsText = (task: Task) => {
 export function TasksView() {
   const [mode, setMode] = useUiState<TaskMode>("tasks.mode", "list", { validate: oneOf("list", "kanban", "matrix", "subject", "focus") });
   const [sort, setSort] = useUiState<SortMode>("tasks.sort", "deadline", { validate: oneOf("deadline", "priority", "recent") });
-  const [editingTaskId, setEditingTaskId] = useUiState<string | null>("tasks.editing", null, { scope: "tab", validate: isNullableString });
+  // Chiavi che altre schermate scrivono per portare qui: attività aperta, filtro, materia.
+  const [editingTaskId, setEditingTaskId] = useLinkedUiState<string | null>("tasks.editing", null, { validate: isNullableString });
+  const [filter, setFilter] = useLinkedUiState<TaskFilter>("tasks.filter", "all", { validate: isTaskFilter });
+  const [subjectId, setSubjectId] = useLinkedUiState<string | null>("tasks.subject", null, { validate: isNullableString });
   const [createOpen, setCreateOpen] = useState(false);
-  const { tasks, subjects, addTask, updateTask, toggleTask, deleteTask } = useStudyStore();
+  const { tasks, subjects, addTask, updateTask, toggleTask, deleteTask, setActiveView } = useStudyStore();
+  const share = useShareAction(["tasks"]);
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
   const hasAnyTask = tasks.length > 0;
+  const subjectFilter = subjectFilterTarget(subjects, subjectId);
+
+  // Materia del filtro che non c'è più (eliminata): il filtro si toglie invece di nascondere tutto.
+  useEffect(() => {
+    if (subjectId && !subjectFilter) setSubjectId(null);
+  }, [subjectId, subjectFilter, setSubjectId]);
+
+  // Attività da aprire che non c'è più (eliminata altrove): si dimentica invece di restare in memoria.
+  useEffect(() => {
+    if (editingTaskId && !editingTask) setEditingTaskId(null);
+  }, [editingTaskId, editingTask, setEditingTaskId]);
 
   const visible = useMemo(() => tasks.filter((task) => task.status !== "archived"), [tasks]);
-  const open = visible.filter(isOpen);
+  const ofSubject = useMemo(() => filterTasks(visible, "all", subjectFilter?.id ?? null), [visible, subjectFilter?.id]);
+  const shown = useMemo(() => filterTasks(ofSubject, filter, null), [ofSubject, filter]);
+  const open = shown.filter(isOpen);
+  // Il riepilogo conta la materia scelta ma non "in ritardo / urgenti": quei numeri sono i pulsanti dei filtri.
+  const summary = taskSummary(ofSubject);
+  const filtered = filter !== "all" || Boolean(subjectFilter);
+  const clearFilters = () => {
+    setFilter("all");
+    setSubjectId(null);
+  };
 
   const confirmDelete = async (task: Task) => {
     const label = task.title.length > 80 ? `${task.title.slice(0, 77)}…` : task.title;
@@ -90,75 +121,93 @@ export function TasksView() {
     onDelete: (task) => void confirmDelete(task)
   };
 
-  const stats = [
-    { label: "Da fare", value: String(open.length), tone: "var(--accent)" },
-    { label: "In ritardo", value: String(open.filter(isOverdue).length), tone: "var(--accent-3)" },
-    { label: "Urgenti", value: String(open.filter((task) => task.priority === "urgent").length), tone: "var(--warning)" },
-    { label: "Tempo previsto", value: formatMinutes(open.reduce((sum, task) => sum + (task.estimatedMinutes || 0), 0)), tone: "var(--accent-2)" }
-  ];
+  const newTaskButton = (
+    <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
+      {TASKS_TEXT.newTask}
+    </Button>
+  );
+  const emptyFiltered = (
+    <EmptyState
+      icon="Search"
+      title={TASKS_TEXT.filteredEmptyTitle}
+      body={TASKS_TEXT.filteredEmptyBody}
+      action={
+        <Button variant="soft" icon="X" onClick={clearFilters}>
+          {TASKS_TEXT.clearFilters}
+        </Button>
+      }
+    />
+  );
+  const backToList = (
+    <EmptyState
+      icon="Check"
+      title={TASKS_TEXT.noneHereTitle}
+      body={TASKS_TEXT.noneHereBody}
+      action={
+        <Button variant="soft" icon="List" onClick={() => setMode("list")}>
+          {TASKS_TEXT.backToList}
+        </Button>
+      }
+    />
+  );
 
   return (
     <div>
       <SectionTitle
         title="Attività"
         subtitle="Segna cosa devi fare, con scadenza e priorità, e spunta ogni attività quando l'hai finita."
-        action={
-          <div className="flex flex-wrap items-start gap-2">
-            {hasAnyTask ? (
-              <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
-                Nuova attività
-              </Button>
-            ) : null}
-            <ShareButton scopes={["tasks"]} />
-          </div>
-        }
+        action={<PageActions primary={hasAnyTask ? newTaskButton : undefined} more={share.action ? [share.action] : []} />}
       />
+      {share.element}
 
       {!hasAnyTask ? (
-        <Panel>
-          <div className="mx-auto max-w-md py-6 text-center">
-            <span className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-super bg-[var(--surface-strong)]">
-              <Icon name="Check" className="h-7 w-7 text-[var(--accent-ink)]" />
-            </span>
-            <h3 className="text-2xl font-black">Ancora nessuna attività</h3>
-            <p className="mt-2 text-sm text-[var(--muted)]">Qui annoti compiti, consegne e cose da studiare, ognuna con la sua scadenza.</p>
-            <Button className="mt-5" icon="Plus" variant="primary" onClick={() => setCreateOpen(true)}>
-              Nuova attività
-            </Button>
-          </div>
-        </Panel>
+        <EmptyState
+          icon="Check"
+          title={TASKS_TEXT.emptyTitle}
+          body={TASKS_TEXT.emptyBody}
+          action={
+            <>
+              {newTaskButton}
+              <Button variant="soft" icon="CalendarDays" onClick={() => setActiveView("calendar")}>
+                {TASKS_TEXT.fromCalendar}
+              </Button>
+            </>
+          }
+        />
       ) : (
         <>
-          <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {stats.map((stat) => (
-              <div key={stat.label} className="quiet-panel flex items-center gap-3 p-3.5">
-                <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ background: stat.tone }} />
-                <div className="min-w-0">
-                  <p className="truncate text-xl font-black leading-tight">{stat.value}</p>
-                  <p className="truncate text-xs font-bold text-[var(--muted)]">{stat.label}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <TaskSummaryLine summary={summary} filter={filter} onFilter={setFilter} />
+          {filtered ? (
+            <div role="group" aria-label={TASKS_TEXT.activeFilters} className="mb-3 flex flex-wrap items-center gap-2 px-1">
+              {filter !== "all" ? <FilterChip label={TASKS_TEXT.filterName[filter]} onClear={() => setFilter("all")} /> : null}
+              {subjectFilter ? (
+                <FilterChip label={FILTER_CHIP_TEXT.only(subjectFilter.name)} color={subjectFilter.color} onClear={() => setSubjectId(null)} />
+              ) : null}
+            </div>
+          ) : null}
 
-          <QuickTaskBar subjects={subjects} onAdd={addTask} />
+          <QuickTaskBar subjects={subjects} onAdd={addTask} defaultSubjectId={subjectFilter?.id ?? ""} filtered={filtered} />
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <Segmented
-              label="Come vedere le attività"
-              value={mode}
-              onChange={setMode}
-              options={[
-                { id: "list", label: "Lista", icon: "List", title: "Tutte le attività, raggruppate per scadenza" },
-                { id: "focus", label: "Piano di oggi", icon: "Zap", title: "Solo le 6 attività più urgenti" },
-                { id: "subject", label: "Per materia", icon: "BookOpen", title: "Le attività da fare divise per materia" },
-                { id: "kanban", label: "Per stato", icon: "LayoutGrid", title: "Colonne Da fare, In corso, Completata…: sposta le attività da una all'altra" },
-                { id: "matrix", label: "Urgenza e importanza", icon: "Grid2X2", title: "Quattro riquadri: cosa fare subito, pianificare, ridurre o rimandare" }
-              ]}
-            />
+            <div className="flex min-w-0 max-w-full items-center gap-2">
+              <Segmented
+                label={TASKS_TEXT.views}
+                value={mode}
+                onChange={setMode}
+                className="min-w-0"
+                options={[
+                  { id: "list", label: "Lista", icon: "List", title: "Tutte le attività, raggruppate per scadenza" },
+                  { id: "focus", label: "Piano di oggi", icon: "Zap", title: "Solo le 6 attività più urgenti" },
+                  { id: "subject", label: "Per materia", icon: "BookOpen", title: "Le attività da fare divise per materia" },
+                  { id: "kanban", label: "Per stato", icon: "LayoutGrid", title: "Colonne Da fare, In corso, Completata…: sposta le attività da una all'altra" },
+                  { id: "matrix", label: "Urgenza e importanza", icon: "Grid2X2", title: "Quattro riquadri: cosa fare subito, pianificare, ridurre o rimandare" }
+                ]}
+              />
+              <HelpTip {...TASKS_HELP.views} />
+            </div>
             {mode === "list" ? (
               <label className="flex items-center gap-2 text-xs font-black text-[var(--muted)]">
-                Ordina per
+                {TASKS_TEXT.sortBy}
                 <select
                   className="min-h-11 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--text)]"
                   value={sort}
@@ -172,19 +221,21 @@ export function TasksView() {
             ) : null}
           </div>
 
-          {mode === "list" ? <GroupedList tasks={visible} sort={sort} actions={rowActions} onNew={() => setCreateOpen(true)} /> : null}
+          {mode === "list" ? (
+            <GroupedList tasks={shown} sort={sort} actions={rowActions} onNew={() => setCreateOpen(true)} empty={filtered ? emptyFiltered : null} />
+          ) : null}
           {mode === "focus" ? (
             <Panel>
-              <div className="mb-3 flex items-baseline justify-between gap-2">
-                <h3 className="text-xl font-black">Piano di oggi</h3>
-                <span className="text-xs font-bold text-[var(--muted)]">Le 6 attività più urgenti, per scadenza e priorità</span>
+              <div className="mb-3 flex items-center gap-2">
+                <h3 className="text-xl font-black">{TASKS_TEXT.focusTitle}</h3>
+                <HelpTip {...TASKS_HELP.focus} />
               </div>
-              <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />
+              {!open.length && filtered ? emptyFiltered : <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />}
             </Panel>
           ) : null}
-          {mode === "kanban" ? <Kanban tasks={visible} actions={rowActions} updateTask={updateTask} /> : null}
-          {mode === "matrix" ? <Matrix tasks={open} actions={rowActions} /> : null}
-          {mode === "subject" ? <BySubject tasks={visible} actions={rowActions} /> : null}
+          {mode === "kanban" ? <Kanban tasks={shown} actions={rowActions} updateTask={updateTask} /> : null}
+          {mode === "matrix" ? (open.length ? <Matrix tasks={open} actions={rowActions} /> : filtered ? emptyFiltered : backToList) : null}
+          {mode === "subject" ? (open.length ? <BySubject tasks={shown} actions={rowActions} /> : filtered ? emptyFiltered : backToList) : null}
         </>
       )}
 
@@ -206,75 +257,164 @@ export function TasksView() {
   );
 }
 
-function QuickTaskBar({ subjects, onAdd }: { subjects: Subjects; onAdd: ReturnType<typeof useStudyStore.getState>["addTask"] }) {
+/**
+ * Una riga al posto dei 4 riquadri: "12 da fare · 3 in ritardo · 2 urgenti · 6 h previste". I numeri
+ * in ritardo e urgenti sono pulsanti che applicano il filtro (`tasks.filter`); a zero restano testo.
+ */
+function TaskSummaryLine({
+  summary,
+  filter,
+  onFilter
+}: {
+  summary: ReturnType<typeof taskSummary>;
+  filter: TaskFilter;
+  onFilter: (filter: TaskFilter) => void;
+}) {
+  const toggle = (id: Exclude<TaskFilter, "all">, count: number, text: string, tone: string) => {
+    const active = filter === id;
+    if (!count && !active) return <span>{text}</span>;
+    return (
+      <button
+        type="button"
+        aria-pressed={active}
+        title={TASKS_TEXT.filterAria[id]}
+        onClick={() => onFilter(active ? "all" : id)}
+        className={`motion-safe relative rounded-full font-black underline decoration-dotted decoration-2 underline-offset-4 after:absolute after:-inset-x-1 after:-inset-y-3 after:content-[''] hover:decoration-solid aria-pressed:bg-[var(--surface-strong)] aria-pressed:px-2 aria-pressed:no-underline ${tone}`}
+      >
+        {text}
+      </button>
+    );
+  };
+  const dot = <span aria-hidden="true">·</span>;
+  return (
+    <div role="group" aria-label={TASKS_TEXT.summary} className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm font-bold text-[var(--muted)]">
+      <span className="font-black text-[var(--text)]">{TASKS_TEXT.open(summary.open)}</span>
+      {dot}
+      {toggle("overdue", summary.overdue, TASKS_TEXT.overdue(summary.overdue), summary.overdue ? "text-[var(--danger-text)]" : "")}
+      {dot}
+      {toggle("urgent", summary.urgent, TASKS_TEXT.urgent(summary.urgent), summary.urgent ? "text-[var(--warning-text)]" : "")}
+      {summary.minutes ? (
+        <>
+          {dot}
+          <span>{TASKS_TEXT.planned(summary.minutes)}</span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Aggiunta rapida: un campo solo, Invio per aggiungere. "Dettagli" apre materia, priorità e scadenza.
+ * Con il filtro per materia attivo la nuova attività prende quella materia (così compare nell'elenco).
+ */
+function QuickTaskBar({
+  subjects,
+  onAdd,
+  defaultSubjectId,
+  filtered
+}: {
+  subjects: Subjects;
+  onAdd: ReturnType<typeof useStudyStore.getState>["addTask"];
+  defaultSubjectId: string;
+  filtered: boolean;
+}) {
   const [title, setTitle] = useState("");
-  const [subjectId, setSubjectId] = useState("");
+  const [subjectId, setSubjectId] = useState(defaultSubjectId);
   const [priority, setPriority] = useState<Task["priority"]>("medium");
   const [dueDate, setDueDate] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [added, setAdded] = useState("");
+
+  useEffect(() => setSubjectId(defaultSubjectId), [defaultSubjectId]);
+
+  useEffect(() => {
+    if (!added) return;
+    const timer = window.setTimeout(() => setAdded(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [added]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!title.trim()) return;
+    const text = title.trim();
+    if (!text) return;
     const due = dueDate ? new Date(`${dueDate}T18:00`) : undefined;
     await onAdd({
-      title: title.trim(),
+      title: text,
       subjectId: subjectId || undefined,
       priority,
       importance: priority === "urgent" ? 5 : 3,
       dueDate: due && !Number.isNaN(due.getTime()) ? due.toISOString() : undefined
     });
     setTitle("");
+    setAdded(filtered ? TASKS_TEXT.addedFiltered(text) : "");
   };
 
   const selectClass = "min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)]";
 
   return (
-    // Una riga sola solo da xl: su tablet il titolo ha una riga intera e i filtri stanno sotto.
-    <div className="mb-4">
-      <p className="mb-1.5 px-1 text-xs font-black uppercase text-[var(--faint)]">Aggiunta rapida</p>
-      <form onSubmit={submit} className="soft-panel grid grid-cols-1 gap-2 p-2.5 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] xl:items-center">
-      <label className="relative block min-w-0">
-        <span className="sr-only">Cosa devi fare</span>
-        <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input
-          id="quick-task-title"
-          className={`${inputClass} pl-10`}
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Es. Consegnare la relazione di laboratorio, poi Invio"
-        />
-      </label>
-      <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] xl:contents">
-        <select className={`${selectClass} min-w-0 xl:max-w-[200px]`} value={subjectId} onChange={(event) => setSubjectId(event.target.value)} aria-label="Materia (facoltativa)">
-          <option value="">Nessuna materia</option>
-          {selectableSubjects(subjects, subjectId).map((subject) => (
-            <option value={subject.id} key={subject.id}>
-              {subject.name}
-            </option>
-          ))}
-        </select>
-        <select className={`${selectClass} min-w-0`} value={priority} onChange={(event) => setPriority(event.target.value as Task["priority"])} aria-label="Priorità">
-          {(Object.keys(PRIORITY_LABEL) as Task["priority"][]).map((key) => (
-            <option key={key} value={key}>
-              {priorityText(key)}
-            </option>
-          ))}
-        </select>
-        <input
-          className={`${selectClass} min-w-0`}
-          type="date"
-          value={dueDate}
-          onChange={(event) => setDueDate(event.target.value)}
-          aria-label="Scadenza (facoltativa)"
-          title="Scadenza (facoltativa)"
-        />
+    <form onSubmit={submit} aria-label={TASKS_TEXT.quickAdd} className="soft-panel mb-4 p-2">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <label className="relative block min-w-0 flex-1">
+          <span className="sr-only">{TASKS_TEXT.quickAddField}</span>
+          <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
+          <input
+            id="quick-task-title"
+            className={`${inputClass} pl-10`}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder={TASKS_TEXT.quickAddPlaceholder}
+            enterKeyHint="done"
+          />
+        </label>
+        <button
+          type="button"
+          aria-expanded={detailsOpen}
+          aria-controls="quick-task-details"
+          title={TASKS_TEXT.detailsAria}
+          onClick={() => setDetailsOpen((value) => !value)}
+          className="motion-safe inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-black text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)] aria-expanded:bg-[var(--surface-strong)] aria-expanded:text-[var(--text)]"
+        >
+          {TASKS_TEXT.details}
+          <Icon name="ChevronDown" className={`h-3.5 w-3.5 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
+        </button>
         {/* Il primario della pagina è "Nuova attività": qui l'aggiunta veloce resta secondaria. */}
-        <Button type="submit" variant="soft" icon="Plus" disabled={!title.trim()} className="min-[480px]:col-span-3 sm:col-span-1">
-          Aggiungi
+        {/* Solo icona sul telefono: "!" perché px-4 e gap-2 di Button vincerebbero, e l'icona resterebbe fuori centro. */}
+        <Button type="submit" variant="soft" icon="Plus" disabled={!title.trim()} aria-label={TASKS_TEXT.add} className="w-11 shrink-0 !gap-0 !px-0 sm:w-auto sm:!gap-2 sm:!px-4">
+          <span className="hidden sm:inline">{TASKS_TEXT.add}</span>
         </Button>
       </div>
+      {detailsOpen ? (
+        <div id="quick-task-details" className="mt-2 grid grid-cols-1 gap-2 min-[480px]:grid-cols-3">
+          <select className={`${selectClass} min-w-0`} value={subjectId} onChange={(event) => setSubjectId(event.target.value)} aria-label={TASKS_TEXT.subjectOptional}>
+            <option value="">{TASKS_TEXT.noSubject}</option>
+            {selectableSubjects(subjects, subjectId).map((subject) => (
+              <option value={subject.id} key={subject.id}>
+                {subject.name}
+              </option>
+            ))}
+          </select>
+          <select className={`${selectClass} min-w-0`} value={priority} onChange={(event) => setPriority(event.target.value as Task["priority"])} aria-label={TASKS_TEXT.priority}>
+            {(Object.keys(PRIORITY_LABEL) as Task["priority"][]).map((key) => (
+              <option key={key} value={key}>
+                {priorityText(key)}
+              </option>
+            ))}
+          </select>
+          <input
+            className={`${selectClass} min-w-0`}
+            type="date"
+            value={dueDate}
+            onChange={(event) => setDueDate(event.target.value)}
+            aria-label={TASKS_TEXT.dueOptional}
+            title={TASKS_TEXT.dueOptional}
+          />
+        </div>
+      ) : null}
+      {/* Sempre presente: il lettore di schermo annuncia il testo appena compare. */}
+      <div role="status" aria-live="polite">
+        {added ? <p className="mt-1.5 px-2 text-xs font-bold text-[var(--muted)]">{added}</p> : null}
+      </div>
     </form>
-    </div>
   );
 }
 
@@ -393,7 +533,20 @@ function RowList({ tasks, actions, compact, empty }: { tasks: Task[]; actions: R
   );
 }
 
-function GroupedList({ tasks, sort, actions, onNew }: { tasks: Task[]; sort: SortMode; actions: RowActions; onNew: () => void }) {
+function GroupedList({
+  tasks,
+  sort,
+  actions,
+  onNew,
+  empty
+}: {
+  tasks: Task[];
+  sort: SortMode;
+  actions: RowActions;
+  onNew: () => void;
+  /** Con un filtro attivo e nulla da mostrare: lo stato vuoto che toglie i filtri. */
+  empty: ReactNode;
+}) {
   const [showDone, setShowDone] = useUiState("tasks.showDone", false);
   const open = tasks.filter(isOpen);
   const done = tasks
@@ -413,7 +566,9 @@ function GroupedList({ tasks, sort, actions, onNew }: { tasks: Task[]; sort: Sor
 
   return (
     <Panel>
-      {open.length === 0 ? (
+      {open.length === 0 && empty ? (
+        empty
+      ) : open.length === 0 ? (
         <EmptyState
           icon="Check"
           title="Hai fatto tutto"
@@ -647,9 +802,10 @@ function Matrix({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
   ];
   return (
     <div>
-      <p className="mb-3 px-1 text-xs font-bold text-[var(--muted)]">
-        Urgente = priorità alta o urgente. Importante = importanza 4 o 5 su 5 (la trovi in «Altre opzioni» quando apri un'attività).
-      </p>
+      {/* La regola dei riquadri sta nell'aiuto "?" invece che in una frase sempre visibile. */}
+      <div className="mb-3 px-1">
+        <HelpTip {...TASKS_HELP.matrix} label={TASKS_TEXT.howItWorks} />
+      </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {quadrants.map((quadrant) => {
           const items = tasks.filter(quadrant.test).sort(byDue);
@@ -676,13 +832,11 @@ function BySubject({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
     ...actions.subjects.map((subject) => ({ id: subject.id, name: subject.name, color: subject.color, items: open.filter((task) => task.subjectId === subject.id) })),
     {
       id: "none",
-      name: "Senza materia",
+      name: NO_SUBJECT_LABEL,
       color: "var(--faint)",
       items: open.filter((task) => !task.subjectId || !actions.subjects.some((subject) => subject.id === task.subjectId))
     }
   ].filter((group) => group.items.length);
-
-  if (!groups.length) return <Panel><p className="p-6 text-center text-sm font-bold text-[var(--muted)]">Non hai attività da fare.</p></Panel>;
 
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

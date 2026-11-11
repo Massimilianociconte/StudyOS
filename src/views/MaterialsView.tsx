@@ -1,9 +1,11 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import type { Attachment } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
-import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, attachmentKind, hostOf, type AttachmentKind } from "../lib/labels";
-import { Button, EmptyState, Field, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, MATERIALS_HELP, MATERIALS_TEXT, attachmentKind, capitalizeFirst, hostOf, type AttachmentKind } from "../lib/labels";
+import { Button, EmptyState, Field, HelpTip, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
+import { HelpField } from "../components/HelpField";
+import { goToView } from "../hooks/useLinkedUiState";
 import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
@@ -45,6 +47,28 @@ export function MaterialsView() {
     if (type === "studySession") return sessions.find((session) => session.id === id)?.title ?? "Sessione di studio";
     if (type === "exam") return `Esame · ${subjectName(subjects, exams.find((exam) => exam.id === id)?.subjectId)}`;
     return "Elemento";
+  };
+
+  // Pillola del collegamento sulla scheda: la materia filtra qui; attività, esame ed evento si aprono
+  // nella loro sezione. Se l'elemento non c'è più resta un'etichetta.
+  const linkedAction = (attachment: Attachment): { aria: string; run: () => void } | null => {
+    const { linkedEntityType: type, linkedEntityId: id } = attachment;
+    if (!type || !id) return null;
+    if (type === "subject" && subjects.some((subject) => subject.id === id)) return { aria: MATERIALS_TEXT.filterBySubject, run: () => setSubjectFilter(id) };
+    if (type === "task" && tasks.some((task) => task.id === id)) return { aria: MATERIALS_TEXT.openLinked, run: () => goToView("tasks", [["tasks.editing", id, "tab"]]) };
+    if (type === "exam" && exams.some((exam) => exam.id === id)) return { aria: MATERIALS_TEXT.openLinked, run: () => goToView("exams", [["exams.editing", id, "tab"]]) };
+    if (type === "calendarEvent" && events.some((event) => event.id === id)) return { aria: MATERIALS_TEXT.openLinked, run: () => goToView("calendar", [["calendar.editingEvent", id, "tab"]]) };
+    return null;
+  };
+
+  const fileInput = useRef<HTMLInputElement>(null);
+  const uploadFile = async (file: File) => {
+    setUploadError("");
+    try {
+      await addAttachment(file, subjectFilter ? { type: "subject", id: subjectFilter } : undefined);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "File non caricato: riprova o scegli un altro file.");
+    }
   };
 
   const counts = useMemo(() => {
@@ -120,15 +144,21 @@ export function MaterialsView() {
         action={<ShareButton scopes={["materials"]} />}
       />
 
-      <AddBar
-        onFile={async (file) => {
-          setUploadError("");
-          try {
-            await addAttachment(file, subjectFilter ? { type: "subject", id: subjectFilter } : undefined);
-          } catch (error) {
-            setUploadError(error instanceof Error ? error.message : "File non caricato: riprova o scegli un altro file.");
-          }
+      {/* Il campo file dell'invito nello stato vuoto: il pulsante lo apre. */}
+      <input
+        ref={fileInput}
+        type="file"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) await uploadFile(file);
         }}
+      />
+      <AddBar
+        onFile={uploadFile}
         onLink={async (rawUrl, name) => {
           const safe = normalizeExternalUrl(rawUrl);
           if (!safe) {
@@ -153,28 +183,33 @@ export function MaterialsView() {
           <input className={`${inputClass} pl-10`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca per nome, etichetta o link" />
         </label>
         <Segmented label="Tipo di materiale" size="sm" value={kind} onChange={setKind} options={kindOptions} />
-        <select
-          className="min-h-9 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black lg:ml-auto"
-          value={subjectFilter}
-          onChange={(event) => setSubjectFilter(event.target.value)}
-          aria-label="Filtra per materia"
-        >
-          <option value="">Tutte le materie</option>
-          {subjects.map((subject) => (
-            <option key={subject.id} value={subject.id}>
-              {subject.name}
-            </option>
-          ))}
-        </select>
+        <span className="flex min-w-0 items-center gap-1.5 lg:ml-auto">
+          <select
+            className="min-h-9 min-w-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black"
+            value={subjectFilter}
+            onChange={(event) => setSubjectFilter(event.target.value)}
+            aria-label={MATERIALS_TEXT.subjectFilter}
+          >
+            <option value="">{MATERIALS_TEXT.allSubjects}</option>
+            {/* Archiviate solo se già scelte: il filtro non si perde, ma l'elenco resta corto. */}
+            {selectableSubjects(subjects, subjectFilter).map((subject) => (
+              <option key={subject.id} value={subject.id}>
+                {subject.name}
+              </option>
+            ))}
+          </select>
+          <HelpTip {...MATERIALS_HELP.subjectFilter} />
+        </span>
       </div>
 
       {filtered.length ? (
-        <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
+        <div className="grid grid-cols-1 gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
           {filtered.map((attachment) => {
             const attachmentType = attachmentKind(attachment);
             const href = attachment.externalUrl ? safeHref(attachment.externalUrl) : undefined;
             const download = !href ? safeDataUrl(attachment.dataUrl) : undefined;
             const linked = linkedName(attachment.linkedEntityType, attachment.linkedEntityId);
+            const linkAction = linkedAction(attachment);
             const color = attachment.linkedEntityType === "subject" ? subjectColor(subjects, attachment.linkedEntityId) : undefined;
             return (
               <article key={attachment.id} className="quiet-panel group flex min-w-0 items-start gap-3 p-3" data-testid="attachment-card">
@@ -195,9 +230,15 @@ export function MaterialsView() {
                   </p>
                   {linked || attachment.tags.length ? (
                     <div className="mt-1.5 flex flex-wrap gap-1">
-                      {linked ? <Tag color={color}>{linked}</Tag> : null}
+                      {linked ? (
+                        linkAction ? (
+                          <PillButton label={linked} color={color} aria={linkAction.aria} onClick={linkAction.run} />
+                        ) : (
+                          <Tag color={color}>{linked}</Tag>
+                        )
+                      ) : null}
                       {attachment.tags.slice(0, 3).map((tag) => (
-                        <Tag key={tag}>#{tag}</Tag>
+                        <PillButton key={tag} label={`#${tag}`} aria={MATERIALS_TEXT.searchTag} onClick={() => setQuery(tag)} />
                       ))}
                     </div>
                   ) : null}
@@ -248,8 +289,8 @@ export function MaterialsView() {
         attachments.length ? (
           <EmptyState
             icon="Search"
-            title="Nessun materiale trovato"
-            body="Nessun materiale corrisponde alla ricerca o ai filtri scelti."
+            title={MATERIALS_TEXT.noneFoundTitle}
+            body={MATERIALS_TEXT.noneFoundBody}
             action={
               <Button
                 variant="soft"
@@ -259,18 +300,27 @@ export function MaterialsView() {
                   setSubjectFilter("");
                 }}
               >
-                Mostra tutti i materiali
+                {MATERIALS_TEXT.showAll}
               </Button>
             }
           />
         ) : (
-          <EmptyState icon="Paperclip" title="Ancora nessun materiale" body="Qui ritrovi dispense, appunti e link: carica un file o salva un link qui sopra." />
+          <EmptyState
+            icon="Paperclip"
+            title={MATERIALS_TEXT.emptyTitle}
+            body={MATERIALS_TEXT.emptyBody}
+            action={
+              <Button variant="primary" icon="Upload" onClick={() => fileInput.current?.click()}>
+                {MATERIALS_TEXT.upload}
+              </Button>
+            }
+          />
         )
       )}
 
       {editingAttachment ? (
         <div
-          className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
+          className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
           role="dialog"
           aria-modal="true"
           aria-label="Modifica materiale"
@@ -300,16 +350,18 @@ export function MaterialsView() {
                 </Field>
               ) : null}
               {!editingAttachment.linkedEntityType || editingAttachment.linkedEntityType === "subject" ? (
-                <Field label="Materia">
-                  <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-                    <option value="">Nessuna materia</option>
-                    {selectableSubjects(subjects, draft.subjectId).map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                <HelpField label="Materia" help={MATERIALS_HELP.subject}>
+                  {(id) => (
+                    <select id={id} className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
+                      <option value="">Nessuna materia</option>
+                      {selectableSubjects(subjects, draft.subjectId).map((subject) => (
+                        <option key={subject.id} value={subject.id}>
+                          {subject.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </HelpField>
               ) : (
                 <p className="rounded-[16px] bg-[var(--surface-soft)] p-3 text-sm">
                   Collegato a: <span className="font-black">{linkedName(editingAttachment.linkedEntityType, editingAttachment.linkedEntityId)}</span>
@@ -318,9 +370,9 @@ export function MaterialsView() {
               <Field label="Descrizione (facoltativa)">
                 <textarea className={`${inputClass} min-h-20 py-3`} value={draft.description} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} />
               </Field>
-              <Field label="Etichette, separate da virgola (facoltative)">
-                <input className={inputClass} value={draft.tags} onChange={(event) => setDraft((value) => ({ ...value, tags: event.target.value }))} placeholder="Es. appunti, esame" />
-              </Field>
+              <HelpField label="Etichette, separate da virgola (facoltative)" help={MATERIALS_HELP.tags}>
+                {(id) => <input id={id} className={inputClass} value={draft.tags} onChange={(event) => setDraft((value) => ({ ...value, tags: event.target.value }))} placeholder="Es. appunti, esame" />}
+              </HelpField>
 
               {uploadError ? (
                 <p className="text-sm font-bold text-[var(--warning-text)]" role="alert">
@@ -384,14 +436,27 @@ function AddBar({ onFile, onLink }: { onFile: (file: File) => Promise<void>; onL
           <input className={`${inputClass} pl-10`} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Indirizzo del link (https://…)" inputMode="url" />
         </label>
         <input className={`${inputClass} min-w-0 flex-1`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome (facoltativo)" aria-label="Nome del link (facoltativo)" />
-        <button
-          type="submit"
-          disabled={!url.trim()}
-          className="motion-safe inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)] disabled:opacity-50"
-        >
-          <Icon name="Plus" className="h-4 w-4" /> Salva un link
-        </button>
+        <Button type="submit" variant="soft" icon="Plus" disabled={!url.trim()} className="shrink-0">
+          {MATERIALS_TEXT.saveLink}
+        </Button>
       </form>
     </div>
+  );
+}
+
+/** Pillola che fa qualcosa (filtra, cerca, apre): stessa forma di `Tag`, ma con bordo e stato al passaggio. */
+function PillButton({ label, color, aria, onClick }: { label: string; color?: string; aria: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={capitalizeFirst(aria)}
+      className="motion-safe relative inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-[11px] font-extrabold text-[var(--muted)] after:absolute after:-inset-y-2.5 after:inset-x-0 after:content-[''] hover:border-[var(--accent-ink)] hover:text-[var(--text)]"
+    >
+      {color ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} /> : null}
+      <span className="min-w-0 truncate">{label}</span>
+      {/* Il nome resta il testo della pillola; cosa fa si aggiunge solo a voce. */}
+      <span className="sr-only">: {aria}</span>
+    </button>
   );
 }

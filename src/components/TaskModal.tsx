@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects } from "../lib/selectors";
@@ -70,7 +71,8 @@ export function TaskModal({
     }
   };
 
-  return (
+  // Portal su body come Drawer: dentro la vista la barra in basso del telefono restava sopra la finestra.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
       role="dialog"
@@ -166,5 +168,7 @@ export function TaskModal({
         </div>
       </section>
     </div>
+    ,
+    document.body
   );
 }

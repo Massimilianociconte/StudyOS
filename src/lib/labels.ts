@@ -285,6 +285,239 @@ export const GOAL_CATEGORY_LABEL: Record<Goal["category"], string> = {
   project: "Progetto"
 };
 
+// ——— Attività, Materie, Materiali, Obiettivi e Home: riepiloghi, filtri, collegamenti, aiuti "?" ———
+
+/** Pillola di un filtro attivo, uguale in ogni sezione: "In ritardo ✕", "Solo: Analisi ✕". */
+export const FILTER_CHIP_TEXT = {
+  only: (name: string) => `Solo: ${name}`,
+  clear: (name: string) => `Togli il filtro «${name}»`
+} as const;
+
+/** "Condividi" come voce del menu "Altre azioni". */
+export const SHARE_ACTION_LABEL = "Condividi";
+
+export const TASKS_TEXT = {
+  newTask: "Nuova attività",
+  summary: "Riepilogo delle attività da fare",
+  open: (count: number) => `${count} da fare`,
+  overdue: (count: number) => `${count} in ritardo`,
+  urgent: (count: number) => `${count} ${count === 1 ? "urgente" : "urgenti"}`,
+  planned: (minutes: number) => `${formatMinutes(minutes)} previste`,
+  /** Nome del filtro nella pillola "✕" e nell'aiuto dei pulsanti del riepilogo. */
+  filterName: { overdue: "In ritardo", urgent: "Urgenti" },
+  filterAria: { overdue: "Mostra solo le attività in ritardo", urgent: "Mostra solo le attività urgenti" },
+  activeFilters: "Filtri attivi",
+  quickAdd: "Aggiunta rapida",
+  quickAddField: "Scrivi un'attività",
+  quickAddPlaceholder: "Scrivi un'attività…",
+  details: "Dettagli",
+  detailsAria: "Dettagli: materia, priorità e scadenza",
+  add: "Aggiungi",
+  subjectOptional: "Materia (facoltativa)",
+  noSubject: "Nessuna materia",
+  priority: "Priorità",
+  dueOptional: "Scadenza (facoltativa)",
+  /** Dopo l'aggiunta rapida con un filtro attivo: l'attività può non comparire nell'elenco filtrato. */
+  addedFiltered: (title: string) => `Aggiunta «${title}». Se non la vedi, togli i filtri.`,
+  views: "Come vedere le attività",
+  sortBy: "Ordina per",
+  emptyTitle: "Ancora nessuna attività",
+  emptyBody: "Qui annoti compiti, consegne e cose da studiare. Es.: «Esercizi 1–10 di pagina 52, entro venerdì».",
+  fromCalendar: "Scegli dal calendario",
+  filteredEmptyTitle: "Nessuna attività con questi filtri",
+  filteredEmptyBody: "Togli i filtri per rivedere tutte le attività da fare.",
+  clearFilters: "Togli i filtri",
+  noneHereTitle: "Niente da fare qui",
+  noneHereBody: "Non hai attività da fare da mostrare in questa vista. Es.: aggiungine una dalla lista.",
+  backToList: "Torna alla lista",
+  focusTitle: "Piano di oggi",
+  howItWorks: "Come funziona?",
+  close: "Chiudi senza salvare"
+} as const;
+
+export const TASKS_HELP = {
+  views: {
+    title: "Come vedere le attività",
+    text: "Lista: tutte, divise per scadenza. Piano di oggi: le 6 più urgenti. Per materia: divise per materia. Per stato: colonne Da fare, In corso, Completata… tra cui spostarle. Urgenza e importanza: quattro riquadri per decidere cosa fare prima."
+  },
+  focus: { title: "Piano di oggi", text: "Le 6 attività da fare più urgenti, in ordine di scadenza e priorità." },
+  matrix: {
+    title: "Urgenza e importanza",
+    text: "Quattro riquadri per decidere cosa fare prima. Urgente = priorità alta o urgente. Importante = importanza 4 o 5, che imposti aprendo l'attività.",
+    example: "«Consegnare la relazione domani» va in «Fai ora»."
+  },
+  effort: {
+    label: "A cosa servono?",
+    title: "Importanza, difficoltà ed energia",
+    text: "Ti aiutano a scegliere cosa fare in base a come stai.",
+    example: "se sei stanco, scegli un'attività con energia bassa, come riordinare gli appunti."
+  },
+  status: {
+    title: "Stato «In corso»",
+    text: "Quando metti un'attività «In corso» parte un timer che misura quanto ci metti. Lo fermi cambiando stato."
+  }
+} as const;
+
+const daysText = (count: number) => `${count} ${count === 1 ? "giorno" : "giorni"}`;
+
+export const SUBJECTS_TEXT = {
+  /** "3 materie in corso · 21 CFU (1° semestre 15 CFU · 2° semestre 6 CFU)". */
+  subtitle: (count: number, cfu: number, bySemester: string) =>
+    `${count} ${count === 1 ? "materia in corso" : "materie in corso"} · ${cfu} CFU${bySemester ? ` (${bySemester})` : ""}. Tocca una materia per vederne esami, materiali e argomenti.`,
+  subtitleEmpty: "Aggiungi le materie che segui: ognuna raccoglie esami, attività, materiali e ore di studio.",
+  semesterFilter: "Filtra le materie per semestre",
+  allSemesters: "Tutte",
+  add: "Aggiungi materia",
+  nameField: "Nome della nuova materia",
+  namePlaceholder: "Nome della materia (Es. Biochimica)",
+  chooseFromCourse: "Scegli dal corso di laurea",
+  typeName: "Scrivi il nome",
+  emptyTitle: "Ancora nessuna materia",
+  emptyBodyCourse: "Scegli le materie dal piano del tuo corso di laurea, oppure scrivi il nome qui sopra. Es.: «Biochimica».",
+  emptyBody: "Scrivi il nome qui sopra e premi «Aggiungi materia»: qui vedrai CFU, esami e ore di studio. Es.: «Biochimica».",
+  noneInSemesterTitle: "Nessuna materia in questo periodo",
+  noneInSemesterBody: "Scegli un altro semestre oppure torna a tutte le materie.",
+  showAll: "Mostra tutte le materie",
+  cardMenu: (name: string) => `Azioni per ${name}`,
+  markAs: (status: string) => `Segna come ${status.toLowerCase()}`,
+  restore: "Ripristina",
+  restoreSubject: "Ripristina materia",
+  archiveSubject: "Archivia materia",
+  completed: "Superate",
+  archivedGroup: "Archiviate",
+  days: daysText,
+  /** Pillola dell'esame sulla scheda: "12 dic · 30 giorni". */
+  examPill: (date: string, count: number) => `${date} · ${daysText(count)}`,
+  openExam: (name: string) => `Apri l'esame di ${name}`,
+  examIn: "Esame tra",
+  openTask: (title: string) => `Apri l'attività «${title}»`,
+  allTasks: "Vedi le attività della materia",
+  noTasks: "Nessuna attività da fare per questa materia."
+} as const;
+
+export const SUBJECTS_HELP = {
+  cfu: {
+    title: "CFU",
+    text: "I crediti dell'esame: dicono quanto pesa.",
+    example: "nella media ponderata un esame da 9 CFU conta più di uno da 6."
+  },
+  archive: {
+    title: "Archivia",
+    text: "La materia sparisce dall'elenco, ma attività, esami e materiali restano. La ritrovi in «Archiviate», da dove puoi anche eliminarla per sempre."
+  },
+  semester: {
+    title: "Semestre",
+    text: "Se la segui in un periodo diverso da quello del piano ufficiale, sceglilo qui.",
+    example: "la recuperi nel secondo semestre."
+  }
+} as const;
+
+export const MATERIALS_TEXT = {
+  upload: "Carica un file",
+  saveLink: "Salva un link",
+  // Cosa fanno le pillole delle schede: si leggono dopo il testo della pillola, che dice già il nome.
+  /** La pillola della materia applica il filtro. */
+  filterBySubject: "mostra solo i materiali di questa materia",
+  /** L'etichetta va nella ricerca. */
+  searchTag: "cerca i materiali con questa etichetta",
+  openLinked: "apri",
+  subjectFilter: "Filtra per materia",
+  allSubjects: "Tutte le materie",
+  emptyTitle: "Ancora nessun materiale",
+  emptyBody: "Qui ritrovi dispense, appunti e link. Es.: le slide di una lezione o il link a un video.",
+  noneFoundTitle: "Nessun materiale trovato",
+  noneFoundBody: "Nessun materiale corrisponde alla ricerca o ai filtri scelti.",
+  showAll: "Mostra tutti i materiali"
+} as const;
+
+export const MATERIALS_HELP = {
+  subject: {
+    title: "Materia",
+    text: "Collegalo a una materia e lo ritrovi anche nella sua scheda.",
+    example: "le slide di Anatomia."
+  },
+  tags: {
+    title: "Etichette",
+    text: "Parole per ritrovarlo con la ricerca.",
+    example: "«orale», «formulario»."
+  },
+  subjectFilter: {
+    title: "Filtro per materia",
+    text: "Mostra i materiali collegati alla materia. Quelli collegati a un suo esame, a un'attività o a un evento non compaiono qui: li trovi aprendo l'esame, l'attività o l'evento."
+  }
+} as const;
+
+export const GOALS_TEXT = {
+  subtitle: "Fissa i tuoi traguardi e segna a che punto sei.",
+  newField: "Titolo del nuovo obiettivo",
+  newPlaceholder: "Es. Finire il programma di Patologia",
+  create: "Crea obiettivo",
+  emptyTitle: "Ancora nessun obiettivo",
+  emptyBody: "Un traguardo da raggiungere, come finire un programma o studiare un tot di ore a settimana. Es.: «Finire il programma di Patologia».",
+  createFirst: "Crea il primo obiettivo",
+  noneActiveTitle: "Nessun obiettivo in corso",
+  noneActiveBody: "Quelli raggiunti o archiviati sono qui sotto. Puoi crearne uno nuovo quando vuoi.",
+  createOne: "Crea un obiettivo",
+  metric: "Come lo misuri (facoltativo)"
+} as const;
+
+export const GOALS_HELP = {
+  progress: {
+    label: "Come segno i progressi?",
+    title: "Progressi",
+    text: "Ogni tocco su + o − sposta il progresso del 5%. Al 100% l'obiettivo è raggiunto."
+  },
+  metric: {
+    title: "Come lo misuri",
+    text: "L'unità con cui conti i passi verso il traguardo.",
+    example: "ore a settimana, capitoli, esercizi."
+  }
+} as const;
+
+export const HOME_TEXT = {
+  openCalendar: "Apri calendario",
+  allTasks: "Tutte le attività",
+  allExams: "Tutti gli esami",
+  allSubjects: "Tutte le materie",
+  allGoals: "Tutti gli obiettivi",
+  allMaterials: "Tutti i materiali",
+  emptyToday: "Niente in programma oggi.",
+  addEvent: "Aggiungi un impegno",
+  emptyNext: "Qui comparirà la cosa più urgente da fare.",
+  addTask: "Aggiungi un'attività",
+  emptyExams: "Nessun esame in programma.",
+  addExam: "Aggiungi un esame",
+  emptySubjects: "Nessuna materia in corso.",
+  addSubject: "Aggiungi una materia",
+  emptyUpcoming: "Niente in programma nei prossimi giorni.",
+  emptyGoals: "Nessun obiettivo in corso.",
+  addGoal: "Crea un obiettivo",
+  emptyMaterials: "Ancora nessun materiale.",
+  addMaterial: "Aggiungi PDF, slide o link",
+  /** Detto in coda alle righe cliccabili, dopo il loro testo visibile. */
+  openAction: "apri",
+  findAction: "cerca nei materiali",
+  reviews: (count: number) => `${count} ${count === 1 ? "argomento da ripassare" : "argomenti da ripassare"}`,
+  preparation: (value: number) => `preparazione ${value}%`,
+  importance: (value: number) => `Importanza ${value}/5`
+} as const;
+
+export const HOME_HELP = {
+  next: {
+    title: "Cosa fare adesso",
+    text: "In cima va l'attività che conta di più: pesano la priorità, l'importanza e quanto è vicina la scadenza."
+  },
+  effort: {
+    title: "Energia e importanza",
+    text: "L'energia dice quanta concentrazione serve; l'importanza, da 1 a 5, quanto conta per te. Le cambi aprendo l'attività.",
+    example: "ripassare le formule chiede poca energia, scrivere una relazione molta."
+  },
+  preparation: {
+    title: "Preparazione",
+    text: "Quanto ti senti pronto per l'esame, da 0 a 100%. La aggiorni tu in Esami."
+  }
+} as const;
+
 export const SESSION_STATUS_LABEL: Record<StudySession["status"], string> = {
   planned: "Pianificata",
   running: "In corso",

@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { shortDate, studyDaysUntil } from "../lib/selectors";
 import { readImageFile } from "../lib/files";
-import { ATTACHMENT_KIND_ICON, SUBJECT_REMOVE_TEXT, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
-import { Button, Drawer, EmptyState, Field, IconButton, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { ATTACHMENT_KIND_ICON, SUBJECT_REMOVE_TEXT, SUBJECT_STATUS_LABEL, SUBJECTS_HELP, SUBJECTS_TEXT, attachmentKind, formatHours } from "../lib/labels";
+import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
+import { HelpField } from "../components/HelpField";
 import { InlineConfirm } from "../components/InlineConfirm";
 import { Icon } from "../components/Icon";
 import { CourseIcon } from "../components/CourseIcon";
@@ -14,6 +15,9 @@ import { resolveBarbCourse } from "../lib/university/examSessions";
 import { subjectSemester, SEMESTER_LABEL, SEMESTER_TONE, SEMESTER_IDS, type SemesterId } from "../lib/semesters";
 import { TopicManager } from "../components/TopicManager";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
+import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
+import { cfuBySemester, isArchivedSubject, nextSubjectColor, semesterFilterOptions, subjectMenuItems, type SemesterFilter } from "../lib/subjectCards";
+import { safeCssColor } from "../lib/sharing";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
 // Nomi leggibili dei colori per i lettori di schermo (i codici esadecimali non dicono nulla).
@@ -28,6 +32,19 @@ const SWATCH_NAMES: Record<string, string> = {
   "#A6E3A1": "verde"
 };
 const swatchLabel = (swatch: string) => `Colore ${SWATCH_NAMES[swatch] ?? swatch}`;
+// Icona di ogni stato nel menu "⋯" della scheda.
+const STATUS_ICON: Record<Subject["status"], string> = {
+  "not-started": "CircleDot",
+  active: "PlayCircle",
+  review: "RotateCcw",
+  "exam-ready": "GraduationCap",
+  completed: "Check",
+  archived: "Archive"
+};
+const subjectColor = (subject: Subject) => safeCssColor(subject.color) || "var(--accent)";
+
+/** Porta all'esame aperto in Esami (la sezione legge `exams.editing`). */
+const openExam = (examId: string) => goToView("exams", [["exams.editing", examId, "tab"]]);
 
 type StoreState = ReturnType<typeof useStudyStore.getState>;
 
@@ -48,23 +65,39 @@ const subjectStats = (subject: Subject, state: Pick<StoreState, "tasks" | "sessi
 };
 
 export function SubjectsView() {
-  const [openId, setOpenId] = useUiState<string | null>("subjects.open", null, { scope: "tab", validate: isNullableString });
+  // Letta anche quando un'altra sezione porta qui una materia da aprire (es. dalla Home).
+  const [openId, setOpenId] = useLinkedUiState<string | null>("subjects.open", null, { validate: isNullableString });
   const [showArchived, setShowArchived] = useUiState("subjects.showArchived", false);
-  const [semester, setSemester] = useUiState<SemesterId | "tutti">("subjects.semester", "tutti", { validate: oneOf("tutti", ...SEMESTER_IDS) });
+  const [semester, setSemester] = useUiState<SemesterFilter>("subjects.semester", "tutti", { validate: oneOf("tutti", ...SEMESTER_IDS) });
   const [showCompleted, setShowCompleted] = useUiState("subjects.showCompleted", false);
   const { subjects, tasks, sessions, exams, topics, attachments, addSubject, updateSubject, deleteSubject, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
   const state = { tasks, sessions, exams, attachments };
-  // Ultima materia archiviata dalla scheda: «Annulla» le rende lo stato di prima per qualche secondo.
+  // Ultima materia archiviata (dalla scheda o dal dettaglio): «Annulla» le rende lo stato di prima per qualche secondo.
   const [archivedNotice, setArchivedNotice] = useState<{ id: string; name: string; previous: Subject["status"] } | null>(null);
+  // La scheda archiviata sparisce col suo menu: il focus va su «Annulla», e finché resta lì l'avviso non si chiude.
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const [noticeFocused, setNoticeFocused] = useState(false);
+
+  useEffect(() => {
+    if (!archivedNotice || noticeFocused) return;
+    const timer = window.setTimeout(() => setArchivedNotice(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [archivedNotice, noticeFocused]);
 
   useEffect(() => {
     if (!archivedNotice) return;
-    const timer = window.setTimeout(() => setArchivedNotice(null), 8000);
-    return () => window.clearTimeout(timer);
+    // Dopo il Drawer, che alla chiusura rimette il focus dove l'aveva preso.
+    const frame = window.requestAnimationFrame(() => noticeRef.current?.querySelector("button")?.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(frame);
   }, [archivedNotice]);
 
-  const isArchived = (subject: Subject) => subject.status === "archived" || subject.archived;
+  const open = subjects.find((subject) => subject.id === openId) ?? null;
+  // Materia da aprire che non c'è più (eliminata altrove): si dimentica invece di restare in memoria.
+  useEffect(() => {
+    if (openId && !open) setOpenId(null);
+  }, [openId, open, setOpenId]);
+
   const archiveSubject = (subject: Subject) => {
     setArchivedNotice({ id: subject.id, name: subject.name, previous: subject.status });
     void updateSubject(subject.id, { status: "archived" });
@@ -73,54 +106,62 @@ export function SubjectsView() {
     if (!archivedNotice) return;
     void updateSubject(archivedNotice.id, { status: archivedNotice.previous });
     setArchivedNotice(null);
+    setNoticeFocused(false);
   };
-  // Archiviate: si eliminano per sempre, con una conferma che dice cosa si perde. Le altre si archiviano.
-  const removal = (subject: Subject) => {
-    if (!isArchived(subject)) return { onArchive: () => archiveSubject(subject) };
+  const restoreSubject = (subject: Subject) => void updateSubject(subject.id, { status: "active", archived: false });
+  // Archiviate: si eliminano per sempre, con una conferma che dice cosa si perde.
+  const deleteText = (subject: Subject) => {
     const subjectExams = exams.filter((exam) => exam.subjectId === subject.id);
     const graded = subjectExams.filter((exam) => typeof exam.grade === "number" || exam.passFail).length;
     const topicCount = topics.filter((topic) => topic.subjectId === subject.id).length;
-    return {
-      deleteText: SUBJECT_REMOVE_TEXT.confirm(subject.name, subjectExams.length, graded, topicCount),
-      onDelete: async () => {
-        if (openId === subject.id) setOpenId(null);
-        await deleteSubject(subject.id);
-      }
-    };
+    return SUBJECT_REMOVE_TEXT.confirm(subject.name, subjectExams.length, graded, topicCount);
   };
-  const active = subjects.filter((subject) => !isArchived(subject) && subject.status !== "completed");
+  const deleteForever = async (subject: Subject) => {
+    if (openId === subject.id) setOpenId(null);
+    await deleteSubject(subject.id);
+  };
+
+  const active = subjects.filter((subject) => !isArchivedSubject(subject) && subject.status !== "completed");
   // Materie superate (anche quelle registrate dal libretto): fuori dalla griglia principale.
-  const completed = subjects.filter((subject) => !isArchived(subject) && subject.status === "completed");
-  const archived = subjects.filter(isArchived);
-  const open = subjects.find((subject) => subject.id === openId) ?? null;
+  const completed = subjects.filter((subject) => !isArchivedSubject(subject) && subject.status === "completed");
+  const archived = subjects.filter(isArchivedSubject);
   const visible = active.filter((subject) => semester === "tutti" || subjectSemester(subject) === semester);
   const totalCfu = active.reduce((sum, subject) => sum + (subject.cfu || 0), 0);
+  const semesterOptions = semesterFilterOptions(active.map((subject) => subjectSemester(subject)), semester);
+  const bySemester = cfuBySemester(active.map((subject) => ({ semester: subjectSemester(subject), cfu: subject.cfu })));
+  const focusNewSubject = () => document.getElementById("new-subject-name")?.focus();
 
-  const group = (label: string, items: Subject[], expanded: boolean, toggle: () => void) =>
+  const card = (subject: Subject) => (
+    <SubjectCard
+      key={subject.id}
+      subject={subject}
+      stats={subjectStats(subject, state)}
+      onOpen={() => setOpenId(subject.id)}
+      onStatus={(status) => void updateSubject(subject.id, { status })}
+      onArchive={() => archiveSubject(subject)}
+      onRestore={() => restoreSubject(subject)}
+      deleteText={isArchivedSubject(subject) ? deleteText(subject) : ""}
+      onDelete={() => deleteForever(subject)}
+    />
+  );
+
+  const group = (label: string, items: Subject[], expanded: boolean, toggle: () => void, help?: { title: string; text: string }) =>
     items.length ? (
       <div className="mt-6">
-        <button
-          type="button"
-          onClick={toggle}
-          aria-expanded={expanded}
-          className="mb-2 flex min-h-8 items-center gap-2 text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
-        >
-          <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
-          {label} · {items.length}
-        </button>
+        <div className="mb-2 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={expanded}
+            className="flex min-h-8 items-center gap-2 text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
+          >
+            <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
+            {label} · {items.length}
+          </button>
+          {help ? <HelpTip {...help} /> : null}
+        </div>
         {expanded ? (
-          <div className="grid gap-3 opacity-75 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
-            {items.map((subject) => (
-              <SubjectCard
-                key={subject.id}
-                subject={subject}
-                stats={subjectStats(subject, state)}
-                onOpen={() => setOpenId(subject.id)}
-                onStatus={(status) => void updateSubject(subject.id, { status })}
-                {...removal(subject)}
-              />
-            ))}
-          </div>
+          <div className="grid grid-cols-1 gap-3 opacity-75 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">{items.map(card)}</div>
         ) : null}
       </div>
     ) : null;
@@ -129,41 +170,36 @@ export function SubjectsView() {
     <div>
       <SectionTitle
         title="Materie"
-        subtitle={
-          active.length
-            ? `${active.length} ${active.length === 1 ? "materia in corso" : "materie in corso"} · ${totalCfu} CFU. Apri una materia per vederne esami, materiali e argomenti.`
-            : "Aggiungi le materie che segui: ognuna raccoglie esami, attività, materiali e ore di studio."
-        }
+        subtitle={active.length ? SUBJECTS_TEXT.subtitle(active.length, totalCfu, bySemester) : SUBJECTS_TEXT.subtitleEmpty}
         action={
           // Secondo modo per aggiungere materie: sceglierle dal piano del corso. Quando l'elenco è
           // vuoto lo stesso invito è nel riquadro sotto, per non mostrarlo due volte.
           showBarb && active.length ? (
             <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
-              Scegli dal corso di laurea
+              {SUBJECTS_TEXT.chooseFromCourse}
             </Button>
           ) : undefined
         }
       />
 
-      <NewSubjectBar onAdd={async (name, color) => void (await addSubject({ name, color, status: "active", icon: "BookOpen" }))} />
+      <NewSubjectBar onAdd={async (name) => void (await addSubject({ name, color: nextSubjectColor(subjects, SWATCHES), status: "active", icon: "BookOpen" }))} />
 
-      {active.length > 0 ? <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-4" aria-label="Materie per semestre">
-        {SEMESTER_IDS.map((id) => {
-          const items = active.filter((subject) => subjectSemester(subject) === id);
-          return <button key={id} type="button" aria-pressed={semester === id} onClick={() => setSemester(semester === id ? "tutti" : id)} className={`quiet-panel min-w-0 p-3 text-left ${semester === id ? "ring-2 ring-[var(--accent)]" : ""}`}>
-            <Tag color={SEMESTER_TONE[id]}>{SEMESTER_LABEL[id]}</Tag>
-            <p className="mt-2 text-sm font-black">{items.length} {items.length === 1 ? "materia" : "materie"} · {items.reduce((sum, subject) => sum + subject.cfu, 0)} CFU</p>
-          </button>;
-        })}
-      </div> : null}
-      {active.length > 0 ? <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Filtra materie per semestre">
-        {[{ id: "tutti" as const, label: "Tutte" }, ...SEMESTER_IDS.map((id) => ({ id, label: id === "annuale" ? "Annuali" : SEMESTER_LABEL[id] }))].map((item) => <button key={item.id} type="button" aria-pressed={semester === item.id} onClick={() => setSemester(item.id)} className={`min-h-9 rounded-full px-3 text-xs font-black ${semester === item.id ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)]"}`}>{item.label}</button>)}
-      </div> : null}
+      {/* Un solo filtro, con i conteggi: compare solo quando c'è davvero da scegliere fra più semestri. */}
+      {active.length > 0 && (semesterOptions.length > 2 || semester !== "tutti") ? (
+        <Segmented className="mb-4" label={SUBJECTS_TEXT.semesterFilter} value={semester} options={semesterOptions} onChange={setSemester} />
+      ) : null}
 
       {/* Sempre presente: il lettore di schermo annuncia l'archiviazione appena compare il testo. */}
       <div role="status" aria-live="polite">
         {archivedNotice ? (
-          <div className="soft-panel mb-4 flex flex-wrap items-center gap-2 p-2.5">
+          <div
+            ref={noticeRef}
+            className="soft-panel mb-4 flex flex-wrap items-center gap-2 p-2.5"
+            onFocus={() => setNoticeFocused(true)}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setNoticeFocused(false);
+            }}
+          >
             <Icon name="Archive" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
             <p className="safe-text min-w-0 flex-1 text-sm font-bold">{SUBJECT_REMOVE_TEXT.archived(archivedNotice.name)}</p>
             <Button variant="soft" icon="RotateCcw" onClick={undoArchive}>
@@ -176,92 +212,90 @@ export function SubjectsView() {
       {active.length === 0 ? (
         <EmptyState
           icon="BookOpen"
-          title="Ancora nessuna materia"
-          body={
-            showBarb
-              ? "Scrivi il nome qui sopra e premi «Aggiungi materia», oppure scegli le materie dal piano del corso di laurea."
-              : "Scrivi il nome qui sopra e premi «Aggiungi materia»: qui vedrai CFU, esami e ore di studio."
-          }
+          title={SUBJECTS_TEXT.emptyTitle}
+          body={showBarb ? SUBJECTS_TEXT.emptyBodyCourse : SUBJECTS_TEXT.emptyBody}
           action={
             showBarb ? (
-              <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
-                Scegli dal corso di laurea
+              <>
+                <Button variant="primary" icon="Landmark" onClick={() => setActiveView("barb")}>
+                  {SUBJECTS_TEXT.chooseFromCourse}
+                </Button>
+                <Button variant="soft" icon="PenLine" onClick={focusNewSubject}>
+                  {SUBJECTS_TEXT.typeName}
+                </Button>
+              </>
+            ) : (
+              <Button variant="soft" icon="PenLine" onClick={focusNewSubject}>
+                {SUBJECTS_TEXT.typeName}
               </Button>
-            ) : undefined
+            )
           }
         />
-      ) : visible.length === 0 ? <EmptyState icon="CalendarDays" title="Nessuna materia in questo periodo" body="Scegli un altro semestre oppure torna a tutte le materie." action={<Button variant="soft" onClick={() => setSemester("tutti")}>Mostra tutte le materie</Button>} /> : (
-        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
-          {visible.map((subject) => (
-            <SubjectCard
-              key={subject.id}
-              subject={subject}
-              stats={subjectStats(subject, state)}
-              onOpen={() => setOpenId(subject.id)}
-              onStatus={(status) => void updateSubject(subject.id, { status })}
-              {...removal(subject)}
-            />
-          ))}
-        </div>
+      ) : visible.length === 0 ? (
+        <EmptyState
+          icon="CalendarDays"
+          title={SUBJECTS_TEXT.noneInSemesterTitle}
+          body={SUBJECTS_TEXT.noneInSemesterBody}
+          action={
+            <Button variant="soft" onClick={() => setSemester("tutti")}>
+              {SUBJECTS_TEXT.showAll}
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">{visible.map(card)}</div>
       )}
 
-      {group("Superate", completed, showCompleted, () => setShowCompleted((value) => !value))}
-      {group("Archiviate", archived, showArchived, () => setShowArchived((value) => !value))}
+      {group(SUBJECTS_TEXT.completed, completed, showCompleted, () => setShowCompleted((value) => !value))}
+      {group(SUBJECTS_TEXT.archivedGroup, archived, showArchived, () => setShowArchived((value) => !value), SUBJECTS_HELP.archive)}
 
-      <SubjectDrawer subject={open} onClose={() => setOpenId(null)} />
+      <SubjectDrawer
+        subject={open}
+        onClose={() => setOpenId(null)}
+        onArchive={(subject) => {
+          setOpenId(null);
+          archiveSubject(subject);
+        }}
+        onRestore={restoreSubject}
+      />
     </div>
   );
 }
 
-function NewSubjectBar({ onAdd }: { onAdd: (name: string, color: string) => Promise<void> }) {
+/** Solo il nome: il colore lo sceglie l'app (il primo libero) e si cambia nel dettaglio della materia. */
+function NewSubjectBar({ onAdd }: { onAdd: (name: string) => Promise<void> }) {
   const [name, setName] = useState("");
-  const [color, setColor] = useState(SWATCHES[0]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!name.trim()) return;
-    await onAdd(name.trim(), color);
+    await onAdd(name.trim());
     setName("");
-    setColor(SWATCHES[(SWATCHES.indexOf(color) + 1) % SWATCHES.length]);
   };
   return (
-    <form onSubmit={submit} className="soft-panel mb-4 flex flex-col gap-2 p-2.5 md:flex-row md:items-center">
+    <form onSubmit={submit} className="soft-panel mb-4 flex flex-col gap-2 p-2.5 sm:flex-row sm:items-center">
       <label className="relative block min-w-0 flex-1">
-        <span className="sr-only">Nome della nuova materia</span>
+        <span className="sr-only">{SUBJECTS_TEXT.nameField}</span>
         <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input id="new-subject-name" className={`${inputClass} pl-10`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome della materia (Es. Biochimica)" />
+        <input id="new-subject-name" className={`${inputClass} pl-10`} value={name} onChange={(event) => setName(event.target.value)} placeholder={SUBJECTS_TEXT.namePlaceholder} />
       </label>
-      <div className="flex items-center gap-1.5 px-1" role="radiogroup" aria-label="Colore della materia">
-        {SWATCHES.map((swatch) => (
-          <button
-            key={swatch}
-            type="button"
-            role="radio"
-            aria-checked={color === swatch}
-            aria-label={swatchLabel(swatch)}
-            title={swatchLabel(swatch)}
-            onClick={() => setColor(swatch)}
-            className={`h-7 w-7 rounded-full border-2 ${color === swatch ? "border-[var(--text)]" : "border-transparent"}`}
-            style={{ background: swatch }}
-          />
-        ))}
-      </div>
-      <button
-        type="submit"
-        disabled={!name.trim()}
-        className="motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-5 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
-      >
-        <Icon name="Plus" className="h-4 w-4" /> Aggiungi materia
-      </button>
+      <Button type="submit" variant="primary" icon="Plus" disabled={!name.trim()}>
+        {SUBJECTS_TEXT.add}
+      </Button>
     </form>
   );
 }
 
+/**
+ * Scheda di una materia: tutta la scheda apre il dettaglio (il pulsante del nome copre la scheda con
+ * `after:`), mentre il menu "⋯", la pillola dell'esame e la conferma stanno sopra (`relative z-10`).
+ */
 function SubjectCard({
   subject,
   stats,
   onOpen,
   onStatus,
   onArchive,
+  onRestore,
   onDelete,
   deleteText
 }: {
@@ -269,29 +303,57 @@ function SubjectCard({
   stats: ReturnType<typeof subjectStats>;
   onOpen: () => void;
   onStatus: (status: Subject["status"]) => void;
-  /** Materie non archiviate: archivia subito dalla scheda (l'elenco offre «Annulla»). */
-  onArchive?: () => void;
+  /** Materie non archiviate: archivia subito (l'elenco offre «Annulla»). */
+  onArchive: () => void;
+  onRestore: () => void;
   /** Materie archiviate: elimina per sempre dopo la conferma sul posto con `deleteText`. */
-  onDelete?: () => Promise<void>;
-  deleteText?: string;
+  onDelete: () => Promise<void>;
+  deleteText: string;
 }) {
   const course = resolveBarbCourse(subject, BARB_DATASET.courses);
   const semester = subjectSemester(subject);
+  const color = subjectColor(subject);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const exam = stats.exam;
+  const examPill = exam ? SUBJECTS_TEXT.examPill(shortDate(exam.date), studyDaysUntil(exam.date)) : "";
+
+  const menu = subjectMenuItems(subject).map((item): PageAction => {
+    switch (item.kind) {
+      case "status":
+        return { label: SUBJECTS_TEXT.markAs(SUBJECT_STATUS_LABEL[item.status]), icon: STATUS_ICON[item.status], onClick: () => onStatus(item.status) };
+      case "archive":
+        return { label: SUBJECT_REMOVE_TEXT.archive, icon: "Archive", onClick: onArchive };
+      case "restore":
+        return { label: SUBJECTS_TEXT.restore, icon: "RotateCcw", onClick: onRestore };
+      case "delete":
+        return { label: SUBJECT_REMOVE_TEXT.deleteForever, icon: "Trash2", danger: true, onClick: () => setConfirming(true) };
+    }
+  });
+
   return (
-    <article className="quiet-panel motion-safe group flex min-w-0 flex-col p-3.5 hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--border))]">
+    <article className="quiet-panel motion-safe relative flex min-w-0 flex-col p-3.5 hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--border))]">
       <div className="flex items-start gap-3">
-        <span className="grid grid-cols-1 h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-super" style={{ background: subject.color }}>
+        <span className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center overflow-hidden rounded-super" style={{ background: color }}>
           {subject.cover ? <img src={subject.cover} alt="" className="h-full w-full object-cover" /> : course ? <CourseIcon course={course} className="h-9 w-9 text-[#172333]" /> : <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />}
         </span>
-        <button type="button" onClick={onOpen} aria-haspopup="dialog" className="min-w-0 flex-1 text-left">
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-haspopup="dialog"
+          className="min-w-0 flex-1 self-center text-left after:absolute after:inset-0 after:rounded-[var(--radius-sm)] after:content-[''] focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-[3px] focus-visible:after:outline-offset-2 focus-visible:after:outline-[color-mix(in_srgb,var(--accent)_62%,transparent)]"
+        >
           <h3 className="two-line-safe text-base font-black leading-snug">{subject.name}</h3>
           <p className="one-line-safe text-xs font-bold text-[var(--muted)]">{subject.teacher || "Docente non indicato"}</p>
         </button>
+        <div ref={menuRef} className="relative z-10 -mr-1 -mt-1 shrink-0" role="group" aria-label={SUBJECTS_TEXT.cardMenu(subject.name)}>
+          <PageActions more={menu} />
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold text-[var(--muted)]">
+        <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
         <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag>
         <span>{subject.cfu} CFU</span>
         <span>{stats.openTasks.length} attività da fare</span>
@@ -307,65 +369,39 @@ function SubjectCard({
       {course ? <BarbExamAvailability course={course} /> : null}
       <div className="mt-3">
         <div className="mb-1 flex items-center justify-between text-[11px] font-black">
-          <span className="text-[var(--faint)] uppercase">{stats.exam ? "Preparazione all'esame" : "Attività completate"}</span>
+          <span className="text-[var(--faint)] uppercase">{exam ? "Preparazione all'esame" : "Attività completate"}</span>
           <span>{stats.progress}%</span>
         </div>
-        <ProgressBar value={stats.progress} color={subject.color} />
+        <ProgressBar value={stats.progress} color={color} />
       </div>
 
-      <div className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-3">
-        <select
-          className="min-h-8 min-w-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2.5 text-xs font-black"
-          value={subject.status}
-          onChange={(event) => onStatus(event.target.value as Subject["status"])}
-          aria-label={`Stato di ${subject.name}`}
-        >
-          {(Object.keys(SUBJECT_STATUS_LABEL) as Subject["status"][]).map((status) => (
-            <option key={status} value={status}>
-              {SUBJECT_STATUS_LABEL[status]}
-            </option>
-          ))}
-        </select>
-        {stats.exam ? (
-          <Tag className="shrink-0">
-            <Icon name="GraduationCap" className="mr-1 inline h-3 w-3 align-[-2px]" />
-            {shortDate(stats.exam.date)} · {studyDaysUntil(stats.exam.date)} gg
-          </Tag>
-        ) : null}
-        <button type="button" onClick={onOpen} aria-label={`Apri ${subject.name}`} className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-          Apri <Icon name="ChevronRight" className="h-3.5 w-3.5" />
-        </button>
-        {onArchive ? (
+      {exam ? (
+        <div className="mt-3 border-t border-[var(--border)] pt-3">
           <button
             type="button"
-            onClick={onArchive}
-            aria-label={SUBJECT_REMOVE_TEXT.archiveAria(subject.name)}
-            title={SUBJECT_REMOVE_TEXT.archive}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
+            onClick={() => openExam(exam.id)}
+            aria-label={`${examPill}: ${SUBJECTS_TEXT.openExam(subject.name)}`}
+            className="motion-safe relative z-10 inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full bg-[var(--surface-soft)] px-3 text-xs font-black hover:bg-[var(--surface)]"
           >
-            <Icon name="Archive" className="h-4 w-4" />
+            <Icon name="GraduationCap" className="h-3.5 w-3.5 shrink-0 text-[var(--accent-ink)]" />
+            <span className="min-w-0 truncate">{examPill}</span>
+            <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
           </button>
-        ) : null}
-        {onDelete && !confirming ? (
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            aria-label={SUBJECT_REMOVE_TEXT.deleteAria(subject.name)}
-            title={SUBJECT_REMOVE_TEXT.deleteForever}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--surface-soft)]"
-          >
-            <Icon name="Trash2" className="h-4 w-4" />
-          </button>
-        ) : null}
-      </div>
-      {onDelete && confirming ? (
-        <div className="mt-3">
+        </div>
+      ) : null}
+
+      {confirming ? (
+        <div className="relative z-10 mt-3">
           <InlineConfirm
-            text={deleteText ?? ""}
+            text={deleteText}
             confirmLabel={SUBJECT_REMOVE_TEXT.deleteForever}
             icon="Trash2"
             busy={deleting}
-            onCancel={() => setConfirming(false)}
+            onCancel={() => {
+              setConfirming(false);
+              // La conferma sparisce: il focus torna al menu da cui era partita.
+              menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+            }}
             onConfirm={() => {
               setDeleting(true);
               void onDelete().finally(() => setDeleting(false));
@@ -377,8 +413,19 @@ function SubjectCard({
   );
 }
 
-function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose: () => void }) {
-  const { tasks, sessions, exams, attachments, subjects, updateSubject, addAttachment, updateAttachment, deleteAttachment, setActiveView } = useStudyStore();
+function SubjectDrawer({
+  subject,
+  onClose,
+  onArchive,
+  onRestore
+}: {
+  subject: Subject | null;
+  onClose: () => void;
+  /** Come dalla scheda: subito, il dettaglio si chiude e l'elenco offre «Annulla». */
+  onArchive: (subject: Subject) => void;
+  onRestore: (subject: Subject) => void;
+}) {
+  const { tasks, sessions, exams, attachments, subjects, updateSubject, addAttachment, updateAttachment, deleteAttachment } = useStudyStore();
   const [draft, setDraft] = useState({ name: "", teacher: "", cfu: "6", semester: "", targetGrade: "", color: SWATCHES[0], notes: "" });
   const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
   const [editingAttachment, setEditingAttachment] = useState<Attachment | null>(null);
@@ -433,7 +480,8 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
     ok("Modifiche salvate.");
   };
 
-  const archived = subject?.status === "archived";
+  const archived = subject ? isArchivedSubject(subject) : false;
+  const showTasks = (id: string) => goToView("tasks", [["tasks.subject", id, "tab"], ["tasks.filter", "all", "tab"]]);
 
   return (
     <Drawer
@@ -443,7 +491,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
       eyebrow={
         subject ? (
           <>
-            {course ? <span className="grid h-10 w-10 place-items-center rounded-xl" style={{ background: subject.color }}><CourseIcon course={course} className="h-8 w-8 text-[#172333]" /></span> : <span className="h-3 w-3 rounded-full" style={{ background: subject.color }} />}
+            {course ? <span className="grid h-10 w-10 grid-cols-1 place-items-center rounded-xl" style={{ background: subjectColor(subject) }}><CourseIcon course={course} className="h-8 w-8 text-[#172333]" /></span> : <span className="h-3 w-3 rounded-full" style={{ background: subjectColor(subject) }} />}
             <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag>
             <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
             <Tag>{subject.cfu} CFU</Tag>
@@ -453,16 +501,13 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
       footer={
         subject ? (
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant={archived ? "soft" : "danger"}
-              icon="Archive"
-              onClick={() => {
-                if (!archived && !window.confirm(`Archiviare "${subject.name}"? Sparisce dall'elenco, ma attività, esami e materiali restano collegati. Puoi ripristinarla quando vuoi.`)) return;
-                void updateSubject(subject.id, { status: archived ? "active" : "archived" });
-              }}
-            >
-              {archived ? "Ripristina materia" : "Archivia materia"}
-            </Button>
+            {/* Come dalla scheda: archiviare è subito e si annulla dall'elenco, niente finestra di conferma. */}
+            <span className="inline-flex items-center gap-1">
+              <Button variant="soft" icon={archived ? "RotateCcw" : "Archive"} onClick={() => (archived ? onRestore(subject) : onArchive(subject))}>
+                {archived ? SUBJECTS_TEXT.restoreSubject : SUBJECTS_TEXT.archiveSubject}
+              </Button>
+              <HelpTip {...SUBJECTS_HELP.archive} />
+            </span>
             <span className="flex-1" />
             {feedback ? (
               <span role={feedback.error ? "alert" : "status"} className={`text-xs font-bold ${feedback.error ? "text-[var(--danger-text)]" : "text-[var(--muted)]"}`}>
@@ -478,20 +523,18 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
     >
       {subject && stats ? (
         <div className="grid grid-cols-1 gap-5">
-          <dl className="grid grid-cols-3 gap-2">
-            <div className="rounded-[16px] bg-[var(--surface-soft)] p-3">
-              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Ore di studio</dt>
-              <dd className="text-lg font-black">{formatHours(stats.studyMinutes)} h</dd>
+          {/* I numeri che portano altrove sono pulsanti: "Da fare" → Attività della materia, "Esame tra" → l'esame. */}
+          <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-3">
+            <div className="col-span-2 min-w-0 min-[420px]:col-span-1">
+              <StatTile label="Ore di studio" value={`${formatHours(stats.studyMinutes)} h`} />
             </div>
-            <div className="rounded-[16px] bg-[var(--surface-soft)] p-3">
-              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Da fare</dt>
-              <dd className="text-lg font-black">{stats.openTasks.length}</dd>
-            </div>
-            <div className="rounded-[16px] bg-[var(--surface-soft)] p-3">
-              <dt className="text-[11px] font-black uppercase text-[var(--faint)]">Esame tra</dt>
-              <dd className="text-lg font-black">{stats.exam ? `${studyDaysUntil(stats.exam.date)} gg` : "—"}</dd>
-            </div>
-          </dl>
+            <StatTile label="Da fare" value={stats.openTasks.length} onClick={() => showTasks(subject.id)} />
+            {stats.exam ? (
+              <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.days(studyDaysUntil(stats.exam.date))} hint={shortDate(stats.exam.date)} onClick={() => openExam(stats.exam!.id)} />
+            ) : (
+              <StatTile label={SUBJECTS_TEXT.examIn} value="—" />
+            )}
+          </div>
 
           {course ? <BarbExamSessions course={course} /> : null}
 
@@ -504,16 +547,17 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
               <Field label="Docente (facoltativo)">
                 <input className={inputClass} value={draft.teacher} onChange={(event) => setDraft((value) => ({ ...value, teacher: event.target.value }))} placeholder="Es. Mario Rossi" />
               </Field>
-              <Field label="Semestre">
-                <select className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))}>
-                  <option value="ufficiale">{course ? `Dal piano ufficiale: ${SEMESTER_LABEL[course.semester]}` : `Periodo attuale: ${SEMESTER_LABEL[subjectSemester(subject)]}`}</option>
-                  {SEMESTER_IDS.map((id) => <option key={id} value={id}>{SEMESTER_LABEL[id]}</option>)}
-                </select>
-                {course ? <p className="mt-1 text-xs text-[var(--faint)]">Se la segui in un altro periodo, sceglilo qui.</p> : null}
-              </Field>
-              <Field label="CFU">
-                <input className={inputClass} type="number" min={0} max={60} value={draft.cfu} onChange={(event) => setDraft((value) => ({ ...value, cfu: event.target.value }))} />
-              </Field>
+              <HelpField label="Semestre" help={SUBJECTS_HELP.semester}>
+                {(id) => (
+                  <select id={id} className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))}>
+                    <option value="ufficiale">{course ? `Dal piano ufficiale: ${SEMESTER_LABEL[course.semester]}` : `Periodo attuale: ${SEMESTER_LABEL[subjectSemester(subject)]}`}</option>
+                    {SEMESTER_IDS.map((semesterId) => <option key={semesterId} value={semesterId}>{SEMESTER_LABEL[semesterId]}</option>)}
+                  </select>
+                )}
+              </HelpField>
+              <HelpField label="CFU" help={SUBJECTS_HELP.cfu}>
+                {(id) => <input id={id} className={inputClass} type="number" min={0} max={60} value={draft.cfu} onChange={(event) => setDraft((value) => ({ ...value, cfu: event.target.value }))} />}
+              </HelpField>
               <Field label="Voto obiettivo (facoltativo)">
                 <input
                   className={inputClass}
@@ -526,7 +570,9 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                 />
               </Field>
             </div>
-            <Field label="Colore">
+            {/* fieldset e non label: dentro un label il primo colore diventerebbe "il" campo e un tocco sulla scritta lo sceglierebbe. */}
+            <fieldset className="min-w-0">
+              <legend className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">Colore</legend>
               <div className="flex flex-wrap items-center gap-1.5">
                 {SWATCHES.map((swatch) => (
                   <button
@@ -534,7 +580,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                     type="button"
                     aria-label={swatchLabel(swatch)}
                     title={swatchLabel(swatch)}
-                    aria-pressed={draft.color === swatch}
+                    aria-pressed={draft.color.toLowerCase() === swatch.toLowerCase()}
                     onClick={() => setDraft((value) => ({ ...value, color: swatch }))}
                     className={`h-8 w-8 rounded-full border-2 ${draft.color.toLowerCase() === swatch.toLowerCase() ? "border-[var(--text)]" : "border-transparent"}`}
                     style={{ background: swatch }}
@@ -548,7 +594,7 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
                   className="h-8 w-10 rounded-full border border-[var(--border)] bg-transparent p-0.5"
                 />
               </div>
-            </Field>
+            </fieldset>
             <Field label="Note (facoltative)">
               <textarea className={`${inputClass} min-h-20 py-3`} value={draft.notes} onChange={(event) => setDraft((value) => ({ ...value, notes: event.target.value }))} placeholder="Es. Ricevimento il martedì alle 14" />
             </Field>
@@ -645,22 +691,36 @@ function SubjectDrawer({ subject, onClose }: { subject: Subject | null; onClose:
           <section>
             <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-xs font-black uppercase text-[var(--faint)]">Attività da fare · {stats.openTasks.length}</h4>
-              <button type="button" onClick={() => setActiveView("tasks")} className="text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-                Vai alle attività
+              <button
+                type="button"
+                onClick={() => showTasks(subject.id)}
+                className="inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+              >
+                {SUBJECTS_TEXT.allTasks}
+                <Icon name="ChevronRight" className="h-3.5 w-3.5" />
               </button>
             </div>
             {stats.openTasks.length ? (
-              <ul className="grid grid-cols-1 gap-1">
+              <ul className="grid grid-cols-1 gap-0.5">
                 {stats.openTasks.slice(0, 8).map((task) => (
-                  <li key={task.id} className="flex min-w-0 items-center gap-2 text-sm">
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: subject.color }} />
-                    <span className="one-line-safe min-w-0 flex-1 font-bold">{task.title}</span>
-                    {task.dueDate ? <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{shortDate(task.dueDate)}</span> : null}
+                  <li key={task.id}>
+                    {/* Ogni attività si apre in Attività (la sezione legge `tasks.editing`). */}
+                    <button
+                      type="button"
+                      onClick={() => goToView("tasks", [["tasks.editing", task.id, "tab"]])}
+                      aria-label={SUBJECTS_TEXT.openTask(task.title)}
+                      className="motion-safe flex min-h-10 w-full min-w-0 items-center gap-2 rounded-[12px] px-2 text-left text-sm hover:bg-[var(--surface-soft)]"
+                    >
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: subjectColor(subject) }} />
+                      <span className="one-line-safe min-w-0 flex-1 font-bold">{task.title}</span>
+                      {task.dueDate ? <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{shortDate(task.dueDate)}</span> : null}
+                      <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+                    </button>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">Nessuna attività da fare per questa materia.</p>
+              <p className="text-sm text-[var(--muted)]">{SUBJECTS_TEXT.noTasks}</p>
             )}
           </section>
 
