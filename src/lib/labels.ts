@@ -838,6 +838,55 @@ export const CALENDAR_HELP = {
   }
 } as const;
 
+/** Selettore di data e ora (DateField, DateTimeField, DateRangeField): nomi di giorni e mesi, testi. */
+export const DATE_PICKER_TEXT = {
+  weekdaysShort: ["lun", "mar", "mer", "gio", "ven", "sab", "dom"],
+  weekdaysLong: ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"],
+  monthsShort: ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"],
+  monthsLong: ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"],
+  previousMonth: "Mese precedente",
+  nextMonth: "Mese successivo",
+  previousYear: "Anno precedente",
+  nextYear: "Anno successivo",
+  previousYears: "Anni precedenti",
+  nextYears: "Anni successivi",
+  chooseMonthYear: (title: string) => `${title}: scegli mese e anno`,
+  chooseYear: (year: number) => `${year}: scegli l'anno`,
+  backToDays: "Torna ai giorni",
+  today: "Oggi",
+  todaySuffix: "oggi",
+  done: "Fatto",
+  clear: "Togli la data",
+  noDate: "Nessuna data",
+  chooseDate: "Scegli la data",
+  chooseDateTime: "Scegli data e ora",
+  chooseRange: "Scegli i giorni",
+  time: "Ora",
+  timeInput: "Scrivi l'ora",
+  timePlaceholder: "hh:mm",
+  timeSlots: "Orari",
+  timeInvalid: "Scrivi un orario come 9:30",
+  timeTooEarly: (min: string) => `Scegli un orario dalle ${min} in poi.`,
+  rangeStartHint: "Tocca il primo giorno",
+  rangeEndHint: "Ora tocca l'ultimo giorno",
+  days: (count: number) => (count === 1 ? "1 giorno" : `${count} giorni`)
+} as const;
+
+/** Griglie del calendario: eventi nascosti su schermi stretti ("+N") ed eventi su più giorni. */
+export const CALENDAR_LAYOUT_TEXT = {
+  more: (count: number) => `+${count}`,
+  moreAria: (count: number) => `Altri ${count} ${count === 1 ? "evento" : "eventi"} in questa fascia: apri l'elenco`,
+  dayOfSpan: (index: number, total: number) => `giorno ${index} di ${total}`
+} as const;
+
+/** Tipologie del calendario oltre alle categorie degli eventi: vacanza, ricorrenze, festività calcolate. */
+export const EVENT_TYPE_EXTRA_LABEL = {
+  vacation: "Vacanza",
+  birthday: "Compleanno",
+  anniversary: "Anniversario",
+  holiday: "Festività"
+} as const;
+
 /** Colore semantico della priorità (token del tema, leggibile in chiaro e scuro). */
 export const PRIORITY_TONE: Record<Task["priority"], string> = {
   low: "var(--faint)",

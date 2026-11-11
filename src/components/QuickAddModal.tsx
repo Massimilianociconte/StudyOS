@@ -5,6 +5,7 @@ import { AnimatePresence, m } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Field, IconButton, Pill, fileInputClass, inputClass } from "./ui";
 import { Icon } from "./Icon";
+import { DateTimeField } from "./DatePicker";
 import { fromDatetimeLocal } from "../lib/dates";
 import { quickAddDefaults, quickAddTaskDates, type QuickAddTaskCreate } from "../lib/quickAdd";
 import { UI_TEXT } from "../lib/labels";
@@ -269,14 +270,14 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
 
               {mode !== "subject" && mode !== "material" ? (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label={mode === "task" ? (taskCreateMode === "completed" ? "Quando l'hai fatta" : UI_TEXT.dueOptional) : "Quando inizia?"}>
-                    <input
-                      className={inputClass}
-                      type="datetime-local"
-                      value={mode === "task" ? taskDue : date}
-                      onChange={(event) => (mode === "task" ? setTaskDue : setDate)(event.target.value)}
-                    />
-                  </Field>
+                  {/* Selettore a calendario (al posto di datetime-local); vuoto = attività senza scadenza. */}
+                  <DateTimeField
+                    label={mode === "task" ? (taskCreateMode === "completed" ? "Quando l'hai fatta" : UI_TEXT.dueOptional) : "Quando inizia?"}
+                    value={mode === "task" ? taskDue : date}
+                    onChange={mode === "task" ? setTaskDue : setDate}
+                    optional={mode === "task"}
+                    defaultTime={mode === "task" ? "18:00" : undefined}
+                  />
                   <Field label="Materia (facoltativa)">
                     <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
                       <option value="">Nessuna materia</option>

@@ -16,6 +16,7 @@ import {
 import { Icon } from "./Icon";
 import { UI_TEXT } from "../lib/labels";
 import { menuIndexForKey, placeFloating, type FloatingAlign, type FloatingPosition } from "../lib/uiPieces";
+import { applyStyles, canScrollToward, createLayerStack, createScrollLock, lockStyles, scrollbarWidthOf } from "../lib/scrollLock";
 
 export function Button({
   children,
@@ -326,14 +327,154 @@ export function Tag({ children, color, className = "" }: PropsWithChildren<{ col
   );
 }
 
+const MODAL_SELECTOR = '[aria-modal="true"]';
+
+// Pagina bloccata finché almeno una finestra è aperta (contatore: le finestre una dentro l'altra,
+// come la data dentro il modulo evento, non la sbloccano chiudendosi).
+const pageScrollLock = createScrollLock({ lock: lockPage });
+// Dove si può scorrere al tocco: solo dentro la finestra in cima.
+const scrollAreas = createLayerStack<() => HTMLElement | null>();
+// Finestre aperte, dalla più vecchia alla più recente: Esc e Tab li gestisce solo quella in cima (es.
+// "Invita" sopra il dettaglio del gruppo, o il selettore della data sopra il modulo evento).
+const dialogLayers = createLayerStack<null>();
+
+const TEXT_ENTRY = "input, textarea, select, [contenteditable='true']";
+
+const lastModal = () => {
+  const modals = document.querySelectorAll<HTMLElement>(MODAL_SELECTOR);
+  return modals[modals.length - 1] ?? null;
+};
+
+/** Il gesto scorre qualcosa dentro la finestra in cima? Se no si blocca: la pagina sotto non si muove. */
+function touchCanScroll(target: EventTarget | null, dx: number, dy: number) {
+  if (!(target instanceof Element)) return false;
+  const area = scrollAreas.top()?.() ?? lastModal();
+  if (!area || !area.contains(target)) return false;
+  // Nei campi di testo il dito sposta il cursore e seleziona: mai bloccato.
+  if (target.closest(TEXT_ENTRY)) return true;
+  const vertical = Math.abs(dy) >= Math.abs(dx);
+  for (let element: Element | null = target; element; element = element === area ? null : element.parentElement) {
+    if (!(element instanceof HTMLElement)) continue;
+    const style = getComputedStyle(element);
+    if (/(auto|scroll|overlay)/.test(vertical ? style.overflowY : style.overflowX) && canScrollToward(element, dx, dy)) return true;
+  }
+  return false;
+}
+
+/**
+ * Blocca la pagina: `html` non scorre (posizione e pezzi sticky restano dove sono, nessun salto),
+ * la barra di scorrimento del computer è compensata, al tocco (iOS compreso) scorre solo il contenuto
+ * della finestra in cima e senza rimbalzi. Restituisce lo sblocco, che rimette tutto com'era.
+ */
+function lockPage() {
+  const html = document.documentElement;
+  const body = document.body;
+  const scroll = { left: window.scrollX, top: window.scrollY };
+  const styles = lockStyles({
+    scrollbarWidth: scrollbarWidthOf(window.innerWidth, html.clientWidth),
+    bodyPaddingRight: Number.parseFloat(getComputedStyle(body).paddingRight) || 0
+  });
+  const restoreHtml = applyStyles(html, styles.html);
+  const restoreBody = applyStyles(body, styles.body);
+  let last = { x: 0, y: 0 };
+  const onTouchStart = (event: TouchEvent) => {
+    const touch = event.touches[0];
+    if (touch) last = { x: touch.clientX, y: touch.clientY };
+  };
+  const onTouchMove = (event: TouchEvent) => {
+    // Due dita: zoom, mai bloccato.
+    const touch = event.touches[0];
+    if (!touch || event.touches.length > 1) return;
+    const dx = touch.clientX - last.x;
+    const dy = touch.clientY - last.y;
+    last = { x: touch.clientX, y: touch.clientY };
+    if (event.cancelable && !touchCanScroll(event.target, dx, dy)) event.preventDefault();
+  };
+  document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+  document.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+  return () => {
+    document.removeEventListener("touchstart", onTouchStart, { capture: true });
+    document.removeEventListener("touchmove", onTouchMove, { capture: true });
+    restoreBody();
+    restoreHtml();
+    if (window.scrollX !== scroll.left || window.scrollY !== scroll.top) window.scrollTo({ ...scroll, behavior: "instant" });
+  };
+}
+
+/**
+ * Blocca lo scorrimento della pagina finché `active` è vero. Annidabile: si sblocca solo quando si
+ * chiude l'ultima finestra. `areaRef`: dove si può ancora scorrere al tocco (lo sfondo della finestra o
+ * il pannello); senza, la finestra `aria-modal` più recente. Da usare in ogni finestra fatta a mano.
+ */
+export function useScrollLock(active: boolean, areaRef?: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!active) return;
+    const area = scrollAreas.push(() => areaRef?.current ?? null);
+    const release = pageScrollLock.acquire();
+    return () => {
+      scrollAreas.remove(area);
+      release();
+    };
+  }, [active, areaRef]);
+}
+
+const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+/**
+ * Finestra modale: pagina bloccata (`useScrollLock`), focus all'apertura sull'elemento del pannello
+ * con `data-autofocus` (altrimenti sul pannello), Tab che resta nel pannello, Esc (`onEscape`) e Tab
+ * gestiti solo dalla finestra in cima, focus che torna a chi l'ha aperta alla chiusura. Ascolto in
+ * bolla su window: fumetti, menu e selettori aperti dentro la finestra fermano Esc prima (in
+ * cattura) e chiudono solo sé stessi.
+ */
+export function useDialogLayer(
+  open: boolean,
+  { panelRef, areaRef, onEscape }: { panelRef: RefObject<HTMLElement | null>; areaRef?: RefObject<HTMLElement | null>; onEscape?: () => void }
+) {
+  const escapeRef = useRef(onEscape);
+  escapeRef.current = onEscape;
+  useScrollLock(open, areaRef ?? panelRef);
+
+  useEffect(() => {
+    if (!open) return;
+    const token = dialogLayers.push(null);
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = panelRef.current;
+    (panel?.querySelector<HTMLElement>("[data-autofocus]") ?? panel)?.focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => {
+      if (!dialogLayers.isTop(token)) return;
+      if (event.key === "Escape") {
+        escapeRef.current?.();
+        return;
+      }
+      // Tab resta dentro il pannello (aria-modal): niente focus sugli elementi della pagina sotto.
+      const panel = panelRef.current;
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => element.offsetParent !== null && element.tabIndex >= 0);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      dialogLayers.remove(token);
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, [open, panelRef]);
+}
+
 /**
  * Pannello laterale per i dettagli: a destra su desktop, foglio dal basso su mobile.
  * Esc o click fuori chiudono; lo scroll della pagina resta bloccato finché è aperto.
  */
-// Drawer aperti, dal più vecchio al più recente: Esc e Tab li gestisce solo quello in cima (es.
-// "Invita" sopra il dettaglio del gruppo), altrimenti Esc chiudeva tutto e il focus scappava sotto.
-const openDrawers: symbol[] = [];
-
 export function Drawer({
   open,
   onClose,
@@ -356,6 +497,7 @@ export function Drawer({
   dismissOutside?: boolean;
 }>) {
   const titleId = useId();
+  const backdropRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -364,45 +506,14 @@ export function Drawer({
   // Su mobile è un foglio che sale dal basso, su desktop un pannello che entra da destra.
   const offset = typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches ? { x: 40 } : { y: 60 };
 
-  useEffect(() => {
-    if (!open) return;
-    const token = Symbol("drawer");
-    openDrawers.push(token);
-    const previousFocus = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    panelRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (openDrawers[openDrawers.length - 1] !== token) return;
-      if (event.key === "Escape") {
-        if (outsideRef.current) closeRef.current();
-        return;
-      }
-      // Tab resta dentro il pannello (aria-modal): niente focus sugli elementi della pagina sotto.
-      if (event.key !== "Tab" || !panelRef.current) return;
-      const focusable = [...panelRef.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex='-1'])")].filter(
-        (element) => element.offsetParent !== null
-      );
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      const index = openDrawers.lastIndexOf(token);
-      if (index >= 0) openDrawers.splice(index, 1);
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus?.();
-    };
-  }, [open]);
+  // Lo sfondo è l'area dove si scorre al tocco: contiene anche fumetti e selettori aperti nel pannello.
+  useDialogLayer(open, {
+    panelRef,
+    areaRef: backdropRef,
+    onEscape: () => {
+      if (outsideRef.current) closeRef.current();
+    }
+  });
 
   // Portal su body: un drawer aperto dentro un altro non resta confinato nel pannello sotto.
   // role="dialog" sullo sfondo a tutto schermo, come le altre finestre: HelpTip e menu si montano
@@ -411,6 +522,7 @@ export function Drawer({
     <AnimatePresence>
       {open ? (
         <m.div
+          ref={backdropRef}
           key="drawer"
           role="dialog"
           aria-modal="true"
@@ -443,7 +555,7 @@ export function Drawer({
               </div>
               <IconButton icon="X" label="Chiudi" onClick={onClose} className="h-10 w-10" />
             </header>
-            <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{children}</div>
+            <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">{children}</div>
             {footer ? <footer className="safe-bottom border-t border-[var(--border)] p-3 sm:p-4">{footer}</footer> : null}
           </m.div>
         </m.div>
@@ -453,15 +565,13 @@ export function Drawer({
   );
 }
 
-const MODAL_SELECTOR = '[aria-modal="true"]';
-
 /**
  * Dove montare fumetti e menu: dentro la finestra modale aperta che contiene il pulsante (fuori da un
  * aria-modal gli screen reader li ignorano), altrimenti su body. Le finestre dell'app (Drawer e
  * modali) hanno aria-modal sullo sfondo fixed a tutto schermo e senza overflow: lì un fumetto fixed
  * non viene ritagliato e le coordinate restano quelle dello schermo.
  */
-const floatingHost = (anchor: HTMLElement | null): HTMLElement => anchor?.closest<HTMLElement>(MODAL_SELECTOR) ?? document.body;
+export const floatingHost = (anchor: HTMLElement | null): HTMLElement => anchor?.closest<HTMLElement>(MODAL_SELECTOR) ?? document.body;
 
 /**
  * Un tocco sullo sfondo di una finestra con un fumetto aperto chiude solo il fumetto: le finestre si
@@ -487,13 +597,16 @@ function swallowBackdropPress(backdrop: Element) {
  * spazio, sempre dentro lo schermo), aggiornata a scorrimento e ridimensionamento. Esc e tocco fuori
  * chiudono. Esc si ferma qui (cattura su window, prima dell'ascolto dei Drawer): un Drawer aperto
  * sotto il fumetto resta aperto; lo stesso per un tocco sul suo sfondo (swallowBackdropPress).
+ * `sheet`: pannello dal basso (telefono) che non segue il pulsante: niente posizione, restano Esc e
+ * tocco fuori.
  */
-function useFloatingLayer(
+export function useFloatingLayer(
   open: boolean,
   close: (refocus: boolean) => void,
   anchorRef: RefObject<HTMLElement | null>,
   floatingRef: RefObject<HTMLElement | null>,
-  align: FloatingAlign
+  align: FloatingAlign,
+  sheet = false
 ) {
   const [position, setPosition] = useState<FloatingPosition | null>(null);
   const closeRef = useRef(close);
@@ -506,7 +619,7 @@ function useFloatingLayer(
     const place = () => {
       const anchor = anchorRef.current;
       const floating = floatingRef.current;
-      if (!anchor || !floating) return;
+      if (sheet || !anchor || !floating) return;
       const rect = anchor.getBoundingClientRect();
       const viewport = { width: document.documentElement.clientWidth || window.innerWidth, height: window.innerHeight };
       // Pulsante uscito dallo schermo scorrendo: il fumetto non resta sospeso da solo.
@@ -549,7 +662,7 @@ function useFloatingLayer(
       window.removeEventListener("keydown", onKey, true);
       document.removeEventListener("pointerdown", onPointer, true);
     };
-  }, [open, align, anchorRef, floatingRef]);
+  }, [open, align, anchorRef, floatingRef, sheet]);
 
   return position;
 }
@@ -676,19 +789,19 @@ export type PageAction = { label: string; icon?: string; onClick: () => void; da
 /**
  * Azioni di una pagina: una sola primaria più il menu "Altre azioni" (⋯) con il resto. Il menu è
  * in portal su body come `Drawer`; frecce e Home/End per muoversi, Esc o Tab chiudono e il focus
- * torna al pulsante, un tocco fuori chiude.
+ * torna al pulsante, un tocco fuori chiude. `label`: nome del pulsante ⋯ (predefinito "Altre azioni").
  */
-export function PageActions({ primary, more = [] }: { primary?: ReactNode; more?: PageAction[] }) {
+export function PageActions({ primary, more = [], label }: { primary?: ReactNode; more?: PageAction[]; label?: string }) {
   if (!primary && !more.length) return null;
   return (
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
       {primary}
-      {more.length ? <MoreActionsMenu items={more} /> : null}
+      {more.length ? <MoreActionsMenu items={more} label={label || UI_TEXT.moreActions} /> : null}
     </div>
   );
 }
 
-function MoreActionsMenu({ items }: { items: PageAction[] }) {
+function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string }) {
   const [open, setOpen] = useState(false);
   const [host, setHost] = useState<HTMLElement | null>(null);
   const startAt = useRef<"first" | "last">("first");
@@ -735,8 +848,8 @@ function MoreActionsMenu({ items }: { items: PageAction[] }) {
         ref={buttonRef}
         id={`${id}-button`}
         type="button"
-        aria-label={UI_TEXT.moreActions}
-        title={UI_TEXT.moreActions}
+        aria-label={label}
+        title={label}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={id}
