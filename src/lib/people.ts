@@ -61,7 +61,6 @@ export const profileFromRow = (row: Record<string, unknown> | null | undefined):
     ? { displayName: textOf(row.display_name), handle: normalizeHandle(textOf(row.handle)), discoverable: row.discoverable !== false }
     : { ...DEFAULT_PROFILE };
 
-/** Titolo della scheda di una persona: il nome, oppure "Nome non impostato". */
 /**
  * Il nome da scrivere sul profilo online, o null se va lasciato com'è: un nome locale vuoto non
  * deve cancellare quello impostato su un altro dispositivo (la colonna ha default '', quindi una
@@ -72,6 +71,7 @@ export const profileNameToWrite = (explicit: string | undefined, local: string):
   return explicit !== undefined || name ? name : null;
 };
 
+/** Titolo della scheda di una persona: il nome, oppure "Nome non impostato". */
 export const personTitle = (person: FoundPerson) => person.displayName || peopleLabels.noName;
 
 /** `@nome` da mostrare, oppure null. */
