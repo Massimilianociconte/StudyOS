@@ -1,4 +1,4 @@
-const CACHE_NAME = "studyos-shell-v7";
+const CACHE_NAME = "studyos-shell-v8";
 const PRECACHE_MANIFEST = "./precache-manifest.json";
 const NAVIGATION_TIMEOUT_MS = 4000;
 const PRECACHE_REFRESH_MS = 10 * 60 * 1000;
@@ -149,4 +149,74 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") self.skipWaiting();
+});
+
+// ——— Notifiche push (invito ricevuto, invito accettato, permessi cambiati) ———
+// Il Worker invia un messaggio cifrato; qui arriva già decifrato come JSON: { kind, title, body, url, tag }.
+// `url` è relativo all'ambito dell'app (es. "?apri=notifiche"). Con userVisibleOnly ogni push deve
+// mostrare una notifica: se il contenuto non è leggibile si mostra un testo generico.
+const PUSH_FALLBACK = { title: "StudyOS", body: "Hai una nuova notifica.", url: "./", tag: "studyos" };
+
+const readPushPayload = (event) => {
+  try {
+    const raw = event.data ? event.data.json() : null;
+    if (!raw || typeof raw !== "object") return { ...PUSH_FALLBACK };
+    const text = (value, fallback, max) =>
+      typeof value === "string" && value.trim() ? value.trim().slice(0, max) : fallback;
+    return {
+      title: text(raw.title, PUSH_FALLBACK.title, 120),
+      body: text(raw.body, "", 300),
+      url: text(raw.url, PUSH_FALLBACK.url, 300),
+      tag: text(raw.tag, PUSH_FALLBACK.tag, 200)
+    };
+  } catch {
+    return { ...PUSH_FALLBACK };
+  }
+};
+
+self.addEventListener("push", (event) => {
+  const payload = readPushPayload(event);
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      tag: payload.tag,
+      icon: new URL("icons/studyos-192.png", self.registration.scope).href,
+      badge: new URL("icons/favicon-64.png", self.registration.scope).href,
+      data: { url: payload.url }
+    })
+  );
+});
+
+// Solo pagine dell'app: mai un altro sito, anche se il contenuto di una push fosse manomesso.
+const resolveNotificationUrl = (raw) => {
+  const scope = new URL(self.registration.scope);
+  try {
+    const target = new URL(typeof raw === "string" ? raw : "", scope);
+    if (target.origin === scope.origin && target.pathname.startsWith(scope.pathname)) return target.href;
+  } catch {
+    // indirizzo non valido: si apre la pagina iniziale
+  }
+  return scope.href;
+};
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = resolveNotificationUrl(event.notification.data && event.notification.data.url);
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
+      const scope = self.registration.scope;
+      const inScope = windows.filter((candidate) => candidate.url.startsWith(scope));
+      const client = inScope.find((candidate) => candidate.focused) || inScope[0];
+      if (client) {
+        try {
+          await client.focus();
+          await client.navigate(target);
+          return;
+        } catch {
+          // scheda non controllata dal service worker o chiusa nel frattempo: se ne apre una nuova
+        }
+      }
+      await self.clients.openWindow(target);
+    })
+  );
 });
