@@ -225,11 +225,12 @@ export const SUBJECTS_HELP = {
 export const MATERIALS_TEXT = {
   upload: "Carica un file",
   saveLink: "Salva un link",
-  /** La pillola della materia sulla scheda applica il filtro. */
-  filterBySubject: (name: string) => `Mostra solo i materiali di ${name}`,
-  /** L'etichetta sulla scheda va nella ricerca. */
-  searchTag: (tag: string) => `Cerca i materiali con l'etichetta «${tag}»`,
-  openLinked: (name: string) => `Apri ${name}`,
+  // Cosa fanno le pillole delle schede: si leggono dopo il testo della pillola, che dice già il nome.
+  /** La pillola della materia applica il filtro. */
+  filterBySubject: "mostra solo i materiali di questa materia",
+  /** L'etichetta va nella ricerca. */
+  searchTag: "cerca i materiali con questa etichetta",
+  openLinked: "apri",
   subjectFilter: "Filtra per materia",
   allSubjects: "Tutte le materie",
   emptyTitle: "Ancora nessun materiale",
@@ -303,12 +304,9 @@ export const HOME_TEXT = {
   addGoal: "Crea un obiettivo",
   emptyMaterials: "Ancora nessun materiale.",
   addMaterial: "Aggiungi PDF, slide o link",
-  openTask: (title: string) => `Apri l'attività «${title}»`,
-  openEvent: (title: string) => `Apri l'evento «${title}»`,
-  openExam: (name: string) => `Apri l'esame di ${name}`,
-  openSubject: (name: string) => `Apri la materia ${name}`,
-  openGoal: (title: string) => `Apri l'obiettivo «${title}»`,
-  findMaterial: (name: string) => `Trova «${name}» nei materiali`,
+  /** Detto in coda alle righe cliccabili, dopo il loro testo visibile. */
+  openAction: "apri",
+  findAction: "cerca nei materiali",
   reviews: (count: number) => `${count} ${count === 1 ? "argomento da ripassare" : "argomenti da ripassare"}`,
   preparation: (value: number) => `preparazione ${value}%`,
   importance: (value: number) => `Importanza ${value}/5`

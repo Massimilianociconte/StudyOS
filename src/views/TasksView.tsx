@@ -88,6 +88,11 @@ export function TasksView() {
     if (subjectId && !subjectFilter) setSubjectId(null);
   }, [subjectId, subjectFilter, setSubjectId]);
 
+  // Attività da aprire che non c'è più (eliminata altrove): si dimentica invece di restare in memoria.
+  useEffect(() => {
+    if (editingTaskId && !editingTask) setEditingTaskId(null);
+  }, [editingTaskId, editingTask, setEditingTaskId]);
+
   const visible = useMemo(() => tasks.filter((task) => task.status !== "archived"), [tasks]);
   const ofSubject = useMemo(() => filterTasks(visible, "all", subjectFilter?.id ?? null), [visible, subjectFilter?.id]);
   const shown = useMemo(() => filterTasks(ofSubject, filter, null), [ofSubject, filter]);
@@ -373,7 +378,8 @@ function QuickTaskBar({
           <Icon name="ChevronDown" className={`h-3.5 w-3.5 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
         </button>
         {/* Il primario della pagina è "Nuova attività": qui l'aggiunta veloce resta secondaria. */}
-        <Button type="submit" variant="soft" icon="Plus" disabled={!title.trim()} aria-label={TASKS_TEXT.add} className="w-11 shrink-0 px-0 sm:w-auto sm:px-4">
+        {/* Solo icona sul telefono: "!" perché px-4 e gap-2 di Button vincerebbero, e l'icona resterebbe fuori centro. */}
+        <Button type="submit" variant="soft" icon="Plus" disabled={!title.trim()} aria-label={TASKS_TEXT.add} className="w-11 shrink-0 !gap-0 !px-0 sm:w-auto sm:!gap-2 sm:!px-4">
           <span className="hidden sm:inline">{TASKS_TEXT.add}</span>
         </Button>
       </div>

@@ -83,7 +83,13 @@ function EmptyLine({ text, action, onAction }: { text: string; action: string; o
 
 /** Riga cliccabile: tutte le righe della Home aprono l'elemento, con lo stesso aspetto. */
 const ROW = "motion-safe flex w-full min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]";
-const RowChevron = () => <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--faint)]" />;
+// Il nome della riga resta il suo testo visibile (ora, priorità, data, progresso): l'azione si aggiunge in coda, solo a voce.
+const RowChevron = ({ action = HOME_TEXT.openAction }: { action?: string }) => (
+  <>
+    <span className="sr-only">, {action}</span>
+    <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--faint)]" />
+  </>
+);
 
 const openTask = (id: string) => goToView("tasks", [["tasks.editing", id, "tab"]]);
 const openExam = (id: string) => goToView("exams", [["exams.editing", id, "tab"]]);
@@ -261,7 +267,6 @@ export function DashboardView() {
                       <button
                         type="button"
                         onClick={() => openEvent(event.id)}
-                        aria-label={`${event.title}: ${HOME_TEXT.openEvent(event.title)}`}
                         className={`${ROW} ${parseISO(event.end) < now ? "opacity-55" : ""}`}
                       >
                         {isAllDayEvent(event) ? (
@@ -295,7 +300,7 @@ export function DashboardView() {
                       >
                         {task.status === "done" ? <Icon name="Check" className="h-3 w-3" /> : null}
                       </button>
-                      <button type="button" onClick={() => openTask(task.id)} aria-label={`${task.title}: ${HOME_TEXT.openTask(task.title)}`} className={`${ROW} ml-2 flex-1 pl-3`}>
+                      <button type="button" onClick={() => openTask(task.id)} className={`${ROW} ml-2 flex-1 pl-3`}>
                         <span className={`one-line-safe min-w-0 flex-1 text-sm font-bold ${task.status === "done" ? "text-[var(--faint)] line-through" : ""}`}>
                           {task.title}
                         </span>
@@ -338,10 +343,10 @@ export function DashboardView() {
                   <button
                     type="button"
                     onClick={() => openTask(nextTask.id)}
-                    aria-label={`${nextTask.title}: ${HOME_TEXT.openTask(nextTask.title)}`}
                     className="motion-safe -mx-2 flex w-[calc(100%+1rem)] min-w-0 items-start gap-2 rounded-[16px] px-2 py-1 text-left hover:bg-[var(--surface-soft)]"
                   >
                     <span className="two-line-safe min-w-0 flex-1 text-xl font-black leading-tight">{nextTask.title}</span>
+                    <span className="sr-only">, {HOME_TEXT.openAction}</span>
                     <Icon name="ChevronRight" className="mt-1 h-4 w-4 shrink-0 text-[var(--faint)]" />
                   </button>
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -363,7 +368,7 @@ export function DashboardView() {
                     <ul className="mt-3 grid grid-cols-1 gap-0.5 border-t border-[var(--border)] pt-2">
                       {urgent.slice(1).map((task) => (
                         <li key={task.id}>
-                          <button type="button" onClick={() => openTask(task.id)} aria-label={`${task.title}: ${HOME_TEXT.openTask(task.title)}`} className={`${ROW} gap-2 py-1.5 text-sm`}>
+                          <button type="button" onClick={() => openTask(task.id)} className={`${ROW} gap-2 py-1.5 text-sm`}>
                             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
                             <span className="one-line-safe min-w-0 flex-1 font-bold">{task.title}</span>
                             {task.dueDate ? <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{shortDate(task.dueDate)}</span> : null}
@@ -392,7 +397,6 @@ export function DashboardView() {
                       <button
                         type="button"
                         onClick={() => openExam(exam.id)}
-                        aria-label={`${subjectName(subjects, exam.subjectId)}: ${HOME_TEXT.openExam(subjectName(subjects, exam.subjectId))}`}
                         className="motion-safe flex w-full min-w-0 items-center gap-3 rounded-[18px] border border-transparent bg-[var(--surface-soft)] p-3 text-left hover:border-[var(--border)] hover:bg-[var(--surface)]"
                       >
                         <span className="grid w-14 shrink-0 grid-cols-1 place-items-center rounded-[14px] py-1.5 text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
@@ -428,7 +432,7 @@ export function DashboardView() {
                   const semester = barb?.semester(subject);
                   return (
                     <li key={subject.id}>
-                      <button type="button" onClick={() => openSubject(subject.id)} aria-label={`${subject.name}: ${HOME_TEXT.openSubject(subject.name)}`} className={ROW}>
+                      <button type="button" onClick={() => openSubject(subject.id)} className={ROW}>
                         <span className="grid h-9 w-9 shrink-0 grid-cols-1 place-items-center rounded-super" style={{ background: safeCssColor(subject.color) || "var(--accent)" }}>
                           {course ? <CourseIcon course={course} className="h-4 w-4 text-[#10131d]" /> : <Icon name={subject.icon} className="h-4 w-4 text-[#10131d]" />}
                         </span>
@@ -463,7 +467,7 @@ export function DashboardView() {
               <ul className="grid grid-cols-1 gap-0.5">
                 {nextEvents.map((event) => (
                   <li key={event.occurrenceKey}>
-                    <button type="button" onClick={() => openEvent(event.id)} aria-label={`${event.title}: ${HOME_TEXT.openEvent(event.title)}`} className={`${ROW} items-start`}>
+                    <button type="button" onClick={() => openEvent(event.id)} className={`${ROW} items-start`}>
                       <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: safeCssColor(event.color) || subjectColor(subjects, event.subjectId) }} />
                       <span className="min-w-0 flex-1">
                         <span className="one-line-safe block text-sm font-black">{event.title}</span>
@@ -492,7 +496,7 @@ export function DashboardView() {
                   .slice(0, 3)
                   .map((goal) => (
                     <li key={goal.id}>
-                      <button type="button" onClick={() => openGoal(goal.id)} aria-label={`${goal.title}: ${HOME_TEXT.openGoal(goal.title)}`} className={ROW}>
+                      <button type="button" onClick={() => openGoal(goal.id)} className={ROW}>
                         <span className="min-w-0 flex-1">
                           <span className="mb-1.5 flex items-center justify-between gap-2">
                             <span className="one-line-safe text-sm font-bold">{goal.title}</span>
@@ -516,10 +520,10 @@ export function DashboardView() {
               <ul className="grid grid-cols-1 gap-1">
                 {recentAttachments.map((attachment) => (
                   <li key={attachment.id}>
-                    <button type="button" onClick={() => findMaterial(attachment.name)} aria-label={`${attachment.name}: ${HOME_TEXT.findMaterial(attachment.name)}`} className={`${ROW} py-1.5`}>
+                    <button type="button" onClick={() => findMaterial(attachment.name)} className={`${ROW} py-1.5`}>
                       <Icon name={ATTACHMENT_KIND_ICON[attachmentKind(attachment)]} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
                       <span className="one-line-safe min-w-0 flex-1 text-sm font-bold">{attachment.name}</span>
-                      <RowChevron />
+                      <RowChevron action={HOME_TEXT.findAction} />
                     </button>
                   </li>
                 ))}

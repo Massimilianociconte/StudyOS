@@ -57,7 +57,8 @@ export function GoalsView() {
       {active.length ? (
         // La regola di + e − sta in un "?" vicino alle schede, non nel sottotitolo.
         <div className="mb-2 flex justify-end">
-          <HelpTip {...GOALS_HELP.progress} />
+          {/* Con la scritta accanto al "?": da solo, in fondo a destra, non si capiva a cosa servisse. */}
+          <HelpTip title={GOALS_HELP.progress.title} text={GOALS_HELP.progress.text} label={GOALS_HELP.progress.label} />
         </div>
       ) : null}
 

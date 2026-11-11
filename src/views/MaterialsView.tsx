@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 import type { Attachment } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
-import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, MATERIALS_HELP, MATERIALS_TEXT, attachmentKind, hostOf, type AttachmentKind } from "../lib/labels";
+import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, MATERIALS_HELP, MATERIALS_TEXT, attachmentKind, capitalizeFirst, hostOf, type AttachmentKind } from "../lib/labels";
 import { Button, EmptyState, Field, HelpTip, IconButton, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { HelpField } from "../components/HelpField";
 import { goToView } from "../hooks/useLinkedUiState";
@@ -53,12 +53,11 @@ export function MaterialsView() {
   // nella loro sezione. Se l'elemento non c'è più resta un'etichetta.
   const linkedAction = (attachment: Attachment): { aria: string; run: () => void } | null => {
     const { linkedEntityType: type, linkedEntityId: id } = attachment;
-    const name = linkedName(type, id) ?? "";
     if (!type || !id) return null;
-    if (type === "subject" && subjects.some((subject) => subject.id === id)) return { aria: MATERIALS_TEXT.filterBySubject(name), run: () => setSubjectFilter(id) };
-    if (type === "task" && tasks.some((task) => task.id === id)) return { aria: MATERIALS_TEXT.openLinked(name), run: () => goToView("tasks", [["tasks.editing", id, "tab"]]) };
-    if (type === "exam" && exams.some((exam) => exam.id === id)) return { aria: MATERIALS_TEXT.openLinked(name), run: () => goToView("exams", [["exams.editing", id, "tab"]]) };
-    if (type === "calendarEvent" && events.some((event) => event.id === id)) return { aria: MATERIALS_TEXT.openLinked(name), run: () => goToView("calendar", [["calendar.editingEvent", id, "tab"]]) };
+    if (type === "subject" && subjects.some((subject) => subject.id === id)) return { aria: MATERIALS_TEXT.filterBySubject, run: () => setSubjectFilter(id) };
+    if (type === "task" && tasks.some((task) => task.id === id)) return { aria: MATERIALS_TEXT.openLinked, run: () => goToView("tasks", [["tasks.editing", id, "tab"]]) };
+    if (type === "exam" && exams.some((exam) => exam.id === id)) return { aria: MATERIALS_TEXT.openLinked, run: () => goToView("exams", [["exams.editing", id, "tab"]]) };
+    if (type === "calendarEvent" && events.some((event) => event.id === id)) return { aria: MATERIALS_TEXT.openLinked, run: () => goToView("calendar", [["calendar.editingEvent", id, "tab"]]) };
     return null;
   };
 
@@ -239,7 +238,7 @@ export function MaterialsView() {
                         )
                       ) : null}
                       {attachment.tags.slice(0, 3).map((tag) => (
-                        <PillButton key={tag} label={`#${tag}`} aria={MATERIALS_TEXT.searchTag(tag)} onClick={() => setQuery(tag)} />
+                        <PillButton key={tag} label={`#${tag}`} aria={MATERIALS_TEXT.searchTag} onClick={() => setQuery(tag)} />
                       ))}
                     </div>
                   ) : null}
@@ -451,12 +450,13 @@ function PillButton({ label, color, aria, onClick }: { label: string; color?: st
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${label}: ${aria}`}
-      title={aria}
-      className="motion-safe relative inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-[11px] font-extrabold text-[var(--muted)] after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] hover:border-[var(--accent-ink)] hover:text-[var(--text)]"
+      title={capitalizeFirst(aria)}
+      className="motion-safe relative inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-[11px] font-extrabold text-[var(--muted)] after:absolute after:-inset-y-2.5 after:inset-x-0 after:content-[''] hover:border-[var(--accent-ink)] hover:text-[var(--text)]"
     >
       {color ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} /> : null}
       <span className="min-w-0 truncate">{label}</span>
+      {/* Il nome resta il testo della pillola; cosa fa si aggiunge solo a voce. */}
+      <span className="sr-only">: {aria}</span>
     </button>
   );
 }
