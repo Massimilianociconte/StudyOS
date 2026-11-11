@@ -3,7 +3,8 @@ import { Icon } from "../Icon";
 import type { RepeatRule } from "../../types";
 import { REPEAT_PICKER_TEXT } from "../../lib/labels";
 import { describeRule } from "../../lib/repeat";
-import { presetIdOf, repeatPresets } from "../../lib/repeatPicker";
+import { customFromRule, presetIdOf, repeatPresets, ruleFromCustom } from "../../lib/repeatPicker";
+import { RepeatCustom } from "./RepeatCustom";
 
 /**
  * Riga "Non si ripete ▾": un tocco apre, sotto, le scelte pronte calcolate dalla data d'inizio.
@@ -25,6 +26,7 @@ export function RepeatPicker({
   note?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
   const listId = useId();
   const presets = repeatPresets(start);
   const current = presetIdOf(value, start);
@@ -59,6 +61,7 @@ export function RepeatPicker({
                 onClick={() => {
                   onChange(preset.rule);
                   setOpen(false);
+                  setCustomOpen(false);
                 }}
                 className={`flex min-h-11 items-center gap-2 rounded-[14px] px-3 text-left text-sm font-bold ${
                   selected ? "bg-[var(--surface-soft)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
@@ -69,8 +72,27 @@ export function RepeatPicker({
               </button>
             );
           })}
+          <button
+            type="button"
+            aria-pressed={current === "custom"}
+            aria-expanded={customOpen}
+            disabled={disabled}
+            onClick={() => {
+              // Da "Non si ripete": il modulo parte da "ogni settimana" e la regola vale da subito (la riga lo dice).
+              if (!value) onChange(ruleFromCustom(customFromRule(null, start), start));
+              setCustomOpen(true);
+              setOpen(false);
+            }}
+            className={`flex min-h-11 items-center gap-2 rounded-[14px] px-3 text-left text-sm font-bold ${
+              current === "custom" ? "bg-[var(--surface-soft)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
+            }`}
+          >
+            <span className="min-w-0 flex-1">{REPEAT_PICKER_TEXT.custom}</span>
+            {current === "custom" ? <Icon name="Check" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" /> : null}
+          </button>
         </div>
       ) : null}
+      {customOpen && !open ? <RepeatCustom key={start} value={value} start={start} onChange={onChange} disabled={disabled} /> : null}
     </div>
   );
 }

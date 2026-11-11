@@ -1123,6 +1123,7 @@ export const REPEAT_PICKER_TEXT = {
   monthlyDay: (day: number) => `Il giorno ${day}`,
   monthlyLastDay: "L'ultimo giorno del mese",
   monthlyWeekday: "Un giorno della settimana",
+  clamp: "Nei mesi senza questo giorno, l'ultimo del mese",
   nth: "Quale",
   nthOptions: { 1: "primo", 2: "secondo", 3: "terzo", 4: "quarto", [-1]: "ultimo" } as Record<number, string>,
   weekdayField: "Giorno della settimana",

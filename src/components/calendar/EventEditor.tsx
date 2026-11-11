@@ -164,7 +164,9 @@ export function EventEditor({
     setError("");
     setDraft(change);
   };
-  const setCategory = (category: EventCategory) => update((value) => ({ ...value, category, color: draftColor({ ...value, category }, colorContext(value.subjectId)) }));
+  // Spostare un giorno di una serie non ne cambia la regola (la cambia solo chi la sceglie).
+  const moveStart = (current: EventDraft, value: string) => (occurrenceDate ? { ...changeStart(current, value), repeat: current.repeat } : changeStart(current, value));
+  const setCategory =(category: EventCategory) => update((value) => ({ ...value, category, color: draftColor({ ...value, category }, colorContext(value.subjectId)) }));
   const setSubject = (subjectId: string) => update((value) => ({ ...value, subjectId, color: draftColor(value, colorContext(subjectId)) }));
 
   const submit = async () => {
@@ -447,7 +449,7 @@ export function EventEditor({
                 </label>
                 {draft.allDay ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <DateField label={EVENT_EDITOR_TEXT.firstDay} value={startDate} onChange={(value) => value && update((current) => changeStart(current, `${value}T${current.start.slice(11, 16) || "00:00"}`))} />
+                    <DateField label={EVENT_EDITOR_TEXT.firstDay} value={startDate} onChange={(value) => value && update((current) => moveStart(current, `${value}T${current.start.slice(11, 16) || "00:00"}`))} />
                     <DateField
                       label={EVENT_EDITOR_TEXT.lastDay}
                       value={draft.end.slice(0, 10)}
@@ -457,7 +459,7 @@ export function EventEditor({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <DateTimeField label={EVENT_EDITOR_TEXT.start} value={draft.start} onChange={(value) => update((current) => changeStart(current, value))} />
+                    <DateTimeField label={EVENT_EDITOR_TEXT.start} value={draft.start} onChange={(value) => update((current) => moveStart(current, value))} />
                     <DateTimeField label={EVENT_EDITOR_TEXT.end} value={draft.end} min={draft.start} onChange={(value) => update((current) => ({ ...current, end: value }))} />
                     <Field label={EVENT_EDITOR_TEXT.duration} className="sm:col-span-2">
                       <select

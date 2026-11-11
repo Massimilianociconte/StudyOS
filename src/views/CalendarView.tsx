@@ -55,9 +55,11 @@ import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters
 import { CalendarTransfer, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { EventEditor } from "../components/calendar/EventEditor";
-import { draftFromEvent, newEventDraft } from "../lib/eventEditor";
-import { applyRepeatFields, changesRepeat, normalizeRepeat } from "../lib/repeat";
-import { deviceTimeZone } from "../lib/tz";
+import { ScopeChoice } from "../components/calendar/ScopeChoice";
+import { allScopePatch, draftFromEvent, followingPatch, newEventDraft, scopeOptions, wallTimeChanged, type ScopeOption } from "../lib/eventEditor";
+import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
+import { applyRepeatFields, changesRepeat, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
+import { deviceTimeZone, isCivilDate } from "../lib/tz";
 import { daysUntil, eventMinutes, isAllDayEvent, selectableSubjects, shortDate, studyDaysLabel, subjectColor, subjectName, timeLabel } from "../lib/selectors";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { expandEvents, RECURRENCE_LABEL, type EventOccurrence } from "../lib/recurrence";
@@ -74,6 +76,8 @@ import {
   OFFICIAL_EXAMS_ADD_LABEL,
   PRIORITY_LABEL,
   PRIORITY_TONE,
+  REPEAT_PICKER_TEXT,
+  SCOPE_TEXT,
   SHARE_TEXT,
   TASK_STATUS_LABEL,
   capitalizeFirst,
@@ -219,7 +223,8 @@ const pointerPoint = (event: ReactMouseEvent<HTMLElement>): PreviewPoint => ({ x
 
 interface Handlers {
   subjects: Subjects;
-  onEditEvent: (id: string, ownerId?: string) => void;
+  /** `occurrence`: il giorno toccato, per una serie che si ripete. */
+  onEditEvent: (id: string, ownerId?: string, occurrence?: CalendarOccurrence) => void;
   onEditTask: (id: string) => void;
   onToggleTask: (id: string) => void;
   onCreate: (at: Date, kind?: "event" | "task") => void;
@@ -268,14 +273,47 @@ export function CalendarView() {
     [setCursorIso]
   );
   const [editingEventId, setEditingEventId] = useUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
+  // Giorno dell'occorrenza aperta di una serie (YYYY-MM-DD): con l'id la ritrova anche dopo un refresh.
+  const [editingDate, setEditingDate] = useUiState<string | null>("calendar.editingDate", null, {
+    scope: "tab",
+    validate: (value): value is string | null => value === null || isCivilDate(value)
+  });
+  const closeEventEditor = () => {
+    setEditingEventId(null);
+    setEditingDate(null);
+  };
+  // Scelta "Solo questo · Questo e i successivi · Tutti" in attesa di risposta.
+  const [scopeRequest, setScopeRequest] = useState<{ heading: string; options: ScopeOption[]; danger: boolean; resolve: (scope: OccurrenceScope | null) => void } | null>(null);
+  const askScope = (heading: string, options: ScopeOption[], danger = false) =>
+    new Promise<OccurrenceScope | null>((resolve) => setScopeRequest({ heading, options, danger, resolve }));
+  const answerScope = (scope: OccurrenceScope | null) => {
+    scopeRequest?.resolve(scope);
+    setScopeRequest(null);
+  };
   const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
   const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string } | null>(null);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const [barbImportOpen, setBarbImportOpen] = useState(false);
   const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
   const transfer = useRef<CalendarTransferHandle>(null);
-  const { events, subjects, exams, tasks, loading, locked, updateEvent, addEvent, deleteEvent, addTask, updateTask, toggleTask, deleteTask, setActiveView } =
-    useStudyStore();
+  const {
+    events,
+    subjects,
+    exams,
+    tasks,
+    loading,
+    locked,
+    updateEvent,
+    addEvent,
+    deleteEvent,
+    editOccurrence,
+    deleteOccurrence,
+    addTask,
+    updateTask,
+    toggleTask,
+    deleteTask,
+    setActiveView
+  } = useStudyStore();
   // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
   // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
   const [storedSubject, setStoredSubject] = useUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
@@ -368,6 +406,14 @@ export function CalendarView() {
   }, [received, labels]);
   const calendarTasks = useMemo(() => tasks.filter((task) => task.dueDate && task.status !== "archived"), [tasks]);
   const editingEvent = editingEventId ? events.find((event) => event.id === editingEventId) ?? null : null;
+  // Giorno aperto di una serie: la sua riga (se cambiato da solo) o la serie con gli orari di quel giorno.
+  const editingOccurrence = useMemo(
+    () => (editingEventId && editingDate ? findOccurrence(events, editingEventId, editingDate) : null),
+    [events, editingEventId, editingDate]
+  );
+  const editingSeries = editingOccurrence
+    ? events.find((event) => event.id === occurrenceTarget(editingOccurrence).seriesId && !isOccurrenceRow(event)) ?? null
+    : null;
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
   /** Colore della materia per il modulo (le tipologie con materia ne prendono il colore). */
   const ownColorContext = (subjectId?: string) => ({ subjectColor: subjects.find((subject) => subject.id === subjectId)?.color });
@@ -406,7 +452,11 @@ export function CalendarView() {
     [occurrences, calendarTasks, exams, subjectFilter]
   );
   const rangeEmpty = !hasItemsInRange(visible, range.from, range.to);
-  const subjectSummary = useMemo(() => subjectCalendarSummary({ subjects, events, exams, tasks }), [subjects, events, exams, tasks]);
+  // Le righe dei giorni cambiati da soli non sono eventi in più.
+  const subjectSummary = useMemo(
+    () => subjectCalendarSummary({ subjects, events: events.filter((event) => !isOccurrenceRow(event)), exams, tasks }),
+    [subjects, events, exams, tasks]
+  );
   const addForSubject = () => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)));
   const subjectEmpty = filterSubject ? (
     <SubjectEmptyNotice name={filterSubject.name} onAdd={addForSubject} onClear={() => setStoredSubject(null)} />
@@ -433,17 +483,69 @@ export function CalendarView() {
             : "";
   const summary = isCalendarSummary(mode);
 
+  /** La serie di un mio evento che si ripete (non la riga di un giorno) e il fuso che la modifica le fisserà. */
+  const ownSeriesOf = (seriesId: string) => {
+    const series = useStudyStore.getState().events.find((event) => event.id === seriesId && !isOccurrenceRow(event));
+    return series ? { series, pinsZone: series.timeZone || series.allDay ? undefined : deviceTimeZone() } : null;
+  };
+
+  /**
+   * Modifica di un giorno di una mia serie con la portata scelta. "Tutti" da un giorno cambiato da
+   * solo: la serie cambia e quel giorno prende anche lui la modifica (lo si sta guardando).
+   */
+  const applyOccurrenceEdit = async (
+    item: CalendarOccurrence,
+    scope: OccurrenceScope,
+    changes: Partial<CalendarEvent>,
+    shown: Partial<CalendarEvent> = {}
+  ) => {
+    const target = occurrenceTarget(item);
+    const own = ownSeriesOf(target.seriesId);
+    if (!own) throw new Error("series missing");
+    if (scope === "all") {
+      await editOccurrence(target.seriesId, target.date, "all", allScopePatch(changes, { occurrence: item, series: own.series, date: target.date }));
+      if (target.row) await editOccurrence(target.seriesId, target.date, "this", changes);
+      return;
+    }
+    await editOccurrence(target.seriesId, target.date, scope, scope === "following" ? followingPatch(shown, changes, target.row) : changes);
+  };
+
   const moveEvent = async (item: CalendarOccurrence, nextStart: Date) => {
     const origin = item.sharedFrom;
     if (origin && !origin.canEdit) return;
+    if (Number.isNaN(nextStart.getTime())) return;
+    const delta = nextStart.getTime() - parseISO(item.start).getTime();
+    if (!delta) return;
+    if (!origin && item.recurring) {
+      // Un giorno di una mia serie: solo questo, questo e i successivi, o tutti.
+      const target = occurrenceTarget(item);
+      const own = ownSeriesOf(target.seriesId);
+      const start = new Date(parseISO(item.start).getTime() + delta);
+      const end = new Date(parseISO(item.end).getTime() + delta);
+      if (!own || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+      const moved = { start: start.toISOString(), end: end.toISOString() };
+      const scope = await askScope(
+        SCOPE_TEXT.titleMove(shortTitle(item.title)),
+        scopeOptions({ action: "move", date: target.date, timeChanged: wallTimeChanged(item, moved), pinsZone: own.pinsZone })
+      );
+      if (!scope) return;
+      try {
+        await applyOccurrenceEdit(item, scope, moved);
+        setNotice("");
+      } catch {
+        setNotice(EVENT_EDITOR_TEXT.moveFailed(shortTitle(item.title)));
+      }
+      return;
+    }
     const series: ShownEvent | undefined = origin
       ? sharedEvents.find((event) => event.id === item.id && event.sharedFrom.ownerId === origin.ownerId)
       : events.find((event) => event.id === item.id);
-    if (!series || Number.isNaN(nextStart.getTime())) return;
-    // Spostare un'occorrenza sposta l'intera serie dello stesso scarto (niente eccezioni per singola data).
-    const delta = nextStart.getTime() - parseISO(item.start).getTime();
-    if (!delta) return;
-    if (item.recurring && !window.confirm(`"${series.title}" si ripete: spostando questa data si spostano allo stesso modo anche tutte le altre. Continuare?`)) return;
+    if (!series) return;
+    // Evento altrui che si ripete: si sposta tutta la serie dello stesso scarto (lo si dice prima).
+    if (item.recurring) {
+      const scope = await askScope(SCOPE_TEXT.titleMove(shortTitle(series.title)), scopeOptions({ action: "move", date: item.occurrenceDate, sharedOnly: true }));
+      if (scope !== "all") return;
+    }
     const start = new Date(parseISO(series.start).getTime() + delta);
     const end = new Date(parseISO(series.end).getTime() + delta);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
@@ -456,7 +558,7 @@ export function CalendarView() {
         await useSharedStore.getState().saveSharedItem(origin.ownerId, "calendarEvent", { ...latest, start: start.toISOString(), end: end.toISOString() });
         setNotice("");
       } catch (cause) {
-        setNotice(sharedFailure(cause, `"${series.title}" non è stato spostato. Riprova.`));
+        setNotice(sharedFailure(cause, EVENT_EDITOR_TEXT.moveFailed(shortTitle(series.title))));
       }
       return;
     }
@@ -466,7 +568,15 @@ export function CalendarView() {
 
   const handlers: Handlers = {
     subjects,
-    onEditEvent: (id, ownerId) => (ownerId ? setEditingSharedKey(sharedKey(ownerId, "calendarEvent", id)) : setEditingEventId(id)),
+    onEditEvent: (id, ownerId, occurrence) => {
+      if (ownerId) {
+        setEditingSharedKey(sharedKey(ownerId, "calendarEvent", id));
+        return;
+      }
+      setEditingEventId(id);
+      // Un giorno di una serie si apre come tale: al salvataggio si sceglie a quali date vale.
+      setEditingDate(occurrence?.recurring ? occurrence.occurrenceDate : null);
+    },
     onEditTask: setEditingTaskId,
     onToggleTask: (id) => void toggleTask(id),
     onCreate: (at, kind = "event") => openCreator(at, kind),
@@ -678,7 +788,62 @@ export function CalendarView() {
         ) : null}
       </Panel>
 
-      {editingEvent ? (
+      {editingDate && editingOccurrence ? (
+        <EventEditor
+          key={`${editingEventId}@${editingDate}`}
+          heading={EVENT_EDITOR_TEXT.editEvent}
+          initial={draftFromEvent(editingOccurrence, {
+            ...ownColorContext(editingOccurrence.subjectId),
+            // Una riga non ha la regola: si mostra quella della sua serie.
+            repeat: normalizeRepeat(editingSeries ?? editingOccurrence)
+          })}
+          event={editingOccurrence}
+          occurrenceDate={occurrenceTarget(editingOccurrence).date}
+          subjects={subjects}
+          repeatNote={REPEAT_PICKER_TEXT.onlyForSeries}
+          onClose={closeEventEditor}
+          onSubmit={async ({ changes, patch }) => {
+            const item = editingOccurrence;
+            const target = occurrenceTarget(item);
+            const own = ownSeriesOf(target.seriesId);
+            if (!own) return EVENT_EDITOR_TEXT.saveFailed;
+            const scope = await askScope(
+              SCOPE_TEXT.titleEdit(shortTitle(patch.title || item.title)),
+              scopeOptions({
+                action: "edit",
+                date: target.date,
+                ruleChanged: "repeat" in changes,
+                timeChanged: wallTimeChanged(item, changes),
+                subjectChanged: "subjectId" in changes,
+                pinsZone: own.pinsZone
+              })
+            );
+            // Annullato: il modulo resta aperto con le modifiche.
+            if (!scope) return;
+            try {
+              await applyOccurrenceEdit(item, scope, changes, patch);
+              closeEventEditor();
+            } catch {
+              return EVENT_EDITOR_TEXT.saveFailed;
+            }
+          }}
+          onDelete={async () => {
+            const item = editingOccurrence;
+            const target = occurrenceTarget(item);
+            const scope = await askScope(SCOPE_TEXT.titleDelete(shortTitle(item.title)), scopeOptions({ action: "delete", date: target.date }), true);
+            if (!scope) return;
+            try {
+              // "Tutti": tutta la serie come la si vede, anche le parti nate da "Questo e i successivi".
+              await deleteOccurrence(target.seriesId, target.date, scope, scope === "all" ? { includeSplits: true } : undefined);
+              closeEventEditor();
+            } catch {
+              return EVENT_EDITOR_TEXT.deleteFailed;
+            }
+          }}
+        />
+      ) : null}
+
+      {editingEvent && !editingDate ? (
         <EventEditor
           key={editingEvent.id}
           heading={EVENT_EDITOR_TEXT.editEvent}
@@ -686,14 +851,14 @@ export function CalendarView() {
           event={editingEvent}
           subjects={subjects}
           deleteConfirmText={(normalizeRepeat(editingEvent) ? EVENT_EDITOR_TEXT.deleteSeriesConfirm : EVENT_EDITOR_TEXT.deleteConfirm)(shortTitle(editingEvent.title))}
-          onClose={() => setEditingEventId(null)}
+          onClose={closeEventEditor}
           onSubmit={async ({ changes }) => {
             await updateEvent(editingEvent.id, changes);
-            setEditingEventId(null);
+            closeEventEditor();
           }}
           onDelete={async () => {
             await deleteEvent(editingEvent.id);
-            setEditingEventId(null);
+            closeEventEditor();
           }}
         />
       ) : null}
@@ -818,6 +983,10 @@ export function CalendarView() {
             setPreview(null);
           }}
         />
+      ) : null}
+
+      {scopeRequest ? (
+        <ScopeChoice heading={scopeRequest.heading} options={scopeRequest.options} danger={scopeRequest.danger} onChoose={answerScope} onCancel={() => answerScope(null)} />
       ) : null}
 
       {preview ? <CalendarHoverPreview preview={preview} subjects={subjects} /> : null}
@@ -1145,7 +1314,7 @@ function TimeGrid({
                     }}
                     onClick={(event) => {
                       event.stopPropagation();
-                      handlers.onEditEvent(placed.item.id, placed.item.sharedFrom?.ownerId);
+                      handlers.onEditEvent(placed.item.id, placed.item.sharedFrom?.ownerId, placed.item);
                     }}
                     onMouseEnter={(event) => handlers.onPreviewEvent(placed.item, pointerPoint(event))}
                     onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
@@ -1253,7 +1422,7 @@ function AllDayChip({ item, handlers }: { item: CalendarOccurrence; handlers: Ha
       type="button"
       onClick={(event) => {
         event.stopPropagation();
-        handlers.onEditEvent(item.id, item.sharedFrom?.ownerId);
+        handlers.onEditEvent(item.id, item.sharedFrom?.ownerId, item);
       }}
       onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
       onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
@@ -1378,7 +1547,7 @@ function EventRow({ item, handlers }: { item: CalendarOccurrence; handlers: Hand
   return (
     <button
       type="button"
-      onClick={() => handlers.onEditEvent(item.id, item.sharedFrom?.ownerId)}
+      onClick={() => handlers.onEditEvent(item.id, item.sharedFrom?.ownerId, item)}
       onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
       onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
       onMouseLeave={handlers.onPreviewHide}
@@ -1523,7 +1692,7 @@ function MonthGrid({
                     }}
                     onClick={(event) => {
                       event.stopPropagation();
-                      handlers.onEditEvent(item.id, item.sharedFrom?.ownerId);
+                      handlers.onEditEvent(item.id, item.sharedFrom?.ownerId, item);
                     }}
                     onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
                     onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}

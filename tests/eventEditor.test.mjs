@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addReminder,
+  allScopePatch,
   changeStart,
   customReminder,
   draftColor,
@@ -9,6 +10,7 @@ import {
   draftPatch,
   editorChanges,
   editorFormFor,
+  followingPatch,
   initialColorCustom,
   newEventDraft,
   reminderChoices,
@@ -19,7 +21,8 @@ import {
   draftDuration,
   shiftPatchDays,
   toLocalInput,
-  validateDraft
+  validateDraft,
+  wallTimeChanged
 } from "../src/lib/eventEditor.ts";
 import { localMidnight } from "../src/lib/tz.ts";
 
@@ -217,6 +220,15 @@ test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
   assert.ok(pinned.find((option) => option.id === "this").details.some((line) => line.includes("Europe/Rome")));
 });
 
+test("l'orario cambia? Solo ora d'inizio, durata o tutto il giorno, non il giorno", () => {
+  const before = { start: iso(2026, 11, 12, 10), end: iso(2026, 11, 12, 11) };
+  assert.equal(wallTimeChanged(before, { start: iso(2026, 11, 13, 10), end: iso(2026, 11, 13, 11) }), false);
+  assert.equal(wallTimeChanged(before, { start: iso(2026, 11, 12, 14), end: iso(2026, 11, 12, 15) }), true);
+  assert.equal(wallTimeChanged(before, { end: iso(2026, 11, 12, 12) }), true);
+  assert.equal(wallTimeChanged(before, { allDay: true }), true);
+  assert.equal(wallTimeChanged({ ...before, allDay: false }, { title: "x" }), false);
+});
+
 test("spostare inizio e fine di qualche giorno (per «Tutti» con tutto il giorno)", () => {
   const patch = { start: iso(2026, 11, 19), end: iso(2026, 11, 20), allDay: true, title: "x" };
   const shifted = shiftPatchDays(patch, -7);
@@ -224,6 +236,43 @@ test("spostare inizio e fine di qualche giorno (per «Tutti» con tutto il giorn
   assert.equal(shifted.end, iso(2026, 11, 13));
   assert.equal(shifted.title, "x");
   assert.equal(shiftPatchDays({ title: "y" }, 3).start, undefined);
+});
+
+test("«Tutti» da un giorno: la modifica si riporta al giorno di riferimento della serie", () => {
+  const series = { start: iso(2026, 11, 5, 10), allDay: false };
+  // Occorrenza al suo posto: nessuno spostamento, si cambia solo l'ora.
+  const plain = allScopePatch({ start: iso(2026, 11, 12, 14), end: iso(2026, 11, 12, 15) }, { occurrence: { start: iso(2026, 11, 12, 10), allDay: false }, series, date: "2026-11-12" });
+  assert.equal(plain.start, iso(2026, 11, 12, 14));
+  // Riga spostata a venerdì: cambiando l'ora la serie non si sposta di giorno.
+  const moved = allScopePatch({ start: iso(2026, 11, 13, 14), end: iso(2026, 11, 13, 15) }, { occurrence: { start: iso(2026, 11, 13, 10), allDay: false }, series, date: "2026-11-12" });
+  assert.equal(moved.start, iso(2026, 11, 12, 14));
+  assert.equal(moved.end, iso(2026, 11, 12, 15));
+  // Tutto il giorno acceso da un giorno qualsiasi: si scrive dal primo giorno della serie.
+  const toggled = allScopePatch({ start: iso(2026, 11, 12), end: iso(2026, 11, 13), allDay: true }, { occurrence: { start: iso(2026, 11, 12, 10), allDay: false }, series, date: "2026-11-12" });
+  assert.equal(toggled.start, iso(2026, 11, 5));
+  assert.equal(toggled.end, iso(2026, 11, 6));
+  // "Tutto il giorno" invariato non si passa (una serie senza il campo lo prenderebbe per un cambio).
+  const sameAllDay = allScopePatch({ start: iso(2026, 11, 12, 14), end: iso(2026, 11, 12, 16), allDay: false }, { occurrence: { start: iso(2026, 11, 12, 10) }, series: { start: iso(2026, 11, 5, 10) }, date: "2026-11-12" });
+  assert.equal("allDay" in sameAllDay, false);
+  assert.equal(sameAllDay.start, iso(2026, 11, 12, 14));
+  // Senza orari la modifica resta com'è.
+  const title = { title: "Nuovo" };
+  assert.equal(allScopePatch(title, { occurrence: { start: iso(2026, 11, 13, 10) }, series, date: "2026-11-12" }), title);
+});
+
+test("«Questo e i successivi» da un giorno cambiato da solo: i successivi prendono ciò che si vede", () => {
+  const shown = { title: "Lezione in aula B", description: "porta il libro", color: "#EF4444", colorCustom: true, start: iso(2026, 11, 13, 10), end: iso(2026, 11, 13, 11), allDay: false, repeat: { freq: "weekly" }, subjectId: "s1" };
+  const changes = { start: iso(2026, 11, 13, 14), end: iso(2026, 11, 13, 15) };
+  const fromRow = followingPatch(shown, changes, true);
+  assert.equal(fromRow.title, "Lezione in aula B");
+  assert.equal(fromRow.color, "#EF4444");
+  assert.equal(fromRow.start, changes.start);
+  // Orari, regola e materia solo se cambiati: la serie non si sposta da sola.
+  assert.equal("repeat" in followingPatch(shown, { title: "x" }, true), false);
+  assert.equal("start" in followingPatch(shown, { title: "x" }, true), false);
+  assert.equal("subjectId" in followingPatch(shown, { title: "x" }, true), false);
+  // Dalla serie: solo le modifiche.
+  assert.deepEqual(followingPatch(shown, changes, false), changes);
 });
 
 test("quale modulo apre un evento: ricorrenza, vacanza o completo", () => {
