@@ -11,6 +11,8 @@ import { expandEvents, type EventOccurrence } from "../lib/recurrence";
 import { dueTopics } from "../lib/review";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import { studyMinutesThisWeek, studyStreak, upcomingExams, urgentTasks } from "../lib/selectors";
+import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, timerElapsedSeconds, timerRemainingSeconds, timerUnsavedSeconds } from "../lib/studyTimer";
+import { TIMER_KIND_LABEL, TIMER_MODE_LABEL } from "../lib/labels";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore, type PreferencesPatch } from "../store/useStudyStore";
 import type { Attachment, CalendarEvent, Exam, Goal, Note, StudySession, StudyTopic, Subject, Task } from "../types";
@@ -983,19 +985,51 @@ const addBarbCourses = async (args: Args): Promise<AgentCallResult> => {
   return ok({ added, skipped, unknown });
 };
 
+// Stessi arrotondamenti dell'app: il tempo che resta per eccesso, quello passato per difetto.
 const timerSnapshot = () => {
   const timer = state().timer;
-  const remainingSeconds = timer.running && timer.endsAt ? Math.max(0, Math.round((timer.endsAt - Date.now()) / 1000)) : timer.remainingSeconds;
-  return { mode: timer.mode, running: timer.running, remainingSeconds, durationSeconds: timer.durationSeconds, label: timer.label };
+  const now = Date.now();
+  return {
+    mode: timer.mode,
+    running: timer.running,
+    remainingSeconds: timerRemainingSeconds(timer, now),
+    durationSeconds: timer.durationSeconds,
+    label: timer.kind === "stopwatch" ? TIMER_KIND_LABEL.stopwatch : TIMER_MODE_LABEL[timer.mode],
+    kind: timer.kind,
+    phase: timer.phase,
+    elapsedSeconds: timerElapsedSeconds(timer, now),
+    subjectId: timer.subjectId ?? null,
+    cycle: timer.cycle
+  };
 };
+
+const isOneOf = <T extends string>(values: readonly T[], value: unknown): value is T => typeof value === "string" && (values as readonly string[]).includes(value);
 
 const controlTimer = (args: Args): AgentCallResult => {
   const store = state();
-  if (args.action === "start") {
-    if (typeof args.mode !== "string") return fail("invalid", "Per avviare il timer indica mode: classic, pomodoro o deep-focus.");
-    store.startStudyTimer(args.mode as "classic" | "pomodoro" | "deep-focus");
-  } else if (args.action === "toggle") store.toggleStudyTimer();
-  else store.resetStudyTimer(typeof args.mode === "string" ? args.mode as "classic" | "pomodoro" | "deep-focus" : undefined);
+  const action = args.action;
+  if (!isOneOf(TIMER_CONTROL_ACTIONS, action)) return fail("invalid", "action deve essere start, toggle, reset o finish.");
+  if (action === "start") {
+    const kind = args.kind === undefined ? "pomodoro" : args.kind;
+    if (!isOneOf(TIMER_KINDS, kind)) return fail("invalid", "kind deve essere pomodoro o stopwatch.");
+    const subjectId = args.subjectId === undefined ? undefined : String(args.subjectId);
+    if (subjectId !== undefined && !store.subjects.some((subject) => subject.id === subjectId)) return fail("not_found", "Materia non trovata. Leggi gli id da studyos_list_subjects.");
+    // Il tempo di studio non salvato non si perde in silenzio.
+    if (timerUnsavedSeconds(store.timer, Date.now()) >= 60) return fail("invalid", "C'è una sessione in corso: salvala con action=finish o scartala con action=reset, poi avvia.");
+    if (kind === "stopwatch") store.startStopwatch(subjectId);
+    else {
+      const mode = args.mode === undefined && args.kind === "pomodoro" ? "pomodoro" : args.mode;
+      if (!isOneOf(TIMER_MODES, mode)) return fail("invalid", "Per avviare il timer indica mode: classic, pomodoro o deep-focus.");
+      store.startStudyTimer(mode, { subjectId });
+    }
+  } else if (action === "toggle") store.toggleStudyTimer();
+  else if (action === "reset") store.resetStudyTimer(isOneOf(TIMER_MODES, args.mode) ? args.mode : undefined);
+  else {
+    const result = store.finishStudyTimer();
+    if (result.status === "too-short") return fail("invalid", "Meno di un minuto di studio: non c'è niente da salvare. Per fermare il timer usa action=reset.");
+    if (result.status === "saved") return ok({ timer: timerSnapshot(), session: publicEntity(result.session) });
+    return ok({ timer: timerSnapshot(), session: null, note: result.status === "ended" ? "Giro del Pomodoro chiuso: i blocchi finiti erano già salvati." : "Il timer era già fermo." });
+  }
   return ok({ timer: timerSnapshot() });
 };
 

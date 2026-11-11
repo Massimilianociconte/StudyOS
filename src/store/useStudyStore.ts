@@ -58,15 +58,28 @@ import {
   setVaultSession
 } from "../lib/persistence";
 import {
+  advanceTimerState,
   defaultTimer,
+  finishedSession,
+  isTimerIdle,
   loadTimer,
+  nextPhase,
   saveTimer,
-  settleTimerState,
+  sessionFromBlock,
+  skipBreakState,
+  startStopwatchState,
   startTimerState,
+  syncTimerDurations,
   toggleTimerState,
+  type FinishedBlock,
+  type TimerEvent,
+  type TimerFinish,
+  type TimerKind,
   type TimerMode,
   type TimerState
 } from "../lib/studyTimer";
+import { resolveTimerDurations } from "../lib/timerPrefs";
+import type { TimerSettings } from "../types";
 import { useSharedStore } from "./useSharedStore";
 
 let sessionPassphrase: string | undefined;
@@ -203,10 +216,28 @@ interface StudyState {
    */
   resetAllData: (options?: { propagate?: boolean }) => Promise<void>;
   retryPersist: () => Promise<void>;
-  startStudyTimer: (mode: TimerMode) => void;
+  /** Avvia un blocco Pomodoro (`mode`: durata di partenza; `subjectId` null = nessuna materia). */
+  startStudyTimer: (mode: TimerMode, options?: { subjectId?: string | null }) => void;
+  /** Avvia (da fermo, con le durate attuali della materia), mette in pausa o riprende. */
   toggleStudyTimer: () => void;
+  /** Scarta il blocco o la sessione in corso: timer fermo, stessa materia. */
   resetStudyTimer: (mode?: TimerMode) => void;
-  settleStudyTimer: () => void;
+  /** Chiude la fase scaduta; a fine blocco Pomodoro salva la sessione (una volta sola). */
+  settleStudyTimer: () => TimerEvent | null;
+  startStopwatch: (subjectId?: string | null) => void;
+  /** "Termina e salva": salva il tempo studiato e azzera il timer in un colpo solo. */
+  finishStudyTimer: () => TimerFinish;
+  skipBreak: () => void;
+  setTimerKind: (kind: TimerKind) => void;
+  setTimerSubject: (subjectId: string | null) => void;
+  setTimerDetails: (details: { title?: string; template?: StudySession["template"] }) => void;
+  markTimerTargetNotified: () => void;
+  /** "Annulla" dopo Scarta: rimette lo stato precedente se nel frattempo non è partito altro. */
+  restoreStudyTimer: (previous: TimerState) => boolean;
+  /** Stato del timer cambiato in un'altra scheda. */
+  reloadStudyTimer: () => void;
+  /** Durate della materia e/o generali (null = togli); il timer fermo prende subito le nuove. */
+  saveTimerSettings: (change: { subjectId?: string | null; subject?: TimerSettings | null; defaults?: TimerSettings | null }) => Promise<void>;
 }
 
 type StoreState = StudyState;
@@ -214,7 +245,7 @@ type StoreState = StudyState;
 export type PreferencesPatch = Partial<
   Pick<
     Preferences,
-    "displayName" | "avatarDataUrl" | "weeklyTargetMinutes" | "degreeCfu" | "showBarb" | "degreeProgram" | "sbThesisGrade" | "barbThesisPoints" | "abroad"
+    "displayName" | "avatarDataUrl" | "weeklyTargetMinutes" | "degreeCfu" | "showBarb" | "degreeProgram" | "sbThesisGrade" | "barbThesisPoints" | "abroad" | "timer"
   >
 >;
 
@@ -368,10 +399,26 @@ const commit = async () => {
   }
 };
 
+// Ogni modifica porta l'ora: tra due schede vince lo stato più recente (vedi settleStudyTimer).
 const setTimerState = (set: (partial: Partial<StoreState>) => void, timer: TimerState) => {
-  saveTimer(timer);
-  set({ timer });
+  const stamped = { ...timer, changedAt: Date.now() };
+  saveTimer(stamped);
+  set({ timer: stamped });
 };
+
+/** Durate del timer per una materia: materia → preferenze → predefiniti. */
+const timerDurationsFor = (state: Pick<StoreState, "subjects" | "preferences">, subjectId?: string) =>
+  resolveTimerDurations(subjectId ? state.subjects.find((subject) => subject.id === subjectId)?.timer : undefined, selectPreferences(state).timer);
+
+const knownSubjectId = (state: Pick<StoreState, "subjects">, subjectId?: string | null) =>
+  subjectId && state.subjects.some((subject) => subject.id === subjectId) ? subjectId : undefined;
+
+/**
+ * La persona sceglie materia o durate: un blocco non ancora avviato torna sulle sue durate anche
+ * se un agente l'aveva preparato da 45 o 90 minuti (`mode` classic / deep-focus).
+ */
+const chosenByUser = (timer: TimerState): TimerState =>
+  timer.mode !== "pomodoro" && timer.kind === "pomodoro" && isTimerIdle(timer) ? { ...timer, mode: "pomodoro" } : timer;
 
 export const useStudyStore = create<StudyState>((set, get) => {
   configurePersistence({
@@ -399,6 +446,17 @@ export const useStudyStore = create<StudyState>((set, get) => {
       }
     }
     set(rollback as Partial<StoreState>);
+  };
+
+  /** Blocco di studio finito → sessione completata. Id già presente (altra scheda, ricarica) → nulla. */
+  const saveTimerBlock = (block: FinishedBlock): StudySession | null => {
+    const state = get();
+    const id = block.sessionId ?? createId("session");
+    if (state.sessions.some((session) => session.id === id)) return null;
+    const session = sessionFromBlock({ ...block, sessionId: id }, { subjects: state.subjects, now: nowIso() });
+    set((current) => ({ sessions: [session, ...current.sessions] }));
+    void commit();
+    return session;
   };
 
   return {
@@ -1488,12 +1546,169 @@ export const useStudyStore = create<StudyState>((set, get) => {
       await commit();
     },
 
-    startStudyTimer: (mode) => setTimerState(set, startTimerState(mode)),
-    toggleStudyTimer: () => setTimerState(set, toggleTimerState(get().timer)),
-    resetStudyTimer: (mode) => setTimerState(set, defaultTimer(mode ?? get().timer.mode)),
+    startStudyTimer: (mode, options) => {
+      const state = get();
+      const current = state.timer;
+      const subjectId = knownSubjectId(state, options?.subjectId === undefined ? current.subjectId : options.subjectId);
+      setTimerState(
+        set,
+        startTimerState(mode, Date.now(), {
+          durations: timerDurationsFor(state, subjectId),
+          subjectId,
+          title: current.title,
+          template: current.template,
+          sessionId: createId("session")
+        })
+      );
+    },
+    startStopwatch: (subjectId) => {
+      const state = get();
+      const current = state.timer;
+      const id = knownSubjectId(state, subjectId === undefined ? current.subjectId : subjectId);
+      setTimerState(
+        set,
+        startStopwatchState(Date.now(), {
+          mode: current.mode,
+          subjectId: id,
+          title: current.title,
+          template: current.template,
+          targetMinutes: timerDurationsFor(state, id).stopwatchTargetMinutes,
+          sessionId: createId("session")
+        })
+      );
+    },
+    toggleStudyTimer: () => {
+      const state = get();
+      const now = Date.now();
+      // Da fermo parte con le durate attuali della materia (il giro del Pomodoro continua).
+      const timer = syncTimerDurations(state.timer, timerDurationsFor(state, state.timer.subjectId), now);
+      setTimerState(set, toggleTimerState(timer, now, { sessionId: createId("session") }));
+    },
+    resetStudyTimer: (mode) => {
+      const state = get();
+      const current = state.timer;
+      const subjectId = knownSubjectId(state, current.subjectId);
+      const durations = timerDurationsFor(state, subjectId);
+      setTimerState(
+        set,
+        defaultTimer(mode ?? current.mode, {
+          kind: mode ? "pomodoro" : current.kind,
+          durations,
+          subjectId,
+          title: current.title,
+          template: current.template,
+          targetMinutes: durations.stopwatchTargetMinutes
+        })
+      );
+    },
     settleStudyTimer: () => {
-      const settled = settleTimerState(get().timer);
-      if (settled !== get().timer) setTimerState(set, settled);
+      const state = get();
+      // I blocchi si salvano solo con i dati caricati: init() sostituirebbe le sessioni appena aggiunte.
+      if (state.loading || state.locked) return null;
+      // Un'altra scheda può aver già chiuso questo blocco: si parte dallo stato più recente.
+      const stored = loadTimer();
+      const timer = (stored.changedAt ?? 0) > (state.timer.changedAt ?? 0) ? stored : state.timer;
+      const durations = timerDurationsFor(state, timer.subjectId);
+      const result = advanceTimerState(timer, Date.now(), durations);
+      if (result.timer === timer) {
+        if (timer !== state.timer) set({ timer });
+        return null;
+      }
+      const block = result.finishedBlock;
+      const session = block ? saveTimerBlock(block) : null;
+      setTimerState(set, result.timer);
+      if (!block) return { type: "break-done" };
+      const breakPhase = nextPhase("focus", timer.cycle, durations.longBreakEvery).phase;
+      return {
+        type: "focus-done",
+        session,
+        minutes: block.actualMinutes,
+        subjectId: session?.subjectId ?? knownSubjectId(state, block.subjectId),
+        breakPhase,
+        breakMinutes: breakPhase === "long" ? durations.longBreakMinutes : durations.shortBreakMinutes,
+        breakEnded: Boolean(result.breakEnded)
+      };
+    },
+    finishStudyTimer: () => {
+      const state = get();
+      const now = Date.now();
+      const timer = state.timer;
+      if (state.loading || state.locked || isTimerIdle(timer, now)) return { status: "idle" };
+      const subjectId = knownSubjectId(state, timer.subjectId);
+      const durations = timerDurationsFor(state, subjectId);
+      const ready = () =>
+        defaultTimer(timer.mode, {
+          kind: timer.kind,
+          durations,
+          subjectId,
+          title: timer.title,
+          template: timer.template,
+          targetMinutes: durations.stopwatchTargetMinutes
+        });
+      // Pausa del Pomodoro: i blocchi finiti sono già salvati, la pausa non è studio.
+      if (timer.phase !== "focus") {
+        setTimerState(set, ready());
+        return { status: "ended" };
+      }
+      const block = finishedSession(timer, now);
+      if (!block) return { status: "too-short" };
+      const session = saveTimerBlock(block) ?? get().sessions.find((item) => item.id === block.sessionId);
+      setTimerState(set, ready());
+      return session ? { status: "saved", session } : { status: "ended" };
+    },
+    skipBreak: () => {
+      const state = get();
+      const timer = state.timer;
+      const next = skipBreakState(timer, Date.now(), timerDurationsFor(state, timer.subjectId), createId("session"));
+      if (next !== timer) setTimerState(set, next);
+    },
+    setTimerKind: (kind) => {
+      const state = get();
+      const current = state.timer;
+      if (current.kind === kind) return;
+      const subjectId = knownSubjectId(state, current.subjectId);
+      const durations = timerDurationsFor(state, subjectId);
+      setTimerState(
+        set,
+        defaultTimer("pomodoro", { kind, durations, subjectId, title: current.title, template: current.template, targetMinutes: durations.stopwatchTargetMinutes })
+      );
+    },
+    setTimerSubject: (subjectId) => {
+      const state = get();
+      const id = knownSubjectId(state, subjectId);
+      if (state.timer.subjectId === id) return;
+      setTimerState(set, syncTimerDurations(chosenByUser({ ...state.timer, subjectId: id }), timerDurationsFor(state, id)));
+    },
+    setTimerDetails: (details) => {
+      const current = get().timer;
+      const next = { ...current, ...details };
+      if (next.title === current.title && next.template === current.template) return;
+      setTimerState(set, next);
+    },
+    markTimerTargetNotified: () => {
+      const current = get().timer;
+      if (current.kind !== "stopwatch" || current.targetNotifiedSeconds === current.durationSeconds) return;
+      setTimerState(set, { ...current, targetNotifiedSeconds: current.durationSeconds });
+    },
+    restoreStudyTimer: (previous) => {
+      if (!isTimerIdle(get().timer)) return false;
+      setTimerState(set, previous);
+      return true;
+    },
+    reloadStudyTimer: () => {
+      const stored = loadTimer();
+      // Solo `set`: riscriverlo in localStorage farebbe rimbalzare l'evento tra le schede.
+      if ((stored.changedAt ?? 0) > (get().timer.changedAt ?? 0)) set({ timer: stored });
+    },
+    saveTimerSettings: async ({ subjectId, subject, defaults }) => {
+      const writes: Array<Promise<void>> = [];
+      const id = knownSubjectId(get(), subjectId);
+      if (id && subject !== undefined) writes.push(get().updateSubject(id, { timer: subject ?? undefined }));
+      if (defaults !== undefined) writes.push(get().updatePreferences({ timer: defaults ?? undefined }));
+      const state = get();
+      const synced = syncTimerDurations(chosenByUser(state.timer), timerDurationsFor(state, state.timer.subjectId));
+      if (synced !== state.timer) setTimerState(set, synced);
+      await Promise.all(writes);
     }
   };
 });

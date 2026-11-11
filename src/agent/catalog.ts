@@ -1,6 +1,8 @@
 import type { AgentRisk } from "./policy";
 import type { JsonSchema } from "./schema";
 import { SHARE_SCOPE_LABEL } from "../lib/labels";
+// Stesse costanti che usa execute.ts: azioni, durate e tipi del timer restano allineati.
+import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES } from "../lib/studyTimer";
 import type { ShareScope } from "../lib/sharing";
 
 const ID = { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9_.:-]{1,120}$", description: "Id StudyOS restituito da una lettura precedente." } as const satisfies JsonSchema;
@@ -955,7 +957,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_timer_status",
     title: "Stato del timer",
-    description: "Legge il timer di studio di questo dispositivo (pomodoro, classico, deep focus): se è in corsa e quanti secondi restano.",
+    description: "Legge il timer di studio di questo dispositivo, come lo mostra l'app. kind = pomodoro (blocchi di studio e pause) o stopwatch (cronometro); phase = focus (studio), short o long (pausa). remainingSeconds è arrotondato per eccesso ed elapsedSeconds per difetto, come in app; per il cronometro durationSeconds è l'obiettivo (0 = nessuno). mode e label restano per compatibilità.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),
@@ -964,12 +966,14 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_timer_control",
     title: "Controlla il timer",
-    description: "Avvia, mette in pausa o azzera il timer di questo dispositivo. action=start richiede mode. Non registra da sola una sessione nello storico: al termine usa studyos_create_session.",
+    description: "Avvia, mette in pausa, azzera o termina il timer di questo dispositivo. action=start avvia un Pomodoro (richiede mode) oppure, con kind=stopwatch, il cronometro; subjectId facoltativo sceglie la materia. Se c'è una sessione in corso da almeno un minuto, start rifiuta: prima usa finish o reset. action=toggle mette in pausa o riprende; action=reset scarta il tempo non salvato; action=finish salva come sessione il tempo di studio fatto (almeno un minuto, pause escluse). Ogni blocco Pomodoro finito si salva già da solo come sessione.",
     risk: "write",
     idempotent: false,
     inputSchema: objectSchema({
-      action: { type: "string", enum: ["start", "toggle", "reset"] },
-      mode: { type: "string", enum: ["classic", "pomodoro", "deep-focus"], description: "Richiesto se action=start." }
+      action: { type: "string", enum: [...TIMER_CONTROL_ACTIONS] },
+      mode: { type: "string", enum: [...TIMER_MODES], description: "Richiesto se action=start senza kind=stopwatch. pomodoro = durata di studio scelta dalla persona (25 minuti se non l'ha cambiata), classic = 45 minuti, deep-focus = 90 minuti." },
+      kind: { type: "string", enum: [...TIMER_KINDS], description: "Solo con action=start: pomodoro (predefinito) o stopwatch (cronometro)." },
+      subjectId: { ...ID, description: "Solo con action=start: id della materia (studyos_list_subjects). Senza, resta la materia già scelta nel timer." }
     }, ["action"]),
     summary: (args) => `Controllare il timer (${text(args.action, "")})`
   }),
