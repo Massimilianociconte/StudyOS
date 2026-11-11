@@ -14,7 +14,7 @@ import { isOccurrenceRow, laterParts, normalizeRepeat, planDelete, sanitizeOccas
 import { isCivilDate, isValidTimeZone } from "../lib/tz";
 import { safeCssColor } from "../lib/sharing";
 import { dueTopics } from "../lib/review";
-import { normalizeExternalUrl } from "../lib/safeUrl";
+import { normalizeExternalUrl, safeHref } from "../lib/safeUrl";
 import { studyMinutesThisWeek, studyStreak, upcomingExams, urgentTasks } from "../lib/selectors";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, timerElapsedSeconds, timerRemainingSeconds, timerUnsavedSeconds } from "../lib/studyTimer";
 import { SESSION_SOURCE_VALUES, editedSessionTimes } from "../lib/studySessions";
@@ -1123,8 +1123,9 @@ const groupBoard = (args: Args): AgentCallResult => {
   const limit = Number(args.limit ?? 30);
   return ok({
     group: publicGroup(group),
+    // Link scritti da altri membri: solo http, https e mailto, come nell'app (safeHref); gli altri spariscono.
     resources: state().groupResources.filter((item) => item.groupId === groupId).slice(0, limit).map((item) => ({
-      id: item.id, kind: item.kind, title: item.title, url: item.url, body: item.body, pinned: item.pinned, addedByDisplayName: item.addedByDisplayName, updatedAt: item.updatedAt
+      id: item.id, kind: item.kind, title: item.title, url: safeHref(item.url), body: item.body, pinned: item.pinned, addedByDisplayName: item.addedByDisplayName, updatedAt: item.updatedAt
     })),
     activities: state().groupActivities.filter((item) => item.groupId === groupId).slice(0, limit).map((item) => ({
       id: item.id, actorDisplayName: item.actorDisplayName, text: item.text, createdAt: item.createdAt

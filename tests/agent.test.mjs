@@ -1217,3 +1217,33 @@ test("N8 (revisione finale). sessioni condivise: origine e argomento si vedono e
   assert.equal((await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(good), source: "altro" })).code, "invalid");
   assert.ok(/topicId/.test(findAgentTool("studyos_update_shared_item").description));
 });
+
+test("bacheca del gruppo: i link degli altri membri passano dagli stessi filtri dei dati condivisi", async () => {
+  seedApp();
+  const stamp = { createdAt: "2026-11-10T08:00:00.000Z", updatedAt: "2026-11-10T08:00:00.000Z", archived: false, tags: [] };
+  const resource = (id, url, kind = "link") => ({ ...stamp, id, groupId: "g1", kind, title: id, url, body: "", pinned: false, addedByUserId: "u2", addedByDisplayName: "Bea" });
+  useStudyStore.setState({
+    studyGroups: [{ ...stamp, id: "g1", name: "Biochimica", description: "", ownerDisplayName: "Bea", members: [] }],
+    groupResources: [
+      resource("ok", "https://unimi.it/dispense"),
+      resource("senza-schema", "www.esempio.it/appunti"),
+      resource("script", "javascript:alert(document.cookie)"),
+      resource("dati", "data:text/html;base64,PHNjcmlwdD4="),
+      resource("file", "file:///etc/passwd"),
+      resource("nota", undefined, "note")
+    ]
+  });
+  const board = await executeAgentTool("studyos_list_group_board", { groupId: "g1" });
+  assert.equal(board.ok, true, JSON.stringify(board));
+  const urls = Object.fromEntries(board.data.resources.map((item) => [item.id, item.url]));
+  assert.deepEqual(urls, {
+    ok: "https://unimi.it/dispense",
+    "senza-schema": "https://www.esempio.it/appunti",
+    script: undefined,
+    dati: undefined,
+    file: undefined,
+    nota: undefined
+  });
+  const packed = JSON.stringify(board);
+  for (const unsafe of ["javascript:", "data:", "file:"]) assert.equal(packed.includes(unsafe), false, unsafe);
+});
