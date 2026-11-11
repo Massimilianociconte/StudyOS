@@ -84,7 +84,8 @@ const NO_IMPACT = {
   laterParts: 0,
   laterOwnTime: 0,
   laterMoved: 0,
-  laterOwnDays: 0
+  laterOwnDays: 0,
+  both: []
 };
 
 test("B1. spostare un giorno a un altro giorno con «Questo e i successivi» o «Tutti»: si dice che le modifiche e gli annullamenti si perdono", () => {
@@ -880,8 +881,10 @@ test("R1-S1 ter (1). Ogni giorno alle 12 con una parte alle 13 dal 30/11: il 16/
   assert.deepEqual(now.slice(-5), ["2026-11-29 12 Lezione", "2026-11-30 12 Lezione", "2026-11-30 13 Lezione", "2026-12-01 13 Lezione", "2026-12-02 13 Lezione"]);
   assert.deepEqual(normalizeRepeat(seriesOf(after, "s~2026-11-16")).end, { type: "until", date: "2026-11-30" });
   assert.deepEqual(laterOf(impact), [0, [], 1, 0, 1]);
-  // «La serie finisce quando finiva prima» resta vero.
-  assert.deepEqual(lines, [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingKeepsEnd]);
+  // «La serie finisce quando finiva prima» resta vero, e la scelta dice che il 30/11 ci sono tutte e due.
+  assert.deepEqual(impact.both, ["2026-11-30"]);
+  assert.deepEqual(lines, [SCOPE_TEXT.followingKeepsSplits, SCOPE_TEXT.followingBoth("lun 30 nov"), SCOPE_TEXT.followingKeepsEnd]);
+  assert.equal(SCOPE_TEXT.followingBoth("lun 30 nov"), "Ci saranno entrambi gli eventi, quello spostato e quello che c'era già: lun 30 nov.");
 });
 
 test("R1-S1 ter (1). Ogni lunedì con lunedì e venerdì dal 30/11: il 16/11 una settimana dopo tiene il 30/11 spostato", () => {
@@ -899,6 +902,7 @@ test("R1-S1 ter (1). Ogni lunedì con lunedì e venerdì dal 30/11: il 16/11 una
   ]);
   assert.equal(weekdayView(after, "2026-11-01", "2027-03-01").length, weekdayView(events, "2026-11-01", "2027-03-01").length);
   assert.deepEqual(laterOf(impact), [0, [], 1, 0, 1]);
+  assert.deepEqual(impact.both, ["2026-11-30"]);
 });
 
 test("R1-S1 ter (1). Spostando indietro, la parte uguale dopo una parte con un orario suo si sposta senza nascondere quella", () => {
@@ -919,7 +923,9 @@ test("R1-S1 ter (1). Spostando indietro, la parte uguale dopo una parte con un o
   const x = seriesOf(after, "s~2026-11-30~2026-12-07");
   assert.equal(x.originalDate, "2026-12-07", "X ferma D solo dopo la sua ultima data (6/12)");
   assert.deepEqual(laterOf(impact), [0, [], 2, 1, 1]);
-  assert.deepEqual(lines, [SCOPE_TEXT.followingMovesSplits, SCOPE_TEXT.followingSplitsOwnDays, SCOPE_TEXT.followingKeepsEnd]);
+  // Il 15/11 della parte prima e il 16/11 spostato; il 6/12 di D e il 7/12 di X spostato.
+  assert.deepEqual(impact.both, ["2026-11-15", "2026-12-06"]);
+  assert.deepEqual(lines, [SCOPE_TEXT.followingMovesSplits, SCOPE_TEXT.followingSplitsOwnDays, SCOPE_TEXT.followingBoth("dom 15 nov, dom 6 dic"), SCOPE_TEXT.followingKeepsEnd]);
 });
 
 test("R1-S1 ter (3). «Il 2° lunedì» spostato al martedì: la parte dopo parte dal 2° martedì del suo mese e quella prima finisce prima", () => {

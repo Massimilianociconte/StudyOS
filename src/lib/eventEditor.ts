@@ -593,6 +593,8 @@ export const scopeOptions = ({
           ...(rowContent ? [SCOPE_TEXT.followingTakesDay] : []),
           ...rowLines(impacts.following),
           ...splitLines(impacts.following),
+          // Spostando, i giorni in cui una data spostata arriva su quella di un'altra parte: ci sono tutte e due.
+          ...(impacts.following?.both?.length ? [SCOPE_TEXT.followingBoth(shortDatesText(impacts.following.both.slice(0, GONE_SHOWN)))] : []),
           // Se spariscono date, la fine di prima non vale più per tutto ciò che viene dopo.
           ...(ruleChanged || impacts.following?.gone?.length ? [] : [SCOPE_TEXT.followingKeepsEnd]),
           ...pin
