@@ -1,10 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Field, Pill, inputClass } from "./ui";
+import { Button, Field, HelpTip, IconButton, Pill, inputClass } from "./ui";
+import { HelpField } from "./HelpField";
 import { DurationField } from "./DurationField";
 import { durationToMinutes, minutesToDuration } from "../lib/duration";
-import { PRIORITY_LABEL, TASK_STATUS_LABEL, formatMinutes } from "../lib/labels";
+import { ENERGY_LABEL, PRIORITY_LABEL, TASK_STATUS_LABEL, TASKS_HELP, TASKS_TEXT, formatMinutes } from "../lib/labels";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
@@ -143,7 +145,8 @@ export function TaskEditorModal({
             ? "Salvando parte il timer: ogni tanto ti chiederà come va."
             : "Scegli «In corso» per far partire il timer.";
 
-  return (
+  // Portal su body come Drawer: dentro la vista la barra in basso del telefono restava sopra la finestra.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
       role="dialog"
@@ -159,9 +162,7 @@ export function TaskEditorModal({
             <p className="text-xs font-black uppercase text-[var(--faint)]">Attività</p>
             <h3 id={titleId} className="safe-text text-2xl font-black">Modifica attività</h3>
           </div>
-          <Button variant="ghost" icon="X" onClick={onClose} aria-label="Chiudi senza salvare">
-            Chiudi
-          </Button>
+          <IconButton icon="X" label={TASKS_TEXT.close} onClick={onClose} className="h-10 w-10" />
         </div>
 
         <div className="grid grid-cols-1 gap-3">
@@ -190,15 +191,17 @@ export function TaskEditorModal({
               </select>
             </Field>
             <div className="min-w-0">
-              <Field label="Stato">
-                <select className={inputClass} value={draft.status} onChange={(event) => setDraft((value) => ({ ...value, status: event.target.value as Task["status"] }))}>
-                  {(Object.keys(TASK_STATUS_LABEL) as Task["status"][]).map((status) => (
-                    <option key={status} value={status}>
-                      {TASK_STATUS_LABEL[status]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <HelpField label="Stato" help={TASKS_HELP.status}>
+                {(id) => (
+                  <select id={id} className={inputClass} value={draft.status} onChange={(event) => setDraft((value) => ({ ...value, status: event.target.value as Task["status"] }))}>
+                    {(Object.keys(TASK_STATUS_LABEL) as Task["status"][]).map((status) => (
+                      <option key={status} value={status}>
+                        {TASK_STATUS_LABEL[status]}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </HelpField>
               <p className="mt-1 text-xs font-bold text-[var(--faint)]">{statusHint}</p>
             </div>
           </div>
@@ -215,6 +218,9 @@ export function TaskEditorModal({
           <details ref={moreRef} open={moreOpenAtStart || undefined} className="quiet-panel p-4">
             <summary className="cursor-pointer text-sm font-extrabold">Altre opzioni: priorità, tempi, tag e note</summary>
             <div className="mt-3 grid grid-cols-1 gap-3">
+              <div>
+                <HelpTip {...TASKS_HELP.effort} />
+              </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Field label="Priorità">
                   <select className={inputClass} value={draft.priority} onChange={(event) => setDraft((value) => ({ ...value, priority: event.target.value as Task["priority"] }))}>
@@ -233,9 +239,11 @@ export function TaskEditorModal({
                 </Field>
                 <Field label="Energia richiesta">
                   <select className={inputClass} value={draft.energy} onChange={(event) => setDraft((value) => ({ ...value, energy: event.target.value as Task["energy"] }))}>
-                    <option value="low">Bassa</option>
-                    <option value="medium">Media</option>
-                    <option value="high">Alta</option>
+                    {(Object.keys(ENERGY_LABEL) as Task["energy"][]).map((key) => (
+                      <option key={key} value={key}>
+                        {ENERGY_LABEL[key]}
+                      </option>
+                    ))}
                   </select>
                 </Field>
               </div>
@@ -302,5 +310,7 @@ export function TaskEditorModal({
         </div>
       </section>
     </div>
+    ,
+    document.body
   );
 }
