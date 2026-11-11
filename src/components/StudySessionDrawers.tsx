@@ -27,32 +27,10 @@ import {
 } from "../lib/studySessions";
 import { finishedSession, timerUnsavedSeconds, type TimerState } from "../lib/studyTimer";
 import { createId } from "../lib/id";
+import { useOnce } from "../hooks/useOnce";
 import { Button, Drawer, Field, inputClass } from "./ui";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
-
-/**
- * Un solo Salva / Scarta / Elimina per volta: il Drawer che si chiude resta cliccabile per l'animazione
- * e un doppio tocco rifarebbe l'azione. Il ref blocca subito (stesso tocco), lo stato disattiva il pulsante.
- * `release` dopo un errore del modulo; `reset` quando il Drawer si riapre per un'altra sessione.
- */
-const useOnce = () => {
-  const busyRef = useRef(false);
-  const [busy, setBusy] = useState(false);
-  return {
-    busy,
-    take: () => {
-      if (busyRef.current) return false;
-      busyRef.current = true;
-      setBusy(true);
-      return true;
-    },
-    release: () => {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
-};
 
 const normalize = (text: string) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase("it");
 
