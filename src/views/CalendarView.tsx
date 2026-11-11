@@ -240,8 +240,11 @@ const pointerPoint = (event: ReactMouseEvent<HTMLElement>): PreviewPoint => ({ x
 
 interface Handlers {
   subjects: Subjects;
-  /** `occurrence`: il giorno toccato, per una serie che si ripete. */
-  onEditEvent: (id: string, ownerId?: string, occurrence?: CalendarOccurrence) => void;
+  /**
+   * `occurrence`: il giorno toccato (`occurrenceDate`, e `seriesId` per un giorno già cambiato da solo).
+   * Basta questo: se l'evento si ripete lo dice lo store.
+   */
+  onEditEvent: (id: string, ownerId?: string, occurrence?: { occurrenceDate?: string; seriesId?: string }) => void;
   onEditTask: (id: string) => void;
   onToggleTask: (id: string) => void;
   onCreate: (at: Date, kind?: "event" | "task") => void;
@@ -609,13 +612,17 @@ export function CalendarView() {
         return;
       }
       // Ricorrenze e vacanze si aprono nel loro modulo semplice, per tutta la serie.
-      const seriesId = occurrence?.recurring ? occurrenceTarget(occurrence).seriesId : id;
+      const stored = events.find((event) => event.id === id);
+      const seriesId = stored && isOccurrenceRow(stored) ? (stored.seriesId as string) : id;
       const series = events.find((event) => event.id === seriesId);
       const simple = series ? editorFormFor(series) !== "event" : false;
+      // Un giorno di una serie (anche già cambiato da solo, il cui occurrenceDate è il giorno originale)
+      // si apre come tale: al salvataggio si sceglie a quali date vale. Un evento singolo no.
+      const date = occurrence?.occurrenceDate;
+      const recurring = Boolean(series && isCivilDate(date) && (seriesId !== id || normalizeRepeat(series)));
       setFullForm(null);
       setEditingEventId(simple ? seriesId : id);
-      // Un giorno di una serie si apre come tale: al salvataggio si sceglie a quali date vale.
-      setEditingDate(!simple && occurrence?.recurring ? occurrence.occurrenceDate : null);
+      setEditingDate(!simple && recurring ? (date as string) : null);
     },
     onEditTask: setEditingTaskId,
     onToggleTask: (id) => void toggleTask(id),
