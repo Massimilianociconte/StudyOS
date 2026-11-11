@@ -91,6 +91,8 @@ export interface Subject extends BaseEntity {
   targetGrade?: number;
   examDate?: string;
   notes: string;
+  /** Durate del timer ricordate per questa materia (vince sulle preferenze). */
+  timer?: TimerSettings;
 }
 
 export interface Exam extends BaseEntity {
@@ -201,6 +203,20 @@ export interface StudySession extends BaseEntity {
   notes: string;
   attachmentIds: ID[];
   status: "planned" | "running" | "completed" | "skipped";
+  /** Da dove arriva: blocco Pomodoro, cronometro o aggiunta a mano (assente = vecchia o a mano). */
+  source?: "pomodoro" | "stopwatch" | "manual";
+}
+
+/**
+ * Durate del timer di studio in minuti (tutte facoltative). Nella materia valgono solo per lei,
+ * nelle preferenze per tutte le altre; mancano → valori predefiniti (vedi lib/timerPrefs.ts).
+ */
+export interface TimerSettings {
+  focusMinutes?: number;
+  shortBreakMinutes?: number;
+  longBreakMinutes?: number;
+  longBreakEvery?: number;
+  stopwatchTargetMinutes?: number;
 }
 
 export interface StudyTopic extends BaseEntity {
@@ -309,6 +325,8 @@ export interface Preferences extends BaseEntity {
   barbThesisPoints?: number;
   /** Scenario della proiezione: esperienza all'estero riconosciuta dal corso. */
   abroad?: boolean;
+  /** Durate del timer per tutte le materie senza durate proprie. */
+  timer?: TimerSettings;
 }
 
 /** Notifica dell'account: segue l'utente su ogni dispositivo (collezione sincronizzata). */

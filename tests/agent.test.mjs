@@ -26,6 +26,7 @@ import {
 import { describeAgentCall, executeAgentTool } from "../src/agent/execute.ts";
 import { useSharedStore } from "../src/store/useSharedStore.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
+import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, defaultTimer } from "../src/lib/studyTimer.ts";
 
 const actor = { name: "Prova", source: "stdio", scopes: ["studyos:read", "studyos:write"] };
 const reader = { name: "Lettore", source: "oauth", scopes: ["studyos:read"] };
@@ -893,4 +894,90 @@ test("strumenti condivisi: mai errori grezzi, solo testi in italiano", async () 
   assert.equal((await executeAgentTool("studyos_revoke_share", { id: "via-group", confirm: true })).code, "denied");
   useSharedStore.setState({ viewerId: null });
   assert.equal((await executeAgentTool("studyos_list_shares", {})).code, "not_connected");
+});
+
+const seedTimerApp = () => {
+  seedApp();
+  useStudyStore.setState({
+    subjects: [{ id: "sub_an", name: "Analisi 1", status: "active", archived: false, timer: { focusMinutes: 50, stopwatchTargetMinutes: 90 }, updatedAt: "2026-01-01T00:00:00.000Z" }],
+    timer: defaultTimer("pomodoro")
+  });
+};
+
+test("timer MCP: le enum del catalogo sono le costanti del timer, argomenti nuovi solo facoltativi", () => {
+  const control = findAgentTool("studyos_timer_control").inputSchema;
+  assert.deepEqual(control.properties.action.enum, [...TIMER_CONTROL_ACTIONS]);
+  assert.deepEqual(control.properties.mode.enum, [...TIMER_MODES]);
+  assert.deepEqual(control.properties.kind.enum, [...TIMER_KINDS]);
+  assert.ok(control.properties.subjectId);
+  assert.deepEqual(control.required, ["action"]);
+  for (const old of ["start", "toggle", "reset"]) assert.ok(control.properties.action.enum.includes(old), old);
+  assert.deepEqual(Object.keys(findAgentTool("studyos_timer_status").inputSchema.properties ?? {}), []);
+});
+
+test("timer MCP: start, stato compatibile e arrotondamenti dell'app", async () => {
+  seedTimerApp();
+  assert.equal((await executeAgentTool("studyos_timer_control", { action: "start" })).code, "invalid", "start senza mode resta un errore");
+  const started = await executeAgentTool("studyos_timer_control", { action: "start", mode: "classic" });
+  assert.equal(started.ok, true);
+  const timer = started.data.timer;
+  for (const key of ["mode", "running", "remainingSeconds", "durationSeconds", "label", "kind", "phase", "elapsedSeconds", "subjectId"]) assert.ok(key in timer, key);
+  assert.equal(timer.mode, "classic");
+  assert.equal(timer.running, true);
+  assert.equal(timer.durationSeconds, 45 * 60);
+  assert.equal(timer.kind, "pomodoro");
+  assert.equal(timer.phase, "focus");
+  assert.equal(timer.subjectId, null);
+  assert.equal(typeof timer.label, "string");
+
+  // 1499,5 s rimasti: l'app mostra 25:00, quindi 1500 (non 1499 come con Math.round).
+  const current = useStudyStore.getState().timer;
+  useStudyStore.setState({ timer: { ...current, endsAt: Date.now() + 1_499_500 } });
+  assert.equal((await executeAgentTool("studyos_timer_status", {})).data.timer.remainingSeconds, 1500);
+
+  const toggled = await executeAgentTool("studyos_timer_control", { action: "toggle" });
+  assert.equal(toggled.data.timer.running, false);
+  const reset = await executeAgentTool("studyos_timer_control", { action: "reset", mode: "deep-focus" });
+  assert.equal(reset.data.timer.mode, "deep-focus");
+  assert.equal(reset.data.timer.running, false);
+  assert.equal(reset.data.timer.remainingSeconds, 90 * 60);
+});
+
+test("timer MCP: cronometro con materia, finish salva il tempo vero, niente perdite in silenzio", async () => {
+  seedTimerApp();
+  assert.equal((await executeAgentTool("studyos_timer_control", { action: "start", kind: "stopwatch", subjectId: "sub_nope" })).code, "not_found");
+  const started = await executeAgentTool("studyos_timer_control", { action: "start", kind: "stopwatch", subjectId: "sub_an" });
+  assert.equal(started.data.timer.kind, "stopwatch");
+  assert.equal(started.data.timer.subjectId, "sub_an");
+  assert.equal(started.data.timer.durationSeconds, 90 * 60, "obiettivo della materia");
+
+  assert.equal((await executeAgentTool("studyos_timer_control", { action: "finish" })).code, "invalid", "meno di un minuto non si salva");
+
+  const now = Date.now();
+  const timer = useStudyStore.getState().timer;
+  useStudyStore.setState({ timer: { ...timer, runningSince: now - 5 * 60_000 - 400, startedAt: now - 5 * 60_000 - 400 } });
+  const status = await executeAgentTool("studyos_timer_status", {});
+  assert.equal(status.data.timer.elapsedSeconds, 300, "per difetto, come in app");
+
+  const blocked = await executeAgentTool("studyos_timer_control", { action: "start", mode: "pomodoro" });
+  assert.equal(blocked.code, "invalid", "start non cancella 5 minuti non salvati");
+  assert.equal(useStudyStore.getState().timer.kind, "stopwatch");
+
+  const finished = await executeAgentTool("studyos_timer_control", { action: "finish" });
+  assert.equal(finished.ok, true);
+  assert.equal(finished.data.session.actualMinutes, 5);
+  assert.equal(finished.data.session.subjectId, "sub_an");
+  assert.equal(finished.data.session.source, "stopwatch");
+  assert.equal(finished.data.session.status, "completed");
+  assert.equal(finished.data.timer.running, false);
+  assert.equal(useStudyStore.getState().sessions.length, 1);
+
+  const idle = await executeAgentTool("studyos_timer_control", { action: "finish" });
+  assert.equal(idle.ok, true);
+  assert.equal(idle.data.session, null);
+  assert.equal(useStudyStore.getState().sessions.length, 1);
+
+  const pomodoro = await executeAgentTool("studyos_timer_control", { action: "start", kind: "pomodoro" });
+  assert.equal(pomodoro.data.timer.durationSeconds, 50 * 60, "kind=pomodoro senza mode usa la durata della materia");
+  useStudyStore.setState({ timer: defaultTimer("pomodoro") });
 });

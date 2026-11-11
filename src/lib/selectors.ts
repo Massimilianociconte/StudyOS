@@ -14,6 +14,7 @@ import {
 import { it } from "date-fns/locale";
 import type { CalendarEvent, Exam, StudySession, Subject, Task } from "../types";
 import { expandEvents } from "./recurrence";
+import { NO_SUBJECT_LABEL } from "./labels";
 
 export const subjectName = (subjects: Subject[], id?: string) =>
   subjects.find((subject) => subject.id === id)?.name ?? "Senza materia";
@@ -130,11 +131,21 @@ export const completionRate = (tasks: Task[]) => {
   return Math.round((tasks.filter((task) => task.status === "done").length / tasks.length) * 100);
 };
 
-export const workloadBySubject = (subjects: Subject[], sessions: StudySession[]) =>
-  subjects.map((subject) => ({
+/** Colore della riga "Senza materia" nei grafici (grigio neutro, uguale nei due temi). */
+export const NO_SUBJECT_COLOR = "#8b93a7";
+
+/**
+ * Minuti di studio completati per materia. Le sessioni senza materia (o con una materia eliminata)
+ * finiscono in una riga "Senza materia", così la somma è sempre il totale studiato.
+ */
+export const workloadBySubject = (subjects: Subject[], sessions: StudySession[]) => {
+  const done = sessions.filter((session) => session.status === "completed");
+  const known = new Set(subjects.map((subject) => subject.id));
+  const rows = subjects.map((subject) => ({
     name: subject.name,
-    minutes: sessions
-      .filter((session) => session.subjectId === subject.id && session.status === "completed")
-      .reduce((sum, session) => sum + session.actualMinutes, 0),
+    minutes: done.filter((session) => session.subjectId === subject.id).reduce((sum, session) => sum + session.actualMinutes, 0),
     color: subject.color
   }));
+  const orphan = done.filter((session) => !session.subjectId || !known.has(session.subjectId)).reduce((sum, session) => sum + session.actualMinutes, 0);
+  return orphan > 0 ? [...rows, { name: NO_SUBJECT_LABEL, minutes: orphan, color: NO_SUBJECT_COLOR }] : rows;
+};
