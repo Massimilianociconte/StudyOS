@@ -419,6 +419,11 @@ export interface Preferences extends BaseEntity {
   abroad?: boolean;
   /** Durate del timer per tutte le materie senza durate proprie. */
   timer?: TimerSettings;
+  /**
+   * "Colori delle tipologie": colore scelto per una tipologia (chiavi di EVENT_TYPE_COLORS, es.
+   * "exam", "birthday"). Arriva dalla sincronizzazione: leggerlo con `sanitizeTypeColorOverrides`.
+   */
+  eventTypeColors?: Partial<Record<string, string>>;
 }
 
 /** Notifica dell'account: segue l'utente su ogni dispositivo (collezione sincronizzata). */

@@ -1,7 +1,7 @@
 // Logica del modulo evento (creazione e modifica), senza React: bozza ↔ campi dell'evento, modifiche
 // da salvare, orari e "tutto il giorno", errori, promemoria, scelta "solo questo / successivi / tutti".
 import type { CalendarEvent, EventCategory, EventReminder, RepeatRule } from "../types";
-import { eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, typeDefaultColor, type TypeColorOverrides } from "./eventColors";
+import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, sanitizeTypeColorOverrides, typeDefaultColor, type EventTypeKey, type TypeColorOverrides } from "./eventColors";
 import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME } from "./labels";
 import { describeReminder, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
@@ -116,6 +116,18 @@ export const initialColorCustom = (event: Pick<CalendarEvent, "color" | "colorCu
 /** Colore della bozza dopo un cambio di tipologia o materia: segue la tipologia se non è scelto a mano. */
 export const draftColor = (draft: Pick<EventDraft, "category" | "color" | "colorCustom">, context: ColorContext) =>
   draft.colorCustom && safeCssColor(draft.color) ? safeCssColor(draft.color) : typeDefaultColor(eventTypeKey({ category: draft.category, occasionKind: context.occasionKind }), context);
+
+/**
+ * "Colori delle tipologie": la preferenza con il colore di `type` cambiato (`null` = Ripristina).
+ * Il colore predefinito non si salva (la tipologia torna "Predefinito"); il resto si ripulisce.
+ */
+export const withTypeColor = (overrides: unknown, type: EventTypeKey, color: string | null): TypeColorOverrides => {
+  const next: Record<string, unknown> = { ...sanitizeTypeColorOverrides(overrides) };
+  const own = color === null ? "" : safeCssColor(color);
+  if (!own || own.toLowerCase() === EVENT_TYPE_COLORS[type].toLowerCase()) delete next[type];
+  else next[type] = own;
+  return sanitizeTypeColorOverrides(next);
+};
 
 /** Ultimo giorno (compreso) di un tutto il giorno salvato con fine esclusiva. */
 const lastDayOf = (startLocal: string, endLocal: string) => {

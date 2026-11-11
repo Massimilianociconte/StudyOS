@@ -31,7 +31,7 @@ import {
   startOfWeek
 } from "date-fns";
 import { it } from "date-fns/locale";
-import { useStudyStore } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { sharedOfTypes, useSharedStore } from "../store/useSharedStore";
 import { originOf, ownerColor, safeCssColor, sharedKey, ShareUserError, type SharedEntity, type SharedOrigin } from "../lib/sharing";
 import { SharedMark } from "../components/SharedMark";
@@ -58,6 +58,8 @@ import { EventEditor } from "../components/calendar/EventEditor";
 import { ScopeChoice } from "../components/calendar/ScopeChoice";
 import { OccasionForm, occasionIcon } from "../components/calendar/OccasionForm";
 import { VacationForm } from "../components/calendar/VacationForm";
+import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
+import { sanitizeTypeColorOverrides } from "../lib/eventColors";
 import { allScopePatch, draftFromEvent, editorFormFor, followingPatch, newEventDraft, scopeOptions, wallTimeChanged, type EventDraft, type ScopeOption } from "../lib/eventEditor";
 import {
   newOccasionDraft,
@@ -93,6 +95,7 @@ import {
   SCOPE_TEXT,
   SHARE_TEXT,
   TASK_STATUS_LABEL,
+  TYPE_COLORS_TEXT,
   VACATION_FORM_TEXT,
   capitalizeFirst,
   formatMinutes
@@ -312,6 +315,7 @@ export function CalendarView() {
   const [simpleNew, setSimpleNew] = useState<{ form: "occasion"; kind?: OccasionKind; name?: string } | { form: "vacation"; title?: string } | null>(null);
   // Ricorrenza o vacanza aperta nel modulo completo, con le modifiche fatte nel modulo semplice.
   const [fullForm, setFullForm] = useState<{ id: string; draft: EventDraft } | null>(null);
+  const [typeColorsOpen, setTypeColorsOpen] = useState(false);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const [barbImportOpen, setBarbImportOpen] = useState(false);
   const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
@@ -332,8 +336,12 @@ export function CalendarView() {
     updateTask,
     toggleTask,
     deleteTask,
-    setActiveView
+    setActiveView,
+    preferences,
+    updatePreferences
   } = useStudyStore();
+  // "Colori delle tipologie" (preferenza sincronizzata: ripulita prima dell'uso).
+  const typeOverrides = useMemo(() => sanitizeTypeColorOverrides(selectPreferences({ preferences }).eventTypeColors), [preferences]);
   // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
   // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
   const [storedSubject, setStoredSubject] = useUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
@@ -439,7 +447,7 @@ export function CalendarView() {
   const todayYmd = civilDateOf(new Date());
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
   /** Colore della materia per il modulo (le tipologie con materia ne prendono il colore). */
-  const ownColorContext = (subjectId?: string) => ({ subjectColor: subjects.find((subject) => subject.id === subjectId)?.color });
+  const ownColorContext = (subjectId?: string) => ({ subjectColor: subjects.find((subject) => subject.id === subjectId)?.color, overrides: typeOverrides });
   /** Bozza del modulo completo da campi già pronti (dal modulo semplice), sopra l'evento salvato se c'è. */
   const draftFromFields = (fields: Partial<CalendarEvent>, saved?: CalendarEvent) =>
     draftFromEvent({ links: [], priority: "medium", status: "planned", description: "", ...saved, ...fields } as CalendarEvent, ownColorContext(saved?.subjectId));
@@ -653,13 +661,17 @@ export function CalendarView() {
                 }
               },
               { label: CALENDAR_TEXT.subjectSummary, icon: "BookOpen", onClick: () => openSummary("semester") },
-              { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") }
+              { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") },
+              { label: TYPE_COLORS_TEXT.menu, icon: "Palette", onClick: () => setTypeColorsOpen(true) }
             ]}
           />
         }
       />
       <CalendarTransfer ref={transfer} buttons={false} />
       {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
+      {typeColorsOpen ? (
+        <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
+      ) : null}
       {sharePhase === "open" ? (
         <Suspense fallback={null}>
           <ShareDrawer open onClose={() => setSharePhase("idle")} initialScopes={["calendar"]} />
@@ -824,6 +836,7 @@ export function CalendarView() {
 
       {editingDate && editingOccurrence ? (
         <EventEditor
+          overrides={typeOverrides}
           key={`${editingEventId}@${editingDate}`}
           heading={EVENT_EDITOR_TEXT.editEvent}
           initial={draftFromEvent(editingOccurrence, {
@@ -879,6 +892,7 @@ export function CalendarView() {
 
       {editingEvent && !editingDate && editingForm === "occasion" ? (
         <OccasionForm
+          overrides={typeOverrides}
           key={editingEvent.id}
           initial={occasionDraftFromEvent(editingEvent)}
           editing
@@ -903,6 +917,7 @@ export function CalendarView() {
 
       {editingEvent && !editingDate && editingForm === "vacation" ? (
         <VacationForm
+          overrides={typeOverrides}
           key={editingEvent.id}
           initial={vacationDraftFromEvent(editingEvent)}
           editing
@@ -921,16 +936,17 @@ export function CalendarView() {
 
       {simpleNew?.form === "occasion" ? (
         <OccasionForm
+          overrides={typeOverrides}
           initial={newOccasionDraft({ today: todayYmd, kind: simpleNew.kind, name: simpleNew.name })}
           editing={false}
           today={todayYmd}
           onClose={() => setSimpleNew(null)}
           onSave={async (draft) => {
-            await addEvent(newEventFields(occasionFields(draft, { today: todayYmd })));
+            await addEvent(newEventFields(occasionFields(draft, { today: todayYmd, overrides: typeOverrides })));
             setSimpleNew(null);
           }}
           onFullForm={(draft) => {
-            const { occasion, ...fields } = occasionFields(draft, { today: todayYmd });
+            const { occasion, ...fields } = occasionFields(draft, { today: todayYmd, overrides: typeOverrides });
             setSimpleNew(null);
             setCreator({ at: new Date(), kind: "event", draft: draftFromFields({ ...fields, occasion }), occasion });
           }}
@@ -939,22 +955,24 @@ export function CalendarView() {
 
       {simpleNew?.form === "vacation" ? (
         <VacationForm
+          overrides={typeOverrides}
           initial={newVacationDraft(todayYmd, simpleNew.title)}
           editing={false}
           onClose={() => setSimpleNew(null)}
           onSave={async (draft) => {
-            await addEvent(newEventFields(vacationFields(draft)));
+            await addEvent(newEventFields(vacationFields(draft, { overrides: typeOverrides })));
             setSimpleNew(null);
           }}
           onFullForm={(draft) => {
             setSimpleNew(null);
-            setCreator({ at: new Date(), kind: "event", draft: draftFromFields(vacationFields(draft)) });
+            setCreator({ at: new Date(), kind: "event", draft: draftFromFields(vacationFields(draft, { overrides: typeOverrides })) });
           }}
         />
       ) : null}
 
       {editingEvent && !editingDate && editingForm === "event" ? (
         <EventEditor
+          overrides={typeOverrides}
           key={editingEvent.id}
           heading={EVENT_EDITOR_TEXT.editEvent}
           initial={fullForm?.id === editingEvent.id ? fullForm.draft : draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
@@ -976,9 +994,10 @@ export function CalendarView() {
 
       {editingShared ? (
         <EventEditor
+          overrides={typeOverrides}
           key={editingSharedKey ?? editingShared.id}
           heading={(editingShared.sharedFrom.canEdit ? EVENT_EDITOR_TEXT.editShared : EVENT_EDITOR_TEXT.viewShared)(firstName(editingShared.sharedFrom.ownerName))}
-          initial={draftFromEvent(editingShared, { subjectColor: editingShared.sharedFrom.subjectColor })}
+          initial={draftFromEvent(editingShared, { subjectColor: editingShared.sharedFrom.subjectColor, overrides: typeOverrides })}
           event={editingShared}
           subjects={subjects}
           sharedFrom={editingShared.sharedFrom}
@@ -1023,6 +1042,7 @@ export function CalendarView() {
 
       {creator ? (
         <EventEditor
+          overrides={typeOverrides}
           heading={EVENT_EDITOR_TEXT.newEvent}
           occasionKind={creator.occasion?.kind}
           initial={creator.draft ?? newEventDraft({ start: defaultStartFor(creator.at), subjectId: creator.subjectId ?? "", ...ownColorContext(creator.subjectId) })}

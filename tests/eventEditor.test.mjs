@@ -22,7 +22,8 @@ import {
   shiftPatchDays,
   toLocalInput,
   validateDraft,
-  wallTimeChanged
+  wallTimeChanged,
+  withTypeColor
 } from "../src/lib/eventEditor.ts";
 import { localMidnight } from "../src/lib/tz.ts";
 
@@ -288,4 +289,14 @@ test("quale modulo apre un evento: ricorrenza, vacanza o completo", () => {
 test("ora locale per i campi", () => {
   assert.equal(toLocalInput(at(2026, 1, 5, 7, 5)), "2026-01-05T07:05");
   assert.equal(toLocalInput("nope"), "");
+});
+
+test("colori delle tipologie: scegliere, tornare al predefinito, ripristinare", () => {
+  assert.deepEqual(withTypeColor({}, "exam", "#3B82F6"), { exam: "#3B82F6" });
+  // Il colore predefinito non si salva: la tipologia torna "Predefinito".
+  assert.deepEqual(withTypeColor({ exam: "#3B82F6" }, "exam", "#ef4444"), {});
+  assert.deepEqual(withTypeColor({ exam: "#3B82F6", gym: "#000000" }, "exam", null), { gym: "#000000" });
+  // Valori arrivati dalla sincronizzazione: si scartano tipologie e colori non validi.
+  assert.deepEqual(withTypeColor({ nope: "#000000", work: "url(x)" }, "birthday", "#A855F7"), {});
+  assert.deepEqual(withTypeColor({}, "vacation", "javascript:alert(1)"), {});
 });

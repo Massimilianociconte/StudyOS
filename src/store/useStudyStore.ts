@@ -291,7 +291,7 @@ type StoreState = StudyState;
 export type PreferencesPatch = Partial<
   Pick<
     Preferences,
-    "displayName" | "avatarDataUrl" | "weeklyTargetMinutes" | "degreeCfu" | "showBarb" | "degreeProgram" | "sbThesisGrade" | "barbThesisPoints" | "abroad" | "timer"
+    "displayName" | "avatarDataUrl" | "weeklyTargetMinutes" | "degreeCfu" | "showBarb" | "degreeProgram" | "sbThesisGrade" | "barbThesisPoints" | "abroad" | "timer" | "eventTypeColors"
   >
 >;
 
