@@ -1,13 +1,12 @@
-// Attività ed esami come piccole voci del calendario (fascia in alto, Mese, Agenda, elenco del telefono)
-// e gli eventi di tutto il giorno nella griglia oraria.
+// Attività ed esami come piccole voci del calendario (fascia in alto, Mese, Agenda, elenco del telefono).
+// Gli eventi di tutto il giorno o su più giorni sono barre (bars.tsx).
 import { isBefore, parseISO } from "date-fns";
 import type { Exam, Task } from "../../types";
 import { Icon } from "../Icon";
-import { SharedMark } from "../SharedMark";
 import { CALENDAR_TEXT, PRIORITY_TONE } from "../../lib/labels";
 import { subjectColor, subjectName } from "../../lib/selectors";
-import { allDayEventLabel, eventColor, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
-import type { CalendarOccurrence, Handlers, Subjects } from "./types";
+import { pointerPoint } from "./shared";
+import type { Handlers, Subjects } from "./types";
 
 export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers }) {
   const done = task.status === "done";
@@ -44,38 +43,6 @@ export function TaskChip({ task, handlers }: { task: Task; handlers: Handlers })
         {task.title}
       </button>
     </div>
-  );
-}
-
-export function AllDayChip({ item, handlers }: { item: CalendarOccurrence; handlers: Handlers }) {
-  const color = eventColor(item, handlers.subjects);
-  return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        handlers.onEditEvent(item.id, item.sharedFrom?.ownerId);
-      }}
-      onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
-      onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}
-      onMouseLeave={handlers.onPreviewHide}
-      className={`flex min-w-0 items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-left text-[11px] font-black hover:brightness-110 ${
-        item.status === "done" ? "opacity-60" : ""
-      } ${sharedOutlineClass(item)}`}
-      style={{ background: `color-mix(in srgb, ${color} 26%, var(--bg-2))`, ...sharedOutline(item) }}
-      title={`${allDayEventLabel(item)} · ${item.title}`}
-    >
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
-      {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
-      <span className="min-w-0 truncate">
-        {item.recurring ? (
-          <span role="img" aria-label="Si ripete">
-            ↻{" "}
-          </span>
-        ) : null}
-        {item.title}
-      </span>
-    </button>
   );
 }
 

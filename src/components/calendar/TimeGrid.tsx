@@ -8,12 +8,24 @@ import type { Exam, Task } from "../../types";
 import { SharedMark } from "../SharedMark";
 import { Drawer } from "../ui";
 import { useNow } from "../../hooks/useNow";
-import { isAllDayEvent, timeLabel } from "../../lib/selectors";
+import { timeLabel } from "../../lib/selectors";
 import { CALENDAR_LAYOUT_TEXT, CALENDAR_VIEW_TEXT } from "../../lib/labels";
-import { MIN_EVENT_HEIGHT_PX, MORE_GUTTER_PX, dayPieces, layoutTimedDay, type MoreBand, type PlacedPiece } from "../../lib/calendarRender";
-import { AllDayChip, ExamChip, TaskChip } from "./chips";
+import { dayOfSpan } from "../../lib/calendarLayout";
+import { todayYmd } from "../../lib/datePicker";
+import {
+  MIN_EVENT_HEIGHT_PX,
+  MORE_GUTTER_PX,
+  dayPieces,
+  laneRows,
+  layoutTimedDay,
+  weekStartsOf,
+  type MoreBand,
+  type PlacedPiece
+} from "../../lib/calendarRender";
+import { EventBar, eventBars } from "./bars";
+import { ExamChip, TaskChip } from "./chips";
 import { EventRow } from "./DayList";
-import { canDrag, eventColor, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
+import { canDrag, editOccurrence, eventColor, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
 
 const MINUTE_MS = 60_000;
@@ -21,6 +33,8 @@ const HOUR_MS = 3_600_000;
 /** Etichette orarie a sinistra e spazio tra le colonne dei giorni (px). */
 const HOURS_COLUMN_PX = 52;
 const COLUMN_GAP_PX = 6;
+/** Corsie di barre nella fascia in alto della Settimana: oltre, un "+N" per giorno apre il giorno. */
+const WEEK_LANES = 4;
 
 /** Evento preso per trascinarlo: chiave dell'occorrenza e minuti tra il suo inizio e il punto preso. */
 type Grab = { key: string; offsetMin: number };
@@ -70,17 +84,25 @@ export function TimeGrid({
   // Larghezza di una colonna giorno (etichette orarie a sinistra, spazio tra le colonne).
   const columnWidth = containerWidth ? (containerWidth - HOURS_COLUMN_PX - days.length * COLUMN_GAP_PX) / days.length : 200;
 
+  // Eventi di tutto il giorno o su più giorni: barre nella fascia in alto, non nella griglia oraria.
+  const bars = eventBars(occurrences);
+  const barById = new Map(bars.map((bar) => [bar.id, bar]));
+  // Settimana: barre continue da un giorno all'altro, al più WEEK_LANES corsie.
+  const laneRow = days.length === 7 ? laneRows(bars, weekStartsOf(days), WEEK_LANES)[0] : undefined;
+  const lanes = laneRow?.lanes ?? 0;
+
   const perDay = days.map((day) => {
     const dayStart = startOfDay(day).getTime();
     // Giorno vero (23 o 25 ore nei giorni del cambio dell'ora), non 24 ore fisse.
     const dayEnd = addDays(startOfDay(day), 1).getTime();
-    const dayEvents = occurrences.filter((item) => parseISO(item.start).getTime() < dayEnd && parseISO(item.end).getTime() > dayStart);
+    const ymd = todayYmd(day);
     const pieces = dayPieces(occurrences, dayStart, dayEnd);
     return {
       day,
       dayStart,
-      // Gli eventi "Tutto il giorno" non occupano la griglia oraria: stanno nella riga in alto.
-      allDay: dayEvents.filter(isAllDayEvent),
+      ymd,
+      // Vista Giorno: le barre che toccano il giorno, come striscia con "giorno 2 di 3".
+      bars: laneRow ? [] : bars.filter((bar) => bar.startDay <= ymd && bar.endDay >= ymd),
       pieces,
       layout: layoutTimedDay(pieces, { hourHeight, columnWidth }),
       tasks: tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)).sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? "")),
@@ -111,7 +133,7 @@ export function TimeGrid({
 
   const hours = Array.from({ length: hourEnd - hourStart }, (_, index) => hourStart + index);
   const gridHeight = hours.length * hourHeight;
-  const hasAllDay = perDay.some((entry) => entry.allDay.length || entry.tasks.length || entry.exams.length);
+  const hasAllDay = Boolean(laneRow?.segments.length) || perDay.some((entry) => entry.bars.length || entry.tasks.length || entry.exams.length);
   // Fascia fissa (Focus 8–19): eventi interamente fuori fascia, che la griglia taglia.
   const outside = (test: (minutes: { startMin: number; endMin: number }) => boolean) =>
     fixedHours ? perDay.reduce((sum, entry) => sum + entry.pieces.filter((piece) => test(minutesOf(piece.startMs, piece.endMs, entry.dayStart))).length, 0) : 0;
@@ -171,36 +193,73 @@ export function TimeGrid({
         })}
       </div>
 
-      {/* riga "tutto il giorno": eventi senza orario, esami e attività in scadenza */}
+      {/* fascia "tutto il giorno": barre (tutto il giorno, più giorni), esami e attività in scadenza */}
       {hasAllDay ? (
-        <div className="mt-1.5 grid gap-x-1.5 border-b border-[var(--border)] pb-1.5" style={{ gridTemplateColumns: columns }}>
+        <div
+          className="mt-1.5 grid grid-cols-1 gap-x-1.5 gap-y-1 border-b border-[var(--border)] pb-1.5"
+          style={{ gridTemplateColumns: columns, gridTemplateRows: `${lanes ? `repeat(${lanes}, auto) ` : ""}auto` }}
+        >
           <span
             className="pt-1 text-right text-[10px] font-black uppercase leading-tight text-[var(--faint)]"
+            style={{ gridColumn: 1, gridRow: `1 / ${lanes + 2}` }}
             title={CALENDAR_VIEW_TEXT.allDayRowTitle}
           >
             {CALENDAR_VIEW_TEXT.allDayRow}
           </span>
-          {perDay.map((entry) => {
+          {laneRow?.segments.map((segment) => {
+            const bar = barById.get(segment.id);
+            return bar ? (
+              <EventBar
+                key={segment.id}
+                item={bar.item}
+                handlers={handlers}
+                roundStart={!segment.continuesBefore}
+                roundEnd={!segment.continuesAfter}
+                style={{ gridColumn: `${segment.startCol + 2} / ${segment.endCol + 3}`, gridRow: segment.lane + 1 }}
+              />
+            ) : null;
+          })}
+          {perDay.map((entry, index) => {
             const dayKey = entry.day.toISOString();
             const base = days.length > 1 ? 3 : 12;
             const expanded = expandedDays.includes(dayKey);
             const limit = expanded ? Number.MAX_SAFE_INTEGER : base;
-            const hidden = entry.tasks.length - limit;
+            const hiddenTasks = Math.max(0, entry.tasks.length - limit);
+            // Settimana: barre oltre il tetto e attività in più si vedono aprendo il giorno.
+            const hidden = hiddenTasks + (laneRow?.hidden[index] ?? 0);
+            const longDay = format(entry.day, "EEEE d MMMM", { locale: it });
             return (
-              <div key={dayKey} className="grid grid-cols-1 min-w-0 content-start gap-1">
-                {entry.allDay.map((item) => (
-                  <AllDayChip key={item.occurrenceKey} item={item} handlers={handlers} />
-                ))}
+              <div key={dayKey} className="grid grid-cols-1 min-w-0 content-start gap-1" style={{ gridColumn: index + 2, gridRow: lanes + 1 }}>
+                {entry.bars.map((bar) => {
+                  const position = dayOfSpan(entry.ymd, bar.startDay, bar.endDay);
+                  return (
+                    <EventBar
+                      key={bar.id}
+                      item={bar.item}
+                      handlers={handlers}
+                      detail={position && position.total > 1 ? CALENDAR_LAYOUT_TEXT.dayOfSpan(position.index, position.total) : undefined}
+                    />
+                  );
+                })}
                 {entry.exams.map((exam) => (
                   <ExamChip key={exam.id} exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
                 ))}
                 {entry.tasks.slice(0, limit).map((task) => (
                   <TaskChip key={task.id} task={task} handlers={handlers} />
                 ))}
-                {hidden > 0 ? (
+                {hidden > 0 && days.length > 1 ? (
                   <button
                     type="button"
-                    onClick={() => (days.length > 1 ? onPickDay?.(entry.day) : setExpandedDays((value) => [...value, dayKey]))}
+                    onClick={() => onPickDay?.(entry.day)}
+                    className="flex min-h-11 items-center text-left text-[11px] font-black text-[var(--muted)] hover:text-[var(--text)]"
+                    title={CALENDAR_VIEW_TEXT.moreItemsAria(hidden, longDay)}
+                  >
+                    {CALENDAR_VIEW_TEXT.moreItems(hidden)}
+                  </button>
+                ) : hidden > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setExpandedDays((value) => [...value, dayKey])}
                     className="flex min-h-11 items-center text-left text-[11px] font-black text-[var(--muted)] hover:text-[var(--text)]"
                   >
                     {CALENDAR_VIEW_TEXT.moreTasks(hidden)}
@@ -404,7 +463,7 @@ function TimedEvent({
       }}
       onClick={(event) => {
         event.stopPropagation();
-        handlers.onEditEvent(item.id, item.sharedFrom?.ownerId, { occurrenceDate: item.occurrenceDate, seriesId: item.seriesId });
+        editOccurrence(handlers, item);
       }}
       onMouseEnter={(event) => handlers.onPreviewEvent(item, pointerPoint(event))}
       onMouseMove={(event) => handlers.onPreviewMove(pointerPoint(event))}

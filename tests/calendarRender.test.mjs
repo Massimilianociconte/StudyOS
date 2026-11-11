@@ -29,6 +29,18 @@ test("maxColumnsFor: quante colonne affiancate entrano in un giorno", () => {
   assert.equal(render.maxColumnsFor(Number.NaN), 1);
 });
 
+test("isBarEvent: tutto il giorno o almeno 24 ore su più giorni va nella fascia in alto", () => {
+  assert.equal(render.isBarEvent(timed("a", [2026, 12, 4], [2026, 12, 5], { allDay: true })), true);
+  assert.equal(render.isBarEvent(timed("b", [2026, 12, 4], [2026, 12, 7], { allDay: true })), true);
+  assert.equal(render.isBarEvent(timed("conf", [2026, 12, 4, 9], [2026, 12, 6, 18])), true, "congresso di tre giorni");
+  assert.equal(render.isBarEvent(timed("day", [2026, 12, 4, 10], [2026, 12, 5, 10])), true, "24 ore esatte");
+  assert.equal(render.isBarEvent(timed("night", [2026, 12, 4, 22], [2026, 12, 5, 2])), false, "4 ore a cavallo della mezzanotte");
+  assert.equal(render.isBarEvent(timed("lesson", [2026, 12, 4, 10], [2026, 12, 4, 12])), false);
+  // Mezzanotte → mezzanotte senza "tutto il giorno" (import vecchi): resta nella griglia come prima.
+  assert.equal(render.isBarEvent(timed("legacy", [2026, 12, 4], [2026, 12, 5])), false);
+  assert.equal(render.isBarEvent({ start: "x", end: "y" }), false);
+});
+
 test("dayPieces: solo eventi con orario, tagliati sul giorno", () => {
   const dayStart = local(2026, 12, 5).getTime();
   const dayEnd = local(2026, 12, 6).getTime();
@@ -107,3 +119,83 @@ test("layoutTimedDay: un evento cortissimo occupa l'altezza minima e si affianca
   // Con ore da 120 px l'altezza minima vale 10 minuti: non si toccano più.
   assert.equal(render.layoutTimedDay(pieces, { hourHeight: 120, columnWidth: 600 }).placed[1].columns, 1);
 });
+
+/* ------------------------------------------------------------------ */
+/* Barre su più giorni                                                  */
+/* ------------------------------------------------------------------ */
+
+test("weekStartsOf: i lunedì delle righe del mese", () => {
+  const days = Array.from({ length: 14 }, (_, index) => local(2026, 11, 30 + index));
+  assert.deepEqual(render.weekStartsOf(days), ["2026-11-30", "2026-12-07"]);
+});
+
+test("barSource: giorni di una barra; null se non è una barra", () => {
+  assert.deepEqual(render.barSource(timed("trip", [2026, 12, 4], [2026, 12, 7], { allDay: true })), {
+    id: "trip",
+    startDay: "2026-12-04",
+    endDay: "2026-12-06"
+  });
+  assert.equal(render.barSource(timed("lesson", [2026, 12, 4, 10], [2026, 12, 4, 12])), null);
+});
+
+test("laneRows: vacanza di 3 giorni a cavallo di due settimane nel Mese", () => {
+  // Sab 5, dom 6, lun 7 dicembre 2026: una barra per riga, senza angoli dove continua.
+  const vacation = { id: "vacation", startDay: "2026-12-05", endDay: "2026-12-07" };
+  const rows = render.laneRows([vacation], ["2026-11-30", "2026-12-07"], 3);
+  assert.deepEqual(rows[0].segments, [{ id: "vacation", startCol: 5, endCol: 6, lane: 0, continuesBefore: false, continuesAfter: true }]);
+  assert.deepEqual(rows[1].segments, [{ id: "vacation", startCol: 0, endCol: 0, lane: 0, continuesBefore: true, continuesAfter: false }]);
+  assert.equal(rows[0].lanes, 1);
+  assert.deepEqual(rows[0].hidden, [0, 0, 0, 0, 0, 0, 0]);
+});
+
+test("laneRows: oltre il tetto di corsie le barre diventano un +N per giorno", () => {
+  const items = [
+    { id: "a", startDay: "2026-12-01", endDay: "2026-12-03" },
+    { id: "b", startDay: "2026-12-01", endDay: "2026-12-02" },
+    { id: "c", startDay: "2026-12-02", endDay: "2026-12-04" },
+    { id: "d", startDay: "2026-12-02", endDay: "2026-12-02" }
+  ];
+  const [row] = render.laneRows(items, ["2026-11-30"], 2);
+  assert.equal(row.lanes, 2, "solo le corsie mostrate");
+  assert.ok(row.segments.every((segment) => segment.lane < 2));
+  const hiddenIds = items.map((item) => item.id).filter((id) => !row.segments.some((segment) => segment.id === id));
+  assert.equal(hiddenIds.length, 2);
+  // Ogni giorno conta le barre nascoste che lo coprono.
+  assert.equal(row.hidden.reduce((sum, count) => sum + count, 0) > 0, true);
+  assert.equal(row.hidden[0], 0, "lunedì non ha barre");
+  const [uncapped] = render.laneRows(items, ["2026-11-30"], Infinity);
+  assert.deepEqual(uncapped.hidden, [0, 0, 0, 0, 0, 0, 0]);
+  assert.equal(uncapped.segments.length, 4);
+});
+
+test("monthItemBudget: le barre lasciano meno posto alle voci del giorno, mai meno di una", () => {
+  assert.equal(render.monthItemBudget(0), 3);
+  assert.equal(render.monthItemBudget(1), 2);
+  assert.equal(render.monthItemBudget(3), 1);
+  assert.equal(render.monthItemBudget(5), 1);
+});
+
+/* ------------------------------------------------------------------ */
+/* Elenchi per giorno (Agenda, Settimana sul telefono)                  */
+/* ------------------------------------------------------------------ */
+
+test("listDayOf: una voce sola, nel primo giorno mostrato in cui c'è", () => {
+  const trip = timed("trip", [2026, 12, 4], [2026, 12, 7], { allDay: true });
+  assert.equal(render.listDayOf(trip, "2026-12-01", "2026-12-14"), "2026-12-04");
+  assert.equal(render.listDayOf(trip, "2026-12-05", "2026-12-18"), "2026-12-05", "iniziata prima: in cima al primo giorno");
+  assert.equal(render.listDayOf(trip, "2026-12-07", "2026-12-20"), null, "finita il 6");
+  assert.equal(render.listDayOf(trip, "2026-11-20", "2026-12-03"), null, "comincia dopo");
+  const night = timed("night", [2026, 12, 4, 22], [2026, 12, 5, 2]);
+  assert.equal(render.listDayOf(night, "2026-12-01", "2026-12-14"), "2026-12-04");
+  assert.equal(render.listDayOf(night, "2026-12-05", "2026-12-14"), "2026-12-05");
+});
+
+test("spanText: 'ven 4 – dom 6 dic' per le voci su più giorni, niente per le altre", () => {
+  const today = "2026-11-11";
+  assert.equal(render.spanText(timed("trip", [2026, 12, 4], [2026, 12, 7], { allDay: true }), today), "ven 4 – dom 6 dic");
+  assert.equal(render.spanText(timed("cross", [2026, 11, 30], [2026, 12, 2], { allDay: true }), today), "lun 30 nov – mar 1 dic");
+  assert.equal(render.spanText(timed("one", [2026, 12, 4], [2026, 12, 5], { allDay: true }), today), null);
+  assert.equal(render.spanText(timed("lesson", [2026, 12, 4, 10], [2026, 12, 4, 12]), today), null);
+  assert.equal(render.spanText(timed("conf", [2026, 12, 4, 9], [2026, 12, 6, 18]), today), "ven 4 – dom 6 dic");
+});
+

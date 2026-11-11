@@ -5,8 +5,9 @@ import { it } from "date-fns/locale";
 import type { Exam, Task } from "../../types";
 import { Button, EmptyState } from "../ui";
 import { daysUntil } from "../../lib/selectors";
+import { todayYmd } from "../../lib/datePicker";
 import { ExamChip, TaskChip } from "./chips";
-import { EventRow } from "./DayList";
+import { EventRow, eventsByListDay } from "./DayList";
 import { defaultStartFor } from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
 
@@ -32,10 +33,12 @@ export function Agenda({
     .filter((task) => task.status !== "done" && task.dueDate && isBefore(parseISO(task.dueDate), startOfDay(new Date())))
     .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
   const days = eachDayOfInterval({ start: from, end: addDays(to, -1) });
+  // Un evento su più giorni è una voce sola ("ven 3 – dom 5"), nel primo giorno mostrato.
+  const events = eventsByListDay(occurrences, days);
   const sections = days
     .map((day) => ({
       day,
-      events: occurrences.filter((item) => isSameDay(parseISO(item.start), day)),
+      events: events.get(todayYmd(day)) ?? [],
       tasks: tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)),
       exams: exams.filter((exam) => isSameDay(parseISO(exam.date), day))
     }))

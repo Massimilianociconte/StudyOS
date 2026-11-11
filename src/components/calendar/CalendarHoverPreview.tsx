@@ -17,6 +17,7 @@ import {
   capitalizeFirst,
   formatMinutes
 } from "../../lib/labels";
+import { spanText } from "../../lib/calendarRender";
 import { allDayEventLabel, eventColor } from "./shared";
 import type { CalendarPreviewState, Subjects } from "./types";
 
@@ -29,6 +30,7 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
   const taskTimerRunning = preview.kind === "task" && isTaskTimerRunning(preview.task);
   const taskElapsed = preview.kind === "task" ? taskElapsedSeconds(preview.task) : 0;
   const taskCompletedLate = preview.kind === "task" && isTaskCompletedLate(preview.task);
+  const range = preview.kind === "event" ? spanText(preview.event) : null;
 
   return (
     <aside
@@ -49,8 +51,18 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
       {preview.kind === "event" ? (
         <div className="grid grid-cols-1 gap-2 text-sm">
           <p className="font-bold text-[var(--muted)]">
-            {capitalizeFirst(format(parseISO(preview.event.start), "EEEE d MMM", { locale: it }))} ·{" "}
-            {isAllDayEvent(preview.event) ? allDayEventLabel(preview.event) : `${timeLabel(preview.event.start)}–${timeLabel(preview.event.end)} · ${formatMinutes(eventMinutes(preview.event))}`}
+            {range ? (
+              // Su più giorni: il periodo, poi "Tutto il giorno" o l'orario di inizio e fine.
+              <>
+                {capitalizeFirst(range)} ·{" "}
+                {isAllDayEvent(preview.event) ? allDayEventLabel(preview.event) : `${timeLabel(preview.event.start)}–${timeLabel(preview.event.end)}`}
+              </>
+            ) : (
+              <>
+                {capitalizeFirst(format(parseISO(preview.event.start), "EEEE d MMM", { locale: it }))} ·{" "}
+                {isAllDayEvent(preview.event) ? allDayEventLabel(preview.event) : `${timeLabel(preview.event.start)}–${timeLabel(preview.event.end)} · ${formatMinutes(eventMinutes(preview.event))}`}
+              </>
+            )}
           </p>
           <div className="flex flex-wrap gap-1.5">
             {preview.event.sharedFrom ? <SharedMark origin={preview.event.sharedFrom} /> : null}

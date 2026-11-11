@@ -6,10 +6,14 @@ import type { CalendarEvent } from "../../types";
 import { safeCssColor } from "../../lib/sharing";
 import { subjectColor, subjectName } from "../../lib/selectors";
 import { ALL_DAY_LABEL } from "../../lib/labels";
-import type { CalendarOccurrence, PreviewPoint, ShownEvent, Subjects } from "./types";
+import type { CalendarOccurrence, Handlers, PreviewPoint, ShownEvent, Subjects } from "./types";
 
 /** Si trascina solo ciò che si può modificare: gli eventi altrui in sola lettura non sono trascinabili. */
 export const canDrag = (item: CalendarOccurrence) => !item.sharedFrom || item.sharedFrom.canEdit;
+
+/** Apre l'evento toccato dicendo quale occorrenza è (giorno e serie), per chi sceglie cosa modificare. */
+export const editOccurrence = (handlers: Handlers, item: CalendarOccurrence) =>
+  handlers.onEditEvent(item.id, item.sharedFrom?.ownerId, { occurrenceDate: item.occurrenceDate, seriesId: item.seriesId });
 
 /** Materia da mostrare ("" = nessuna): per gli eventi di altri quella del proprietario, mai una delle mie. */
 export const occurrenceSubject = (item: ShownEvent, subjects: Subjects) =>
