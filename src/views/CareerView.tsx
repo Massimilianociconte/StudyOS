@@ -115,6 +115,7 @@ export function CareerView() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <GraduationPanel
           program={program}
+          degreeCfu={preferences.degreeCfu}
           entries={entries}
           weighted={stats.weighted}
           targetsWeighted={withTargets?.weighted ?? null}
@@ -184,6 +185,7 @@ function Tile({ label, value, detail, help, progress }: { label: string; value: 
 
 function GraduationPanel({
   program,
+  degreeCfu,
   entries,
   weighted,
   targetsWeighted,
@@ -196,6 +198,8 @@ function GraduationPanel({
   onScenario
 }: {
   program: DegreeProgramId;
+  /** CFU del corso dalle Impostazioni: gli stessi del riquadro CFU. */
+  degreeCfu: number;
   entries: LibrettoEntry[];
   weighted: number | null;
   targetsWeighted: number | null;
@@ -237,7 +241,7 @@ function GraduationPanel({
           <h3 className="text-xl font-black">Voto di laurea previsto</h3>
           {/* Sola lettura: il corso di laurea si cambia in Impostazioni, dove sta già la scelta. */}
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs font-bold text-[var(--muted)]">
-            <span className="safe-text min-w-0">{CAREER_TEXT.rulesOf(info.name, info.level, info.totalCfu)}</span>
+            <span className="safe-text min-w-0">{CAREER_TEXT.rulesOf(info.name, info.level, degreeCfu)}</span>
             <button
               type="button"
               onClick={onChangeProgram}

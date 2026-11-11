@@ -69,9 +69,12 @@ test("collegamento Studio: materia del timer già scelta (dispositivo), poi la v
   });
 });
 
-test("collegamento argomenti: apre gli argomenti da ripassare in Studio", () => {
+test("collegamento argomenti: materia dell'esame scelta in Studio (dispositivo), poi gli argomenti da ripassare", () => {
   assert.deepEqual(examLinkPlan("topics", "s2"), {
     view: "study",
-    writes: [{ key: "study.topicsOpen", value: true, scope: "tab" }]
+    writes: [
+      { key: "study.subject", value: "s2", scope: "device" },
+      { key: "study.topicsOpen", value: true, scope: "tab" }
+    ]
   });
 });

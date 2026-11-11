@@ -435,7 +435,7 @@ function CoursesTab({
                   {group.items.length} {group.items.length === 1 ? "insegnamento" : "insegnamenti"} in elenco · {cfu} CFU in totale
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr))]">
+              <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,250px),1fr))]">
                 {group.items.map((course) => (
                   <CourseCard
                     key={course.id}
@@ -512,7 +512,7 @@ function CourseCard({
         </span>
       </div>
       <div className="mt-3 flex min-w-0 items-start gap-2.5">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-8 w-8" /></span>
+        <span className="grid h-10 w-10 shrink-0 grid-cols-1 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-8 w-8" /></span>
         <h4 className="three-line-safe text-sm font-black leading-snug sm:text-[15px]">{course.name}</h4>
       </div>
       <BarbExamAvailability course={course} />
@@ -662,7 +662,7 @@ function CourseDrawer({
       eyebrow={
         course ? (
           <>
-            <span className="grid h-11 w-11 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-9 w-9" /></span>
+            <span className="grid h-11 w-11 grid-cols-1 place-items-center rounded-xl" style={{ background: courseColor(course), color: "#172333" }}><CourseIcon course={course} className="h-9 w-9" /></span>
             <Tag color={SEMESTER_TONE[course.semester]}>{SEMESTER_LABEL[course.semester]}</Tag>
             <Pill active={course.character === "obbligatorio"}>{BARB_CHARACTER_LABEL[course.character] ?? course.character}</Pill>
             {course.choiceGroup ? <Pill>{PLAN_GROUPS.find((group) => group.id === course.choiceGroup)?.title ?? course.choiceGroup}</Pill> : null}
@@ -913,7 +913,7 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
             action={<Button variant="soft" onClick={() => setQuery("")}>Cancella la ricerca</Button>}
           />
         ) : (
-          <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
+          <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]">
             {filtered.map((teacher) => (
               <article key={teacher.id} className="quiet-panel flex min-w-0 flex-col p-3.5 text-sm">
                 <h4 className="font-black">{teacher.displayName}</h4>
@@ -1046,7 +1046,7 @@ function RoomsTab({ courses }: { courses: BarbCourse[] }) {
           </div>
         </div>
       ) : (
-        <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))]">
+        <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))]">
           {rooms.map((room) => (
             <div key={`${room.room}-${room.building}`} className="quiet-panel p-3 text-sm">
               <p className="font-black">{room.room}</p>

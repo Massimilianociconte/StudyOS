@@ -36,6 +36,8 @@ export const examLinkPlan = (target: ExamLinkTarget, subjectId: string): { view:
       ]
     };
   }
-  if (target === "study") return { view: "study", writes: [{ key: "study.subject", value: subjectId, scope: "device" }] };
-  return { view: "study", writes: [{ key: "study.topicsOpen", value: true, scope: "tab" }] };
+  const subject: UiWrite = { key: "study.subject", value: subjectId, scope: "device" };
+  if (target === "study") return { view: "study", writes: [subject] };
+  // Argomenti: stessa materia del conteggio già scelta in Studio, poi il riquadro degli argomenti aperto.
+  return { view: "study", writes: [subject, { key: "study.topicsOpen", value: true, scope: "tab" }] };
 };

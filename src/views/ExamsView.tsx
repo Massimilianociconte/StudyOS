@@ -378,7 +378,7 @@ function PersonalExamsView({
           ) : null}
 
           {upcoming.length ? (
-            <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
+            <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))]">
               {upcoming.map((exam) => (
                 <ExamCard
                   key={exam.id}
@@ -675,11 +675,11 @@ function ExamCard({
             <HelpTip title={EXAMS_HELP.readiness.title} text={EXAMS_HELP.readiness.text} example={EXAMS_HELP.readiness.example} />
           </span>
           <span className="flex items-center gap-1">
-            <button type="button" aria-label={`Abbassa la preparazione per ${name} del 5%`} onClick={() => onPrep(-5)} className="relative grid h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
+            <button type="button" aria-label={`Abbassa la preparazione per ${name} del 5%`} onClick={() => onPrep(-5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
               −
             </button>
             <span className="w-10 text-center tabular-nums">{exam.preparation}%</span>
-            <button type="button" aria-label={`Alza la preparazione per ${name} del 5%`} onClick={() => onPrep(5)} className="relative grid h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
+            <button type="button" aria-label={`Alza la preparazione per ${name} del 5%`} onClick={() => onPrep(5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
               +
             </button>
           </span>
@@ -691,7 +691,7 @@ function ExamCard({
       <p className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-bold text-[var(--muted)]">
         <CountLink label={EXAMS_TEXT.tasksLink(openTasks)} aria={EXAMS_TEXT.tasksAria(name)} onClick={() => onLink("tasks")} />
         <span aria-hidden="true">·</span>
-        <CountLink label={EXAMS_TEXT.studyLink(formatMinutes(studiedMinutes))} aria={EXAMS_TEXT.studyAria(name)} onClick={() => onLink("study")} />
+        <CountLink label={EXAMS_TEXT.studyLink(formatMinutes(studiedMinutes))} aria={EXAMS_TEXT.studyTimeAria(name)} onClick={() => onLink("study")} />
         <span aria-hidden="true">·</span>
         <CountLink label={EXAMS_TEXT.topicsLink(topics)} aria={EXAMS_TEXT.topicsAria} onClick={() => onLink("topics")} />
       </p>

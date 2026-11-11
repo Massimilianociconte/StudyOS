@@ -93,6 +93,7 @@ export const EXAMS_TEXT = {
   tasksAria: (name: string) => `Apri le attività di ${name}`,
   studyLink: (time: string) => `${time} di studio`,
   studyAria: (name: string) => `Studia ${name}: apre il timer con la materia già scelta`,
+  studyTimeAria: (name: string) => `Tempo già studiato per ${name}: apri lo Studio con questa materia`,
   topicsLink: (count: number) => `${count} ${count === 1 ? "argomento" : "argomenti"} da ripassare`,
   topicsAria: "Apri gli argomenti da ripassare in Studio",
   riskHigh: "Sei indietro",
