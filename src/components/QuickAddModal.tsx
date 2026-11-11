@@ -1,16 +1,18 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { selectableSubjects } from "../lib/selectors";
 import { addHours } from "date-fns";
 import { AnimatePresence, m } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Field, IconButton, Pill, fileInputClass, inputClass } from "./ui";
+import { Button, Field, IconButton, Pill, fileInputClass, inputClass, useDialogLayer } from "./ui";
 import { Icon } from "./Icon";
 import { DateTimeField } from "./DatePicker";
 import { fromDatetimeLocal } from "../lib/dates";
 import { quickAddDefaults, quickAddTaskDates, type QuickAddTaskCreate } from "../lib/quickAdd";
-import { UI_TEXT } from "../lib/labels";
+import { REPEAT_PICKER_TEXT, UI_TEXT } from "../lib/labels";
 import { normalizeExternalUrl } from "../lib/safeUrl";
-import { deviceTimeZone } from "../lib/tz";
+import { deviceTimeZone, isCivilDate } from "../lib/tz";
+import { repeatPresets, type RepeatPresetId } from "../lib/repeatPresets";
+import { describeRule } from "../lib/repeat";
 
 type Mode = "task" | "event" | "session" | "subject" | "material";
 export type QuickAddMode = Mode;
@@ -24,6 +26,16 @@ const modes: { id: Mode; label: string; icon: string; hint: string }[] = [
   { id: "subject", label: "Materia", icon: "BookOpen", hint: "Un corso che stai seguendo. Potrai aggiungere CFU e docente dopo." },
   { id: "material", label: "Materiale", icon: "Paperclip", hint: "Un link o un file (PDF, slide, appunti) da ritrovare in fretta." }
 ];
+
+/** Ripetizioni pronte dell'aggiunta veloce (le altre, e la fine, dal modulo completo nel Calendario). */
+const QUICK_REPEATS: readonly RepeatPresetId[] = ["none", "daily", "weekly", "monthlyDay", "yearly", "workdays"];
+
+/** Scelte pronte per l'inizio "YYYY-MM-DDTHH:mm": giorni scritti (vedi repeatPresets); senza data, solo "non si ripete". */
+const quickRepeats = (start: string) => {
+  const day = start.slice(0, 10);
+  if (!isCivilDate(day)) return [{ id: "none" as const, label: describeRule(null), rule: null }];
+  return repeatPresets(day).filter((preset) => QUICK_REPEATS.includes(preset.id));
+};
 
 const titleField: Record<Mode, { label: string; placeholder: string }> = {
   task: { label: "Cosa devi fare?", placeholder: "Es. Ripassare il capitolo 3 di Patologia" },
@@ -45,9 +57,14 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
   const [taskCreateMode, setTaskCreateMode] = useState<TaskCreateMode>("normal");
   const [estimatedMinutes, setEstimatedMinutes] = useState("45");
   const [actualMinutes, setActualMinutes] = useState("");
+  const [repeatId, setRepeatId] = useState<RepeatPresetId>("none");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Pagina bloccata sotto, Tab che resta qui, Esc solo se è la finestra in cima, focus che torna a chi l'ha aperta.
+  useDialogLayer(open, { panelRef, onEscape: onClose });
+  const repeats = useMemo(() => quickRepeats(date), [date]);
   const { subjects, addTask, addEvent, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
   // Il modale resta montato: a ogni apertura la data proposta torna "adesso" e il tipo è quello richiesto.
@@ -57,18 +74,10 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
       setDate(defaults.start);
       setTaskDue(defaults.taskDue);
       setMode(initialMode);
+      setRepeatId("none");
       setError("");
     }
   }, [open, initialMode]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
 
   const submitLabel = useMemo(() => {
     if (mode === "task") {
@@ -92,6 +101,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
     setActualMinutes("");
     setTaskCreateMode("normal");
     setTaskDue(quickAddDefaults().taskDue);
+    setRepeatId("none");
   };
 
   const submit = async () => {
@@ -107,6 +117,8 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
       setError("Data o ora non valida: controlla il campo e riprova.");
       return;
     }
+    // Regola dell'inizio scelto (giorno della settimana e del mese di quella data).
+    const repeat = mode === "event" || mode === "session" ? quickRepeats(date).find((preset) => preset.id === repeatId)?.rule ?? null : null;
     setBusy(true);
     setError("");
     try {
@@ -137,7 +149,8 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
           end: addHours(new Date(start), 1).toISOString(),
           category: "other",
           color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined,
-          timeZone: deviceTimeZone()
+          timeZone: deviceTimeZone(),
+          ...(repeat ? { repeat } : {})
         });
       }
       if (mode === "session") {
@@ -150,7 +163,8 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
           end: new Date(new Date(start).getTime() + 50 * 60_000).toISOString(),
           category: "study",
           color: subjectId ? subjects.find((subject) => subject.id === subjectId)?.color : undefined,
-          timeZone: deviceTimeZone()
+          timeZone: deviceTimeZone(),
+          ...(repeat ? { repeat } : {})
         });
       }
       if (mode === "subject") {
@@ -174,7 +188,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
     <AnimatePresence>
       {open ? (
         <m.div
-          className="fixed inset-0 z-50 grid place-items-end bg-black/40 p-3 backdrop-blur-sm sm:place-items-center"
+          className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/40 p-3 backdrop-blur-sm sm:place-items-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -183,7 +197,9 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
           aria-labelledby={titleId}
         >
           <m.div
-            className="soft-panel scrollbar-soft max-h-[85dvh] w-full max-w-xl overflow-y-auto p-4 sm:p-5"
+            ref={panelRef}
+            tabIndex={-1}
+            className="soft-panel scrollbar-soft max-h-[85dvh] w-full max-w-xl overflow-y-auto p-4 outline-none sm:p-5"
             initial={{ y: 30, scale: 0.98 }}
             animate={{ y: 0, scale: 1 }}
             exit={{ y: 30, scale: 0.98 }}
@@ -253,7 +269,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
                     className={inputClass}
                     type="url"
                     inputMode="url"
-                    autoFocus
+                    data-autofocus={mode === "material" ? true : undefined}
                     value={url}
                     onChange={(event) => setUrl(event.target.value)}
                     placeholder="Es. https://ariel.unimi.it/…"
@@ -264,7 +280,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
               <Field label={titleField[mode].label}>
                 <input
                   className={inputClass}
-                  autoFocus={mode !== "material"}
+                  data-autofocus={mode !== "material" ? true : undefined}
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder={titleField[mode].placeholder}
@@ -295,9 +311,20 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
               ) : null}
 
               {mode === "event" || mode === "session" ? (
-                <p className="-mt-1 text-xs font-bold text-[var(--muted)]">
-                  {mode === "event" ? "Dura un'ora" : "Dura 50 minuti"}: puoi cambiare durata e ripetizione aprendolo dal Calendario.
-                </p>
+                <>
+                  <Field label={REPEAT_PICKER_TEXT.label}>
+                    <select className={inputClass} value={repeatId} onChange={(event) => setRepeatId(event.target.value as RepeatPresetId)}>
+                      {repeats.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <p className="-mt-1 text-xs font-bold text-[var(--muted)]">
+                    {mode === "event" ? "Dura un'ora" : "Dura 50 minuti"}. {REPEAT_PICKER_TEXT.quickMore}
+                  </p>
+                </>
               ) : null}
 
               {mode === "task" ? (

@@ -228,7 +228,9 @@ test("addEvent scarta promemoria e ricorrenze non validi", async () => {
 });
 
 test("editOccurrence 'this' su una serie senza fuso: il fuso del dispositivo va sulla serie nello stesso salvataggio", async () => {
-  const legacy = event({ id: "old", recurrence: "weekly" });
+  // Una serie senza fuso si ripete nell'ora del dispositivo: lunedì 2 alle 10 locali, così il 16 è un
+  // lunedì della serie in ogni fuso (alle 09:00Z, a Honolulu sarebbe domenica 1).
+  const legacy = event({ id: "old", recurrence: "weekly", start: new Date(2026, 10, 2, 10).toISOString(), end: new Date(2026, 10, 2, 11).toISOString() });
   store.setState({ events: [legacy, OTHER] });
   await store.getState().editOccurrence("old", "2026-11-16", "this", { title: "Spostata" });
   assert.equal(notifications, 2, "uno per lo stato iniziale, uno per la modifica");

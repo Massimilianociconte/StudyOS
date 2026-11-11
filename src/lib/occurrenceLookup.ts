@@ -44,7 +44,7 @@ export const shiftPatchDays = (patch: Partial<CalendarEvent>, days: number): Par
 };
 
 /** Giorno (YYYY-MM-DD) di un inizio: tutto il giorno nell'ora locale, altrimenti nel fuso della serie. */
-const dayOfStart = (start: string, allDay: boolean | undefined, zone: string | undefined) => {
+export const startDayOf = (start: string, allDay: boolean | undefined, zone: string | undefined) => {
   const date = new Date(start);
   return Number.isNaN(date.getTime()) ? "" : civilDateOf(date, allDay ? undefined : zone);
 };
@@ -68,14 +68,11 @@ export const allScopePatch = (
   }
 ): Partial<CalendarEvent> => {
   const toggled = changes.allDay !== undefined && changes.allDay !== (series.allDay ?? false);
-  // "Tutto il giorno" che non cambia non si passa: una serie senza il campo lo vedrebbe come un
-  // cambio e prenderebbe gli orari così come sono (spostandosi al giorno aperto).
-  const { allDay: _allDay, ...withoutAllDay } = changes;
-  const patch = toggled || changes.allDay === undefined ? changes : withoutAllDay;
-  if (patch.start === undefined && patch.end === undefined) return patch;
+  // Un "tutto il giorno" invariato si passa così com'è: il motore lo confronta con `?? false`.
+  if (changes.start === undefined && changes.end === undefined) return changes;
   const zone = series.timeZone;
-  const from = dayOfStart(occurrence.start, occurrence.allDay, zone);
-  const to = toggled ? dayOfStart(series.start, series.allDay, zone) : date;
-  if (!isCivilDate(from) || !isCivilDate(to)) return patch;
-  return shiftPatchDays(patch, civilDaysBetween(from, to));
+  const from = startDayOf(occurrence.start, occurrence.allDay, zone);
+  const to = toggled ? startDayOf(series.start, series.allDay, zone) : date;
+  if (!isCivilDate(from) || !isCivilDate(to)) return changes;
+  return shiftPatchDays(changes, civilDaysBetween(from, to));
 };

@@ -16,6 +16,7 @@ export function VacationForm({
   initial,
   editing,
   overrides,
+  customColor,
   onClose,
   onSave,
   onDelete,
@@ -24,6 +25,8 @@ export function VacationForm({
   initial: VacationDraft;
   editing: boolean;
   overrides?: TypeColorOverrides;
+  /** Colore scelto a mano per questo evento: l'anteprima usa quello, non il colore della tipologia. */
+  customColor?: string;
   onClose: () => void;
   /** Bozza già controllata. */
   onSave: (draft: VacationDraft) => Promise<string | void>;
@@ -69,7 +72,7 @@ export function VacationForm({
         <p className="text-xs font-bold text-[var(--muted)]">{VACATION_FORM_TEXT.daysHint}</p>
       </div>
 
-      <ColorPreview color={typeDefaultColor("vacation", { overrides })} icon={eventTypeIcon("vacation")} title={title} meta={days ? EVENT_EDITOR_TEXT.daysLabel(days) : undefined} />
+      <ColorPreview color={customColor || typeDefaultColor("vacation", { overrides })} icon={eventTypeIcon("vacation")} title={title} meta={days ? EVENT_EDITOR_TEXT.daysLabel(days) : undefined} />
 
       <Field label={VACATION_FORM_TEXT.destination}>
         <input

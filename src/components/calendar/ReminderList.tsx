@@ -57,7 +57,7 @@ export function ReminderList({
                   disabled={disabled}
                   aria-label={REMINDER_PICKER_TEXT.remove(text)}
                   onClick={() => onChange(removeReminder(value, index))}
-                  className="grid h-11 w-11 place-items-center rounded-full text-[var(--muted)] hover:text-[var(--text)] disabled:cursor-not-allowed"
+                  className="grid h-11 w-11 grid-cols-1 place-items-center rounded-full text-[var(--muted)] hover:text-[var(--text)] disabled:cursor-not-allowed"
                 >
                   <Icon name="X" className="h-4 w-4" />
                 </button>

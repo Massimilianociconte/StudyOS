@@ -1140,7 +1140,9 @@ export const REPEAT_PICKER_TEXT = {
   weekdaysMissing: "Scegli almeno un giorno della settimana.",
   untilInvalid: "La ripetizione deve finire dopo l'inizio: scegli un giorno successivo.",
   countInvalid: "Scrivi un numero di volte tra 1 e 999.",
-  onlyForSeries: "Per cambiare la ripetizione scegli poi «Questo e i successivi» o «Tutti»."
+  onlyForSeries: "Per cambiare la ripetizione scegli poi «Questo e i successivi» o «Tutti».",
+  /** Aggiunta veloce: solo le scelte pronte; il resto dal modulo completo. */
+  quickMore: "Per cambiare la durata, scegliere altri giorni o la fine della ripetizione («Personalizza…»), aprilo poi dal Calendario."
 } as const;
 
 /** Scelta "Solo questo · Questo e i successivi · Tutti" per modifica, spostamento ed eliminazione. */
@@ -1159,14 +1161,41 @@ export const SCOPE_TEXT = {
   followingEdit: (day: string) => `Cambia l'evento di ${day} e tutti quelli dopo; quelli prima restano come sono.`,
   followingMove: (day: string) => `Sposta l'evento di ${day} e tutti quelli dopo; quelli prima restano dove sono.`,
   followingDelete: (day: string) => `Elimina l'evento di ${day} e tutti quelli dopo, comprese le modifiche fatte ai singoli giorni.`,
-  followingTimeChanged: "Le modifiche fatte a singoli giorni dopo questa data verranno sostituite; i giorni annullati restano annullati.",
-  followingSameTime: "Le modifiche fatte a singoli giorni dopo questa data restano; i giorni annullati restano annullati.",
-  followingSplits: "Se dopo questa data avevi già cambiato la serie, vale questa modifica.",
+  followingSplits: "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: vale questa modifica.",
   followingKeepsEnd: "La serie finisce quando finiva prima.",
-  allEdit: "Cambia tutte le date della serie, anche quelle passate.",
-  allMove: "Sposta tutte le date della serie allo stesso modo, anche quelle passate.",
-  allDelete: "Elimina tutta la serie, con tutte le sue date, anche quelle passate.",
-  allRows: "I giorni che avevi cambiato uno per uno tengono le loro modifiche.",
+  /** "Tutti": le date che cambiano davvero (una parte di una serie divisa, o tutta la serie). */
+  allEdit: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
+    from && until
+      ? `Cambia le date di questa serie dal ${from} al ${until}; le altre restano come sono.`
+      : from
+        ? `Cambia tutte le date di questa serie dal ${from} in poi; quelle prima restano come sono.`
+        : until
+          ? `Cambia le date di questa serie fino al ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano come sono.`
+          : past
+            ? "Cambia tutte le date della serie, anche quelle passate."
+            : "Cambia tutte le date della serie.",
+  allMove: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
+    from && until
+      ? `Sposta allo stesso modo le date di questa serie dal ${from} al ${until}; le altre restano dove sono.`
+      : from
+        ? `Sposta allo stesso modo tutte le date di questa serie dal ${from} in poi; quelle prima restano dove sono.`
+        : until
+          ? `Sposta allo stesso modo le date di questa serie fino al ${until}; quelle dopo, già cambiate con «Questo e i successivi», restano dove sono.`
+          : past
+            ? "Sposta tutte le date della serie allo stesso modo, anche quelle passate."
+            : "Sposta tutte le date della serie allo stesso modo.",
+  allDelete: (past: boolean) => (past ? "Elimina tutta la serie, con tutte le sue date, anche quelle passate." : "Elimina tutta la serie, con tutte le sue date."),
+  allDeleteFamily: "Elimina tutta la serie, comprese le parti modificate in precedenza con «Questo e i successivi».",
+  /** Che cosa succede ai giorni cambiati o annullati da soli (calcolato prima di salvare). */
+  changedLost: (count: number) =>
+    count === 1
+      ? "1 giorno che avevi cambiato da solo perde la sua modifica e torna come il resto della serie."
+      : `${count} giorni che avevi cambiato da soli perdono le loro modifiche e tornano come il resto della serie.`,
+  cancelledBack: (count: number) => (count === 1 ? "1 giorno che avevi annullato torna nel calendario." : `${count} giorni che avevi annullato tornano nel calendario.`),
+  rowsKept: "I giorni che avevi cambiato o annullato da soli restano così.",
+  othersKept: "Gli altri giorni che avevi cambiato o annullato da soli restano così.",
+  ownLost: "Questo giorno perde la modifica fatta solo a lui e diventa come il resto della serie.",
+  newStart: (day: string) => `La serie ora inizia ${day}, il primo giorno che corrisponde alla nuova ripetizione.`,
   sharedAll: "Negli eventi di altre persone si cambiano tutte le date insieme.",
   pinZone: (zone: string) => `Da adesso gli orari di questa serie restano quelli del fuso orario ${zone}, anche se apri StudyOS da un altro paese.`,
   cancel: "Annulla"
@@ -1185,7 +1214,7 @@ export const REMINDER_PICKER_TEXT = {
   at: "Alle (facoltativo)",
   addCustom: "Aggiungi",
   invalid: "Scrivi un numero valido: fino a 4 settimane prima.",
-  where: "Suonano dentro StudyOS quando è aperta, e in Google o Apple Calendar se esporti il calendario. Ad app chiusa, per ora, non arrivano."
+  where: "Suonano dentro StudyOS quando è aperta, e in Google o Apple Calendar se esporti il calendario. Ad app chiusa non arrivano: quelli persi nelle ultime 24 ore compaiono nella campanella quando la riapri."
 } as const;
 
 /** Percorso "Nuova ricorrenza": compleanni, anniversari e altre date di ogni anno. */
@@ -1198,6 +1227,8 @@ export const OCCASION_FORM_TEXT = {
   namePlaceholder: (kind: string) =>
     kind === "birthday" ? "Es. Giulia" : kind === "anniversary" ? "Es. Anniversario di matrimonio" : kind === "holiday" ? "Es. Festa del paese" : "Es. Rinnovo dell'abbonamento",
   birthdayTitle: (name: string) => `Compleanno di ${name}`,
+  /** Inizi di titolo che non fanno parte del nome (ricorrenze create senza nome, es. dall'agente). */
+  titlePrefixes: ["Compleanno di ", "Onomastico di "],
   day: "Giorno",
   month: "Mese",
   year: "Anno (facoltativo)",

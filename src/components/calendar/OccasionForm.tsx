@@ -158,6 +158,7 @@ export function OccasionForm({
   editing,
   today,
   overrides,
+  customColor,
   onClose,
   onSave,
   onDelete,
@@ -168,6 +169,8 @@ export function OccasionForm({
   /** Oggi (YYYY-MM-DD). */
   today: string;
   overrides?: TypeColorOverrides;
+  /** Colore scelto a mano per questo evento: l'anteprima usa quello, non il colore della tipologia. */
+  customColor?: string;
   onClose: () => void;
   /** Bozza già controllata. */
   onSave: (draft: OccasionDraft) => Promise<string | void>;
@@ -183,7 +186,7 @@ export function OccasionForm({
   const next = nextOccasion(draft, today);
   const name = draft.name.trim();
   const previewTitle = name ? (draft.kind === "birthday" ? OCCASION_FORM_TEXT.birthdayTitle(name) : name) : OCCASION_KIND_LABEL[draft.kind];
-  const color = typeDefaultColor(eventTypeKey({ category: "personal", occasionKind: draft.kind }), { overrides });
+  const color = customColor || typeDefaultColor(eventTypeKey({ category: "personal", occasionKind: draft.kind }), { overrides });
   const days = Array.from({ length: 31 }, (_, index) => index + 1);
 
   return (

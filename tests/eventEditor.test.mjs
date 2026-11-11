@@ -22,7 +22,6 @@ import {
   shiftPatchDays,
   toLocalInput,
   validateDraft,
-  wallTimeChanged,
   withTypeColor
 } from "../src/lib/eventEditor.ts";
 import { localMidnight } from "../src/lib/tz.ts";
@@ -206,16 +205,20 @@ test("promemoria: scelte pronte, niente doppioni, personalizzati entro i limiti"
 });
 
 test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
-  const edit = scopeOptions({ action: "edit", date: "2026-11-12", ruleChanged: false, timeChanged: true });
+  const edit = scopeOptions({ action: "edit", date: "2026-11-12", ruleChanged: false });
   assert.deepEqual(edit.map((option) => option.id), ["this", "following", "all"]);
+  // Senza giorni cambiati da soli non si parla di loro; la fine resta.
   const following = edit.find((option) => option.id === "following");
-  assert.ok(following.details.some((line) => line.includes("verranno sostituite")));
-  assert.ok(following.details.some((line) => line.includes("i giorni annullati restano annullati")));
+  assert.deepEqual(following.details, ["Cambia l'evento di giovedì 12 novembre e tutti quelli dopo; quelli prima restano come sono.", "La serie finisce quando finiva prima."]);
   // Cambiando la regola non si può scegliere "Solo questo".
   assert.deepEqual(scopeOptions({ action: "edit", date: "2026-11-12", ruleChanged: true }).map((option) => option.id), ["following", "all"]);
-  // Stesso orario: le modifiche dei singoli giorni restano.
-  const same = scopeOptions({ action: "edit", date: "2026-11-12", timeChanged: false }).find((option) => option.id === "following");
-  assert.ok(same.details.some((line) => line.includes("restano")));
+  // Ciò che si dice dei giorni cambiati viene da `impacts` (vedi occurrenceEdit.test).
+  const lost = scopeOptions({ action: "edit", date: "2026-11-12", impacts: { following: { changedLost: 2, cancelledLost: 0, kept: 1, ownLost: false, absorbed: 1 } } });
+  assert.deepEqual(lost.find((option) => option.id === "following").details.slice(1, 4), [
+    "2 giorni che avevi cambiato da soli perdono le loro modifiche e tornano come il resto della serie.",
+    "Gli altri giorni che avevi cambiato o annullato da soli restano così.",
+    "Dopo questa data avevi già cambiato la serie con «Questo e i successivi»: vale questa modifica."
+  ]);
   const remove = scopeOptions({ action: "delete", date: "2026-11-12" });
   assert.ok(remove.find((option) => option.id === "all").details[0].includes("tutta la serie"));
   // Eventi di altri: solo "Tutti".
@@ -223,15 +226,6 @@ test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
   // Fuso fissato alla prima modifica di un giorno: lo si dice.
   const pinned = scopeOptions({ action: "edit", date: "2026-11-12", pinsZone: "Europe/Rome" });
   assert.ok(pinned.find((option) => option.id === "this").details.some((line) => line.includes("Europe/Rome")));
-});
-
-test("l'orario cambia? Solo ora d'inizio, durata o tutto il giorno, non il giorno", () => {
-  const before = { start: iso(2026, 11, 12, 10), end: iso(2026, 11, 12, 11) };
-  assert.equal(wallTimeChanged(before, { start: iso(2026, 11, 13, 10), end: iso(2026, 11, 13, 11) }), false);
-  assert.equal(wallTimeChanged(before, { start: iso(2026, 11, 12, 14), end: iso(2026, 11, 12, 15) }), true);
-  assert.equal(wallTimeChanged(before, { end: iso(2026, 11, 12, 12) }), true);
-  assert.equal(wallTimeChanged(before, { allDay: true }), true);
-  assert.equal(wallTimeChanged({ ...before, allDay: false }, { title: "x" }), false);
 });
 
 test("spostare inizio e fine di qualche giorno (per «Tutti» con tutto il giorno)", () => {
@@ -256,9 +250,10 @@ test("«Tutti» da un giorno: la modifica si riporta al giorno di riferimento de
   const toggled = allScopePatch({ start: iso(2026, 11, 12), end: iso(2026, 11, 13), allDay: true }, { occurrence: { start: iso(2026, 11, 12, 10), allDay: false }, series, date: "2026-11-12" });
   assert.equal(toggled.start, iso(2026, 11, 5));
   assert.equal(toggled.end, iso(2026, 11, 6));
-  // "Tutto il giorno" invariato non si passa (una serie senza il campo lo prenderebbe per un cambio).
+  // "Tutto il giorno" invariato su una serie senza il campo: passa com'è e non sposta il giorno (il
+  // motore lo confronta con `?? false`, vedi repeat.test).
   const sameAllDay = allScopePatch({ start: iso(2026, 11, 12, 14), end: iso(2026, 11, 12, 16), allDay: false }, { occurrence: { start: iso(2026, 11, 12, 10) }, series: { start: iso(2026, 11, 5, 10) }, date: "2026-11-12" });
-  assert.equal("allDay" in sameAllDay, false);
+  assert.equal(sameAllDay.allDay, false);
   assert.equal(sameAllDay.start, iso(2026, 11, 12, 14));
   // Senza orari la modifica resta com'è.
   const title = { title: "Nuovo" };

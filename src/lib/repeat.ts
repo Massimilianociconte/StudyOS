@@ -992,7 +992,7 @@ const rowsOf = (series: CalendarEvent, overrides: readonly CalendarEvent[]) => o
 /** Nuovo inizio/fine della serie quando si sposta l'occorrenza `date`: stesso spostamento di giorni, nuova ora. */
 const shiftedSeriesTimes = (event: CalendarEvent, series: Series, date: string, patch: Partial<CalendarEvent>) => {
   if (patch.start === undefined && patch.end === undefined) return {};
-  if (date === series.startDate || (patch.allDay !== undefined && patch.allDay !== event.allDay)) {
+  if (date === series.startDate || (patch.allDay !== undefined && patch.allDay !== (event.allDay ?? false))) {
     return { ...(patch.start !== undefined ? { start: patch.start } : {}), ...(patch.end !== undefined ? { end: patch.end } : {}) };
   }
   const original = instanceFields(series, date);

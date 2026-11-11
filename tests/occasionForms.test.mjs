@@ -3,17 +3,21 @@ import assert from "node:assert/strict";
 import {
   newOccasionDraft,
   nextOccasion,
+  occasionChanges,
   occasionDraftFromEvent,
   occasionError,
   occasionFields,
   occasionStartDate,
   newVacationDraft,
+  vacationChanges,
   vacationDays,
   vacationDraftFromEvent,
   vacationError,
   vacationFields
 } from "../src/lib/occasionForms.ts";
 import { localMidnight } from "../src/lib/tz.ts";
+import { executeAgentTool } from "../src/agent/execute.ts";
+import { useStudyStore } from "../src/store/useStudyStore.ts";
 
 const midnight = (date) => localMidnight(date).toISOString();
 
@@ -138,4 +142,47 @@ test("vacanza: errori e ritorno al modulo", () => {
   assert.equal(back.last, "2026-08-14");
   assert.equal(back.destination, "Sardegna");
   assert.equal(vacationDays(back), 14);
+});
+
+test("S3. ricorrenza creata dall'agente, aperta e salvata senza toccare nulla: nessuna modifica", async () => {
+  // Come nei test dell'agente: dati caricati (con `loading` l'agente aspetta).
+  useStudyStore.setState({ loading: false, locked: false, persistError: null, subjects: [], tasks: [], events: [], attachments: [], notes: [], reminders: [], preferences: [] });
+  const created = await executeAgentTool("studyos_create_event", { title: "Compleanno di Anna", start: "2026-04-20", allDay: true, category: "other", occasion: { kind: "birthday" } });
+  assert.equal(created.ok, true);
+  const event = useStudyStore.getState().events[0];
+  assert.equal(event.category, "other");
+  assert.equal(event.occasion.person, undefined);
+  const before = occasionDraftFromEvent(event);
+  assert.equal(before.name, "Anna", "il nome senza «Compleanno di »");
+  assert.deepEqual(occasionChanges(event, before, before, { today: "2026-11-11" }), {});
+  // Solo i promemoria toccati: solo i promemoria; mai categoria, colore o titolo.
+  assert.deepEqual(occasionChanges(event, before, { ...before, reminders: [{ at: "08:00" }] }, { today: "2026-11-11" }), { reminders: [{ at: "08:00" }] });
+  // Nome cambiato: titolo e persona, la categoria resta.
+  assert.deepEqual(occasionChanges(event, before, { ...before, name: "Anna Maria" }, { today: "2026-11-11" }), {
+    title: "Compleanno di Anna Maria",
+    occasion: { kind: "birthday", person: "Anna Maria" }
+  });
+});
+
+test("S3. ricorrenza con un titolo scelto a mano, senza promemoria: salvare senza cambiare non scrive nulla", () => {
+  const event = baseEvent({ title: "Festa di Giulia", occasion: { kind: "birthday", person: "Giulia" } });
+  assert.equal("reminders" in event, false);
+  const before = occasionDraftFromEvent(event);
+  assert.deepEqual(occasionChanges(event, before, before, { today: "2026-11-11" }), {});
+  // Il nome cambia: il titolo scelto a mano segue il nome, non torna «Compleanno di …».
+  assert.equal(occasionChanges(event, before, { ...before, name: "Giulia R." }, { today: "2026-11-11" }).title, "Festa di Giulia R.");
+  // Giorno cambiato: inizio e fine, nell'anno della serie.
+  assert.deepEqual(occasionChanges(event, before, { ...before, day: 15 }, { today: "2026-11-11", baseYear: 2026 }), {
+    start: midnight("2026-03-15"),
+    end: midnight("2026-03-16")
+  });
+});
+
+test("S3. vacanza aperta e salvata senza cambiare: nessuna modifica; poi solo ciò che cambia", () => {
+  const event = baseEvent({ title: "Mare", category: "vacation", start: midnight("2026-08-01"), end: midnight("2026-08-15"), location: "Sardegna" });
+  const before = vacationDraftFromEvent(event);
+  assert.deepEqual(vacationChanges(event, before, before), {});
+  assert.deepEqual(vacationChanges(event, before, { ...before, last: "2026-08-20" }), { end: midnight("2026-08-21") });
+  assert.deepEqual(vacationChanges(event, before, { ...before, destination: " " }), { location: undefined });
+  assert.deepEqual(vacationChanges(event, before, { ...before, reminders: [{ daysBefore: 1, at: "09:00" }] }), { reminders: [{ daysBefore: 1, at: "09:00" }] });
 });

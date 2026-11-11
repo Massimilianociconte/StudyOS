@@ -117,8 +117,10 @@ test("personalizza: da regola a modulo e ritorno", () => {
     { freq: "yearly", interval: 2 }
   ];
   for (const rule of cases) assert.deepEqual(ruleFromCustom(customFromRule(rule, START), START), rule, JSON.stringify(rule));
-  // Un solo giorno uguale all'inizio: regola settimanale semplice.
-  assert.deepEqual(ruleFromCustom({ ...empty, weekdays: ["TH"] }, START), { freq: "weekly" });
+  // Un solo giorno uguale all'inizio: si scrive anche quello (la regola non dipende dall'inizio).
+  assert.deepEqual(ruleFromCustom({ ...empty, weekdays: ["TH"] }, START), { freq: "weekly", byWeekday: ["TH"] });
+  // Una regola vecchia senza giorni si legge con il giorno dell'inizio.
+  assert.deepEqual(ruleFromCustom(customFromRule({ freq: "weekly" }, START), START), { freq: "weekly", byWeekday: ["TH"] });
   // Ogni 3 mesi e ogni 6 mesi.
   assert.equal(describeRule(ruleFromCustom({ ...empty, unit: "month", interval: 6 }, START), START), "Ogni 6 mesi il 12");
 });

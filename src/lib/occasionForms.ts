@@ -41,12 +41,22 @@ export const newOccasionDraft = ({ today, kind = "birthday", name = "" }: { toda
   return { kind, name, day: parts?.day ?? 1, month: parts?.month ?? 1, year: "", notes: "", reminders: [...DEFAULT_OCCASION_REMINDERS] };
 };
 
+/**
+ * Nome dal titolo, per una ricorrenza senza `occasion.person` (creata dall'agente o importata): senza
+ * "Compleanno di " o "Onomastico di " davanti, così salvando non si aggiunge un secondo prefisso.
+ */
+const nameFromTitle = (title: string) => {
+  const trimmed = title.trim();
+  const prefix = OCCASION_FORM_TEXT.titlePrefixes.find((item) => trimmed.toLowerCase().startsWith(item.toLowerCase()));
+  return prefix ? trimmed.slice(prefix.length).trim() || trimmed : trimmed;
+};
+
 export const occasionDraftFromEvent = (event: CalendarEvent): OccasionDraft => {
   const occasion = sanitizeOccasion(event.occasion);
   const parts = parseCivil(dayOf(event.start));
   return {
     kind: occasion?.kind ?? "recurring-day",
-    name: occasion?.person || event.title || "",
+    name: occasion?.person || nameFromTitle(event.title ?? ""),
     day: parts?.day ?? 1,
     month: parts?.month ?? 1,
     year: occasion?.birthYear ? String(occasion.birthYear) : "",
@@ -116,6 +126,51 @@ export const occasionFields = (
   };
 };
 
+const sameReminders = (a: readonly EventReminder[], b: readonly EventReminder[]) => JSON.stringify(sanitizeReminders(a)) === JSON.stringify(sanitizeReminders(b));
+
+/** Inizio e fine (mezzanotti locali) del giorno `first` fino a `last` compreso, solo se cambiano. */
+const dayChanges = (event: Pick<CalendarEvent, "start" | "end">, first: string, last: string): Partial<CalendarEvent> => {
+  const start = localMidnight(first).toISOString();
+  const end = localMidnight(civilAddDays(last, 1)).toISOString();
+  return { ...(start !== event.start ? { start } : {}), ...(end !== event.end ? { end } : {}) };
+};
+
+/**
+ * Campi da salvare modificando una ricorrenza: solo ciò che il modulo ha cambiato (`before` è la
+ * bozza all'apertura, `after` quella salvata), {} se nulla. Mai la categoria, il colore o la regola.
+ * Il titolo cambia solo con il nome o il tipo: se era quello di sempre ("Compleanno di …") si
+ * riscrive, se è stato scelto a mano vi si sostituisce il nome. I promemoria solo se toccati.
+ */
+export const occasionChanges = (
+  event: CalendarEvent,
+  before: OccasionDraft,
+  after: OccasionDraft,
+  { today, baseYear }: { today: string; baseYear?: number }
+): Partial<CalendarEvent> => {
+  const changes: Partial<CalendarEvent> = {};
+  const oldName = before.name.trim();
+  const name = after.name.trim();
+  const nameChanged = name !== oldName;
+  const kindChanged = after.kind !== before.kind;
+  const yearChanged = after.year.trim() !== before.year.trim();
+  if (nameChanged || kindChanged) {
+    const title = event.title ?? "";
+    const derived = !title.trim() || title === occasionTitle(before.kind, oldName) || title === oldName;
+    const next = derived ? occasionTitle(after.kind, name) : nameChanged && oldName && title.includes(oldName) ? title.split(oldName).join(name) : title;
+    if (next !== title) changes.title = next;
+  }
+  if (nameChanged || kindChanged || yearChanged) {
+    changes.occasion = sanitizeOccasion({ ...sanitizeOccasion(event.occasion), kind: after.kind, person: name, birthYear: yearOf(after) });
+  }
+  if (after.day !== before.day || after.month !== before.month || yearChanged) {
+    const date = occasionStartDate(after, { today, baseYear });
+    Object.assign(changes, dayChanges(event, date, date));
+  }
+  if (after.notes.trim() !== before.notes.trim()) changes.description = after.notes.trim();
+  if (!sameReminders(after.reminders, before.reminders)) changes.reminders = sanitizeReminders(after.reminders);
+  return changes;
+};
+
 // ---------------------------------------------------------------------------------------
 // Vacanza
 // ---------------------------------------------------------------------------------------
@@ -156,6 +211,17 @@ export const vacationError = (draft: VacationDraft) => {
   if (!isCivilDate(draft.first) || !isCivilDate(draft.last)) return VACATION_FORM_TEXT.daysMissing;
   if (draft.last < draft.first) return EVENT_EDITOR_TEXT.lastDayBeforeFirst;
   return "";
+};
+
+/** Campi da salvare modificando una vacanza: solo ciò che il modulo ha cambiato, {} se nulla. Mai categoria o colore. */
+export const vacationChanges = (event: CalendarEvent, before: VacationDraft, after: VacationDraft): Partial<CalendarEvent> => {
+  const changes: Partial<CalendarEvent> = {};
+  if (after.title.trim() !== before.title.trim()) changes.title = after.title.trim();
+  if (after.first !== before.first || after.last !== before.last) Object.assign(changes, dayChanges(event, after.first, after.last));
+  if (after.destination.trim() !== before.destination.trim()) changes.location = after.destination.trim() || undefined;
+  if (after.notes.trim() !== before.notes.trim()) changes.description = after.notes.trim();
+  if (!sameReminders(after.reminders, before.reminders)) changes.reminders = sanitizeReminders(after.reminders);
+  return changes;
 };
 
 /** Campi dell'evento: un solo evento di tutto il giorno, dal primo all'ultimo giorno compresi. */

@@ -37,7 +37,7 @@ export function ScopeChoice({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-[60] grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
+      className="fixed inset-0 z-[60] grid grid-cols-1 place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onCancel();
       }}

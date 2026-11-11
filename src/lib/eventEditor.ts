@@ -5,6 +5,7 @@ import { EVENT_TYPE_COLORS, eventTypeKey, LEGACY_AUTO_COLOR, resolveEventColor, 
 import { EVENT_EDITOR_TEXT, MONTH_NAME, SCOPE_TEXT, WEEKDAY_NAME } from "./labels";
 import { describeReminder, normalizeRepeat, sanitizeReminders, validateRepeat, type OccurrenceScope } from "./repeat";
 import { adaptRuleToStart, weekdayOf } from "./repeatPicker";
+import type { ScopeImpact, SeriesSpan } from "./occurrenceEdit";
 import { CALENDAR_EVENT_FIELD_GROUPS, changedFields, safeCssColor } from "./sharing";
 import { civilAddDays, civilDaysBetween, isCivilDate, localMidnight, parseCivil } from "./tz";
 
@@ -296,21 +297,6 @@ export const setDraftAllDay = <T extends EventDraft>(draft: T, on: boolean): T =
   return { ...draft, allDay: false, start, end };
 };
 
-/**
- * La modifica cambia l'orario (ora d'inizio, durata, tutto il giorno)? Spostare solo il giorno no:
- * per "Questo e i successivi" decide se le modifiche dei singoli giorni restano.
- */
-export const wallTimeChanged = (before: Pick<CalendarEvent, "start" | "end" | "allDay">, after: Partial<CalendarEvent>) => {
-  if ((after.allDay ?? before.allDay ?? false) !== (before.allDay ?? false)) return true;
-  if (after.start === undefined && after.end === undefined) return false;
-  const beforeStart = new Date(before.start);
-  const afterStart = new Date(after.start ?? before.start);
-  const beforeLength = new Date(before.end).getTime() - beforeStart.getTime();
-  const afterLength = new Date(after.end ?? before.end).getTime() - afterStart.getTime();
-  if ([beforeStart.getTime(), afterStart.getTime(), beforeLength, afterLength].some(Number.isNaN)) return true;
-  return afterStart.getHours() !== beforeStart.getHours() || afterStart.getMinutes() !== beforeStart.getMinutes() || afterLength !== beforeLength;
-};
-
 // Spostamento della modifica per "Tutti": in occurrenceLookup.ts (lo usa anche l'agente, nel bundle iniziale).
 export { allScopePatch, shiftPatchDays } from "./occurrenceLookup";
 
@@ -392,41 +378,69 @@ export const occurrenceDayText = (date: string) => {
   return `${WEEKDAY_NAME[weekdayOf(date)]} ${parts.day} ${MONTH_NAME[parts.month - 1]}`;
 };
 
+/** Righe sui giorni cambiati o annullati da soli: quanti perdono la modifica, quanti restano. */
+const rowLines = (impact: ScopeImpact | undefined) => {
+  if (!impact) return [];
+  const lost = [
+    ...(impact.changedLost ? [SCOPE_TEXT.changedLost(impact.changedLost)] : []),
+    ...(impact.cancelledLost ? [SCOPE_TEXT.cancelledBack(impact.cancelledLost)] : [])
+  ];
+  return [...lost, ...(impact.kept ? [lost.length ? SCOPE_TEXT.othersKept : SCOPE_TEXT.rowsKept] : [])];
+};
+
 /**
- * Opzioni della scelta per un evento che si ripete, con le conseguenze dette chiaramente.
+ * Opzioni della scelta per un evento che si ripete, con le conseguenze dette come stanno.
  * - Cambiando la regola non c'è "Solo questo" (una data sola non ha una ripetizione).
- * - "Questo e i successivi": le modifiche ai singoli giorni dopo quella data si perdono se cambia
- *   l'orario, i giorni annullati restano annullati, le modifiche successive alla serie si sostituiscono.
+ * - `impacts`: che cosa fanno davvero "Questo e i successivi" e "Tutti" ai giorni cambiati o
+ *   annullati da soli (vedi `scopeImpact`): si dice quanti perdono la modifica e quanti restano.
+ * - `span`: le date che "Tutti" tocca (una parte di una serie divisa, giorni passati o no, parti
+ *   eliminate); `newStart`: il nuovo primo giorno della serie con una regola nuova.
+ * - Dal primo giorno di una serie mai divisa "Questo e i successivi" è "Tutti": non si propone.
  * - Eventi di altri (`sharedOnly`): solo "Tutti".
  */
 export const scopeOptions = ({
   action,
   date,
   ruleChanged = false,
-  timeChanged = false,
   subjectChanged = false,
   pinsZone,
-  sharedOnly = false
+  sharedOnly = false,
+  impacts = {},
+  span,
+  newStart
 }: {
   action: ScopeAction;
   date: string;
   ruleChanged?: boolean;
-  timeChanged?: boolean;
   subjectChanged?: boolean;
   /** La serie non ha un fuso: la prima modifica di un giorno lo fissa (quello del dispositivo). */
   pinsZone?: string;
   sharedOnly?: boolean;
+  impacts?: Partial<Record<"following" | "all", ScopeImpact>>;
+  span?: SeriesSpan;
+  newStart?: string;
 }): ScopeOption[] => {
   const day = occurrenceDayText(date);
   const pin = pinsZone ? [SCOPE_TEXT.pinZone(pinsZone)] : [];
+  const range = {
+    ...(span?.from ? { from: occurrenceDayText(span.from) } : {}),
+    ...(span?.until ? { until: occurrenceDayText(span.until) } : {}),
+    past: span?.past ?? false
+  };
   const all: ScopeOption = {
     id: "all",
     label: SCOPE_TEXT.all,
     details: sharedOnly
       ? [SCOPE_TEXT.sharedAll]
       : action === "delete"
-        ? [SCOPE_TEXT.allDelete]
-        : [action === "move" ? SCOPE_TEXT.allMove : SCOPE_TEXT.allEdit, SCOPE_TEXT.allRows, ...pin]
+        ? [span && span.parts > 1 ? SCOPE_TEXT.allDeleteFamily : SCOPE_TEXT.allDelete(range.past)]
+        : [
+            action === "move" ? SCOPE_TEXT.allMove(range) : SCOPE_TEXT.allEdit(range),
+            ...(impacts.all?.ownLost ? [SCOPE_TEXT.ownLost] : []),
+            ...(newStart ? [SCOPE_TEXT.newStart(occurrenceDayText(newStart))] : []),
+            ...rowLines(impacts.all),
+            ...pin
+          ]
   };
   if (sharedOnly) return [all];
   const options: ScopeOption[] = [];
@@ -439,11 +453,13 @@ export const scopeOptions = ({
       ? [SCOPE_TEXT.followingDelete(day)]
       : [
           action === "move" ? SCOPE_TEXT.followingMove(day) : SCOPE_TEXT.followingEdit(day),
-          timeChanged ? SCOPE_TEXT.followingTimeChanged : SCOPE_TEXT.followingSameTime,
-          SCOPE_TEXT.followingSplits,
+          ...rowLines(impacts.following),
+          ...(impacts.following?.absorbed ? [SCOPE_TEXT.followingSplits] : []),
           ...(ruleChanged ? [] : [SCOPE_TEXT.followingKeepsEnd]),
           ...pin
         ];
-  options.push({ id: "following", label: SCOPE_TEXT.following, details: following }, all);
+  const firstDay = span?.start === date && span.parts === 1;
+  if (!firstDay) options.push({ id: "following", label: SCOPE_TEXT.following, details: following });
+  options.push(all);
   return options;
 };

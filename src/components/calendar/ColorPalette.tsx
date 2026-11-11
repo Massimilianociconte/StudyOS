@@ -47,10 +47,10 @@ export function ColorPalette({
       aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
-      className="grid h-11 w-11 shrink-0 place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-60"
+      className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-full disabled:cursor-not-allowed disabled:opacity-60"
     >
       <span
-        className={`grid h-8 w-8 place-items-center rounded-full border-2 ${pressed ? "border-[var(--text)] ring-2 ring-[var(--surface)]" : "border-[var(--border)]"}`}
+        className={`grid h-8 w-8 grid-cols-1 place-items-center rounded-full border-2 ${pressed ? "border-[var(--text)] ring-2 ring-[var(--surface)]" : "border-[var(--border)]"}`}
         style={{ background: hex }}
       >
         {extra ? <span className="rounded-full bg-black/55 px-1 text-[9px] font-black uppercase text-white">{extra}</span> : null}
@@ -65,9 +65,14 @@ export function ColorPalette({
       <div className="flex flex-wrap items-center gap-0.5">
         {autoColor && onAuto ? swatch(autoColor, !custom, autoLabel ?? label, onAuto, "A") : null}
         {EVENT_PALETTE.map((hex) => swatch(hex, (custom || !autoColor) && same(hex, current), colorName(hex), () => onPick(hex)))}
-        <label htmlFor={inputId} className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-full" title={EVENT_EDITOR_TEXT.colorCustom}>
+        <label
+          htmlFor={inputId}
+          // Il campo colore è nascosto (sr-only): il contorno del focus da tastiera va sul cerchio che si vede.
+          className="grid h-11 w-11 shrink-0 cursor-pointer grid-cols-1 place-items-center rounded-full has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:outline-offset-[3px] has-[:focus-visible]:outline-[color:color-mix(in_srgb,var(--accent)_62%,transparent)]"
+          title={EVENT_EDITOR_TEXT.colorCustom}
+        >
           <span className="sr-only">{EVENT_EDITOR_TEXT.colorCustom}</span>
-          <span className="grid h-8 w-8 place-items-center rounded-full border-2 border-dashed border-[var(--border)] bg-[var(--surface-soft)]">
+          <span className="grid h-8 w-8 grid-cols-1 place-items-center rounded-full border-2 border-dashed border-[var(--border)] bg-[var(--surface-soft)]">
             <Icon name="Palette" className="h-4 w-4 text-[var(--muted)]" />
           </span>
           <input

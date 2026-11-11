@@ -51,13 +51,16 @@ import { OccasionForm, occasionIcon } from "../components/calendar/OccasionForm"
 import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
-import { allScopePatch, draftFromEvent, editorFormFor, followingPatch, newEventDraft, scopeOptions, wallTimeChanged, type EventDraft, type ScopeOption } from "../lib/eventEditor";
+import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
+import { occurrenceEditCalls, scopeImpact, seriesSpan, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
   newOccasionDraft,
   newVacationDraft,
   OCCASION_KINDS,
+  occasionChanges,
   occasionDraftFromEvent,
   occasionFields,
+  vacationChanges,
   vacationDraftFromEvent,
   vacationFields
 } from "../lib/occasionForms";
@@ -340,7 +343,7 @@ export function CalendarView() {
     const ownerId = editingSharedKey.slice(0, editingSharedKey.indexOf(":"));
     if (calendarOwners.some((owner) => owner.id === ownerId)) return;
     if (!received.length && !seenOwners.current.has(ownerId)) return;
-    if (sharedDraftDirty.current) setNotice("L'evento che stavi modificando non è più condiviso con te: le modifiche non salvate sono andate perse.");
+    if (sharedDraftDirty.current) setNotice(EVENT_EDITOR_TEXT.sharedGoneDraft);
     closeSharedEditor();
   }, [calendarOwners, received, editingSharedKey]);
   // L'avviso riguarda la vista in cui è nato: cambiando vista sparisce.
@@ -395,6 +398,9 @@ export function CalendarView() {
   const draftFromFields = (fields: Partial<CalendarEvent>, saved?: CalendarEvent) =>
     draftFromEvent({ links: [], priority: "medium", status: "planned", description: "", ...saved, ...fields } as CalendarEvent, ownColorContext(saved?.subjectId));
   const startYearOf = (event: CalendarEvent) => parseCivil(civilDateOf(new Date(event.start)))?.year;
+  /** Colore scelto a mano per l'evento (per l'anteprima dei moduli semplici), se c'è. */
+  const customColorOf = (event: CalendarEvent) =>
+    initialColorCustom(event, ownColorContext(event.subjectId).subjectColor) ? safeCssColor(event.color) || undefined : undefined;
 
   const monthDays = useMemo(() => {
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 });
@@ -469,8 +475,9 @@ export function CalendarView() {
   };
 
   /**
-   * Modifica di un giorno di una mia serie con la portata scelta. "Tutti" da un giorno cambiato da
-   * solo: la serie cambia e quel giorno prende anche lui la modifica (lo si sta guardando).
+   * Modifica di un giorno di una mia serie con la portata scelta (vedi `occurrenceEditCalls`). "Tutti"
+   * da un giorno cambiato da solo: la serie cambia e quel giorno, se c'è ancora, prende anche lui la
+   * modifica (lo si sta guardando).
    */
   const applyOccurrenceEdit = async (
     item: CalendarOccurrence,
@@ -481,12 +488,42 @@ export function CalendarView() {
     const target = occurrenceTarget(item);
     const own = ownSeriesOf(target.seriesId);
     if (!own) throw new Error("series missing");
-    if (scope === "all") {
-      await editOccurrence(target.seriesId, target.date, "all", allScopePatch(changes, { occurrence: item, series: own.series, date: target.date }));
-      if (target.row) await editOccurrence(target.seriesId, target.date, "this", changes);
-      return;
+    const { calls } = occurrenceEditCalls({ item, series: own.series, scope, changes, shown });
+    for (const call of calls) await editOccurrence(target.seriesId, target.date, call.scope, call.patch);
+  };
+
+  /**
+   * Scelta della portata per modificare o spostare un giorno di una mia serie: ciò che ogni portata fa
+   * ai giorni cambiati o annullati da soli si calcola prima con il motore, così il testo dice il vero.
+   */
+  const occurrenceScopeOptions = (
+    item: CalendarOccurrence,
+    action: "edit" | "move",
+    changes: Partial<CalendarEvent>,
+    shown: Partial<CalendarEvent>,
+    flags: { ruleChanged?: boolean; subjectChanged?: boolean } = {}
+  ) => {
+    const target = occurrenceTarget(item);
+    const own = ownSeriesOf(target.seriesId);
+    const current = useStudyStore.getState().events;
+    const impacts: Partial<Record<"following" | "all", ScopeImpact>> = {};
+    let newStart: string | undefined;
+    if (own) {
+      for (const scope of ["following", "all"] as const) {
+        const plan = occurrenceEditCalls({ item, series: own.series, scope, changes, shown });
+        impacts[scope] = scopeImpact(current, item, scope, plan.calls);
+        if (scope === "all") newStart = plan.newStart;
+      }
     }
-    await editOccurrence(target.seriesId, target.date, scope, scope === "following" ? followingPatch(shown, changes, target.row) : changes);
+    return scopeOptions({
+      action,
+      date: target.date,
+      ...flags,
+      pinsZone: own?.pinsZone,
+      impacts,
+      span: seriesSpan(current, target.seriesId, target.date, civilDateOf(new Date())),
+      newStart
+    });
   };
 
   const moveEvent = async (item: CalendarOccurrence, nextStart: Date) => {
@@ -503,13 +540,11 @@ export function CalendarView() {
       const end = new Date(parseISO(item.end).getTime() + delta);
       if (!own || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
       const moved = { start: start.toISOString(), end: end.toISOString() };
-      const scope = await askScope(
-        SCOPE_TEXT.titleMove(shortTitle(item.title)),
-        scopeOptions({ action: "move", date: target.date, timeChanged: wallTimeChanged(item, moved), pinsZone: own.pinsZone })
-      );
+      // Il giorno porta con sé ciò che mostra (per "Questo e i successivi" da un giorno cambiato da solo).
+      const scope = await askScope(SCOPE_TEXT.titleMove(shortTitle(item.title)), occurrenceScopeOptions(item, "move", moved, item));
       if (!scope) return;
       try {
-        await applyOccurrenceEdit(item, scope, moved);
+        await applyOccurrenceEdit(item, scope, moved, item);
         setNotice("");
       } catch {
         setNotice(EVENT_EDITOR_TEXT.moveFailed(shortTitle(item.title)));
@@ -846,14 +881,7 @@ export function CalendarView() {
             if (!own) return EVENT_EDITOR_TEXT.saveFailed;
             const scope = await askScope(
               SCOPE_TEXT.titleEdit(shortTitle(patch.title || item.title)),
-              scopeOptions({
-                action: "edit",
-                date: target.date,
-                ruleChanged: "repeat" in changes,
-                timeChanged: wallTimeChanged(item, changes),
-                subjectChanged: "subjectId" in changes,
-                pinsZone: own.pinsZone
-              })
+              occurrenceScopeOptions(item, "edit", changes, patch, { ruleChanged: "repeat" in changes, subjectChanged: "subjectId" in changes })
             );
             // Annullato: il modulo resta aperto con le modifiche.
             if (!scope) return;
@@ -867,7 +895,8 @@ export function CalendarView() {
           onDelete={async () => {
             const item = editingOccurrence;
             const target = occurrenceTarget(item);
-            const scope = await askScope(SCOPE_TEXT.titleDelete(shortTitle(item.title)), scopeOptions({ action: "delete", date: target.date }), true);
+            const span = seriesSpan(useStudyStore.getState().events, target.seriesId, target.date, civilDateOf(new Date()));
+            const scope = await askScope(SCOPE_TEXT.titleDelete(shortTitle(item.title)), scopeOptions({ action: "delete", date: target.date, span }), true);
             if (!scope) return;
             try {
               // "Tutti": tutta la serie come la si vede, anche le parti nate da "Questo e i successivi".
@@ -883,15 +912,16 @@ export function CalendarView() {
       {editingEvent && !editingDate && editingForm === "occasion" ? (
         <OccasionForm
           overrides={typeOverrides}
+          customColor={customColorOf(editingEvent)}
           key={editingEvent.id}
           initial={occasionDraftFromEvent(editingEvent)}
           editing
           today={todayCivil}
           onClose={closeEventEditor}
           onSave={async (draft) => {
-            // La regola resta quella salvata (ogni anno, o quella scelta nel modulo completo).
-            const { repeat: _repeat, ...fields } = occasionFields(draft, { today: todayCivil, baseYear: startYearOf(editingEvent), keepColor: true });
-            await updateEvent(editingEvent.id, fields);
+            // Solo ciò che il modulo ha cambiato: la regola, la categoria e il colore restano quelli salvati.
+            const changes = occasionChanges(editingEvent, occasionDraftFromEvent(editingEvent), draft, { today: todayCivil, baseYear: startYearOf(editingEvent) });
+            if (Object.keys(changes).length) await updateEvent(editingEvent.id, changes);
             closeEventEditor();
           }}
           onDelete={async () => {
@@ -899,8 +929,8 @@ export function CalendarView() {
             closeEventEditor();
           }}
           onFullForm={(draft) => {
-            const { repeat: _repeat, ...fields } = occasionFields(draft, { today: todayCivil, baseYear: startYearOf(editingEvent), keepColor: true });
-            setFullForm({ id: editingEvent.id, draft: draftFromFields(fields, editingEvent) });
+            const changes = occasionChanges(editingEvent, occasionDraftFromEvent(editingEvent), draft, { today: todayCivil, baseYear: startYearOf(editingEvent) });
+            setFullForm({ id: editingEvent.id, draft: draftFromFields(changes, editingEvent) });
           }}
         />
       ) : null}
@@ -908,19 +938,21 @@ export function CalendarView() {
       {editingEvent && !editingDate && editingForm === "vacation" ? (
         <VacationForm
           overrides={typeOverrides}
+          customColor={customColorOf(editingEvent)}
           key={editingEvent.id}
           initial={vacationDraftFromEvent(editingEvent)}
           editing
           onClose={closeEventEditor}
           onSave={async (draft) => {
-            await updateEvent(editingEvent.id, vacationFields(draft, { keepColor: true }));
+            const changes = vacationChanges(editingEvent, vacationDraftFromEvent(editingEvent), draft);
+            if (Object.keys(changes).length) await updateEvent(editingEvent.id, changes);
             closeEventEditor();
           }}
           onDelete={async () => {
             await deleteEvent(editingEvent.id);
             closeEventEditor();
           }}
-          onFullForm={(draft) => setFullForm({ id: editingEvent.id, draft: draftFromFields(vacationFields(draft, { keepColor: true }), editingEvent) })}
+          onFullForm={(draft) => setFullForm({ id: editingEvent.id, draft: draftFromFields(vacationChanges(editingEvent, vacationDraftFromEvent(editingEvent), draft), editingEvent) })}
         />
       ) : null}
 
@@ -1095,7 +1127,8 @@ export function CalendarView() {
                   checklist: [],
                   attachmentIds: [],
                   notes: "",
-                  links: []
+                  // I link scritti nel modulo restano (prima si perdevano in silenzio).
+                  links: fields.links ?? []
                 },
                 { repeatChanged: fields.repeat !== undefined }
               );

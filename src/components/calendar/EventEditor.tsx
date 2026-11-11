@@ -58,6 +58,9 @@ export interface EditorSubmit {
 
 const CATEGORY_OPTIONS = (Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => ({ id, label: EVENT_CATEGORY_LABEL[id] }));
 
+/** Pulsante in attesa del salvataggio: sembra spento ma tiene il fuoco (vedi Salva ed Elimina). */
+const WAITING_CLASS = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:scale-100";
+
 /**
  * Un solo modulo (Drawer) per creare e modificare un evento: Principali · Aspetto e collocazione ·
  * Altre opzioni (chiuse all'inizio). Salva e Annulla sempre visibili; chiudere con modifiche non
@@ -278,13 +281,19 @@ export function EventEditor({
         <div className="flex items-center gap-2">
           {onDelete ? (
             // Sul telefono solo l'icona (il nome resta per i lettori di schermo): Annulla e Salva stanno in riga.
+            // In attesa resta raggiungibile (aria-disabled, non disabled): chiusa la scelta "solo questo /
+            // tutti", il fuoco torna qui e non sulla pagina dietro.
             <Button
               variant="danger"
               icon="Trash2"
               title={EVENT_EDITOR_TEXT.delete}
-              className="px-3 sm:px-4"
-              disabled={busy}
-              onClick={() => (deleteConfirmText ? setConfirm("delete") : void remove())}
+              className={`px-3 sm:px-4 ${WAITING_CLASS}`}
+              aria-disabled={busy || undefined}
+              onClick={() => {
+                if (busy) return;
+                if (deleteConfirmText) setConfirm("delete");
+                else void remove();
+              }}
             >
               <span className="sr-only sm:not-sr-only">{EVENT_EDITOR_TEXT.delete}</span>
             </Button>
@@ -293,7 +302,7 @@ export function EventEditor({
           <Button variant="soft" onClick={requestClose} disabled={busy}>
             {EVENT_EDITOR_TEXT.cancel}
           </Button>
-          <Button variant="primary" icon={creating ? "Plus" : "Check"} onClick={() => void submit()} disabled={busy}>
+          <Button variant="primary" icon={creating ? "Plus" : "Check"} className={WAITING_CLASS} onClick={() => void submit()} aria-disabled={busy || undefined}>
             {creating ? (kind === "task" ? EVENT_EDITOR_TEXT.saveTask : EVENT_EDITOR_TEXT.saveCreate) : EVENT_EDITOR_TEXT.save}
           </Button>
         </div>
@@ -572,7 +581,7 @@ export function EventEditor({
                                   type="button"
                                   aria-label={EVENT_EDITOR_TEXT.linkRemove(label)}
                                   onClick={() => update((value) => ({ ...value, links: value.links.filter((item) => item !== url) }))}
-                                  className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[var(--muted)] hover:text-[var(--text)]"
+                                  className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-full text-[var(--muted)] hover:text-[var(--text)]"
                                 >
                                   <Icon name="X" className="h-4 w-4" />
                                 </button>

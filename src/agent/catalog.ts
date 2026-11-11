@@ -348,7 +348,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     inputSchema: objectSchema({
       title: { type: "string", minLength: 1, maxLength: 200 },
       start: { type: "string", format: "date-time", description: `Inizio. ${WHEN}` },
-      end: { type: "string", format: "date-time", description: `Fine, dopo start. ${WHEN}` },
+      end: { type: "string", format: "date-time", description: `Fine, dopo start. ${WHEN} Con allDay=true: l'ultimo giorno, compreso (YYYY-MM-DD; una mezzanotte vale come fine esclusiva).` },
       category: { type: "string", enum: EVENT_CATEGORY, default: "study" },
       description: { type: "string", maxLength: 4000, default: "" },
       notes: { type: "string", maxLength: 8000, default: "" },
@@ -372,7 +372,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       id: ID,
       title: { type: "string", minLength: 1, maxLength: 200 },
       start: { type: "string", format: "date-time", description: WHEN },
-      end: { type: "string", format: "date-time", description: WHEN },
+      end: { type: "string", format: "date-time", description: `${WHEN} Con allDay=true: l'ultimo giorno, compreso (YYYY-MM-DD; una mezzanotte vale come fine esclusiva).` },
       category: { type: "string", enum: EVENT_CATEGORY },
       description: { type: "string", maxLength: 4000 },
       notes: { type: "string", maxLength: 8000 },
