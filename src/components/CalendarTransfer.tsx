@@ -222,6 +222,17 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
   }, [parsed, ics, items, events, exams, tasks]);
   const plan = planned && planned.file === parsed ? planned.plan : null;
   const nothingNew = plan !== null && !plan.puts.length && !plan.deletes.length;
+  // Prima reimportazione di un calendario importato con una versione precedente: il luogo passa dalla
+  // descrizione al campo Luogo, e quegli eventi risultano aggiornati una volta (lo si dice).
+  const placeMoved = useMemo(() => {
+    if (!plan?.updated) return false;
+    const before = new Map(events.map((event) => [event.id, event]));
+    return plan.puts.some((put) => {
+      const old = before.get(put.id);
+      const place = put.location?.trim();
+      return Boolean(old && place && !old.location?.trim() && old.description?.includes(place));
+    });
+  }, [plan, events]);
   const warnings = parsed ? [...parsed.warnings, ...(plan?.warnings ?? [])] : [];
   const preview = useMemo(() => {
     if (!parsed || !ics) return null;
@@ -458,6 +469,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
       <>
         {question(parsed.fileName, `${T.previewSummary(preview.count, preview.recurring, preview.changed)} ${preview.from ? T.previewRange(preview.from, preview.to) : ""}`)}
         <p className="text-xs font-bold text-[var(--muted)]">{nothingNew ? T.nothingNewHint : T.previewNoDuplicates}</p>
+        {placeMoved ? <p className="text-xs font-bold text-[var(--muted)]">{T.previewPlaceMoved}</p> : null}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <Field label={T.categoryLabel}>

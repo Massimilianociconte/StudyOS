@@ -51,6 +51,9 @@ export const CALENDAR_GUIDE_TEXT = {
     }.`,
   previewRange: (from: string, to?: string) => (to ? `Dal ${from} al ${to}.` : `Il ${from}.`),
   previewNoDuplicates: "Se importi di nuovo lo stesso file, gli eventi già presenti vengono aggiornati, non duplicati.",
+  /** Prima reimportazione di un calendario importato con una versione precedente (il luogo era nella descrizione). */
+  previewPlaceMoved:
+    "Questa volta risultano aggiornati anche gli eventi con un luogo importati con una versione precedente: il luogo passa dalla descrizione al campo Luogo. Succede una volta sola.",
   previewMore: (count: number) => `…e altri ${count}`,
   categoryLabel: "Tipo di evento",
   categoryHint: "Usato quando il titolo non fa capire il tipo (es. «Esame», «Laboratorio»).",
