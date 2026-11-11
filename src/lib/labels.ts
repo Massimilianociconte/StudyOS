@@ -419,6 +419,13 @@ export const DATE_PICKER_TEXT = {
   days: (count: number) => (count === 1 ? "1 giorno" : `${count} giorni`)
 } as const;
 
+/** Griglie del calendario: eventi nascosti su schermi stretti ("+N") ed eventi su più giorni. */
+export const CALENDAR_LAYOUT_TEXT = {
+  more: (count: number) => `+${count}`,
+  moreAria: (count: number) => `Altri ${count} ${count === 1 ? "evento" : "eventi"} in questa fascia: apri l'elenco`,
+  dayOfSpan: (index: number, total: number) => `giorno ${index} di ${total}`
+} as const;
+
 /** Colore semantico della priorità (token del tema, leggibile in chiaro e scuro). */
 export const PRIORITY_TONE: Record<Task["priority"], string> = {
   low: "var(--faint)",
