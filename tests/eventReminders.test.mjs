@@ -141,8 +141,8 @@ test("notificationIdOf: stabile e senza caratteri strani", () => {
 
 test("reminderWhenText: adesso, tra minuti, iniziato, oggi, domani, giorno", () => {
   const at = (h, min = 0, d = 12) => local(2026, 11, d, h, min).getTime();
-  assert.equal(reminders.reminderWhenText(at(9), false, NOW), EVENT_REMINDER_TEXT.now);
-  assert.equal(reminders.reminderWhenText(at(9, 15), false, NOW), EVENT_REMINDER_TEXT.inMinutes(15));
+  assert.equal(reminders.reminderWhenText(at(9), false, NOW), `${EVENT_REMINDER_TEXT.now} · 09:00`);
+  assert.equal(reminders.reminderWhenText(at(9, 15), false, NOW), `${EVENT_REMINDER_TEXT.inMinutes(15)} · 09:15`);
   assert.equal(reminders.reminderWhenText(at(8, 50), false, NOW), EVENT_REMINDER_TEXT.started("08:50"));
   assert.equal(reminders.reminderWhenText(at(14, 30), false, NOW), EVENT_REMINDER_TEXT.todayAt("14:30"));
   assert.equal(reminders.reminderWhenText(at(8, 0, 13), false, NOW), EVENT_REMINDER_TEXT.tomorrowAt("08:00"));

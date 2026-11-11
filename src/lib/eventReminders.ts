@@ -121,15 +121,18 @@ export const notificationIdOf = (key: string) => `notif-reminder-${key.replace(/
 
 const dayText = (ms: number) => capitalizeFirst(format(ms, "EEEE d MMMM", { locale: it }));
 
-/** "Tra 15 minuti", "Oggi alle 14:30", "Domani", "Iniziato alle 08:50"… */
+/**
+ * "Tra 15 minuti · 09:15", "Oggi alle 14:30", "Domani", "Iniziato alle 08:50"… La notifica resta
+ * nell'elenco: accanto a "adesso" e "tra N minuti" c'è anche l'ora, che non invecchia.
+ */
 export function reminderWhenText(startMs: number, allDay: boolean, now: Date): string {
   const days = differenceInCalendarDays(startMs, now);
   if (allDay) return days <= 0 ? EVENT_REMINDER_TEXT.today : days === 1 ? EVENT_REMINDER_TEXT.tomorrow : dayText(startMs);
   const time = format(startMs, "HH:mm");
   const delta = startMs - now.getTime();
-  if (Math.abs(delta) < MINUTE_MS) return EVENT_REMINDER_TEXT.now;
+  if (Math.abs(delta) < MINUTE_MS) return `${EVENT_REMINDER_TEXT.now} · ${time}`;
   if (delta < 0) return EVENT_REMINDER_TEXT.started(time);
-  if (delta < HOUR_MS) return EVENT_REMINDER_TEXT.inMinutes(Math.ceil(delta / MINUTE_MS));
+  if (delta < HOUR_MS) return `${EVENT_REMINDER_TEXT.inMinutes(Math.ceil(delta / MINUTE_MS))} · ${time}`;
   if (days === 0) return EVENT_REMINDER_TEXT.todayAt(time);
   if (days === 1) return EVENT_REMINDER_TEXT.tomorrowAt(time);
   return EVENT_REMINDER_TEXT.dayAt(dayText(startMs), time);

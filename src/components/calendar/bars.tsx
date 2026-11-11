@@ -150,6 +150,7 @@ export function EventBar({
     >
       <TypeIcon paint={paint} />
       {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
+      {/* Il testo in più segue il titolo nella stessa riga: se manca spazio si taglia lui, non il titolo. */}
       <span className="min-w-0 truncate">
         {item.recurring ? (
           <span role="img" aria-label={CALENDAR_VIEW_TEXT.recurring}>
@@ -157,8 +158,8 @@ export function EventBar({
           </span>
         ) : null}
         {item.title}
+        {extra ? <span className="font-bold opacity-80"> · {extra}</span> : null}
       </span>
-      {extra ? <span className="ml-auto shrink-0 pl-1 font-bold opacity-80">{extra}</span> : null}
     </button>
   );
 }
