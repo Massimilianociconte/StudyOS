@@ -4,9 +4,11 @@
  * quel dispositivo, un rimando spiega perché e indica la strada che funziona. Solo dati e logica:
  * i testi sono in labels.ts, i disegni in components/CalendarGuideArt.
  */
+import type { CalendarEvent, RepeatRule } from "../types";
 import { CALENDAR_GUIDE_REDIRECT, CALENDAR_GUIDE_STEPS } from "./labels/calendarGuide";
 import { MONTH_NAME } from "./labels";
-import { civilAddDays, civilDateOf, isCivilDate, utcToZonedParts } from "./tz";
+import { lastDateBefore } from "./repeat";
+import { civilAddDays, civilDateOf, civilDaysBetween, isCivilDate, isValidTimeZone, utcToZonedParts } from "./tz";
 
 export type GuideDevice = "samsung" | "android" | "ios" | "windows" | "macos";
 export type GuideApp = "google" | "apple" | "samsung" | "outlook";
@@ -108,8 +110,9 @@ const exportGuide = (device: GuideDevice, app: GuideApp, synced: boolean): Guide
     const import_ = step("googleImport", "Upload", "webPanel");
     const onPhone = step("googleOnPhone", "Check");
     const ownCalendar = step("googleOwnCalendar", "CalendarPlus");
-    if (phone) return steps(true, toComputer, ownCalendar, step("googleOnComputer", "Globe", "webSettings"), import_, onPhone, startClean);
-    return steps(false, download, ownCalendar, step("googleSettings", "Settings", "webSettings"), import_, onPhone, startClean);
+    // Prima si apre calendar.google.com (Impostazioni), poi lì si crea il calendario «StudyOS» e si importa.
+    if (phone) return steps(true, toComputer, step("googleOnComputer", "Globe", "webSettings"), ownCalendar, import_, onPhone, startClean);
+    return steps(false, download, step("googleSettings", "Settings", "webSettings"), ownCalendar, import_, onPhone, startClean);
   }
   if (app === "outlook") {
     if (phone) return steps(true, toComputer, step("outlookOnComputer", "Globe", "webPanel"), step("outlookOnPhone", "Check"), startClean);
@@ -118,15 +121,17 @@ const exportGuide = (device: GuideDevice, app: GuideApp, synced: boolean): Guide
     return steps(false, download, step("outlookWebImport", "Globe", "webPanel"), step("outlookOnPhone", "Check"), startClean);
   }
   if (app === "apple") {
+    // Il calendario «StudyOS» si crea prima di importare, non a metà.
     if (device === "ios")
       return steps(
         false,
+        step("iosNewCalendar", "CalendarPlus"),
         step("downloadIos", "Download", "download", "download"),
         step("iosOpenFile", "FileText", "phoneFiles"),
         step("iosAddAll", "CalendarPlus", "phonePreview"),
         startClean
       );
-    return steps(false, download, step("macOpen", "FileText", "desktopMenu"), step("macPick", "CalendarPlus", "desktopPreview"), startClean);
+    return steps(false, download, step("macNewCalendar", "CalendarPlus"), step("macOpen", "FileText", "desktopMenu"), step("macPick", "CalendarDays", "desktopPreview"), startClean);
   }
   // Calendario Samsung, dal telefono Samsung: solo strade verificate (aprire il file da «Archivio», o Google).
   return steps(
@@ -195,6 +200,9 @@ interface PreviewItem {
   start: string;
   end: string;
   allDay: boolean;
+  /** Serie: il periodo arriva all'ultima volta (o resta aperto se non finisce). */
+  repeat?: RepeatRule | null;
+  timeZone?: string;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -234,20 +242,43 @@ export const previewWhen = (item: PreviewItem, zone?: string) => {
   return `${a.day} ${monthShort(a.month)} ${a.year} – ${b.day} ${monthShort(b.month)} ${b.year}`;
 };
 
-/** Periodo coperto dagli elementi, dal primo inizio all'ultima fine (non all'ultimo inizio): «7 dic 2026». */
-export const previewSpan = (items: readonly PreviewItem[], zone?: string): { from: string; to?: string } => {
+/**
+ * Ultimo giorno di una serie, mostrato come il primo (nel fuso dell'anteprima), fino alla fine dell'ultima volta.
+ * null: non finisce; assente: nessuna regola o niente da dire.
+ */
+const seriesLastDay = (item: PreviewItem, days: { first: string; last: string }): string | null | undefined => {
+  if (!item.repeat) return undefined;
+  const last = lastDateBefore({ ...item, id: "", title: "" } as unknown as CalendarEvent);
+  if (last === null) return null;
+  if (!isCivilDate(last)) return undefined;
+  // Giorni nel fuso della serie; la prima volta dice di quanto si spostano in quello mostrato.
+  const seriesFirst = item.allDay ? item.start.slice(0, 10) : civilDateOf(Date.parse(item.start), isValidTimeZone(item.timeZone) ? item.timeZone : undefined);
+  if (!isCivilDate(seriesFirst)) return undefined;
+  return civilAddDays(last, civilDaysBetween(seriesFirst, days.first) + civilDaysBetween(days.first, days.last));
+};
+
+/**
+ * Periodo coperto dagli elementi, dal primo inizio all'ultima fine (non all'ultimo inizio): «7 dic 2026».
+ * Una serie arriva alla sua ultima volta; una che non finisce lascia il periodo aperto (`open`).
+ */
+export const previewSpan = (items: readonly PreviewItem[], zone?: string): { from: string; to?: string; open?: boolean } => {
   let first = "";
   let last = "";
+  let open = false;
   for (const item of items) {
     const days = previewDays(item, zone);
     if (!isCivilDate(days.first)) continue;
     if (!first || days.first < first) first = days.first;
-    if (!last || days.last > last) last = days.last;
+    const end = seriesLastDay(item, days);
+    if (end === null) open = true;
+    const lastDay = end && end > days.last ? end : days.last;
+    if (!last || lastDay > last) last = lastDay;
   }
   const long = (date: string) => {
     const { year, month, day } = dayParts(date);
     return `${day} ${monthShort(month)} ${year}`;
   };
   if (!first) return { from: "" };
+  if (open) return { from: long(first), open: true };
   return last > first ? { from: long(first), to: long(last) } : { from: long(first) };
 };

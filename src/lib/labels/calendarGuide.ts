@@ -1,6 +1,9 @@
 // Guida a importazione ed esportazione del calendario (components/CalendarTransfer, lib/calendarGuide).
 // Testi che si caricano con la schermata che li usa; le etichette condivise (valori enum, testi comuni) sono in ../labels.
 
+/** Giorni che in italiano vogliono l'apostrofo: «l'8 nov», «dall'11 nov» (la data comincia con il giorno). */
+const elides = (date: string) => /^(8|11)\b/.test(date);
+
 export const CALENDAR_GUIDE_TEXT = {
   menuItem: "Importa o esporta",
   eyebrow: "Calendario",
@@ -8,6 +11,10 @@ export const CALENDAR_GUIDE_TEXT = {
   honesty:
     "È una copia in un file .ics, non un collegamento: quello che cambi dopo non passa da solo da un'app all'altra, quindi quando serve ripeti l'esportazione o l'importazione. Una nuova importazione aggiunge e aggiorna gli eventi ma non ne toglie: un evento eliminato nell'altra app resta in StudyOS, eliminalo anche qui (e viceversa).",
   directionQuestion: "Cosa vuoi fare?",
+  /** Scorciatoie della prima schermata, per chi sa già cosa fare (la guida resta sotto). */
+  shortcutsTitle: "Sai già come fare?",
+  shortcutDownload: "Scarica il file .ics",
+  shortcutChooseFile: "Ho già il file",
   direction: {
     export: { title: "Da StudyOS a un'altra app", text: "Porta lezioni, esami e scadenze nel calendario del telefono o del computer." },
     import: { title: "Da un'altra app a StudyOS", text: "Aggiungi qui gli eventi di Google, Apple, Samsung o Outlook." }
@@ -50,7 +57,16 @@ export const CALENDAR_GUIDE_TEXT = {
     `Nel file ${count === 1 ? "c'è 1 evento" : `ci sono ${count} eventi`}${recurring ? ` (${recurring} si ${recurring === 1 ? "ripete" : "ripetono"})` : ""}${
       changed ? `, più ${changed === 1 ? "1 giorno modificato" : `${changed} giorni modificati`} di una serie` : ""
     }.`,
-  previewRange: (from: string, to?: string) => (to ? `Dal ${from} al ${to}.` : `Il ${from}.`),
+  /** `open`: c'è una serie che non finisce. */
+  previewRange: (from: string, to?: string, open = false) => {
+    const since = `${elides(from) ? "Dall'" : "Dal "}${from}`;
+    if (open) return `${since} in poi.`;
+    if (to) return `${since} ${elides(to) ? "all'" : "al "}${to}.`;
+    return `${elides(from) ? "L'" : "Il "}${from}.`;
+  },
+  /** Giorni di una serie modificati a mano che il file scrive in un altro modo: la modifica a mano resta. */
+  previewKeptEdits: (count: number) =>
+    count === 1 ? "1 giorno che hai modificato a mano resta com'è." : `${count} giorni che hai modificato a mano restano come sono.`,
   previewNoDuplicates:
     "Se importi di nuovo lo stesso calendario, gli eventi già presenti vengono aggiornati, non duplicati. Le modifiche che hai fatto qui restano, tranne dove un avviso qui sotto dice che vengono sostituite.",
   /** Prima reimportazione di un calendario importato con una versione precedente (il luogo era nella descrizione). */
@@ -80,9 +96,9 @@ export const CALENDAR_GUIDE_TEXT = {
       added ? `${added} ${added === 1 ? "evento aggiunto" : "eventi aggiunti"}` : "",
       updated ? `${updated} ${updated === 1 ? "evento aggiornato" : "eventi aggiornati"}` : ""
     ].filter(Boolean);
-    return parts.length
-      ? `Fatto: ${parts.join(", ")} nel calendario. Puoi modificarli o eliminarli come gli altri.`
-      : "Nessuna novità: gli eventi di questo file erano già tutti nel calendario.";
+    if (!parts.length) return "Nessuna novità: gli eventi di questo file erano già tutti nel calendario.";
+    const them = added + updated === 1 ? "Puoi modificarlo o eliminarlo come gli altri." : "Puoi modificarli o eliminarli come gli altri.";
+    return `Fatto: ${parts.join(", ")} nel calendario. ${them}`;
   },
   importAnother: "Importa un altro file"
 };
@@ -96,7 +112,8 @@ export const CALENDAR_GUIDE_STEPS = {
   /** Solo con l'accesso fatto e la sincronizzazione attiva (altrimenti StudyOS sul computer ha altri dati). */
   downloadToComputerSynced:
     "Scarica il file con il pulsante qui sotto e mandalo al computer, per esempio per email a te stesso. Oppure, visto che i tuoi dati si sincronizzano con il tuo account, apri StudyOS dal computer, entra con lo stesso account e scaricalo da lì.",
-  googleOwnCalendar: "Consiglio: su calendar.google.com crea prima un calendario «StudyOS» (accanto ad «Altri calendari», +) e importa lì il file.",
+  googleOwnCalendar:
+    "Consiglio: crea prima un calendario «StudyOS» in cui importare il file: nel menu a sinistra scegli «Aggiungi calendario», poi «Crea nuovo calendario».",
   /** Lo stesso consiglio per ogni app in cui si può tenere StudyOS in un calendario a parte. */
   startClean:
     "Per ripartire puliti, elimina il calendario «StudyOS» nell'altra app e importa di nuovo il file: una nuova importazione aggiunge e aggiorna gli eventi, ma non toglie quelli che hai eliminato in StudyOS.",
@@ -113,9 +130,11 @@ export const CALENDAR_GUIDE_STEPS = {
   samsungViaGoogle:
     "Se il file non si apre con il Calendario, importalo dal computer su calendar.google.com, in un calendario «StudyOS» dell'account Google collegato al telefono: dopo qualche minuto gli eventi compaiono anche nel Calendario Samsung.",
   iosOpenFile: "Se il Calendario non si è aperto, apri l'app «File», vai in «Download» e tocca il file che finisce con .ics.",
-  iosAddAll: "Nell'anteprima del Calendario tocca «Aggiungi tutti» e scegli il calendario. Consiglio: creane prima uno «StudyOS» (Calendario, «Calendari», «Aggiungi calendario»).",
+  iosNewCalendar: "Consiglio: prima crea un calendario «StudyOS» in cui mettere gli eventi: nell'app Calendario tocca «Calendari», poi «Aggiungi calendario».",
+  iosAddAll: "Nell'anteprima del Calendario tocca «Aggiungi tutti» e scegli il calendario (meglio «StudyOS», se l'hai creato).",
+  macNewCalendar: "Consiglio: prima crea un calendario «StudyOS» in cui mettere gli eventi: nell'app Calendario usa «File», poi «Nuovo calendario».",
   macOpen: "Fai doppio clic sul file scaricato, oppure nell'app Calendario usa «File», poi «Importa…».",
-  macPick: "Scegli il calendario in cui aggiungere gli eventi: meglio uno nuovo, «StudyOS» («File», poi «Nuovo calendario»).",
+  macPick: "Scegli il calendario in cui aggiungere gli eventi (meglio «StudyOS», se l'hai creato).",
   macSelect: "Nell'app Calendario seleziona, nella colonna a sinistra, il calendario da portare in StudyOS.",
   macExport: "Usa «File», poi «Esporta», poi «Esporta…» e salva il file .ics. Non scegliere «Archivio Calendario»: è un altro formato.",
   outlookClassicImport:

@@ -2043,6 +2043,11 @@ export interface IcsMergePlan {
   warnings: string[];
   /** Eventi modificati qui dopo l'ultimo import, cambiati nel file: le modifiche fatte qui si perdono. */
   editsReplaced: number;
+  /**
+   * Giorni di una serie modificati a mano qui che il file scrive in un altro modo: la modifica fatta a
+   * mano vince e resta com'è (l'anteprima lo dice, invece di «non cambia niente»). Solo in memoria.
+   */
+  editsKept: number;
 }
 
 type Linked = { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string };
@@ -2233,6 +2238,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   // (la madre di una divisione e la figlia esportata da StudyOS).
   const placed = new Set<string>();
   const stale = new Map<string, string>();
+  /** Giorni modificati a mano che il file vorrebbe diversi: restano come sono (si dice quanti). */
+  const keptEdits = new Set<string>();
   /** Serie locale di ogni UID del file, e le figlie che nel file dicono chi è la madre. */
   const masterOf = new Map<string, string>();
   const parentLinks: [string, string, string | undefined][] = [];
@@ -2560,9 +2567,12 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       }
       const id = occurrenceId(home.member.id, date);
       const current = puts.get(id) ?? byId.get(id) ?? home.rows.find((row) => row.originalDate === date);
-      // Una modifica fatta a mano in questo calendario vince su ogni file.
+      // Una modifica fatta a mano in questo calendario vince su ogni file. Se il file la scrive in un altro
+      // modo, l'anteprima dice che resta com'è.
       if (current && !current.sourceRecurrenceId) {
         placed.add(current.id);
+        const fromFile = rowFor(home.member, home.timing, date, uid, rid, change, current);
+        if (!sameRow({ ...current, sourceRecurrenceId: rid, sourceEdited: fromFile.sourceEdited }, fromFile)) keptEdits.add(current.id);
         continue;
       }
       // Una modifica a mano ricevuta con una copia: la cambia solo un file segnato con lo stesso UID (una
@@ -2842,6 +2852,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     updated: touched.size,
     relinked,
     warnings,
-    editsReplaced: replaced.length
+    editsReplaced: replaced.length,
+    editsKept: keptEdits.size
   };
 };

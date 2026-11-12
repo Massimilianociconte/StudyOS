@@ -366,6 +366,24 @@ test("una data esclusa tolta dal file si toglie anche qui; le modifiche fatte in
   assert.ok(after.some((event) => event.id === `${master.id}@2026-11-25` && event.cancelled));
 });
 
+test("un giorno cambiato a mano vince sul file, e l'anteprima dice che resta com'è", () => {
+  const first = apply([], merge([], parseIcs(GOOGLE, { timeZone: "Europe/Rome" })));
+  const master = first.find((event) => event.sourceUid === "5f3k2j1h0g@google.com" && !event.seriesId);
+  assert.equal(merge(first, parseIcs(GOOGLE, { timeZone: "Europe/Rome" })).editsKept, 0, "nessuna modifica a mano: niente da dire");
+  // Il recupero del 18/11 (giorno modificato nel file) cambiato a mano in StudyOS.
+  const mine = apply(first, planEdit(master, first, "2026-11-18", "this", { location: "Aula 3" }, { now: NOW }));
+  // Il file sposta il recupero in un'altra aula: la modifica a mano resta, e lo si dice.
+  const moved = GOOGLE.replace("SUMMARY:Anatomia (recupero)", "SUMMARY:Anatomia (recupero)\r\nLOCATION:Aula 4");
+  const plan = merge(mine, parseIcs(moved, { timeZone: "Europe/Rome" }));
+  assert.equal(plan.editsKept, 1);
+  assert.deepEqual({ added: plan.added, updated: plan.updated, puts: plan.puts.length }, { added: 0, updated: 0, puts: 0 }, "la regola «vince la modifica a mano» resta");
+  assert.equal(importButton(plan), "nothing");
+  assert.equal(CALENDAR_GUIDE_TEXT.previewKeptEdits(1), "1 giorno che hai modificato a mano resta com'è.");
+  assert.equal(CALENDAR_GUIDE_TEXT.previewKeptEdits(2), "2 giorni che hai modificato a mano restano come sono.");
+  const after = apply(mine, plan);
+  assert.equal(after.find((event) => event.id === `${master.id}@2026-11-18`).location, "Aula 3");
+});
+
 test("vecchi import divisi per giorno (uid#1, uid#3) adottati e sostituiti da una serie sola", () => {
   const old = (weekday, start) =>
     ({ id: `old-${weekday}`, createdAt: T0, updatedAt: T0, archived: false, tags: [], title: "Anatomia", description: "", category: "lesson", color: "#7CF7C8", priority: "medium", start, end: start.replace("T08", "T10"), recurrence: "weekly", recurrenceUntil: "2026-12-18", status: "planned", checklist: [], attachmentIds: [], notes: "Portare il camice", links: [], subjectId: "anat", sourceUid: `5f3k2j1h0g@google.com#${weekday}` });

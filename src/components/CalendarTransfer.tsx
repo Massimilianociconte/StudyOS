@@ -98,6 +98,11 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
+  // La prima schermata mostrata: l'avviso «è una copia, non un collegamento» si legge lì, una volta.
+  const [firstStage, setFirstStage] = useState<Stage>("direction");
+  // Da dove si è scelto il file (scorciatoia della prima schermata o passi della guida): lì tornano
+  // «Indietro» dall'anteprima e «Importa un altro file».
+  const [fileFrom, setFileFrom] = useState<Stage>("steps");
   const synced = useSynced();
   const shareable = useMemo(() => (open ? canShareFiles() : false), [open]);
 
@@ -110,6 +115,8 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
     setError("");
     setResult("");
     setBusy(false);
+    setFirstStage("direction");
+    setFileFrom("steps");
   };
 
   const openGuide = (next?: GuideDirection) => {
@@ -120,6 +127,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
     setApp(appsFor(found)[0]);
     setDirection(next ?? "export");
     setStage(next ? "device" : "direction");
+    setFirstStage(next ? "device" : "direction");
     setOpen(true);
   };
 
@@ -203,7 +211,14 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
       return;
     }
     setParsed({ ...outcome, fileName: file.name });
+    setDirection("import");
     go("preview");
+  };
+
+  /** «Scegli il file» dalla guida o «Ho già il file» dalla prima schermata. */
+  const chooseFile = (from: Stage) => {
+    setFileFrom(from);
+    fileInput.current?.click();
   };
 
   const candidates = useMemo(() => selectableSubjects(subjects), [subjects]);
@@ -260,6 +275,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
       matched: masters.filter((event) => ics.matchSubject(event.title, candidates)).length,
       from: span.from,
       to: span.to,
+      open: span.open === true,
       sample: sorted.slice(0, 6)
     };
   }, [parsed, ics, candidates]);
@@ -272,6 +288,11 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
       // Serie, date escluse, giorni modificati e promemoria passano così come sono nel file.
       const payload = ics.icsImportItems(parsed.events, { defaultCategory: category, subjects: candidates, matchSubjects });
       const { added, updated } = await importEvents(payload);
+      // Niente di nuovo da dire (solo l'impronta dei vecchi import): un solo «Fatto», si chiude.
+      if (button === "remember") {
+        close();
+        return;
+      }
       setResult(T.result(added, updated));
       setParsed(null);
       go("result");
@@ -283,7 +304,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
   };
 
   const guide = guideFor(direction, device, app, { synced });
-  const previous = PREVIOUS[stage];
+  const previous = stage === "preview" ? fileFrom : PREVIOUS[stage];
 
   const stepAction = (item: GuideStep) => {
     if (item.action === "download")
@@ -311,7 +332,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
       return (
         <div className="mt-3 grid grid-cols-1 gap-2">
           <div>
-            <Button variant="primary" icon="Import" onClick={() => fileInput.current?.click()}>
+            <Button variant="primary" icon="Import" onClick={() => chooseFile("steps")}>
               {T.chooseFile}
             </Button>
           </div>
@@ -360,6 +381,24 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
               </span>
             </button>
           ))}
+        </div>
+        <div className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--border)] p-3">
+          <p className="text-xs font-black uppercase text-[var(--faint)]">{T.shortcutsTitle}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="soft" icon="Download" onClick={download} disabled={!ics}>
+              {ics ? T.shortcutDownload : T.loading}
+            </Button>
+            <Button variant="soft" icon="Import" onClick={() => chooseFile("direction")}>
+              {T.shortcutChooseFile}
+            </Button>
+          </div>
+          {downloaded ? (
+            <p role="status" className="flex items-start gap-1.5 text-xs font-bold text-[var(--success-text)]">
+              <Icon name="Check" className="mt-px h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 break-words">{T.downloaded(downloaded)}</span>
+            </p>
+          ) : null}
+          {error ? <Alert>{error}</Alert> : null}
         </div>
       </>
     );
@@ -480,8 +519,10 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
   else if (stage === "preview" && parsed && preview)
     body = (
       <>
-        {question(parsed.fileName, `${T.previewSummary(preview.count, preview.recurring, preview.changed)} ${preview.from ? T.previewRange(preview.from, preview.to) : ""}`)}
+        {question(parsed.fileName, `${T.previewSummary(preview.count, preview.recurring, preview.changed)} ${preview.from ? T.previewRange(preview.from, preview.to, preview.open) : ""}`)}
         <p className="text-xs font-bold text-[var(--muted)]">{nothingNew ? T.nothingNewHint : T.previewNoDuplicates}</p>
+        {/* La modifica fatta a mano vince sul file: lo si dice, invece di lasciar credere che il file non dica niente. */}
+        {plan?.editsKept ? <p className="text-xs font-bold text-[var(--muted)]">{T.previewKeptEdits(plan.editsKept)}</p> : null}
         {placeMoved ? <p className="text-xs font-bold text-[var(--muted)]">{T.previewPlaceMoved}</p> : null}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
@@ -558,7 +599,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
             {T.back}
           </Button>
         ) : stage === "result" ? (
-          <Button variant="ghost" icon="Import" onClick={() => go("steps")}>
+          <Button variant="ghost" icon="Import" onClick={() => go(fileFrom)}>
             {T.importAnother}
           </Button>
         ) : (
@@ -579,10 +620,12 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
   return (
     <Drawer open={open} onClose={close} eyebrow={T.eyebrow} title={T.title} width="max-w-[600px]" footer={footer}>
       <div ref={top} className="grid scroll-mt-4 grid-cols-1 gap-4">
-        <p className="flex items-start gap-2 rounded-[14px] bg-[var(--surface-soft)] p-3 text-xs font-bold text-[var(--muted)]">
-          <Icon name="Info" className="mt-px h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0">{T.honesty}</span>
-        </p>
+        {stage === firstStage ? (
+          <p className="flex items-start gap-2 rounded-[14px] bg-[var(--surface-soft)] p-3 text-xs font-bold text-[var(--muted)]">
+            <Icon name="Info" className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0">{T.honesty}</span>
+          </p>
+        ) : null}
         {body}
         <input
           ref={fileInput}
