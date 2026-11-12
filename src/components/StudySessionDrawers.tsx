@@ -160,7 +160,7 @@ function SessionFields({
   );
 }
 
-/** Conferma in riga (Scarta, Elimina): niente finestre del browser. */
+/** Conferma in riga per "Scarta" (non si può annullare): niente finestre del browser. */
 function InlineConfirm({
   text,
   yes,
@@ -428,7 +428,6 @@ export function SessionEditorDrawer({
   const deleteSession = useStudyStore((state) => state.deleteSession);
   const [draft, setDraft] = useState<SessionDraft | null>(null);
   const [error, setError] = useState<SessionDraftError | "">("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [openFor, setOpenFor] = useState<string | null>(null);
   const once = useOnce();
   const open = Boolean(session);
@@ -436,7 +435,6 @@ export function SessionEditorDrawer({
     setOpenFor(session?.id ?? null);
     setDraft(session ? draftFromSession(session, subjects, topics) : null);
     setError("");
-    setConfirmDelete(false);
     if (session) once.release();
   }
 
@@ -472,30 +470,20 @@ export function SessionEditorDrawer({
       title={SESSION_FORM_TEXT.editTitle}
       width="max-w-[520px]"
       footer={
-        confirmDelete ? (
-          <InlineConfirm
-            text={SESSION_FORM_TEXT.deleteConfirm}
-            yes={SESSION_FORM_TEXT.deleteYes}
-            no={SESSION_FORM_TEXT.deleteNo}
-            busy={once.busy}
-            onYes={() => void remove()}
-            onNo={() => setConfirmDelete(false)}
-          />
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button variant="ghost" icon="Trash2" onClick={() => setConfirmDelete(true)} disabled={once.busy}>
-              {SESSION_FORM_TEXT.delete}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Elimina subito: «Annulla» nell'avviso la ripristina con i suoi collegamenti. */}
+          <Button variant="ghost" icon="Trash2" onClick={() => void remove()} disabled={once.busy}>
+            {SESSION_FORM_TEXT.delete}
+          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              {SESSION_FORM_TEXT.cancel}
             </Button>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="ghost" onClick={onClose}>
-                {SESSION_FORM_TEXT.cancel}
-              </Button>
-              <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
-                {SESSION_FORM_TEXT.save}
-              </Button>
-            </div>
+            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
+              {SESSION_FORM_TEXT.save}
+            </Button>
           </div>
-        )
+        </div>
       }
     >
       {session && draft ? (

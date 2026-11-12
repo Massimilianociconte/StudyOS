@@ -1071,7 +1071,7 @@ const updatePreferences = async (args: Args): Promise<AgentCallResult> => {
   // Come in Impostazioni: almeno un'ora a settimana (0 darebbe percentuali senza senso).
   const weekly = patch.weeklyTargetMinutes;
   if (weekly !== undefined && !(Number.isInteger(weekly) && (weekly as number) >= WEEKLY_TARGET_MIN && (weekly as number) <= WEEKLY_TARGET_MAX)) {
-    return fail("invalid", `weeklyTargetMinutes deve essere un numero intero di minuti da ${WEEKLY_TARGET_MIN} (1 ora) a ${WEEKLY_TARGET_MAX}.`);
+    return fail("invalid", `weeklyTargetMinutes deve essere un numero intero di minuti da ${WEEKLY_TARGET_MIN} a ${WEEKLY_TARGET_MAX}: da 1 a 80 ore, come in Impostazioni.`);
   }
   await state().updatePreferences(patch as PreferencesPatch);
   return ok({ preferences: publicPreferences(selectPreferences(state())) });

@@ -202,13 +202,20 @@ test("sessioni MCP: una sessione fatta non inizia né finisce nel futuro (come n
   assert.equal((await executeAgentTool("studyos_update_session", { id: planned.id, status: "completed" })).code, "invalid", "domani non è ancora fatta");
 });
 
-test("preferenze MCP: obiettivo settimanale di almeno un'ora, come in Impostazioni", async () => {
+test("preferenze MCP: obiettivo settimanale da 1 a 80 ore, come in Impostazioni", async () => {
   seed();
-  assert.equal(findAgentTool("studyos_update_preferences").inputSchema.properties.weeklyTargetMinutes.minimum, 60);
-  for (const value of [0, 59, -60, 90.5]) {
-    assert.equal((await executeAgentTool("studyos_update_preferences", { weeklyTargetMinutes: value })).code, "invalid", String(value));
+  const schema = findAgentTool("studyos_update_preferences").inputSchema.properties.weeklyTargetMinutes;
+  assert.equal(schema.minimum, 60);
+  assert.equal(schema.maximum, 4800, "Impostazioni arriva a 80 ore");
+  assert.match(schema.description, /da 1 a 80 ore, come in Impostazioni/);
+  for (const value of [0, 59, -60, 90.5, 4801, 6000, 10080]) {
+    const rejected = await executeAgentTool("studyos_update_preferences", { weeklyTargetMinutes: value });
+    assert.equal(rejected.code, "invalid", String(value));
+    assert.match(rejected.error, /da 1 a 80 ore, come in Impostazioni/, String(value));
   }
-  const saved = await executeAgentTool("studyos_update_preferences", { weeklyTargetMinutes: 60 });
-  assert.equal(saved.ok, true);
-  assert.equal(saved.data.preferences.weeklyTargetMinutes, 60);
+  for (const value of [60, 4800]) {
+    const saved = await executeAgentTool("studyos_update_preferences", { weeklyTargetMinutes: value });
+    assert.equal(saved.ok, true, String(value));
+    assert.equal(saved.data.preferences.weeklyTargetMinutes, value);
+  }
 });
