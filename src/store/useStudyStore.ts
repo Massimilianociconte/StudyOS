@@ -1489,7 +1489,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
         createdAt: nowIso(),
         updatedAt: nowIso(),
         archived: false,
-        tags: ["link"],
+        // Nessuna etichetta automatica: che sia un link lo dice già il tipo.
+        tags: [],
         name,
         mimeType: "text/uri-list",
         size: 0,
