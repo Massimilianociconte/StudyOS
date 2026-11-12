@@ -1,7 +1,7 @@
 // Etichette italiane per i valori enum salvati nei dati (la UI non mostra mai i codici interni) e testi
 // condivisi dalla struttura dell'app o da più schermate. I testi di una sola schermata sono in
 // labels/<schermata>.ts e si caricano con lei.
-import type { Attachment, CalendarEvent, Exam, Goal, StudySession, Subject, Task } from "../types";
+import type { Attachment, CalendarEvent, Exam, ExamPlanStatus, Goal, GroupExamKind, StudySession, Subject, Task } from "../types";
 import type { ShareAction, SharePermission, ShareScope } from "./sharing";
 
 export const PRIORITY_LABEL: Record<Task["priority"], string> = {
@@ -921,4 +921,71 @@ export const FILE_TEXT = {
   sharedNotUploaded: "Il file non è ancora stato caricato da chi lo condivide.",
   sharedOffline: "Sei offline: per scaricare un file condiviso serve la connessione.",
   sharedGone: "Il file non è più disponibile: forse la condivisione è stata tolta."
+} as const;
+
+/** Tipo di prova di un appello di gruppo (stessi testi di studyos_exam_kind_label in group-exams.sql). */
+export const GROUP_EXAM_KIND_LABEL: Record<GroupExamKind, string> = {
+  appello: "Appello",
+  preappello: "Preappello",
+  prova_in_itinere: "Prova in itinere",
+  scritto: "Scritto",
+  orale: "Orale",
+  laboratorio: "Laboratorio",
+  altro: "Altra prova"
+};
+
+/** Stato personale di un appello scelto (piano d'esame). */
+export const EXAM_PLAN_STATUS_LABEL: Record<ExamPlanStatus, string> = {
+  planned: "Da fare",
+  registered: "Iscritto",
+  taken: "Sostenuto, aspetto l'esito",
+  passed: "Superato",
+  failed: "Non superato",
+  withdrawn: "Ritirato",
+  skipped: "Non lo faccio"
+};
+
+/** Nomi dei campi di un appello nella cronologia e nei conflitti. */
+export const GROUP_EXAM_FIELD_LABEL = {
+  course: "Corso",
+  date: "Data",
+  kind: "Tipo",
+  label: "Etichetta",
+  time: "Ora",
+  room: "Aula",
+  notes: "Note",
+  registrationOpens: "Apertura iscrizioni",
+  registrationCloses: "Chiusura iscrizioni",
+  deleted: "Eliminato"
+} as const;
+
+/** Messaggi dei controlli sui campi: gli stessi che restituisce il server. */
+export const GROUP_EXAM_FIELD_ERROR = {
+  fields: "Dati dell'appello mancanti.",
+  unknown: "Campo non previsto.",
+  value: "Valore non valido.",
+  courseId: "Corso non valido.",
+  courseName: "Scrivi il nome del corso (da 2 a 160 caratteri).",
+  courseNameLetters: "Scrivi il nome del corso con lettere o cifre.",
+  date: "Data non valida: usa AAAA-MM-GG.",
+  kind: "Tipo di prova non valido.",
+  label: "Etichetta troppo lunga (massimo 80 caratteri).",
+  time: "Ora non valida: usa HH:MM.",
+  room: "Aula troppo lunga (massimo 120 caratteri).",
+  notes: "Note troppo lunghe (massimo 1000 caratteri).",
+  registrationOpens: "Data di apertura iscrizioni non valida.",
+  registrationCloses: "Data di chiusura iscrizioni non valida.",
+  registrationOrder: "La chiusura delle iscrizioni viene prima dell'apertura.",
+  barbSessionId: "Appello ufficiale non valido.",
+  source: "Origine non valida.",
+  sourceBarb: "Un appello dal catalogo ha bisogno del corso e dell'appello ufficiale.",
+  overrideKind: "Tipo di correzione non valido.",
+  overrideFields: "Correzioni mancanti.",
+  overrideUnknown: "Campo non previsto per questa correzione.",
+  overrideEmpty: "Scrivi almeno una correzione.",
+  overrideTooLong: (max: number) => `Testo troppo lungo (massimo ${max} caratteri).`,
+  overrideEmail: "Solo indirizzi istituzionali che finiscono con @unimi.it.",
+  overridePhone: "Numero di telefono non valido.",
+  overrideUrl: "Indirizzo non valido: deve iniziare con https:// o mailto:.",
+  overrideWebsite: "Il sito deve iniziare con https://."
 } as const;
