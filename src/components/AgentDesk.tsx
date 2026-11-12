@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { trustedWritesActive } from "../agent/policy";
@@ -24,10 +24,44 @@ import { requestSettingsSection, type SettingsSection } from "../lib/settingsJum
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
 import { agentAccountLabels, agentCloudLabels } from "../lib/labels";
 import { AGENT_DESK_TEXT } from "../lib/labels/agents";
+import { AGENT_CHANGES_TEXT } from "../lib/labels/agentChanges";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { ConfirmWithError } from "./ConfirmWithError";
 import { Icon } from "./Icon";
 import { Button, Field, inputClass } from "./ui";
+
+// «Modifiche del connettore»: pannello (e supabase-js) caricato solo al tocco.
+const loadChangesDrawer = () => import("./AgentChangesDrawer");
+const AgentChangesDrawer = lazy(() => loadChangesDrawer().then((module) => ({ default: module.AgentChangesDrawer })));
+
+/**
+ * Pulsante «Modifiche del connettore»: scarica il pannello prima di aprirlo; se non arriva (offline,
+ * scheda di prima di un aggiornamento) lo dice qui accanto e al tocco successivo riprova.
+ */
+function ConnectorChangesButton() {
+  const [phase, setPhase] = useState<"idle" | "loading" | "open" | "failed">("idle");
+  const openDrawer = () => {
+    if (phase === "loading") return;
+    setPhase("loading");
+    loadChangesDrawer().then(
+      () => setPhase("open"),
+      () => setPhase("failed")
+    );
+  };
+  return (
+    <>
+      <Button variant="soft" icon="History" onClick={openDrawer} disabled={phase === "loading"} aria-busy={phase === "loading"}>
+        {phase === "loading" ? AGENT_CHANGES_TEXT.opening : AGENT_CHANGES_TEXT.open}
+      </Button>
+      {phase === "failed" ? <p role="alert" className="w-full text-xs font-bold text-[var(--danger-text)]">{AGENT_CHANGES_TEXT.loadFailedChunk}</p> : null}
+      {phase === "open" ? (
+        <Suspense fallback={null}>
+          <AgentChangesDrawer open onClose={() => setPhase("idle")} />
+        </Suspense>
+      ) : null}
+    </>
+  );
+}
 
 /** Porta alla categoria di Impostazioni (anche se sono già aperte su un'altra). */
 const openSettingsAt = (section: SettingsSection) => {
@@ -241,6 +275,7 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
           <>
             {outcome ? <p role="status" className="rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{outcome.text}</p> : null}
             <div className="flex flex-wrap gap-2">
+              {signedIn ? <ConnectorChangesButton /> : null}
               <Button variant="soft" icon="LogOut" disabled={busy} onClick={() => void revoke()}>{text.revoke}</Button>
             </div>
           </>

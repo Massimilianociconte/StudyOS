@@ -14,6 +14,7 @@ import {
   rebuiltFromClip
 } from "./project";
 import { readAudit, readStoredPolicy } from "../lib/agentLocal";
+import { splitPages } from "./pageSplit";
 import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats } from "../lib/grades";
 import { examDateOut } from "../lib/examOutcome";
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
@@ -301,13 +302,60 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
       case "studyos_timer_control":
         return controlTimer(args);
       case "studyos_list_audit":
-        return ok({ entries: readAudit(Number(args.limit ?? 20)) });
+        return listLocalAudit(args);
+      case "studyos_restore_change":
+        // Solo sul connettore remoto (cloudRunner lo risponde prima di arrivare qui): il registro
+        // di questo browser non ha le versioni prima e dopo da rimettere.
+        return fail("invalid", "Il ripristino c'è solo sul connettore remoto, che salva ogni modifica nel registro del server.");
+      case "studyos_split_pages":
+        return splitPagesResult(args);
       default:
         return fail("invalid", `Strumento non eseguibile nell'app: ${name}.`);
     }
   } catch (error) {
     return fail("failed", error instanceof Error ? error.message : "Operazione non riuscita.");
   }
+};
+
+/**
+ * Registro delle azioni di questo browser (studyos_list_audit sul connettore principale): il più recente
+ * prima, filtri per strumento e per data. Gli id degli elementi non si salvano qui: itemId vale solo sul
+ * connettore remoto, dove il registro è sul server.
+ */
+const listLocalAudit = (args: Args): AgentCallResult => {
+  if (optional(args.itemId)) {
+    return fail("invalid", "Il registro di questo browser non salva gli id degli elementi: filtra per tool o per data (since, until).");
+  }
+  const since = optional(args.since) ? instant(args.since) : null;
+  const until = optional(args.until) ? instant(args.until) : null;
+  if ((optional(args.since) && !since) || (optional(args.until) && !until)) return fail("invalid", "since e until devono essere date ISO 8601.");
+  const tool = optional(args.tool);
+  const entries = readAudit(100).filter((entry) => {
+    const at = Date.parse(entry.at);
+    if (tool && entry.tool !== tool) return false;
+    if (since && !(at >= since.getTime())) return false;
+    if (until && !(at < until.getTime())) return false;
+    return true;
+  });
+  return ok({ source: "browser", ...page(entries, args) });
+};
+
+/** studyos_split_pages: conti esatti e inclusivi, nessun dato letto o scritto (vedi pageSplit.ts). */
+const splitPagesResult = (args: Args): AgentCallResult => {
+  const strings = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined);
+  const result = splitPages({
+    from: Number(args.from),
+    to: Number(args.to),
+    parts: typeof args.parts === "number" ? args.parts : undefined,
+    perPart: typeof args.perPart === "number" ? args.perPart : undefined,
+    startDate: optional(args.startDate),
+    endDate: optional(args.endDate),
+    skipWeekdays: strings(args.skipWeekdays),
+    days: strings(args.days),
+    labels: strings(args.labels)
+  });
+  if (!result.ok) return fail("invalid", result.error);
+  return ok({ from: result.from, to: result.to, totalPages: result.totalPages, partCount: result.partCount, summary: result.summary, parts: result.parts });
 };
 
 /** Nome leggibile dell'elemento indicato da un id, per la richiesta di conferma. */

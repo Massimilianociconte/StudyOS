@@ -60,7 +60,9 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.7.0 (`/health` la mostra dopo il deploy): negli elenchi di attività, eventi,
+versione 1.8.0 (`/health` la mostra dopo il deploy). La 1.8.0 aggiunge `studyos_split_pages` (vedi
+«Pagine da studiare») e, sul connettore remoto, il registro del server con il ripristino (vedi
+«Registro e ripristino del connettore remoto»). Dalla 1.7.0, negli elenchi di attività, eventi,
 sessioni, argomenti e obiettivi descrizioni e note oltre 300 caratteri arrivano accorciate con
 «…» e il campo compare in `truncated`; `fullText: true` (o il dettaglio, es. `studyos_get_task`)
 le dà intere. Una modifica che riscrive il testo partendo dalla copia accorciata viene
@@ -72,7 +74,35 @@ accessi»). La 1.5.0 aveva corretto fuso orario, serie ripetute, link della bach
 `/register` e `/authorize`; la 1.4.0 aveva aggiunto il connettore remoto di un solo account
 (vedi sotto). La 1.7.0 aggiunge il parametro `fullText` agli elenchi e cambia le descrizioni
 di elenchi e modifiche di attività, eventi e obiettivi: ricrea il connettore perché
-l'assistente le legga (vedi «Ripubblicare dopo una modifica»).
+l'assistente le legga (vedi «Ripubblicare dopo una modifica»). Anche la 1.8.0 cambia l'elenco
+degli strumenti e le istruzioni del server: ricrea il connettore dopo il deploy.
+
+## Pagine da studiare
+
+Quando pianificava lo studio nel calendario («pp. 120–180 in 4 giorni»), un assistente a volte
+scriveva intervalli spostati di una pagina, che andavano corretti una o due volte. Una causa era il
+testo accorciato degli elenchi (risolta nella 1.7.0), l'altra l'aritmetica degli intervalli
+inclusivi. Dalla 1.8.0 le istruzioni del server (su tutti e due i connettori) dicono: «Conta le
+pagine includendo prima e ultima (10–20 = 11 pagine). Per dividere un intervallo usa
+studyos_split_pages invece di calcolare.»
+
+`studyos_split_pages` (sola lettura, non tocca i dati) divide `from`–`to` (interi da 1, estremi
+compresi) in parti contigue, senza buchi né sovrapposizioni, la cui somma è sempre `to - from + 1`.
+Una modalità alla volta:
+
+- `parts`: quante parti; il resto va alle prime (61 pagine in 4 = 16, 15, 15, 15). Più parti che
+  pagine è un errore che lo dice.
+- `perPart`: pagine per parte; l'ultima prende il resto (1–100 da 30 = 30, 30, 30, 10).
+- `startDate` + `endDate` (giorni compresi, al massimo 366): una parte per ogni giorno utile.
+  `skipWeekdays` salta giorni della settimana (es. `["SA","SU"]`), `days` usa solo quelli (es.
+  `["MO","WE","FR"]`). Con `startDate` senza `endDate`, `parts` o `perPart` ricevono i giorni utili
+  in ordine.
+
+`labels` (facoltativo) dà un'etichetta a ogni parte, in ordine. Ogni parte ha `from`, `to`,
+`pages`, `date` e `weekday` quando ci sono giorni, e `text` pronto per titolo o descrizione
+(«pp. 120–135 (16 pagine)», «p. 7 (1 pagina)»); `summary` riassume il conto («… in 4 parti: 16 + 15
++ 15 + 15 = 61 pagine.»). I giorni sono date civili: il cambio d'ora non sposta niente. La logica è
+in `src/agent/pageSplit.ts`, i test in `tests/pageSplit.test.mjs`.
 
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
 salvo una policy impostata da te su «Consenti».
@@ -83,8 +113,12 @@ foto, email dei membri o passphrase. Le note si possono leggere e scrivere, ma
 non hanno ancora una schermata dedicata nell'app.
 
 Se una conferma tarda, l'agente riceve `pending_approval` e deve rileggere
-l'esito con `studyos_approval_status`, senza ripetere l'azione. Il registro
-delle azioni resta in questo browser.
+l'esito con `studyos_approval_status`, senza ripetere l'azione. Sul connettore
+`/mcp` il registro delle azioni resta in questo browser: `studyos_list_audit` lo legge (il più
+recente prima, filtri `tool`, `since`, `until`, paginato con `limit` e `offset`; `itemId` qui dà
+errore, perché il browser non salva gli id). Il ripristino (`studyos_restore_change`) c'è solo sul
+connettore remoto, che salva prima e dopo di ogni modifica: su `/mcp` non compare in
+`tools/list`.
 
 A vault bloccato l'app risponde che i dati non sono disponibili e non mostra
 conteggi vuoti come se fossero veri.
@@ -253,7 +287,8 @@ Differenze dal primo connettore:
   scelto. Le eliminazioni chiedono comunque `confirm: true`.
 - Gli strumenti non hanno il parametro `account`: il connettore è già legato a un account.
 - Non ci sono gli strumenti dei dati condivisi, i gruppi (elenco, bacheca e risorse), il
-  cronometro, il registro delle azioni, `studyos_approval_status` e `studyos_list_accounts`.
+  cronometro, `studyos_approval_status` e `studyos_list_accounts`. `studyos_list_audit` c'è dalla
+  1.8.0, ma legge il registro del server (vedi sotto); in più c'è `studyos_restore_change`.
   I gruppi condivisi stanno nelle tabelle dei gruppi e non nel cloud personale che l'hub legge:
   da lì si vedrebbe una copia vecchia. Panoramica e ricerca remote non contano i gruppi.
 - File, copertine e foto non arrivano all'hub. Quando l'hub modifica un elemento, il
@@ -261,6 +296,46 @@ Differenze dal primo connettore:
 - Se l'app ha cambiato lo stesso elemento dopo l'ultima lettura dell'hub, la scrittura è
   rifiutata: la risposta è un errore di conflitto, l'hub rilegge i dati e l'azione si può
   ripetere.
+
+### Registro e ripristino del connettore remoto
+
+Dalla 1.8.0 (con `agent.sql` rieseguito, vedi `supabase/README.md`) ogni riga che il connettore
+remoto cambia lascia una voce nella tabella `studyos_agent_audit`: quando, quale permesso
+(etichetta del connettore, es. «ChatGPT»), quale strumento, tipo e id dell'elemento, azione
+`create`/`update`/`delete`, l'elemento prima e dopo. La scrive `studyos_agent_push` nella stessa
+transazione della modifica: l'hub non può saltarla, e le riscritture che non cambiano niente non
+lasciano voci. Le immagini non contengono file, copertine né foto; solo un'eliminazione tiene a parte
+i file dell'elemento eliminato, per poterlo rimettere intero. Le voci restano 90 giorni e al massimo
+le ultime 2000 per account: le funzioni che scrivono tolgono le altre, usando solo l'indice.
+Nessun client scrive o cancella voci; la persona legge le sue (RLS).
+
+- `studyos_list_audit` (remoto) chiama `studyos_agent_audit_list` col segreto: voci dalla più
+  recente, filtri `itemId`, `tool`, `since`, `until` (senza offset valgono nell'ora locale della
+  persona), `limit` e `offset`, `total` dal server. Ogni voce ha `id`, `at`, `tool`, `collection`,
+  `itemId`, `title`, `action`; una modifica ha `changed` e solo quei campi in `before`/`after`, una
+  creazione l'elemento in `after`, un'eliminazione l'elemento in `before` (testi oltre 300
+  caratteri accorciati, con `truncated`); `canRestore` dice se si può ancora annullare. Prima di
+  arrivare all'agente le immagini passano dalle proiezioni degli altri strumenti e perdono, a ogni
+  profondità, email, codici di invito, token, iscrizioni push, id di account e file.
+- `studyos_restore_change` (`id`, `confirm: true`; distruttivo, serve lo scope di scrittura)
+  chiama `studyos_agent_restore`: rimette la versione di prima come nuova scrittura con un timbro
+  nuovo (oltre quello attuale). Una creazione si annulla eliminando, un'eliminazione rimettendo
+  l'elemento (file compresi), una modifica tornando ai valori di prima. Solo se l'elemento ha ancora
+  il timbro di quella scrittura: altrimenti `conflict` con l'elemento com'è ora in `current`, e
+  niente viene scritto. Il ripristino lascia a sua volta una voce (`restoreOf`), quindi si può
+  annullare anche lui; la voce annullata ha `restoredAt` e non si ripristina due volte.
+- Nell'app, **Impostazioni → Agenti → Connettore remoto → «Modifiche del connettore»** (con
+  l'accesso all'account fatto) apre un pannello caricato solo al tocco: quando, chi (il connettore o
+  «Tu, dall'app»), cosa è cambiato in parole semplici («Ha modificato l'attività «Ripasso»: titolo e
+  scadenza.») e «Ripristina» con conferma. Usa `studyos_agent_audit_own` e
+  `studyos_agent_restore_own` (solo le voci di chi ha fatto l'accesso); la riga ripristinata ha
+  `client_id` vuoto, così arriva anche al dispositivo che l'ha chiesta, e l'app chiede subito una
+  sincronizzazione.
+
+Con `agent.sql` di prima il Worker 1.8.0 scrive come prima (riprova la push senza `p_tool`) e
+`studyos_list_audit` risponde che il registro non è ancora attivo. Un Worker di prima con
+`agent.sql` nuovo scrive lo stesso il registro, con lo strumento vuoto. Prova su Postgres usa e
+getta: `scripts/supabase/agent-audit-check.sql`.
 
 «Scollega il connettore remoto» e «Revoca gli accessi di questo browser» in Impostazioni →
 Agenti revocano tutti i permessi remoti dell'account (anche senza browser collegato, con
