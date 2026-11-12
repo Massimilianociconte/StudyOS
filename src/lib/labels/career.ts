@@ -26,6 +26,11 @@ export const GRADE_TEXT = {
   newDateInvalid: "Nuova data non valida: sceglila di nuovo.",
   recordTitle: "Registra il voto",
   saveOutcome: "Salva esito",
+  // Chiudere il modulo (✕, Esc, tocco fuori, Indietro) con dati cambiati: «Annulla» e il salvataggio no.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: "Hai cambiato l'esito (voto, data, materia…) senza salvarlo.",
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche",
   /** Pulsante del modulo per un nuovo esito: dice cosa registra. */
   recordButton: (outcome: "grade" | "passFail" | "failed") => (outcome === "passFail" ? "Registra idoneità" : "Registra voto"),
   /** «Biochimica: 28 registrato», «Biochimica: idoneità registrata» (nel libretto). */

@@ -9,7 +9,7 @@ import { EXAMS_HELP, EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
 import { readCoverImage } from "../lib/files";
-import { isDateToDecide, withoutDateToDecide } from "../lib/examOutcome";
+import { examDraftChanged, isDateToDecide, withoutDateToDecide } from "../lib/examOutcome";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
@@ -157,6 +157,16 @@ function PersonalExamsView({
   const { exams, subjects, tasks, sessions, topics, addExam, updateExam, deleteExam, addTopics, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
   const [draft, setDraft] = useState<ExamDraft>(() => emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
+  // Il modulo com'era all'apertura: Esc, ✕ o tocco fuori con dati cambiati chiedono «Scartare le modifiche?».
+  const [pristine, setPristine] = useState<ExamDraft>(() => draft);
+  const [asking, setAsking] = useState(false);
+  const promptRef = useRef<HTMLDivElement>(null);
+  /** Riempie il modulo e ne fa la versione «com'era all'apertura». */
+  const startDraft = (next: ExamDraft) => {
+    setDraft(next);
+    setPristine(next);
+    setAsking(false);
+  };
   // Id dell'esame i cui dati sono nel modulo: se l'esame arriva da `exams.editing` (altra
   // schermata o refresh) il modulo si riempie qui, una volta sola, senza perdere le modifiche.
   const [draftFor, setDraftFor] = useState<string | null>(null);
@@ -179,7 +189,7 @@ function PersonalExamsView({
   const once = useOnce();
   if (editingExam && draftFor !== editingExam.id) {
     setDraftFor(editingExam.id);
-    setDraft(draftFromExam(editingExam));
+    startDraft(draftFromExam(editingExam));
     // Le opzioni meno usate restano aperte se l'esame le usa già.
     setMoreOpen(Boolean(editingExam.frequentQuestions.length || editingExam.cover));
     setMessage("");
@@ -203,7 +213,7 @@ function PersonalExamsView({
     // Modulo che si riapre: "Salva esame" torna usabile (come openCreate / openEdit).
     once.release();
     onEditingChange(null);
-    setDraft(start ? { ...emptyDraft(start.subjectId), date: toDatetimeLocal(start.date) } : emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
+    startDraft(start ? { ...emptyDraft(start.subjectId), date: toDatetimeLocal(start.date) } : emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
     setMoreOpen(false);
     setCreating(true);
     setFromCalendar(start ? { ref: prefill, title: start.title } : null);
@@ -216,7 +226,7 @@ function PersonalExamsView({
   const areaRef = useRef<HTMLDivElement>(null);
 
   // Pagina sotto bloccata, focus nel modulo (anche se aperto da un'altra schermata) e restituito alla chiusura.
-  useDialogLayer(formOpen, { panelRef: dialogRef, areaRef, onEscape: () => closeForm() });
+  useDialogLayer(formOpen, { panelRef: dialogRef, areaRef, onEscape: () => requestClose() });
   const sorted = useMemo(() => [...exams].sort((a, b) => a.date.localeCompare(b.date)), [exams]);
   const today = startOfDay(new Date());
   // In arrivo, poi i non superati con la nuova data ancora da decidere.
@@ -246,7 +256,7 @@ function PersonalExamsView({
     once.release();
     setFromCalendar(null);
     onEditingChange(null);
-    setDraft(emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
+    startDraft(emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
     setMoreOpen(false);
     setCreating(true);
   };
@@ -257,15 +267,33 @@ function PersonalExamsView({
     once.release();
     setCreating(false);
     setDraftFor(exam.id);
-    setDraft({ ...draftFromExam(exam), ...patch });
+    startDraft({ ...draftFromExam(exam), ...patch });
     // Le opzioni meno usate restano aperte se l'esame le usa già.
     setMoreOpen(Boolean(exam.frequentQuestions.length || exam.cover));
     onEditingChange(exam.id);
   };
 
+  /** Chiude subito: «Annulla», salvataggio, esame eliminato. */
   const closeForm = () => {
+    setAsking(false);
     setCreating(false);
     onEditingChange(null);
+  };
+
+  /**
+   * Esc, ✕, tocco fuori: con dati cambiati chiede prima, al posto dei pulsanti in fondo. Se la
+   * domanda c'è già (magari scorsa via, in fondo al modulo), ci riporta su «Continua a modificare».
+   */
+  const requestClose = () => {
+    if (!examDraftChanged(draft, pristine)) closeForm();
+    else if (asking) showPrompt();
+    else setAsking(true);
+  };
+  // Il fuoco da solo non scorre se è già lì (tocco fuori e Esc non lo spostano): si scorre anche.
+  const showPrompt = () => {
+    const prompt = promptRef.current;
+    prompt?.scrollIntoView({ block: "nearest" });
+    prompt?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   };
 
   const followLink = (target: ExamLinkTarget, subjectId: string) => {
@@ -527,7 +555,10 @@ function PersonalExamsView({
           aria-modal="true"
           aria-label={editingExam ? "Modifica esame" : "Aggiungi esame"}
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closeForm();
+            if (event.target !== event.currentTarget) return;
+            // Il tocco sullo sfondo non sposta il focus: resta su «Continua a modificare», se compare la domanda.
+            event.preventDefault();
+            requestClose();
           }}
         >
           <section ref={dialogRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 outline-none sm:p-5">
@@ -537,7 +568,7 @@ function PersonalExamsView({
                 <p className="two-line-safe text-sm text-[var(--muted)]">Bastano materia e data: l'esame comparirà anche nel tuo Calendario.</p>
                 {creating && fromCalendar ? <p className="safe-text mt-1 text-sm font-bold text-[var(--accent-ink)]">{EXAMS_TEXT.fromCalendar(fromCalendar.title)}</p> : null}
               </div>
-              <IconButton icon="X" label="Chiudi" className="h-10 w-10" onClick={() => closeForm()} />
+              <IconButton icon="X" label="Chiudi" className="h-10 w-10" onClick={() => requestClose()} />
             </div>
 
             <div className="grid grid-cols-1 gap-3">
@@ -669,19 +700,36 @@ function PersonalExamsView({
 
               {message ? <p role="alert" className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">{message}</p> : null}
 
-              <div className="mt-2 flex flex-wrap justify-end gap-2">
-                {editingExam ? (
-                  <Button variant="danger" icon="Trash2" onClick={() => removeExam(editingExam)}>
-                    Elimina esame
+              {asking ? (
+                // Stesso schema dei pannelli (Attività, Materie, Obiettivi): chiudere con dati cambiati chiede prima, sul posto.
+                <div ref={promptRef} role="group" aria-label={EXAMS_TEXT.unsavedTitle} className="mt-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+                  <p className="text-sm font-black">{EXAMS_TEXT.unsavedTitle}</p>
+                  <p className="text-sm font-bold text-[var(--muted)]">{EXAMS_TEXT.unsavedText}</p>
+                  <div className="mt-2 flex flex-wrap justify-end gap-2">
+                    <Button variant="soft" onClick={() => setAsking(false)} autoFocus>
+                      {EXAMS_TEXT.unsavedKeep}
+                    </Button>
+                    <Button variant="danger" icon="X" onClick={() => closeForm()}>
+                      {EXAMS_TEXT.unsavedDiscard}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 flex flex-wrap justify-end gap-2">
+                  {editingExam ? (
+                    <Button variant="danger" icon="Trash2" onClick={() => removeExam(editingExam)}>
+                      Elimina esame
+                    </Button>
+                  ) : null}
+                  {/* «Annulla» chiude senza chiedere: è già una scelta esplicita. */}
+                  <Button variant="soft" onClick={() => closeForm()}>
+                    Annulla
                   </Button>
-                ) : null}
-                <Button variant="soft" onClick={() => closeForm()}>
-                  Annulla
-                </Button>
-                <Button variant="primary" icon="Check" onClick={() => void saveExam()} disabled={once.busy}>
-                  Salva esame
-                </Button>
-              </div>
+                  <Button variant="primary" icon="Check" onClick={() => void saveExam()} disabled={once.busy}>
+                    Salva esame
+                  </Button>
+                </div>
+              )}
             </div>
           </section>
         </div>
@@ -719,6 +767,8 @@ function ExamCard({
   onLink: (target: ExamLinkTarget) => void;
 }) {
   const remaining = studyDaysUntil(exam.date);
+  // Il giorno dell'esame: «Oggi», non «0 giorni».
+  const countdown = EXAMS_TEXT.countdown(remaining);
   const risk = dateToDecide ? null : examRisk(remaining, exam.preparation);
   const riskHelp = risk === "alto" ? EXAMS_HELP.riskHigh : EXAMS_HELP.riskMedium;
   const program = exam.program.slice(0, 6);
@@ -735,15 +785,15 @@ function ExamCard({
           </div>
         ) : (
           <div className="grid grid-cols-1 h-14 w-14 shrink-0 place-items-center rounded-[16px] text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
-            <span className="text-xl font-black leading-none tabular-nums">{remaining}</span>
-            <span className="text-[10px] font-black uppercase text-[var(--muted)]">{remaining === 1 ? "giorno" : "giorni"}</span>
+            <span className={`font-black leading-none tabular-nums ${countdown.unit ? "text-xl" : "text-base"}`}>{countdown.value}</span>
+            {countdown.unit ? <span className="text-[10px] font-black uppercase text-[var(--muted)]">{countdown.unit}</span> : null}
           </div>
         )}
         <button type="button" onClick={onEdit} className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-lg font-black leading-tight">{name}</h3>
           <p className="text-xs font-bold text-[var(--muted)]">
             {dateToDecide ? EXAMS_TEXT.dateToDecide : capitalizeFirst(format(parseISO(exam.date), "EEEE d MMMM · HH:mm", { locale: it }))}
-            {cover && !dateToDecide ? ` · ${remaining} ${remaining === 1 ? "giorno" : "giorni"}` : ""}
+            {cover && !dateToDecide ? ` · ${EXAMS_TEXT.countdownInline(remaining)}` : ""}
           </p>
         </button>
         <IconButton icon="PenLine" label={`Modifica esame di ${name}`} className="h-9 w-9" onClick={onEdit} />

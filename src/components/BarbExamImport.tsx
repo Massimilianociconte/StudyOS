@@ -6,7 +6,15 @@ import { CourseIcon } from "./CourseIcon";
 import { barbSessionDate, barbSessionType } from "./BarbExamSessions";
 import { Button, Drawer, EmptyState, inputClass } from "./ui";
 import { EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
-import { groupExamSlots, type BarbExamSlot } from "../lib/barbExamSlots";
+import { groupExamSlots, slotDifference, slotTwins, type BarbExamSlot } from "../lib/barbExamSlots";
+
+/** Appelli gemelli (Inglese B2: test online e in aula, stessa ora): ognuno dice cosa lo distingue. */
+function twinHint(slot: BarbExamSlot, slots: readonly BarbExamSlot[]): string {
+  const twins = slotTwins(slot, slots);
+  if (twins.length < 2) return "";
+  const difference = slotDifference(slot.session, twins.map((twin) => twin.session));
+  return EXAMS_TEXT.registrationHint({ component: difference.component, location: difference.location, closes: difference.registrationCloses && barbSessionDate(difference.registrationCloses), list: difference.sourceCourseCode });
+}
 
 function CourseCheckbox({ checked, mixed, disabled, onChange, label }: { checked: boolean; mixed: boolean; disabled: boolean; onChange: () => void; label: string }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -77,7 +85,8 @@ export function BarbExamImport({ onClose }: { onClose: () => void }) {
           {slots.length ? <ul className="border-t border-[var(--border)]">{slots.map((slot) => {
             const { session } = slot;
             const already = slot.imported;
-            return <li key={slot.key}><label className={`flex min-h-11 items-center gap-3 px-3 py-2 ${eligible && !already ? "cursor-pointer hover:bg-[var(--surface)]" : "opacity-60"}`}><input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" disabled={busy || !eligible || already} checked={eligible && !already && selected.has(slot.key)} onChange={() => toggleSessions([slot.key])} aria-label={`${course.name}, ${barbSessionDate(session.date)}, ${barbSessionType(session.type)}`} /><span className="min-w-0 flex-1 text-xs"><span className="font-extrabold">{barbSessionDate(session.date)}</span><span className="safe-text block text-[var(--muted)]">{barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}{slot.sessions.length > 1 ? ` · ${EXAMS_TEXT.registrationsCount(slot.sessions.length)}` : ""}{already ? " · Già nel calendario" : ""}</span></span></label></li>;
+            const distinct = twinHint(slot, slots);
+            return <li key={slot.key}><label className={`flex min-h-11 items-center gap-3 px-3 py-2 ${eligible && !already ? "cursor-pointer hover:bg-[var(--surface)]" : "opacity-60"}`}><input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" disabled={busy || !eligible || already} checked={eligible && !already && selected.has(slot.key)} onChange={() => toggleSessions([slot.key])} aria-label={`${course.name}, ${barbSessionDate(session.date)}, ${barbSessionType(session.type)}${distinct ? `, ${distinct}` : ""}`} /><span className="min-w-0 flex-1 text-xs"><span className="font-extrabold">{barbSessionDate(session.date)}</span><span className="safe-text block text-[var(--muted)]">{barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}{slot.sessions.length > 1 ? ` · ${EXAMS_TEXT.registrationsCount(slot.sessions.length)}` : ""}{distinct ? ` · ${distinct}` : ""}{already ? " · Già nel calendario" : ""}</span></span></label></li>;
           })}</ul> : <p className="px-3 pb-3 text-xs text-[var(--muted)]">Nessuna data ufficiale pubblicata per ora.</p>}
         </section>;
       })}</div>

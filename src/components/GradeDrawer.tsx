@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { Exam, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { MAX_GRADE, MIN_GRADE, examToRecord, isValidGrade } from "../lib/grades";
-import { failedExamPatch, outcomeOf, recordDateFor, withoutDateToDecide, type ExamOutcome } from "../lib/examOutcome";
+import { examDraftChanged, failedExamPatch, outcomeOf, recordDateFor, recordInstantFor, withoutDateToDecide, type ExamOutcome } from "../lib/examOutcome";
 import { DateField, DateTimeField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
 import { CAREER_HELP, GRADE_TEXT } from "../lib/labels/career";
@@ -66,6 +66,10 @@ export function GradeDrawer({
     newDate: ""
   });
   const [draft, setDraft] = useState(initial);
+  // Il modulo com'era all'apertura: il confronto dice se chiudere perderebbe qualcosa.
+  const [pristine, setPristine] = useState(() => draft);
+  // ✕, Esc, tocco fuori o Indietro con dati cambiati: «Scartare le modifiche?» al posto dei pulsanti.
+  const [asking, setAsking] = useState(false);
   const [error, setError] = useState("");
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   // Un solo Registra / Elimina per volta: un doppio tocco creerebbe due esami (e due materie).
@@ -75,11 +79,18 @@ export function GradeDrawer({
   if (key !== openedFor) {
     setOpenedFor(key);
     if (key) {
-      setDraft(initial());
+      const next = initial();
+      setDraft(next);
+      setPristine(next);
+      setAsking(false);
       setError("");
       once.release();
     }
   }
+  const requestClose = () => {
+    if (examDraftChanged(draft, pristine)) setAsking(true);
+    else onClose();
+  };
 
   const editing = Boolean(exam && isGraded(exam));
   // Esame ancora senza voto (data passata, o «Sostenuto» senza voto): si può anche non averlo superato.
@@ -124,20 +135,22 @@ export function GradeDrawer({
     const passFail = draft.outcome === "passFail";
     const grade = Number(draft.grade);
     if (!passFail && !isValidGrade(grade)) return fail(`Scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
-    const date = new Date(`${draft.date}T12:00`);
-    if (Number.isNaN(date.getTime())) return fail("Data non valida: scegli il giorno dell'esame.");
-    const result = {
+    const noon = recordInstantFor(draft.date);
+    if (!noon) return fail("Data non valida: scegli il giorno dell'esame.");
+    const honors = !passFail && grade === MAX_GRADE && draft.honors;
+    // Lo stesso giorno dell'esame che si registra (o si riusa) tiene la sua ora; un altro giorno va alle 12.
+    const resultFor = (reused?: Exam) => ({
       status: "done" as const,
-      date: date.toISOString(),
+      date: recordInstantFor(draft.date, reused) ?? noon,
       preparation: 100,
       grade: passFail ? undefined : grade,
-      honors: !passFail && grade === MAX_GRADE && draft.honors,
+      honors,
       passFail
-    };
-    const outcome = passFail ? "idoneità" : result.honors ? "30 e lode" : String(grade);
+    });
+    const outcome = passFail ? "idoneità" : honors ? "30 e lode" : String(grade);
 
     if (exam) {
-      await updateExam(exam.id, { ...result, tags: withoutDateToDecide(exam.tags) });
+      await updateExam(exam.id, { ...resultFor(exam), tags: withoutDateToDecide(exam.tags) });
       if (recording) await markPassed(exam.subjectId);
       onSaved(GRADE_TEXT.saved(subjectName || "Esame", outcome, passFail, editing), draft.outcome);
       return;
@@ -155,8 +168,8 @@ export function GradeDrawer({
     if (!subjectId) return fail("Scegli la materia dell'esame.");
     // Riusa l'esame «Sostenuto» senza voto (o il primo da dare): la materia resta una riga del libretto.
     const pendingExam = examToRecord(exams, subjectId);
-    if (pendingExam) await updateExam(pendingExam.id, { ...result, tags: withoutDateToDecide(pendingExam.tags) });
-    else await addExam({ subjectId, targetGrade: Math.min(MAX_GRADE, grade || 28), ...result });
+    if (pendingExam) await updateExam(pendingExam.id, { ...resultFor(pendingExam), tags: withoutDateToDecide(pendingExam.tags) });
+    else await addExam({ subjectId, targetGrade: Math.min(MAX_GRADE, grade || 28), ...resultFor() });
     await markPassed(subjectId);
     onSaved(GRADE_TEXT.saved(name, outcome, passFail, false), draft.outcome);
   };
@@ -174,25 +187,49 @@ export function GradeDrawer({
   return (
     <Drawer
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       eyebrow={recording ? GRADE_TEXT.outcomeAsk : "Libretto"}
       title={editing || recording ? subjectName || "Modifica voto" : fixedSubjectId ? subjectName || GRADE_TEXT.recordTitle : "Registra un voto"}
       width="max-w-[480px]"
       footer={
-        <div className="flex items-center gap-2">
-          {editing ? (
-            <Button variant="danger" icon="Trash2" onClick={() => void remove()} disabled={once.busy}>
-              Elimina voto
+        asking ? (
+          // Stesso schema di Attività, Materie, Obiettivi e sessioni: chiudere con dati cambiati chiede prima, sul posto.
+          <div role="group" aria-label={GRADE_TEXT.unsavedTitle} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
+            <p className="text-sm font-black">{GRADE_TEXT.unsavedTitle}</p>
+            <p className="text-sm font-bold text-[var(--muted)]">{GRADE_TEXT.unsavedText}</p>
+            <div className="mt-2 flex flex-wrap justify-end gap-2">
+              <Button variant="soft" onClick={() => setAsking(false)} autoFocus>
+                {GRADE_TEXT.unsavedKeep}
+              </Button>
+              <Button
+                variant="danger"
+                icon="X"
+                onClick={() => {
+                  setAsking(false);
+                  onClose();
+                }}
+              >
+                {GRADE_TEXT.unsavedDiscard}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            {editing ? (
+              <Button variant="danger" icon="Trash2" onClick={() => void remove()} disabled={once.busy}>
+                Elimina voto
+              </Button>
+            ) : null}
+            <span className="flex-1" />
+            {/* «Annulla» chiude senza chiedere: è già una scelta esplicita. */}
+            <Button variant="ghost" onClick={onClose}>
+              Annulla
             </Button>
-          ) : null}
-          <span className="flex-1" />
-          <Button variant="ghost" onClick={onClose}>
-            Annulla
-          </Button>
-          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
-            {editing ? "Salva voto" : recording ? GRADE_TEXT.saveOutcome : GRADE_TEXT.recordButton(draft.outcome)}
-          </Button>
-        </div>
+            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
+              {editing ? "Salva voto" : recording ? GRADE_TEXT.saveOutcome : GRADE_TEXT.recordButton(draft.outcome)}
+            </Button>
+          </div>
+        )
       }
     >
       <div className="grid grid-cols-1 gap-3">

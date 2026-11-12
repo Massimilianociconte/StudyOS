@@ -30,6 +30,19 @@ export const EXAMS_TEXT = {
   dateToDecide: "Non superato · nuova data da decidere",
   dateToDecideShort: "Data",
   dateToDecideBox: "da decidere",
+  /**
+   * Riquadro dei giorni all'esame (Esami e Home): il giorno stesso «Oggi», mai «0 giorni»; una data
+   * già passata «Data / passata» (come «Data / da decidere»), mai un numero negativo.
+   */
+  countdown: (days: number) =>
+    days < 0 ? { value: "Data", unit: "passata" } : days === 0 ? { value: "Oggi", unit: "" } : { value: String(days), unit: days === 1 ? "giorno" : "giorni" },
+  /** Giorni all'esame in riga, dopo la data: «oggi», «domani», «12 giorni» (come in Statistiche); mai negativi. */
+  countdownInline: (days: number) => (days < 0 ? "data passata" : days === 0 ? "oggi" : days === 1 ? "domani" : `${days} giorni`),
+  // Chiudere «Aggiungi esame» o «Modifica esame» (✕, Esc, tocco fuori) con dati cambiati.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: "Hai cambiato l'esame (data, preparazione, programma…) senza salvarlo.",
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche",
   shareProgress: "Condividi i progressi",
   study: "Studia",
   readiness: "Quanto sei pronto",
@@ -60,6 +73,17 @@ export const EXAMS_TEXT = {
   incompleteSources: "Alcune fonti ufficiali sono incomplete: qui vedi solo le date verificate.",
   registrations: (count: number) => `${count} iscrizioni diverse: tocca per sceglierne una`,
   registrationsCount: (count: number) => `${count} iscrizioni negli elenchi ufficiali`,
+  /** Cella del mese in «Date ufficiali» (nome accessibile). */
+  dayCellLabel: (date: string, count: number) => `Apri ${date}, ${count} ${count === 1 ? "appello" : "appelli"}`,
+  // Un appello con più iscrizioni (commissioni, aule o chiusure diverse): si sceglie la propria.
+  slotChooserIntro: (count: number) => `Negli elenchi ufficiali questo appello ha ${count} iscrizioni. Apri la tua: commissione, aula e chiusura delle iscrizioni possono essere diverse.`,
+  registrationLabel: (index: number, commission?: string | null) => `Iscrizione ${index}${commission ? ` · ${commission}` : ""}`,
+  /** Cosa distingue un'iscrizione o una prova dalle altre (data di chiusura già scritta). */
+  registrationHint: ({ component, location, closes, list }: { component?: string | null; location?: string | null; closes?: string | null; list?: string | null }) =>
+    [component, location, closes ? `chiusura iscrizioni ${closes}` : null, list ? `elenco ${list}` : null].filter(Boolean).join(" · "),
+  seeDetails: "Vedi dettagli",
+  shownDetails: "Dettagli qui sotto",
+  timeNotPublished: "Orario non pubblicato",
   officialEyebrow: "Appello ufficiale"
 } as const;
 

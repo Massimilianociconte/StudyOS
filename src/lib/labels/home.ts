@@ -27,6 +27,9 @@ export const HOME_TEXT = {
   reviews: (count: number) => `${count} ${count === 1 ? "argomento da ripassare" : "argomenti da ripassare"}`,
   preparation: (value: number) => `preparazione ${value}%`,
   importance: (value: number) => `Importanza ${value}/5`,
+  /** «Cosa fare adesso»: attività con la scadenza passata (in evidenza e nelle righe sotto). */
+  overdue: "Scaduta",
+  overdueOn: (date: string) => `Scaduta il ${date}`,
   weekTarget: (hours: string) => `su ${hours} h di obiettivo`,
   weekNoTarget: "Nessun obiettivo settimanale: impostalo in Impostazioni"
 } as const;
@@ -58,7 +61,11 @@ export const HOME_HELP = {
 /** Home: guida «Per iniziare». */
 export const HOME_GUIDE_TEXT = {
   /** Menu del corso nel primo passo: decide se le materie arrivano dal catalogo del corso. */
-  degreeLabel: "Il tuo corso di laurea"
+  degreeLabel: "Il tuo corso di laurea",
+  /** Passo «Inserisci le lezioni»: apre il Calendario con la guida all'importazione già aperta. */
+  importCalendar: "Importa da Google o Apple",
+  /** Passo fatto: al posto della descrizione. */
+  done: "Fatto."
 } as const;
 
 /** Home: riquadro delle prossime ricorrenze (compleanni, anniversari). */

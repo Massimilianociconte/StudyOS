@@ -78,3 +78,44 @@ test("collegamento argomenti: materia dell'esame scelta in Studio (dispositivo),
     ]
   });
 });
+
+test("giorni all'esame: il giorno stesso dice «Oggi», non «0 giorni»", async () => {
+  const { EXAMS_TEXT } = await import("../src/lib/labels/exams.ts");
+  // Riquadro della scheda (Esami e Home): numero grande e parola sotto.
+  assert.deepEqual(EXAMS_TEXT.countdown(0), { value: "Oggi", unit: "" });
+  assert.deepEqual(EXAMS_TEXT.countdown(1), { value: "1", unit: "giorno" });
+  assert.deepEqual(EXAMS_TEXT.countdown(12), { value: "12", unit: "giorni" });
+  // In riga, dopo la data (scheda con copertina): come in Statistiche.
+  assert.equal(EXAMS_TEXT.countdownInline(0), "oggi");
+  assert.equal(EXAMS_TEXT.countdownInline(1), "domani");
+  assert.equal(EXAMS_TEXT.countdownInline(12), "12 giorni");
+});
+
+test("giorni all'esame: una data già passata non diventa mai «-1 giorni»", async () => {
+  const { EXAMS_TEXT } = await import("../src/lib/labels/exams.ts");
+  // Stessa forma del riquadro «Data / da decidere»: parola sopra, parola sotto.
+  assert.deepEqual(EXAMS_TEXT.countdown(-1), { value: "Data", unit: "passata" });
+  assert.deepEqual(EXAMS_TEXT.countdown(-40), { value: "Data", unit: "passata" });
+  assert.equal(EXAMS_TEXT.countdownInline(-1), "data passata");
+  assert.equal(EXAMS_TEXT.countdownInline(-40), "data passata");
+  for (const days of [-1, -2, -365]) {
+    const box = EXAMS_TEXT.countdown(days);
+    assert.doesNotMatch(`${box.value} ${box.unit} ${EXAMS_TEXT.countdownInline(days)}`, /-|\d/);
+  }
+});
+
+test("Date ufficiali: testi della cella del mese e delle iscrizioni dello stesso appello", async () => {
+  const { EXAMS_TEXT } = await import("../src/lib/labels/exams.ts");
+  // Cella del mese: singolare e plurale, anche a zero.
+  assert.equal(EXAMS_TEXT.dayCellLabel("22 gennaio 2027", 1), "Apri 22 gennaio 2027, 1 appello");
+  assert.equal(EXAMS_TEXT.dayCellLabel("22 gennaio 2027", 2), "Apri 22 gennaio 2027, 2 appelli");
+  assert.equal(EXAMS_TEXT.dayCellLabel("23 gennaio 2027", 0), "Apri 23 gennaio 2027, 0 appelli");
+  // Ogni iscrizione si riconosce dal numero e dalla commissione, quando c'è.
+  assert.equal(EXAMS_TEXT.registrationLabel(1, "AMADEO ALIDA"), "Iscrizione 1 · AMADEO ALIDA");
+  assert.equal(EXAMS_TEXT.registrationLabel(2, null), "Iscrizione 2");
+  // Riga che la distingue: solo le parti che ci sono, nell'ordine prova · aula · chiusura · elenco.
+  assert.equal(EXAMS_TEXT.registrationHint({ component: "TEST ACCERTAMENTO", location: "Online", closes: "24 novembre 2026" }), "TEST ACCERTAMENTO · Online · chiusura iscrizioni 24 novembre 2026");
+  assert.equal(EXAMS_TEXT.registrationHint({ list: "FBG-39" }), "elenco FBG-39");
+  assert.equal(EXAMS_TEXT.registrationHint({ component: null, location: null, closes: null, list: null }), "");
+  assert.match(EXAMS_TEXT.slotChooserIntro(2), /2 iscrizioni/);
+});
