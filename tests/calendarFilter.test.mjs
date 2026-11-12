@@ -11,7 +11,8 @@ import {
   itemMatchesSubject,
   resolveCalendarMode,
   resolveSubjectFilter,
-  subjectCalendarSummary
+  subjectCalendarSummary,
+  subjectJumpDay
 } from "../src/lib/calendarFilter.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
 
@@ -284,4 +285,74 @@ test("resolveCalendarMode: Esami e Per materia restano validi come riepiloghi", 
 
 test("resolveCalendarMode: valori sconosciuti o rotti tornano a Settimana", () => {
   for (const bad of [undefined, null, "", "year", 3, {}]) assert.deepEqual(resolveCalendarMode(bad, "sì"), { mode: "week", dayFocus: false });
+});
+
+/* ------------------------------------------------------------------ */
+/* Riepilogo per materia: dove porta il calendario                      */
+/* ------------------------------------------------------------------ */
+
+const NOW = new Date(2026, 10, 12, 15, 0);
+const ymd = (date) => (date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : null);
+const jump = (input) => ymd(subjectJumpDay({ subjectId: "s1", events: [], exams: [], tasks: [], now: NOW, ...input }));
+
+test("subjectJumpDay: la prossima voce della materia, anche oltre la settimana mostrata (1 impegno il 20)", () => {
+  const events = [
+    event("e1", { subjectId: "s1", start: new Date(2026, 10, 20, 9).toISOString(), end: new Date(2026, 10, 20, 11).toISOString() }),
+    event("e2", { subjectId: "s2", start: new Date(2026, 10, 13, 9).toISOString(), end: new Date(2026, 10, 13, 11).toISOString() })
+  ];
+  assert.equal(jump({ events }), "2026-11-20");
+});
+
+test("subjectJumpDay: la voce più vicina tra eventi, esami e scadenze", () => {
+  const events = [event("e1", { subjectId: "s1", start: new Date(2026, 10, 30, 9).toISOString(), end: new Date(2026, 10, 30, 10).toISOString() })];
+  const exams = [exam("x1", "s1", { date: new Date(2026, 11, 15, 9).toISOString() })];
+  const tasks = [task("t1", { subjectId: "s1", dueDate: new Date(2026, 10, 25, 18).toISOString() })];
+  assert.equal(jump({ events, exams, tasks }), "2026-11-25");
+  assert.equal(jump({ events, exams }), "2026-11-30");
+  assert.equal(jump({ exams }), "2026-12-15");
+});
+
+test("subjectJumpDay: una serie conta dalla sua prossima volta, non dal primo giorno", () => {
+  // Ogni lunedì da settembre: il prossimo lunedì dopo giovedì 12 novembre è il 16.
+  const events = [
+    event("w", { subjectId: "s1", recurrence: "weekly", start: new Date(2026, 8, 7, 9).toISOString(), end: new Date(2026, 8, 7, 11).toISOString() })
+  ];
+  assert.equal(jump({ events }), "2026-11-16");
+});
+
+test("subjectJumpDay: le voci di oggi (anche già passate nell'ora) e quelle in corso portano a oggi", () => {
+  const morning = event("m", { subjectId: "s1", start: new Date(2026, 10, 12, 8).toISOString(), end: new Date(2026, 10, 12, 9).toISOString() });
+  assert.equal(jump({ events: [morning] }), "2026-11-12");
+  const trip = event("t", { subjectId: "s1", start: new Date(2026, 10, 10, 9).toISOString(), end: new Date(2026, 10, 14, 9).toISOString() });
+  assert.equal(jump({ events: [trip] }), "2026-11-12");
+});
+
+test("subjectJumpDay: senza voci future, l'ultima passata; senza voci, null", () => {
+  const events = [
+    event("a", { subjectId: "s1", start: new Date(2026, 9, 1, 9).toISOString(), end: new Date(2026, 9, 1, 10).toISOString() }),
+    event("b", { subjectId: "s1", start: new Date(2026, 9, 20, 9).toISOString(), end: new Date(2026, 9, 20, 10).toISOString() })
+  ];
+  const tasks = [task("t", { subjectId: "s1", dueDate: new Date(2026, 9, 5, 18).toISOString() })];
+  assert.equal(jump({ events, tasks }), "2026-10-20");
+  assert.equal(jump({ tasks }), "2026-10-05");
+  // Una serie finita: la sua ultima volta.
+  const ended = event("w", {
+    subjectId: "s1",
+    recurrence: "weekly",
+    recurrenceUntil: "2026-10-26",
+    start: new Date(2026, 8, 7, 9).toISOString(),
+    end: new Date(2026, 8, 7, 10).toISOString()
+  });
+  assert.equal(jump({ events: [ended] }), "2026-10-26");
+  assert.equal(jump({}), null);
+});
+
+test("subjectJumpDay: voci archiviate, di altre materie o giorni annullati non contano", () => {
+  const events = [
+    event("arch", { subjectId: "s1", archived: true, start: new Date(2026, 10, 14, 9).toISOString(), end: new Date(2026, 10, 14, 10).toISOString() }),
+    event("other", { subjectId: "s2", start: new Date(2026, 10, 15, 9).toISOString(), end: new Date(2026, 10, 15, 10).toISOString() })
+  ];
+  const exams = [exam("x", "s1", { archived: true, date: new Date(2026, 10, 16, 9).toISOString() })];
+  const tasks = [task("t", { subjectId: "s1", status: "archived", dueDate: new Date(2026, 10, 17, 18).toISOString() })];
+  assert.equal(jump({ events, exams, tasks }), null);
 });

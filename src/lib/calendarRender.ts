@@ -6,9 +6,11 @@ import { collapseForWidth, eventDaySpan, layoutDayColumns, multiDaySegments, typ
 import { formatRangeField, parseYmd, todayYmd } from "./datePicker";
 import {
   EVENT_TYPE_COLORS,
+  contrastRatio,
   eventColorStyle,
   eventTypeIcon,
   eventTypeKey,
+  mixHex,
   resolveEventColor,
   type EventTheme,
   type EventTypeKey,
@@ -25,8 +27,20 @@ const HOUR_MS = 3_600_000;
 export const MIN_EVENT_HEIGHT_PX = 20;
 /** Larghezza minima (px) di una colonna di eventi affiancati: sotto, i successivi vanno nel "+N". */
 export const MIN_EVENT_COLUMN_PX = 56;
-/** Spazio (px) a destra di una fascia con il "+N". */
-export const MORE_GUTTER_PX = 28;
+/** Lato minimo (px) di un bersaglio da dito. */
+export const TOUCH_TARGET_PX = 44;
+/**
+ * "+N" accanto a una fascia di eventi sovrapposti. Dito (`pointer: coarse`): largo 44 px, gli eventi
+ * accanto almeno MIN_EVENT_COLUMN_PX. Mouse: 28 px (sopra i 24 px minimi; l'altezza si allunga
+ * comunque a 44) e colonne affiancate fino a 44 px, così a 1280 due eventi stanno ancora vicini.
+ */
+export const OVERLAP_SIZES = {
+  touch: { gutter: TOUCH_TARGET_PX, column: MIN_EVENT_COLUMN_PX },
+  mouse: { gutter: 28, column: 44 }
+} as const;
+export type OverlapPointer = keyof typeof OVERLAP_SIZES;
+/** Spazio (px) a destra di una fascia con il "+N" sugli schermi touch: largo un bersaglio da dito. */
+export const MORE_GUTTER_PX = OVERLAP_SIZES.touch.gutter;
 
 /** Durata (ms) che occupa davvero un evento corto: l'altezza minima in px divisa per i px all'ora. */
 export const minDurationMsFor = (hourHeight: number, minHeightPx = MIN_EVENT_HEIGHT_PX) => Math.round((minHeightPx / hourHeight) * HOUR_MS);
@@ -123,25 +137,33 @@ export type MoreBand<T> = { cluster: number; count: number; startMs: number; end
 
 /**
  * Eventi contemporanei affiancati (layoutDayColumns con l'altezza minima della griglia). Se una fascia
- * ha più colonne di quante ne entrano (`columnWidth`), restano le prime e il resto diventa un "+N" che
- * apre l'elenco di tutta la fascia; `narrowed` = la fascia lascia spazio a destra per il "+N".
+ * ha più colonne di quante ne entrano (`columnWidth`), restano le prime che stanno accanto al "+N"
+ * (larghezze in OVERLAP_SIZES per `pointer`, dito se non detto) e il "+N" apre l'elenco di tutta la
+ * fascia; `narrowed` = la fascia lascia `gutter` px a destra per il "+N". Se accanto al "+N" non
+ * restano MIN_EVENT_COLUMN_PX (`merged`, Settimana sul tablet) la fascia è solo il pulsante, largo
+ * quanto la colonna.
  */
 export function layoutTimedDay<T extends { occurrenceKey: string }>(
   pieces: readonly DayPiece<T>[],
-  { hourHeight, columnWidth }: { hourHeight: number; columnWidth: number }
-): { placed: PlacedPiece<T>[]; more: MoreBand<T>[] } {
+  { hourHeight, columnWidth, pointer = "touch" }: { hourHeight: number; columnWidth: number; pointer?: OverlapPointer }
+): { placed: PlacedPiece<T>[]; more: MoreBand<T>[]; merged: boolean; gutter: number } {
   const byKey = new Map(pieces.map((piece) => [piece.item.occurrenceKey, piece]));
   const layout = layoutDayColumns(
     pieces.map((piece) => ({ id: piece.item.occurrenceKey, startMs: piece.startMs, endMs: piece.endMs })),
     { minDurationMs: minDurationMsFor(hourHeight) }
   );
-  const { items, more } = collapseForWidth(layout, maxColumnsFor(columnWidth));
+  const { gutter, column } = OVERLAP_SIZES[pointer] ?? OVERLAP_SIZES.touch;
+  const beside = columnWidth - gutter;
+  const merged = !(beside >= MIN_EVENT_COLUMN_PX);
+  const { items, more } = collapseForWidth(layout, maxColumnsFor(columnWidth), merged ? 0 : maxColumnsFor(beside, column));
   const collapsed = new Set(more.map((group) => group.cluster));
   const placed = items.flatMap((entry) => {
     const piece = byKey.get(entry.id);
     return piece ? [{ ...piece, key: entry.id, column: entry.column, columns: entry.columns, span: entry.span, narrowed: collapsed.has(entry.cluster) }] : [];
   });
   return {
+    merged,
+    gutter,
     placed,
     more: more.map((group) => ({
       cluster: group.cluster,
@@ -186,6 +208,40 @@ export function laneRows(items: readonly DayRangeItem[], weekStarts: readonly st
   });
 }
 
+/**
+ * Fondi più difficili su cui stanno i pallini, con colori pieni: la cella del Mese (quella di oggi, la
+ * più chiara nel tema scuro) e il pulsante della fascia raccolta (--surface-strong). Nel tema chiaro
+ * entrambi sono quasi bianchi.
+ */
+export const DOT_SURFACES = {
+  dark: { cell: "#3C3E48", pill: "#4A4C57" },
+  light: { cell: "#FFFFFF", pill: "#FFFFFF" }
+} as const;
+
+/**
+ * Colore di un pallino: quello della tipologia (o della materia), avvicinato al testo del tema finché
+ * ha almeno 3:1 sul fondo (contrasto degli oggetti grafici, WCAG 1.4.11). Colore non valido: "Altro".
+ */
+export function dotColor(hex: string, theme: EventTheme, surface: "cell" | "pill" = "cell"): string {
+  const start = /^#[0-9a-f]{6}$/i.test(hex) ? hex : EVENT_TYPE_COLORS.other;
+  const against = DOT_SURFACES[theme][surface];
+  const toward = theme === "dark" ? "#FFFFFF" : "#16181F";
+  for (let step = 0; step <= 20; step += 1) {
+    const candidate = mixHex(toward, start, step / 20);
+    if (contrastRatio(candidate, against) >= 3) return candidate;
+  }
+  return toward;
+}
+
+/**
+ * Pallini di una cella (Mese sul telefono, fascia raccolta della Settimana): uno per voce nel colore
+ * della sua tipologia, al più `max`; le altre si contano in «+N».
+ */
+export const monthDots = (colors: readonly string[], max = 3): { dots: string[]; more: number } => ({
+  dots: colors.slice(0, max),
+  more: Math.max(0, colors.length - max)
+});
+
 /** Voci del giorno (eventi con orario, esami, Attività) che una cella del Mese mostra sotto le barre. */
 export const monthItemBudget = (visibleLanes: number, limit = 3) => Math.max(1, limit - visibleLanes);
 
@@ -201,6 +257,18 @@ export function listDayOf(item: Timed, firstDay: string, lastDay: string): strin
   const span = daySpanOf(item);
   if (!span || span.endDay < firstDay || span.startDay > lastDay) return null;
   return span.startDay < firstDay ? firstDay : span.startDay;
+}
+
+/**
+ * Voce con orario mostrata in un elenco sotto `listDay` ma cominciata prima (un evento della sera prima
+ * che passa la mezzanotte, in cima al primo giorno dell'Agenda): il giorno in cui è cominciata, per
+ * dirla «continua» e non farla sembrare di quel giorno. null se comincia quel giorno, e per le barre
+ * (tutto il giorno, più giorni), che dicono già il loro periodo.
+ */
+export function continuedFrom(item: Timed, listDay: string): string | null {
+  if (isBarEvent(item)) return null;
+  const span = daySpanOf(item);
+  return span && span.startDay < listDay ? span.startDay : null;
 }
 
 /** "ven 4 – dom 6 dic" per una barra su più giorni; null per tutto il resto. */

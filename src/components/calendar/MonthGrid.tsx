@@ -11,7 +11,8 @@ import { WEEKDAY_SHORT } from "../../lib/labels";
 import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { addDays as addYmdDays, daysInclusive } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";
-import { holidayBars, holidayId, holidayPaint, isBarEvent, laneRows, monthItemBudget, occasionText, weekStartsOf } from "../../lib/calendarRender";
+import { dotColor, holidayBars, holidayId, holidayPaint, isBarEvent, laneRows, monthDots, monthItemBudget, occasionText, weekStartsOf } from "../../lib/calendarRender";
+import { EVENT_TYPE_COLORS } from "../../lib/eventColors";
 import { EventBar, HolidayChip, TypeIcon, eventBars, useEventPaint, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
 import { canDrag, defaultStartFor, editOccurrence, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
@@ -56,6 +57,10 @@ export function MonthGrid({
   // Prima gli eventi dell'utente: a parità di giorni le festività cedono la corsia (e vanno nel "+N").
   const rows = laneRows([...bars, ...holidayBars(holidays)], weekStartsOf(days), MONTH_LANES);
   const timed = occurrences.filter((item) => !isBarEvent(item));
+  // Pallini del telefono: esami e scadenze nel colore delle loro tipologie, come le voci sul computer.
+  const examDot = dotColor(EVENT_TYPE_COLORS.exam, theme);
+  const taskDot = dotColor(EVENT_TYPE_COLORS.deadline, theme);
+  const dotOf = (item: CalendarOccurrence) => dotColor(paintOf(item, handlers.subjects).color, theme);
 
   /** Click, trascinamento e rilascio su un giorno (fondo, numero e voci della cella). */
   const dayTarget = (day: Date, key: string) => ({
@@ -98,6 +103,8 @@ export function MonthGrid({
         const week = days.slice(rowIndex * 7, rowIndex * 7 + 7);
         const budget = monthItemBudget(row.lanes);
         const itemsRow = row.lanes + 2;
+        // Barre disegnate (come filo) in questa riga: le altre hanno un pallino nei loro giorni.
+        const shownBars = new Set(row.segments.map((segment) => segment.id));
         return (
           <div
             key={row.weekStart}
@@ -122,22 +129,28 @@ export function MonthGrid({
               );
             })}
 
-            {/* numero del giorno (e, sul telefono, un punto se ci sono voci) */}
+            {/* numero del giorno (e, sul telefono, un pallino per voce nel colore della sua tipologia) */}
             {week.map((day, column) => {
               const key = day.toISOString();
               const today = isSameDay(day, now);
-              // Sul telefono anche le barre oltre le corsie mostrate accendono il punto.
-              const hasItems =
-                row.hidden[column] > 0 ||
-                timed.some((item) => isSameDay(parseISO(item.start), day)) ||
-                tasks.some((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)) ||
-                exams.some((exam) => isSameDay(parseISO(exam.date), day));
+              const ymd = addYmdDays(row.weekStart, column);
+              // Sul telefono anche le barre oltre le corsie mostrate hanno il loro pallino. Colori: quello
+              // della voce, schiarito (o scurito) quanto basta per 3:1 sul fondo della cella.
+              const dots = monthDots([
+                ...exams.filter((exam) => isSameDay(parseISO(exam.date), day)).map(() => examDot),
+                ...timed.filter((item) => isSameDay(parseISO(item.start), day)).map(dotOf),
+                ...tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)).map(() => taskDot),
+                ...bars.filter((bar) => bar.startDay <= ymd && bar.endDay >= ymd && !shownBars.has(bar.id)).map((bar) => dotOf(bar.item))
+              ]);
               return (
                 <div
                   key={`head-${key}`}
                   role="presentation"
                   {...dayTarget(day, key)}
-                  className={`flex min-w-0 cursor-copy items-center justify-between gap-1 px-1 pt-1 sm:px-1.5 sm:pt-1.5 ${isSameMonth(day, month) ? "" : "opacity-45"}`}
+                  // Giorni di un altro mese: numero nel colore attenuato del tema (≥ 4,5:1 sulla cella in
+                  // entrambi i temi), non trasparente come il fondo.
+                  // Sul telefono i pallini stanno sotto il numero (la cella è larga ~42 px).
+                  className={`flex min-w-0 cursor-copy flex-col items-center gap-1 px-1 pt-1 sm:flex-row sm:justify-between sm:px-1.5 sm:pt-1.5 ${isSameMonth(day, month) ? "" : "text-[var(--faint)]"}`}
                   style={{ gridColumn: column + 1, gridRow: 1 }}
                 >
                   <button
@@ -154,7 +167,14 @@ export function MonthGrid({
                   >
                     {format(day, "d")}
                   </button>
-                  {hasItems ? <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] sm:hidden" /> : null}
+                  {dots.dots.length ? (
+                    <span aria-hidden="true" className="flex min-w-0 items-center gap-0.5 sm:hidden">
+                      {dots.dots.map((color, index) => (
+                        <span key={index} className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+                      ))}
+                      {dots.more ? <span className="text-[10px] font-black leading-none text-[var(--muted)]">{CALENDAR_VIEW_TEXT.moreDots(dots.more)}</span> : null}
+                    </span>
+                  ) : null}
                 </div>
               );
             })}
@@ -318,7 +338,11 @@ function MonthEvent({
         <TypeIcon paint={paint} />
       </span>
       {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
-      <span className="shrink-0 tabular-nums text-[var(--muted)]">{timeLabel(item.start)}</span>
+      {/* Sotto lg l'orario lascerebbe al titolo una lettera: resta nel nome accessibile e nell'anteprima. */}
+      <span className="sr-only shrink-0 tabular-nums text-[var(--muted)] lg:not-sr-only">
+        {timeLabel(item.start)}
+        <span className="sr-only">, </span>
+      </span>
       <span className="min-w-0 truncate">{item.title}</span>
     </button>
   );

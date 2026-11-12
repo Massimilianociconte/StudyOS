@@ -2,8 +2,8 @@
 // serie + giorno da passare a editOccurrence / deleteOccurrence e modifica da passare a "Tutti".
 // Puro e leggero: lo usa anche l'agente, che sta nel bundle iniziale.
 import type { CalendarEvent } from "../types";
-import { expandEvents, isOccurrenceRow, occurrenceId, type EventOccurrence } from "./repeat";
-import { civilAddDays, civilDateOf, civilDaysBetween, isCivilDate, localMidnight } from "./tz";
+import { allDayDays, allDaySpan, allDayTimes, expandEvents, isOccurrenceRow, occurrenceId, type EventOccurrence } from "./repeat";
+import { civilAddDays, civilDateOf, civilDaysBetween, isCivilDate, isValidTimeZone, localMidnight } from "./tz";
 
 /**
  * Occorrenza `date` (YYYY-MM-DD, nel fuso della serie) dell'evento `id`: la serie o, se quel giorno
@@ -26,11 +26,24 @@ export const occurrenceTarget = (item: Pick<CalendarEvent, "id" | "seriesId" | "
     ? { seriesId: item.seriesId as string, date: isCivilDate(item.originalDate) ? item.originalDate : item.occurrenceDate, row: true }
     : { seriesId: item.id, date: item.occurrenceDate, row: false };
 
-/** Sposta inizio e fine della modifica di `days` giorni (ora locale), il resto uguale. */
-export const shiftPatchDays = (patch: Partial<CalendarEvent>, days: number): Partial<CalendarEvent> => {
+/**
+ * Sposta inizio e fine della modifica di `days` giorni, il resto uguale. Con orario: ora locale. Tutto
+ * il giorno (`allDay`): gli stessi giorni spostati, a mezzanotte nel fuso `zone` dell'evento (come li
+ * salvano i moduli), mai nell'ora del dispositivo.
+ */
+export const shiftPatchDays = (
+  patch: Partial<CalendarEvent>,
+  days: number,
+  { allDay = false, zone }: { allDay?: boolean; zone?: string } = {}
+): Partial<CalendarEvent> => {
   if (!days) return patch;
+  const valid = isValidTimeZone(zone) ? zone : undefined;
   const shift = (value: string | undefined) => {
     if (value === undefined) return undefined;
+    if (allDay) {
+      const day = allDaySpan(value, undefined, valid)?.date;
+      return day ? allDayTimes(civilAddDays(day, days), civilAddDays(day, days), valid).start : value;
+    }
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     date.setDate(date.getDate() + days);
@@ -43,11 +56,22 @@ export const shiftPatchDays = (patch: Partial<CalendarEvent>, days: number): Par
   };
 };
 
-/** Giorno (YYYY-MM-DD) di un inizio: tutto il giorno nell'ora locale, altrimenti nel fuso della serie. */
+/**
+ * Giorno (YYYY-MM-DD) di un inizio salvato o di una modifica, nel fuso della serie. Tutto il giorno:
+ * la mezzanotte in quel fuso (o la più vicina, vedi `allDaySpan`), mai il giorno del dispositivo; per
+ * un'occorrenza espansa, che sta alla mezzanotte del dispositivo, vale `shownDayOf`.
+ */
 export const startDayOf = (start: string, allDay: boolean | undefined, zone: string | undefined) => {
+  if (allDay) return allDaySpan(start, undefined, isValidTimeZone(zone) ? zone : undefined)?.date ?? "";
   const date = new Date(start);
-  return Number.isNaN(date.getTime()) ? "" : civilDateOf(date, allDay ? undefined : zone);
+  return Number.isNaN(date.getTime()) ? "" : civilDateOf(date, zone);
 };
+
+/** Primo giorno di un'occorrenza come si vede: tutto il giorno con `allDayDays`, altrimenti nel fuso `zone` della serie. */
+export const shownDayOf = (
+  item: Pick<CalendarEvent, "start" | "allDay"> & Partial<Pick<CalendarEvent, "end" | "timeZone">> & { occurrenceKey?: unknown },
+  zone: string | undefined
+) => (item.allDay === true ? allDayDays(item)?.first ?? "" : startDayOf(item.start, false, zone));
 
 /**
  * Modifica da passare a "Tutti" salvando dal giorno `date`. La serie si sposta dello scarto tra la
@@ -62,7 +86,7 @@ export const allScopePatch = (
     series,
     date
   }: {
-    occurrence: Pick<CalendarEvent, "start" | "allDay">;
+    occurrence: Pick<CalendarEvent, "start" | "allDay"> & Partial<Pick<CalendarEvent, "end" | "timeZone">> & { occurrenceKey?: unknown };
     series: Pick<CalendarEvent, "start" | "allDay" | "timeZone">;
     date: string;
   }
@@ -71,8 +95,8 @@ export const allScopePatch = (
   // Un "tutto il giorno" invariato si passa così com'è: il motore lo confronta con `?? false`.
   if (changes.start === undefined && changes.end === undefined) return changes;
   const zone = series.timeZone;
-  const from = startDayOf(occurrence.start, occurrence.allDay, zone);
+  const from = shownDayOf(occurrence, zone);
   const to = toggled ? startDayOf(series.start, series.allDay, zone) : date;
   if (!isCivilDate(from) || !isCivilDate(to)) return changes;
-  return shiftPatchDays(changes, civilDaysBetween(from, to));
+  return shiftPatchDays(changes, civilDaysBetween(from, to), { allDay: (changes.allDay ?? series.allDay) === true, zone });
 };

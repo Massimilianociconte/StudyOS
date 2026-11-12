@@ -4,7 +4,7 @@
 // Il filtro lavora su qualunque elenco di voci mostrate (occorrenze, attività, esami, sessioni…)
 // che abbia `subjectId`: un nuovo modello di occorrenze si aggancia passando i suoi elenchi.
 import type { CalendarEvent, Exam, Subject, Task } from "../types";
-import { isOccurrenceRow, normalizeRepeat } from "./repeat";
+import { expandEvents, isOccurrenceRow, normalizeRepeat } from "./repeat";
 
 /* ------------------------------------------------------------------ */
 /* Filtro per materia                                                   */
@@ -159,6 +159,69 @@ export const subjectCalendarSummary = <S extends SubjectState>({
     };
   });
   return { planned: rows.length, withItems: rows.filter((row) => row.items > 0).length, rows };
+};
+
+const YEAR_WINDOW_DAYS = 366;
+const localDayOf = (ms: number) => {
+  const date = new Date(ms);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+};
+const shiftDays = (day: Date, days: number) => new Date(day.getFullYear(), day.getMonth(), day.getDate() + days);
+
+/**
+ * Giorno su cui aprire il calendario per una materia scelta nel riepilogo: quello della sua prossima
+ * voce (evento o sua prossima volta, esame, scadenza) da oggi in poi; una voce già in corso porta a
+ * oggi. Senza voci future, l'ultima passata; senza voci, null. Contano le stesse voci del riepilogo
+ * (niente archiviate né giorni annullati); gli eventi si cercano un anno alla volta, fino a `years`.
+ */
+export const subjectJumpDay = ({
+  subjectId,
+  events,
+  exams,
+  tasks,
+  now = new Date(),
+  years = 5
+}: {
+  subjectId: string;
+  events: readonly CalendarEvent[];
+  exams: readonly Pick<Exam, "subjectId" | "archived" | "date">[];
+  tasks: readonly Pick<Task, "subjectId" | "archived" | "status" | "dueDate">[];
+  now?: Date;
+  years?: number;
+}): Date | null => {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayMs = today.getTime();
+  const dated = [
+    ...exams.filter((exam) => !exam.archived && exam.subjectId === subjectId).map((exam) => exam.date),
+    ...tasks.filter((task) => !task.archived && task.status !== "archived" && task.subjectId === subjectId).map((task) => task.dueDate)
+  ]
+    .map((iso) => (typeof iso === "string" ? Date.parse(iso) : Number.NaN))
+    .filter((ms) => !Number.isNaN(ms));
+  // Le righe dei giorni cambiati da soli servono all'espansione (sostituiscono o annullano il loro giorno).
+  const own = events.filter((event) => isOccurrenceRow(event) || event.subjectId === subjectId);
+  const shown = (from: Date, to: Date) => expandEvents(own, from, to).filter((item) => item.subjectId === subjectId);
+
+  let next = Math.min(Infinity, ...dated.filter((ms) => ms >= todayMs));
+  for (let year = 0; year < years; year += 1) {
+    const from = shiftDays(today, year * YEAR_WINDOW_DAYS);
+    if (from.getTime() >= next) break;
+    const first = shown(from, shiftDays(today, (year + 1) * YEAR_WINDOW_DAYS))[0];
+    if (!first) continue;
+    next = Math.min(next, Math.max(Date.parse(first.start), from.getTime()));
+    break;
+  }
+  if (Number.isFinite(next)) return localDayOf(next);
+
+  let last = Math.max(-Infinity, ...dated.filter((ms) => ms < todayMs));
+  for (let year = 0; year < years; year += 1) {
+    const to = shiftDays(today, -year * YEAR_WINDOW_DAYS);
+    if (to.getTime() <= last) break;
+    const found = shown(shiftDays(today, -(year + 1) * YEAR_WINDOW_DAYS), to);
+    if (!found.length) continue;
+    last = Math.max(last, Date.parse(found[found.length - 1].start));
+    break;
+  }
+  return Number.isFinite(last) ? localDayOf(last) : null;
 };
 
 /* ------------------------------------------------------------------ */

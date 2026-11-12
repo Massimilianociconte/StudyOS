@@ -52,7 +52,7 @@ import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
 import { draftFromEvent, editorFormFor, initialColorCustom, newEventDraft, recipientEventUpdate, rowHasOwnContent, scopeOptions, type EventDraft, type ScopeOption } from "../lib/eventEditor";
-import { occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, weekdayShift, type ScopeImpact } from "../lib/occurrenceEdit";
+import { draggedTimes, occurrenceEditCalls, scopeImpact, seriesMovePatch, seriesSpan, userRuleChange, weekdayShift, type ScopeImpact } from "../lib/occurrenceEdit";
 import {
   newOccasionDraft,
   newVacationDraft,
@@ -60,6 +60,7 @@ import {
   occasionChanges,
   occasionDraftFromEvent,
   occasionFields,
+  occasionStartYear,
   vacationChanges,
   vacationDraftFromEvent,
   vacationFields
@@ -97,6 +98,7 @@ import {
   resolveCalendarMode,
   resolveSubjectFilter,
   subjectCalendarSummary,
+  subjectJumpDay,
   type CalendarViewId,
   type SubjectCalendarSummary
 } from "../lib/calendarFilter";
@@ -110,7 +112,7 @@ import { todayYmd } from "../lib/datePicker";
 import { DayList } from "../components/calendar/DayList";
 import { MonthGrid } from "../components/calendar/MonthGrid";
 import { TimeGrid } from "../components/calendar/TimeGrid";
-import { defaultStartFor } from "../components/calendar/shared";
+import { NARROW_QUERY, PHONE_QUERY, defaultStartFor, useMediaQuery } from "../components/calendar/shared";
 import type {
   CalendarOccurrence,
   CalendarPreviewState,
@@ -200,6 +202,10 @@ export function CalendarView() {
   const [storedMode, setMode] = useUiState<StoredCalendarMode>("calendar.mode", "week", { validate: oneOf(...STORED_CALENDAR_MODES) });
   const [storedDayFocus, setDayFocus] = useUiState<boolean>("calendar.dayFocus", false, { validate: (value) => typeof value === "boolean" });
   const { mode, dayFocus } = resolveCalendarMode(storedMode, storedDayFocus);
+  // Sotto 768 px "Solo 8–19" e "Festività" vanno in «Altre azioni»; sotto 640 px (dove c'è il + fisso
+  // in basso) si crea solo da lì. Stesse preferenze salvate; sul computer non cambia nulla.
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const phone = useMediaQuery(PHONE_QUERY);
   useEffect(() => {
     if (storedMode !== "focus") return;
     setDayFocus(true);
@@ -396,7 +402,7 @@ export function CalendarView() {
   /** Bozza del modulo completo da campi già pronti (dal modulo semplice), sopra l'evento salvato se c'è. */
   const draftFromFields = (fields: Partial<CalendarEvent>, saved?: CalendarEvent) =>
     draftFromEvent({ links: [], priority: "medium", status: "planned", description: "", ...saved, ...fields } as CalendarEvent, ownColorContext(saved?.subjectId));
-  const startYearOf = (event: CalendarEvent) => parseCivil(civilDateOf(new Date(event.start)))?.year;
+  const startYearOf = (event: CalendarEvent) => occasionStartYear(event);
   /** Colore scelto a mano per l'evento (per l'anteprima dei moduli semplici), se c'è. */
   const customColorOf = (event: CalendarEvent) =>
     initialColorCustom(event, ownColorContext(event.subjectId).subjectColor) ? safeCssColor(event.color) || undefined : undefined;
@@ -541,10 +547,9 @@ export function CalendarView() {
       // Un giorno di una mia serie: solo questo, questo e i successivi, o tutti.
       const target = occurrenceTarget(item);
       const own = ownSeriesOf(target.seriesId);
-      const start = new Date(parseISO(item.start).getTime() + delta);
-      const end = new Date(parseISO(item.end).getTime() + delta);
-      if (!own || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
-      const moved = { start: start.toISOString(), end: end.toISOString() };
+      // Tutto il giorno: gli stessi giorni spostati, a mezzanotte nel fuso della serie (non del dispositivo).
+      const moved = draggedTimes(item, delta);
+      if (!own || !moved) return;
       // Il giorno porta con sé ciò che mostra (per "Questo e i successivi" da un giorno cambiato da solo).
       const scope = await askScope(SCOPE_TEXT.titleMove(shortTitle(item.title)), occurrenceScopeOptions(item, "move", moved, item));
       if (!scope) return;
@@ -560,9 +565,10 @@ export function CalendarView() {
       ? sharedEvents.find((event) => event.id === item.id && event.sharedFrom.ownerId === origin.ownerId)
       : events.find((event) => event.id === item.id);
     if (!series) return;
-    const start = new Date(parseISO(series.start).getTime() + delta);
-    const end = new Date(parseISO(series.end).getTime() + delta);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    const times = draggedTimes(series, delta);
+    if (!times) return;
+    const start = new Date(times.start);
+    const end = new Date(times.end);
     // Evento altrui che si ripete: si sposta tutta la serie dello stesso scarto (lo si dice prima, con i
     // giorni della settimana nuovi se la regola ne ha più d'uno).
     if (item.recurring) {
@@ -638,11 +644,25 @@ export function CalendarView() {
           // Una sola azione primaria; il resto, che si usa di rado, nel menu "Altre azioni".
           <PageActions
             primary={
-              <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
-                {CALENDAR_TEXT.newEvent}
-              </Button>
+              phone ? undefined : (
+                <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
+                  {CALENDAR_TEXT.newEvent}
+                </Button>
+              )
             }
             more={[
+              ...(narrow && mode === "day" && !summary
+                ? [{ label: dayFocus ? CALENDAR_TEXT.dayFocusOff : CALENDAR_TEXT.dayFocus, icon: "Clock", onClick: () => setDayFocus((value) => !value) } satisfies PageAction]
+                : []),
+              ...(narrow && !summary
+                ? [
+                    {
+                      label: showHolidays ? CALENDAR_TEXT.holidaysHide : CALENDAR_TEXT.holidaysShow,
+                      icon: "PartyPopper",
+                      onClick: () => setShowHolidays((value) => !value)
+                    } satisfies PageAction
+                  ]
+                : []),
               { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
               { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
               { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
@@ -688,7 +708,7 @@ export function CalendarView() {
               <Segmented label={CALENDAR_TEXT.viewsLabel} value={mode as CalendarViewId} onChange={setMode} options={modes} className="min-w-0 max-sm:[&>button]:px-2.5" />
               <HelpTip {...CALENDAR_HELP.views} />
             </div>
-            {mode === "day" ? (
+            {mode === "day" && !narrow ? (
               <button
                 type="button"
                 aria-pressed={dayFocus}
@@ -720,7 +740,7 @@ export function CalendarView() {
             active={filterSubject}
             onChange={setStoredSubject}
             showHolidays={showHolidays}
-            onToggleHolidays={() => setShowHolidays((value) => !value)}
+            onToggleHolidays={narrow ? undefined : () => setShowHolidays((value) => !value)}
             undatedCount={undated.length}
             onOpenUndated={mode === "day" || mode === "agenda" ? () => setUndatedOpen(true) : undefined}
           />
@@ -849,8 +869,12 @@ export function CalendarView() {
             summary={subjectSummary}
             onGoSubjects={() => setActiveView("subjects")}
             onFilter={(id) => {
+              // Si apre dove la materia ha qualcosa (la prossima voce, o l'ultima passata), nella vista
+              // da cui si era aperto il riepilogo: mai una settimana vuota con "1 impegno" nella scheda.
+              const day = subjectJumpDay({ subjectId: id, events, exams, tasks });
               setStoredSubject(id);
-              setMode("week");
+              if (day) setCursor(day);
+              setMode(returnMode.current);
             }}
             onOpenSubject={(id) => {
               writeUiState("subjects.open", id, "tab");
@@ -1283,8 +1307,9 @@ function ExamSession({
 }
 
 /**
- * Riepilogo "Per materia": ogni scheda mostra solo quella materia nel calendario (Settimana); "Apri
- * materia" porta alla sua scheda in Materie. Solo materie non archiviate, le superate in fondo.
+ * Riepilogo "Per materia": ogni scheda mostra solo quella materia nel calendario (nella vista di prima,
+ * sul giorno della sua prossima voce); "Apri materia" porta alla sua scheda in Materie. Solo materie
+ * non archiviate, le superate in fondo.
  */
 function SemesterMap({
   summary,

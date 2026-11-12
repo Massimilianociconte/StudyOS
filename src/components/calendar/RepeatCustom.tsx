@@ -3,12 +3,13 @@ import { DateField } from "../DatePicker";
 import { Field, inputClass } from "../ui";
 import type { RepeatRule, Weekday } from "../../types";
 import { REPEAT_PICKER_TEXT, WEEKDAY_NAME, WEEKDAY_SHORT } from "../../lib/labels";
-import { describeRule, WEEKDAYS } from "../../lib/repeat";
+import { WEEKDAYS } from "../../lib/repeat";
 import {
   customError,
   customFromRule,
   monthlyChoiceId,
   monthlyChoices,
+  repeatSummary,
   ruleFromCustom,
   type CustomRepeat,
   type RepeatUnit
@@ -175,7 +176,8 @@ export function RepeatCustom({
       ) : (
         <p className="rounded-[14px] bg-[var(--surface-soft)] p-2.5 text-sm font-bold" aria-live="polite">
           <span className="text-[var(--muted)]">{REPEAT_PICKER_TEXT.summary}: </span>
-          {describeRule(ruleFromCustom(custom, start), start)}
+          {/* Se l'inizio non è uno dei giorni scelti, lo dice: il motore lo conta come la prima volta. */}
+          {repeatSummary(ruleFromCustom(custom, start), start)}
         </p>
       )}
     </fieldset>

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const render = await import("../src/lib/calendarRender.ts");
-const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels/calendar.ts");
+const { CALENDAR_LAYOUT_TEXT, CALENDAR_VIEW_TEXT } = await import("../src/lib/labels/calendar.ts");
 const { EVENT_TYPE_COLORS } = await import("../src/lib/eventColors.ts");
 
 // Date locali del dispositivo: i test valgono in ogni fuso (Roma, New York, UTC).
@@ -97,23 +97,90 @@ test("layoutTimedDay: tre eventi 15–16 affiancati dove c'è spazio, +N dove no
   );
   assert.deepEqual(wide.more, []);
 
+  // Settimana su computer (124 px): il "+N" prende 44 px (bersaglio da dito), gli eventi accanto restano
+  // larghi almeno MIN_EVENT_COLUMN_PX: ne entra uno.
   const narrow = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 124 });
+  assert.equal(narrow.merged, false);
   assert.deepEqual(
     narrow.placed.map(({ item, column, columns, narrowed }) => [item.id, column, columns, narrowed]),
-    [
-      ["a", 0, 2, true],
-      ["b", 1, 2, true]
-    ]
+    [["a", 0, 1, true]]
   );
+  assert.ok(124 - render.MORE_GUTTER_PX >= render.MIN_EVENT_COLUMN_PX);
+  assert.ok(render.MORE_GUTTER_PX >= render.TOUCH_TARGET_PX);
   assert.equal(narrow.more.length, 1);
-  assert.equal(narrow.more[0].count, 1);
+  assert.equal(narrow.more[0].count, 2);
   assert.deepEqual(
     narrow.more[0].items.map((item) => item.id),
     ["a", "b", "c"],
     "il +N apre l'elenco di tutta la fascia"
   );
   assert.equal(narrow.more[0].startMs, local(2026, 12, 5, 15).getTime());
-  assert.equal(CALENDAR_LAYOUT_TEXT.more(narrow.more[0].count), "+1");
+  assert.equal(CALENDAR_LAYOUT_TEXT.more(narrow.more[0].count), "+2");
+  // Tre colonne ci stanno a 200 px, ma con il "+N" accanto due (2 × 78 px).
+  const four = [...items, timed("d", [2026, 12, 5, 15], [2026, 12, 5, 16])];
+  const fourPieces = render.dayPieces(four, local(2026, 12, 5).getTime(), local(2026, 12, 6).getTime());
+  const mid = render.layoutTimedDay(fourPieces, { hourHeight: 46, columnWidth: 200 });
+  assert.deepEqual(mid.placed.map(({ item, columns }) => [item.id, columns]), [["a", 2], ["b", 2]]);
+  assert.equal(mid.more[0].count, 2);
+});
+
+test("layoutTimedDay: in una colonna stretta (Settimana sul tablet) la fascia diventa un solo pulsante largo quanto la colonna", () => {
+  const items = [timed("a", [2026, 12, 5, 15], [2026, 12, 5, 16]), timed("b", [2026, 12, 5, 15, 30], [2026, 12, 5, 17]), timed("alone", [2026, 12, 5, 18], [2026, 12, 5, 19])];
+  const pieces = render.dayPieces(items, local(2026, 12, 5).getTime(), local(2026, 12, 6).getTime());
+  const tablet = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 72 });
+  assert.equal(tablet.merged, true);
+  // L'evento da solo resta a tutta larghezza; quelli che si sovrappongono sono tutti nel pulsante.
+  assert.deepEqual(tablet.placed.map(({ item, narrowed }) => [item.id, narrowed]), [["alone", false]]);
+  assert.equal(tablet.more.length, 1);
+  assert.equal(tablet.more[0].count, 2);
+  assert.deepEqual(tablet.more[0].items.map((item) => item.id), ["a", "b"]);
+  // Anche con il mouse: accanto al "+N" non resterebbero 56 px.
+  assert.equal(render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 74, pointer: "mouse" }).merged, true);
+  assert.equal(CALENDAR_LAYOUT_TEXT.mergedAria(3), "3 eventi che si sovrappongono: apri l'elenco");
+  assert.equal(CALENDAR_LAYOUT_TEXT.moreAria(1), "Un altro evento in questa fascia: apri l'elenco");
+  assert.equal(CALENDAR_LAYOUT_TEXT.moreAria(2), "Altri 2 eventi in questa fascia: apri l'elenco");
+});
+
+test("layoutTimedDay: con il mouse il \"+N\" è largo 28 px e due eventi stanno affiancati in 118 px", () => {
+  assert.equal(render.OVERLAP_SIZES.touch.gutter, render.TOUCH_TARGET_PX);
+  assert.ok(render.OVERLAP_SIZES.mouse.gutter >= 24, "sopra il minimo di 24 px");
+  const items = [timed("gym", [2026, 11, 13, 10], [2026, 11, 13, 12]), timed("exam", [2026, 11, 13, 10, 30], [2026, 11, 13, 12]), timed("c", [2026, 11, 13, 10, 45], [2026, 11, 13, 11, 30])];
+  const pieces = render.dayPieces(items, local(2026, 11, 13).getTime(), local(2026, 11, 14).getTime());
+  // Venerdì in Settimana a 1280 (circa 118 px).
+  const mouse = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 118, pointer: "mouse" });
+  assert.equal(mouse.merged, false);
+  assert.deepEqual(mouse.placed.map(({ item, column, columns, narrowed }) => [item.id, column, columns, narrowed]), [["gym", 0, 2, true], ["exam", 1, 2, true]]);
+  assert.equal(mouse.more[0].count, 1);
+  // Con il dito: "+N" da 44 px e un evento solo accanto.
+  const touch = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 118, pointer: "touch" });
+  assert.deepEqual(touch.placed.map(({ item }) => item.id), ["gym"]);
+  assert.equal(touch.more[0].count, 2);
+  // Senza indicazione: dito (il caso più largo).
+  assert.deepEqual(render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 118 }).placed.length, 1);
+});
+
+test("dotColor: ogni colore di tipologia ha almeno 3:1 sulla cella e sul pulsante, nei due temi", async () => {
+  const { contrastRatio } = await import("../src/lib/eventColors.ts");
+  for (const theme of ["dark", "light"]) {
+    for (const surface of ["cell", "pill"]) {
+      const against = render.DOT_SURFACES[theme][surface];
+      for (const color of [...Object.values(EVENT_TYPE_COLORS), "#000000", "#FFFFFF", "#123456", "rotto"]) {
+        const dot = render.dotColor(color, theme, surface);
+        assert.match(dot, /^#[0-9A-F]{6}$/i);
+        assert.ok(contrastRatio(dot, against) >= 3, `${theme} ${surface} ${color} → ${dot}`);
+      }
+    }
+  }
+  // Un colore già leggibile resta quello.
+  assert.equal(render.dotColor("#7CF7C8", "dark", "cell").toUpperCase(), "#7CF7C8");
+  assert.equal(render.dotColor("#3B82F6", "light", "cell").toUpperCase(), "#3B82F6");
+});
+
+test("monthDots: un pallino per voce nel suo colore, al più 3, poi «+N»", () => {
+  assert.deepEqual(render.monthDots([]), { dots: [], more: 0 });
+  assert.deepEqual(render.monthDots(["#111111", "#222222"]), { dots: ["#111111", "#222222"], more: 0 });
+  assert.deepEqual(render.monthDots(["#1", "#2", "#3", "#4", "#5"]), { dots: ["#1", "#2", "#3"], more: 2 });
+  assert.deepEqual(render.monthDots(["#1", "#2", "#3"], 2), { dots: ["#1", "#2"], more: 1 });
 });
 
 test("layoutTimedDay: sovrapposizioni parziali e eventi isolati a tutta larghezza", () => {
@@ -207,6 +274,18 @@ test("listDayOf: una voce sola, nel primo giorno mostrato in cui c'è", () => {
   const night = timed("night", [2026, 12, 4, 22], [2026, 12, 5, 2]);
   assert.equal(render.listDayOf(night, "2026-12-01", "2026-12-14"), "2026-12-04");
   assert.equal(render.listDayOf(night, "2026-12-05", "2026-12-14"), "2026-12-05");
+});
+
+test("continuedFrom: l'evento di ieri sera che passa la mezzanotte è «continua» sotto oggi, non un evento di oggi", () => {
+  const night = timed("night", [2026, 11, 11, 23, 17], [2026, 11, 12, 0, 17]);
+  assert.equal(render.continuedFrom(night, "2026-11-12"), "2026-11-11");
+  assert.equal(render.continuedFrom(night, "2026-11-11"), null, "nel suo giorno è un evento normale");
+  const lesson = timed("lesson", [2026, 11, 12, 9], [2026, 11, 12, 11]);
+  assert.equal(render.continuedFrom(lesson, "2026-11-12"), null);
+  // Le barre (tutto il giorno, più giorni) dicono già il loro periodo ("ven 4 – dom 6").
+  const trip = timed("trip", [2026, 12, 4], [2026, 12, 7], { allDay: true });
+  assert.equal(render.continuedFrom(trip, "2026-12-05"), null);
+  assert.equal(CALENDAR_VIEW_TEXT.continuedFrom("mer 11 nov", "23:17", "00:17"), "Dal mer 11 nov, 23:17–00:17");
 });
 
 test("spanText: 'ven 4 – dom 6 dic' per le voci su più giorni, niente per le altre", () => {

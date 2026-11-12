@@ -16,6 +16,10 @@ export const CALENDAR_TEXT = {
   viewsLabel: "Vista calendario",
   dayFocus: "Solo 8–19, ore grandi",
   dayFocusTitle: "Mostra il giorno dalle 8 alle 19, con le ore più grandi",
+  /** Sul telefono "Solo 8–19" e "Festività" stanno in «Altre azioni»: la voce dice cosa fa. */
+  dayFocusOff: "Mostra tutte le ore",
+  holidaysShow: "Mostra le festività",
+  holidaysHide: "Nascondi le festività",
   filterLabel: "Mostra gli impegni di una materia",
   allSubjects: "Tutte",
   onlySubject: (name: string) => `Solo: ${name}`,
@@ -64,7 +68,10 @@ export const CALENDAR_HELP = {
 /** Griglie del calendario: eventi nascosti su schermi stretti ("+N") ed eventi su più giorni. */
 export const CALENDAR_LAYOUT_TEXT = {
   more: (count: number) => `+${count}`,
-  moreAria: (count: number) => `Altri ${count} ${count === 1 ? "evento" : "eventi"} in questa fascia: apri l'elenco`,
+  moreAria: (count: number) => `${count === 1 ? "Un altro evento" : `Altri ${count} eventi`} in questa fascia: apri l'elenco`,
+  /** Colonna troppo stretta (Settimana sul tablet): la fascia è un solo pulsante con tutti i suoi eventi. */
+  merged: (count: number) => `${count} ${count === 1 ? "evento" : "eventi"}`,
+  mergedAria: (count: number) => (count === 1 ? "1 evento sovrapposto: apri l'elenco" : `${count} eventi che si sovrappongono: apri l'elenco`),
   dayOfSpan: (index: number, total: number) => `giorno ${index} di ${total}`
 } as const;
 
@@ -111,7 +118,11 @@ export const EVENT_EDITOR_TEXT = {
   daysLabel: (count: number) => (count === 1 ? "1 giorno" : `${count} giorni`),
   allDay: "Tutto il giorno",
   allDayHint: "Occupa giornate intere, senza orari",
+  /** Tipologia «Vacanza» scelta nel modulo completo: passa a tutto il giorno (come «Nuova vacanza»). */
+  vacationAllDay: "Una vacanza occupa giornate intere: scegli il primo e l'ultimo giorno in «Dal» e «Al».",
   endFollows: "Se cambi l'inizio, la fine si sposta e la durata resta la stessa.",
+  /** Ripetizione personalizzata il cui schema non comprende il giorno d'inizio: il motore lo conta comunque. */
+  repeatStartExtra: (day: string) => `Anche ${day}, il giorno d'inizio, che conta come la prima volta.`,
   type: "Tipologia",
   typeOccasions: "Ogni anno",
   color: "Colore",
@@ -184,6 +195,15 @@ export const SCOPE_TEXT = {
   this: "Solo questo",
   following: "Questo e i successivi",
   all: "Tutti",
+  /** Una riga breve sotto ogni scelta; le conseguenze per intero sono in «Dettagli». */
+  thisShort: (day: string) => `Solo ${day}.`,
+  followingShort: (day: string) => `Da ${day} in poi.`,
+  allShort: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
+    from && until ? `Da ${from} a ${until}.` : from ? `Da ${from} in poi.` : until ? `Fino a ${until}.` : past ? "Tutte le date, anche quelle passate." : "Tutte le date.",
+  allDeleteShort: (past: boolean) => (past ? "Tutta la serie, anche le date passate." : "Tutta la serie."),
+  allDeleteFamilyShort: "Tutta la serie, anche le parti cambiate prima.",
+  sharedAllShort: "Tutte le date insieme.",
+  details: "Dettagli",
   thisEdit: (day: string) => `Cambia solo l'evento di ${day}; gli altri restano come sono.`,
   thisMove: (day: string) => `Sposta solo l'evento di ${day}; gli altri restano dove sono.`,
   thisDelete: (day: string) => `Elimina solo l'evento di ${day}; gli altri restano.`,
@@ -203,6 +223,8 @@ export const SCOPE_TEXT = {
   followingSplitsOwnDays: "Dove avevi già cambiato giorni o orario, quelle date restano dove sono.",
   followingSplitsOwnTime: "Dove avevi già cambiato l'orario, resta quello.",
   followingKeepsEnd: "La serie finisce quando finiva prima.",
+  /** La modifica sposta l'ultima data della serie (es. "martedì 22 dicembre"). */
+  followingNewEnd: (day: string) => `La serie ora finisce ${day}.`,
   /** Spostando, una data arriva sul giorno di un'altra parte della serie: quel giorno ci sono tutti e due (es. "lun 30 nov"). */
   followingBoth: (dates: string) => `Ci saranno entrambi gli eventi, quello spostato e quello che c'era già: ${dates}.`,
   /** Da un giorno cambiato da solo: i successivi prendono ciò che quel giorno ha di suo (vedi followingPatch). */
@@ -373,6 +395,11 @@ export const CALENDAR_VIEW_TEXT = {
   noItems: "Nessun impegno",
   addOn: (day: string) => `Aggiungi un evento il ${day}`,
   recurring: "Si ripete",
+  /** Evento cominciato il giorno prima (passa la mezzanotte), in un elenco sotto il giorno dopo. */
+  continues: "continua",
+  continuedFrom: (day: string, start: string, end: string) => `Dal ${day}, ${start}–${end}`,
+  /** Mese sul telefono: pallini delle voci del giorno, oltre i primi tre. */
+  moreDots: (count: number) => `+${count}`,
   exam: (name: string) => `Esame · ${name}`,
   examTitle: (name: string, preparation: number) => `Esame di ${name} · preparazione al ${preparation}%`,
   /** Azione detta solo a voce dopo il testo visibile di una voce. */

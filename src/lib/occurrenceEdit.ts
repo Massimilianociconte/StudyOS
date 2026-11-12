@@ -3,11 +3,15 @@
 // davvero alle date cambiate o annullate da sole (simulata con il motore, per dirlo prima). Puro.
 import type { CalendarEvent, RepeatRule, Weekday } from "../types";
 import {
+  allDayDays,
+  allDayTimes,
   applyEditPlan,
   countBefore,
   expandEvents,
   expandRule,
+  familyLastDate,
   isOccurrenceRow,
+  lastDateBefore,
   laterParts,
   legacyProjection,
   movedRule,
@@ -18,7 +22,7 @@ import {
   sameClock,
   type OccurrenceScope
 } from "./repeat";
-import { allScopePatch, occurrenceTarget, shiftPatchDays, startDayOf } from "./occurrenceLookup";
+import { allScopePatch, occurrenceTarget, shiftPatchDays, shownDayOf, startDayOf } from "./occurrenceLookup";
 import { followingPatch } from "./eventEditor";
 import { weekdayOf, weekdayPosition } from "./repeatPicker";
 import { civilAddDays, civilDaysBetween, daysInMonth, isCivilDate, isValidTimeZone, localMidnight, parseCivil } from "./tz";
@@ -61,16 +65,30 @@ const matchesPattern = (rule: RepeatRule, day: string, picked: string) => {
   return parts.day === anchor.day;
 };
 
+/** Giorni in cui si cerca il primo della regola (il 2° mercoledì o l'ultimo venerdì arrivano entro un mese). */
+const MATCH_WINDOW_DAYS = 400;
+
+/** Primo giorno dal giorno `from` in poi che è uno di quelli della regola scelta da `picked`. */
+const firstMatching = (rule: RepeatRule, picked: string, from: string) => {
+  for (let step = 0, day = from; step < MATCH_WINDOW_DAYS; step += 1, day = civilAddDays(day, 1)) {
+    if (matchesPattern(rule, day, picked)) return day;
+  }
+  return null;
+};
+
 /**
  * Primo giorno, dall'inizio della serie `seriesStart` in poi, da cui la regola scelta dal giorno
  * `picked` comincia davvero: un giorno della regola, con lo stesso passo che arriva a `picked`. Così
  * "Ogni settimana il mercoledì" scelto da un mercoledì resta il mercoledì, "Ogni mese il 18" resta il
  * 18, e non resta un primo giorno in più che la regola non ha. `earliest`: si cerca anche da lì, se è
  * prima (la serie spostata indietro: "Tutti" dal lunedì alla domenica tiene la domenica prima).
+ * Se `picked` non è un giorno della regola (da lunedì 16 "ogni martedì e giovedì"): il primo giorno
+ * della regola dal primo giorno della serie in poi (martedì 3), mai un giorno che la regola non ha.
  */
 export const alignedSeriesStart = (rule: RepeatRule, picked: string, seriesStart: string, earliest: string = seriesStart): string => {
   if (!isCivilDate(picked) || !isCivilDate(seriesStart)) return seriesStart;
   const from = isCivilDate(earliest) && earliest < seriesStart ? earliest : seriesStart;
+  if (!matchesPattern(rule, picked, picked)) return firstMatching(rule, picked, picked < from ? picked : from) ?? picked;
   if (picked <= from) return picked < seriesStart ? picked : seriesStart;
   const open: RepeatRule = { ...rule };
   delete open.end;
@@ -95,7 +113,10 @@ const seriesFirstDay = (
   patch: Partial<CalendarEvent>,
   { series, date, seriesStart, toggled }: { series: CalendarEvent; date: string; seriesStart: string; toggled: boolean }
 ) => {
-  const timed = patch.start !== undefined ? patch : { ...patch, ...shiftPatchDays({ start: series.start, end: series.end }, civilDaysBetween(seriesStart, date)) };
+  const timed =
+    patch.start !== undefined
+      ? patch
+      : { ...patch, ...shiftPatchDays({ start: series.start, end: series.end }, civilDaysBetween(seriesStart, date), { allDay: series.allDay === true, zone: zoneOf(series) }) };
   const current = startDayOf(timed.start as string, (timed.allDay ?? series.allDay) === true, zoneOf(series));
   if (!isCivilDate(current)) return null;
   return { timed, first: toggled || date === seriesStart ? current : civilAddDays(seriesStart, civilDaysBetween(date, current)) };
@@ -124,11 +145,15 @@ const withoutRepeat = (changes: Partial<CalendarEvent>): Partial<CalendarEvent> 
 
 /**
  * Giorno da cui si è scelta la regola nel modulo: quello dell'inizio mostrato, nel fuso della serie
- * (dove la regola si ripete e dove sta il giorno aperto); tutto il giorno, quello locale. Da Tokyo un
- * lunedì sera a Roma è già martedì: conta il lunedì, o un cambio d'ora sposterebbe la regola.
+ * (dove la regola si ripete e dove sta il giorno aperto). Da Tokyo un lunedì sera a Roma è già
+ * martedì: conta il lunedì, o un cambio d'ora sposterebbe la regola. Tutto il giorno: le date
+ * dell'evento (la modifica a mezzanotte nel suo fuso; senza, il giorno come si vede).
  */
-const pickedDay = (item: Pick<CalendarEvent, "start" | "allDay">, changes: Partial<CalendarEvent>, series: Pick<CalendarEvent, "allDay" | "timeZone">) =>
-  startDayOf(changes.start ?? item.start, (changes.allDay ?? item.allDay ?? series.allDay) === true, zoneOf(series));
+const pickedDay = (item: Occurrence, changes: Partial<CalendarEvent>, series: Pick<CalendarEvent, "allDay" | "timeZone">) => {
+  const allDay = (changes.allDay ?? item.allDay ?? series.allDay) === true;
+  if (changes.start === undefined && allDay && item.allDay === true) return shownDayOf(item, zoneOf(series));
+  return startDayOf(changes.start ?? item.start, allDay, zoneOf(series));
+};
 
 // La regola che segue un giorno spostato sta nel motore (vedi `movedRule`): la usano anche i piani.
 export { movedRule } from "./repeat";
@@ -214,7 +239,10 @@ export const occurrenceEditCalls = ({
     const natural = isCivilDate(seriesStart) ? seriesFirstDay(patch, { series, date: target.date, seriesStart, toggled }) : null;
     if (natural) {
       const aligned = alignedSeriesStart(ruled.repeat, picked, seriesStart, natural.first);
-      if (aligned !== natural.first) patch = shiftPatchDays(natural.timed, civilDaysBetween(natural.first, aligned));
+      if (aligned !== natural.first) {
+        const allDay = (natural.timed.allDay ?? series.allDay) === true;
+        patch = shiftPatchDays(natural.timed, civilDaysBetween(natural.first, aligned), { allDay, zone: zoneOf(series) });
+      }
       // Si dice solo se il primo giorno cambia davvero (non se torna quello di prima).
       if (aligned !== natural.first && aligned !== seriesStart) newStart = aligned;
     }
@@ -240,6 +268,31 @@ export const seriesMovePatch = (event: CalendarEvent, start: string, end: string
   if (!next || ruleKey(next) === ruleKey(rule)) return { start, end };
   const projection = legacyProjection(next, to);
   return { start, end, repeat: next, recurrence: projection.recurrence, recurrenceUntil: projection.recurrenceUntil, repeatLegacy: repeatLegacyKey(projection) };
+};
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Inizio e fine di `item` (occorrenza come si vede o evento salvato) trascinato di `deltaMs`. Tutto il
+ * giorno: gli stessi giorni spostati di quanti giorni si è trascinato (arrotondati: un giorno del
+ * cambio d'ora resta un giorno), a mezzanotte nel fuso dell'evento come li salvano i moduli, mai in
+ * quello del dispositivo. Con orario: gli istanti spostati. null se non si legge.
+ */
+export const draggedTimes = (
+  item: Pick<CalendarEvent, "start" | "end" | "allDay" | "timeZone"> & { occurrenceKey?: unknown },
+  deltaMs: number
+): { start: string; end: string } | null => {
+  if (!Number.isFinite(deltaMs)) return null;
+  if (item.allDay === true) {
+    const days = allDayDays(item);
+    if (!days) return null;
+    const shift = Math.round(deltaMs / DAY_MS);
+    return allDayTimes(civilAddDays(days.first, shift), civilAddDays(days.last, shift), zoneOf(item));
+  }
+  const start = Date.parse(item.start) + deltaMs;
+  const end = Date.parse(item.end) + deltaMs;
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return { start: new Date(start).toISOString(), end: new Date(end).toISOString() };
 };
 
 // ---------------------------------------------------------------------------------------
@@ -280,6 +333,11 @@ export interface ScopeImpact {
    * parte della serie, che resta: quel giorno ci sono tutti e due (nulla sparisce, R1-S1 ter).
    */
   both: string[];
+  /**
+   * "Questo e i successivi" senza regola nuova che sposta l'ultima data della serie (fine "fino al" o
+   * N volte spostate con il giorno): la nuova ultima data. Assente se finisce quando finiva prima.
+   */
+  endsOn?: string;
 }
 
 /** Giorni dopo quello aperto in cui si cercano le date che spariscono. */
@@ -412,6 +470,10 @@ export const scopeImpact = (
     impact.gone = gone.dates;
     impact.goneMore = gone.more;
   } else if (scope === "following") {
+    // L'ultima data della serie (della sua ultima parte) cambia? Allora si dice quella nuova.
+    const lastBefore = familyLastDate(events, target.seriesId);
+    const lastAfter = familyLastDate(after.events, target.seriesId);
+    if (typeof lastAfter === "string" && lastAfter !== lastBefore) impact.endsOn = lastAfter;
     // Senza regola nuova le parti successive restano (R1-S1): quante, quante tengono un orario loro
     // e, spostando il giorno, quante si spostano con lui.
     const later = laterParts(events, target.seriesId, target.date);
@@ -477,10 +539,12 @@ export const seriesSpan = (events: readonly CalendarEvent[], seriesId: string, d
   const deleted = planDelete(events, seriesId, date, "all", { includeSplits: true }).deletes;
   const byId = new Map(events.map((event) => [event.id, event]));
   const parts = Math.max(1, deleted.filter((id) => byId.has(id) && !isOccurrenceRow(byId.get(id) as CalendarEvent)).length);
+  // Fermata dalla parte dopo: l'ultima data vera prima di lei (non il giorno prima della parte dopo).
+  const last = cuts.length ? lastDateBefore(series, cuts[0]) : undefined;
   return {
     ...(isCivilDate(start) ? { start } : {}),
     ...(parent && isCivilDate(start) ? { from: start } : {}),
-    ...(cuts.length ? { until: civilAddDays(cuts[0], -1) } : {}),
+    ...(cuts.length ? { until: isCivilDate(last) ? last : civilAddDays(cuts[0], -1) } : {}),
     past: isCivilDate(start) && start < today,
     parts
   };

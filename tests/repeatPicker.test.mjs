@@ -8,11 +8,13 @@ import {
   monthlyChoices,
   presetIdOf,
   repeatPresets,
+  repeatSummary,
   ruleFromCustom,
+  startOutsideRule,
   weekdayOf,
   weekdayPosition
 } from "../src/lib/repeatPicker.ts";
-import { describeRule } from "../src/lib/repeat.ts";
+import { describeRule, expandRule } from "../src/lib/repeat.ts";
 
 // 12 novembre 2026 è il secondo giovedì del mese.
 const START = "2026-11-12";
@@ -149,4 +151,50 @@ test("personalizza: errori in italiano semplice", () => {
   assert.match(customError({ ...base, end: "until", until: "2026-11-01" }, START), /dopo l'inizio/);
   assert.match(customError({ ...base, end: "count", count: 0 }, START), /1 e 999/);
   assert.equal(customError({ ...base, unit: "day", weekdays: [] }, START), "");
+});
+
+test("startOutsideRule: vero solo quando il motore conta l'inizio come una volta in più", () => {
+  // Giovedì 12/11/2026, secondo giovedì del mese; 30/11 è l'ultimo giorno (e l'ultimo lunedì).
+  const cases = [
+    [{ freq: "weekly", byWeekday: ["TU", "TH"] }, START, false],
+    [{ freq: "weekly", byWeekday: ["MO", "WE"] }, START, true],
+    [{ freq: "weekly" }, START, false],
+    [{ freq: "daily" }, START, false],
+    [{ freq: "monthly" }, START, false],
+    [{ freq: "monthly", monthly: { by: "weekday", nth: 2, weekday: "TH" } }, START, false],
+    [{ freq: "monthly", monthly: { by: "weekday", nth: 1, weekday: "TU" } }, START, true],
+    [{ freq: "monthly", monthly: { by: "weekday", nth: -1, weekday: "MO" } }, "2026-11-30", false],
+    [{ freq: "monthly", monthly: { by: "lastDay" } }, START, true],
+    [{ freq: "monthly", monthly: { by: "lastDay" } }, "2026-11-30", false],
+    [{ freq: "yearly" }, START, false]
+  ];
+  const until = new Date(2027, 11, 31);
+  for (const [rule, start, extra] of cases) {
+    assert.equal(startOutsideRule(rule, start), extra, JSON.stringify(rule));
+    // Il motore: l'inizio c'è sempre; dopo, le volte seguono la regola. L'inizio è "in più" quando,
+    // partendo dalla seconda volta, l'inizio non tornerebbe con lo stesso passo all'indietro.
+    const dates = expandRule(rule, `${start}T09:00`, undefined, new Date(`${start}T00:00`), until).map((item) => item.date);
+    assert.equal(dates[0], start);
+    const fromSecond = expandRule(rule, `${dates[1]}T09:00`, undefined, new Date(`${dates[1]}T00:00`), until).map((item) => item.date);
+    assert.equal(dates.slice(1, 4).join(), fromSecond.slice(0, 3).join(), JSON.stringify(rule));
+  }
+  // Settimanale "lun, mer" da giovedì 12: giovedì 12, poi lunedì 16 e mercoledì 18.
+  assert.deepEqual(
+    expandRule({ freq: "weekly", byWeekday: ["MO", "WE"] }, `${START}T09:00`, undefined, new Date(`${START}T00:00`), new Date(2026, 10, 19)).map((item) => item.date),
+    [START, "2026-11-16", "2026-11-18"]
+  );
+  assert.equal(startOutsideRule(null, START), false);
+  assert.equal(startOutsideRule({ freq: "weekly", byWeekday: ["MO"] }, "non è una data"), false);
+});
+
+test("repeatSummary: la frase della regola e, se serve, il giorno d'inizio in più", () => {
+  assert.equal(repeatSummary({ freq: "weekly", byWeekday: ["TU", "TH"] }, START), "Ogni settimana mar, gio");
+  assert.equal(
+    repeatSummary({ freq: "weekly", byWeekday: ["MO", "WE"], end: { type: "count", count: 4 } }, START),
+    "Ogni settimana lun, mer, per 4 volte. Anche giovedì 12 novembre, il giorno d'inizio, che conta come la prima volta."
+  );
+  assert.equal(
+    repeatSummary({ freq: "monthly", monthly: { by: "lastDay" } }, START),
+    "Ogni mese l'ultimo giorno. Anche giovedì 12 novembre, il giorno d'inizio, che conta come la prima volta."
+  );
 });

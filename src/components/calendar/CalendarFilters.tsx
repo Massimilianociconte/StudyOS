@@ -17,8 +17,9 @@ const pill = (pressed: boolean) =>
 
 /**
  * Riga "Tutte · Analisi · Fisica…": scorre in orizzontale dentro la riga (mai la pagina). Con un
- * filtro attivo, a sinistra e sempre visibile, il chip "Solo: Analisi ✕" che lo toglie. Dopo, sempre
- * visibili (sul telefono vanno a capo): "Festività" e "Senza data · N".
+ * filtro attivo, a sinistra e sempre visibile, il chip "Solo: Analisi ✕" che lo toglie. Dopo (sul
+ * telefono vanno a capo): "Festività" (solo con `onToggleHolidays`: sul telefono è in «Altre azioni»)
+ * e "Senza data · N".
  */
 export function CalendarFilterRow({
   subjects,
@@ -33,7 +34,7 @@ export function CalendarFilterRow({
   active: Subjects[number] | null;
   onChange: (id: string | null) => void;
   showHolidays: boolean;
-  onToggleHolidays: () => void;
+  onToggleHolidays?: () => void;
   /** Attività senza data; il pulsante compare solo se ce ne sono e c'è chi le apre. */
   undatedCount?: number;
   onOpenUndated?: () => void;
@@ -86,11 +87,13 @@ export function CalendarFilterRow({
           })}
         </div>
       ) : null}
-      <div className="flex shrink-0 items-center gap-1.5 py-0.5">
-        <button type="button" aria-pressed={showHolidays} onClick={onToggleHolidays} title={CALENDAR_VIEW_TEXT.holidaysTitle} className={pill(showHolidays)}>
-          <Icon name="PartyPopper" className="h-3.5 w-3.5 shrink-0" />
-          {HOLIDAYS_TOGGLE_LABEL}
-        </button>
+      <div className="flex shrink-0 items-center gap-1.5 py-0.5 empty:hidden">
+        {onToggleHolidays ? (
+          <button type="button" aria-pressed={showHolidays} onClick={onToggleHolidays} title={CALENDAR_VIEW_TEXT.holidaysTitle} className={pill(showHolidays)}>
+            <Icon name="PartyPopper" className="h-3.5 w-3.5 shrink-0" />
+            {HOLIDAYS_TOGGLE_LABEL}
+          </button>
+        ) : null}
         {undatedCount > 0 && onOpenUndated ? (
           <button type="button" onClick={onOpenUndated} title={CALENDAR_VIEW_TEXT.undatedAria(undatedCount)} aria-haspopup="dialog" className={pill(false)}>
             <Icon name="CalendarPlus" className="h-3.5 w-3.5 shrink-0" />

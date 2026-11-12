@@ -71,11 +71,13 @@ export function layoutDayColumns(items: TimedItem[], { minDurationMs = 30 * 60_0
 export type MoreGroup = { cluster: number; ids: string[]; bandIds: string[]; count: number; startMs: number; endMs: number };
 
 /**
- * Schermi stretti: nei gruppi con più di `maxColumns` colonne restano le prime `maxColumns` (larghezze
- * ricalcolate su quelle) e il resto diventa un "+N" per la fascia, da mettere a `startMs`–`endMs`.
+ * Schermi stretti: nei gruppi con più di `maxColumns` colonne restano le prime `visibleColumns`
+ * (predefinito `maxColumns`, 0 = nessuna; larghezze ricalcolate su quelle) e il resto diventa un "+N"
+ * per la fascia, da mettere a `startMs`–`endMs`.
  */
-export function collapseForWidth(layout: DayColumn[], maxColumns: number): { items: DayColumn[]; more: MoreGroup[] } {
+export function collapseForWidth(layout: DayColumn[], maxColumns: number, visibleColumns: number = maxColumns): { items: DayColumn[]; more: MoreGroup[] } {
   const max = Math.max(1, Math.floor(maxColumns));
+  const visible = Math.max(0, Math.min(max, Math.floor(visibleColumns)));
   const items: DayColumn[] = [];
   const groups = new Map<number, MoreGroup>();
   for (const item of layout) {
@@ -88,7 +90,7 @@ export function collapseForWidth(layout: DayColumn[], maxColumns: number): { ite
     group.bandIds.push(item.id);
     group.startMs = Math.min(group.startMs, item.startMs);
     group.endMs = Math.max(group.endMs, item.endMs);
-    if (item.column < max) items.push({ ...item, columns: max, span: Math.min(item.span, max - item.column) });
+    if (item.column < visible) items.push({ ...item, columns: visible, span: Math.min(item.span, visible - item.column) });
     else group.ids.push(item.id);
   }
   return { items, more: [...groups.values()].map((group) => ({ ...group, count: group.ids.length })) };

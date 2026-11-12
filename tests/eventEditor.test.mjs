@@ -19,6 +19,7 @@ import {
   removeReminder,
   scopeOptions,
   setDraftAllDay,
+  setDraftCategory,
   setDraftDuration,
   draftDuration,
   shiftPatchDays,
@@ -26,6 +27,7 @@ import {
   validateDraft,
   withTypeColor
 } from "../src/lib/eventEditor.ts";
+import { newVacationDraft, vacationFields } from "../src/lib/occasionForms.ts";
 import { localMidnight } from "../src/lib/tz.ts";
 
 const at = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
@@ -151,6 +153,50 @@ test("tutto il giorno acceso e spento: si ritrovano gli orari, altrimenti 9–10
   assert.equal(midnight.end, "2026-11-12T10:00");
 });
 
+test("Tipologia «Vacanza» nel modulo completo: tutto il giorno, dal giorno scelto allo stesso giorno, come «Nuova vacanza»", () => {
+  const draft = { ...newEventDraft({ start: at(2026, 11, 12, 14) }), title: "Mare", description: "Portare il libro" };
+  const vacation = setDraftCategory(draft, "vacation", {});
+  assert.equal(vacation.category, "vacation");
+  assert.equal(vacation.allDay, true);
+  assert.equal(vacation.start.slice(0, 10), "2026-11-12");
+  assert.equal(vacation.end.slice(0, 10), "2026-11-12");
+  assert.equal(vacation.title, "Mare");
+  assert.equal(vacation.description, "Portare il libro");
+  assert.equal(vacation.color, draftColor({ ...draft, category: "vacation" }, {}));
+  // Gli stessi istanti salvati del modulo vacanza (date civili a mezzanotte).
+  const saved = draftPatch(vacation);
+  const form = vacationFields({ ...newVacationDraft("2026-11-12"), title: "Mare" });
+  assert.equal(saved.start, form.start);
+  assert.equal(saved.end, form.end);
+  assert.equal(saved.allDay, true);
+  // Togliendo «Tutto il giorno» tornano gli orari di prima.
+  const back = setDraftAllDay(vacation, false);
+  assert.equal(back.start, "2026-11-12T14:00");
+  assert.equal(back.end, "2026-11-12T15:00");
+});
+
+test("Tipologia «Vacanza»: un evento a cavallo della mezzanotte resta sul suo giorno; un periodo già scelto resta", () => {
+  const late = { ...newEventDraft({ start: at(2026, 11, 12, 23) }), end: "2026-11-13T01:00" };
+  const vacation = setDraftCategory(late, "vacation", {});
+  assert.equal(vacation.start.slice(0, 10), "2026-11-12");
+  assert.equal(vacation.end.slice(0, 10), "2026-11-12");
+  const range = { ...newEventDraft({ start: at(2026, 12, 20) }), allDay: true, start: "2026-12-20T00:00", end: "2026-12-27T00:00" };
+  const kept = setDraftCategory(range, "vacation", {});
+  assert.equal(kept.start, range.start);
+  assert.equal(kept.end, range.end);
+});
+
+test("Altre tipologie: cambia solo il colore automatico, l'orario resta", () => {
+  const draft = newEventDraft({ start: at(2026, 11, 12, 14) });
+  const exam = setDraftCategory(draft, "exam", {});
+  assert.equal(exam.allDay, false);
+  assert.equal(exam.start, draft.start);
+  assert.equal(exam.end, draft.end);
+  assert.equal(exam.color, draftColor({ ...draft, category: "exam" }, {}));
+  const custom = setDraftCategory({ ...draft, color: "#EF4444", colorCustom: true }, "vacation", {});
+  assert.equal(custom.color, "#EF4444");
+});
+
 test("spostando l'inizio la fine segue con la stessa durata; la ripetizione segue il giorno", () => {
   const draft = { ...newEventDraft({ start: at(2026, 11, 12, 10) }), end: "2026-11-12T11:30", repeat: { freq: "weekly", byWeekday: ["TH"] } };
   const moved = changeStart(draft, "2026-11-13T09:00");
@@ -262,6 +308,89 @@ test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
   // Fuso fissato alla prima modifica di un giorno: lo si dice.
   const pinned = scopeOptions({ action: "edit", date: "2026-11-12", pinsZone: "Europe/Rome" });
   assert.ok(pinned.find((option) => option.id === "this").details.some((line) => line.includes("Europe/Rome")));
+});
+
+test("scelta della portata: una riga breve per scelta, le conseguenze restano nei dettagli", () => {
+  const summaries = (options) => options.map((option) => option.summary);
+  assert.deepEqual(summaries(scopeOptions({ action: "edit", date: "2026-11-12" })), ["Solo giovedì 12 novembre.", "Da giovedì 12 novembre in poi.", "Tutte le date."]);
+  assert.deepEqual(summaries(scopeOptions({ action: "delete", date: "2026-11-12", span: { start: "2026-11-02", parts: 1, past: true } })), [
+    "Solo giovedì 12 novembre.",
+    "Da giovedì 12 novembre in poi.",
+    "Tutta la serie, anche le date passate."
+  ]);
+  assert.equal(scopeOptions({ action: "delete", date: "2026-11-30", span: { start: "2026-11-02", parts: 2, past: false } }).at(-1).summary, "Tutta la serie, anche le parti cambiate prima.");
+  // "Tutti" su una parte della serie: le date che cambiano davvero.
+  const part = { start: "2026-11-02", parts: 2, past: false, from: "2026-11-23", until: "2026-12-14" };
+  assert.equal(scopeOptions({ action: "move", date: "2026-11-30", span: part }).at(-1).summary, "Da lunedì 23 novembre a lunedì 14 dicembre.");
+  assert.equal(scopeOptions({ action: "edit", date: "2026-11-30", span: { ...part, until: undefined } }).at(-1).summary, "Da lunedì 23 novembre in poi.");
+  assert.equal(scopeOptions({ action: "edit", date: "2026-11-30", span: { ...part, from: undefined } }).at(-1).summary, "Fino a lunedì 14 dicembre.");
+  assert.equal(scopeOptions({ action: "edit", date: "2026-11-30", span: { start: "2026-11-02", parts: 1, past: true } }).at(-1).summary, "Tutte le date, anche quelle passate.");
+  assert.deepEqual(summaries(scopeOptions({ action: "move", date: "2026-11-12", sharedOnly: true })), ["Tutte le date insieme."]);
+  // Le frasi lunghe restano tutte, invariate, nei dettagli.
+  const following = scopeOptions({ action: "edit", date: "2026-11-12" }).find((option) => option.id === "following");
+  assert.equal(following.details.length, 2);
+  assert.deepEqual(following.warnings, []);
+});
+
+test("scelta della portata: ciò che si perde, sparisce, raddoppia, si sposta o torna è sempre visibile", async () => {
+  const { SCOPE_TEXT } = await import("../src/lib/labels/calendar.ts");
+  const { SCOPE_WARNING_KEYS, SCOPE_DETAIL_KEYS } = await import("../src/lib/eventEditor.ts");
+  const impact = (patch) => ({
+    changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: 0, gone: [], goneMore: false,
+    laterParts: 0, laterOwnTime: 0, laterMoved: 0, laterOwnDays: 0, both: [], ...patch
+  });
+  const shift = { from: ["MO", "WE"], to: ["TU", "TH"] };
+  const losing = impact({ changedLost: 2, changedGone: 1, cancelledLost: 3, kept: 1 });
+  // Scenari che accendono ogni riga di avviso, per ogni scelta e ogni azione.
+  const scenarios = [
+    {
+      options: scopeOptions({
+        action: "edit", date: "2026-11-24", subjectChanged: true, pinsZone: "Europe/Rome", daysShift: shift, rowContent: true, newStart: "2026-11-03",
+        impacts: { following: losing, all: { ...losing, ownLost: true } }
+      }),
+      expected: {
+        this: [SCOPE_TEXT.thisSubject],
+        following: [
+          SCOPE_TEXT.followingDaysShift("lun, mer", "mar, gio"), SCOPE_TEXT.followingTakesDay, SCOPE_TEXT.changedLost(2), SCOPE_TEXT.changedGone(1),
+          SCOPE_TEXT.cancelledBack(3)
+        ],
+        all: [
+          SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio"), SCOPE_TEXT.ownLost, SCOPE_TEXT.newStart("martedì 3 novembre"), SCOPE_TEXT.changedLost(2),
+          SCOPE_TEXT.changedGone(1), SCOPE_TEXT.cancelledBack(3)
+        ]
+      },
+      // Il fuso fissato è uguale per tutte le scelte: non aiuta a scegliere, sta nei dettagli.
+      details: SCOPE_TEXT.pinZone("Europe/Rome")
+    },
+    {
+      options: scopeOptions({ action: "edit", date: "2026-11-24", ruleChanged: true, impacts: { following: impact({ absorbed: 1, gone: ["2026-12-04", "2026-12-11"] }) } }),
+      expected: { following: [SCOPE_TEXT.followingSplits, SCOPE_TEXT.followingGone("ven 4, 11 dic", false)], all: [] }
+    },
+    {
+      options: scopeOptions({ action: "move", date: "2026-11-24", impacts: { following: impact({ laterParts: 2, laterMoved: 1, laterOwnDays: 1, both: ["2026-11-30"] }) } }),
+      expected: { this: [], following: [SCOPE_TEXT.followingMovesSplits, SCOPE_TEXT.followingBoth("lun 30 nov")], all: [] }
+    },
+    { options: scopeOptions({ action: "move", date: "2026-11-24", sharedOnly: true, daysShift: shift }), expected: { all: [SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio")] } },
+    { options: scopeOptions({ action: "delete", date: "2026-11-24", span: { start: "2026-11-02", parts: 2, past: true } }), expected: { this: [], following: [], all: [] } }
+  ];
+  for (const { options, expected, details } of scenarios) {
+    assert.deepEqual(options.map((option) => option.id), Object.keys(expected));
+    for (const option of options) {
+      // Ogni avviso atteso è tra quelli sempre visibili, nello stesso ordine; i dettagli sono il resto.
+      assert.deepEqual(option.warnings, expected[option.id], option.id);
+      const inDetails = option.details.filter((line) => !option.warnings.includes(line));
+      for (const line of expected[option.id]) assert.ok(!inDetails.includes(line), `${option.id}: «${line}» non solo nei dettagli`);
+      assert.ok(inDetails.length >= 1, "la scelta detta per intero resta nei dettagli");
+      if (details) assert.ok(inDetails.includes(details), `${option.id}: «${details}» nei dettagli`);
+    }
+  }
+  // Le righe che non avvisano restano nei dettagli: la fine della serie, «restano così».
+  const kept = scopeOptions({ action: "edit", date: "2026-11-24", impacts: { following: impact({ kept: 2, laterParts: 1, laterOwnTime: 1 }) } }).find((o) => o.id === "following");
+  assert.deepEqual(kept.warnings, []);
+  assert.ok(kept.details.includes(SCOPE_TEXT.rowsKept) && kept.details.includes(SCOPE_TEXT.followingKeepsEnd) && kept.details.includes(SCOPE_TEXT.followingKeepsSplits));
+  // Un solo elenco, senza doppioni: ogni riga è avviso o dettaglio.
+  assert.equal(new Set([...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]).size, SCOPE_WARNING_KEYS.length + SCOPE_DETAIL_KEYS.length);
+  for (const key of [...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]) assert.ok(key in SCOPE_TEXT, key);
 });
 
 test("spostare inizio e fine di qualche giorno (per «Tutti» con tutto il giorno)", () => {

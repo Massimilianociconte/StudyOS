@@ -15,13 +15,15 @@ import { todayYmd } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";
 import {
   MIN_EVENT_HEIGHT_PX,
-  MORE_GUTTER_PX,
+  TOUCH_TARGET_PX,
   atWallMinutes,
   dayPieces,
+  dotColor,
   holidayBars,
   holidayId,
   laneRows,
   layoutTimedDay,
+  monthDots,
   occasionText,
   wallMinutes,
   weekStartsOf,
@@ -31,7 +33,18 @@ import {
 import { EventBar, HolidayChip, TypeIcon, eventBars, useEventPaint, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
 import { EventRow } from "./DayList";
-import { canDrag, editOccurrence, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
+import {
+  COARSE_QUERY,
+  PHONE_FAB_GUTTER_PX,
+  PHONE_QUERY,
+  canDrag,
+  editOccurrence,
+  occurrenceSubject,
+  pointerPoint,
+  sharedOutline,
+  sharedOutlineClass,
+  useMediaQuery
+} from "./shared";
 import type { CalendarOccurrence, Handlers } from "./types";
 
 const MINUTE_MS = 60_000;
@@ -45,8 +58,8 @@ const WEEK_LANES = 4;
 type Grab = { key: string; offsetMin: number };
 
 /** Posizione orizzontale di un evento affiancato: la fascia con "+N" lascia spazio a destra. */
-const horizontal = ({ column, columns, span, narrowed }: Pick<PlacedPiece<unknown>, "column" | "columns" | "span" | "narrowed">) => {
-  const room = narrowed ? `(100% - ${MORE_GUTTER_PX}px)` : "100%";
+const horizontal = ({ column, columns, span, narrowed }: Pick<PlacedPiece<unknown>, "column" | "columns" | "span" | "narrowed">, gutter: number) => {
+  const room = narrowed ? `(100% - ${gutter}px)` : "100%";
   return { left: `calc(${room} * ${column / columns} + 1px)`, width: `calc(${room} * ${span / columns} - 3px)` };
 };
 
@@ -89,11 +102,17 @@ export function TimeGrid({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  // Larghezza di una colonna giorno (etichette orarie a sinistra, spazio tra le colonne).
-  const columnWidth = containerWidth ? (containerWidth - HOURS_COLUMN_PX - days.length * COLUMN_GAP_PX) / days.length : 200;
+  // Telefono: a destra degli eventi resta libera la striscia dove passa il pulsante "+" fisso, così
+  // l'ultima colonna di eventi affiancati non finisce mai sotto di lui.
+  const fabGutter = useMediaQuery(PHONE_QUERY) ? PHONE_FAB_GUTTER_PX : 0;
+  // "+N" da 44 px solo dove si tocca col dito; con il mouse 28 px e più eventi affiancati.
+  const pointer = useMediaQuery(COARSE_QUERY) ? "touch" : "mouse";
+  // Larghezza di una colonna giorno per gli eventi (etichette orarie a sinistra, spazio tra le colonne).
+  const columnWidth = (containerWidth ? (containerWidth - HOURS_COLUMN_PX - days.length * COLUMN_GAP_PX) / days.length : 200) - fabGutter;
 
   // Eventi di tutto il giorno o su più giorni: barre nella fascia in alto, non nella griglia oraria.
   const theme = useEventTheme();
+  const paintOf = useEventPaint();
   const bars = eventBars(occurrences);
   const barById = new Map(bars.map((bar) => [bar.id, bar]));
   const holidayById = new Map(holidays.map((holiday) => [holidayId(holiday), holiday]));
@@ -116,7 +135,7 @@ export function TimeGrid({
       bars: laneRow ? [] : bars.filter((bar) => bar.startDay <= ymd && bar.endDay >= ymd),
       holidays: laneRow ? [] : holidays.filter((holiday) => holiday.date === ymd),
       pieces,
-      layout: layoutTimedDay(pieces, { hourHeight, columnWidth }),
+      layout: layoutTimedDay(pieces, { hourHeight, columnWidth, pointer }),
       tasks: tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)).sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? "")),
       exams: exams.filter((exam) => isSameDay(parseISO(exam.date), day))
     };
@@ -200,11 +219,12 @@ export function TimeGrid({
             </>
           );
           return onPickDay ? (
+            // Alto 40 px, area di tocco di 44 (2 px sopra e sotto, nello spazio prima della fascia in alto).
             <button
               key={day.toISOString()}
               type="button"
               onClick={() => onPickDay(day)}
-              className="flex items-center justify-center gap-1.5 rounded-[14px] py-1 hover:bg-[var(--surface-soft)] hover:underline hover:decoration-[var(--faint)] hover:underline-offset-4"
+              className="relative flex items-center justify-center gap-1.5 rounded-[14px] py-1 after:absolute after:-inset-y-0.5 after:inset-x-0 after:content-[''] hover:bg-[var(--surface-soft)] hover:underline hover:decoration-[var(--faint)] hover:underline-offset-4"
               aria-label={CALENDAR_VIEW_TEXT.openDay(format(day, "EEE d", { locale: it }), format(day, "EEEE d MMMM", { locale: it }))}
               title={CALENDAR_VIEW_TEXT.openDay(format(day, "EEE d", { locale: it }), format(day, "EEEE d MMMM", { locale: it }))}
             >
@@ -379,39 +399,60 @@ export function TimeGrid({
                   <span className="absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full bg-[var(--accent-3)]" />
                 </span>
               ) : null}
-              {entry.layout.placed.map((placed) => (
-                <TimedEvent
-                  key={placed.key}
-                  placed={placed}
-                  {...boxOf(placed.startMs, placed.endMs, entry.dayEnd)}
-                  hourHeight={hourHeight}
-                  handlers={handlers}
-                  onGrab={(value) => {
-                    grab.current = value;
-                  }}
-                />
-              ))}
-              {entry.layout.more.map((more) => {
-                const { top, height } = boxOf(more.startMs, more.endMs, entry.dayEnd);
-                return (
-                  <button
-                    key={more.cluster}
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handlers.onPreviewHide();
-                      setBand({ day: entry.day, band: more });
+              {/* Area degli eventi: sul telefono si ferma prima della striscia del pulsante "+" fisso
+                  (la striscia resta un orario libero: toccarla aggiunge un evento). */}
+              <div className="absolute inset-y-0 left-0" style={{ right: fabGutter }}>
+                {entry.layout.placed.map((placed) => (
+                  <TimedEvent
+                    key={placed.key}
+                    placed={placed}
+                    gutter={entry.layout.gutter}
+                    {...boxOf(placed.startMs, placed.endMs, entry.dayEnd)}
+                    hourHeight={hourHeight}
+                    handlers={handlers}
+                    onGrab={(value) => {
+                      grab.current = value;
                     }}
-                    // Il nome comincia dal testo visibile ("+2"), poi la spiegazione.
-                    aria-label={`${CALENDAR_LAYOUT_TEXT.more(more.count)}, ${CALENDAR_LAYOUT_TEXT.moreAria(more.count)}`}
-                    title={CALENDAR_LAYOUT_TEXT.moreAria(more.count)}
-                    className="absolute right-0 z-[5] grid grid-cols-1 place-items-start justify-center rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black text-[var(--text)] after:absolute after:-inset-y-3 after:inset-x-0 after:content-[''] hover:bg-[var(--surface)]"
-                    style={{ top, height, width: MORE_GUTTER_PX - 2 }}
-                  >
-                    {CALENDAR_LAYOUT_TEXT.more(more.count)}
-                  </button>
-                );
-              })}
+                  />
+                ))}
+                {entry.layout.more.map((more) => {
+                  const { top, height } = boxOf(more.startMs, more.endMs, entry.dayEnd);
+                  // Fascia bassa: l'area di tocco arriva a 44 px, sopra e sotto in parti uguali.
+                  const reach = Math.max(0, (TOUCH_TARGET_PX - height) / 2);
+                  const merged = entry.layout.merged;
+                  const visible = merged ? CALENDAR_LAYOUT_TEXT.merged(more.count) : CALENDAR_LAYOUT_TEXT.more(more.count);
+                  const explain = merged ? CALENDAR_LAYOUT_TEXT.mergedAria(more.count) : CALENDAR_LAYOUT_TEXT.moreAria(more.count);
+                  const dots = merged ? monthDots(more.items.map((item) => dotColor(paintOf(item, handlers.subjects).color, theme, "pill"))) : null;
+                  return (
+                    <button
+                      key={more.cluster}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handlers.onPreviewHide();
+                        setBand({ day: entry.day, band: more });
+                      }}
+                      // Il nome comincia dal testo visibile ("+2", "3 eventi"), poi la spiegazione (senza ripeterlo).
+                      aria-label={explain.startsWith(visible) ? explain : `${visible}, ${explain}`}
+                      title={explain}
+                      className={`absolute z-[5] flex flex-col items-center gap-1 rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black leading-tight text-[var(--text)] hover:bg-[var(--surface)] ${
+                        merged ? "left-0 right-0 px-1" : "right-0"
+                      }`}
+                      style={{ top, height, ...(merged ? {} : { width: entry.layout.gutter - 2 }) }}
+                    >
+                      {reach ? <span aria-hidden="true" className="absolute inset-x-0" style={{ top: -reach, bottom: -reach }} /> : null}
+                      {dots ? (
+                        <span aria-hidden="true" className="flex items-center gap-0.5">
+                          {dots.dots.map((color, index) => (
+                            <span key={index} className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                          ))}
+                        </span>
+                      ) : null}
+                      <span className="max-w-full truncate">{visible}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
@@ -453,6 +494,7 @@ export function TimeGrid({
 /** Un evento con orario nella colonna del giorno: posizione e altezza dall'orario, larghezza dalla sua colonna. */
 function TimedEvent({
   placed,
+  gutter,
   top,
   height,
   hourHeight,
@@ -460,6 +502,8 @@ function TimedEvent({
   onGrab
 }: {
   placed: PlacedPiece<CalendarOccurrence>;
+  /** Larghezza (px) del "+N" accanto alla fascia (vedi layoutTimedDay). */
+  gutter: number;
   top: number;
   height: number;
   hourHeight: number;
@@ -507,7 +551,7 @@ function TimedEvent({
       style={{
         top,
         height,
-        ...horizontal(placed),
+        ...horizontal(placed, gutter),
         // Colore della tipologia (o della materia), con testo leggibile nel tema.
         borderLeftColor: paint.style.border,
         background: paint.style.background,

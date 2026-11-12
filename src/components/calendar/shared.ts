@@ -1,6 +1,6 @@
 // Piccoli aiuti comuni alle viste del calendario: chi si può trascinare, materia mostrata, bordo
 // tratteggiato degli eventi altrui, punto del mouse per l'anteprima, orario proposto per un nuovo evento.
-import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useSyncExternalStore, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { isSameDay, setHours, startOfDay } from "date-fns";
 import type { CalendarEvent } from "../../types";
 import { subjectName } from "../../lib/selectors";
@@ -47,3 +47,33 @@ export const defaultStartFor = (day: Date) => {
 };
 
 export const allDayEventLabel = (event: CalendarEvent) => (event.tags?.includes("appello-importato") ? CALENDAR_VIEW_TEXT.examDate : ALL_DAY_LABEL);
+
+/**
+ * La media query `query` vale adesso? Si aggiorna quando cambia (rotazione, finestra ridimensionata).
+ * Senza `window` vale false.
+ */
+export function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (typeof window === "undefined") return () => undefined;
+      const list = window.matchMedia(query);
+      list.addEventListener("change", onChange);
+      return () => list.removeEventListener("change", onChange);
+    },
+    [query]
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => typeof window !== "undefined" && window.matchMedia(query).matches,
+    () => false
+  );
+}
+
+/** Telefono: sotto 640 px c'è il pulsante "+" fisso in basso a destra (AppShell). */
+export const PHONE_QUERY = "(max-width: 639px)";
+/** Sotto 768 px: l'intestazione del calendario si fa più semplice (vedi CalendarView). */
+export const NARROW_QUERY = "(max-width: 767px)";
+/** Schermo touch: il "+N" della griglia oraria è largo un dito (44 px), con il mouse 28 (vedi OVERLAP_SIZES). */
+export const COARSE_QUERY = "(pointer: coarse)";
+/** Spazio libero (px) a destra della griglia oraria sul telefono: lì passa il pulsante "+" fisso. */
+export const PHONE_FAB_GUTTER_PX = 56;
