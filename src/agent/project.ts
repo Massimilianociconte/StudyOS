@@ -181,11 +181,12 @@ export const agentUrl = (value: string | null | undefined, safe: (value: string)
   // Schema non sicuro: come prima, nessun valore. Indirizzi dei membri: null.
   if (!href) return undefined;
   if (/^mailto:/i.test(href)) return null;
-  let decoded = href;
+  let decoded: string;
   try {
     decoded = decodeURIComponent(href);
   } catch {
-    // Percentuali non valide: si controlla la forma scritta.
+    // Percentuali non valide: non si può controllare la forma decodificata, il link non arriva.
+    return null;
   }
   return agentMemberText(href) !== href || agentMemberText(decoded) !== decoded ? null : href;
 };

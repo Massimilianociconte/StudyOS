@@ -40,13 +40,15 @@ test("NEW-A: gli indirizzi delle risorse del gruppo non arrivano agli agenti; un
       resource("r3", "https://bea.private@gmail.com/"),
       resource("r4", "https://forms.example.com/?contatto=bea.private%40gmail.com"),
       resource("r5", "https://forms.example.com/?contatto=bea.private@gmail.com"),
-      resource("r6", "https://example.org/appunti?pagina=2")
+      resource("r6", "https://example.org/appunti?pagina=2"),
+      // Una percentuale non valida altrove impedisce di decodificare: il link non arriva.
+      resource("r7", "https://forms.example.com/?vecchio=%E0&contatto=bea.private%2540gmail.com")
     ]
   });
   const board = await executeAgentTool("studyos_list_group_board", { groupId: "g1" });
   assert.equal(board.ok, true, JSON.stringify(board));
   const urls = Object.fromEntries(board.data.resources.map((item) => [item.id, item.url]));
-  for (const id of ["r1", "r2", "r3", "r4", "r5"]) assert.equal(urls[id], null, id);
+  for (const id of ["r1", "r2", "r3", "r4", "r5", "r7"]) assert.equal(urls[id], null, id);
   assert.equal(urls.r6, "https://example.org/appunti?pagina=2");
   assert.deepEqual(leaksIn(board), []);
 });
@@ -95,6 +97,9 @@ test("R-LOW-1: il controllo di coerenza non conferma un nome grezzo; duplicate_s
   seed([session({ id: "p", courseName: "Chimica", courseKey: "nome:chimica", date: day })], { subjects: [subject("Chimica")], exams: [exam("s1")] });
   assert.equal((await executeAgentTool("studyos_check_consistency", {})).data.items.some((issue) => issue.code === "unlinked_personal_duplicate"), true);
   // Il nome indovinato non fa comparire «unlinked_personal_duplicate».
+  // Anche un appello con corso del catalogo non conferma il nome grezzo.
+  seed([{ ...one, courseId: "chim-gen" }], { subjects: [subject("chimica bea private gmail com")], exams: [exam("s1")] });
+  assert.equal((await executeAgentTool("studyos_check_consistency", {})).data.items.some((issue) => issue.code === "unlinked_personal_duplicate"), false);
   seed([one], { subjects: [subject("chimica bea private gmail com")], exams: [exam("s1")] });
   const guessed = await executeAgentTool("studyos_check_consistency", {});
   assert.equal(guessed.data.items.some((issue) => issue.code === "unlinked_personal_duplicate"), false);
@@ -118,7 +123,8 @@ test("INFO-2: due corsi che oscurati coincidono hanno id diversi e stabili, senz
   const issues = first.data.items.filter((issue) => issue.code === "two_selected_same_course");
   assert.equal(issues.length, 2);
   assert.notEqual(issues[0].id, issues[1].id);
-  assert.match(issues[0].refs.courseKey, /~[0-9a-f]{6}$/);
+  // Il suffisso è l'id del primo appello con quella chiave: mai derivato dal nome.
+  assert.deepEqual(issues.map((issue) => issue.refs.courseKey.split("~")[1]).sort(), ["g01", "g11"]);
   assert.deepEqual(leaksIn(first.data), []);
   assert.equal(JSON.stringify(first.data).includes("a.one"), false);
   const second = await executeAgentTool("studyos_check_consistency", {});

@@ -166,14 +166,17 @@ const safeCourseKey = (key: string, sessions: ReadonlyArray<{ courseKey: string;
   return hit ? `nome:${normalizeCourseName(agentMemberText(hit.courseName))}` : "nome:";
 };
 
-/** 6 caratteri esadecimali di SHA-256: distinguono due chiavi che oscurate sono uguali, senza rivelarle. */
-const shortHash = async (value: string) => {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest).slice(0, 3)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+/**
+ * Suffisso che distingue due chiavi che oscurate sono uguali: l'id (già pubblico) del primo appello con quella
+ * chiave grezza. Mai derivato dal nome, così non permette di verificare un nome indovinato.
+ */
+const keySuffix = (raw: string, sessions: ReadonlyArray<{ id: string; courseKey: string }>, position: number) => {
+  const ids = sessions.filter((session) => session.courseKey === raw).map((session) => session.id).sort();
+  return ids[0] ?? String(position + 1);
 };
 
 /** Chiave sicura per ogni chiave grezza degli esiti; con due chiavi che coincidono si aggiunge un suffisso. */
-const safeKeyMap = async (issues: readonly ConsistencyIssue[], sessions: ReadonlyArray<{ courseKey: string; courseName: string }>) => {
+const safeKeyMap = (issues: readonly ConsistencyIssue[], sessions: ReadonlyArray<{ id: string; courseKey: string; courseName: string }>) => {
   const rawKeys = [...new Set(issues.flatMap((issue) => (issue.refs.courseKey ? [issue.refs.courseKey] : [])))];
   const byText = new Map<string, string[]>();
   for (const raw of rawKeys) {
@@ -182,7 +185,7 @@ const safeKeyMap = async (issues: readonly ConsistencyIssue[], sessions: Readonl
   }
   const map = new Map<string, string>();
   for (const [safe, raws] of byText) {
-    for (const raw of raws) map.set(raw, raws.length > 1 ? `${safe}~${await shortHash(raw)}` : safe);
+    raws.forEach((raw, position) => map.set(raw, raws.length > 1 ? `${safe}~${keySuffix(raw, sessions, position)}` : safe));
   }
   return map;
 };
@@ -228,7 +231,7 @@ export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult>
   // Corrispondenze con i dati personali (doppioni, esame superato): sul nome oscurato, così un agente non
   // conferma un nome grezzo. duplicate_session resta sui nomi veri (due corsi diversi non si fondono).
   const redacted = groups.sessions.map((session) =>
-    !session.courseId && agentMemberText(session.courseName) !== session.courseName ? { ...session, courseName: agentMemberText(session.courseName) } : session
+    agentMemberText(session.courseName) !== session.courseName ? { ...session, courseName: agentMemberText(session.courseName) } : session
   );
   const matchedByName = new Set(["unlinked_personal_duplicate", "passed_but_selected_future"]);
   const rawIssues = report.issues;
@@ -240,7 +243,7 @@ export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult>
   const scope = text(args.scope) || "all";
   const min = SEVERITY_RANK[(text(args.minSeverity) || "info") as IssueSeverity] ?? 2;
   const issues = reportIssues.filter((issue) => SEVERITY_RANK[issue.severity] <= min && (scope === "all" || (scope === "groups") === GROUP_CODES.has(issue.code)));
-  const keys = await safeKeyMap(issues, groups.sessions);
+  const keys = safeKeyMap(issues, groups.sessions);
   return ok({
     checkedAt: report.checkedAt,
     groupsChecked: report.groupsChecked,
