@@ -1,7 +1,8 @@
 // Scelte della riga "Ripetizione" del modulo evento: scelte pronte calcolate dalla data d'inizio,
 // sezione "Personalizza" (modulo ↔ regola) e adattamento quando l'inizio cambia. Tutto puro.
 import type { RepeatRule, Weekday } from "../types";
-import { REPEAT_PICKER_TEXT, REPEAT_TEXT } from "./labels";
+import { MONTH_NAME, REPEAT_PICKER_TEXT, REPEAT_TEXT, WEEKDAY_NAME } from "./labels";
+import { EVENT_EDITOR_TEXT } from "./labels/calendar";
 import { describeRule, MAX_COUNT, MAX_INTERVAL, validateRepeat, WEEKDAYS } from "./repeat";
 import { repeatPresets, weekdayOf, weekdayPosition, type RepeatPresetId } from "./repeatPresets";
 import { civilAddMonths, daysInMonth, isCivilDate, parseCivil } from "./tz";
@@ -104,6 +105,30 @@ export const ruleFromCustom = (custom: CustomRepeat, start: string): RepeatRule 
   if (custom.end === "until") rule.end = { type: "until", date: custom.until };
   else if (custom.end === "count") rule.end = { type: "count", count: custom.count };
   return rule;
+};
+
+/**
+ * Il giorno d'inizio non è uno di quelli della regola (da giovedì "ogni lunedì e mercoledì", da un
+ * giorno qualsiasi "l'ultimo del mese"): il motore lo conta lo stesso come la prima volta.
+ */
+export const startOutsideRule = (rule: RepeatRule | null | undefined, start: string): boolean => {
+  const parts = parseCivil(start);
+  if (!rule || !parts) return false;
+  if (rule.freq === "weekly") return Boolean(rule.byWeekday?.length) && !rule.byWeekday!.includes(weekdayOf(start));
+  if (rule.freq !== "monthly" || !rule.monthly) return false;
+  if (rule.monthly.by === "lastDay") return parts.day !== daysInMonth(parts.year, parts.month);
+  if (rule.monthly.by !== "weekday") return false;
+  const position = weekdayPosition(start);
+  return weekdayOf(start) !== rule.monthly.weekday || (rule.monthly.nth === -1 ? !position.last : position.nth !== rule.monthly.nth);
+};
+
+/** Frase della regola; se l'inizio è una volta in più, lo dice ("Anche giovedì 12 novembre, …"). */
+export const repeatSummary = (rule: RepeatRule, start: string) => {
+  const text = describeRule(rule, start);
+  const parts = parseCivil(start);
+  if (!parts || !startOutsideRule(rule, start)) return text;
+  const day = `${WEEKDAY_NAME[weekdayOf(start)]} ${parts.day} ${MONTH_NAME[parts.month - 1]}`;
+  return `${text}. ${EVENT_EDITOR_TEXT.repeatStartExtra(day)}`;
 };
 
 const isIntIn = (value: number, min: number, max: number) => Number.isInteger(value) && value >= min && value <= max;

@@ -117,6 +117,8 @@ export const EVENT_EDITOR_TEXT = {
   /** Tipologia «Vacanza» scelta nel modulo completo: passa a tutto il giorno (come «Nuova vacanza»). */
   vacationAllDay: "Una vacanza occupa giornate intere: scegli il primo e l'ultimo giorno in «Dal» e «Al».",
   endFollows: "Se cambi l'inizio, la fine si sposta e la durata resta la stessa.",
+  /** Ripetizione personalizzata il cui schema non comprende il giorno d'inizio: il motore lo conta comunque. */
+  repeatStartExtra: (day: string) => `Anche ${day}, il giorno d'inizio, che conta come la prima volta.`,
   type: "Tipologia",
   typeOccasions: "Ogni anno",
   color: "Colore",
