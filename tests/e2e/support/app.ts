@@ -127,7 +127,7 @@ export const joinWithCode = async (page: Page, code: string, groupName: string) 
   return detail;
 };
 
-export const detailTab = async (detail: Locator, tab: "Bacheca" | "Membri" | "Cronologia") => {
+export const detailTab = async (detail: Locator, tab: "Bacheca" | "Membri" | "Cronologia" | "Appelli" | "Docenti e aule") => {
   const button = detail.getByRole("group", { name: "Sezioni del gruppo" }).getByRole("button", { name: tab, exact: true });
   await button.click();
   await expect(button).toHaveAttribute("aria-pressed", "true");

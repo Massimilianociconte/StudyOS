@@ -15,6 +15,7 @@ Non tocca mai il progetto Supabase reale né le porte 5432x (un altro progetto).
 | `05-group-leave.spec.ts` | Bob esce dal gruppo; Alice vede «bob ha lasciato il gruppo» nella cronologia (voce scritta dal trigger del server) e un solo membro. |
 | `06-account-erase.spec.ts` | Bob usa «Cancella anche dall'account» dal telefono: spariscono anche le attività create sul portatile, il portatile le perde dal vivo, e né un ricaricamento né un accesso da un dispositivo nuovo le riportano. |
 | `07-group-join-catchup.spec.ts` | Con la rete di Bob lenta, Alice aggiunge una nota mentre Bob sta entrando nel gruppo: la nota compare a Bob appena il suo canale è pronto, senza ricaricare. |
+| `08-group-exams.spec.ts` | Alice aggiunge un appello nella scheda «Appelli» del gruppo; Bob lo vede comparire dal vivo e lo sceglie; per Alice resta da scegliere (il piano è personale). |
 
 Ogni prova crea i propri dati (nomi con un suffisso unico) e parte e finisce con i due account
 azzerati sul server (`resetAccounts` in `support/stack.ts`): dati personali, gruppi, condivisioni,
@@ -51,10 +52,11 @@ psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/people.sql
 psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/storage.sql
 psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/agent.sql
 psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/push-reminders.sql
+psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/group-exams.sql
 ```
 
-`people.sql` serve sempre: senza, la sincronizzazione di gruppi e condivisioni dell'app attuale
-non parte. Gli altri tre tengono lo stack uguale al progetto reale (file, collegamenti agli agenti,
+`people.sql` e `group-exams.sql` servono sempre: senza, la sincronizzazione di gruppi, condivisioni
+e appelli dell'app attuale non parte. Gli altri tre tengono lo stack uguale al progetto reale (file, collegamenti agli agenti,
 promemoria). In locale `push-reminders-verify.sql` mostra `vault_ready` e `cron_ready` falsi: è
 normale, il job e i segreti esistono solo sul progetto reale. Per i file serve anche il servizio
 storage: per questo il comando sopra non lo esclude.

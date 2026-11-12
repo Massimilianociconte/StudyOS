@@ -91,6 +91,9 @@ create temp table e2e_users on commit drop as select id::text as id from auth.us
 create temp table e2e_groups on commit drop as
   select g.id::text as id from public.studyos_groups g where g.owner_id::text in (select id from e2e_users)
   union select m.group_id::text from public.studyos_group_members m where m.user_id::text in (select id from e2e_users);
+delete from public.studyos_group_history where group_id::text in (select id from e2e_groups);
+delete from public.studyos_group_catalog_overrides where group_id::text in (select id from e2e_groups);
+delete from public.studyos_group_exam_sessions where group_id::text in (select id from e2e_groups);
 delete from public.studyos_group_activity where group_id::text in (select id from e2e_groups) or actor_user_id::text in (select id from e2e_users);
 delete from public.studyos_group_resources where group_id::text in (select id from e2e_groups) or added_by_user_id::text in (select id from e2e_users);
 delete from public.studyos_group_invites where group_id::text in (select id from e2e_groups) or from_user_id::text in (select id from e2e_users)
@@ -120,11 +123,12 @@ export const assertSchemaReady = (dbUrl: string) => {
        and (to_regclass('public.studyos_shares') is not null)
        and exists (select 1 from pg_proc where proname = 'erase_studyos_account_items')
        and exists (select 1 from pg_trigger where tgname = 'studyos_group_member_left')
-       and (to_regclass('public.studyos_profiles') is not null)`
+       and (to_regclass('public.studyos_profiles') is not null)
+       and (to_regclass('public.studyos_group_exam_sessions') is not null)`
   );
   if (ready !== "t") {
     throw new Error(
-      "Lo stack locale non ha lo schema completo: applica supabase/schema.sql, groups.sql, sharing.sql e people.sql (vedi tests/e2e/README.md)."
+      "Lo stack locale non ha lo schema completo: applica supabase/schema.sql, groups.sql, sharing.sql, people.sql e group-exams.sql (vedi tests/e2e/README.md)."
     );
   }
 };
