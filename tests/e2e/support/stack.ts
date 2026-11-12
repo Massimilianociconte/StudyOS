@@ -69,7 +69,12 @@ export const psql = (dbUrl: string, sql: string): string => {
   }).trim();
 };
 
-const emails = () => Object.values(ACCOUNTS).map((account) => `'${account.email.replace(/'/g, "''")}'`).join(", ");
+const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+const emails = () => Object.values(ACCOUNTS).map((account) => quote(account.email)).join(", ");
+const profileNames = () =>
+  Object.values(ACCOUNTS)
+    .map((account) => `(${quote(account.email.toLowerCase())}, ${quote(account.name)})`)
+    .join(", ");
 
 /**
  * Azzera tutto ciò che i due account di prova hanno sul server (dati personali, gruppi, condivisioni,
@@ -98,6 +103,9 @@ delete from public.studyos_share_invites where owner_id::text in (select id from
   or lower(recipient_email) in (${emails()});
 delete from public.studyos_item_revisions where owner_id::text in (select id from e2e_users) or changed_by::text in (select id from e2e_users);
 delete from public.studyos_items where user_id::text in (select id from e2e_users);
+insert into public.studyos_profiles (user_id, display_name)
+  select u.id, v.name from auth.users u join (values ${profileNames()}) as v(email, name) on lower(u.email) = v.email
+on conflict (user_id) do update set display_name = excluded.display_name;
 commit;
 `
   );
@@ -111,11 +119,12 @@ export const assertSchemaReady = (dbUrl: string) => {
        and (to_regclass('public.studyos_groups') is not null)
        and (to_regclass('public.studyos_shares') is not null)
        and exists (select 1 from pg_proc where proname = 'erase_studyos_account_items')
-       and exists (select 1 from pg_trigger where tgname = 'studyos_group_member_left')`
+       and exists (select 1 from pg_trigger where tgname = 'studyos_group_member_left')
+       and (to_regclass('public.studyos_profiles') is not null)`
   );
   if (ready !== "t") {
     throw new Error(
-      "Lo stack locale non ha lo schema completo: applica supabase/schema.sql, groups.sql e sharing.sql (vedi tests/e2e/README.md)."
+      "Lo stack locale non ha lo schema completo: applica supabase/schema.sql, groups.sql, sharing.sql e people.sql (vedi tests/e2e/README.md)."
     );
   }
 };

@@ -5,7 +5,10 @@ export interface TestAccount {
   label: "alice" | "bob";
   email: string;
   password: string;
-  /** Nome che l'app mostra senza un nome nel profilo: la parte locale dell'email. */
+  /**
+   * Nome visibile: le fixture lo scrivono in «Il tuo nome» dopo l'accesso e `resetAccounts` lo mette
+   * anche nel profilo online. L'app non ricava mai un nome dall'email: senza mostrerebbe «Studente».
+   */
   name: string;
 }
 

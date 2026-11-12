@@ -58,6 +58,18 @@ export const signIn = async (page: Page, account: TestAccount) => {
   await expect(cloudBadge(page)).toHaveAccessibleName(`Sincronizzato: ${account.email}. Apri le impostazioni dell'account.`);
 };
 
+/**
+ * Nome visibile agli altri (Impostazioni → Profilo e obiettivi → «Il tuo nome»): l'app lo usa per gruppi,
+ * bacheca e condivisioni e lo copia nel profilo online. Senza, gli altri vedrebbero «Studente».
+ */
+export const setDisplayName = async (page: Page, name: string) => {
+  await openSettings(page, /Profilo e obiettivi/);
+  const field = page.getByLabel("Il tuo nome", { exact: true });
+  await field.fill(name);
+  await expect(field).toHaveValue(name);
+  await waitSynced(page);
+};
+
 // ——— Attività ———
 
 /** Elenco delle proprie attività (senza la parte «Condivisi con te»). */

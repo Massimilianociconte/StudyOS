@@ -1,4 +1,4 @@
-import { ACCOUNTS, channelMark, expect, test, waitForChannel } from "./support/fixtures";
+import { channelMark, expect, test, waitForChannel } from "./support/fixtures";
 import { ACROSS, LIVE, createTask, goTo, ownTask, sharedSection, waitSynced } from "./support/app";
 
 test("04 Alice condivide le attività con Bob, Bob modifica, Alice revoca e Bob perde l'accesso con l'avviso giusto", async ({ alice, bob, tag }) => {
@@ -9,13 +9,12 @@ test("04 Alice condivide le attività con Bob, Bob modifica, Alice revoca e Bob 
   await createTask(alice.page, original);
   await waitSynced(alice.page);
 
-  // Alice: Condivisione → Condividi → solo «Attività», «Può modificare», invito per l'email di Bob.
+  // Alice: Condivisione → Condividi → solo «Attività», «Può modificare», invito con link.
   await goTo(alice.page, "Condivisione");
   await alice.page.getByRole("button", { name: "Condividi", exact: true }).first().click();
   const share = alice.page.getByRole("dialog", { name: "Condividi" });
   await share.getByRole("checkbox", { name: /^Calendario/ }).uncheck();
   await share.getByRole("checkbox", { name: /^Attività/ }).check();
-  await share.getByLabel("Email (facoltativa)").fill(ACCOUNTS.bob.email);
   await share.getByRole("group", { name: "Permesso" }).getByRole("button", { name: "Può modificare" }).click();
   await share.getByRole("button", { name: "Crea l'invito" }).click();
   await expect(share.getByText(/^Invito pronto: Attività \(Può modificare\)/)).toBeVisible();

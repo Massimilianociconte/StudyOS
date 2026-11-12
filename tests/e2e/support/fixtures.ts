@@ -3,7 +3,7 @@
 
 import { test as base, expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { ACCOUNTS, type TestAccount } from "./accounts";
-import { openApp, signIn } from "./app";
+import { openApp, setDisplayName, signIn } from "./app";
 import { APP_URL, assertLocalApi, resetAccounts } from "./stack";
 
 export interface Device {
@@ -110,12 +110,14 @@ export const test = base.extend<Fixtures>({
   alice: async ({ newDevice }, use) => {
     const device = await newDevice(ACCOUNTS.alice);
     await signInOn(device);
+    await setDisplayName(device.page, device.account.name);
     await use(device);
   },
 
   bob: async ({ newDevice }, use) => {
     const device = await newDevice(ACCOUNTS.bob);
     await signInOn(device);
+    await setDisplayName(device.page, device.account.name);
     await use(device);
   }
 });

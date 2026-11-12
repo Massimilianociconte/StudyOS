@@ -14,6 +14,7 @@ Non tocca mai il progetto Supabase reale né le porte 5432x (un altro progetto).
 | `04-share-task.spec.ts` | Alice condivide le sue attività con Bob («Può modificare», invito con link); Bob modifica un'attività di Alice e Alice vede la modifica; Alice smette di condividere e la modifica successiva di Bob non passa, con l'avviso giusto. |
 | `05-group-leave.spec.ts` | Bob esce dal gruppo; Alice vede «bob ha lasciato il gruppo» nella cronologia (voce scritta dal trigger del server) e un solo membro. |
 | `06-account-erase.spec.ts` | Bob usa «Cancella anche dall'account» dal telefono: spariscono anche le attività create sul portatile, il portatile le perde dal vivo, e né un ricaricamento né un accesso da un dispositivo nuovo le riportano. |
+| `07-group-join-catchup.spec.ts` | Con la rete di Bob lenta, Alice aggiunge una nota mentre Bob sta entrando nel gruppo: la nota compare a Bob appena il suo canale è pronto, senza ricaricare. |
 
 Ogni prova crea i propri dati (nomi con un suffisso unico) e parte e finisce con i due account
 azzerati sul server (`resetAccounts` in `support/stack.ts`): dati personali, gruppi, condivisioni,
@@ -35,7 +36,7 @@ supabase init
 sed -i '' -e 's/project_id = ".*"/project_id = "studyos-sharing"/' -e 's/543\([0-9][0-9]\)/554\1/g' supabase/config.toml
 # Solo per le prove: una passata fa una ventina di accessi e il limite locale è 30 ogni 5 minuti.
 sed -i '' -e 's/^sign_in_sign_ups = 30$/sign_in_sign_ups = 1000/' -e 's/^token_refresh = 150$/token_refresh = 1000/' supabase/config.toml
-supabase start -x studio,imgproxy,edge-runtime,analytics,vector,storage,functions,inbucket
+supabase start -x studio,imgproxy,edge-runtime,analytics,vector,functions,inbucket
 cd ../../..
 ```
 
@@ -46,7 +47,17 @@ export PGURL=postgresql://postgres:postgres@127.0.0.1:55422/postgres
 psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/schema.sql
 psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/groups.sql
 psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/sharing.sql
+psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/people.sql
+psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/storage.sql
+psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/agent.sql
+psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/push-reminders.sql
 ```
+
+`people.sql` serve sempre: senza, la sincronizzazione di gruppi e condivisioni dell'app attuale
+non parte. Gli altri tre tengono lo stack uguale al progetto reale (file, collegamenti agli agenti,
+promemoria). In locale `push-reminders-verify.sql` mostra `vault_ready` e `cron_ready` falsi: è
+normale, il job e i segreti esistono solo sul progetto reale. Per i file serve anche il servizio
+storage: per questo il comando sopra non lo esclude.
 
 Gli account di prova (`alice@studyos.test`, `bob@studyos.test`, password in
 `scripts/supabase/local-stack.md`) li crea il global setup se mancano.
