@@ -7,7 +7,25 @@ export type NoteTextPart = { text: string; href?: string };
 
 const LINK = /\b(?:https?:\/\/|mailto:|www\.)[^\s<>"«»]+/gi;
 /** Punteggiatura in coda che chiude la frase, non il link. */
-const TRAILING = /[.,;:!?)\]}'’]+$/;
+const TRAILING_PUNCTUATION = ".,;:!?}'’";
+const PAIRS: Record<string, string> = { ")": "(", "]": "[" };
+
+const count = (text: string, char: string) => text.split(char).length - 1;
+
+/**
+ * Toglie dalla coda la punteggiatura della frase. Una ")" o "]" finale resta solo se apre nel link
+ * (es. …/Ciclo_di_Krebs_(biochimica)); se è in più chiude il testo intorno, come «(vedi https://…)».
+ */
+const trimLink = (raw: string) => {
+  let url = raw;
+  while (url) {
+    const last = url[url.length - 1];
+    const open = PAIRS[last];
+    if (TRAILING_PUNCTUATION.includes(last) || (open && count(url, open) < count(url, last))) url = url.slice(0, -1);
+    else break;
+  }
+  return url;
+};
 
 export function noteTextParts(body: string): NoteTextPart[] {
   const parts: NoteTextPart[] = [];
@@ -20,7 +38,7 @@ export function noteTextParts(body: string): NoteTextPart[] {
   let cursor = 0;
   for (const match of body.matchAll(LINK)) {
     const start = match.index ?? 0;
-    const raw = match[0].replace(TRAILING, "");
+    const raw = trimLink(match[0]);
     const href = raw ? safeHref(raw) : undefined;
     if (!href) continue;
     pushText(body.slice(cursor, start));

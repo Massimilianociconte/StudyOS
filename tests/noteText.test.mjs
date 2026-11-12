@@ -27,6 +27,31 @@ test("testo della nota: link tra parentesi o virgolette non si portano dietro la
   ]);
 });
 
+test("testo della nota: le parentesi che fanno parte del link restano (Wikipedia), quelle che lo chiudono no", () => {
+  const krebs = "https://it.wikipedia.org/wiki/Ciclo_di_Krebs_(biochimica)";
+  assert.deepEqual(noteTextParts(`Leggi ${krebs}.`), [{ text: "Leggi " }, { text: krebs, href: krebs }, { text: "." }]);
+  assert.deepEqual(noteTextParts(`(vedi ${krebs})`), [{ text: "(vedi " }, { text: krebs, href: krebs }, { text: ")" }]);
+  assert.deepEqual(noteTextParts("(vedi https://x.it/a)"), [
+    { text: "(vedi " },
+    { text: "https://x.it/a", href: "https://x.it/a" },
+    { text: ")" }
+  ]);
+  assert.deepEqual(noteTextParts("(vedi https://x.it/a)."), [
+    { text: "(vedi " },
+    { text: "https://x.it/a", href: "https://x.it/a" },
+    { text: ")." }
+  ]);
+});
+
+test("testo della nota: stessa regola per le quadre", () => {
+  assert.deepEqual(noteTextParts("[https://x.it/a]"), [{ text: "[" }, { text: "https://x.it/a", href: "https://x.it/a" }, { text: "]" }]);
+  assert.deepEqual(noteTextParts("Nota https://x.it/a[1], poi"), [
+    { text: "Nota " },
+    { text: "https://x.it/a[1]", href: "https://x.it/a[1]" },
+    { text: ", poi" }
+  ]);
+});
+
 test("testo della nota: javascript:, data: e indirizzi non validi restano testo semplice", () => {
   const unsafe = "javascript:alert(1) data:text/html,<b>x</b> http://localhost-nope";
   for (const part of noteTextParts(unsafe)) assert.equal(part.href, undefined, part.text);
