@@ -34,7 +34,6 @@ export const GROUP_SYNC_TEXT = {
   leaveFailed: "Uscita non riuscita: sei ancora nel gruppo. Controlla la connessione e riprova.",
   deleteGroupFailed: "Il gruppo non è stato eliminato: controlla la connessione e riprova.",
   removedMember: (name: string) => `${name} non fa più parte del gruppo.`,
-  removedMemberActivity: (name: string) => `ha tolto ${name} dal gruppo`,
   notPublished: "Non ancora condiviso: partirà appena il server risponde.",
   inviteQueued: (recipient: string) =>
     `Il server dei gruppi non risponde: l'invito a ${recipient} è salvato e partirà da solo appena torna la connessione.`

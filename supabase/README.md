@@ -33,6 +33,23 @@ passano dalla conferma email, tra i Redirect URLs aggiungi anche
 nominale richiede ora un'email presente, uguale a quella dell'invito e confermata.
 `groups.sql` si può rieseguire senza perdere righe.
 
+**Revisione del 12/11/2026: riesegui `schema.sql`, `groups.sql`, `sharing.sql`, poi
+`verify.sql` e `sharing-verify.sql`** (stesso ordine qui sotto). Cosa cambia:
+
+- `schema.sql`: nuova funzione `erase_studyos_account_items`. «Cancella anche dall'account»
+  elimina anche i dati mai arrivati sul dispositivo che cancella (prima tornavano). In
+  `verify.sql` la nuova colonna `erase_rpc_ready` deve essere `true`.
+- `groups.sql`: `updated_at` di gruppi, inviti e risorse lo scrive il server (un telefono con
+  l'orologio avanti nascondeva le modifiche degli altri membri); una sola voce «è entrato nel
+  gruppo» per ingresso; «ha lasciato il gruppo» e «ha tolto … dal gruppo» le scrive il server
+  solo se l'uscita riesce.
+- `sharing.sql`: la modifica di chi riceve non perde più contro un timbro del proprietario
+  nel futuro (orologio avanti) e chi modifica un elemento appena eliminato dal proprietario
+  riceve un avviso chiaro invece di «Non hai più il permesso».
+
+Senza questa revisione l'app funziona come prima: le cancellazioni dall'account valgono solo
+per ciò che c'è sul dispositivo e le voci di uscita dai gruppi non vengono scritte.
+
 Ordine esatto nel SQL Editor, una query alla volta:
 
 1. `schema.sql` (la prima volta o dopo una sua revisione);

@@ -10,7 +10,7 @@ import {
 } from "../lib/backup";
 import { selectPreferences, useStudyStore, snapshotFromState } from "../store/useStudyStore";
 import { whenPersisted } from "../lib/persistence";
-import { isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
+import { eraseAccountData, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSyncState";
 import { resizeImageFile } from "../lib/files";
 import { SETTINGS_JUMP_EVENT, settingsSectionFromEvent, takeSettingsSection, type SettingsSection } from "../lib/settingsJump";
@@ -333,11 +333,16 @@ export function SettingsView() {
       if (mode !== "local") {
         const alsoCloud = mode === "cloud";
         await resetAllData({ propagate: alsoCloud });
+        // Prima della sync: il server elimina anche ciò che questo dispositivo non ha mai ricevuto, e il
+        // pull che segue non riporta qui i dati arrivati da altri dispositivi.
+        const erased = alsoCloud ? await eraseAccountData() : null;
         if (alsoCloud) await requestSync();
         else await resetCloudDeviceState();
         const sync = getCloudSyncState();
         report(alsoCloud
-          ? sync.pendingChanges || sync.status === "error" || sync.status === "offline"
+          ? erased === "failed"
+            ? SETTINGS_TEXT.erase.accountUnreachable
+            : sync.pendingChanges || sync.status === "error" || sync.status === "offline"
             ? "Dati cancellati da questo dispositivo. Verranno cancellati anche dall'account appena la sincronizzazione riprende."
             : "Dati cancellati da questo dispositivo e dall'account."
           : sync.status === "error" || sync.status === "offline"

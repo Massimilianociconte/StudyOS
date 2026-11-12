@@ -161,6 +161,18 @@ export const pushEntityRows = async (userId: string, clientId: string, rows: Pus
   return data as PushResult[];
 };
 
+/**
+ * Ogni dato personale dell'account diventa un'eliminazione timbrata dal server (erase_studyos_account_items,
+ * schema.sql). "missing": il progetto non ha ancora la funzione (PGRST202). Un altro errore si lancia.
+ */
+export const eraseAccountItems = async (): Promise<"ok" | "missing"> => {
+  const client = requireClient();
+  const { error } = await client.rpc("erase_studyos_account_items");
+  if (!error) return "ok";
+  if (error.code === "PGRST202") return "missing";
+  throw Object.assign(new Error(error.message), { code: error.code });
+};
+
 /** Legge una versione precisa, inclusi gli aggiornamenti già scritti dalla scheda corrente. */
 export const pullEntityRow = async (userId: string, entityType: string, entityId: string): Promise<RemoteRow | null> => {
   const client = requireClient();

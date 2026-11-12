@@ -181,6 +181,48 @@ revoke all on function public.push_studyos_rows(uuid, text, jsonb) from public;
 revoke all on function public.push_studyos_rows(uuid, text, jsonb) from anon;
 grant execute on function public.push_studyos_rows(uuid, text, jsonb) to authenticated;
 
+-- «Cancella anche dall'account» (revisione del 12/11/2026): ogni dato personale dell'account diventa
+-- un'eliminazione, anche quelli mai arrivati sul dispositivo che cancella. Prima partivano solo le
+-- eliminazioni di ciò che c'era lì e il resto tornava. Il timbro supera quello salvato (anche se un
+-- dispositivo con l'orologio avanti l'aveva messo nel futuro): vince su ogni copia già sincronizzata,
+-- mentre una modifica fatta dopo su un altro dispositivo resta, come per ogni eliminazione.
+-- client_id vuoto: anche il dispositivo che cancella riceve le eliminazioni al prossimo pull.
+-- Toglie anche la vecchia riga snapshot (backup della sync v1). Restituisce le righe eliminate.
+create or replace function public.erase_studyos_account_items()
+returns integer
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_count integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Accesso richiesto';
+  end if;
+  delete from public.studyos_items where user_id = auth.uid() and entity_type = 'snapshot';
+  update public.studyos_items as item
+    set payload = jsonb_build_object(
+          'id', item.entity_id,
+          'deletedAt', to_char(
+            greatest(now(), public.studyos_item_stamp(item.payload, item.deleted, item.updated_at) + interval '1 millisecond')
+              at time zone 'utc',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          )
+        ),
+        deleted = true,
+        encrypted = false,
+        client_id = null
+    where item.user_id = auth.uid() and not item.deleted and item.entity_type <> 'snapshot';
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+revoke all on function public.erase_studyos_account_items() from public;
+revoke all on function public.erase_studyos_account_items() from anon;
+grant execute on function public.erase_studyos_account_items() to authenticated;
+
 -- Realtime: il client usa gli eventi solo come segnale per un pull incrementale.
 do $$
 begin

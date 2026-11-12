@@ -29,6 +29,7 @@ import {
   type PullAfter,
   pullLegacySnapshot,
   pushEntityRows,
+  eraseAccountItems,
   subscribeRemoteChanges,
   unsubscribeChannel,
   type PushRow
@@ -700,6 +701,22 @@ export const forcePullNow = async () => {
 };
 
 export const isSignedIn = () => Boolean(currentSession());
+
+/**
+ * «Cancella anche dall'account»: il server segna come eliminato ogni dato personale dell'account, anche
+ * quelli mai arrivati su questo dispositivo (prima partivano solo le eliminazioni di ciò che c'era qui e
+ * il resto tornava). Da chiamare dopo aver svuotato il dispositivo e prima della sync. "local-only": il
+ * progetto non ha ancora la funzione e valgono solo le eliminazioni di qui; "failed": il server non ha
+ * risposto (le eliminazioni di qui partono comunque con la sync).
+ */
+export const eraseAccountData = async (): Promise<"ok" | "local-only" | "failed"> => {
+  if (!currentSession()) return "failed";
+  try {
+    return (await eraseAccountItems()) === "ok" ? "ok" : "local-only";
+  } catch {
+    return "failed";
+  }
+};
 
 /**
  * Dopo un reset solo locale con account collegato: dimentica cursore e flag del dispositivo

@@ -10,6 +10,10 @@ select
     and has_table_privilege('authenticated', to_regclass('public.studyos_items'), 'DELETE'), false) as authenticated_table_ready,
   coalesce(has_function_privilege('authenticated',
     to_regprocedure('public.push_studyos_rows(uuid,text,jsonb)'), 'EXECUTE'), false) as authenticated_rpc_ready,
+  -- «Cancella anche dall'account» (revisione del 12/11/2026): solo account autenticati.
+  coalesce(has_function_privilege('authenticated',
+    to_regprocedure('public.erase_studyos_account_items()'), 'EXECUTE')
+    and not has_function_privilege('anon', to_regprocedure('public.erase_studyos_account_items()'), 'EXECUTE'), false) as erase_rpc_ready,
   (select count(*) from pg_policies where schemaname = 'public' and tablename = 'studyos_items'
     and policyname in ('studyos_select_own_items', 'studyos_insert_own_items',
       'studyos_update_own_items', 'studyos_delete_own_items')) as own_item_policies,

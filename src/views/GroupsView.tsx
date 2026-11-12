@@ -9,6 +9,7 @@ import { cloudConfigured } from "../lib/cloudSyncState";
 import { GROUP_JOINED_EVENT, confirmPendingInvite, inviteCodeFromText, savePendingInvite } from "../lib/groupInvite";
 import {
   acceptInviteRemote,
+  adoptServerStamp,
   declineInviteRemote,
   deleteSharedGroup,
   deleteSharedResource,
@@ -633,11 +634,14 @@ function ResourceRow({ resource, canManage, shared }: { resource: GroupResource;
     setBusy(true);
     setError("");
     try {
-      if (published && !(await pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))) {
+      const pinned = published ? await pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }) : null;
+      if (published && !pinned) {
         setError(GROUP_SYNC_TEXT.pinFailed);
         return;
       }
       await store.toggleResourcePin(resource.id);
+      // Il timbro del server, non quello di questo dispositivo (vedi adoptServerStamp).
+      if (pinned) await adoptServerStamp("groupResources", resource.id, pinned.stamp);
     } finally {
       setBusy(false);
     }
@@ -719,8 +723,8 @@ const leaveGroup = async (group: StudyGroup, me: Pick<GroupMember, "userId" | "d
     if (owner) {
       if (!(await deleteSharedGroup(group.id))) return { ok: false, text: GROUP_SYNC_TEXT.deleteGroupFailed };
     } else {
-      // Prima la voce in cronologia (serve ancora essere membri per pubblicarla), poi l'uscita.
-      await logSharedActivity(group.id, me.displayName, "ha lasciato il gruppo").catch(() => undefined);
+      // «ha lasciato il gruppo» lo scrive il server (trigger studyos_group_member_left di groups.sql), solo
+      // se l'uscita riesce: scritta da qui prima di uscire restava anche quando l'uscita falliva.
       if (!(await removeSharedMember(group.id, me.userId))) return { ok: false, text: GROUP_SYNC_TEXT.leaveFailed };
     }
   } else if (owner) {
@@ -768,12 +772,9 @@ function MemberRow({ group, member, isOwner, actor, onClose, onNotice, onLeft }:
         onNotice(GROUP_SYNC_TEXT.removeFailed(member.displayName));
         return;
       }
+      // In un gruppo condiviso «ha tolto … dal gruppo» lo scrive il server (trigger studyos_group_member_left):
+      // la tabella dei membri non manda eventi, la voce in cronologia avvisa subito gli altri membri.
       await store.updateStudyGroup(group.id, { members: group.members.filter((m) => m.userId !== member.userId) });
-      if (group.sharedAt) {
-        // La tabella dei membri non manda eventi: la voce in cronologia avvisa subito gli altri membri.
-        const me = group.members.find((m) => m.userId === myId)?.displayName || actor?.displayName || "";
-        if (me) await logSharedActivity(group.id, me, GROUP_SYNC_TEXT.removedMemberActivity(member.displayName)).catch(() => undefined);
-      }
       onNotice(GROUP_SYNC_TEXT.removedMember(member.displayName));
     } finally {
       setBusy(false);

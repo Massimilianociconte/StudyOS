@@ -11,7 +11,9 @@
 -- Si può rieseguire: tabelle e righe esistenti restano, policy, trigger e funzioni si
 -- aggiornano. Rieseguilo dopo la revisione del 10/11/2026 (accettare o rifiutare un invito
 -- nominale richiede un'email presente, uguale e confermata); se usi la condivisione dei dati,
--- poi riesegui sharing.sql e sharing-verify.sql, in quest'ordine.
+-- poi riesegui sharing.sql e sharing-verify.sql, in quest'ordine. Rieseguilo anche dopo la
+-- revisione del 12/11/2026: timbri del server sui gruppi, una sola voce per ingresso, uscite e
+-- rimozioni scritte dal server.
 
 -- ─── Tabelle ────────────────────────────────────────────────────────────────
 
@@ -258,6 +260,85 @@ create trigger studyos_group_resources_guard
   before update on public.studyos_group_resources
   for each row execute function public.studyos_group_resources_guard();
 
+-- ─── Timbri e cronologia scritti dal server (revisione del 12/11/2026) ─────
+
+-- updated_at è l'ora del server, non quella del dispositivo. Con il timbro del client restava
+-- l'ultima scrittura arrivata anche se più vecchia, e un telefono con l'orologio avanti teneva la
+-- sua copia «più nuova» di ogni modifica successiva degli altri membri (un invito accettato
+-- restava «in attesa» per chi l'aveva mandato). Il client adotta il timbro restituito.
+create or replace function public.studyos_group_stamp()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+revoke all on function public.studyos_group_stamp() from public;
+
+drop trigger if exists studyos_groups_stamp on public.studyos_groups;
+create trigger studyos_groups_stamp
+  before insert or update on public.studyos_groups
+  for each row execute function public.studyos_group_stamp();
+drop trigger if exists studyos_group_invites_stamp on public.studyos_group_invites;
+create trigger studyos_group_invites_stamp
+  before insert or update on public.studyos_group_invites
+  for each row execute function public.studyos_group_stamp();
+drop trigger if exists studyos_group_resources_stamp on public.studyos_group_resources;
+create trigger studyos_group_resources_stamp
+  before insert or update on public.studyos_group_resources
+  for each row execute function public.studyos_group_stamp();
+
+-- Uscite e rimozioni in cronologia, scritte solo quando la riga del membro sparisce davvero.
+-- Prima le scriveva l'app: chi usciva pubblicava «ha lasciato il gruppo» prima di togliersi (dopo
+-- la RLS l'avrebbe rifiutata) e la voce restava anche se l'uscita poi falliva. La voce è anche il
+-- segnale realtime per gli altri membri (la tabella dei membri non è nella pubblicazione).
+-- Niente voce quando sparisce il gruppo intero (cascade dall'eliminazione del gruppo).
+-- Nome diverso da studyos_group_member_left di sharing.sql, che toglie le condivisioni.
+create or replace function public.studyos_group_member_left_activity()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := left(coalesce(nullif(btrim(old.display_name), ''), 'Un membro'), 80);
+  v_actor text;
+begin
+  if not exists (select 1 from public.studyos_groups where id = old.group_id) then
+    return old;
+  end if;
+  if auth.uid() is not null and auth.uid()::text <> old.user_id then
+    select left(coalesce(nullif(btrim(m.display_name), ''), 'Il proprietario'), 80) into v_actor
+      from public.studyos_group_members m
+      where m.group_id = old.group_id and m.user_id = auth.uid()::text;
+  end if;
+  insert into public.studyos_group_activity (id, group_id, actor_display_name, text, actor_user_id)
+  values (
+    'activity-left-' || replace(gen_random_uuid()::text, '-', ''),
+    old.group_id,
+    coalesce(v_actor, v_name),
+    case
+      when v_actor is not null then 'ha tolto ' || v_name || ' dal gruppo'
+      when auth.uid()::text = old.user_id then 'ha lasciato il gruppo'
+      else 'non fa più parte del gruppo'
+    end,
+    coalesce(auth.uid()::text, old.user_id)
+  );
+  return old;
+end;
+$$;
+
+revoke all on function public.studyos_group_member_left_activity() from public;
+
+drop trigger if exists studyos_group_member_left_activity on public.studyos_group_members;
+create trigger studyos_group_member_left_activity
+  after delete on public.studyos_group_members
+  for each row execute function public.studyos_group_member_left_activity();
+
 -- ─── RPC (SECURITY DEFINER: verifiche atomiche lato server) ─────────────────
 
 -- Nome visibile di chi entra: quello scelto nel profilo, altrimenti la parte locale dell'email.
@@ -284,6 +365,7 @@ declare
   v_invite public.studyos_group_invites%rowtype;
   v_email text := lower(auth.jwt() ->> 'email');
   v_name text := public.studyos_member_name(p_display_name, lower(auth.jwt() ->> 'email'));
+  v_added integer;
 begin
   if auth.uid() is null then
     raise exception 'Accesso richiesto';
@@ -309,12 +391,16 @@ begin
   insert into public.studyos_group_members (group_id, user_id, email, display_name, role)
   values (v_invite.group_id, auth.uid()::text, v_email, v_name, 'member')
   on conflict (group_id, user_id) do nothing;
+  get diagnostics v_added = row_count;
   update public.studyos_group_invites
     set status = 'accepted', updated_at = now()
     where id = p_invite_id;
-  insert into public.studyos_group_activity (id, group_id, actor_display_name, text)
-  values ('activity-' || p_invite_id, v_invite.group_id, v_name, 'è entrato nel gruppo')
-  on conflict (id) do nothing;
+  -- Solo se è entrato adesso: chi era già membro (entrato col link, poi accetta l'invito vecchio)
+  -- scriveva un secondo «è entrato nel gruppo». Stesso schema di id di join_group_by_code.
+  if v_added > 0 then
+    insert into public.studyos_group_activity (id, group_id, actor_display_name, text)
+    values ('activity-join-' || replace(gen_random_uuid()::text, '-', ''), v_invite.group_id, v_name, 'è entrato nel gruppo');
+  end if;
 end;
 $$;
 
@@ -370,6 +456,7 @@ declare
   v_group public.studyos_groups%rowtype;
   v_email text := lower(auth.jwt() ->> 'email');
   v_name text := public.studyos_member_name(p_display_name, lower(auth.jwt() ->> 'email'));
+  v_added integer;
 begin
   if auth.uid() is null then
     raise exception 'Accesso richiesto';
@@ -382,14 +469,13 @@ begin
   insert into public.studyos_group_members (group_id, user_id, email, display_name, role)
   values (v_group.id, auth.uid()::text, v_email, v_name, 'member')
   on conflict (group_id, user_id) do nothing;
-  insert into public.studyos_group_activity (id, group_id, actor_display_name, text)
-  values (
-    'activity-join-' || v_group.id || '-' || replace(auth.uid()::text, '-', ''),
-    v_group.id,
-    v_name,
-    'è entrato nel gruppo'
-  )
-  on conflict (id) do nothing;
+  get diagnostics v_added = row_count;
+  -- Solo se è entrato adesso: un membro che reinseriva il codice scriveva un'altra voce. Un id nuovo
+  -- per ogni ingresso: chi esce e rientra ha la sua voce (prima l'id fisso la saltava).
+  if v_added > 0 then
+    insert into public.studyos_group_activity (id, group_id, actor_display_name, text)
+    values ('activity-join-' || replace(gen_random_uuid()::text, '-', ''), v_group.id, v_name, 'è entrato nel gruppo');
+  end if;
   return v_group.id;
 end;
 $$;

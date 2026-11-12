@@ -111,3 +111,19 @@ test("schermata di blocco: esce solo da questo dispositivo, prima di cancellare,
   const erase = source.slice(source.indexOf("const erase"));
   assert.ok(erase.indexOf("signOutThisDevice(") < erase.indexOf("resetAllData("), "uscita prima della cancellazione");
 });
+
+test("cancella anche dall'account: svuota qui, poi il server elimina tutto (anche ciò che qui non c'era), poi la sync", () => {
+  const view = readFileSync(new URL("../src/views/SettingsView.tsx", import.meta.url), "utf8");
+  const erase = view.slice(view.indexOf("const eraseData"));
+  const reset = erase.indexOf("resetAllData({ propagate: alsoCloud })");
+  const server = erase.indexOf("eraseAccountData()");
+  const sync = erase.indexOf("requestSync()");
+  assert.ok(reset >= 0 && reset < server && server < sync, "ordine: svuota, server, sync");
+  assert.match(erase, /erased === "failed"\s*\?\s*SETTINGS_TEXT\.erase\.accountUnreachable/);
+  const client = readFileSync(new URL("../src/lib/supabase.ts", import.meta.url), "utf8");
+  assert.match(client, /rpc\("erase_studyos_account_items"\)/);
+  assert.match(client, /PGRST202"\) return "missing"/, "progetto senza la funzione: restano le eliminazioni di qui");
+  const sql = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+  assert.match(sql, /create or replace function public\.erase_studyos_account_items\(\)/);
+  assert.match(sql, /revoke all on function public\.erase_studyos_account_items\(\) from anon;/);
+});

@@ -308,10 +308,13 @@ girare fuori da localhost.
 - Le notifiche push/email non esistono: gli inviti arrivano nel pannello
   Notifiche all'apertura dell'app (realtime se aperta) e via link/email manuale.
 - Enforce MFA/SSO: invariato rispetto a `schema.sql`.
-- Chi esce scrive «ha lasciato il gruppo» prima di togliersi (dopo non è più membro e la RLS
-  rifiuterebbe la voce) e la cronologia non ha policy di delete: se la rete cade proprio tra le
-  due chiamate la voce resta anche se l'uscita non è riuscita (il gruppo resta e l'app lo dice).
-  La correzione vera è un trigger sul delete di `studyos_group_members`, da aggiungere in SQL.
+- Uscite e rimozioni in cronologia («ha lasciato il gruppo», «ha tolto … dal gruppo») le scrive
+  il trigger `studyos_group_member_left_activity` di `groups.sql` (revisione del 12/11/2026),
+  solo se la riga del membro sparisce davvero; l'app non le scrive più. Su un progetto senza
+  questa revisione le uscite non lasciano voci.
+- `updated_at` di gruppi, inviti e risorse è l'ora del server (trigger `studyos_group_stamp`) e
+  l'app adotta il timbro restituito dalla scrittura (`adoptServerStamp`): con l'orologio del
+  dispositivo avanti la copia locale non nasconde più le modifiche successive degli altri membri.
 - Condivisione, limiti noti: il logout scarta le modifiche a dati altrui non ancora inviate
   (il pannello di uscita lo dice e offre «Sincronizza ora»); blocco, sblocco e cambio della
   password dell'app le conservano in memoria (anche ad app bloccata: nessuna vista le mostra e
@@ -329,11 +332,12 @@ girare fuori da localhost.
 - Chi riceve una sezione vede l'id e l'ora di eliminazione degli elementi eliminati di quel
   tipo anche fuori dal suo filtro per materie: l'elemento eliminato conserva solo id e data,
   quindi la materia non si può più controllare. Titoli e contenuti non arrivano.
-- Se l'orologio del proprietario è avanti, la modifica di chi riceve a un suo elemento appena
-  salvato perde (`stale`) e torna indietro finché l'orologio vero non lo supera. Il client non
-  può timbrare «versione + 1 ms»: il trigger `studyos_items_recipient_values` riporta a now()
-  ogni timbro futuro dopo averlo accettato e il proprietario ripubblicherebbe la sua copia sopra,
-  in silenzio. Serve `greatest(now(), timbro salvato + 1 ms)` nel trigger, poi il client può seguire.
+- Orologio del proprietario avanti (revisione del 12/11/2026 di `sharing.sql`): un timbro
+  salvato vale al più fino all'ora in cui il server l'ha scritto (`studyos_recipient_newer`), e la
+  modifica accettata di chi riceve prende «timbro salvato + 1 ms» se il suo è più vecchio
+  (`studyos_recipient_stamped`); il trigger `studyos_items_recipient_values` abbassa solo i timbri
+  futuri, non li alza. Un elemento eliminato dal proprietario risponde `gone` (avviso dedicato
+  nell'app) invece di `denied`. Il client non cambia i suoi timbri.
 - L'avviso "Non hai più il permesso…" compare anche quando il server rifiuta un valore
   (colore, link, tipo di un campo) con il permesso ancora attivo.
 - Le cache dei dati altrui hanno portato il database locale (Dexie) alla versione 6. Non

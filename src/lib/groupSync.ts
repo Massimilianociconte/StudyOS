@@ -8,7 +8,9 @@ import {
   mergeSharedSnapshot,
   normalizeInviteCode,
   realtimeGroupIds,
+  serverStampOf,
   settleInviteNotifications,
+  withServerStamp,
   type GroupRpcOutcome,
   type SharedSnapshot
 } from "./groups";
@@ -505,15 +507,31 @@ const flushPublishQueue = async (me: string) => {
   }
 };
 
-const pushRow = async (table: string, row: Record<string, unknown>, onConflict = "id") => {
+/** Esito di una scrittura: false se non è riuscita, altrimenti il timbro scritto dal server (se la tabella ne ha uno). */
+type PushResult = false | { stamp?: string };
+
+const pushRow = async (table: string, row: Record<string, unknown>, onConflict = "id"): Promise<PushResult> => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   try {
-    const { error } = await supabase.from(table).upsert(row, { onConflict });
+    const upsert = supabase.from(table).upsert(row, { onConflict });
+    // Le tabelle con updated_at restituiscono il timbro: lo scrive il server (trigger di groups.sql).
+    const { data, error } = "updated_at" in row ? await upsert.select("updated_at") : await upsert;
     if (error) return false;
-    return true;
+    return { stamp: serverStampOf(data) };
   } catch {
     return false;
   }
+};
+
+type StampedKey = "studyGroups" | "groupResources" | "groupInvites";
+
+/**
+ * La copia locale prende il timbro scritto dal server (vedi `withServerStamp`). Senza il trigger di
+ * groups.sql il server restituisce il timbro mandato e non cambia nulla.
+ */
+export const adoptServerStamp = async (key: StampedKey, id: string, stamp: string | undefined, sent?: string) => {
+  const next = withServerStamp(useStudyStore.getState()[key] as ReadonlyArray<{ id: string; updatedAt: string }>, id, stamp, sent);
+  if (next) await applyShared({ [key]: next } as unknown as SharedPatch);
 };
 
 /**
@@ -562,24 +580,28 @@ export const pushSharedGroup = async (group: StudyGroup) => {
     invite_code: group.inviteCode,
     updated_at: group.updatedAt
   });
-  if (ok) await markShared("group", group.id);
-  return ok;
+  if (!ok) return false;
+  await markShared("group", group.id);
+  await adoptServerStamp("studyGroups", group.id, ok.stamp, group.updatedAt);
+  return true;
 };
 
 // La chiave dei membri è (group_id, user_id): con on_conflict=id l'upsert falliva sempre, e il
 // proprietario non risultava membro (niente elenco membri né inviti nominali lato server).
-export const pushSharedMembership = (groupId: string, member: StudyGroup["members"][number]) =>
-  pushRow(
-    "studyos_group_members",
-    {
-      group_id: groupId,
-      user_id: member.userId,
-      email: member.email ?? null,
-      display_name: member.displayName,
-      role: member.role,
-      joined_at: member.joinedAt
-    },
-    "group_id,user_id"
+export const pushSharedMembership = async (groupId: string, member: StudyGroup["members"][number]) =>
+  Boolean(
+    await pushRow(
+      "studyos_group_members",
+      {
+        group_id: groupId,
+        user_id: member.userId,
+        email: member.email ?? null,
+        display_name: member.displayName,
+        role: member.role,
+        joined_at: member.joinedAt
+      },
+      "group_id,user_id"
+    )
   );
 
 /** Rimozione di un membro (proprietario) o uscita volontaria: senza, al pull ricompariva. */
@@ -590,21 +612,22 @@ export const removeSharedMember = (groupId: string, userId: string) =>
 // alla riga proposta anche quando diventa update, e la riga è di un altro utente.
 // Come per le cancellazioni, una riga esclusa dalla RLS dà zero righe senza errore: conta solo se
 // la modifica ha toccato almeno una riga.
-const updateRows = async (table: string, patch: Record<string, unknown>, match: Record<string, string>) => {
+const updateRows = async (table: string, patch: Record<string, unknown>, match: Record<string, string>): Promise<PushResult> => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   try {
     let query = supabase.from(table).update(patch);
     for (const [column, value] of Object.entries(match)) query = query.eq(column, value);
     const { data, error } = await query.select();
-    return !error && Boolean(data?.length);
+    return !error && data?.length ? { stamp: serverStampOf(data) } : false;
   } catch {
     return false;
   }
 };
 
-export const pushSharedMemberRole = (groupId: string, userId: string, role: StudyGroup["members"][number]["role"]) =>
-  updateRows("studyos_group_members", { role }, { group_id: groupId, user_id: userId });
+export const pushSharedMemberRole = async (groupId: string, userId: string, role: StudyGroup["members"][number]["role"]) =>
+  Boolean(await updateRows("studyos_group_members", { role }, { group_id: groupId, user_id: userId }));
 
+/** Fissaggio sul server; il timbro restituito va adottato dopo il cambio locale (adoptServerStamp). */
 export const pushSharedResourcePin = (resource: GroupResource) =>
   updateRows("studyos_group_resources", { pinned: resource.pinned, updated_at: resource.updatedAt }, { id: resource.id });
 
@@ -612,8 +635,8 @@ export const deleteSharedGroup = (groupId: string) => deleteRow("studyos_groups"
 
 export const deleteSharedResource = (resourceId: string) => deleteRow("studyos_group_resources", resourceId);
 
-export const pushSharedInvite = (invite: GroupInvite) =>
-  pushRow("studyos_group_invites", {
+export const pushSharedInvite = async (invite: GroupInvite) => {
+  const ok = await pushRow("studyos_group_invites", {
     id: invite.id,
     group_id: invite.groupId,
     group_name: invite.groupName,
@@ -625,6 +648,9 @@ export const pushSharedInvite = (invite: GroupInvite) =>
     status: invite.status,
     updated_at: invite.updatedAt
   });
+  if (ok) await adoptServerStamp("groupInvites", invite.id, ok.stamp, invite.updatedAt);
+  return Boolean(ok);
+};
 
 export const pushSharedResource = async (resource: GroupResource) => {
   const ok = await pushRow("studyos_group_resources", {
@@ -639,17 +665,21 @@ export const pushSharedResource = async (resource: GroupResource) => {
     added_by_display_name: resource.addedByDisplayName,
     updated_at: resource.updatedAt
   });
-  if (ok) await markShared("resource", resource.id);
-  return ok;
+  if (!ok) return false;
+  await markShared("resource", resource.id);
+  await adoptServerStamp("groupResources", resource.id, ok.stamp, resource.updatedAt);
+  return true;
 };
 
-export const pushSharedActivity = (activity: GroupActivity) =>
-  pushRow("studyos_group_activity", {
-    id: activity.id,
-    group_id: activity.groupId,
-    actor_display_name: activity.actorDisplayName,
-    text: activity.text
-  });
+export const pushSharedActivity = async (activity: GroupActivity) =>
+  Boolean(
+    await pushRow("studyos_group_activity", {
+      id: activity.id,
+      group_id: activity.groupId,
+      actor_display_name: activity.actorDisplayName,
+      text: activity.text
+    })
+  );
 
 /**
  * RPC con il nome di chi entra; se il progetto ha ancora la migrazione precedente (funzione

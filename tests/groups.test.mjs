@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   classifyGroupRpcError,
   groupInviteLink,
@@ -10,7 +11,9 @@ import {
   mergeSharedSnapshot,
   normalizeInviteCode,
   realtimeGroupIds,
-  settleInviteNotifications
+  serverStampOf,
+  settleInviteNotifications,
+  withServerStamp
 } from "../src/lib/groups.ts";
 import { durationToMinutes, minutesToDuration } from "../src/lib/duration.ts";
 
@@ -277,4 +280,43 @@ test("esiti delle RPC dei gruppi: solo la rete è da riprovare", () => {
   assert.equal(classifyGroupRpcError({ message: "Codice non valido" }), "invalid-code");
   assert.equal(classifyGroupRpcError({ message: "Failed to fetch" }), "unavailable");
   assert.equal(classifyGroupRpcError({ message: "Accesso richiesto" }), "unavailable");
+});
+
+test("timbro del server: si adotta dopo la scrittura, mai sopra una modifica fatta nel frattempo", () => {
+  // Postgres restituisce microsecondi e fuso: in ISO al millisecondo, come i timbri dell'app.
+  assert.equal(serverStampOf([{ updated_at: "2026-11-12T15:00:00.123456+00:00" }]), "2026-11-12T15:00:00.123Z");
+  assert.equal(serverStampOf([]), undefined);
+  assert.equal(serverStampOf(null), undefined);
+  assert.equal(serverStampOf([{ updated_at: "non è una data" }]), undefined);
+
+  // Telefono con l'orologio 5 minuti avanti: la copia locale prende l'ora del server.
+  const sent = "2026-11-12T15:05:00.000Z";
+  const items = [{ id: "r1", updatedAt: sent, pinned: true }, { id: "r2", updatedAt: "2026-11-12T14:00:00.000Z", pinned: false }];
+  const next = withServerStamp(items, "r1", "2026-11-12T15:00:00.123Z", sent);
+  assert.deepEqual(next, [{ id: "r1", updatedAt: "2026-11-12T15:00:00.123Z", pinned: true }, items[1]]);
+  // Una modifica successiva di un altro membro (ora del server, dopo) ora vince nel merge.
+  assert.ok(Date.parse("2026-11-12T15:01:00.000Z") > Date.parse(next[0].updatedAt));
+
+  // Cambiata qui dopo l'invio, già uguale, sparita o server vecchio (nessun timbro): nulla da fare.
+  assert.equal(withServerStamp(items, "r1", "2026-11-12T15:00:00.123Z", "2026-11-12T15:04:00.000Z"), null);
+  assert.equal(withServerStamp(items, "r1", sent, sent), null);
+  assert.equal(withServerStamp(items, "r9", "2026-11-12T15:00:00.123Z"), null);
+  assert.equal(withServerStamp(items, "r1", undefined, sent), null);
+  // Senza `sent` (fissaggio: il cambio locale arriva dopo la scrittura) si adotta comunque.
+  assert.equal(withServerStamp(items, "r2", "2026-11-12T15:00:00.123Z")[1].updatedAt, "2026-11-12T15:00:00.123Z");
+});
+
+test("SQL dei gruppi: timbri, ingressi e uscite li scrive il server", () => {
+  const sql = readFileSync(new URL("../supabase/groups.sql", import.meta.url), "utf8");
+  for (const table of ["studyos_groups", "studyos_group_invites", "studyos_group_resources"]) {
+    assert.match(sql, new RegExp(`before insert or update on public\\.${table}\\s+for each row execute function public\\.studyos_group_stamp\\(\\)`));
+  }
+  // Nome diverso dal trigger di sharing.sql che toglie le condivisioni di chi esce.
+  assert.match(sql, /after delete on public\.studyos_group_members\s+for each row execute function public\.studyos_group_member_left_activity\(\)/);
+  assert.equal((sql.match(/get diagnostics v_added = row_count;/g) ?? []).length, 2);
+  assert.doesNotMatch(sql, /'activity-' \|\| p_invite_id/);
+  // L'app non scrive più le voci di uscita e rimozione (le scriveva prima di sapere se l'uscita riusciva).
+  const view = readFileSync(new URL("../src/views/GroupsView.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(view, /logSharedActivity\([^)]*"ha lasciato il gruppo"/);
+  assert.doesNotMatch(view, /removedMemberActivity/);
 });

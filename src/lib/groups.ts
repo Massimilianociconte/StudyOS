@@ -144,6 +144,26 @@ export const settleInviteNotifications = <N extends InviteNotification>(notifica
 /** Id della notifica di un invito: uguale su ogni dispositivo dell'account, così non si duplica. */
 export const inviteNotificationId = (inviteId: string) => `${INVITE_NOTIFICATION_PREFIX}${inviteId}`;
 
+/** `updated_at` della prima riga restituita da una scrittura, in ISO (ms); undefined se manca o non è una data. */
+export const serverStampOf = (data: unknown) => {
+  const value = Array.isArray(data) ? (data[0] as { updated_at?: unknown } | undefined)?.updated_at : undefined;
+  const time = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+};
+
+/**
+ * Copia locale con il timbro scritto dal server (trigger `studyos_group_stamp` di groups.sql), se
+ * nel frattempo non è cambiata (`sent`: il timbro mandato). null se non c'è nulla da cambiare.
+ * Con l'orologio del dispositivo avanti il timbro locale restava più nuovo delle modifiche
+ * successive degli altri membri, che non arrivavano mai.
+ */
+export const withServerStamp = <T extends { id: string; updatedAt: string }>(items: readonly T[], id: string, stamp: string | undefined, sent?: string): T[] | null => {
+  if (!stamp) return null;
+  const item = items.find((entry) => entry.id === id);
+  if (!item || item.updatedAt === stamp || (sent !== undefined && item.updatedAt !== sent)) return null;
+  return items.map((entry) => (entry.id === id ? { ...entry, updatedAt: stamp } : entry));
+};
+
 export interface MergeSharedOptions {
   /**
    * Email dell'account quando la lettura degli inviti ricevuti è completa (tutti quelli in attesa):

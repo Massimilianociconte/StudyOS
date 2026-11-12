@@ -74,6 +74,8 @@ export const SETTINGS_TEXT = {
     alsoCloud: "Cancella anche dall'account",
     alsoCloudHint: "Cancella anche dall'account: spariscono anche dagli altri dispositivi collegati. Non si può annullare.",
     confirmLocal: "Cancella tutti i dati",
-    cancel: "Annulla"
+    cancel: "Annulla",
+    accountUnreachable:
+      "Dati cancellati da questo dispositivo. L'account non ha risposto: ciò che c'era qui sparirà anche dall'account quando la sincronizzazione riprende, il resto no. Ripeti «Cancella anche dall'account» quando sei online."
   }
 } as const;
