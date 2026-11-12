@@ -35,6 +35,17 @@ export const groupInviteLink = (code: string) => `${inviteLinkBase()}#invito=${e
 export const groupInviteMessage = (groupName: string, inviter: string, code: string) =>
   `${inviter} ti invita nel gruppo di studio "${groupName}" su StudyOS.\n\nEntra da qui: ${groupInviteLink(code)}\n\nOppure apri Gruppi → Entra con un codice e scrivi ${normalizeInviteCode(code)}`;
 
+/** Gruppi ascoltati in tempo reale al massimo (limite del filtro `in` di Supabase Realtime). */
+export const REALTIME_GROUPS_MAX = 100;
+
+/**
+ * Id dei gruppi da mettere nel filtro Realtime `group_id=in.(…)`: senza doppioni, ordinati (stesso
+ * canale per gli stessi gruppi) e solo con lettere, cifre, `_` e `-`. Una virgola o una parentesi in
+ * un id arrivato da altri cambierebbe il filtro: quel gruppo si aggiorna comunque al pull.
+ */
+export const realtimeGroupIds = (ids: Iterable<string>, max = REALTIME_GROUPS_MAX): string[] =>
+  [...new Set([...ids].filter((id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,120}$/.test(id)))].sort().slice(0, max);
+
 export interface SharedSnapshot {
   groups: StudyGroup[];
   invites: GroupInvite[];

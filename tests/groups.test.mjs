@@ -6,7 +6,8 @@ import {
   isInviteCodeShape,
   makeGroupInviteCode,
   mergeSharedSnapshot,
-  normalizeInviteCode
+  normalizeInviteCode,
+  realtimeGroupIds
 } from "../src/lib/groups.ts";
 import { durationToMinutes, minutesToDuration } from "../src/lib/duration.ts";
 
@@ -156,4 +157,12 @@ test("merge condiviso: senza novità restituisce gli stessi oggetti (niente risc
   const merged = mergeSharedSnapshot(local, server, "alice", ["g1"]);
   assert.equal(merged.groups[0], shared);
   assert.equal(merged.resources[0], res);
+});
+
+test("realtimeGroupIds: id sicuri per il filtro Realtime, senza doppioni, ordinati e al massimo 100", () => {
+  assert.deepEqual(realtimeGroupIds(["group_b", "group_a", "group_b"]), ["group_a", "group_b"]);
+  // Virgole, parentesi, punti o spazi cambierebbero il filtro `in.(…)`: quell'id resta fuori.
+  assert.deepEqual(realtimeGroupIds(["ok-1", "a,b", "x)", "c.d", "e f", "", 7]), ["ok-1"]);
+  assert.equal(realtimeGroupIds(Array.from({ length: 150 }, (_, i) => `g${String(i).padStart(3, "0")}`)).length, 100);
+  assert.deepEqual(realtimeGroupIds([]), []);
 });

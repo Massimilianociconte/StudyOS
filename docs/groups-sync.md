@@ -87,8 +87,21 @@ alcun errore.
   con la firma vecchia se il progetto non è aggiornato (PGRST202).
 - Gli helper `studyos_is_group_member` / `studyos_group_role` sono DEFINER per
   non rientrare nelle policy (sola lettura).
-- Realtime abilitato sulle 4 tabelle dati; il client usa gli eventi inviti come
-  segnale e ricarica comunque via pull.
+- Realtime abilitato sulle 4 tabelle dati. Il client usa gli eventi solo come
+  segnale e ricarica comunque via pull (con le policy RLS):
+  - inviti: canale degli inviti, come prima;
+  - bacheca, cronologia e gruppi (`studyos-groups:<id utente>`): INSERT e UPDATE di
+    risorse, INSERT di attività e UPDATE di gruppi filtrati con `group_id=in.(…)` /
+    `id=in.(…)` sui propri gruppi (al massimo 100, id con soli `A-Za-z0-9_-`, vedi
+    `realtimeGroupIds`). I DELETE arrivano a tutti senza filtro e con la sola chiave:
+    contano solo se l'id è già in locale. Chi entra o esce scrive una riga di cronologia,
+    quindi i membri arrivano con quella.
+  - pull 400 ms dopo l'ultimo segnale, uno alla volta (uno solo in coda); al rientro
+    della connessione, quando la pagina torna visibile o si torna online dopo 30 s senza
+    pull, e ogni 5 minuti a pagina visibile.
+  - il canale si rifà quando cambiano i propri gruppi (creazione, ingresso, uscita) e si
+    ferma all'uscita dall'account. Il file della bacheca resta solo un nome: i file veri
+    passano da «Materiali e note» condivisi al gruppo.
 
 ## Note per il client
 

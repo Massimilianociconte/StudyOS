@@ -1,7 +1,7 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
 import { getMeta, setMeta } from "./db";
-import { makeGroupInviteCode, mergeSharedSnapshot, type SharedSnapshot } from "./groups";
+import { makeGroupInviteCode, mergeSharedSnapshot, realtimeGroupIds, type SharedSnapshot } from "./groups";
 import { GROUP_JOINED_EVENT, clearPendingInvite, readPendingInvite } from "./groupInvite";
 import { getSession, isCloudConfigured, supabase } from "./supabase";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -109,6 +109,8 @@ export const resetSharedCache = async () => {
     // ignora
   }
   stopInviteSubscription();
+  // Account cambiato o uscito: niente più segnali dei gruppi dell'account di prima.
+  stopGroupWatch();
 };
 
 const toGroup = (row: Record<string, unknown>): StudyGroup => ({
@@ -212,11 +214,37 @@ const notifyFreshInvites = async (fresh: GroupInvite[]) => {
   }
 };
 
+let pullRunning: Promise<boolean> | null = null;
+let pullQueued: Promise<boolean> | null = null;
+
 /**
  * Scarica le novità condivise: inviti nominali, risposte ai miei inviti,
  * membri/risorse/attività dei miei gruppi. Ritorna false se non applicabile.
+ * Una passata alla volta: chi chiama durante una passata aspetta quella dopo (una sola, che vede
+ * anche ciò che è cambiato nel frattempo), così due passate non si sovrascrivono a vicenda.
  */
-export const pullSharedUpdates = async (): Promise<boolean> => {
+export const pullSharedUpdates = (): Promise<boolean> => {
+  if (!pullRunning) {
+    pullRunning = pullOnce().finally(() => {
+      pullRunning = null;
+    });
+    return pullRunning;
+  }
+  if (pullQueued) return pullQueued;
+  pullQueued = pullRunning.then(
+    () => {
+      pullQueued = null;
+      return pullSharedUpdates();
+    },
+    () => {
+      pullQueued = null;
+      return pullSharedUpdates();
+    }
+  );
+  return pullQueued;
+};
+
+const pullOnce = async (): Promise<boolean> => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   let session: Awaited<ReturnType<typeof getSession>>;
   try {
@@ -285,6 +313,10 @@ export const pullSharedUpdates = async (): Promise<boolean> => {
     }
     const { freshInvites } = await mergeShared(snapshot, me, myGroupIds);
     await notifyFreshInvites(freshInvites);
+    lastGroupPullAt = Date.now();
+    watchedMe = me;
+    // Gruppi cambiati (entrato, uscito, creato): il canale in tempo reale segue quelli nuovi.
+    if (mailboxOn) await watchGroups(me, myGroupIds);
     return true;
   } catch {
     return false;
@@ -640,9 +672,137 @@ const startInviteSubscription = (email: string) => {
     .subscribe();
 };
 
+// ——— Bacheca, cronologia e gruppi in tempo reale ———
+// Gli eventi sono solo un segnale: si scarica tutto con il pull (stesse letture, stessa RLS), mai
+// dal payload. Così una risorsa, un file o una nota aggiunti da un altro membro compaiono in circa
+// un secondo, senza ricaricare la pagina e anche fuori dalla sezione Gruppi.
+
+/** Attesa dopo un segnale: più eventi vicini (un'aggiunta scrive risorsa e cronologia) = un solo pull. */
+const GROUP_SIGNAL_DEBOUNCE_MS = 400;
+/** Al ritorno sulla scheda o in rete si ricontrolla se l'ultimo pull è più vecchio di così. */
+const GROUP_STALE_MS = 30_000;
+/** Controllo di riserva se il canale cade senza dirlo (telefono in tasca, rete che cambia). */
+const GROUP_PERIODIC_MS = 5 * 60_000;
+
+let mailboxOn = false;
+let lastGroupPullAt = 0;
+/** Account dell'ultimo pull riuscito: chi guarda i gruppi in tempo reale. */
+let watchedMe = "";
+let unsubscribeGroups: (() => void) | null = null;
+let groupChannel: RealtimeChannel | null = null;
+let groupChannelKey = "";
+let groupWatch: Promise<void> = Promise.resolve();
+let groupSignalTimer: ReturnType<typeof setTimeout> | null = null;
+let groupPeriodic: ReturnType<typeof setInterval> | null = null;
+
+const signalGroups = (delay = GROUP_SIGNAL_DEBOUNCE_MS) => {
+  if (!mailboxOn) return;
+  if (groupSignalTimer) clearTimeout(groupSignalTimer);
+  groupSignalTimer = setTimeout(() => {
+    groupSignalTimer = null;
+    void pullSharedUpdates();
+  }, delay);
+};
+
+const refreshIfStale = () => {
+  if (document.visibilityState === "visible" && Date.now() - lastGroupPullAt > GROUP_STALE_MS) signalGroups(0);
+};
+
+const removeGroupChannel = async () => {
+  const current = groupChannel;
+  groupChannel = null;
+  groupChannelKey = "";
+  // Attendere la rimozione: supabase-js riusa un canale con lo stesso topic finché esiste.
+  if (current && supabase) await supabase.removeChannel(current).catch(() => undefined);
+};
+
+/** Canale sui gruppi di cui sono membro; si rifà solo quando cambiano i gruppi (una modifica alla volta). */
+const watchGroups = (me: string, groupIds: string[]): Promise<void> => {
+  groupWatch = groupWatch.then(async () => {
+    const client = supabase;
+    if (!mailboxOn || !client) return;
+    const ids = realtimeGroupIds(groupIds);
+    const key = `${me}|${ids.join(",")}`;
+    if (groupChannel && key === groupChannelKey) return;
+    await removeGroupChannel();
+    if (!ids.length || !mailboxOn) return;
+    groupChannelKey = key;
+    const inGroups = `in.(${ids.join(",")})`;
+    const signal = () => signalGroups();
+    // Una cancellazione porta solo l'id e arriva a ogni iscritto, senza filtro: conta solo se è di
+    // una risorsa o di un gruppo che ho, e anche allora dal payload non si legge altro.
+    const deleted = (known: (id: string) => boolean) => (payload: { old?: Record<string, unknown> | null }) => {
+      const id = payload.old?.id;
+      if (typeof id === "string" && known(id)) signal();
+    };
+    let subscribedOnce = false;
+    groupChannel = client
+      .channel(`studyos-groups:${me}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "studyos_group_resources", filter: `group_id=${inGroups}` }, signal)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "studyos_group_resources", filter: `group_id=${inGroups}` }, signal)
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "studyos_group_resources" },
+        deleted((id) => useStudyStore.getState().groupResources.some((resource) => resource.id === id))
+      )
+      // Chi entra o esce scrive nella cronologia (la tabella dei membri non è in Realtime).
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "studyos_group_activity", filter: `group_id=${inGroups}` }, signal)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "studyos_groups", filter: `id=${inGroups}` }, signal)
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "studyos_groups" },
+        deleted((id) => useStudyStore.getState().studyGroups.some((group) => group.id === id))
+      )
+      .subscribe((status) => {
+        // Iscritto (o di nuovo, dopo una caduta della rete): ciò che è cambiato prima non è arrivato
+        // come evento, quindi si ricontrolla. La prima volta basta il pull appena fatto.
+        if (status !== "SUBSCRIBED") return;
+        if (subscribedOnce) signalGroups(0);
+        subscribedOnce = true;
+      });
+  });
+  return groupWatch;
+};
+
+/** Gruppi di cui sono proprietario o membro, come li vede lo store adesso. */
+const myLocalGroupIds = (me: string) =>
+  useStudyStore
+    .getState()
+    .studyGroups.filter((group) => group.ownerId === me || group.members.some((member) => member.userId === me))
+    .map((group) => group.id);
+
+const startGroupWatchdog = () => {
+  if (groupPeriodic || typeof window === "undefined") return;
+  // Gruppo creato o appena entrato da qui: il canale lo segue subito, senza aspettare il pull dopo.
+  unsubscribeGroups = useStudyStore.subscribe((state, previous) => {
+    if (state.studyGroups !== previous.studyGroups && mailboxOn && watchedMe) void watchGroups(watchedMe, myLocalGroupIds(watchedMe));
+  });
+  document.addEventListener("visibilitychange", refreshIfStale);
+  window.addEventListener("online", refreshIfStale);
+  groupPeriodic = setInterval(() => {
+    if (document.visibilityState === "visible") signalGroups(0);
+  }, GROUP_PERIODIC_MS);
+};
+
+const stopGroupWatch = () => {
+  mailboxOn = false;
+  watchedMe = "";
+  unsubscribeGroups?.();
+  unsubscribeGroups = null;
+  if (groupSignalTimer) clearTimeout(groupSignalTimer);
+  groupSignalTimer = null;
+  if (groupPeriodic) clearInterval(groupPeriodic);
+  groupPeriodic = null;
+  if (typeof window !== "undefined") {
+    document.removeEventListener("visibilitychange", refreshIfStale);
+    window.removeEventListener("online", refreshIfStale);
+  }
+  groupWatch = groupWatch.then(removeGroupChannel);
+};
+
 /**
- * Cassetta postale condivisa: pull iniziale + realtime sugli inviti nominali.
- * Silenziosa quando non applicabile (ospite, offline, migrazione assente).
+ * Cassetta postale condivisa: pull iniziale + realtime sugli inviti nominali e sui miei gruppi
+ * (bacheca, cronologia, nome). Silenziosa quando non applicabile (ospite, offline, migrazione assente).
  */
 export const ensureSharedMailbox = async (): Promise<boolean> => {
   if (!(await isSharedAvailable())) return false;
@@ -653,10 +813,15 @@ export const ensureSharedMailbox = async (): Promise<boolean> => {
     return false;
   }
   if (!session?.user) return false;
+  mailboxOn = true;
+  startGroupWatchdog();
   const ok = await pullSharedUpdates();
   const email = (session.user.email ?? "").toLowerCase();
   if (ok && email && supabase) startInviteSubscription(email);
   return ok;
 };
 
-export const stopSharedMailbox = () => stopInviteSubscription();
+export const stopSharedMailbox = () => {
+  stopInviteSubscription();
+  stopGroupWatch();
+};

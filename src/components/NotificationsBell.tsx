@@ -1,6 +1,7 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import { useStudyStore } from "../store/useStudyStore";
 import { cloudConfigured } from "../lib/cloudSyncState";
+import { useCloudSession } from "../hooks/useCloudSession";
 import { Icon } from "./Icon";
 import { NOTIFICATIONS_TEXT } from "../lib/labels/notifications";
 
@@ -15,14 +16,22 @@ export function NotificationsBell({ onOpen }: { onOpen: () => void }) {
   const notifications = useStudyStore((state) => state.notifications);
   const unread = unreadNotifications(notifications).length;
 
-  // Recapito inviti: se il cloud condiviso è attivo, gli inviti di altri utenti
-  // compaiono qui senza dover aprire la sezione Gruppi.
+  // Recapito inviti e gruppi in tempo reale: se il cloud condiviso è attivo, gli inviti di altri
+  // utenti e le novità della bacheca arrivano senza dover aprire la sezione Gruppi. Si riparte a
+  // ogni accesso o cambio di account; all'uscita i segnali dell'account di prima si fermano.
+  const session = useCloudSession();
+  const sessionUserId = session?.user.id;
+  const hadUser = useRef(false);
   useEffect(() => {
     // groupSync porta con sé supabase-js: import dinamico, solo se il cloud è configurato, così
     // resta fuori dal caricamento iniziale (come il motore di sync in App).
     if (!cloudConfigured) return;
-    void import("../lib/groupSync").then((module) => module.ensureSharedMailbox()).catch(() => undefined);
-  }, []);
+    const leaving = hadUser.current && !sessionUserId;
+    hadUser.current = Boolean(sessionUserId);
+    void import("../lib/groupSync")
+      .then((module): unknown => (leaving ? module.stopSharedMailbox() : module.ensureSharedMailbox()))
+      .catch(() => undefined);
+  }, [sessionUserId]);
 
   // Promemoria degli eventi: il watcher arriva a parte, quando la pagina è libera (fuori dal bundle
   // d'ingresso). Se il pezzo non arriva (offline, versione vecchia) non si monta niente.

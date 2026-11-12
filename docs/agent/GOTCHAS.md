@@ -180,6 +180,11 @@
   `commit()` (fuori dallo store: `retryPersist`). Vale per ogni modulo che scrive nello store.
 - supabase-js riusa un canale realtime con lo stesso topic finché non è rimosso: attendere
   `removeChannel` prima di ricrearlo e non avviare due sottoscrizioni in parallelo.
+- Realtime `postgres_changes`: il filtro `in.(…)` accetta al massimo 100 valori e un id con
+  virgole o parentesi lo rompe (passare da `realtimeGroupIds`); i DELETE non si filtrano e
+  portano solo la chiave primaria. Usare gli eventi come segnale per un pull, mai come dati.
+- Con Vite in sviluppo, importare un modulo con `?t=` (HMR) crea un secondo store: per
+  provare a mano dalla console ricaricare la pagina invece di importare a parte.
 - Bundle iniziale: niente import statici di `lib/supabase`, `lib/groupSync` o dei dati BARB
   (`university/examSessions`, JSON) da store, shell o componenti sempre montati; usare
   `import()` (vedi App, NotificationsBell, `importBarbExamSessions`). Animazioni con `m.` sotto
