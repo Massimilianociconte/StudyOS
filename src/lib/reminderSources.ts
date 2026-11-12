@@ -43,10 +43,12 @@ export const reminderSourceEvents = (input: {
   examPlans: readonly ExamPlan[];
   reminders: readonly Reminder[];
   groupSessions: readonly GroupExamSession[];
+  /** false = gli appelli dei gruppi non sono ancora stati letti: restano fuori i promemoria degli appelli (non la copia salvata). */
+  groupConfirmed?: boolean;
 }): CalendarEvent[] => {
   // Un piano arrivato storto dal cloud non deve far cadere i promemoria: si ripulisce o si salta.
   const plans = input.examPlans.map(normalizeExamPlan).filter((plan): plan is ExamPlan => plan !== null);
-  return [...input.events, ...groupExamReminderEvents(input.groupSessions, plans, input.events), ...standaloneReminderEvents(input.reminders)];
+  return [...input.events, ...(input.groupConfirmed === false ? [] : groupExamReminderEvents(input.groupSessions, plans, input.events)), ...standaloneReminderEvents(input.reminders)];
 };
 
 /** Stato dello store degli appelli che serve a sapere se la copia salvata nel piano è ancora quella giusta. */

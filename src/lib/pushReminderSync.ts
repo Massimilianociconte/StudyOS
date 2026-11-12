@@ -79,13 +79,18 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
   const store = useStudyStore.getState();
   if (store.loading || store.locked) return "waiting";
 
-  // Appelli scelti e gruppi non ancora letti: la copia salvata nel piano può essere di un appello tolto o
-  // spostato, e la push partirebbe lo stesso con l'app chiusa. Si aspetta la lettura (la sottoscrizione riprova).
-  if (planNeedsGroupPull(store.examPlans, useGroupExamStore.getState(), userId)) return "waiting";
+  // Appelli scelti e gruppi non ancora letti (primo pull non fatto, pull che fallisce, sync dei gruppi mai
+  // partita): la copia salvata nel piano può essere di un appello tolto o spostato. Finché non è confermata
+  // restano fuori SOLO i promemoria degli appelli; quelli personali e autonomi continuano a sincronizzarsi.
+  const groupConfirmed = !planNeedsGroupPull(store.examPlans, useGroupExamStore.getState(), userId);
 
   const now = new Date();
   // Stesse sorgenti del watcher in app: eventi, appelli scelti, promemoria autonomi.
-  const events = reminderSourceEvents({ events: store.events, examPlans: store.examPlans, reminders: store.reminders, groupSessions: useGroupExamStore.getState().sessions });
+  const events = reminderSourceEvents({ events: store.events, examPlans: store.examPlans, reminders: store.reminders, groupSessions: useGroupExamStore.getState().sessions, groupConfirmed });
+  // Righe degli appelli già sul server: finché non sono confermate non si toccano (né scritte né tolte).
+  const guarded = groupConfirmed
+    ? new Set<string>()
+    : new Set(pushReminderRows(reminderSourceEvents({ events: [], examPlans: store.examPlans, reminders: [], groupSessions: [] }), now).map((row) => row.id));
   const zone = rowZoneOf(deviceTimeZone());
   const wanted = pushRemindersWanted(selectPreferences(store));
   const rows = wanted ? pushReminderRows(events, now) : [];
@@ -121,12 +126,13 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
       return "failed";
     }
     // Le righe scritte da un dispositivo in un altro fuso restano se sono ancora giuste per quel fuso.
-    const { upserts, deletes } = diffPushReminders(
+    const { upserts, deletes: allDeletes } = diffPushReminders(
       desired,
       (data ?? []) as ServerReminderRow[],
       now.getTime(),
       desired.length ? { zone, rowsInZone: (other) => pushReminderRows(events, now, { zone: other }) } : { zone }
     );
+    const deletes = allDeletes.filter((id) => !guarded.has(id));
     if (!stillSignedIn(userId)) return "waiting";
     // Prima si toglie, poi si scrive: il tetto di righe per account sul server non si supera per un attimo.
     for (const ids of chunk(deletes, DELETE_BATCH)) {

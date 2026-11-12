@@ -194,3 +194,14 @@ export function reminderWhenText(startMs: number, allDay: boolean, now: Date): s
   if (days === 1) return EVENT_REMINDER_TEXT.tomorrowAt(time);
   return EVENT_REMINDER_TEXT.dayAt(dayText(startMs), time);
 }
+
+/**
+ * Il «quando» di un promemoria pianificato: come reminderWhenText, ma un promemoria autonomo già scaduto
+ * (recuperato ad app chiusa) dice «Scaduto alle HH:mm», non «Iniziato alle», che è parola da evento.
+ */
+export function plannedReminderWhenText(item: Pick<PlannedReminder, "eventId" | "startMs" | "allDay">, now: Date): string {
+  if (item.eventId.startsWith(STANDALONE_REMINDER_PREFIX) && !item.allDay && item.startMs - now.getTime() <= -MINUTE_MS) {
+    return EVENT_REMINDER_TEXT.due(format(item.startMs, "HH:mm"));
+  }
+  return reminderWhenText(item.startMs, item.allDay, now);
+}

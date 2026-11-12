@@ -228,6 +228,8 @@ export const refreshGroupExams = (): Promise<boolean> => {
       return true;
     }
     const ids = groups.map((group) => group.id);
+    // Da qui le righe scritte o arrivate in tempo reale non si perdono se questo pull non le contiene.
+    store.beginPull();
     const [sessions, overrides] = await Promise.all([
       pullTable<GroupExamSession>("studyos_group_exam_sessions", ids, sessionFromRow),
       pullTable<CatalogOverride>("studyos_group_catalog_overrides", ids, overrideFromRow)
