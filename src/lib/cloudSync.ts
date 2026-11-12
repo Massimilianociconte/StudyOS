@@ -108,6 +108,17 @@ const assertStoreReady = () => {
   if (!storeReady()) throw new SyncSuspendedError();
 };
 
+/**
+ * Ogni scrittura dell'outbox arriva dopo un'attesa (rete, lettura): nel frattempo un'altra scheda
+ * può aver preso il blocco (activeTab.ts). Il controllo è dentro la transazione: se la scheda è
+ * stata fermata, la transazione si annulla e nulla viene scritto.
+ */
+const outboxTransaction = <T,>(work: () => Promise<T>) =>
+  db.transaction("rw", db.syncOutbox, async () => {
+    if (isPersistenceHalted()) throw new SyncSuspendedError();
+    return work();
+  });
+
 
 const schedule = (delay: number) => {
   if (debounceTimer) clearTimeout(debounceTimer);
@@ -153,14 +164,14 @@ const enqueueAllLocal = async (skip: Set<string> = new Set()) => {
       });
     }
   }
-  if (rows.length) await db.syncOutbox.bulkPut(rows);
+  if (rows.length) await outboxTransaction(() => db.syncOutbox.bulkPut(rows));
   return rows.length;
 };
 
 const requeueEntities = async (items: Array<{ collection: CollectionKey; id: string }>) => {
   if (!items.length) return;
   const base = Date.now() * 1000;
-  await db.transaction("rw", db.syncOutbox, async () => {
+  await outboxTransaction(async () => {
     for (const [index, item] of items.entries()) {
       const key = outboxKey(item.collection, item.id);
       if (await db.syncOutbox.get(key)) continue; // una modifica locale più recente è già in coda
@@ -188,7 +199,7 @@ const mergeRows = async (rows: RemoteRow[], force: boolean) => {
       .applyRemoteChanges(plan.changes.map((change) => ({ ...change, force })));
   }
   if (plan.dropOutbox.length) {
-    await db.transaction("rw", db.syncOutbox, async () => {
+    await outboxTransaction(async () => {
       for (const key of plan.dropOutbox) {
         const previous = outbox.find((row) => row.key === key);
         const current = await db.syncOutbox.get(key);
@@ -264,7 +275,7 @@ const push = async (userId: string) => {
       prepared.sort((a, b) => a.row.queuedAt - b.row.queuedAt);
     }
     if (drop.length) {
-      await db.transaction("rw", db.syncOutbox, async () => {
+      await outboxTransaction(async () => {
         for (const row of drop) {
           const current = await db.syncOutbox.get(row.key);
           if (current && current.queuedAt === row.queuedAt && !current.deleted) await db.syncOutbox.delete(row.key);
@@ -288,7 +299,7 @@ const push = async (userId: string) => {
       const results = await pushEntityRows(userId, clientId, batch.map((item) => item.push));
       const accepted = new Set(results.filter((result) => result.accepted).map((result) => `${result.entity_type}:${result.entity_id}`));
       // Rimuove dall'outbox solo le voci accettate e non riaccodate nel frattempo.
-      await db.transaction("rw", db.syncOutbox, async () => {
+      await outboxTransaction(async () => {
         for (const item of batch) {
           if (!accepted.has(item.row.key)) continue;
           const current = await db.syncOutbox.get(item.row.key);
@@ -365,7 +376,7 @@ const bindUser = async (userId: string) => {
   }
   // Solo un account precedente noto consente di scartare una coda già vuota.
   // Al primo collegamento i tombstone creati offline devono restare in coda.
-  if (bound) await db.syncOutbox.clear();
+  if (bound) await outboxTransaction(() => db.syncOutbox.clear());
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));
   await setMeta(metaKeys.boundUser, userId);

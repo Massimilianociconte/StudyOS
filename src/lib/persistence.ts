@@ -200,9 +200,17 @@ const pendingWrites = () => {
   return { state, diff, settingsChanged, any: diff.count > 0 || settingsChanged || needsVaultWrite };
 };
 
+/**
+ * Lo stop può arrivare a ogni attesa (scheda congelata che intanto perde il blocco): si ricontrolla
+ * prima di ogni scrittura. Dentro la transazione l'eccezione la annulla tutta: niente scritto.
+ */
+const assertNotHalted = () => {
+  if (halted) throw new PersistenceHaltedError();
+};
+
 const flush = async () => {
   // Chi aspetta (es. la sync prima di avanzare il cursore) non deve credere che i dati siano salvati.
-  if (halted) throw new PersistenceHaltedError();
+  assertNotHalted();
   if (!host) return;
   const pendingNow = pendingWrites();
   if (!pendingNow) return;
@@ -220,20 +228,28 @@ const flush = async () => {
     if (vaultMode) {
       if (!vaultKey) throw new Error("Vault bloccato: sblocca il workspace per salvare le modifiche.");
       const record = await encryptWithKey(JSON.stringify(snapshotOf(state.collections)), vaultKey);
+      // Col vault questa scrittura sostituisce l'intera copia: mai dopo lo stop.
+      assertNotHalted();
       await db.transaction("rw", [db.settings, db.vault, db.syncOutbox], async () => {
+        assertNotHalted();
         if (settingsChanged) await db.settings.put({ ...state.settings });
+        assertNotHalted();
         await db.vault.put(record);
+        assertNotHalted();
         if (outbox.length) await db.syncOutbox.bulkPut(outbox);
       });
     } else {
       await db.transaction("rw", [db.settings, db.syncOutbox, ...dataTables], async () => {
+        assertNotHalted();
         if (settingsChanged) await db.settings.put({ ...state.settings });
         for (const key of COLLECTIONS) {
           const puts = diff.puts[key];
           const deletes = diff.deletes[key];
+          assertNotHalted();
           if (puts?.length) await collectionTable(key).bulkPut(puts);
           if (deletes?.length) await collectionTable(key).bulkDelete(deletes);
         }
+        assertNotHalted();
         if (outbox.length) await db.syncOutbox.bulkPut(outbox);
       });
     }
@@ -246,6 +262,8 @@ const flush = async () => {
     host.onError(undefined);
     if (outbox.length) localChangeListeners.forEach((listener) => listener(outbox.length));
   } catch (error) {
+    // Stop a metà: nessun messaggio d'errore, la scheda sta passando alla guardia.
+    if (halted) throw new PersistenceHaltedError();
     const message = error instanceof Error ? error.message : "Salvataggio locale non riuscito.";
     host.onError(`Salvataggio non riuscito: ${message}`);
     throw error;

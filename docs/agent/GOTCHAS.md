@@ -29,7 +29,12 @@
   senza salvare e si ricarica. Dopo lo stop `requestPersist` rifiuta con
   `PersistenceHaltedError` (la sync non avanza il cursore) e `storeReady()` della sync è
   falso. `shareSync`/`useSharedStore` non controllano lo stop: si fermano col
-  ricaricamento. Nuove scritture fuori dallo store: controllare `isPersistenceHalted()`.
+  ricaricamento. Nuove scritture fuori dallo store: controllare `isPersistenceHalted()`
+  DENTRO la transazione, dopo ogni attesa (come `flush` dopo la cifratura e prima di ogni
+  scrittura, e `outboxTransaction` in `cloudSync.ts`): una scheda congelata può perdere il
+  blocco a metà. Il messaggio di passaggio è solo un indizio (qualsiasi pagina della stessa
+  origine può mandarlo): l'attiva cede solo se `navigator.locks.query()` mostra una
+  richiesta in coda per il blocco.
 - Senza `navigator.locks` (browser vecchi; contesto non sicuro, es. dev su
   `http://<IP di rete>`) non c'è guardia: come prima, due schede possono sovrascriversi.
   La guardia valuta comunque i moduli dell'app (import statico di `App`): niente effetti
