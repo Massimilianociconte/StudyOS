@@ -13,7 +13,7 @@ import {
   userRuleChange
 } from "../src/lib/occurrenceEdit.ts";
 import { scopeOptions, shortDatesText, weekdaysText } from "../src/lib/eventEditor.ts";
-import { findOccurrence, startDayOf } from "../src/lib/occurrenceLookup.ts";
+import { findOccurrence, shownDayOf, startDayOf } from "../src/lib/occurrenceLookup.ts";
 import { applyEditPlan, expandEvents, isOccurrenceRow, normalizeRepeat, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { customFromRule, repeatPresets, ruleFromCustom } from "../src/lib/repeatPicker.ts";
 import { SCOPE_TEXT } from "../src/lib/labels/calendar.ts";
@@ -1045,4 +1045,217 @@ test("N2 (ricontrollo). «Tutti» sulla parte prima di una divisione: «fino a»
   const all = scopeOptions({ action: "edit", date: "2026-11-16", span }).find((option) => option.id === "all").details[0];
   assert.ok(all.includes("fino a lunedì 30 novembre"), all);
   assert.ok(!all.includes("domenica 6 dicembre"), all);
+});
+
+test("Round 2 (3). Un giorno annullato non è l'ultima data: «fino a» e «La serie ora finisce» dicono l'ultima che c'è", () => {
+  // N2: lunedì 30 annullato, la parte dopo dal 7 dicembre: «fino a lunedì 23 novembre».
+  let events = [romeNine()];
+  events = following(events, "s", "2026-12-07", { title: "B" }).after;
+  events = apply(events, planDelete(events, "s", "2026-11-30", "this", { now: NOW }));
+  const span = seriesSpan(events, "s", "2026-11-16", TODAY);
+  assert.equal(span.until, "2026-11-23");
+  const all = scopeOptions({ action: "edit", date: "2026-11-16", span }).find((option) => option.id === "all").details[0];
+  assert.ok(all.includes("fino a lunedì 23 novembre"), all);
+  // Il 30 spostato da solo a mercoledì 2 dicembre: c'è, è quella l'ultima data.
+  let movedRow = following([romeNine()], "s", "2026-12-07", { title: "B" }).after;
+  const thirty = findOccurrence(movedRow, "s", "2026-11-30");
+  movedRow = apply(movedRow, planEdit(seriesOf(movedRow), movedRow, "2026-11-30", "this", draggedTimes(thirty, 2 * DAY), { now: NOW }));
+  assert.equal(seriesSpan(movedRow, "s", "2026-11-16", TODAY).until, "2026-12-02");
+  // N1: fino al 21 dicembre con il 21 annullato, il 16 spostato al 17 con «Questo e i successivi»: la
+  // fine detta è un giorno che c'è dopo la modifica, non il 22 se il 22 non c'è.
+  const until = romeNine({ freq: "weekly", byWeekday: ["MO"], end: { type: "until", date: "2026-12-21" } });
+  const cancelled = apply([until], planDelete([until], "s", "2026-12-21", "this", { now: NOW }));
+  const item = findOccurrence(cancelled, "s", "2026-11-16");
+  const moved = draggedTimes(item, DAY);
+  const { calls } = occurrenceEditCalls({ item, series: seriesOf(cancelled), scope: "following", changes: moved, shown: item });
+  const after = simulateOccurrenceEdit(cancelled, "s", "2026-11-16", calls, NOW).events;
+  const real = expandEvents(after, localMidnight("2026-11-01"), localMidnight("2027-02-01"))
+    .filter((occurrence) => !occurrence.cancelled)
+    .map((occurrence) => startDayOf(occurrence.start, false, "Europe/Rome"));
+  const endsOn = impactsFor(cancelled, item, moved).following.endsOn;
+  assert.equal(endsOn, real.at(-1), real.join(" "));
+  // Prima finiva lunedì 14 (il 21 annullato), non il 21.
+  assert.equal(impactsFor(cancelled, item, { title: "Nuovo" }).following.endsOn, undefined);
+});
+
+test("Round 2 (4). «Questo e i successivi» con una regola nuova: la parte nuova parte dal primo giorno della regola dal giorno aperto, e il giorno aperto che sparisce si dice", () => {
+  const series = romeNine();
+  const item = findOccurrence([series], "s", "2026-11-16");
+  const rule = { freq: "weekly", byWeekday: ["TU", "TH"] };
+  // Il modulo manda orari e regola insieme (CALENDAR_EVENT_FIELD_GROUPS).
+  const changes = { repeat: rule, start: item.start, end: item.end, allDay: false };
+  const { calls } = occurrenceEditCalls({ item, series, scope: "following", changes, shown: item });
+  const after = simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events;
+  assert.deepEqual(dates(after, "2026-11-01", "2026-11-30"), ["2026-11-02", "2026-11-09", "2026-11-17", "2026-11-19", "2026-11-24", "2026-11-26"]);
+  const part = after.find((event) => event.splitFrom === "s" && !isOccurrenceRow(event));
+  assert.equal(startDayOf(part.start, false, "Europe/Rome"), "2026-11-17");
+  assert.equal(new Date(part.start).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" }), "09:00");
+  assert.equal(seriesSpan(after, "s", "2026-11-09", TODAY).until, "2026-11-09", "la parte prima finisce lunedì 9");
+  const impact = scopeImpact([series], item, "following", calls, NOW, changes);
+  assert.equal(impact.startsOn, "2026-11-17");
+  assert.deepEqual(impact.gone, ["2026-11-16"]);
+  const lines = scopeOptions({ action: "edit", date: "2026-11-16", ruleChanged: true, impacts: { following: impact } }).find((option) => option.id === "following").details;
+  assert.ok(lines.includes(SCOPE_TEXT.followingStartsOn("martedì 17 novembre")), lines.join(" | "));
+  assert.ok(lines.includes(SCOPE_TEXT.followingGone(shortDatesText(["2026-11-16"]), false)), lines.join(" | "));
+
+  // Con le parti dopo da assorbire, il giorno aperto si dice insieme alle loro date che spariscono.
+  const split = following([series], "s", "2026-11-30", { title: "B" }).after;
+  const fromSplit = following(split, "s", "2026-11-16", changes, "edit", true);
+  assert.equal(fromSplit.impact.startsOn, "2026-11-17");
+  assert.ok(fromSplit.impact.gone.includes("2026-11-16"), fromSplit.impact.gone.join(" "));
+
+  // Una regola che ha il giorno aperto parte da lì (lun e mer dal 16): niente da dire.
+  const both = { repeat: { freq: "weekly", byWeekday: ["MO", "WE"] }, start: item.start, end: item.end, allDay: false };
+  const kept = following([series], "s", "2026-11-16", both, "edit", true);
+  assert.equal(kept.impact.startsOn, undefined);
+  assert.deepEqual(kept.impact.gone, []);
+  assert.deepEqual(dates(kept.after, "2026-11-01", "2026-11-24"), ["2026-11-02", "2026-11-09", "2026-11-16", "2026-11-18", "2026-11-23"]);
+
+  // Uno spostamento senza regola nuova resta com'era: dal 16 al 17 la parte nuova parte martedì 17.
+  const move = following([series], "s", "2026-11-16", draggedTimes(item, DAY), "move");
+  assert.equal(move.impact.startsOn, undefined);
+  assert.deepEqual(move.impact.gone, []);
+  assert.deepEqual(dates(move.after, "2026-11-01", "2026-11-25"), ["2026-11-02", "2026-11-09", "2026-11-17", "2026-11-24"]);
+});
+
+/** Ogni lunedì alle 9 a Roma, con lunedì 16 spostato da solo a mercoledì 18 (trascinato, «Solo questo»). */
+const movedSixteen = () => {
+  const series = romeNine();
+  const sixteen = findOccurrence([series], "s", "2026-11-16");
+  const { calls } = occurrenceEditCalls({ item: sixteen, series, scope: "this", changes: draggedTimes(sixteen, 2 * DAY) });
+  return simulateOccurrenceEdit([series], "s", "2026-11-16", calls, NOW).events;
+};
+/** Date come si vedono (a Roma) con il titolo. */
+const romeView = (events, to = "2026-12-08") =>
+  expandEvents(events, localMidnight("2026-11-01"), localMidnight(to))
+    .filter((item) => !item.cancelled)
+    .map((item) => `${startDayOf(item.start, false, "Europe/Rome").slice(5)} ${item.title}`);
+const TUTH = { freq: "weekly", byWeekday: ["TU", "TH"] };
+
+test("Round 3 (1, 2). «Questo e i successivi» da un giorno spostato da solo, senza cambiarne giorno né orario: non è uno spostamento", () => {
+  const base = movedSixteen();
+  assert.deepEqual(romeView(base), ["11-02 Lezione", "11-09 Lezione", "11-18 Lezione", "11-23 Lezione", "11-30 Lezione", "12-07 Lezione"]);
+  const title = following(base, "s", "2026-11-16", { title: "X" });
+  // La parte nuova tiene il lunedì dal 16; il 16 resta spostato a mercoledì 18, con il titolo nuovo; il lunedì 16 non torna.
+  assert.deepEqual(romeView(title.after), ["11-02 Lezione", "11-09 Lezione", "11-18 X", "11-23 X", "11-30 X", "12-07 X"]);
+  const part = title.after.find((event) => event.splitFrom === "s" && !isOccurrenceRow(event));
+  assert.deepEqual(normalizeRepeat(part).byWeekday, ["MO"]);
+  assert.equal(startDayOf(part.start, false, "Europe/Rome"), "2026-11-16");
+  assert.equal(title.impact.startsOn, undefined, "nessuna regola nuova: niente «riprende»");
+  assert.ok(!title.lines.some((line) => line.includes("riprende")), title.lines.join(" | "));
+  assert.deepEqual(title.impact.gone, []);
+  // Lo stesso con inizio e fine uguali a quelli aperti (l'agente li manda): non è uno spostamento.
+  const row = findOccurrence(base, "s", "2026-11-16");
+  const same = following(base, "s", "2026-11-16", { title: "X", start: row.start, end: row.end });
+  assert.deepEqual(romeView(same.after), ["11-02 Lezione", "11-09 Lezione", "11-18 X", "11-23 X", "11-30 X", "12-07 X"]);
+});
+
+test("Round 3 (2). Da un giorno spostato da solo, cambiando giorno o orario: è uno spostamento, la parte nuova parte dal giorno scelto (mai dal lunedì di prima)", () => {
+  const base = movedSixteen();
+  const row = findOccurrence(base, "s", "2026-11-16");
+  const thursday = following(base, "s", "2026-11-16", draggedTimes(row, DAY), "move");
+  assert.deepEqual(romeView(thursday.after), ["11-02 Lezione", "11-09 Lezione", "11-19 Lezione", "11-26 Lezione", "12-03 Lezione"]);
+  // Solo la fine (un'ora in più), sullo stesso giorno: la serie resta di lunedì con la fine nuova, il
+  // giorno resta mercoledì 18 (Round 5: un cambio d'ora sul giorno aperto non sposta il giorno della settimana).
+  const longer = following(base, "s", "2026-11-16", { end: new Date(Date.parse(row.end) + 3600e3).toISOString() });
+  assert.deepEqual(romeView(longer.after), ["11-02 Lezione", "11-09 Lezione", "11-18 Lezione", "11-23 Lezione", "11-30 Lezione", "12-07 Lezione"]);
+  const longRow = findOccurrence(longer.after, "s~2026-11-16", "2026-11-16");
+  assert.equal(startDayOf(longRow.start, false, "Europe/Rome"), "2026-11-18");
+  assert.equal(Date.parse(longRow.end) - Date.parse(longRow.start), 2 * 3600e3);
+  const { calls: allLonger } = occurrenceEditCalls({ item: row, series: seriesOf(base), scope: "all", changes: { end: new Date(Date.parse(row.end) + 3600e3).toISOString() } });
+  const allRow = findOccurrence(simulateOccurrenceEdit(base, "s", "2026-11-16", allLonger, NOW).events, "s", "2026-11-16");
+  assert.equal(startDayOf(allRow.start, false, "Europe/Rome"), "2026-11-18");
+  assert.equal(Date.parse(allRow.end) - Date.parse(allRow.start), 2 * 3600e3);
+  // Una regola nuova che ha il mercoledì, senza toccare l'orario: riprende mercoledì 18, non lunedì 16.
+  const wedFri = following(base, "s", "2026-11-16", { repeat: { freq: "weekly", byWeekday: ["WE", "FR"] } }, "edit", true);
+  assert.deepEqual(romeView(wedFri.after, "2026-11-28"), ["11-02 Lezione", "11-09 Lezione", "11-18 Lezione", "11-20 Lezione", "11-25 Lezione", "11-27 Lezione"]);
+  assert.equal(wedFri.impact.startsOn, undefined);
+});
+
+test("Round 3 (3). Le date che spariscono sono quelle che si vedono: un giorno spostato da solo si dice con la sua data", () => {
+  const base = movedSixteen();
+  const row = findOccurrence(base, "s", "2026-11-16");
+  const rule = following(base, "s", "2026-11-16", { repeat: TUTH, start: row.start, end: row.end, allDay: false }, "edit", true);
+  assert.deepEqual(romeView(rule.after, "2026-12-04"), ["11-02 Lezione", "11-09 Lezione", "11-19 Lezione", "11-24 Lezione", "11-26 Lezione", "12-01 Lezione", "12-03 Lezione"]);
+  assert.equal(rule.impact.startsOn, "2026-11-19");
+  assert.deepEqual(rule.impact.gone, ["2026-11-18"]);
+  assert.ok(rule.lines.includes(SCOPE_TEXT.followingGone(shortDatesText(["2026-11-18"]), false)), rule.lines.join(" | "));
+
+  // In una parte dopo (dal 30, «B») lunedì 7 dicembre spostato a mercoledì 9: assorbita, sparisce il 9.
+  let split = following([romeNine()], "s", "2026-11-30", { title: "B" }).after;
+  const child = "s~2026-11-30";
+  const seventh = findOccurrence(split, child, "2026-12-07");
+  split = simulateOccurrenceEdit(split, child, "2026-12-07", occurrenceEditCalls({ item: seventh, series: seriesOf(split, child), scope: "this", changes: draggedTimes(seventh, 2 * DAY) }).calls, NOW).events;
+  const sixteen = findOccurrence(split, "s", "2026-11-16");
+  const absorbed = following(split, "s", "2026-11-16", { repeat: TUTH, start: sixteen.start, end: sixteen.end, allDay: false }, "edit", true);
+  assert.ok(absorbed.impact.gone.includes("2026-12-09"), absorbed.impact.gone.join(" "));
+  assert.ok(!absorbed.impact.gone.includes("2026-12-07"), absorbed.impact.gone.join(" "));
+  assert.ok(absorbed.impact.gone.includes("2026-11-16") && absorbed.impact.gone.includes("2026-11-30"), absorbed.impact.gone.join(" "));
+});
+
+test("Round 4. «Tutti» da un giorno spostato da solo, senza cambiarne giorno né orario: la serie resta di lunedì e il giorno resta spostato", () => {
+  const base = movedSixteen();
+  const row = findOccurrence(base, "s", "2026-11-16");
+  for (const changes of [{ title: "X" }, { title: "X", start: row.start, end: row.end }]) {
+    const label = JSON.stringify(Object.keys(changes));
+    const { calls } = occurrenceEditCalls({ item: row, series: seriesOf(base), scope: "all", changes, shown: row });
+    const after = simulateOccurrenceEdit(base, "s", "2026-11-16", calls, NOW).events;
+    assert.deepEqual(romeView(after), ["11-02 X", "11-09 X", "11-18 X", "11-23 X", "11-30 X", "12-07 X"], label);
+    assert.deepEqual(normalizeRepeat(seriesOf(after)).byWeekday, ["MO"], label);
+    assert.equal(startDayOf(seriesOf(after).start, false, "Europe/Rome"), "2026-11-02", label);
+    assert.equal(scopeImpact(base, row, "all", calls, NOW, changes).ownLost, false, label);
+  }
+  // Cambiando davvero il giorno (a giovedì 19): come prima, la serie segue il giorno.
+  const moved = draggedTimes(row, DAY);
+  const { calls } = occurrenceEditCalls({ item: row, series: seriesOf(base), scope: "all", changes: moved, shown: row });
+  assert.deepEqual(normalizeRepeat(seriesOf(simulateOccurrenceEdit(base, "s", "2026-11-16", calls, NOW).events)).byWeekday, ["TH"]);
+});
+
+/** Date e ore come si vedono a Roma: "11-18 10:00". */
+const romeHours = (events, to = "2026-12-08") =>
+  expandEvents(events, localMidnight("2026-11-01"), localMidnight(to))
+    .filter((item) => !item.cancelled)
+    .map((item) => `${startDayOf(item.start, false, "Europe/Rome").slice(5)} ${new Date(item.start).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" })}`);
+
+test("Round 5. Un giorno spostato da solo cambiato solo nell'ora: la serie tiene il giorno della settimana e prende l'ora; il giorno resta spostato", () => {
+  const base = movedSixteen();
+  const row = findOccurrence(base, "s", "2026-11-16");
+  const later = { start: new Date(Date.parse(row.start) + 3600e3).toISOString(), end: new Date(Date.parse(row.end) + 3600e3).toISOString() };
+
+  // «Questo e i successivi»: lunedì alle 10 dal 16, il 16 resta mercoledì 18 (alle 10); niente «riprende».
+  const next = following(base, "s", "2026-11-16", later);
+  assert.deepEqual(romeHours(next.after), ["11-02 09:00", "11-09 09:00", "11-18 10:00", "11-23 10:00", "11-30 10:00", "12-07 10:00"]);
+  const part = next.after.find((event) => event.splitFrom === "s" && !isOccurrenceRow(event));
+  assert.deepEqual(normalizeRepeat(part).byWeekday, ["MO"]);
+  assert.equal(next.impact.startsOn, undefined);
+  assert.ok(!next.lines.some((line) => line.includes("primo giorno che corrisponde")), next.lines.join(" | "));
+
+  // «Tutti»: ogni lunedì alle 10 dal 2, il 16 resta mercoledì 18 alle 10; nessun nuovo inizio, il giorno non perde nulla.
+  const { calls, newStart } = occurrenceEditCalls({ item: row, series: seriesOf(base), scope: "all", changes: later, shown: row });
+  const all = simulateOccurrenceEdit(base, "s", "2026-11-16", calls, NOW).events;
+  assert.deepEqual(romeHours(all), ["11-02 10:00", "11-09 10:00", "11-18 10:00", "11-23 10:00", "11-30 10:00", "12-07 10:00"]);
+  assert.deepEqual(normalizeRepeat(seriesOf(all)).byWeekday, ["MO"]);
+  assert.equal(newStart, undefined);
+  const allImpact = scopeImpact(base, row, "all", calls, NOW, later);
+  assert.equal(allImpact.ownLost, false);
+
+  // La scelta nomina il giorno aperto (mercoledì 18), mai lunedì 16.
+  const options = scopeOptions({ action: "edit", date: "2026-11-16", opened: "2026-11-18", impacts: { following: next.impact, all: allImpact }, newStart });
+  for (const option of options) assert.ok(!option.details.join(" ").includes("lunedì 16 novembre"), option.details.join(" | "));
+  assert.ok(options.find((option) => option.id === "this").details[0].includes("mercoledì 18 novembre"));
+  assert.ok(options.find((option) => option.id === "following").details[0].includes("mercoledì 18 novembre"));
+  assert.ok(!options.find((option) => option.id === "all").details.some((line) => line.includes("primo giorno che corrisponde")));
+  assert.equal(shownDayOf(row, "Europe/Rome"), "2026-11-18");
+  assert.ok(scopeOptions({ action: "delete", date: "2026-11-16", opened: "2026-11-18" }).find((option) => option.id === "this").details[0].includes("mercoledì 18 novembre"));
+
+  // Una parte dopo con lo stesso programma (dal 30, «B») prende l'ora nuova, come per un cambio d'ora.
+  const split = following(base, "s", "2026-11-30", { title: "B" }).after;
+  const splitRow = findOccurrence(split, "s", "2026-11-16");
+  const withB = following(split, "s", "2026-11-16", { start: new Date(Date.parse(splitRow.start) + 3600e3).toISOString(), end: new Date(Date.parse(splitRow.end) + 3600e3).toISOString() });
+  assert.deepEqual(romeHours(withB.after), ["11-02 09:00", "11-09 09:00", "11-18 10:00", "11-23 10:00", "11-30 10:00", "12-07 10:00"]);
+
+  // Cambiando il giorno da quello aperto (giovedì 19 alle 10): come prima, il giorno della settimana segue.
+  const thursday = { start: new Date(Date.parse(later.start) + DAY).toISOString(), end: new Date(Date.parse(later.end) + DAY).toISOString() };
+  const moved = following(base, "s", "2026-11-16", thursday);
+  assert.deepEqual(romeHours(moved.after), ["11-02 09:00", "11-09 09:00", "11-19 10:00", "11-26 10:00", "12-03 10:00"]);
 });

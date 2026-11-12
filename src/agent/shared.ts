@@ -301,7 +301,7 @@ interface DraftBase {
 
 export type SharedDraft = DraftBase &
   (
-    | { entityType: "calendarEvent"; start: string; end: string; allDay: boolean; category: CalendarEvent["category"] }
+    | { entityType: "calendarEvent"; start: string; end: string; allDay: boolean; category: CalendarEvent["category"]; timeZone?: string }
     | { entityType: "task"; dueDate?: string }
   );
 
@@ -328,6 +328,8 @@ export const newSharedEntity = (draft: SharedDraft, id: string, now: string): { 
       start: draft.start,
       end: draft.end,
       allDay: draft.allDay || undefined,
+      // Fuso di chi lo crea: un tutto il giorno sono le sue date, anche per chi lo apre altrove.
+      ...(draft.timeZone ? { timeZone: draft.timeZone } : {}),
       recurrence: "none",
       status: "planned",
       checklist: [],

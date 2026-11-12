@@ -239,10 +239,32 @@
   arrotondata, come `timingOf` in ics.ts. Le occorrenze espanse invece stanno alla mezzanotte del
   DISPOSITIVO dei loro giorni (la griglia legge così): `allDayDays` le riconosce da `occurrenceKey`,
   `startDayOf(…, true, zona)` è per inizi salvati e modifiche, `shownDayOf` per l'occorrenza mostrata.
+  L'agente uguale: `nextEventRange(evento, args, zona)` (toolkit.ts) legge start/end come giorni
+  ("YYYY-MM-DD" o un'ora senza offset = quel giorno; con offset = il suo giorno nel fuso dell'evento)
+  e scrive con `allDayTimes` nel fuso della serie o dell'evento (update_event, update_shared_item).
+  Mai `allDayRange` (mezzanotte del dispositivo) su un evento che esiste: da ≥ 12 h di distanza
+  (Roma aperta da Auckland) la mezzanotte più vicina è a pari merito e vince il giorno prima. Un
+  evento altrui spostato da un'occorrenza resta nel riferimento del dispositivo (lo scarto si somma
+  alla serie); un tutto il giorno condiviso creato dall'agente porta il fuso di chi lo crea.
 - «Tutti» con una regola nuova che non comprende il giorno aperto (da lunedì 16 «mar e gio»): la
   serie parte dal primo giorno della regola nuova dal suo primo giorno di prima in poi (martedì 3,
   `alignedSeriesStart`), mai un giorno in più che la regola non ha; la scelta dice quel giorno
-  (`newStart`). Vale anche aprendo dal primo giorno.
+  (`newStart`). Vale anche aprendo dal primo giorno. «Questo e i successivi» uguale, dal giorno
+  aperto: la parte nuova parte dal primo giorno della regola da lì in poi (martedì 17, stessa ora,
+  `occurrenceEditCalls` → `timesMoved`), il giorno aperto sparisce e la parte prima finisce lunedì 9;
+  la scelta dice da dove riprende (`ScopeImpact.startsOn`) e il giorno aperto è tra quelli che
+  spariscono (`gone`, anche per l'agente in `removedDates`). Uno spostamento senza regola nuova no.
+- «Questo e i successivi» da un giorno spostato da solo si misura da ciò che si è aperto (mercoledì 18),
+  non dalla sua data (lunedì 16): senza cambiarne giorno né orario la serie tiene il suo programma e il
+  giorno resta spostato nella parte nuova (`staysPut`, `movedAway` in planSplit); cambiando la data, la
+  parte nuova parte dal giorno scelto; le date che spariscono sono quelle che si vedono (`shownDayOf`).
+  «Tutti» uguale: solo titolo o dettagli da un giorno spostato non sposta la serie (resta di lunedì).
+  Solo l'ora sullo stesso giorno aperto (`timeOnMovedDay`): la serie resta di lunedì all'ora nuova e il
+  giorno resta mercoledì 18; per «Questo e i successivi» una seconda chiamata «Solo questo» va alla
+  parte nuova (`OccurrenceCall.seriesId`: chi esegue le chiamate usa `call.seriesId ?? serie`). La
+  scelta nomina il giorno aperto (`scopeOptions({ opened })`), mai lunedì 16.
+- «fino a» (`seriesSpan.until`) e «La serie ora finisce» (`ScopeImpact.endsOn`) dicono l'ultima data
+  che c'è davvero (`lastShownDate`): non un giorno annullato, un giorno spostato dove sta ora.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`

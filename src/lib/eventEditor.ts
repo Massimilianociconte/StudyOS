@@ -518,6 +518,7 @@ export const SCOPE_WARNING_KEYS = [
   "followingGone",
   "followingMovesSplits",
   "followingBoth",
+  "followingStartsOn",
   "newStart"
 ] as const satisfies readonly (keyof typeof SCOPE_TEXT)[];
 
@@ -560,15 +561,13 @@ const scopeOption = (id: OccurrenceScope, label: string, summary: string, lines:
 /** Che cosa fa "Questo e i successivi" alle parti cambiate prima (assorbite con una regola nuova, o lasciate). */
 const splitLines = (impact: ScopeImpact | undefined): ScopeLine[] => {
   if (!impact) return [];
-  if (impact.absorbed) {
-    const gone = impact.gone ?? [];
-    const more = gone.length > GONE_SHOWN || impact.goneMore === true;
-    return [
-      ["followingSplits", SCOPE_TEXT.followingSplits],
-      ...(gone.length ? [["followingGone", SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), more)] as const] : [])
-    ];
-  }
-  if (!impact.laterParts) return [];
+  const gone = impact.gone ?? [];
+  const goneLine: ScopeLine[] = gone.length
+    ? [["followingGone", SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), gone.length > GONE_SHOWN || impact.goneMore === true)]]
+    : [];
+  if (impact.absorbed) return [["followingSplits", SCOPE_TEXT.followingSplits], ...goneLine];
+  // Senza parti dopo può sparire il giorno aperto (una regola nuova che non lo ha).
+  if (!impact.laterParts) return goneLine;
   // Spostando il giorno si spostano le parti con gli stessi giorni e orario; le altre restano (e lo si dice se ce ne sono di tutti e due i tipi).
   const moved = impact.laterMoved ?? 0;
   return [
@@ -633,6 +632,7 @@ export const weekdaysText = (days: readonly Weekday[]) => {
 export const scopeOptions = ({
   action,
   date,
+  opened,
   ruleChanged = false,
   subjectChanged = false,
   pinsZone,
@@ -645,6 +645,8 @@ export const scopeOptions = ({
 }: {
   action: ScopeAction;
   date: string;
+  /** Il giorno aperto, se non è `date` (un giorno spostato da solo): la scelta nomina questo. */
+  opened?: string;
   ruleChanged?: boolean;
   subjectChanged?: boolean;
   /** La serie non ha un fuso: la prima modifica di un giorno lo fissa (quello del dispositivo). */
@@ -656,7 +658,7 @@ export const scopeOptions = ({
   rowContent?: boolean;
   daysShift?: { from: readonly Weekday[]; to: readonly Weekday[] };
 }): ScopeOption[] => {
-  const day = occurrenceDayText(date);
+  const day = occurrenceDayText(opened || date);
   const pin: ScopeLine[] = pinsZone ? [["pinZone", SCOPE_TEXT.pinZone(pinsZone)]] : [];
   const shift = daysShift && action !== "delete" ? { from: weekdaysText(daysShift.from), to: weekdaysText(daysShift.to) } : null;
   const range = {
@@ -703,6 +705,7 @@ export const scopeOptions = ({
       ? [["followingDelete", SCOPE_TEXT.followingDelete(day)]]
       : [
           action === "move" ? ["followingMove", SCOPE_TEXT.followingMove(day)] : ["followingEdit", SCOPE_TEXT.followingEdit(day)],
+          ...(impacts.following?.startsOn ? [["followingStartsOn", SCOPE_TEXT.followingStartsOn(occurrenceDayText(impacts.following.startsOn))] as const] : []),
           ...(shift ? [["followingDaysShift", SCOPE_TEXT.followingDaysShift(shift.from, shift.to)] as const] : []),
           ...(rowContent ? [["followingTakesDay", SCOPE_TEXT.followingTakesDay] as const] : []),
           ...rowLines(impacts.following),

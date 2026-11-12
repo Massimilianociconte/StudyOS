@@ -27,7 +27,7 @@ import { describeAgentCall, executeAgentTool } from "../src/agent/execute.ts";
 import { useSharedStore } from "../src/store/useSharedStore.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, defaultTimer } from "../src/lib/studyTimer.ts";
-import { expandEvents as expandRepeatEvents } from "../src/lib/repeat.ts";
+import { allDayDays, expandEvents as expandRepeatEvents } from "../src/lib/repeat.ts";
 
 const actor = { name: "Prova", source: "stdio", scopes: ["studyos:read", "studyos:write"] };
 const reader = { name: "Lettore", source: "oauth", scopes: ["studyos:read"] };
@@ -1220,6 +1220,49 @@ test("S4 (revisione finale). serie altrui spostata dall'agente: la regola segue 
   assert.equal(saved("lez@2026-11-16").start, "2026-11-18T09:00:00.000Z");
   assert.equal(saved("lez@2026-11-16").repeat, undefined);
   assert.equal(saved().start, "2026-11-02T09:00:00.000Z");
+});
+
+test("tutto il giorno altrui (Roma) spostato dall'agente da qualunque fuso: i giorni restano quelli di Roma", async () => {
+  const romeMidnight = (day) => {
+    const utc = Date.parse(`${day}T00:00:00Z`);
+    const rome = new Date(utc).toLocaleString("sv-SE", { timeZone: "Europe/Rome" });
+    return new Date(utc - (Date.parse(`${rome.replace(" ", "T")}Z`) - utc)).toISOString();
+  };
+  const romeDays = (entity, to) => expandRepeatEvents([entity], new Date("2026-11-01T00:00:00.000Z"), new Date(to)).map((item) => item.occurrenceDate);
+  const allDay = (id, first, last, over = {}) =>
+    sharedEntry("calendarEvent", id, {
+      ...sharedSeries().entity,
+      id,
+      allDay: true,
+      start: romeMidnight(first),
+      end: romeMidnight(last),
+      recurrence: "none",
+      repeat: undefined,
+      repeatLegacy: undefined,
+      ...over
+    });
+  const saved = (id) => useSharedStore.getState().items.find((item) => item.entityId === id).entity;
+  // Vacanza dall'8 al 10 dicembre (fine esclusiva l'11) spostata al 9: dal 9 all'11, a mezzanotte di Roma.
+  const trip = allDay("trip", "2026-12-08", "2026-12-11");
+  seedApp({ received: [shareGrant({ scope: "calendar", permission: "edit" })], items: [trip] });
+  const moved = await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(trip), start: "2026-12-09" });
+  assert.equal(moved.ok, true, JSON.stringify(moved));
+  assert.equal(saved("trip").start, romeMidnight("2026-12-09"));
+  assert.equal(saved("trip").end, romeMidnight("2026-12-12"));
+  // Serie di tutto il giorno del lunedì, spostata dal 16 al 17 (con occurrenceDate): dal martedì 3.
+  const mondays = allDay("lun", "2026-11-02", "2026-11-03", { recurrence: "weekly", repeat: { freq: "weekly", byWeekday: ["MO"] }, repeatLegacy: "weekly|" });
+  seedApp({ received: [shareGrant({ scope: "calendar", permission: "edit" })], items: [mondays] });
+  assert.equal((await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(mondays), occurrenceDate: "2026-11-16", start: "2026-11-17" })).ok, true);
+  assert.deepEqual(saved("lun").repeat, { freq: "weekly", byWeekday: ["TU"] });
+  assert.equal(saved("lun").start, romeMidnight("2026-11-03"));
+  assert.deepEqual(romeDays(saved("lun"), "2026-11-29T00:00:00.000Z"), ["2026-11-03", "2026-11-10", "2026-11-17", "2026-11-24"]);
+  // Creato dall'agente: porta il fuso di chi lo crea, così chi lo possiede in un altro fuso vede lo stesso giorno.
+  seedApp({ received: [shareGrant({ scope: "calendar", permission: "edit" })], items: [] });
+  const created = await executeAgentTool("studyos_create_shared_item", { personId: personHandle("owner-uuid-1"), entityType: "calendarEvent", title: "Gita", start: "2026-12-08", allDay: true });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const gita = useSharedStore.getState().items.find((item) => item.entityType === "calendarEvent").entity;
+  assert.equal(gita.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone);
+  assert.deepEqual(allDayDays(gita), { first: "2026-12-08", last: "2026-12-08" });
 });
 
 test("N8 (revisione finale). sessioni condivise: origine e argomento si vedono e si cambiano con gli stessi controlli dell'app", async () => {

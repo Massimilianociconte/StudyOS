@@ -20,6 +20,7 @@ import {
   shiftedEnd,
   type ShareAction
 } from "../lib/sharing";
+import { deviceTimeZone } from "../lib/tz";
 import { sharedOfTypes, useSharedStore } from "../store/useSharedStore";
 import type { CalendarEvent, Task } from "../types";
 import {
@@ -162,7 +163,9 @@ export const createSharedItem = async (args: Args): Promise<AgentCallResult> => 
     if (args.end !== undefined && !end) return fail("invalid", "end non è una data valida.");
     const range = eventRange(start, end, args.allDay === true);
     if (typeof range === "string") return fail("invalid", range);
-    draft = { ...base, entityType: "calendarEvent", ...range, allDay: args.allDay === true, category: (optional(args.category) ?? "study") as CalendarEvent["category"] };
+    // Un tutto il giorno porta il fuso in cui sono scritte le sue mezzanotti (come addEvent nello store).
+    const zone = args.allDay === true ? deviceTimeZone() : undefined;
+    draft = { ...base, entityType: "calendarEvent", ...range, allDay: args.allDay === true, category: (optional(args.category) ?? "study") as CalendarEvent["category"], ...(zone ? { timeZone: zone } : {}) };
   } else {
     const dueDate = args.dueDate === undefined ? undefined : toIso(args.dueDate, true);
     if (dueDate === null) return fail("invalid", "dueDate non è una data valida.");
@@ -198,7 +201,12 @@ export const updateSharedItem = async (args: Args): Promise<AgentCallResult> => 
   if (entry.entityType === "calendarEvent") {
     // Come trascinandolo nel calendario: una serie si sposta tutta dello stesso scarto della data
     // indicata, e la regola con i giorni della settimana la segue (vedi sharedEventMove).
-    const move = sharedEventMove(entry.entity, optional(args.occurrenceDate), (base) => nextEventRange(base, args));
+    // Un tutto il giorno nel fuso dell'evento; una data della serie (occorrenza, nel dispositivo) si
+    // sposta nello stesso riferimento della serie espansa, e la serie dello stesso scarto.
+    const zone = typeof entry.entity.timeZone === "string" ? entry.entity.timeZone : undefined;
+    const move = sharedEventMove(entry.entity, optional(args.occurrenceDate), (base) =>
+      nextEventRange(base, args, typeof (base as { occurrenceKey?: unknown }).occurrenceKey === "string" ? undefined : zone)
+    );
     if ("code" in move) return fail(move.code, move.error);
     if (move.range) Object.assign(patch, move.range);
     derived = move.derived;

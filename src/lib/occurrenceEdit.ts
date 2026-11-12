@@ -4,12 +4,14 @@
 import type { CalendarEvent, RepeatRule, Weekday } from "../types";
 import {
   allDayDays,
+  allDaySpan,
   allDayTimes,
   applyEditPlan,
   countBefore,
   expandEvents,
   expandRule,
   familyLastDate,
+  familyOf,
   isOccurrenceRow,
   lastDateBefore,
   laterParts,
@@ -32,6 +34,8 @@ type Occurrence = CalendarEvent & { occurrenceDate: string };
 export interface OccurrenceCall {
   scope: OccurrenceScope;
   patch: Partial<CalendarEvent>;
+  /** La serie da chiamare al posto di quella del giorno: la parte nuova nata da "Questo e i successivi". */
+  seriesId?: string;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -195,6 +199,62 @@ export const userRuleChange = ({ item, series, changes }: { item: Occurrence; se
   "repeat" in changes && ruleKey(changes.repeat) !== ruleKey(followedRule(series, occurrenceTarget(item).date, pickedDay(item, changes, series)));
 
 /**
+ * La modifica cambia giorno o orario rispetto a ciò che il giorno aperto mostra? Da un giorno spostato
+ * da solo si misura da lì (mercoledì 18), non dalla sua data nella serie (lunedì 16). Tutto il giorno:
+ * le date (l'occorrenza sta alla mezzanotte del dispositivo, la modifica a quella del fuso della serie).
+ */
+const changesOpened = (item: Occurrence, changes: Partial<CalendarEvent>, series: CalendarEvent) => {
+  if (changes.allDay !== undefined && changes.allDay !== (item.allDay === true)) return true;
+  if (changes.start === undefined && changes.end === undefined) return false;
+  if (item.allDay === true) {
+    const shown = allDayDays(item);
+    if (!shown) return true;
+    const zone = zoneOf(series);
+    const times = allDayTimes(shown.first, shown.last, zone);
+    const next = allDaySpan(changes.start ?? times.start, changes.end ?? times.end, zone);
+    return !next || next.date !== shown.first || next.days !== civilDaysBetween(shown.first, shown.last) + 1;
+  }
+  const differs = (value: string | undefined, was: string) => value !== undefined && Date.parse(value) !== Date.parse(was);
+  return differs(changes.start, item.start) || differs(changes.end, item.end);
+};
+
+/**
+ * "Questo e i successivi" o "Tutti" da un giorno cambiato da solo, senza regola nuova e senza cambiarne
+ * giorno né orario (solo il titolo…): non è uno spostamento. La serie (o la parte nuova, dalla data del
+ * giorno) tiene il suo programma e il giorno resta dov'è, con la modifica (vedi planSplit).
+ */
+const staysPut = (item: Occurrence, series: CalendarEvent, changes: Partial<CalendarEvent>) =>
+  occurrenceTarget(item).row && !userRuleChange({ item, series, changes }) && !changesOpened(item, changes, series);
+
+/**
+ * Da un giorno spostato da solo (lunedì 16 a mercoledì 18) cambiato solo nell'orario, sullo stesso
+ * giorno aperto: la serie (o la parte nuova) tiene il giorno della settimana e prende solo l'ora; il
+ * giorno resta spostato, all'ora nuova. Cambiando la data, invece, il giorno della settimana segue.
+ */
+const timeOnMovedDay = (item: Occurrence, series: CalendarEvent, changes: Partial<CalendarEvent>) => {
+  const target = occurrenceTarget(item);
+  if (!target.row || userRuleChange({ item, series, changes }) || !changesOpened(item, changes, series)) return false;
+  const opened = shownDayOf(item, zoneOf(series));
+  return isCivilDate(opened) && opened !== target.date && pickedDay(item, changes, series) === opened;
+};
+
+const TIME_KEYS = ["start", "end", "allDay"] as const;
+const withoutTimes = (patch: Partial<CalendarEvent>): Partial<CalendarEvent> =>
+  Object.fromEntries(Object.entries(patch).filter(([key]) => !(TIME_KEYS as readonly string[]).includes(key))) as Partial<CalendarEvent>;
+
+/**
+ * Inizio e fine della modifica `changes` (quello che manca: del giorno `item` come si vede) spostati di
+ * `days` giorni, nel fuso della serie; un tutto il giorno resta sulle sue date (vedi `allDayDays`).
+ */
+const timesMoved = (item: Occurrence, changes: Partial<CalendarEvent>, series: CalendarEvent, days: number): Partial<CalendarEvent> => {
+  const allDay = (changes.allDay ?? item.allDay ?? series.allDay) === true;
+  const zone = zoneOf(series);
+  const shown = allDay && item.allDay === true ? allDayDays(item) : null;
+  const was = shown ? allDayTimes(shown.first, shown.last, zone) : { start: item.start, end: item.end };
+  return shiftPatchDays({ start: changes.start ?? was.start, end: changes.end ?? was.end }, days, { allDay, zone });
+};
+
+/**
  * Chiamate a `editOccurrence(serie, giorno, portata, modifica)` per salvare la modifica `changes` del
  * giorno `item` con la portata `scope`. `shown`: tutto ciò che il giorno mostra (per "Questo e i
  * successivi" da un giorno cambiato da solo). "Tutti" da un giorno cambiato da solo: la serie, poi quel
@@ -221,14 +281,33 @@ export const occurrenceEditCalls = ({
   const chosen = userRuleChange({ item, series, changes });
   const own = chosen ? changes : withoutRepeat(changes);
   if (scope === "this") return { calls: [{ scope, patch: own }] };
-  const followed = chosen ? null : followedRule(series, target.date, picked);
+  // Da un giorno spostato da solo, lasciato dov'è: nessuna regola che segue uno spostamento.
+  const stays = staysPut(item, series, changes);
+  const timeOnly = timeOnMovedDay(item, series, changes);
+  const followed = chosen || stays || timeOnly ? null : followedRule(series, target.date, picked);
   const moved = followed && ruleKey(followed) !== ruleKey(normalizeRepeat(series)) ? { ...own, repeat: followed } : own;
   // Più giorni della settimana spostati insieme: si dice nella scelta.
   const shifted = followed ? weekdayShift(normalizeRepeat(series), followed) : undefined;
   const weekdays = shifted ? { weekdays: shifted } : {};
   const ruled = moved.repeat ? { ...moved, repeat: explicitRule(moved.repeat, picked) } : moved;
   if (scope === "following") {
-    const counted = followed && ruled.repeat ? { ...ruled, repeat: remainingCount(ruled.repeat, series, target.date) } : ruled;
+    let counted = followed && ruled.repeat ? { ...ruled, repeat: remainingCount(ruled.repeat, series, target.date) } : ruled;
+    // Regola nuova scelta che non ha il giorno aperto (da lunedì 16 «mar e gio»): come per «Tutti» (S2),
+    // la parte nuova parte dal primo giorno della regola da quel giorno in poi (martedì 17), stessa ora.
+    const first = chosen && counted.repeat && isCivilDate(picked) && !matchesPattern(counted.repeat, picked, picked) ? firstMatching(counted.repeat, picked, picked) : null;
+    if (first) counted = { ...counted, ...timesMoved(item, counted, series, civilDaysBetween(picked, first)) };
+    // Da un giorno spostato da solo: lasciato dov'è, senza orari (resta lui); altrimenti la parte nuova
+    // parte dal giorno che si vede o si è scelto, mai dalla sua data nella serie (che tornerebbe).
+    else if (stays) counted = withoutTimes(counted);
+    // Cambiato solo nell'ora sul giorno aperto: la parte nuova parte dalla sua data nella serie (lunedì
+    // 16) all'ora nuova; poi il giorno torna spostato (mercoledì 18), all'ora nuova, nella parte nuova.
+    else if (timeOnly) {
+      counted = { ...counted, ...timesMoved(item, counted, series, civilDaysBetween(picked, target.date)) };
+      const seriesStart = startDayOf(series.start, series.allDay, zoneOf(series));
+      const part = target.date === seriesStart ? target.seriesId : `${target.seriesId}~${target.date}`;
+      const day = { ...own, ...timesMoved(item, own, series, 0) };
+      return { calls: [{ scope, patch: followingPatch(shown, counted, target.row) }, { scope: "this", seriesId: part, patch: day }] };
+    } else if (target.row) counted = { ...counted, ...timesMoved(item, counted, series, 0) };
     return { calls: [{ scope, patch: followingPatch(shown, counted, target.row) }], ...weekdays };
   }
   let patch = allScopePatch(ruled, { occurrence: item, series, date: target.date });
@@ -248,7 +327,8 @@ export const occurrenceEditCalls = ({
     }
   }
   const calls: OccurrenceCall[] = [{ scope: "all", patch }];
-  if (target.row) calls.push({ scope: "this", patch: changes });
+  // Cambiato solo nell'ora sul giorno aperto: il giorno torna lì con inizio e fine (non solo ciò che è cambiato).
+  if (target.row) calls.push({ scope: "this", patch: timeOnly ? { ...changes, ...timesMoved(item, changes, series, 0) } : changes });
   return { calls, ...(newStart ? { newStart } : {}), ...weekdays };
 };
 
@@ -338,6 +418,11 @@ export interface ScopeImpact {
    * N volte spostate con il giorno): la nuova ultima data. Assente se finisce quando finiva prima.
    */
   endsOn?: string;
+  /**
+   * "Questo e i successivi" con una regola nuova che non ha il giorno aperto: il giorno da cui la serie
+   * riprende (il primo della regola nuova). Il giorno aperto, che sparisce, è in `gone`.
+   */
+  startsOn?: string;
 }
 
 /** Giorni dopo quello aperto in cui si cercano le date che spariscono. */
@@ -345,6 +430,33 @@ const GONE_WINDOW_DAYS = 366;
 
 /** Serie a cui appartiene un'occorrenza espansa (una riga: la sua serie). */
 const ownerOf = (item: CalendarEvent) => (isOccurrenceRow(item) ? (item.seriesId as string) : item.id);
+
+/** Giorni prima dell'ultima data della regola in cui si cerca l'ultima che c'è davvero (e dopo, per un giorno spostato). */
+const LAST_BACK_DAYS = 400;
+const LAST_AHEAD_DAYS = 32;
+
+/**
+ * Ultima data che c'è davvero delle serie `owners` (e dei loro giorni cambiati da soli), partendo da
+ * `last`, l'ultima della regola: non un giorno annullato, un giorno spostato dove sta ora (nel fuso
+ * della sua serie). Nessuna nella finestra: `last`.
+ */
+const lastShownDate = (events: readonly CalendarEvent[], owners: ReadonlySet<string>, last: string) => {
+  const mine = events.filter((event) => owners.has(ownerOf(event)));
+  const zones = new Map(mine.filter((event) => !isOccurrenceRow(event)).map((event) => [event.id, zoneOf(event)]));
+  let shown: string | undefined;
+  for (const item of expandEvents(mine, localMidnight(civilAddDays(last, -LAST_BACK_DAYS)), localMidnight(civilAddDays(last, LAST_AHEAD_DAYS)))) {
+    if (item.cancelled) continue;
+    const day = shownDayOf(item, zones.get(ownerOf(item)));
+    if (isCivilDate(day) && (!shown || day > shown)) shown = day;
+  }
+  return shown ?? last;
+};
+
+/** Ultima data che c'è davvero della famiglia della serie `id` (vedi `familyLastDate`, `lastShownDate`). */
+const familyShownEnd = (events: readonly CalendarEvent[], id: string) => {
+  const last = familyLastDate(events, id);
+  return typeof last === "string" ? lastShownDate(events, familyOf(events, id), last) : last;
+};
 
 /**
  * Date delle serie `absorbed` (dal giorno `date`, nell'anno dopo) che dopo la modifica non ci sono
@@ -362,13 +474,16 @@ const goneDates = (
 ) => {
   const from = localMidnight(civilAddDays(date, -1));
   const limit = civilAddDays(date, GONE_WINDOW_DAYS);
+  // Le date che si vedono: un giorno spostato da solo con la sua (mercoledì 9), non quella nella serie.
+  const zones = new Map([...before, ...after].filter((item) => !isOccurrenceRow(item)).map((item) => [item.id, zoneOf(item)]));
+  const dayOf = (item: CalendarEvent) => shownDayOf(item, zones.get(ownerOf(item)));
   const was = expandEvents(before, from, localMidnight(civilAddDays(date, 2 * GONE_WINDOW_DAYS)))
     .filter((item) => absorbed.has(ownerOf(item)) && item.occurrenceDate >= date)
-    .map((item) => item.occurrenceDate);
+    .map(dayOf);
   const now = new Set(
     expandEvents(after, from, localMidnight(civilAddDays(date, 2 * GONE_WINDOW_DAYS + Math.abs(shift) + 1)))
       .filter((item) => touched.has(ownerOf(item)))
-      .map((item) => item.occurrenceDate)
+      .map(dayOf)
   );
   const gone = [...new Set(was)].filter((day) => !now.has(day) && !now.has(civilAddDays(day, shift))).sort();
   return { dates: gone.filter((day) => day < limit), more: gone.some((day) => day >= limit) };
@@ -400,7 +515,7 @@ export const simulateOccurrenceEdit = (events: readonly CalendarEvent[], seriesI
   const touched = new Set<string>([seriesId]);
   const absorbedIds = new Set<string>();
   for (const call of calls) {
-    const series = current.find((event) => event.id === seriesId && !isOccurrenceRow(event));
+    const series = current.find((event) => event.id === (call.seriesId ?? seriesId) && !isOccurrenceRow(event));
     if (!series) break;
     const plan = planEdit(series, current, date, call.scope, call.patch, { now });
     const byId = new Map(current.map((event) => [event.id, event]));
@@ -436,7 +551,10 @@ export const scopeImpact = (
   // Di quanti giorni si sposta il giorno aperto (nel fuso della serie): le altre date si spostano allo stesso modo.
   const series = events.find((event) => event.id === target.seriesId && !isOccurrenceRow(event)) ?? item;
   const picked = pickedDay(item, changes, series);
-  const shift = isCivilDate(picked) ? civilDaysBetween(target.date, picked) : 0;
+  // Da un giorno spostato da solo lasciato dov'è, o cambiato solo nell'ora, la serie non si sposta
+  // (vedi staysPut e timeOnMovedDay).
+  const stays = scope !== "this" && (staysPut(item, series, changes) || timeOnMovedDay(item, series, changes));
+  const shift = isCivilDate(picked) && !stays ? civilDaysBetween(target.date, picked) : 0;
   const masters = after.events.filter((event) => !isOccurrenceRow(event));
   const inSeries = (date: string) => {
     const day = civilAddDays(date, shift);
@@ -465,14 +583,20 @@ export const scopeImpact = (
     laterOwnDays: 0,
     both: []
   };
+  if (scope === "following") {
+    // La parte nuova (dal primo giorno della serie: la serie) parte da un altro giorno che quello scelto?
+    const part = after.events.find((event) => event.id === `${target.seriesId}~${target.date}` && !isOccurrenceRow(event)) ?? after.events.find((event) => event.id === target.seriesId);
+    const first = part ? startDayOf(part.start, part.allDay, zoneOf(part)) : "";
+    if (isCivilDate(first) && isCivilDate(picked) && first !== picked && userRuleChange({ item, series, changes })) impact.startsOn = first;
+  }
   if (scope === "following" && after.absorbed) {
     const gone = goneDates(events, after.events, after.absorbedIds, after.touched, target.date, shift);
     impact.gone = gone.dates;
     impact.goneMore = gone.more;
   } else if (scope === "following") {
     // L'ultima data della serie (della sua ultima parte) cambia? Allora si dice quella nuova.
-    const lastBefore = familyLastDate(events, target.seriesId);
-    const lastAfter = familyLastDate(after.events, target.seriesId);
+    const lastBefore = familyShownEnd(events, target.seriesId);
+    const lastAfter = familyShownEnd(after.events, target.seriesId);
     if (typeof lastAfter === "string" && lastAfter !== lastBefore) impact.endsOn = lastAfter;
     // Senza regola nuova le parti successive restano (R1-S1): quante, quante tengono un orario loro
     // e, spostando il giorno, quante si spostano con lui.
@@ -497,6 +621,10 @@ export const scopeImpact = (
       impact.both = bothDays(events, after.events, owners, from, civilAddDays(target.date, GONE_WINDOW_DAYS + Math.abs(shift)));
     }
   }
+  // La regola nuova non ha il giorno aperto: sparisce, e si dice con le altre date che spariscono.
+  // Con la data che si vede (un giorno spostato da solo: la sua, non quella nella serie).
+  const openedDay = shownDayOf(item, zoneOf(series));
+  if (impact.startsOn && isCivilDate(openedDay) && !inSeries(target.date) && !impact.gone.includes(openedDay)) impact.gone = [openedDay, ...impact.gone].sort();
   for (const row of rows) {
     const own = target.row && row.id === item.id;
     if (own && scope === "following") continue;
@@ -540,7 +668,8 @@ export const seriesSpan = (events: readonly CalendarEvent[], seriesId: string, d
   const byId = new Map(events.map((event) => [event.id, event]));
   const parts = Math.max(1, deleted.filter((id) => byId.has(id) && !isOccurrenceRow(byId.get(id) as CalendarEvent)).length);
   // Fermata dalla parte dopo: l'ultima data vera prima di lei (non il giorno prima della parte dopo).
-  const last = cuts.length ? lastDateBefore(series, cuts[0]) : undefined;
+  const rule = cuts.length ? lastDateBefore(series, cuts[0]) : undefined;
+  const last = isCivilDate(rule) ? lastShownDate(events, new Set([seriesId]), rule) : rule;
   return {
     ...(isCivilDate(start) ? { start } : {}),
     ...(parent && isCivilDate(start) ? { from: start } : {}),
