@@ -781,24 +781,81 @@ const defaultGroupKey = (event: unknown) => {
 export const isOccurrenceRow = (event: Pick<CalendarEvent, "seriesId">) => typeof event.seriesId === "string" && event.seriesId.length > 0;
 
 /**
- * Eventi tra i risultati di una ricerca (`matches`): ogni serie una volta; un giorno cambiato da solo
- * solo se la sua serie non c'è già (per esempio rinominato); giorni annullati ed eventi archiviati no,
- * perché il calendario non li mostra.
+ * Eventi tra i risultati di una ricerca (`matches`): ogni serie una volta, anche se divisa in parti
+ * (una per famiglia, vedi `familyOf`); un giorno cambiato da solo solo se la sua serie non c'è già
+ * (per esempio rinominato); giorni annullati ed eventi archiviati no, perché il calendario non li
+ * mostra. Una serie punta alla parte che trovata ha la prossima volta da `now`, con inizio, fine e
+ * giorno di quella volta (`occurrenceDate`); se sono tutte passate, all'ultima volta dell'ultima parte.
  */
-export const searchHits = <T extends CalendarEvent>(events: readonly T[], matches: (event: T) => boolean): T[] => {
+export const searchHits = <T extends CalendarEvent>(events: readonly T[], matches: (event: T) => boolean, now: Date = new Date()): T[] => {
   const hits: T[] = [];
-  const series = new Set<string>();
   const days: T[] = [];
+  const matched: T[] = [];
+  // Serie per proprietario e righe per serie: le famiglie si cercano solo tra gli eventi della stessa persona.
+  const seriesOfGroup = new Map<string, T[]>();
+  const rowsOf = new Map<string, T[]>();
   for (const event of events) {
-    if (event.archived || event.cancelled) continue;
-    if (isOccurrenceRow(event)) days.push(event);
-    else if (matches(event)) {
-      hits.push(event);
-      series.add(event.id);
+    const group = defaultGroupKey(event);
+    if (isOccurrenceRow(event)) {
+      const key = keyOf(group, event.seriesId as string);
+      const rows = rowsOf.get(key) ?? [];
+      rows.push(event);
+      rowsOf.set(key, rows);
+      if (!event.archived && !event.cancelled) days.push(event);
+      continue;
     }
+    const list = seriesOfGroup.get(group) ?? [];
+    list.push(event);
+    seriesOfGroup.set(group, list);
+    if (!event.archived && !event.cancelled && matches(event)) matched.push(event);
   }
-  for (const day of days) if (!series.has(day.seriesId as string) && matches(day)) hits.push(day);
+  const covered = new Set<string>();
+  for (const event of matched) {
+    const group = defaultGroupKey(event);
+    if (covered.has(keyOf(group, event.id))) continue;
+    const family = familyOf(seriesOfGroup.get(group) ?? [], event.id);
+    for (const id of family) covered.add(keyOf(group, id));
+    const parts = matched.filter((item) => family.has(item.id) && defaultGroupKey(item) === group);
+    const members = (seriesOfGroup.get(group) ?? []).filter((item) => family.has(item.id));
+    const list = members.flatMap((member) => [member, ...(rowsOf.get(keyOf(group, member.id)) ?? [])]);
+    hits.push(familyHit(parts, list, now));
+  }
+  for (const day of days) if (!covered.has(keyOf(defaultGroupKey(day), day.seriesId as string)) && matches(day)) hits.push(day);
   return hits;
+};
+
+/**
+ * Il risultato di una famiglia: tra le parti trovate (`parts`), quella con la prossima volta da `now`
+ * (entro un anno, poi più in là per le regole rade), con inizio, fine e giorno di quella volta; se sono
+ * tutte passate, l'ultima volta dell'ultima parte. `list`: tutta la famiglia con le righe (le parti
+ * non trovate fermano lo stesso le altre). Un evento che non si ripete resta com'è.
+ */
+const familyHit = <T extends CalendarEvent>(parts: readonly T[], list: readonly T[], now: Date): T => {
+  const [first] = parts;
+  if (parts.length === 1 && !normalizeRepeat(first)) return first;
+  const byId = new Map(parts.map((part) => [part.id, part]));
+  const owner = (item: CalendarEvent) => byId.get(isOccurrenceRow(item) ? (item.seriesId as string) : item.id);
+  const nowMs = now.getTime();
+  const asHit = (item: T & EventOccurrence): T => {
+    const part = owner(item) as T;
+    return { ...part, start: item.start, end: item.end, occurrenceKey: `${part.id}@${item.start}`, recurring: item.recurring, occurrenceDate: item.occurrenceDate };
+  };
+  const within = (from: number, to: number) => expandEvents(list, new Date(from), new Date(to)).filter((item) => owner(item));
+  const upcoming = within(nowMs, nowMs + 366 * DAY_MS).find((item) => Date.parse(item.end) > nowMs);
+  if (upcoming) return asHit(upcoming);
+  // Nessuna volta nel prossimo anno: l'ultima parte trovata, alla sua ultima volta (o alla prossima, se rada).
+  const last = parts.reduce((best, part) => (Date.parse(part.start) > Date.parse(best.start) ? part : best), first);
+  const end = lastDateBefore(last);
+  const around = (ms: number, before: number, after: number) => within(ms - before * DAY_MS, ms + after * DAY_MS).filter((item) => owner(item) === last);
+  if (end === null) {
+    const later = around(nowMs, 0, 3660).find((item) => Date.parse(item.end) > nowMs);
+    return later ? asHit(later) : last;
+  }
+  if (!isCivilDate(end)) return last;
+  const found = around(localMidnight(end).getTime(), 8, 2);
+  const past = found.filter((item) => Date.parse(item.start) <= nowMs);
+  const pick = past.at(-1) ?? found.find((item) => Date.parse(item.end) > nowMs);
+  return pick ? asHit(pick) : last;
 };
 
 /** Id prevedibile della riga di un'occorrenza: modifiche da due dispositivi convergono. */
