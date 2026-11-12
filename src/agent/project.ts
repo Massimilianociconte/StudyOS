@@ -155,11 +155,17 @@ export const publicPreferences = (item: {
  */
 export const AGENT_INSTITUTIONAL_EMAILS = true;
 
+let institutionalAllowed = AGENT_INSTITUTIONAL_EMAILS;
+/** Solo per i test: prova che con l'interruttore spento nessuno strumento mostra un indirizzo. */
+export const setInstitutionalEmailsForTests = (value: boolean) => {
+  institutionalAllowed = value;
+};
+
 /** Email di un docente o di un contatto: in minuscolo se è esattamente @unimi.it, altrimenti null. */
-export const agentTeacherEmail = (value: unknown, allow = AGENT_INSTITUTIONAL_EMAILS) => (allow ? institutionalEmail(value) : null);
+export const agentTeacherEmail = (value: unknown, allow = institutionalAllowed) => (allow ? institutionalEmail(value) : null);
 
 /** Testo del catalogo (recapito di un contatto): restano solo gli indirizzi @unimi.it (nessuno con allow=false). */
-export const agentCatalogText = (text: string | null | undefined, allow = AGENT_INSTITUTIONAL_EMAILS) => redactEmails(text ?? "", allow);
+export const agentCatalogText = (text: string | null | undefined, allow = institutionalAllowed) => redactEmails(text ?? "", allow);
 
 /** Testo scritto dai membri (note, aule, nomi, cronologia): tutti gli indirizzi oscurati, sempre. */
 export const agentMemberText = (text: string | null | undefined) => redactEmails(text ?? "", false);

@@ -346,9 +346,6 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     await refresh(grant.secret, cache);
     const before = collectionsFrom(cache);
 
-    // Appelli dei gruppi solo per gli strumenti che li leggono, solo per questa chiamata.
-    if (GROUP_SNAPSHOT_TOOLS.has(name)) await loadGroupSnapshot(grant.secret);
-
     if (!sharedReset) {
       // Nessun dato di altre persone sul connettore remoto.
       useSharedStore.setState({ viewerId: null, items: [], given: [], received: [], invites: [], labels: [], outbox: [], persistent: false });
@@ -359,6 +356,9 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     configureAgentRuntime({ timeZone: grant.timeZone, remote: true });
     let result: AgentCallResult;
     try {
+      // Appelli dei gruppi solo per gli strumenti che li leggono, solo per questa chiamata: il reset nel
+      // finally vale anche se il caricamento si interrompe.
+      if (GROUP_SNAPSHOT_TOOLS.has(name)) await loadGroupSnapshot(grant.secret);
       result = await withZonedDate(grant.timeZone, () => executeAgentTool(name, args));
     } finally {
       configureAgentRuntime({ remote: false });

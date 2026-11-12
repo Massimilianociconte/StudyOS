@@ -208,7 +208,7 @@ export const listGroupExamSessions = (args: Args): AgentCallResult => {
       (!from || session.date >= from) &&
       (!to || session.date <= to) &&
       (args.onlyChosen !== true || chosen.has(session.id)) &&
-      (!query || `${session.courseName} ${session.label} ${session.room}`.toLocaleLowerCase("it").includes(query))
+      (!query || agentMemberText(`${session.courseName} ${session.label} ${session.room}`).toLocaleLowerCase("it").includes(query))
   );
   const listed = page(items, args);
   return ok({
@@ -393,7 +393,7 @@ const publicPlan = (plan: ExamPlan, session: GroupExamSession | undefined) => ({
   ...(plan.linkedEventId ? { linkedEventId: plan.linkedEventId } : {}),
   dismissedMatches: plan.dismissedMatches,
   session: session ? publicSession(session) : snapshotView(plan),
-  changes: planChanges(plan, session)
+  changes: planChanges(plan, session).map((line) => agentMemberText(line))
 });
 
 const LINKS = {
