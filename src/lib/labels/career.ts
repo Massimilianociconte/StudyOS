@@ -12,6 +12,26 @@ export const CAREER_TEXT = {
   emptyBody: "Registra i voti degli esami che hai superato: medie e voto di laurea previsto si aggiornano da soli. Per esempio: Biochimica, 28, 6 CFU."
 } as const;
 
+/** Modulo breve del voto (GradeDrawer): esito dell'esame, voto, idoneità o non superato. */
+export const GRADE_TEXT = {
+  outcome: "Esito",
+  outcomeAsk: "Com'è andata?",
+  outcomeGrade: "Superato con voto",
+  outcomePassFail: "Superato senza voto (idoneità)",
+  outcomeFailed: "Non superato o ritirato",
+  failedHint: "L'esame resta tra quelli da preparare e non entra nel libretto.",
+  newDate: "Nuova data (facoltativa)",
+  newDateHint: "Non la sai ancora? Lasciala vuota: la scegli poi in Esami.",
+  newDatePast: "La nuova data è già passata: scegline una da oggi in poi.",
+  newDateInvalid: "Nuova data non valida: sceglila di nuovo.",
+  recordTitle: "Registra il voto",
+  saveOutcome: "Salva esito",
+  failedSaved: (name: string, date: string | null) =>
+    date
+      ? `${name}: non superato. L'esame resta da preparare, con la nuova data del ${date}.`
+      : `${name}: non superato. L'esame resta da preparare: scegli la nuova data in Esami quando la sai.`
+} as const;
+
 /** Aiuto "?" di Libretto e laurea e del pannello del voto. */
 export const CAREER_HELP = {
   weighted: {

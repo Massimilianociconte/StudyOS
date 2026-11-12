@@ -3,6 +3,7 @@ import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { shortDate, studyDaysUntil } from "../lib/selectors";
 import { readImageFile } from "../lib/files";
+import { isDateToDecide } from "../lib/examOutcome";
 import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
 import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
 import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
@@ -320,7 +321,7 @@ function SubjectCard({
   const [deleting, setDeleting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const exam = stats.exam;
-  const examPill = exam ? SUBJECTS_TEXT.examPill(shortDate(exam.date), studyDaysUntil(exam.date)) : "";
+  const examPill = exam ? (isDateToDecide(exam) ? SUBJECTS_TEXT.examPillToDecide : SUBJECTS_TEXT.examPill(shortDate(exam.date), studyDaysUntil(exam.date))) : "";
 
   const menu = subjectMenuItems(subject).map((item): PageAction => {
     switch (item.kind) {
@@ -532,7 +533,9 @@ function SubjectDrawer({
               <StatTile label="Ore di studio" value={`${formatHours(stats.studyMinutes)} h`} />
             </div>
             <StatTile label="Da fare" value={stats.openTasks.length} onClick={() => showTasks(subject.id)} />
-            {stats.exam ? (
+            {stats.exam && isDateToDecide(stats.exam) ? (
+              <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.examToDecide} onClick={() => openExam(stats.exam!.id)} />
+            ) : stats.exam ? (
               <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.days(studyDaysUntil(stats.exam.date))} hint={shortDate(stats.exam.date)} onClick={() => openExam(stats.exam!.id)} />
             ) : (
               <StatTile label={SUBJECTS_TEXT.examIn} value="—" />

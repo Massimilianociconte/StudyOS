@@ -52,6 +52,9 @@ export const SUBJECTS_TEXT = {
   days: daysText,
   /** Pillola dell'esame sulla scheda: "12 dic · 30 giorni". */
   examPill: (date: string, count: number) => `${date} · ${daysText(count)}`,
+  /** Esame non superato senza la nuova data. */
+  examPillToDecide: "Esame: nuova data da decidere",
+  examToDecide: "Da decidere",
   openExam: (name: string) => `Apri l'esame di ${name}`,
   examIn: "Esame tra",
   openTask: (title: string) => `Apri l'attività «${title}»`,
