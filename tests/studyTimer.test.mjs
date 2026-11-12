@@ -18,6 +18,7 @@ import {
   startStopwatchState,
   startTimerState,
   syncTimerDurations,
+  timerAlertStale,
   timerElapsedSeconds,
   timerRemainingSeconds,
   timerUnsavedSeconds,
@@ -459,6 +460,7 @@ const seedStore = (extra = {}) =>
       { id: "s2", name: "Fisica", status: "active", archived: false, updatedAt: OLD }
     ],
     sessions: [],
+    topics: [],
     preferences: [],
     timer: defaultTimer(),
     ...extra
@@ -616,6 +618,89 @@ test("store: modalità e impostazioni del timer (materia, generali) aggiornano i
   store.getState().setTimerDetails({ title: "Cap. 3", template: "exercises" });
   assert.equal(store.getState().timer.title, "Cap. 3");
   assert.equal(store.getState().timer.template, "exercises");
+});
+
+// ---------- «Cosa studi?» e argomento ----------
+
+const TOPICS = [
+  { id: "t-cin", subjectId: "s2", title: "Cinematica" },
+  { id: "t-men", subjectId: "s1", title: "Leggi di Mendel" },
+  { id: "t-cin1", subjectId: "s1", title: "cinematica" }
+];
+
+test("store: cambiando materia il nome di un argomento scelto se ne va con l'argomento", () => {
+  seedStore({ topics: TOPICS.slice(0, 2), timer: defaultTimer("pomodoro", { subjectId: "s2", topicId: "t-cin", title: "Cinematica" }) });
+  store.getState().setTimerSubject("s1");
+  const timer = store.getState().timer;
+  assert.equal(timer.subjectId, "s1");
+  assert.equal(timer.topicId, undefined);
+  assert.equal(timer.title, "", "«Cinematica» non passa a un'altra materia");
+});
+
+test("store: il testo scritto a mano resta cambiando materia, e diventa il suo argomento se c'è", () => {
+  // Scritto prima di scegliere la materia: resta.
+  seedStore({ topics: TOPICS.slice(0, 2), timer: defaultTimer("pomodoro", { title: "Esercizi cap. 2" }) });
+  store.getState().setTimerSubject("s2");
+  assert.equal(store.getState().timer.title, "Esercizi cap. 2");
+  assert.equal(store.getState().timer.topicId, undefined);
+  // Lo stesso testo è un argomento della nuova materia: si collega.
+  seedStore({ topics: TOPICS.slice(0, 2), timer: defaultTimer("pomodoro", { title: "Leggi di Mendel" }) });
+  store.getState().setTimerSubject("s1");
+  assert.equal(store.getState().timer.topicId, "t-men");
+  assert.equal(store.getState().timer.title, "Leggi di Mendel");
+  // Argomento scelto con un omonimo nella nuova materia: si collega quello, il testo resta.
+  seedStore({ topics: TOPICS, timer: defaultTimer("pomodoro", { subjectId: "s2", topicId: "t-cin", title: "Cinematica" }) });
+  store.getState().setTimerSubject("s1");
+  assert.equal(store.getState().timer.topicId, "t-cin1");
+  assert.equal(store.getState().timer.title, "Cinematica");
+});
+
+test("store: «Cosa studi?» si svuota a sessione salvata, a riepilogo salvato e azzerando", () => {
+  const now = Date.now();
+  // Termina e salva (Pomodoro o Cronometro): la materia resta, testo e argomento no.
+  seedStore({ topics: TOPICS, timer: startStopwatchState(now - 20 * MIN, { subjectId: "s2", topicId: "t-cin", title: "Cinematica", sessionId: "session_t1" }) });
+  assert.equal(store.getState().finishStudyTimer().status, "saved");
+  assert.equal(store.getState().sessions[0].title, "Cinematica");
+  assert.equal(store.getState().timer.title, "");
+  assert.equal(store.getState().timer.topicId, undefined);
+  assert.equal(store.getState().timer.subjectId, "s2");
+  // Riepilogo del Cronometro salvato con un altro testo: il prossimo parte vuoto.
+  seedStore({ topics: TOPICS, timer: startStopwatchState(now - 20 * MIN, { subjectId: "s2", topicId: "t-cin", title: "Cinematica", sessionId: "session_t2" }) });
+  assert.equal(store.getState().endStudyTimer().status, "review");
+  const saved = store.getState().saveTimerReview({ subjectId: "s1", topicId: "t-men", title: "Leggi di Mendel", notes: "", template: "review", minutes: 20 });
+  assert.equal(saved.status, "saved");
+  assert.equal(saved.session.title, "Leggi di Mendel");
+  assert.equal(store.getState().timer.title, "");
+  assert.equal(store.getState().timer.topicId, undefined);
+  // Azzera (Scarta): vuoto; Annulla riporta anche il testo.
+  seedStore({ topics: TOPICS, timer: startStopwatchState(now - 5 * MIN, { subjectId: "s2", topicId: "t-cin", title: "Cinematica", sessionId: "session_t3" }) });
+  const previous = store.getState().timer;
+  store.getState().resetStudyTimer();
+  assert.equal(store.getState().timer.title, "");
+  assert.equal(store.getState().timer.topicId, undefined);
+  assert.equal(store.getState().restoreStudyTimer(previous), true);
+  assert.equal(store.getState().timer.title, "Cinematica");
+});
+
+test("store: i blocchi Pomodoro salvati da soli tengono il testo per il blocco dopo", () => {
+  const now = Date.now();
+  seedStore({ topics: TOPICS, timer: { ...startTimerState("pomodoro", now - 26 * MIN, { subjectId: "s2", topicId: "t-cin", title: "Cinematica", sessionId: "session_t4" }), changedAt: now - 26 * MIN } });
+  assert.equal(store.getState().settleStudyTimer().type, "focus-done");
+  assert.equal(store.getState().timer.title, "Cinematica");
+  assert.equal(store.getState().timer.topicId, "t-cin");
+});
+
+test("timerAlertStale: «Salta la pausa» e «Avvia il prossimo» spariscono quando il timer cambia", () => {
+  const now = Date.now();
+  const onBreak = advanceTimerState(startTimerState("pomodoro", now - 27 * MIN), now - 2 * MIN, DEFAULTS).timer;
+  const atBreak = { kind: onBreak.kind, phase: onBreak.phase };
+  assert.equal(timerAlertStale("skip-break", atBreak, onBreak, now), false, "ancora in pausa: l'azione vale");
+  assert.equal(timerAlertStale("skip-break", atBreak, defaultTimer(), now), true, "Pomodoro terminato");
+  assert.equal(timerAlertStale("skip-break", atBreak, startStopwatchState(now - MIN), now), true, "Cronometro avviato");
+  const ready = defaultTimer();
+  const atReady = { kind: ready.kind, phase: ready.phase };
+  assert.equal(timerAlertStale("start-next", atReady, ready, now), false);
+  assert.equal(timerAlertStale("start-next", atReady, startTimerState("pomodoro", now - MIN), now), true, "blocco già partito");
 });
 
 test("store: l'obiettivo del cronometro avvisa una volta", () => {

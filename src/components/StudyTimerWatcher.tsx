@@ -2,7 +2,16 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../store/useStudyStore";
 import { useNow } from "../hooks/useNow";
-import { TIMER_STORAGE_KEY, formatTimerClock, isTimerIdle, timerElapsedSeconds, timerRemainingSeconds, type TimerEvent, type TimerState } from "../lib/studyTimer";
+import {
+  TIMER_STORAGE_KEY,
+  formatTimerClock,
+  isTimerIdle,
+  timerAlertStale,
+  timerElapsedSeconds,
+  timerRemainingSeconds,
+  type TimerEvent,
+  type TimerState
+} from "../lib/studyTimer";
 import { SESSION_FORM_TEXT, TIMER_ALERT_TEXT, TIMER_KIND_LABEL, TIMER_PHASE_LABEL, TIMER_TEXT, formatMinutes } from "../lib/labels";
 import { UNDO_MS, type SessionLinks } from "../lib/studySessions";
 import { playTimerBeep, primeTimerSound, showSystemNotification, vibrateTimer } from "../lib/timerAlerts";
@@ -26,6 +35,8 @@ interface TimerAlert {
   body?: string;
   icon: string;
   action?: AlertAction;
+  /** Modalità e fase del timer quando è comparsa l'azione: se cambiano, l'azione non vale più. */
+  at?: Pick<TimerState, "kind" | "phase">;
   /** "Modifica": la sessione appena salvata (blocco Pomodoro o riepilogo). */
   sessionId?: string;
   /** "Annulla": rimette com'era (sessione eliminata, timer scartato). */
@@ -179,6 +190,12 @@ export function StudyTimerWatcher() {
     if (useStudyStore.getState().timer.ended) setTimerReviewOpen(true);
   }, [loading, setTimerReviewOpen]);
 
+  // «Salta la pausa» o «Avvia il prossimo» dopo che il timer è cambiato (Pomodoro terminato, un
+  // Cronometro avviato, blocco già partito): il pulsante non farebbe niente, l'avviso si chiude.
+  useEffect(() => {
+    if (alert?.action && alert.at && timerAlertStale(alert.action, alert.at, timer)) setAlert(null);
+  }, [alert, timer]);
+
   // Chiudere l'avviso a mano o da solo (conferme brevi).
   useEffect(() => {
     if (!alert?.autoClose) return undefined;
@@ -190,8 +207,10 @@ export function StudyTimerWatcher() {
     if (!phaseDue) return;
     const event: TimerEvent | null = settleStudyTimer();
     if (!event) return;
+    const settled = useStudyStore.getState().timer;
+    const at = { kind: settled.kind, phase: settled.phase };
     if (event.type === "break-done") {
-      announce({ title: TIMER_ALERT_TEXT.breakDone, body: TIMER_ALERT_TEXT.breakDoneBody, icon: "Zap", action: "start-next", goToStudy: true });
+      announce({ title: TIMER_ALERT_TEXT.breakDone, body: TIMER_ALERT_TEXT.breakDoneBody, icon: "Zap", action: "start-next", at, goToStudy: true });
       return;
     }
     const studied = formatMinutes(event.minutes);
@@ -210,6 +229,7 @@ export function StudyTimerWatcher() {
           : TIMER_ALERT_TEXT.focusDoneBody(studied, TIMER_PHASE_LABEL[event.breakPhase], formatMinutes(event.breakMinutes)),
         icon: "Check",
         action: event.breakEnded ? "start-next" : "skip-break",
+        at,
         sessionId: event.session?.id,
         goToStudy: true
       },

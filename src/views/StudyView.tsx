@@ -363,6 +363,12 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sessione salvata o timer azzerato: «Cosa studi?» è vuoto anche nel ricordo della scheda.
+  useEffect(() => {
+    if (timer.title === "" && savedTitle) setSavedTitle("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timer.title]);
+
   useEffect(() => {
     if (!undo) return undefined;
     const id = window.setTimeout(() => setUndo(null), UNDO_MS);
@@ -435,10 +441,9 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
   };
 
   const chooseSubject = (id: string) => {
+    // Il timer collega il testo a un argomento della nuova materia, o toglie il nome di quello scelto.
     setTimerSubject(id || null);
     setSavedSubjectId(id);
-    // Lo stesso testo può essere un argomento della nuova materia.
-    if (title.trim()) setTimerDetails({ topicId: matchTopic(title, topics, id)?.id ?? null });
   };
 
   const writeWhat = (value: string) => {
@@ -616,7 +621,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           </>
         ) : (
           <Button variant={timer.running ? "soft" : "primary"} icon={timer.running ? "Pause" : "Zap"} onClick={onPrimary} className="min-w-[120px]">
-            {timer.running ? TIMER_TEXT.pause : idle ? TIMER_TEXT.start : TIMER_TEXT.resume}
+            {timer.running ? (studying ? TIMER_TEXT.pause : TIMER_TEXT.stopBreak) : idle ? TIMER_TEXT.start : TIMER_TEXT.resume}
           </Button>
         )}
         {/* Pomodoro: salva subito (come i blocchi). Timer e Cronometro: prima il riepilogo. */}
