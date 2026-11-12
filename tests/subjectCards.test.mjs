@@ -91,3 +91,18 @@ test("colore della nuova materia: il primo non ancora usato, poi a rotazione", (
   ];
   assert.equal(nextSubjectColor(full, swatches), "#b", "tutti usati: rotazione sul numero di materie");
 });
+
+test("the exam pill never says «0 giorni» for a past or same-day exam", async () => {
+  const { SUBJECTS_TEXT } = await import("../src/lib/labels/subjects.ts");
+  assert.equal(SUBJECTS_TEXT.examPill("12 dic", 30), "12 dic · 30 giorni");
+  assert.equal(SUBJECTS_TEXT.examPill("12 dic", 1), "12 dic · 1 giorno");
+  assert.equal(SUBJECTS_TEXT.examPill("12 dic", 0), "12 dic · oggi");
+  assert.equal(SUBJECTS_TEXT.examPill("5 nov", -7), "5 nov · esito da registrare");
+});
+
+test("the «Esame tra» tile reads true for past, today and future exams", async () => {
+  const { SUBJECTS_TEXT } = await import("../src/lib/labels/subjects.ts");
+  assert.equal(SUBJECTS_TEXT.examInValue(3), "3 giorni");
+  assert.equal(SUBJECTS_TEXT.examInValue(0), "Oggi");
+  assert.equal(SUBJECTS_TEXT.examInValue(-2), "Esito da registrare");
+});

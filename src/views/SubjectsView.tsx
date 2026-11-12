@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
-import { shortDate, studyDaysUntil } from "../lib/selectors";
+import { daysUntil, shortDate } from "../lib/selectors";
 import { readCoverImage } from "../lib/files";
 import { isDateToDecide } from "../lib/examOutcome";
 import { librettoEntries } from "../lib/grades";
@@ -347,7 +347,7 @@ function SubjectCard({
   const [deleting, setDeleting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const exam = stats.exam;
-  const examPill = exam ? (isDateToDecide(exam) ? SUBJECTS_TEXT.examPillToDecide : SUBJECTS_TEXT.examPill(shortDate(exam.date), studyDaysUntil(exam.date))) : "";
+  const examPill = exam ? (isDateToDecide(exam) ? SUBJECTS_TEXT.examPillToDecide : SUBJECTS_TEXT.examPill(shortDate(exam.date), daysUntil(exam.date))) : "";
 
   const [choosing, setChoosing] = useState(false);
   const backToMenu = () => menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
@@ -665,7 +665,12 @@ function SubjectDrawer({
             {stats.exam && isDateToDecide(stats.exam) ? (
               <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.examToDecide} onClick={() => openExam(stats.exam!.id)} />
             ) : stats.exam ? (
-              <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.days(studyDaysUntil(stats.exam.date))} hint={shortDate(stats.exam.date)} onClick={() => openExam(stats.exam!.id)} />
+              <StatTile
+                label={daysUntil(stats.exam.date) < 0 ? SUBJECTS_TEXT.examPast : SUBJECTS_TEXT.examIn}
+                value={SUBJECTS_TEXT.examInValue(daysUntil(stats.exam.date))}
+                hint={shortDate(stats.exam.date)}
+                onClick={() => openExam(stats.exam!.id)}
+              />
             ) : (
               <StatTile label={SUBJECTS_TEXT.examIn} value="—" />
             )}

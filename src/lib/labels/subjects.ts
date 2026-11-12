@@ -62,13 +62,17 @@ export const SUBJECTS_TEXT = {
   completed: "Superate",
   archivedGroup: "Archiviate",
   days: daysText,
-  /** Pillola dell'esame sulla scheda: "12 dic · 30 giorni". */
-  examPill: (date: string, count: number) => `${date} · ${daysText(count)}`,
+  /** Pillola dell'esame sulla scheda: "12 dic · 30 giorni"; oggi "oggi"; già passato senza esito "esito da registrare". */
+  examPill: (date: string, count: number) =>
+    `${date} · ${count < 0 ? "esito da registrare" : count === 0 ? "oggi" : daysText(count)}`,
   /** Esame non superato senza la nuova data. */
   examPillToDecide: "Esame: nuova data da decidere",
   examToDecide: "Da decidere",
   openExam: (name: string) => `Apri l'esame di ${name}`,
   examIn: "Esame tra",
+  /** Esame già passato senza esito: il riquadro non dice «tra 0 giorni». */
+  examPast: "Esame del",
+  examInValue: (count: number) => (count < 0 ? "Esito da registrare" : count === 0 ? "Oggi" : daysText(count)),
   openTask: (title: string) => `Apri l'attività «${title}»`,
   allTasks: "Vedi le attività della materia",
   noTasks: "Nessuna attività da fare per questa materia."
