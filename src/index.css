@@ -41,7 +41,8 @@
 
 [data-theme="light"] {
   color-scheme: light;
-  --accent-ink: color-mix(in srgb, var(--accent) 48%, #0b1a14);
+  /* 40%: almeno 4,5:1 sul fondo chiaro con ogni palette (con 48% Aurora, Spazio e Grafite restavano sotto). */
+  --accent-ink: color-mix(in srgb, var(--accent) 40%, #0b1a14);
   --bg: #f5f1ea;
   --bg-2: #fffaf2;
   --surface: rgba(255, 255, 255, 0.72);
@@ -72,10 +73,16 @@
 }
 
 [data-palette="milk"] {
-  --accent: #4361ee;
+  /* Il blu più vicino al #4361ee di prima con il testo scuro (#10131d) sopra ad almeno 4,5:1. */
+  --accent: #5b78f2;
   --accent-2: #f4a261;
   --accent-3: #2a9d8f;
   --warning: #e76f51;
+}
+
+/* Nei temi scuri il blu, come testo, si schiarisce: resta leggibile anche sui pannelli. */
+[data-palette="milk"]:not([data-theme="light"]) {
+  --accent-ink: color-mix(in srgb, var(--accent) 70%, white);
 }
 
 [data-palette="space"] {
