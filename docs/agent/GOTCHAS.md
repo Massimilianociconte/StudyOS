@@ -11,7 +11,15 @@
   IndexedDB confermata. Gli errori di push non eliminano voci dall'outbox.
 - La sync cloud aggiornata richiede la funzione `push_studyos_rows` definita in
   `supabase/schema.sql` prima dell'uso; senza migrazione il client conserva la
-  coda e mostra un errore. File incorporati nuovi: massimo 600 KiB.
+  coda e mostra un errore.
+- File dei materiali: i byte non entrano mai nelle righe sincronizzate. Un file nuovo va prima
+  nella copia locale (Dexie `attachmentFiles`/`attachmentBytes`, cifrata dal vault), poi nel bucket
+  privato `studyos-files` (`supabase/storage.sql`, 25 MB, tipi ammessi) in `<uid>/<id>`; la riga ha
+  solo `storedFile` (`local` → `cloud` a caricamento confermato), chiave protetta della
+  condivisione e mai data agli agenti. I file incorporati di prima (`dataUrl`) si migrano da soli e
+  perdono i byte solo dopo il caricamento. I file si scaricano sempre, mai aperti nella pagina.
+  `attachmentSync.ts` (supabase-js) solo con `import()`. Design:
+  [../superpowers/specs/2026-11-12-attachments-storage-design.md](../superpowers/specs/2026-11-12-attachments-storage-design.md).
 - La UI BARB legge il dataset incluso nella build: dopo `barb:apply` occorre
   ricompilare e distribuire l'app per vedere l'aggiornamento in browser.
 - La sync cloud non deve mai leggere lo stato con vault bloccato o app in

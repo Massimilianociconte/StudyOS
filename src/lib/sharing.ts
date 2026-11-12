@@ -382,13 +382,14 @@ export const sharedWriteError = (
 };
 
 /**
- * Chiavi che chi riceve non cambia mai: copertine, file incorporati (`dataUrl`, fino a ~900 KB), UID
- * di import. Specchio di v_protected in studyos_recipient_payload (supabase/sharing.sql): il server
+ * Chiavi che chi riceve non cambia mai: copertine, file incorporati di prima (`dataUrl`, fino a ~900 KB), il
+ * segno del file nello spazio file (`storedFile`: una copia vecchia o il ripristino di una modifica non
+ * deve toglierlo, il file sparirebbe), UID di import. Specchio di v_protected in studyos_recipient_payload (supabase/sharing.sql): il server
  * tiene quelle salvate anche se mancano, quindi non serve inviarle. `sourceStamp` (impronta dell'ultimo
  * import .ics) non è tra queste: il server non la conserva, quindi viaggia con la riga, altrimenti una
  * modifica di chi riceve la toglierebbe al proprietario, e il suo prossimo import la annullerebbe.
  */
-const PROTECTED_KEY = /^(?:cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$/;
+const PROTECTED_KEY = /^(?:cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl|__proto__)$/;
 
 /** Copia senza le chiavi protette, per la riga da inviare: la copia nella cache resta intera. */
 export const withoutProtectedKeys = (payload: Payload): Payload =>

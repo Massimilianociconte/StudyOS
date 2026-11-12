@@ -6,7 +6,7 @@ import { COLLECTIONS } from "../src/lib/collections.ts";
 
 // Supabase finto con le due funzioni di supabase/agent.sql: segreto → account, LWW sul timbro,
 // file incorporati tolti nel pull e rimessi nel push, updated_at del server sempre crescente.
-const FILE_KEYS = ["dataUrl", "cover", "avatarDataUrl"];
+const FILE_KEYS = ["dataUrl", "cover", "avatarDataUrl", "storedFile"];
 const INVALID = "Collegamento dell'assistente non valido o revocato.";
 
 const stampOf = (payload, deleted, updatedAt) => {

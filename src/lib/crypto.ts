@@ -100,6 +100,16 @@ export const decryptWithKey = async (record: VaultRecord, vaultKey: VaultKey) =>
   return decoder.decode(decrypted);
 };
 
+/** Byte di un file (copia locale di un materiale) cifrati con la chiave del vault: IV nuovo per file. */
+export const encryptBytesWithKey = async (bytes: ArrayBuffer, vaultKey: VaultKey) => {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv: bufferSource(iv) }, vaultKey.key, bytes);
+  return { bytes: cipher, iv: toBase64(iv), salt: vaultKey.salt };
+};
+
+export const decryptBytesWithKey = (bytes: ArrayBuffer, iv: string, vaultKey: VaultKey): Promise<ArrayBuffer> =>
+  crypto.subtle.decrypt({ name: "AES-GCM", iv: bufferSource(fromBase64(iv)) }, vaultKey.key, bytes);
+
 export const encryptString = async (plainText: string, passphrase: string): Promise<VaultRecord> =>
   encryptWithKey(plainText, await deriveVaultKey(passphrase));
 

@@ -114,7 +114,8 @@ $$;
 revoke all on function public.studyos_agent_user(text) from public, anon, authenticated;
 
 -- Righe dell'account dopo `p_since` (updated_at del server), in ordine come il pull dell'app.
--- Senza i file incorporati: gli strumenti degli agenti non li leggono.
+-- Senza i file incorporati: gli strumenti degli agenti non li leggono. Senza `storedFile` (file
+-- nello spazio file, storage.sql): una copia vecchia dell'agente non lo riporta indietro.
 create or replace function public.studyos_agent_pull(
   p_secret text,
   p_since timestamptz,
@@ -136,7 +137,7 @@ begin
   return query
     select i.entity_type, i.entity_id,
       case when jsonb_typeof(i.payload) = 'object'
-        then i.payload - 'dataUrl' - 'cover' - 'avatarDataUrl'
+        then i.payload - 'dataUrl' - 'cover' - 'avatarDataUrl' - 'storedFile'
         else i.payload
       end,
       i.deleted, i.updated_at
@@ -276,7 +277,7 @@ $$;
 revoke all on function public.studyos_agent_audit_prune(uuid) from public, anon, authenticated;
 
 -- Stessa scrittura condizionale di push_studyos_rows, per l'account del segreto. I file
--- incorporati tolti dal pull tornano dalla riga attuale se il payload non li porta.
+-- incorporati e `storedFile` tolti dal pull tornano dalla riga attuale se il payload non li porta.
 -- Dalla 1.8.0 scrive anche il registro (con p_tool, lo strumento che ha chiesto la modifica).
 -- La versione a tre argomenti si toglie: con p_tool predefinito un hub di prima la chiama ancora
 -- uguale (PostgREST usa i valori predefiniti), e due versioni renderebbero ambigua la chiamata.
@@ -337,7 +338,7 @@ begin
     where i.user_id = v_user and i.entity_type = v_type and i.entity_id = v_id
     for update;
     if not v_deleted and jsonb_typeof(v_current) = 'object' then
-      foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl'] loop
+      foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl', 'storedFile'] loop
         if not (v_payload ? v_key) and (v_current ? v_key) then
           v_payload := v_payload || jsonb_build_object(v_key, v_current->v_key);
         end if;

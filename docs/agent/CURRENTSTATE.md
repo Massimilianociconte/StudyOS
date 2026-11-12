@@ -311,3 +311,17 @@ istruzioni del server. Verificato: `tests/pageSplit.test.mjs`, `tests/remoteAudi
 tutto `true`, `scripts/supabase/agent-audit-check.sql` 35 controlli. Per usarlo: rieseguire
 `agent.sql` e `agent-verify.sql`, deploy del Worker, pubblicazione del sito, poi ricreare il
 connettore. Non provato sul progetto reale né con PostgREST.
+
+File dei materiali in Supabase Storage (12 novembre 2026): i byte dei file non passano più dalle righe
+sincronizzate. Un file nuovo va nella copia locale (Dexie v7, cifrata dal vault) e poi nel bucket
+privato `studyos-files` (`supabase/storage.sql`, 25 MB, tipi ammessi) in `<uid>/<id>`; i file
+incorporati di prima si migrano da soli con account e rete. Chi riceve un materiale condiviso ne
+scarica il file finché vede la riga. Il backup completo include i file. Verificato:
+`tests/attachments.test.mjs`, `npm test` e `TZ=UTC npm test`, lint, build (supabase-js fuori dal
+bundle iniziale), SQL su PostgreSQL 17 con stub di auth e storage (policy, lettura di chi riceve,
+revoca, `storedFile` protetta, connettore remoto), e su uno stack Supabase locale con lo Storage
+vero: tutti gli script applicati due volte, `verify.sql` e `agent-verify.sql` tutto pronto, 20
+controlli con le stesse chiamate REST dell'app (caricamento e upsert, download, elenco, HTML e oltre
+25 MB rifiutati, cartelle altrui e sottocartelle rifiutate, chi riceve scarica ma non scrive né
+elimina, revoca immediata). Non provato nel browser né sul progetto reale. Per usarlo: `storage.sql`, poi `sharing.sql`/`agent.sql` se in uso, poi i verify (vedi
+supabase/README.md). Design: [../superpowers/specs/2026-11-12-attachments-storage-design.md](../superpowers/specs/2026-11-12-attachments-storage-design.md).

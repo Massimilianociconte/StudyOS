@@ -6,7 +6,7 @@ import { readCoverImage } from "../lib/files";
 import { isDateToDecide } from "../lib/examOutcome";
 import { librettoEntries } from "../lib/grades";
 import { GradeDrawer } from "../components/GradeDrawer";
-import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
+import { ATTACHMENT_KIND_ICON, FILE_TEXT, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
 import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
 import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
 import { HelpField } from "../components/HelpField";
@@ -24,7 +24,9 @@ import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
 import { cfuBySemester, isArchivedSubject, nextSubjectColor, otherStatuses, semesterFilterOptions, subjectMenuItems, type SemesterFilter } from "../lib/subjectCards";
 import { safeCssColor } from "../lib/sharing";
-import { safeDataUrl, safeHref } from "../lib/safeUrl";
+import { safeHref } from "../lib/safeUrl";
+import { FILE_STATES, fileStateText, useMaterialFiles, useOpenMaterial } from "../components/MaterialFile";
+import { FILE_ACCEPT } from "../lib/attachments";
 import { DARK_INK, inkOn } from "../lib/subjectInk";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
@@ -537,6 +539,12 @@ function SubjectDrawer({
   const [topicDirty, setTopicDirty] = useState(false);
   const [materialDirty, setMaterialDirty] = useState(false);
   const fail = (text: string) => setFeedback({ text, error: true });
+  // File dei materiali: copia locale o download dall'account (src/lib/attachmentSync.ts).
+  const files = useMaterialFiles();
+  const opener = useOpenMaterial();
+  useEffect(() => {
+    if (opener.error) fail(opener.error);
+  }, [opener.error]);
   const ok = (text: string) => setFeedback({ text, error: false });
 
   useEffect(() => {
@@ -779,6 +787,8 @@ function SubjectDrawer({
                   <Icon name="Upload" className="h-3.5 w-3.5" /> Carica un file
                   <input
                     type="file"
+                    accept={FILE_ACCEPT}
+                    title={FILE_TEXT.limitHint}
                     className="sr-only"
                     onChange={async (event) => {
                       const file = event.target.files?.[0];
@@ -841,23 +851,38 @@ function SubjectDrawer({
                     );
                   }
                   // Come in Materiali: un link si apre in un'altra scheda, un file si scarica.
-                  const href = attachment.externalUrl ? safeHref(attachment.externalUrl) : undefined;
-                  const download = !href ? safeDataUrl(attachment.dataUrl) : undefined;
+                  const fileState = files.stateOf(attachment);
+                  const download = FILE_STATES.has(fileState);
+                  const href = !download && attachment.externalUrl ? safeHref(attachment.externalUrl) : undefined;
+                  const status = fileStateText(fileState, files.status.errors.get(attachment.id));
                   const deleteId = `subject-material-delete-${attachment.id}`;
+                  const rowClass = "flex min-h-11 min-w-0 flex-1 items-center gap-1.5 px-1 text-left text-sm font-bold underline-offset-2 hover:underline";
                   return (
                     <li key={attachment.id} className="grid grid-cols-1 gap-1.5">
                       <div className="group flex min-w-0 items-center gap-1 rounded-[14px] pl-2 hover:bg-[var(--surface-soft)]">
                         <Icon name={ATTACHMENT_KIND_ICON[attachmentKind(attachment)]} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
-                        {href || download ? (
-                          <a
-                            href={href ?? download}
-                            {...(href ? { target: "_blank", rel: "noreferrer" } : { download: attachment.name })}
-                            aria-label={href ? SUBJECTS_TEXT.openMaterial(attachment.name) : SUBJECTS_TEXT.downloadMaterial(attachment.name)}
-                            className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 px-1 text-sm font-bold underline-offset-2 hover:underline"
-                          >
+                        {href ? (
+                          <a href={href} target="_blank" rel="noreferrer" aria-label={SUBJECTS_TEXT.openMaterial(attachment.name)} className={rowClass}>
                             <span className="one-line-safe min-w-0">{attachment.name}</span>
-                            <Icon name={href ? "ExternalLink" : "Download"} className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+                            <Icon name="ExternalLink" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
                           </a>
+                        ) : download ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFeedback(null);
+                              void opener.open(attachment);
+                            }}
+                            aria-label={SUBJECTS_TEXT.downloadMaterial(attachment.name)}
+                            aria-busy={opener.openingId === attachment.id}
+                            className={rowClass}
+                          >
+                            <span className="min-w-0">
+                              <span className="one-line-safe block">{attachment.name}</span>
+                              {status ? <span className="one-line-safe block text-xs font-bold text-[var(--muted)] no-underline">{status}</span> : null}
+                            </span>
+                            <Icon name="Download" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+                          </button>
                         ) : (
                           <span className="one-line-safe min-w-0 flex-1 px-1 text-sm font-bold">{attachment.name}</span>
                         )}

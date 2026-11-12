@@ -50,6 +50,33 @@ export interface MetaRow {
   value: unknown;
 }
 
+/** Copia locale del file di un materiale (id del materiale). Solo metadati: i byte sono in `attachmentBytes`. */
+export interface AttachmentFileRow {
+  id: string;
+  /** 1 = unica copia, da caricare (mai tolta per spazio); 0 = cache di un file già nel cloud. */
+  pending: 0 | 1;
+  /** Account in cui il caricamento è confermato. */
+  uploadedFor?: string;
+  /** Tipo con cui si carica e si scarica. */
+  type: string;
+  size: number;
+  usedAt: number;
+  /** Byte cifrati con la chiave del vault (IV di questo file, salt della chiave). */
+  sealed?: { iv: string; salt: string };
+}
+
+export interface AttachmentBytesRow {
+  id: string;
+  bytes: ArrayBuffer;
+}
+
+/** Oggetto del bucket da eliminare (materiale eliminato qui). `owner`: account dei dati quando è stato eliminato. */
+export interface AttachmentDeleteRow {
+  id: string;
+  owner?: string;
+  queuedAt: number;
+}
+
 const V1_STORES = {
   settings: "id",
   vault: "id, updatedAt",
@@ -95,6 +122,9 @@ class StudyOSDatabase extends Dexie {
   meta!: Table<MetaRow, string>;
   sharedItems!: Table<SharedItem, string>;
   sharedOutbox!: Table<SharedOutboxEntry, string>;
+  attachmentFiles!: Table<AttachmentFileRow, string>;
+  attachmentBytes!: Table<AttachmentBytesRow, string>;
+  attachmentDeletes!: Table<AttachmentDeleteRow, string>;
 
   constructor() {
     super("studyos-local-db");
@@ -134,6 +164,15 @@ class StudyOSDatabase extends Dexie {
     this.version(6).stores({
       sharedItems: "key, ownerId, entityType",
       sharedOutbox: "key, queuedAt"
+    });
+
+    // v7: file dei materiali fuori dal JSON sincronizzato (src/lib/attachmentFiles.ts). Metadati e byte
+    // in tabelle separate (leggere lo stato non carica i file), più le eliminazioni da fare nel bucket.
+    // Tabelle nuove e vuote: niente da convertire, i file incorporati di prima si migrano col tempo.
+    this.version(7).stores({
+      attachmentFiles: "id, pending, usedAt",
+      attachmentBytes: "id",
+      attachmentDeletes: "id"
     });
   }
 }

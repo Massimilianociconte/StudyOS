@@ -348,7 +348,14 @@ export interface Attachment extends BaseEntity {
   linkedEntityType?: EntityType;
   linkedEntityId?: ID;
   description: string;
+  /** File incorporato in Base64 (versioni di prima): si sposta nello spazio file con l'account. */
   dataUrl?: string;
+  /**
+   * File fuori dalla riga sincronizzata (src/lib/attachments.ts): "local" = solo sul dispositivo che
+   * l'ha aggiunto (da caricare o senza account), "cloud" = nel bucket privato `<uid>/<id>`. Il percorso
+   * non si salva mai. Chiave protetta della condivisione, come `dataUrl`.
+   */
+  storedFile?: "local" | "cloud";
   externalUrl?: string;
 }
 

@@ -77,6 +77,8 @@ export default function App() {
       if (cloudConfigured) void import("./lib/shareSync").then((module) => module.initShareSync());
       // Nome del profilo online (ricerca persone): stesso caricamento in differita.
       if (cloudConfigured) void import("./lib/peopleSync").then((module) => module.initPeopleSync());
+      // Caricamenti e download dei file dei materiali (spazio file dell'account), anche questi in differita.
+      if (cloudConfigured) void import("./lib/attachmentSync").then((module) => module.initAttachmentSync());
     });
   }, [init]);
 

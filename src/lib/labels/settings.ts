@@ -63,7 +63,12 @@ export const SETTINGS_TEXT = {
     restoreAskText: (summary: string) => `Nella copia: ${summary}. I dati attuali verranno cancellati e non si potrà annullare.`,
     restoreAskCloud: "La sostituzione arriverà anche al tuo account e agli altri dispositivi collegati.",
     restoreConfirm: "Sostituisci tutti i dati",
-    cancel: "Annulla"
+    cancel: "Annulla",
+    /** La copia completa porta anche i file dei materiali; quelli che ora non si possono avere restano fuori. */
+    filesMissing: (count: number) =>
+      count === 1
+        ? " Un file dei materiali non è incluso: non è su questo dispositivo e ora non si può scaricare. Riprova online per averlo nella copia."
+        : ` ${count} file dei materiali non sono inclusi: non sono su questo dispositivo e ora non si possono scaricare. Riprova online per averli nella copia.`
   },
   erase: {
     askTitle: "Cancellare tutti i dati?",
@@ -76,6 +81,8 @@ export const SETTINGS_TEXT = {
     confirmLocal: "Cancella tutti i dati",
     cancel: "Annulla",
     accountUnreachable:
-      "Dati cancellati da questo dispositivo. L'account non ha risposto: ciò che c'era qui sparirà anche dall'account quando la sincronizzazione riprende, il resto no. Ripeti «Cancella anche dall'account» quando sei online."
+      "Dati cancellati da questo dispositivo. L'account non ha risposto: ciò che c'era qui sparirà anche dall'account quando la sincronizzazione riprende, il resto no. Ripeti «Cancella anche dall'account» quando sei online.",
+    /** Aggiunta al messaggio: i file dei materiali nell'account si cancellano alla prossima occasione. */
+    filesPending: " I file dei materiali spariranno dall'account appena StudyOS riesce a collegarsi."
   }
 } as const;

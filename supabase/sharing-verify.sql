@@ -61,7 +61,7 @@ select
       select 1 from public.studyos_item_revisions as revision, jsonb_object_keys(
         case when jsonb_typeof(revision.payload) = 'object' then revision.payload else '{}'::jsonb end
       ) as field (key)
-      where revision.change <> 'delete' and field.key ~ '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
+      where revision.change <> 'delete' and field.key ~ '^(cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
     ) as light_history_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
     and schemaname = 'public' and tablename = 'studyos_shares') as realtime_ready;

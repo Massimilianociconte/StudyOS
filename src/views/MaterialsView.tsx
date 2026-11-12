@@ -14,7 +14,10 @@ import { UnsavedPrompt } from "../components/UnsavedPrompt";
 import { LinkedNotes, NoteDrawer } from "../components/NoteDrawer";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
-import { normalizeExternalUrl, safeDataUrl, safeHref } from "../lib/safeUrl";
+import { normalizeExternalUrl, safeHref } from "../lib/safeUrl";
+import { FILE_TEXT } from "../lib/labels";
+import { FILE_STATES, MaterialThumb, fileStateText, useMaterialFiles, useOpenMaterial } from "../components/MaterialFile";
+import { FILE_ACCEPT } from "../lib/attachments";
 import { oneOf } from "../lib/uiState";
 import { MATERIAL_KIND_FILTERS, materialMatches, type MaterialKindFilter } from "../lib/materialFilters";
 
@@ -75,6 +78,9 @@ export function MaterialsView() {
   const { attachments, notes, subjects, tasks, events, sessions, exams, addAttachment, addExternalAttachment, updateAttachment, deleteAttachment } = useStudyStore();
   // Un filtro salvato su una materia poi eliminata non deve nascondere tutto.
   const subjectFilter = subjects.some((subject) => subject.id === savedSubjectFilter) ? savedSubjectFilter : "";
+  // File fuori dalla riga sincronizzata: copia locale, caricamenti e download (src/lib/attachmentSync.ts).
+  const files = useMaterialFiles();
+  const opener = useOpenMaterial();
 
   const linkedName = (type?: string, id?: string) => {
     if (!type || !id) return null;
@@ -109,6 +115,7 @@ export function MaterialsView() {
 
   const uploadFile = async (file: File) => {
     setUploadError("");
+    opener.clearError();
     try {
       await addThen(() => addAttachment(file, subjectFilter ? { type: "subject", id: subjectFilter } : undefined));
     } catch (error) {
@@ -268,9 +275,10 @@ export function MaterialsView() {
           return true;
         }}
       />
-      {uploadError ? (
+      <p className="-mt-2 mb-4 px-1 text-xs font-bold text-[var(--muted)]">{FILE_TEXT.limitHint}</p>
+      {uploadError || opener.error ? (
         <p className="mb-4 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]" role="alert">
-          {uploadError}
+          {uploadError || opener.error}
         </p>
       ) : null}
       {/* Sempre presente: il lettore di schermo annuncia l'avviso appena compare il testo. */}
@@ -316,39 +324,57 @@ export function MaterialsView() {
         <div className="grid grid-cols-1 gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]">
           {filtered.map((attachment) => {
             const attachmentType = attachmentKind(attachment);
-            const href = attachment.externalUrl ? safeHref(attachment.externalUrl) : undefined;
-            const download = !href ? safeDataUrl(attachment.dataUrl) : undefined;
+            const fileState = files.stateOf(attachment);
+            // Un materiale con un file non apre mai il link (anche se una copia vecchia lo avesse).
+            const download = FILE_STATES.has(fileState);
+            const href = !download && attachment.externalUrl ? safeHref(attachment.externalUrl) : undefined;
+            const status = fileStateText(fileState, files.status.errors.get(attachment.id));
             const linked = linkedName(attachment.linkedEntityType, attachment.linkedEntityId);
             const linkAction = linkedAction(attachment);
             const color = attachment.linkedEntityType === "subject" ? subjectColor(subjects, attachment.linkedEntityId) : undefined;
-            const thumb =
-              attachmentType === "image" && attachment.dataUrl?.startsWith("data:image") ? (
-                <img src={safeDataUrl(attachment.dataUrl)} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Icon name={ATTACHMENT_KIND_ICON[attachmentType]} className="h-5 w-5 text-[var(--accent-ink)]" />
-              );
+            const preview = attachmentType === "image" ? <MaterialThumb material={attachment} hasLocal={files.local.has(attachment.id)} className="h-full w-full object-cover" /> : null;
+            const thumb = preview ?? <Icon name={ATTACHMENT_KIND_ICON[attachmentType]} className="h-5 w-5 text-[var(--accent-ink)]" />;
             const thumbClass = "grid h-12 w-12 grid-cols-1 place-items-center overflow-hidden rounded-[14px] bg-[var(--surface-strong)]";
+            const badge = (
+              <span
+                className={`absolute -bottom-1 -right-1 grid h-5 w-5 grid-cols-1 place-items-center rounded-full border-2 border-[var(--bg-2)] ${
+                  href ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface)] text-[var(--text)]"
+                }`}
+              >
+                <Icon name={href ? "ExternalLink" : "Download"} className="h-3 w-3" />
+              </span>
+            );
             return (
               <article key={attachment.id} className="quiet-panel group grid min-w-0 grid-cols-1 gap-2 p-3" data-testid="attachment-card">
                 <div className="flex min-w-0 items-start gap-3">
                   {/* L'anteprima apre il link o scarica il file (48 px, si tocca bene); il segno nell'angolo dice quale dei due. */}
-                  {href || download ? (
+                  {href ? (
                     <a
-                      href={href ?? download}
-                      {...(href ? { target: "_blank", rel: "noreferrer" } : { download: attachment.name })}
-                      aria-label={href ? MATERIALS_TEXT.open(attachment.name) : MATERIALS_TEXT.download(attachment.name)}
-                      title={href ? MATERIALS_TEXT.openTitle : MATERIALS_TEXT.downloadTitle}
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={MATERIALS_TEXT.open(attachment.name)}
+                      title={MATERIALS_TEXT.openTitle}
                       className="relative shrink-0 rounded-[14px] hover:ring-2 hover:ring-[var(--accent-ink)]"
                     >
                       <span className={thumbClass}>{thumb}</span>
-                      <span
-                        className={`absolute -bottom-1 -right-1 grid h-5 w-5 grid-cols-1 place-items-center rounded-full border-2 border-[var(--bg-2)] ${
-                          href ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface)] text-[var(--text)]"
-                        }`}
-                      >
-                        <Icon name={href ? "ExternalLink" : "Download"} className="h-3 w-3" />
-                      </span>
+                      {badge}
                     </a>
+                  ) : download ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadError("");
+                        void opener.open(attachment);
+                      }}
+                      aria-label={MATERIALS_TEXT.download(attachment.name)}
+                      aria-busy={opener.openingId === attachment.id}
+                      title={opener.openingId === attachment.id ? FILE_TEXT.opening : MATERIALS_TEXT.downloadTitle}
+                      className="relative shrink-0 rounded-[14px] hover:ring-2 hover:ring-[var(--accent-ink)]"
+                    >
+                      <span className={`${thumbClass} ${opener.openingId === attachment.id ? "animate-pulse" : ""}`}>{thumb}</span>
+                      {badge}
+                    </button>
                   ) : (
                     <div className={`${thumbClass} shrink-0`}>{thumb}</div>
                   )}
@@ -360,6 +386,15 @@ export function MaterialsView() {
                       {ATTACHMENT_KIND_LABEL[attachmentType]}
                       {attachment.externalUrl ? ` · ${hostOf(attachment.externalUrl)}` : attachment.size ? ` · ${formatBytes(attachment.size)}` : ""} · {shortDate(attachment.addedAt)}
                     </p>
+                    {status ? (
+                      <p
+                        className={`two-line-safe text-xs font-bold ${
+                          fileState === "queued" && files.status.errors.has(attachment.id) ? "text-[var(--warning-text)]" : "text-[var(--muted)]"
+                        }`}
+                      >
+                        {status}
+                      </p>
+                    ) : null}
                     {linked || visibleTags(attachment).length ? (
                       <div className="mt-1.5 flex flex-wrap gap-1">
                         {linked ? (
@@ -541,6 +576,7 @@ function AddBar({ onFile, onLink }: { onFile: (file: File) => Promise<void>; onL
         Carica un file
         <input
           type="file"
+          accept={FILE_ACCEPT}
           className="sr-only"
           onChange={async (event) => {
             const file = event.target.files?.[0];

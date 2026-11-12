@@ -141,6 +141,9 @@ export const setVaultSession = (mode: boolean, key: VaultKey | null) => {
 
 export const hasVaultKey = () => vaultKey !== null;
 
+/** Vault attivo e chiave della sessione (null se bloccato): cifra anche i file locali dei materiali. */
+export const vaultSession = () => ({ mode: vaultMode, key: vaultKey });
+
 /** Durante il lock del vault lo stato in memoria è vuoto: non va mai persistito né diffato. */
 export const setPersistenceSuspended = (value: boolean) => {
   suspended = value;

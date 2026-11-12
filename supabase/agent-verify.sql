@@ -25,6 +25,10 @@ select
   coalesce(has_function_privilege('anon', to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)'), 'EXECUTE')
     and has_function_privilege('anon', to_regprocedure('public.studyos_agent_push(text,text,jsonb,text)'), 'EXECUTE'), false)
     as hub_rpc_ready,
+  -- Il segno del file nello spazio file (`storedFile`) non va all'agente e non si perde con le sue modifiche.
+  coalesce(position('storedFile' in pg_get_functiondef(to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)'))) > 0
+    and position('storedFile' in pg_get_functiondef(to_regprocedure('public.studyos_agent_push(text,text,jsonb,text)'))) > 0, false)
+    as stored_file_kept_ready,
   -- Funzioni interne: nessuno le chiama da fuori.
   not coalesce(
     has_function_privilege('anon', to_regprocedure('public.studyos_agent_user(text)'), 'EXECUTE')

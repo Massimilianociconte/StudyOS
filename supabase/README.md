@@ -1,8 +1,8 @@
 # Preparazione Supabase dalla console web
 
-StudyOS usa le funzioni del piano Free: Postgres, Auth, RLS, Database Functions
-e Realtime. Il dataset BARB e Firecrawl restano locali; non occorre caricarli
-su Supabase.
+StudyOS usa le funzioni del piano Free: Postgres, Auth, RLS, Database Functions,
+Realtime e Storage (file dei materiali, `storage.sql`). Il dataset BARB e Firecrawl
+restano locali; non occorre caricarli su Supabase.
 
 1. Apri il progetto giusto nel Dashboard Supabase → **SQL Editor** → **New query**.
    Incolla l'intero [schema.sql](schema.sql) e premi **Run**. Puoi rieseguirlo
@@ -175,17 +175,41 @@ Prova su un Postgres usa e getta con lo stub di auth (mai sul progetto reale), d
 e `agent.sql`: `psql "$URL" -v ON_ERROR_STOP=1 -f scripts/supabase/agent-audit-check.sql` (ogni
 riga deve finire con `|t`).
 
+**File dei materiali (`storage.sql`, revisione del 12/11/2026).** I file caricati nei
+Materiali non viaggiano più come Base64 dentro `studyos_items.payload`: vanno nel bucket
+privato `studyos-files` di Supabase Storage, un file per materiale nel percorso
+`<uid>/<id del materiale>`. Ordine nel SQL Editor, una query alla volta:
+
+1. `schema.sql` (se non è già aggiornato);
+2. [storage.sql](storage.sql), come un unico script (si può rieseguire): crea il bucket
+   (privato, 25 MB per file, solo PDF, immagini, documenti, audio e video), la funzione
+   `studyos_can_read_file` e le 4 policy su `storage.objects`;
+3. se usi la condivisione, riesegui `sharing.sql` e poi `sharing-verify.sql`: `storedFile`
+   (il segno «file nello spazio file») diventa una chiave che chi riceve non può togliere;
+4. se usi il connettore remoto, riesegui `agent.sql` e poi `agent-verify.sql`: la nuova colonna
+   `stored_file_kept_ready` deve essere `true` (l'agente non vede `storedFile` e non lo perde);
+5. `verify.sql`: `files_bucket_ready` e `file_read_ready` devono essere `true` e
+   `file_policies` deve valere `4`.
+
+`storage.sql` va eseguito dopo `schema.sql`; rispetto a `groups.sql` e `sharing.sql` l'ordine
+non conta. Chi riceve un materiale condiviso ne scarica il file finché può leggere la riga (la
+revoca vale subito); scrivere e cancellare file è solo del proprietario. Senza `storage.sql`
+l'app funziona: i file nuovi restano sul dispositivo dove sono stati aggiunti (l'app lo dice) e
+quelli incorporati di prima restano dove sono; dopo l'esecuzione si caricano da soli. Dettagli:
+[docs/superpowers/specs/2026-11-12-attachments-storage-design.md](../docs/superpowers/specs/2026-11-12-attachments-storage-design.md).
+
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.
 
 Il piano Free mette in pausa i progetti inattivi (vedi sotto); per i dati importanti
-mantieni comunque un backup esportato dall'app. La sincronizzazione cloud attuale invia
-JSON non cifrato: RLS limita l'accesso, ma il vault protegge solo la copia
-locale.
+mantieni comunque un backup esportato dall'app (il backup completo include i file dei
+materiali). La sincronizzazione cloud attuale invia JSON non cifrato: RLS limita l'accesso, ma
+il vault protegge solo la copia locale (compresi i file dei materiali sul dispositivo).
 
-Gli allegati incorporati sono Base64 dentro `studyos_items.payload` e quindi
-consumano la quota del **database**, non la quota Supabase Storage. La PWA
-limita i nuovi file incorporati a 600 KiB; per quelli più grandi usa un link.
+I file dei materiali consumano la quota **Storage** del progetto (1 GB sul piano Free al
+momento della revisione), non più quella del database. I file incorporati di prima (Base64 in
+`studyos_items.payload`, fino a 600 KiB) si spostano da soli nel bucket la prima volta che
+l'app è aperta con l'account e la rete; la riga perde i byte solo a caricamento confermato.
 Controlla sempre i [limiti aggiornati del piano Free](https://supabase.com/pricing).
 
 ## Tenere attivo il progetto (piano Free)

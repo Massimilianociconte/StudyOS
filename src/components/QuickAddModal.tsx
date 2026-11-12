@@ -9,7 +9,8 @@ import { UnsavedPrompt } from "./UnsavedPrompt";
 import { DateTimeField } from "./DatePicker";
 import { fromDatetimeLocal } from "../lib/dates";
 import { quickAddDefaults, quickAddTaskDates, type QuickAddTaskCreate } from "../lib/quickAdd";
-import { QUICK_ADD_TEXT, REPEAT_PICKER_TEXT, UI_TEXT, type QuickAddSaved } from "../lib/labels";
+import { FILE_TEXT, QUICK_ADD_TEXT, REPEAT_PICKER_TEXT, UI_TEXT, type QuickAddSaved } from "../lib/labels";
+import { FILE_ACCEPT } from "../lib/attachments";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import { deviceTimeZone, isCivilDate } from "../lib/tz";
 import { repeatPresets, type RepeatPresetId } from "../lib/repeatPresets";
@@ -425,6 +426,7 @@ export function QuickAddModal({
                     <input
                       className={fileInputClass}
                       type="file"
+                      accept={FILE_ACCEPT}
                       onChange={async (event) => {
                         const file = event.target.files?.[0];
                         event.target.value = "";
@@ -444,6 +446,7 @@ export function QuickAddModal({
                       }}
                     />
                   </Field>
+                  <p className="-mt-1 px-1 text-xs font-bold text-[var(--muted)]">{FILE_TEXT.limitHint}</p>
                 </div>
               ) : null}
 

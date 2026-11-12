@@ -371,7 +371,7 @@ declare
   v_hex constant text := '^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$';
   v_web constant text := '^[hH][tT][tT][pP][sS]?://[^[:space:][:cntrl:]]+$';
   -- Come NEVER_KEYS in src/agent/shared.ts, tranne il cronometro (lo chiude un cambio di stato).
-  v_protected constant text := '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$';
+  v_protected constant text := '^(cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl|__proto__)$';
 begin
   if jsonb_typeof(p_new) is distinct from 'object' then
     return null;
@@ -600,7 +600,7 @@ as $$
   select case when jsonb_typeof(p_payload) = 'object' then (
     select coalesce(jsonb_object_agg(field.key, field.value), '{}'::jsonb)
     from jsonb_each(p_payload) as field
-    where field.key !~ '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
+    where field.key !~ '^(cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
   ) else p_payload end
 $$;
 
@@ -661,7 +661,7 @@ where revision.change <> 'delete'
   and jsonb_typeof(revision.payload) = 'object'
   and exists (
     select 1 from jsonb_object_keys(revision.payload) as field (key)
-    where field.key ~ '^(cover|dataUrl|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
+    where field.key ~ '^(cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
   );
 
 -- ─── RLS delle nuove tabelle ────────────────────────────────────────────────

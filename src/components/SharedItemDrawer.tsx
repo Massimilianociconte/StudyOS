@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { EXAM_STATUS_LABEL, GOAL_STATUS_LABEL, SESSION_STATUS_LABEL, TASK_STATUS_LABEL } from "../lib/labels";
+import { EXAM_STATUS_LABEL, FILE_TEXT, GOAL_STATUS_LABEL, SESSION_STATUS_LABEL, TASK_STATUS_LABEL } from "../lib/labels";
 import { SHARED_ITEM_TEXT } from "../lib/labels/sharing";
 import {
   ShareUserError,
@@ -106,8 +106,31 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
   };
   const who = actorInSentence(origin.ownerName);
   const entity = entry.entity;
-  const externalUrl = safeHref(typeof entity.externalUrl === "string" ? entity.externalUrl : null);
-  const dataUrl = safeDataUrl(typeof entity.dataUrl === "string" ? entity.dataUrl : null);
+  // Un materiale con un file non apre mai il link; il file del proprietario si scarica dal suo spazio file
+  // (supabase/storage.sql: chi vede la riga può scaricarlo), solo online e senza copie qui.
+  const storedFile = entry.entityType === "attachment" && (entity.storedFile === "cloud" || entity.storedFile === "local") ? entity.storedFile : undefined;
+  const dataUrl = storedFile ? undefined : safeDataUrl(typeof entity.dataUrl === "string" ? entity.dataUrl : null);
+  const externalUrl = storedFile || dataUrl ? undefined : safeHref(typeof entity.externalUrl === "string" ? entity.externalUrl : null);
+  const [fileBusy, setFileBusy] = useState(false);
+  const [fileError, setFileError] = useState("");
+  const downloadStored = async () => {
+    setFileBusy(true);
+    setFileError("");
+    try {
+      const { downloadSharedFile } = await import("../lib/attachmentSync");
+      await downloadSharedFile({
+        ownerId: entry.ownerId,
+        entityId: entry.entityId,
+        name: typeof entity.name === "string" ? entity.name : "file",
+        mimeType: typeof entity.mimeType === "string" ? entity.mimeType : undefined,
+        size: typeof entity.size === "number" ? entity.size : undefined
+      });
+    } catch (cause) {
+      setFileError(cause instanceof Error && cause.message ? cause.message : FILE_TEXT.downloadFailed);
+    } finally {
+      setFileBusy(false);
+    }
+  };
 
   const run = async (action: ShareAction, operation: () => Promise<void>) => {
     setBusy(true);
@@ -258,7 +281,7 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
             );
           })}
         </fieldset>
-        {externalUrl || dataUrl ? (
+        {externalUrl || dataUrl || storedFile ? (
           <div className="flex flex-wrap gap-3">
             {externalUrl ? (
               <a className={linkClass} href={externalUrl} target="_blank" rel="noopener noreferrer">
@@ -270,6 +293,17 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
               <a className={linkClass} href={dataUrl} download={typeof entity.name === "string" && entity.name.trim() ? entity.name.trim() : "file"}>
                 Scarica il file
               </a>
+            ) : null}
+            {storedFile === "cloud" ? (
+              <button type="button" className={`${linkClass} inline-flex min-h-11 items-center`} onClick={() => void downloadStored()} disabled={fileBusy} aria-busy={fileBusy}>
+                {fileBusy ? FILE_TEXT.opening : FILE_TEXT.sharedDownload}
+              </button>
+            ) : null}
+            {storedFile === "local" ? <p className="text-sm text-[var(--muted)]">{FILE_TEXT.sharedNotUploaded}</p> : null}
+            {fileError ? (
+              <p className="w-full text-sm font-bold text-[var(--warning-text)]" role="alert">
+                {fileError}
+              </p>
             ) : null}
           </div>
         ) : null}
