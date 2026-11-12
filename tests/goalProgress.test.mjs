@@ -1,0 +1,48 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { goalDraftWith, goalMove, goalStep, statusForProgress } from "../src/lib/goalProgress.ts";
+
+test("obiettivi: lo stato segue il progresso (100 → raggiunto, sotto 100 un raggiunto torna attivo)", () => {
+  assert.equal(statusForProgress("active", 100), "done");
+  assert.equal(statusForProgress("paused", 100), "done");
+  assert.equal(statusForProgress("done", 95), "active");
+  assert.equal(statusForProgress("done", 100), "done");
+  assert.equal(statusForProgress("active", 40), "active");
+  // In pausa resta in pausa sotto il 100; archiviato resta archiviato (scelta esplicita).
+  assert.equal(statusForProgress("paused", 40), "paused");
+  assert.equal(statusForProgress("archived", 100), "archived");
+  assert.equal(statusForProgress("archived", 20), "archived");
+});
+
+test("obiettivi: + e − di 5 tra 0 e 100, con lo stato che segue", () => {
+  assert.deepEqual(goalStep({ progress: 95, status: "active" }, 5), { progress: 100, status: "done" });
+  assert.deepEqual(goalStep({ progress: 100, status: "done" }, -5), { progress: 95, status: "active" });
+  assert.deepEqual(goalStep({ progress: 100, status: "done" }, 5), { progress: 100, status: "done" });
+  assert.deepEqual(goalStep({ progress: 0, status: "active" }, -5), { progress: 0, status: "active" });
+  assert.deepEqual(goalStep({ progress: 97, status: "active" }, 5), { progress: 100, status: "done" });
+});
+
+test("obiettivi: nel dettaglio progresso e stato restano d'accordo", () => {
+  const base = { title: "x", progress: 60, status: "active" };
+  assert.deepEqual(goalDraftWith(base, { progress: 100 }), { ...base, progress: 100, status: "done" });
+  assert.deepEqual(goalDraftWith({ ...base, progress: 100, status: "done" }, { progress: 80 }), { ...base, progress: 80, status: "active" });
+  // «Raggiunto» scelto a mano porta il progresso al 100%.
+  assert.deepEqual(goalDraftWith(base, { status: "done" }), { ...base, progress: 100, status: "done" });
+  // «Attivo» o «In pausa» al 100% scendono al 95%, altrimenti tornerebbero subito raggiunti.
+  assert.deepEqual(goalDraftWith({ ...base, progress: 100, status: "done" }, { status: "active" }), { ...base, progress: 95, status: "active" });
+  assert.deepEqual(goalDraftWith({ ...base, progress: 100, status: "done" }, { status: "paused" }), { ...base, progress: 95, status: "paused" });
+  // Archiviare non tocca il progresso.
+  assert.deepEqual(goalDraftWith({ ...base, progress: 100, status: "done" }, { status: "archived" }), { ...base, progress: 100, status: "archived" });
+});
+
+test("obiettivi: cambia gruppo solo passando tra «in corso» e «raggiunti e archiviati»", () => {
+  assert.equal(goalMove("active", "done"), "reached");
+  assert.equal(goalMove("paused", "done"), "reached");
+  assert.equal(goalMove("archived", "done"), null);
+  assert.equal(goalMove("active", "archived"), "archived");
+  assert.equal(goalMove("done", "archived"), null);
+  assert.equal(goalMove("done", "active"), "reopened");
+  assert.equal(goalMove("archived", "paused"), "reopened");
+  assert.equal(goalMove("active", "paused"), null);
+  assert.equal(goalMove("done", "done"), null);
+});
