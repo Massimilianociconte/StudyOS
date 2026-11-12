@@ -120,3 +120,21 @@ test("esito agli agenti: anche gli esami condivisi da altri escono senza l'etich
   assert.deepEqual(done.tags, ["orale"]);
   assert.equal(done.dateToDecide, undefined);
 });
+
+test("libretto agli agenti: esiti mancanti uno per materia, mai di materie già nel libretto", async () => {
+  seed([
+    // Vecchi doppioni: due esami «Sostenuto» senza voto della stessa materia.
+    exam({ id: "exam_old", status: "done", date: "2026-06-10T08:00:00.000Z" }),
+    exam({ id: "exam_new", status: "done", date: "2026-07-10T08:00:00.000Z" }),
+    // Materia già nel libretto: un esame sostenuto senza voto in più non va chiesto di nuovo.
+    exam({ id: "exam_ana", subjectId: "sub_ana", status: "done", grade: 27, date: "2026-07-01T08:00:00.000Z" }),
+    exam({ id: "exam_ana_dup", subjectId: "sub_ana", status: "done", date: "2026-07-02T08:00:00.000Z" })
+  ]);
+  useStudyStore.setState((current) => ({
+    subjects: [...current.subjects, { ...current.subjects[0], id: "sub_ana", name: "Anatomia umana", cfu: 6 }]
+  }));
+  const libretto = await executeAgentTool("studyos_get_libretto", {});
+  assert.equal(libretto.ok, true);
+  assert.deepEqual(libretto.data.missingGrades, [{ examId: "exam_new", subjectName: "Biochimica", date: "2026-07-10T08:00:00.000Z" }]);
+  assert.deepEqual(libretto.data.exams.map((entry) => entry.subjectId), ["sub_ana"]);
+});

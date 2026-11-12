@@ -4,7 +4,7 @@ import type { AgentCallResult } from "./types";
 import { WEEKLY_TARGET_MAX, WEEKLY_TARGET_MIN, toolSummary } from "./catalog";
 import { publicAttachment, publicEntity, publicGroup, publicPreferences, publicSubject } from "./project";
 import { readAudit, readStoredPolicy } from "../lib/agentLocal";
-import { gradeStats, isValidGrade, librettoEntries, projectedStats } from "../lib/grades";
+import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats } from "../lib/grades";
 import { examDateOut } from "../lib/examOutcome";
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
 import { createId, nowIso } from "../lib/id";
@@ -814,9 +814,8 @@ const librettoResult = (): AgentCallResult => {
   const abroad = preferences.abroad === true;
   const projection = projectGraduation({ program, weightedAverage: stats.weighted, honors: entries.filter((entry) => entry.honors).length, thesis, abroad });
   const names = subjectNames();
-  const missingGrades = current.exams
-    .filter((exam) => !exam.archived && exam.status === "done" && !exam.passFail && !isValidGrade(exam.grade))
-    .map((exam) => ({ examId: exam.id, subjectName: nameOf(names, exam.subjectId), date: exam.date }));
+  // Come nella sezione Libretto: una riga per materia, mai per una materia già nel libretto.
+  const missing = missingGrades(current.exams, entries).map((exam) => ({ examId: exam.id, subjectName: nameOf(names, exam.subjectId), date: exam.date }));
   return ok({
     degreeProgram: { id: program, name: DEGREE_PROGRAMS[program].name },
     degreeCfu: preferences.degreeCfu,
@@ -825,7 +824,7 @@ const librettoResult = (): AgentCallResult => {
     withTargetGrades: withTargets ? { weighted: withTargets.weighted, arithmetic: withTargets.arithmetic, base110: withTargets.base110 } : null,
     graduation: projection ? { scenario: { thesis, abroad }, ...projection } : null,
     exams: entries,
-    missingGrades,
+    missingGrades: missing,
     note: "La lode di laurea e gli arrotondamenti li decide la commissione: non sono calcolati."
   });
 };
