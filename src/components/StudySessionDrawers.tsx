@@ -21,6 +21,7 @@ import {
   sessionDraftEnd,
   sessionEditPatch,
   sessionSourceLabel,
+  sessionUndoPatch,
   topicsOfSubject,
   type SessionDraft,
   type SessionDraftError,
@@ -406,7 +407,10 @@ export function TimerReviewDrawer({
   );
 }
 
-/** Modifica di una sessione salvata: materia, argomento, descrizione, note, inizio e minuti; Elimina. */
+/**
+ * Modifica di una sessione salvata: materia, argomento, descrizione, note, inizio e minuti; Elimina.
+ * Dopo Salva `onSaved` riceve anche i valori di prima, per "Annulla" (come dopo Elimina).
+ */
 export function SessionEditorDrawer({
   sessionId,
   onClose,
@@ -415,7 +419,7 @@ export function SessionEditorDrawer({
 }: {
   sessionId: string | null;
   onClose: () => void;
-  onSaved?: (session: StudySession) => void;
+  onSaved: (session: StudySession, undo: Partial<StudySession>) => void;
   onDeleted: (session: StudySession, links: SessionLinks) => void;
 }) {
   const { subjects, topics } = useSessionData();
@@ -447,7 +451,7 @@ export function SessionEditorDrawer({
     }
     const patch = sessionEditPatch(session, result.value);
     await updateSession(session.id, patch);
-    onSaved?.({ ...session, ...patch });
+    onSaved({ ...session, ...patch }, sessionUndoPatch(session, patch));
     onClose();
   };
 
@@ -652,25 +656,37 @@ export function UndoNotice({ text, onUndo, onDone }: { text: string; onUndo: () 
   );
 }
 
+type EditorNotice =
+  | { kind: "deleted"; session: StudySession; links: SessionLinks }
+  | { kind: "updated"; id: string; undo: Partial<StudySession> };
+
 /**
- * Modifica di una sessione da un elenco: `edit(id)` apre il Drawer; dopo Elimina compare
+ * Modifica di una sessione da un elenco: `edit(id)` apre il Drawer; dopo Salva o Elimina compare
  * "Annulla" in `undoNotice` (da mettere sotto l'elenco).
  */
 export function useSessionEditor(): { edit: (id: string) => void; drawer: ReactNode; undoNotice: ReactNode } {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [deleted, setDeleted] = useState<{ session: StudySession; links: SessionLinks } | null>(null);
+  const [notice, setNotice] = useState<EditorNotice | null>(null);
   const restoreSession = useStudyStore((state) => state.restoreSession);
+  const updateSession = useStudyStore((state) => state.updateSession);
   return {
     edit: (id: string) => {
-      setDeleted(null);
+      setNotice(null);
       setEditingId(id);
     },
-    drawer: <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onDeleted={(session, links) => setDeleted({ session, links })} />,
-    undoNotice: deleted ? (
+    drawer: (
+      <SessionEditorDrawer
+        sessionId={editingId}
+        onClose={() => setEditingId(null)}
+        onSaved={(session, undo) => setNotice({ kind: "updated", id: session.id, undo })}
+        onDeleted={(session, links) => setNotice({ kind: "deleted", session, links })}
+      />
+    ),
+    undoNotice: notice ? (
       <UndoNotice
-        text={SESSION_FORM_TEXT.deleted(deleted.session.title)}
-        onUndo={() => void restoreSession(deleted.session, deleted.links)}
-        onDone={() => setDeleted(null)}
+        text={notice.kind === "deleted" ? SESSION_FORM_TEXT.deleted(notice.session.title) : SESSION_FORM_TEXT.updated}
+        onUndo={() => void (notice.kind === "deleted" ? restoreSession(notice.session, notice.links) : updateSession(notice.id, notice.undo))}
+        onDone={() => setNotice(null)}
       />
     ) : null
   };

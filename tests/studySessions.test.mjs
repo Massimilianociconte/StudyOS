@@ -14,7 +14,8 @@ import {
   sessionEndsInFuture,
   sessionLinksOf,
   sessionSourceLabel,
-  sessionTopicId
+  sessionTopicId,
+  sessionUndoPatch
 } from "../src/lib/studySessions.ts";
 
 const MIN = 60_000;
@@ -155,6 +156,32 @@ test("sessionEditPatch: la fine segue inizio e minuti, le pause restano", () => 
   const later = sessionEditPatch(session, { subjectId: "an", topicId: "lim", title: "x", notes: "", template: "review", minutes: 540, start: new Date(2026, 10, 10, 20, 0).getTime() });
   assert.equal(later.start, new Date(2026, 10, 10, 20, 0).toISOString());
   assert.equal(later.end, new Date(2026, 10, 11, 5, 0).toISOString());
+});
+
+test("sessionUndoPatch: «Annulla» dopo Modifica rimette i valori di prima, anche quelli che mancavano", () => {
+  const previous = {
+    id: "s1",
+    title: "Cronometro",
+    subjectId: "an",
+    topicId: "lim",
+    template: "review",
+    actualMinutes: 540,
+    plannedMinutes: 540,
+    start: new Date(2026, 10, 10, 21, 0).toISOString(),
+    end: new Date(2026, 10, 11, 6, 0).toISOString(),
+    notes: "",
+    source: "stopwatch"
+  };
+  const patch = sessionEditPatch(previous, { subjectId: "fi", title: "Moto", notes: "rivedere", template: "exercises", minutes: 90 });
+  const undo = sessionUndoPatch(previous, patch);
+  assert.deepEqual(Object.keys(undo).sort(), Object.keys(patch).sort(), "solo i campi della modifica");
+  assert.deepEqual({ ...previous, ...patch, ...undo }, previous);
+  // Senza argomento né fine prima: tornano senza (chiavi presenti con undefined, come nella modifica).
+  const bare = { ...previous, topicId: undefined, end: undefined };
+  const added = sessionEditPatch(bare, { subjectId: "an", topicId: "lim", title: "x", notes: "", template: "review", minutes: 30 });
+  const back = sessionUndoPatch(bare, added);
+  assert.equal("topicId" in back && back.topicId === undefined, true);
+  assert.equal("end" in back && back.end === undefined, true);
 });
 
 test("draftFromSession: i campi del modulo, senza ripetere titoli automatici", () => {

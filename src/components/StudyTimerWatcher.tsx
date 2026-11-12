@@ -61,6 +61,7 @@ export function StudyTimerWatcher() {
     setTimerReviewOpen,
     restoreStudyTimer,
     restoreSession,
+    updateSession,
     reviewWanted
   } = useStudyStore(
     useShallow((state) => ({
@@ -77,7 +78,8 @@ export function StudyTimerWatcher() {
       skipBreak: state.skipBreak,
       setTimerReviewOpen: state.setTimerReviewOpen,
       restoreStudyTimer: state.restoreStudyTimer,
-      restoreSession: state.restoreSession
+      restoreSession: state.restoreSession,
+      updateSession: state.updateSession
     }))
   );
   const now = useNow(1000, timer.running).getTime();
@@ -254,6 +256,10 @@ export function StudyTimerWatcher() {
       }
     });
   };
+  // Come dopo Elimina: conferma con "Annulla", che rimette i valori di prima.
+  const onSessionUpdated = (session: StudySession, undo: Partial<StudySession>) => {
+    setAlert({ title: SESSION_FORM_TEXT.updated, icon: "Check", autoClose: true, undo: () => void updateSession(session.id, undo) });
+  };
   const onSessionDeleted = (session: StudySession, links: SessionLinks) => {
     setAlert({ title: SESSION_FORM_TEXT.deleted(session.title), icon: "Trash2", autoClose: true, undo: () => void restoreSession(session, links) });
   };
@@ -261,7 +267,7 @@ export function StudyTimerWatcher() {
   const drawers = drawersReady ? (
     <Suspense fallback={null}>
       {reviewMounted ? <TimerReviewDrawer onSaved={onReviewSaved} onDiscarded={onReviewDiscarded} /> : null}
-      {editorMounted ? <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onDeleted={onSessionDeleted} /> : null}
+      {editorMounted ? <SessionEditorDrawer sessionId={editingId} onClose={() => setEditingId(null)} onSaved={onSessionUpdated} onDeleted={onSessionDeleted} /> : null}
     </Suspense>
   ) : null;
 

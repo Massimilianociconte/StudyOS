@@ -283,6 +283,16 @@ export const sessionEditPatch = (
   };
 };
 
+/**
+ * "Annulla" dopo Modifica: per ogni campo cambiato il valore di prima (undefined se mancava, così
+ * l'argomento o la fine aggiunti spariscono di nuovo). Da salvare con `updateSession`.
+ */
+export const sessionUndoPatch = <T extends object>(previous: T, patch: Partial<T>): Partial<T> => {
+  const undo: Partial<T> = {};
+  for (const key of Object.keys(patch) as (keyof T)[]) undo[key] = previous[key];
+  return undo;
+};
+
 const pad = (value: number) => String(value).padStart(2, "0");
 
 /**
