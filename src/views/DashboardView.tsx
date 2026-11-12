@@ -40,6 +40,7 @@ import {
   occasionAgeText
 } from "../lib/labels";
 import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
+import { homeLinks } from "../lib/homeFirstRun";
 import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import { useToday } from "../hooks/useToday";
 import { homeTimerSummary } from "../lib/homeTimer";
@@ -81,11 +82,11 @@ function PanelHeader({ title, action, onAction, help }: { title: string; action?
   );
 }
 
-/** Riquadro senza dati: una riga e un solo collegamento per aggiungere. */
-function EmptyLine({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
+/** Riquadro senza dati: una riga e al massimo un collegamento per aggiungere (niente doppioni con la guida). */
+function EmptyLine({ text, action, onAction }: { text: string; action?: string; onAction: () => void }) {
   return (
-    <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-[var(--muted)]">
-      {text} <TextLink onClick={onAction}>{action}</TextLink>
+    <p className="flex min-h-8 flex-wrap items-center gap-x-1.5 text-sm text-[var(--muted)]">
+      {text} {action ? <TextLink onClick={onAction}>{action}</TextLink> : null}
     </p>
   );
 }
@@ -222,6 +223,24 @@ export function DashboardView() {
   const hasNextExams = nextExams.length > 0;
   const calendarExams = useMemo(() => (hasNextExams ? [] : calendarExamEvents(events, new Date())), [events, hasNextExams]);
   const nextExamDays = nextExams[0] ? studyDaysUntil(nextExams[0].date) : 0;
+  const activeGoals = goals.filter((goal) => goal.status === "active");
+
+  // Guida «Per iniziare»: finché è in vista, la Home non ripete le sue azioni (vedi homeLinks).
+  const [guideHidden, hideGuide] = useGuideHidden();
+  const guideDone = { subjects: subjects.length > 0, calendar: events.length > 0, tasks: tasks.length > 0, profile: Boolean(displayName) };
+  const guideVisible = !guideHidden && !Object.values(guideDone).every(Boolean);
+  const links = homeLinks({
+    guideVisible,
+    guideTaskPending: !guideDone.tasks,
+    empty: {
+      today: !(today.length || todayTasks.length || reviewsDue.length),
+      next: !nextTask,
+      exams: !nextExams.length && !calendarExams.length,
+      subjects: !activeSubjects.length,
+      goals: !activeGoals.length,
+      materials: !recentAttachments.length
+    }
+  });
   const stats = [
     {
       label: "Studio della settimana",
@@ -281,11 +300,14 @@ export function DashboardView() {
         action={<StudyAction onGo={() => setActiveView("study")} />}
       />
 
-      <GettingStarted
-        showBarb={preferences.showBarb}
-        done={{ subjects: subjects.length > 0, calendar: events.length > 0, tasks: tasks.length > 0, profile: Boolean(displayName) }}
-        onGo={setActiveView}
-      />
+      {guideVisible ? (
+        <GettingStarted
+          showBarb={preferences.showBarb}
+          done={guideDone}
+          onGo={setActiveView}
+          onHide={hideGuide}
+        />
+      ) : null}
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {stats.map((stat) => (
@@ -403,12 +425,12 @@ export function DashboardView() {
                   ) : null}
                 </ul>
               ) : (
-                <EmptyLine text={HOME_TEXT.emptyToday} action={HOME_TEXT.addEvent} onAction={() => openQuickAdd("event")} />
+                <EmptyLine text={HOME_TEXT.emptyToday} action={links.todayAdd ? HOME_TEXT.addEvent : undefined} onAction={() => openQuickAdd("event")} />
               )}
             </Panel>
 
             <Panel>
-              <PanelHeader title="Cosa fare adesso" action={HOME_TEXT.allTasks} onAction={() => setActiveView("tasks")} help={HOME_HELP.next} />
+              <PanelHeader title="Cosa fare adesso" action={links.allTasks ? HOME_TEXT.allTasks : undefined} onAction={() => setActiveView("tasks")} help={HOME_HELP.next} />
               {nextTask ? (
                 <div>
                   <button
@@ -451,13 +473,13 @@ export function DashboardView() {
                   ) : null}
                 </div>
               ) : (
-                <EmptyLine text={HOME_TEXT.emptyNext} action={HOME_TEXT.addTask} onAction={() => openQuickAdd("task")} />
+                <EmptyLine text={HOME_TEXT.emptyNext} action={links.nextAdd ? HOME_TEXT.addTask : undefined} onAction={() => openQuickAdd("task")} />
               )}
             </Panel>
           </div>
 
           <Panel>
-            <PanelHeader title="Esami in arrivo" action={HOME_TEXT.allExams} onAction={() => setActiveView("exams")} help={HOME_HELP.preparation} />
+            <PanelHeader title="Esami in arrivo" action={links.allExams ? HOME_TEXT.allExams : undefined} onAction={() => setActiveView("exams")} help={HOME_HELP.preparation} />
             {nextExams.length ? (
               <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {nextExams.map((exam) => {
@@ -497,7 +519,11 @@ export function DashboardView() {
           </Panel>
 
           <Panel>
-            <PanelHeader title={activeSubjects.length ? `Le tue materie · ${activeSubjects.length}` : "Le tue materie"} action={HOME_TEXT.allSubjects} onAction={() => setActiveView("subjects")} />
+            <PanelHeader
+              title={activeSubjects.length ? `Le tue materie · ${activeSubjects.length}` : "Le tue materie"}
+              action={links.allSubjects ? HOME_TEXT.allSubjects : undefined}
+              onAction={() => setActiveView("subjects")}
+            />
             {activeSubjects.length ? (
               <ul className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
                 {activeSubjects.map((subject) => {
@@ -556,7 +582,7 @@ export function DashboardView() {
                 ))}
               </ul>
             ) : (
-              <EmptyLine text={HOME_TEXT.emptyUpcoming} action={HOME_TEXT.addEvent} onAction={() => openQuickAdd("event")} />
+              <EmptyLine text={HOME_TEXT.emptyUpcoming} action={links.upcomingAdd ? HOME_TEXT.addEvent : undefined} onAction={() => openQuickAdd("event")} />
             )}
           </Panel>
 
@@ -600,11 +626,10 @@ export function DashboardView() {
           ) : null}
 
           <Panel>
-            <PanelHeader title="Obiettivi" action={HOME_TEXT.allGoals} onAction={() => setActiveView("goals")} />
-            {goals.filter((goal) => goal.status === "active").length ? (
+            <PanelHeader title="Obiettivi" action={links.allGoals ? HOME_TEXT.allGoals : undefined} onAction={() => setActiveView("goals")} />
+            {activeGoals.length ? (
               <ul className="grid grid-cols-1 gap-0.5">
-                {goals
-                  .filter((goal) => goal.status === "active")
+                {activeGoals
                   .slice(0, 3)
                   .map((goal) => (
                     <li key={goal.id}>
@@ -627,7 +652,7 @@ export function DashboardView() {
           </Panel>
 
           <Panel>
-            <PanelHeader title="Ultimi materiali" action={HOME_TEXT.allMaterials} onAction={() => setActiveView("materials")} />
+            <PanelHeader title="Ultimi materiali" action={links.allMaterials ? HOME_TEXT.allMaterials : undefined} onAction={() => setActiveView("materials")} />
             {recentAttachments.length ? (
               <ul className="grid grid-cols-1 gap-1">
                 {recentAttachments.map((attachment) => (
@@ -660,6 +685,20 @@ const readHidden = () => {
   }
 };
 
+/** «Nascondi la guida» vale su questo dispositivo. La Home lo legge per sapere se la guida è in vista. */
+function useGuideHidden(): [boolean, () => void] {
+  const [hidden, setHidden] = useState(readHidden);
+  const hide = () => {
+    try {
+      localStorage.setItem(GETTING_STARTED_HIDDEN_KEY, "1");
+    } catch {
+      // senza storage la guida si nasconde solo fino al prossimo caricamento
+    }
+    setHidden(true);
+  };
+  return [hidden, hide];
+}
+
 /**
  * Guida dei primi passi: resta in Home finché i quattro passi non sono fatti (o finché non la
  * si nasconde su questo dispositivo). Ogni passo si spunta da solo quando i dati ci sono.
@@ -667,13 +706,14 @@ const readHidden = () => {
 function GettingStarted({
   showBarb,
   done,
-  onGo
+  onGo,
+  onHide
 }: {
   showBarb: boolean;
   done: { subjects: boolean; calendar: boolean; tasks: boolean; profile: boolean };
   onGo: (view: AppView) => void;
+  onHide: () => void;
 }) {
-  const [hidden, setHidden] = useState(readHidden);
   const steps: { key: keyof typeof done; icon: string; title: string; body: string; action: string; run: () => void }[] = [
     {
       key: "subjects",
@@ -714,17 +754,7 @@ function GettingStarted({
     }
   ];
   const completed = steps.filter((step) => done[step.key]).length;
-  if (hidden || completed === steps.length) return null;
   const nextKey = steps.find((step) => !done[step.key])?.key;
-
-  const hide = () => {
-    try {
-      localStorage.setItem(GETTING_STARTED_HIDDEN_KEY, "1");
-    } catch {
-      // senza storage la guida si nasconde solo fino al prossimo caricamento
-    }
-    setHidden(true);
-  };
 
   return (
     <section className="soft-panel mb-4 p-4" aria-labelledby="getting-started-title">
@@ -738,7 +768,7 @@ function GettingStarted({
             Puoi farli nell'ordine che preferisci.
           </p>
         </div>
-        <Button variant="ghost" icon="EyeOff" className="relative min-h-9 px-3 text-xs after:absolute after:-inset-1 after:content-['']" onClick={hide} title="Nasconde questa guida su questo dispositivo">
+        <Button variant="ghost" icon="EyeOff" className="relative min-h-9 px-3 text-xs after:absolute after:-inset-1 after:content-['']" onClick={onHide} title="Nasconde questa guida su questo dispositivo">
           Nascondi la guida
         </Button>
       </div>
