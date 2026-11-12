@@ -18,6 +18,7 @@ import {
   getCloudSyncState,
   requestSync,
   subscribeCloudSync,
+  whenSyncIdle,
   type CloudSyncState
 } from "../lib/cloudSync";
 
@@ -229,9 +230,13 @@ export function CloudPanel() {
         dropSession: () => setCloudSyncState({ session: null, lastSync: null, status: "idle", error: undefined }),
         schedule: (fn, ms) => void window.setTimeout(fn, ms)
       });
-      // Profilo vuoto: si riparte da Home («Per iniziare»), non da Impostazioni.
-      useStudyStore.getState().setActiveView("dashboard");
+      // Una sincronizzazione già partita finisce prima dello svuotamento (le sue righe tardive
+      // vengono comunque scartate: la sessione non c'è più).
+      await whenSyncIdle();
       await useStudyStore.getState().resetAllData({ propagate: false });
+      // Profilo vuoto: si riparte da Home («Per iniziare»), non da Impostazioni. Solo a svuotamento
+      // riuscito: se fallisce l'errore resta qui, visibile.
+      useStudyStore.getState().setActiveView("dashboard");
       // Sessione tolta solo dallo storage: supabase-js può averne una copia in memoria, si riparte puliti.
       if (signedOut === "removed-here") window.location.reload();
       // Pannello ancora aperto (es. in un invito di gruppo): torna al modulo di accesso.
@@ -340,9 +345,15 @@ export function CloudPanel() {
               <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveKeepHint}</p>
               <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveRemoveHint}</p>
               {sync.pendingCount > 0 ? (
-                <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
-                  {ACCOUNT_TEXT.leavePending(sync.pendingCount)}
-                </p>
+                <div className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3">
+                  <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.leavePending(sync.pendingCount)}</p>
+                  {sync.warning ? <p className="text-sm font-bold text-[var(--warning-text)]">{sync.warning}</p> : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button icon="Sparkles" variant="soft" onClick={handleSyncNow} disabled={busy || sync.status === "syncing"}>
+                      {ACCOUNT_TEXT.leaveSyncNow}
+                    </Button>
+                  </div>
+                </div>
               ) : null}
               <div className="mt-1 flex flex-wrap justify-end gap-2">
                 <Button variant="soft" onClick={cancelLeave} disabled={busy} autoFocus>

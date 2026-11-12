@@ -9,8 +9,9 @@ export const ACCOUNT_TEXT = {
   leaveRemoveHint: "Togli i dati da qui: per un dispositivo non tuo. Nell'account restano tutti e tornano quando accedi di nuovo.",
   leavePending: (count: number) =>
     count === 1
-      ? "1 modifica non è ancora nell'account: premi «Sincronizza ora» prima di togliere i dati da qui."
-      : `${count} modifiche non sono ancora nell'account: premi «Sincronizza ora» prima di togliere i dati da qui.`,
+      ? "1 modifica non è ancora nell'account: premi «Sincronizza ora» qui sotto prima di togliere i dati da qui."
+      : `${count} modifiche non sono ancora nell'account: premi «Sincronizza ora» qui sotto prima di togliere i dati da qui.`,
+  leaveSyncNow: "Sincronizza ora",
   leaveCancel: "Annulla",
   leftKeep: "Sei uscito dall'account. I dati restano su questo dispositivo.",
   leftOffline: "Server non raggiungibile: sei uscito solo su questo dispositivo. Ricarico la pagina…",

@@ -101,6 +101,18 @@ class SyncSuspendedError extends Error {
   }
 }
 
+/** L'account è uscito (o cambiato) durante la passata: si interrompe senza toccare dati né cursori. */
+class SessionChangedError extends Error {
+  constructor() {
+    super("Sincronizzazione interrotta: l'account è cambiato.");
+    this.name = "SessionChangedError";
+  }
+}
+
+const assertSameSession = (userId: string) => {
+  if (currentSession()?.user.id !== userId) throw new SessionChangedError();
+};
+
 /**
  * Con il vault bloccato (o durante il caricamento) lo stato in memoria è vuoto: leggere lo
  * stato in quel momento trasformerebbe ogni voce dell'outbox in un'eliminazione cloud.
@@ -189,10 +201,13 @@ const requeueEntities = async (items: Array<{ collection: CollectionKey; id: str
   });
 };
 
-const mergeRows = async (rows: RemoteRow[], force: boolean) => {
+const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean) => {
   if (!rows.length) return 0;
   assertStoreReady();
   const outbox = await db.syncOutbox.toArray();
+  // Uscita dall'account (o cambio) mentre la richiesta era in volo, es. «Togli i dati da qui»:
+  // le righe arrivate tardi non devono riempire di nuovo il dispositivo appena svuotato.
+  assertSameSession(userId);
   const pending = new Map<string, PendingOutbox>(outbox.map((row) => [row.key, { deleted: row.deleted, deletedAt: row.deletedAt }]));
   const plan = planMerge(rows, pickCollections(useStudyStore.getState()), pending, { force });
   if (plan.changes.length) {
@@ -222,13 +237,14 @@ const pull = async (userId: string, force = false) => {
   for (;;) {
     const rows = await pullEntityRows(userId, since, offset, PAGE_SIZE, force ? undefined : clientId);
     if (!rows.length) break;
-    applied += await mergeRows(rows, force);
+    applied += await mergeRows(userId, rows, force);
     for (const row of rows) {
       if (!maxSeen || row.updated_at > maxSeen) maxSeen = row.updated_at;
     }
     if (rows.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
+  assertSameSession(userId);
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
   return applied;
 };
@@ -312,12 +328,12 @@ const push = async (userId: string) => {
       for (const item of batch) {
         if (accepted.has(item.row.key)) continue;
         const remote = await pullEntityRow(userId, item.row.entityType, item.row.entityId);
-        if (remote) await mergeRows([remote], false);
+        if (remote) await mergeRows(userId, [remote], false);
         const pending = await db.syncOutbox.get(item.row.key);
         if (pending?.queuedAt === item.row.queuedAt) failed.push(`Conflitto cloud irrisolto per ${item.row.key}`);
       }
     } catch (error) {
-      if (error instanceof SyncSuspendedError) throw error;
+      if (error instanceof SyncSuspendedError || error instanceof SessionChangedError) throw error;
       failed.push(errorMessage(error));
     }
   }
@@ -342,9 +358,9 @@ const firstSync = async (userId: string) => {
   }
   if (!rows.length) {
     const legacy = await pullLegacySnapshot(userId);
-    if (legacy?.payload) await mergeRows(legacySnapshotToRows(legacy.payload, legacy.updated_at), false);
+    if (legacy?.payload) await mergeRows(userId, legacySnapshotToRows(legacy.payload, legacy.updated_at), false);
   } else {
-    await mergeRows(rows, false);
+    await mergeRows(userId, rows, false);
   }
   const maxSeen = rows.reduce<string | null>((max, row) => (!max || row.updated_at > max ? row.updated_at : max), null);
   // Senza stato locale disponibile non si può accodare nulla: il flag "migrated" non va scritto.
@@ -352,6 +368,7 @@ const firstSync = async (userId: string) => {
   await enqueueAllLocal(new Set(rows.map((row) => `${row.entity_type}:${row.entity_id}`)));
   await push(userId);
   assertStoreReady();
+  assertSameSession(userId);
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
   await setMeta(metaKeys.migrated(userId), new Date().toISOString());
 };
@@ -419,6 +436,8 @@ const syncOnce = async () => {
     retryAttempt = 0;
     setState({ status: "idle", lastSync, error: undefined });
   } catch (error) {
+    // Uscita o cambio di account a metà passata: chi ha cambiato la sessione ha già aggiornato lo stato.
+    if (error instanceof SessionChangedError) return;
     if (error instanceof SyncSuspendedError || !storeReady()) {
       // Riprende da sola allo sblocco del vault (subscription in initCloudSync).
       setState({ status: "idle" });
@@ -429,6 +448,23 @@ const syncOnce = async () => {
   } finally {
     await refreshPendingCount();
   }
+};
+
+/**
+ * Attende la fine della sync in corso (al massimo `timeoutMs`), senza avviarne un'altra.
+ * Serve prima di svuotare il dispositivo dopo l'uscita: una passata in volo non lo riempie di nuovo.
+ */
+export const whenSyncIdle = async (timeoutMs = 15_000): Promise<void> => {
+  const current = running;
+  if (!current) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    current.catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs);
+    })
+  ]);
+  if (timer !== undefined) clearTimeout(timer);
 };
 
 /** Esegue una sync (single-flight: richieste concorrenti vengono unite in un'ulteriore passata). */
