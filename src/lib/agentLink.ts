@@ -3,9 +3,9 @@ import type { AgentTool } from "../agent/catalog";
 import { hubCandidates, isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRisk, type PolicyChoice } from "../agent/policy";
 import type { AgentCallResult, AuditEntry } from "../agent/types";
-import { appendAudit, readAgentToken, readAudit, readBrowserId, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
+import { appendAudit, readAgentToken, readAudit, readBrowserId, readBrowserSecret, readSavedHub, readStoredPolicy, writeAgentToken, writeBrowserSecret, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
-import { hubRevokesByAccount, pairFirstError, parseRevokeOutcome, revokeNotice } from "./agentDesk";
+import { pairFirstError, parseRevokeOutcome, revokeNotice, revokePlan, type RevokeScope } from "./agentDesk";
 import { agentCloudLabels } from "./labels";
 import { AGENT_DESK_TEXT } from "./labels/agents";
 import { loadOnce } from "./loadOnce";
@@ -346,13 +346,14 @@ const handleConsent = async (job: PendingAgentConsent) => {
   }
   const approve = choice.approve && !cloudError;
   try {
-    // `browser`: l'hub lega la concessione a questo account, così la sua revoca toglie solo le sue.
+    // `secret`: l'hub lega la concessione a questo browser, così la sua revoca toglie solo le sue.
+    const secret = approve ? await ensureBrowserSecret() : "";
     await postJson("/oauth/decide", {
       token: readAgentToken(),
       requestId: job.requestId,
       approve,
       scopes: approve ? choice.scopes : [],
-      browser: browserInfo(),
+      ...(secret ? { secret } : {}),
       ...(cloud ? { cloud } : {})
     });
     if (cloudError) refresh({ error: cloudError });
@@ -455,7 +456,8 @@ const loop = async (mine: number) => {
 export const startAgentLink = () => {
   const mine = ++generation;
   const heart = window.setInterval(() => void heartbeat(), 15_000);
-  void checkHealth();
+  // Un browser collegato prima dei segreti riceve il suo qui, senza ricollegarsi.
+  void checkHealth().then(() => ensureBrowserSecret());
   void loop(mine);
   return () => {
     if (generation === mine) generation += 1;
@@ -492,6 +494,8 @@ export const pairAgent = async (code: string) => {
     const data = await postJson("/pair", { code: normalized });
     if (typeof data.token !== "string" || data.token.length < 20) throw new Error("Risposta di collegamento incompleta.");
     writeAgentToken(data.token);
+    // Un browser che ha già il suo segreto lo tiene: i consensi approvati prima restano revocabili da qui.
+    if (!readBrowserSecret() && typeof data.secret === "string") writeBrowserSecret(data.secret);
     refresh({
       hub: "up",
       error: "",
@@ -557,12 +561,30 @@ const revokeCloudGrants = async () => {
 };
 
 /**
- * «Revoca gli accessi che hai dato» ("account"): l'hub toglie solo le concessioni date da questo
- * account, che riconosce da `browser`. "all" = «Scollega gli assistenti di tutti», dopo una conferma.
+ * Segreto di questo browser per approvare e revocare i consensi. Chi è collegato da prima lo chiede
+ * all'hub con il token del ponte (/bridge/secret). "" = hub di prima o irraggiungibile.
+ */
+const ensureBrowserSecret = async () => {
+  const saved = readBrowserSecret();
+  if (saved) return saved;
+  const token = readAgentToken();
+  if (!token) return "";
+  try {
+    const data = await postJson("/bridge/secret", { token });
+    if (typeof data.secret === "string") writeBrowserSecret(data.secret);
+  } catch {
+    // hub di prima della 1.6.0 o non raggiungibile: si riprova alla prossima richiesta
+  }
+  return readBrowserSecret();
+};
+
+/**
+ * «Revoca gli accessi di questo browser» ("browser"): l'hub toglie solo le concessioni approvate con
+ * il segreto di questo browser. "all" = «Scollega gli assistenti di tutti», dopo una conferma.
  * In entrambi i casi si revocano anche i permessi remoti di questo account nel cloud.
  * Restituisce l'errore da mostrare, null se riuscita.
  */
-export const revokeAgentAccess = async (scope: "account" | "all" = "account"): Promise<string | null> => {
+export const revokeAgentAccess = async (scope: Exclude<RevokeScope, "cloud"> = "browser"): Promise<string | null> => {
   const token = readAgentToken();
   if (!token) {
     const count = await revokeCloudGrants();
@@ -575,7 +597,12 @@ export const revokeAgentAccess = async (scope: "account" | "all" = "account"): P
     return error;
   }
   try {
-    const data = await postJson("/oauth/revoke", { token, browser: browserInfo(), ...(scope === "all" ? { scope: "all" } : {}) });
+    const plan = revokePlan({ scope, hubVersion, token, secret: scope === "all" ? "" : await ensureBrowserSecret() });
+    if (plan.kind !== "send") {
+      refresh({ error: AGENT_DESK_TEXT.noSecret, notice: "" });
+      return AGENT_DESK_TEXT.noSecret;
+    }
+    const data = await postJson("/oauth/revoke", plan.body);
     const count = await revokeCloudGrants();
     refresh({ error: "", notice: revokeNotice(parseRevokeOutcome(data, scope), count) });
     return null;
@@ -588,16 +615,17 @@ export const revokeAgentAccess = async (scope: "account" | "all" = "account"): P
 
 /**
  * «Scollega il connettore remoto»: i permessi remoti di questo account nel cloud e, con il browser
- * collegato, i token remoti dell'hub (dove vive il segreto). Il connettore principale resta.
+ * collegato, i token remoti dell'hub approvati da questo browser. Il connettore principale resta.
  */
 export const revokeRemoteConnector = async () => {
   const token = readAgentToken();
   let hubRevoked = 0;
   let error = "";
   // Un hub di prima della 1.6.0 scollegherebbe tutti: lì basta il permesso tolto nel cloud.
-  if (token && hubRevokesByAccount(hubVersion)) {
+  const plan = token ? revokePlan({ scope: "cloud", hubVersion, token, secret: await ensureBrowserSecret() }) : null;
+  if (plan?.kind === "send") {
     try {
-      const data = await postJson("/oauth/revoke", { token, browser: browserInfo(), scope: "cloud" });
+      const data = await postJson("/oauth/revoke", plan.body);
       hubRevoked = parseRevokeOutcome(data, "cloud").revoked;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Revoca non riuscita.";

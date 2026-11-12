@@ -4,13 +4,14 @@ import { cloudMcpPath, cloudSlug } from "../agent/accounts";
 import { agentCloudLabels } from "./labels";
 import { AGENT_DESK_TEXT } from "./labels/agents";
 
-export type RevokeScope = "account" | "cloud" | "all";
+/** "browser" = solo gli accessi approvati da questo browser; "cloud" = solo i suoi remoti; "all" = di tutti. */
+export type RevokeScope = "browser" | "cloud" | "all";
 
 export interface RevokeOutcome {
   scope: RevokeScope;
   /** Concessioni tolte (un assistente collegato = una concessione). */
   revoked: number;
-  /** Concessioni di prima della 1.6.0 che non dicono chi le ha date: restano. */
+  /** Concessioni senza browser che le ha approvate (di prima, o di un'app senza segreto): restano. */
   legacy: number;
 }
 
@@ -22,21 +23,39 @@ const count = (value: unknown) => (typeof value === "number" && Number.isInteger
  */
 export const parseRevokeOutcome = (data: unknown, asked: RevokeScope): RevokeOutcome => {
   const source = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
-  const scope: RevokeScope = source.scope === "account" || source.scope === "cloud" || source.scope === "all"
+  const scope: RevokeScope = source.scope === "browser" || source.scope === "cloud" || source.scope === "all"
     ? source.scope
     : "ok" in source ? "all" : asked;
   return { scope, revoked: count(source.revoked), legacy: count(source.legacy) };
 };
 
 /**
- * Versione dell'hub (`/health`) che revoca per account. Prima della 1.6.0 /oauth/revoke scollegava
- * tutti qualunque cosa chiedesse: la revoca del solo connettore remoto non va mandata lì.
+ * Versione dell'hub (`/health`) che revoca per browser. Prima della 1.6.0 /oauth/revoke scollegava
+ * tutti qualunque cosa chiedesse: lì non si manda mai una revoca limitata.
  */
-export const hubRevokesByAccount = (version: unknown) => {
+export const hubRevokesPerBrowser = (version: unknown) => {
   const match = typeof version === "string" ? /^(\d+)\.(\d+)\./.exec(version) : null;
   if (!match) return false;
   const [major, minor] = [Number(match[1]), Number(match[2])];
   return major > 1 || (major === 1 && minor >= 6);
+};
+
+export type RevokePlan =
+  | { kind: "send"; body: Record<string, string> }
+  /** Hub di prima con il connettore remoto: basta il permesso tolto nel cloud. */
+  | { kind: "skip" }
+  /** Questo browser non ha ancora il suo segreto: la revoca limitata non si può chiedere. */
+  | { kind: "noSecret" };
+
+/**
+ * Corpo di /oauth/revoke. Una revoca limitata porta il segreto di questo browser, mai il nome del
+ * profilo: l'hub toglie solo ciò che quel segreto ha approvato.
+ */
+export const revokePlan = ({ scope, hubVersion, token, secret }: { scope: RevokeScope; hubVersion: string; token: string; secret: string }): RevokePlan => {
+  if (scope === "all") return { kind: "send", body: { token, scope: "all" } };
+  if (scope === "cloud" && !hubRevokesPerBrowser(hubVersion)) return { kind: "skip" };
+  if (!secret) return { kind: "noSecret" };
+  return { kind: "send", body: scope === "cloud" ? { token, secret, scope: "cloud" } : { token, secret } };
 };
 
 /** Frase dopo una revoca: cosa è stato tolto, cosa resta e perché. `cloudGrants` = permessi remoti tolti nel cloud. */

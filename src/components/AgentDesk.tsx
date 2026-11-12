@@ -339,7 +339,7 @@ export function AgentSettings() {
       {link.paired || (cloudConfigured && signedIn) ? (
         <div className="grid grid-cols-1 gap-2">
           <div className="flex flex-wrap gap-2">
-            <Button variant="danger" icon="Shield" onClick={() => void revokeAgentAccess("account")}>
+            <Button variant="danger" icon="Shield" onClick={() => void revokeAgentAccess("browser")}>
               {AGENT_DESK_TEXT.revokeButton}
             </Button>
           </div>

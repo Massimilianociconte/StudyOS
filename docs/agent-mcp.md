@@ -61,7 +61,7 @@ condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
 versione 1.6.0 (`/health` la mostra dopo il deploy): rispetto alla 1.5.0 la revoca in
-Impostazioni → Agenti toglie solo gli accessi dati da chi la chiede (vedi «Revocare gli
+Impostazioni → Agenti toglie solo gli accessi approvati da quel browser (vedi «Revocare gli
 accessi»). La 1.5.0 aveva corretto fuso orario, serie ripetute, link della bacheca e limiti di
 `/register` e `/authorize`; la 1.4.0 aveva aggiunto il connettore remoto di un solo account
 (vedi sotto). Strumenti e parametri del
@@ -113,24 +113,49 @@ JSON e mai in stream.
 
 In **Impostazioni → Agenti** ci sono tre revoche, tutte con il browser collegato:
 
-- **«Revoca gli accessi che hai dato»** toglie gli assistenti che hai autorizzato tu con
-  «Consenti», anche il connettore remoto del tuo account, e le richieste ancora aperte per il
-  tuo connettore remoto. Gli assistenti autorizzati dalle altre persone sullo stesso
-  connettore restano. Un client che resta senza accessi viene tolto: per ridare l'accesso,
-  togli il connettore StudyOS nell'assistente e aggiungilo di nuovo.
+- **«Revoca gli accessi di questo browser»** toglie gli assistenti approvati con «Consenti» in
+  questo browser, anche il connettore remoto approvato qui, e i permessi remoti del tuo account
+  nel cloud. Gli assistenti approvati da altri browser restano, anche quelli tuoi su un altro
+  dispositivo: revocali da lì, oppure usa «Scollega gli assistenti di tutti». Un client che
+  resta senza accessi viene tolto: per ridare l'accesso, togli il connettore StudyOS
+  nell'assistente e aggiungilo di nuovo.
 - **«Scollega il connettore remoto»** toglie solo il connettore remoto del tuo account (vedi
   sotto); il connettore principale resta.
-- **«Scollega gli assistenti di tutti»**, dopo una conferma che lo dice, toglie token, consensi e
-  client di tutte le persone: ognuno dovrà ricollegare il connettore.
+- **«Scollega gli assistenti di tutti»**, in «Avanzate» e dopo una conferma che lo dice, toglie
+  token, consensi e client di tutte le persone: ognuno dovrà ricollegare il connettore.
 
-L'hub lega ogni accesso all'account del browser che ha premuto «Consenti» (dalla 1.6.0, il
-browser lo dice con `browser` in `/oauth/decide`). Gli accessi dati prima non dicono chi li ha
-autorizzati: «Revoca gli accessi che hai dato» non li tocca, li conta (`legacy`) e l'app spiega
-che per toglierli serve «Scollega gli assistenti di tutti». Quelli del connettore remoto invece
-si riconoscono dall'indirizzo `/u/<nome>/mcp`. Una richiesta di revoca che non dice di quale
-browser è (app di prima della 1.6.0) non toglie niente e chiede di ricaricare la pagina. L'app
-manda «Scollega il connettore remoto» all'hub solo se `/health` dice 1.6.0 o più: un hub di prima
-scollegherebbe tutti. Il permesso nel cloud si toglie comunque, e basta a fermare il connettore.
+### Il segreto del browser
+
+L'hub riconosce chi ha approvato un accesso da un segreto del browser, non dal nome del profilo
+(che chiunque può scrivere uguale o cambiare):
+
+- `/pair` restituisce, oltre al token del ponte, un segreto casuale di 256 bit (`secret`, 43
+  caratteri base64url). Un browser collegato prima lo chiede da solo all'avvio con
+  `/bridge/secret` (serve il token del ponte), senza ricollegarsi. Il browser lo tiene in
+  `localStorage` accanto al collegamento, e lo tiene anche dopo «Scollega questo browser», così
+  quello che ha approvato resta revocabile da lì.
+- `/oauth/decide` con «Consenti» manda `secret`. L'hub ne salva solo lo SHA-256 (`approver`) su
+  consenso, codice, token di accesso e di rinnovo. Il segreto in chiaro non viene salvato, non
+  va mai agli agenti MCP né in un URL: viaggia solo nel corpo delle richieste dal browser all'hub.
+- `/oauth/revoke` limitato (senza `scope`, o `scope: "cloud"` per i soli remoti) richiede
+  `secret` e toglie solo ciò che quel segreto ha approvato. Senza segreto valido risponde 400 e
+  non tocca niente: un'app di prima non scollega più tutti per sbaglio. La risposta conta solo
+  le concessioni di chi chiede (`revoked`) e quelle senza approvatore (`legacy`).
+- Gli accessi approvati prima, o da un'app senza segreto, non hanno approvatore: la revoca
+  limitata non li tocca, li conta in `legacy` e l'app spiega che per toglierli serve «Scollega
+  gli assistenti di tutti».
+
+Cosa protegge: chi conosce la chiave di collegamento (la stessa per tutti) non può revocare gli
+assistenti degli altri scrivendo il loro nome nel profilo, e rinominare il proprio profilo non
+fa perdere la revoca. Cosa non è: non è un'identità cloud né un account. Vale per un solo
+browser: un altro dispositivo della stessa persona ha un altro segreto, e chi cancella i dati
+del sito ne riceve uno nuovo (gli accessi approvati con il vecchio si tolgono solo con
+«Scollega gli assistenti di tutti»). Chi ha la chiave può comunque scollegare tutti con `scope:
+"all"`, come prima.
+
+L'app manda «Scollega il connettore remoto» all'hub solo se `/health` dice 1.6.0 o più: un hub di
+prima scollegherebbe tutti. Il permesso nel cloud si toglie comunque, e basta a fermare il
+connettore.
 
 ## Più account sullo stesso connettore
 
@@ -227,10 +252,11 @@ Differenze dal primo connettore:
   rifiutata: la risposta è un errore di conflitto, l'hub rilegge i dati e l'azione si può
   ripetere.
 
-«Scollega il connettore remoto» e «Revoca gli accessi che hai dato» in Impostazioni → Agenti
-revocano tutti i permessi remoti dell'account (anche senza browser collegato, con l'accesso
-all'account fatto) e i token remoti dell'hub: da lì il connettore risponde che il collegamento
-non è più valido, e per riaverlo serve un nuovo «Consenti».
+«Scollega il connettore remoto» e «Revoca gli accessi di questo browser» in Impostazioni →
+Agenti revocano tutti i permessi remoti dell'account (anche senza browser collegato, con
+l'accesso all'account fatto) e i token remoti dell'hub approvati da questo browser: da lì il
+connettore risponde che il collegamento non è più valido, e per riaverlo serve un nuovo
+«Consenti».
 
 Limite di CPU del piano Free: 10 ms per richiesta. Su un account di prova con 1340 righe
 (935 KB) ogni chiamata a Worker caldo costa 0,2–6 ms, la prima lettura completa

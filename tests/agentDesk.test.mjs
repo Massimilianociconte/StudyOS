@@ -2,35 +2,37 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   agentDeskStatus,
-  hubRevokesByAccount,
+  hubRevokesPerBrowser,
   pairFirstError,
   parseRevokeOutcome,
   remoteConnectorView,
-  revokeNotice
+  revokeNotice,
+  revokePlan
 } from "../src/lib/agentDesk.ts";
 import { AGENT_DESK_TEXT } from "../src/lib/labels/agents.ts";
 import { agentAccountLabels } from "../src/lib/labels.ts";
 
 const HUB = "https://studyos-agent.esempio.workers.dev";
 
-test("revoca: l'esito dice cosa è stato tolto e che gli assistenti degli altri restano", () => {
-  const mine = revokeNotice({ scope: "account", revoked: 2, legacy: 0 }, 0);
+test("revoca: l'esito dice cosa è stato tolto da questo browser e che il resto resta", () => {
+  const mine = revokeNotice({ scope: "browser", revoked: 2, legacy: 0 }, 0);
   assert.match(mine, /2 assistenti/);
-  assert.match(mine, /altre persone/);
+  assert.match(mine, /questo browser/);
   assert.doesNotMatch(mine, /prima dell'aggiornamento/);
-  assert.match(revokeNotice({ scope: "account", revoked: 1, legacy: 0 }, 0), /1 assistente /);
+  assert.match(revokeNotice({ scope: "browser", revoked: 1, legacy: 0 }, 0), /1 assistente /);
 
-  const none = revokeNotice({ scope: "account", revoked: 0, legacy: 0 }, 0);
+  const none = revokeNotice({ scope: "browser", revoked: 0, legacy: 0 }, 0);
   assert.match(none, /Nessun assistente/);
 
-  // Accessi di prima: non si sa di chi sono, restano e la frase dice come toglierli.
-  const legacy = revokeNotice({ scope: "account", revoked: 0, legacy: 1 }, 0);
+  // Accessi di prima: non dicono quale browser li ha approvati, restano e la frase dice come toglierli.
+  const legacy = revokeNotice({ scope: "browser", revoked: 0, legacy: 1 }, 0);
   assert.match(legacy, /1 collegamento/);
   assert.ok(legacy.includes(`«${AGENT_DESK_TEXT.revokeAllButton}»`), legacy);
-  assert.match(revokeNotice({ scope: "account", revoked: 0, legacy: 3 }, 0), /3 collegamenti/);
+  assert.match(legacy, /Avanzate/);
+  assert.match(revokeNotice({ scope: "browser", revoked: 0, legacy: 3 }, 0), /3 collegamenti/);
 
   // Il permesso cloud tolto insieme.
-  assert.ok(revokeNotice({ scope: "account", revoked: 1, legacy: 0 }, 1).includes("connettore remoto"));
+  assert.ok(revokeNotice({ scope: "browser", revoked: 1, legacy: 0 }, 1).includes("connettore remoto"));
 
   const all = revokeNotice({ scope: "all", revoked: 0, legacy: 0 }, 0);
   assert.match(all, /anche quelli delle altre persone/);
@@ -41,21 +43,35 @@ test("revoca: l'esito dice cosa è stato tolto e che gli assistenti degli altri 
 });
 
 test("revoca: la risposta dell'hub si legge senza fidarsi dei tipi", () => {
-  assert.deepEqual(parseRevokeOutcome({ scope: "account", revoked: 2, legacy: 1 }, "account"), { scope: "account", revoked: 2, legacy: 1 });
+  assert.deepEqual(parseRevokeOutcome({ scope: "browser", revoked: 2, legacy: 1 }, "browser"), { scope: "browser", revoked: 2, legacy: 1 });
   assert.deepEqual(parseRevokeOutcome({ revoked: "molti", legacy: -4 }, "cloud"), { scope: "cloud", revoked: 0, legacy: 0 });
   assert.deepEqual(parseRevokeOutcome(null, "all"), { scope: "all", revoked: 0, legacy: 0 });
   // Un hub di prima (1.5.0) risponde { ok: true } e ha scollegato tutti.
-  assert.deepEqual(parseRevokeOutcome({ ok: true }, "account"), { scope: "all", revoked: 0, legacy: 0 });
+  assert.deepEqual(parseRevokeOutcome({ ok: true }, "browser"), { scope: "all", revoked: 0, legacy: 0 });
 });
 
-test("revoca: solo un hub dalla 1.6.0 sa revocare per account (prima scollegava tutti)", () => {
-  assert.equal(hubRevokesByAccount("1.6.0"), true);
-  assert.equal(hubRevokesByAccount("1.10.2"), true);
-  assert.equal(hubRevokesByAccount("2.0.0"), true);
-  assert.equal(hubRevokesByAccount("1.5.0"), false);
-  assert.equal(hubRevokesByAccount("0.9.9"), false);
-  assert.equal(hubRevokesByAccount(undefined), false);
-  assert.equal(hubRevokesByAccount("ultima"), false);
+test("revoca: solo un hub dalla 1.6.0 sa revocare per browser (prima scollegava tutti)", () => {
+  assert.equal(hubRevokesPerBrowser("1.6.0"), true);
+  assert.equal(hubRevokesPerBrowser("1.10.2"), true);
+  assert.equal(hubRevokesPerBrowser("2.0.0"), true);
+  assert.equal(hubRevokesPerBrowser("1.5.0"), false);
+  assert.equal(hubRevokesPerBrowser("0.9.9"), false);
+  assert.equal(hubRevokesPerBrowser(undefined), false);
+  assert.equal(hubRevokesPerBrowser("ultima"), false);
+});
+
+test("revoca: la richiesta porta il segreto del browser, mai il nome; senza segreto non parte", () => {
+  const base = { token: "tok", secret: "s".repeat(43), hubVersion: "1.6.0" };
+  assert.deepEqual(revokePlan({ ...base, scope: "browser" }), { kind: "send", body: { token: "tok", secret: "s".repeat(43) } });
+  assert.deepEqual(revokePlan({ ...base, scope: "cloud" }), { kind: "send", body: { token: "tok", secret: "s".repeat(43), scope: "cloud" } });
+  assert.deepEqual(revokePlan({ ...base, scope: "all" }), { kind: "send", body: { token: "tok", scope: "all" } });
+  assert.deepEqual(revokePlan({ ...base, secret: "", scope: "browser" }), { kind: "noSecret" });
+  assert.deepEqual(revokePlan({ ...base, secret: "", scope: "cloud" }), { kind: "noSecret" });
+  // Remoto su un hub di prima: solo il permesso nel cloud, l'hub scollegherebbe tutti.
+  assert.deepEqual(revokePlan({ ...base, hubVersion: "1.5.0", scope: "cloud" }), { kind: "skip" });
+  for (const plan of [revokePlan({ ...base, scope: "browser" }), revokePlan({ ...base, scope: "cloud" })]) {
+    assert.equal("browser" in plan.body, false);
+  }
 });
 
 test("parole giuste: «chiave» sul sito pubblicato, «codice» con npm run agent", () => {

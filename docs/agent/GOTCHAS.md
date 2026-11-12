@@ -316,18 +316,22 @@
   non sono quelli del Worker: misura `cpuTime` con `wrangler tail` sull'account vero prima di
   concludere che serve il piano a pagamento.
 - Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
-  legato al token OAuth); il database ne tiene l'hash. «Revoca gli accessi che hai dato» e
+  legato al token OAuth); il database ne tiene l'hash. «Revoca gli accessi di questo browser» e
   «Scollega il connettore remoto» revocano tutti i permessi dell'account
   (`studyos_revoke_agent_grants`), anche a browser scollegato.
-- Revoca per account (hub 1.6.0): ogni token porta `account`, l'accountKey del browser che ha
-  deciso il consenso (`browser` in `/oauth/decide`). `/oauth/revoke` senza `scope` toglie solo le
-  concessioni di quell'account (`revokeAccount`), `scope: "cloud"` solo i suoi connettori remoti,
-  `scope: "all"` tutti (`revokeAll`, solo dopo la conferma nell'app). Una richiesta senza
-  `browser` non tocca niente (400): un'app di prima non deve più scollegare tutti per sbaglio. I
-  token di prima senza `account` restano e si contano in `legacy`, salvo quelli remoti, che
-  l'indirizzo `/u/<nome>/mcp` attribuisce. Un client si toglie solo se aveva qualcosa di
-  quell'account e resta senza niente: mai i client di altri, anche se fermi. L'app non manda
-  `scope: "cloud"` a un hub sotto la 1.6.0 (`hubRevokesByAccount`), che scollegherebbe tutti.
+- Revoca per browser (hub 1.6.0): mai attribuire una revoca al nome del profilo o all'accountKey,
+  che chiunque con la chiave può copiare o cambiare. L'hub dà a ogni browser un segreto casuale di
+  256 bit (`/pair`, o `/bridge/secret` per chi era collegato prima, chiesto da solo all'avvio) e
+  salva solo il suo SHA-256 (`approver`) su consenso, codice e token approvati con quel segreto
+  (`secret` in `/oauth/decide`). `/oauth/revoke` senza `scope` o con `scope: "cloud"` vuole il
+  segreto e toglie solo ciò che ha approvato (`revokeApprover`); `scope: "all"` toglie tutto
+  (`revokeAll`, solo dopo la conferma nell'app). Senza segreto valido: 400, niente tolto. Le
+  concessioni senza `approver` (di prima) restano e si contano in `legacy`. Il segreto non va mai
+  agli agenti MCP, in un URL o nello stato salvato dell'hub; il browser lo tiene anche dopo
+  «Scollega questo browser». Non è un'identità cloud: un altro dispositivo ha un altro segreto.
+  Un client si toglie solo se aveva qualcosa di quel segreto e resta senza niente. L'app non
+  manda `scope: "cloud"` a un hub sotto la 1.6.0 (`hubRevokesPerBrowser`), che scollegherebbe
+  tutti.
 - OAuth dell'hub: `/register` e `/authorize` sono aperti a chiunque. `oauth.ts` tiene al massimo
   50 client (al limite toglie quelli senza token, consensi o codici, dal più vecchio, ma non nei
   2 minuti dopo la registrazione; una registrazione mai usata scade dopo 24 ore) e 5 consensi

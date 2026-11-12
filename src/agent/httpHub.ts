@@ -18,7 +18,7 @@ import { toolSummary } from "./catalog";
 import { choosePoller, siteFromOrigin, type BridgeSite } from "./hubEndpoint";
 import { ResultLedger } from "./ledger";
 import { handleMcpRpc } from "./mcp";
-import { OauthServer, REQUEST_TTL_MS, randomToken, timingSafeEqual, type CloudGrantRecord, type PersistedOauth } from "./oauth";
+import { OauthServer, REQUEST_TTL_MS, randomToken, sha256Base64Url, timingSafeEqual, type CloudGrantRecord, type PersistedOauth } from "./oauth";
 import type { AgentActor, AgentCallResult } from "./types";
 import type { CloudRunner } from "./cloudRunner";
 import { isTimeZone } from "./zonedDate";
@@ -187,6 +187,9 @@ interface Waiter {
 }
 
 const emptyOauth = (): PersistedOauth => ({ clients: [], access: [], refresh: [] });
+
+/** Segreto di un browser come lo dà l'hub: 32 byte casuali in base64url (43 caratteri, 256 bit). */
+const isBrowserSecret = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value);
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -506,11 +509,12 @@ export class HttpHub {
         if (this.options.pairMode === "code") this.pairCode = "";
         this.pairFailureTimes = [];
         await this.markDirty();
-        return this.json(200, { token: this.bridgeToken });
+        // Segreto di questo browser: approva e revoca i suoi consensi. L'hub non lo conserva.
+        return this.json(200, { token: this.bridgeToken, secret: randomToken(32) });
       });
     }
-    if (request.method === "POST" && (url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat" || url.pathname === "/bridge/forget" || url.pathname === "/bridge/result" || url.pathname === "/oauth/decide" || url.pathname === "/oauth/revoke")) {
-      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[]; browser?: unknown; cloud?: unknown; scope?: unknown };
+    if (request.method === "POST" && (url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat" || url.pathname === "/bridge/forget" || url.pathname === "/bridge/result" || url.pathname === "/bridge/secret" || url.pathname === "/oauth/decide" || url.pathname === "/oauth/revoke")) {
+      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[]; browser?: unknown; cloud?: unknown; scope?: unknown; secret?: unknown };
       const site = siteFromOrigin(origin);
       const asksWork = url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat";
       const allowed = await this.exclusive(async () => {
@@ -524,6 +528,9 @@ export class HttpHub {
       });
       if (!allowed) return this.json(401, { error: "Collegamento non riconosciuto." });
       if (url.pathname === "/bridge/heartbeat") return this.json(200, { ok: true });
+      // Browser collegato prima dei segreti: ne riceve uno con il token del ponte, senza la chiave.
+      // Un segreto nuovo non apre niente: vale solo per i consensi che approverà.
+      if (url.pathname === "/bridge/secret") return this.json(200, { secret: randomToken(32) });
       if (url.pathname === "/bridge/forget") {
         // Il browser si scollega: il suo account sparisce dalle scelte se non ha altri browser.
         const info = parseBrowserInfo(body.browser);
@@ -554,8 +561,10 @@ export class HttpHub {
             }
             cloud = { secret: raw.secret, timeZone: raw.timeZone };
           }
-          // Chi decide: la sua revoca toglierà questa concessione. Un'app di prima non lo dice.
-          const decided = this.oauth.decide(body.requestId ?? "", body.approve === true, body.scopes ?? [], undefined, cloud, this.browserAccount(body.browser));
+          // Il segreto del browser che decide lega a lui la concessione; un'app di prima non lo manda.
+          if (body.secret !== undefined && !isBrowserSecret(body.secret)) return this.json(400, { error: "Segreto del browser non valido: ricarica la pagina e riprova." });
+          const approver = isBrowserSecret(body.secret) ? await sha256Base64Url(body.secret) : undefined;
+          const decided = this.oauth.decide(body.requestId ?? "", body.approve === true, body.scopes ?? [], undefined, cloud, approver);
           if (!decided.ok) return this.json(400, { error: decided.error });
           await this.markDirty();
           return this.json(200, { ok: true });
@@ -563,30 +572,23 @@ export class HttpHub {
       }
       if (url.pathname === "/oauth/revoke") {
         return this.exclusive(async () => {
-          // "all" scollega gli assistenti di tutti; senza scope solo quelli dati da questo account,
-          // "cloud" solo i suoi connettori remoti. Un'app di prima non dice chi è: non si tocca niente.
+          // "all" scollega gli assistenti di tutti (dopo la conferma nell'app). Senza scope solo quelli
+          // approvati con il segreto di questo browser, "cloud" solo i suoi remoti. Il nome del profilo
+          // non conta: chiunque può dichiararlo. Senza segreto (app di prima) non si tocca niente.
           if (body.scope === "all") {
             this.oauth.revokeAll();
             this.dropStaleConsents();
             await this.markDirty();
             return this.json(200, { ok: true, scope: "all" });
           }
-          if (!parseBrowserInfo(body.browser)) {
-            return this.json(400, { error: "Ricarica la pagina e riprova: questa versione di StudyOS non dice di quale account sono gli accessi da revocare." });
-          }
-          const account = this.browserAccount(body.browser);
-          if (account === undefined) {
-            return this.json(409, { error: "L'hub non conosce ancora questo browser: sblocca StudyOS, aspetta qualche secondo e riprova." });
+          if (!isBrowserSecret(body.secret)) {
+            return this.json(400, { error: "Ricarica la pagina e riprova: questa versione di StudyOS non sa revocare solo gli accessi di questo browser." });
           }
           const cloudOnly = body.scope === "cloud";
-          const owns = (resource: string) => {
-            const target = this.cloudAccount(resource);
-            return target.ok && target.key === account;
-          };
-          const result = this.oauth.revokeAccount(account, owns, cloudOnly);
+          const result = this.oauth.revokeApprover(await sha256Base64Url(body.secret), cloudOnly);
           this.dropStaleConsents();
           await this.markDirty();
-          return this.json(200, { ok: true, scope: cloudOnly ? "cloud" : "account", ...result });
+          return this.json(200, { ok: true, scope: cloudOnly ? "cloud" : "browser", ...result });
         });
       }
       const job = await this.poll(site, allowed.account);
@@ -863,17 +865,6 @@ export class HttpHub {
 
   private bridgeAuthorized(token: string) {
     return Boolean(token) && timingSafeEqual(token, this.bridgeToken);
-  }
-
-  /**
-   * Account del browser che chiede (consenso, revoca): il nome che manda o, a vault chiuso, quello
-   * che l'hub conosce già. undefined = non si sa (app di prima, browser mai visto).
-   */
-  private browserAccount(value: unknown): string | undefined {
-    const info = parseBrowserInfo(value);
-    if (!info) return undefined;
-    if (info.name !== undefined) return accountKeyOf(info.name);
-    return this.browsers.get(info.id)?.key;
   }
 
   /** Account dell'indirizzo di un connettore remoto, con la stessa regola dei nomi in chat. */

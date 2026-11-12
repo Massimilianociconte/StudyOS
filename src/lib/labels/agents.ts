@@ -46,22 +46,25 @@ export const AGENT_DESK_TEXT = {
     none: "Nessun connettore remoto risultava collegato a questo account."
   },
 
-  revokeButton: "Revoca gli accessi che hai dato",
+  /** Toglie solo ciò che questo browser ha approvato (l'hub lo riconosce dal suo segreto, non dal nome). */
+  revokeButton: "Revoca gli accessi di questo browser",
   revokeAllButton: "Scollega gli assistenti di tutti",
   revokeAllConfirm:
     "Scollega gli assistenti di tutte le persone che usano questo connettore, non solo i tuoi. Ognuno dovrà togliere il connettore StudyOS in ChatGPT o Claude e aggiungerlo di nuovo.",
   revokeAllConfirmLabel: "Scollega tutti",
+  /** Il browser non ha ancora il suo segreto (hub irraggiungibile quando l'ha chiesto). */
+  noSecret: "Questo browser non ha ancora il suo segreto per le revoche: ricarica la pagina e riprova.",
 
-  /** Esito di «Revoca gli accessi che hai dato». */
+  /** Esito di «Revoca gli accessi di questo browser». */
   revokedMine: (count: number) =>
     count > 0
-      ? `Hai tolto l'accesso a ${assistants(count)} che avevi autorizzato tu. Gli assistenti delle altre persone restano collegati.`
-      : "Nessun assistente risultava autorizzato da questo account.",
-  /** Accessi dati prima della 1.6.0 dell'hub: non dicono chi li ha autorizzati. */
+      ? `Hai tolto l'accesso a ${assistants(count)} ${count === 1 ? "approvato" : "approvati"} da questo browser. Gli altri assistenti restano collegati.`
+      : "Nessun assistente risultava approvato da questo browser.",
+  /** Accessi senza browser che li ha approvati (di prima dell'aggiornamento, o da un'app senza segreto). */
   revokedLegacy: (count: number, allButton: string) =>
     count === 1
-      ? `${links(count)} di prima dell'aggiornamento non dice chi l'ha autorizzato e resta attivo. Se era tuo, usa «${allButton}»: scollega anche gli assistenti delle altre persone.`
-      : `${links(count)} di prima dell'aggiornamento non dicono chi li ha autorizzati e restano attivi. Se erano tuoi, usa «${allButton}»: scollega anche gli assistenti delle altre persone.`,
+      ? `${links(count)} di prima dell'aggiornamento non dice quale browser l'ha approvato e resta attivo. Se era tuo, usa «${allButton}» in Avanzate: scollega anche gli assistenti delle altre persone.`
+      : `${links(count)} di prima dell'aggiornamento non dicono quale browser li ha approvati e restano attivi. Se erano tuoi, usa «${allButton}» in Avanzate: scollega anche gli assistenti delle altre persone.`,
   revokedAll:
     "Tutti gli assistenti sono scollegati, anche quelli delle altre persone che usano questo connettore. Per ricollegarne uno, toglilo e aggiungilo di nuovo in ChatGPT o Claude.",
   browserStays: "Questo browser resta collegato.",

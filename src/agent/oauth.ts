@@ -28,10 +28,11 @@ export interface AccessRecord {
   /** Solo per il connettore remoto. */
   cloud?: CloudGrantRecord;
   /**
-   * accountKey di chi ha dato il consenso (il browser che ha premuto «Consenti»): la revoca di
-   * quell'account toglie questa concessione. Assente = concessione di prima della 1.6.0.
+   * SHA-256 del segreto del browser che ha premuto «Consenti» (l'hub lo dà a /pair o a
+   * /bridge/secret e non lo conserva): solo chi ha quel segreto revoca questa concessione senza
+   * scollegare tutti. Assente = concessione di prima, o di un browser senza segreto.
    */
-  account?: string;
+  approver?: string;
 }
 
 export interface RefreshRecord extends AccessRecord {
@@ -47,7 +48,7 @@ interface AuthRequest {
   resource: string;
   scopes: AgentScope[];
   expiresAt: number;
-  decision?: { approve: boolean; scopes: AgentDataScope[]; cloud?: CloudGrantRecord; account?: string };
+  decision?: { approve: boolean; scopes: AgentDataScope[]; cloud?: CloudGrantRecord; approver?: string };
   code?: string;
   redirectTo?: string;
 }
@@ -316,10 +317,10 @@ export class OauthServer {
 
   /**
    * Decisione della persona nell'app. Per un connettore remoto l'approvazione porta il permesso
-   * cloud creato dall'app (`cloud`), che resta legato ai token di questa concessione. `account` è
-   * l'account del browser che decide: la sua revoca toglie questa concessione.
+   * cloud creato dall'app (`cloud`), che resta legato ai token di questa concessione. `approver` è
+   * l'hash del segreto del browser che decide: con quel segreto si revoca questa concessione.
    */
-  decide(requestId: string, approve: boolean, scopes: readonly string[], now = this.now(), cloud?: CloudGrantRecord, account?: string): { ok: true; redirectTo: string } | { ok: false; error: string } {
+  decide(requestId: string, approve: boolean, scopes: readonly string[], now = this.now(), cloud?: CloudGrantRecord, approver?: string): { ok: true; redirectTo: string } | { ok: false; error: string } {
     const request = this.requests.get(requestId);
     if (!request || request.expiresAt <= now) return { ok: false, error: "Richiesta di accesso scaduta." };
     if (request.decision) return { ok: false, error: "Richiesta già decisa." };
@@ -334,7 +335,7 @@ export class OauthServer {
       approve: true,
       scopes: granted,
       ...(this.isCloudResource(request.resource) && cloud ? { cloud: { ...cloud } } : {}),
-      ...(account !== undefined ? { account } : {})
+      ...(approver ? { approver } : {})
     };
     const code = randomToken(32);
     request.code = code;
@@ -392,47 +393,38 @@ export class OauthServer {
   }
 
   /**
-   * «Revoca gli accessi che hai dato» in StudyOS: toglie solo le concessioni di `account` (token,
-   * codici, consensi già decisi), le richieste aperte per i suoi connettori remoti e i client rimasti
-   * senza niente. Una concessione senza account (di prima della 1.6.0) è sua solo se è di un suo
-   * connettore remoto, e lo dice `owns` dall'indirizzo. Le altre di prima restano e si contano in
-   * `legacy`: per toglierle serve `revokeAll`. `cloudOnly` = solo i connettori remoti.
+   * «Revoca gli accessi approvati da questo browser»: toglie solo le concessioni approvate con il
+   * segreto il cui hash è `approver` (token, codici, consensi già decisi) e i client rimasti senza
+   * niente. Le concessioni senza approvatore (di prima, o di un browser senza segreto) restano e si
+   * contano in `legacy`: per toglierle serve `revokeAll`. `cloudOnly` = solo i connettori remoti.
+   * Il nome dell'account non conta: chiunque può dichiararlo.
    */
-  revokeAccount(account: string, owns: (resource: string) => boolean, cloudOnly = false): { revoked: number; legacy: number } {
+  revokeApprover(approver: string, cloudOnly = false): { revoked: number; legacy: number } {
     this.prune();
     const inScope = (resource: string) => !cloudOnly || this.isCloudResource(resource);
-    const ownerOf = (record: AccessRecord) => {
-      if (record.account !== undefined) return record.account;
-      return this.isCloudResource(record.resource) && owns(record.resource) ? account : undefined;
-    };
     const touched = new Set<string>();
     const revoked = new Set<string>();
     const legacy = new Set<string>();
     for (const store of [this.access, this.refresh] as Array<Map<string, AccessRecord>>) {
       for (const [hash, record] of store) {
         if (!inScope(record.resource)) continue;
-        const owner = ownerOf(record);
         const grant = record.family ?? hash;
-        if (owner === account) {
+        if (record.approver === approver) {
           store.delete(hash);
           touched.add(record.clientId);
           revoked.add(grant);
-        } else if (owner === undefined && !this.isCloudResource(record.resource)) {
+        } else if (!record.approver) {
           legacy.add(grant);
         }
       }
     }
     for (const [code, stored] of this.codes) {
-      if (!inScope(stored.request.resource) || stored.request.decision?.account !== account) continue;
+      if (!inScope(stored.request.resource) || stored.request.decision?.approver !== approver) continue;
       this.codes.delete(code);
       touched.add(stored.request.clientId);
     }
     for (const [id, request] of this.requests) {
-      if (!inScope(request.resource)) continue;
-      const mine = request.decision
-        ? request.decision.account === account
-        : this.isCloudResource(request.resource) && owns(request.resource);
-      if (!mine) continue;
+      if (!inScope(request.resource) || request.decision?.approver !== approver) continue;
       this.requests.delete(id);
       touched.add(request.clientId);
     }
@@ -468,7 +460,7 @@ export class OauthServer {
     if (!timingSafeEqual(challenge, stored.request.codeChallenge)) return { ok: false as const, status: 400, error: "invalid_grant" };
     stored.used = true;
     this.codes.delete(code);
-    return { ok: true as const, body: await this.issue(client, stored.scopes, now, randomToken(8), stored.request.resource, stored.request.decision?.cloud, stored.request.decision?.account) };
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now, randomToken(8), stored.request.resource, stored.request.decision?.cloud, stored.request.decision?.approver) };
   }
 
   private async exchangeRefresh(form: URLSearchParams, client: OAuthClient, now: number, target: string | undefined) {
@@ -478,10 +470,10 @@ export class OauthServer {
     if (!stored || stored.expiresAt <= now || stored.clientId !== client.clientId) return { ok: false as const, status: 400, error: "invalid_grant" };
     if (target && target !== (stored.resource || this.canonical)) return { ok: false as const, status: 400, error: "invalid_target" };
     this.refresh.delete(hash);
-    return { ok: true as const, body: await this.issue(client, stored.scopes, now, stored.family, stored.resource || this.canonical, stored.cloud, stored.account) };
+    return { ok: true as const, body: await this.issue(client, stored.scopes, now, stored.family, stored.resource || this.canonical, stored.cloud, stored.approver) };
   }
 
-  private async issue(client: OAuthClient, scopes: AgentDataScope[], now: number, family: string, resource: string, cloud?: CloudGrantRecord, account?: string) {
+  private async issue(client: OAuthClient, scopes: AgentDataScope[], now: number, family: string, resource: string, cloud?: CloudGrantRecord, approver?: string) {
     const access = randomToken(32);
     const refresh = randomToken(32);
     const record: AccessRecord = {
@@ -492,7 +484,7 @@ export class OauthServer {
       expiresAt: now + ACCESS_TTL_MS,
       family,
       ...(cloud ? { cloud: { ...cloud } } : {}),
-      ...(account !== undefined ? { account } : {})
+      ...(approver ? { approver } : {})
     };
     this.access.set(await sha256Base64Url(access), record);
     this.refresh.set(await sha256Base64Url(refresh), { ...record, expiresAt: now + REFRESH_TTL_MS, family });
