@@ -269,6 +269,28 @@ export const validateDraft = (draft: EventDraft, { subjectRequired = false }: { 
   return "";
 };
 
+/**
+ * Inizio proposto per un nuovo evento sul giorno `day`: l'ora toccata se `day` ne ha una (griglia
+ * oraria); oggi la prossima mezz'ora (alle 4:46 → 5:00, alle 4:10 → 4:30, mai l'ora esatta di adesso);
+ * un altro giorno le 9:00.
+ */
+export const proposedStart = (day: Date, now: Date = new Date()) => {
+  if (day.getHours() || day.getMinutes()) {
+    const selected = new Date(day);
+    selected.setSeconds(0, 0);
+    return selected;
+  }
+  if (day.getFullYear() === now.getFullYear() && day.getMonth() === now.getMonth() && day.getDate() === now.getDate()) {
+    const next = new Date(now);
+    next.setSeconds(0, 0);
+    next.setMinutes(next.getMinutes() < 30 ? 30 : 60);
+    return next;
+  }
+  const morning = new Date(day);
+  morning.setHours(9, 0, 0, 0);
+  return morning;
+};
+
 /** Durata in minuti (con orario), 0 se non calcolabile. */
 export const draftDuration = (draft: Pick<EventDraft, "start" | "end">) => {
   const minutes = Math.round((localMs(draft.end) - localMs(draft.start)) / MINUTE_MS);

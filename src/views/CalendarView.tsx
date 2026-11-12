@@ -41,7 +41,6 @@ import {
   type PageAction
 } from "../components/ui";
 import { Icon } from "../components/Icon";
-import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
 import { CalendarTransfer, transferMenuItem, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
@@ -82,7 +81,6 @@ import {
   TYPE_COLORS_TEXT,
   VACATION_FORM_TEXT
 } from "../lib/labels/calendar";
-import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
@@ -257,7 +255,6 @@ export function CalendarView() {
   const [fullForm, setFullForm] = useState<{ id: string; draft: EventDraft } | null>(null);
   const [typeColorsOpen, setTypeColorsOpen] = useState(false);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
-  const [barbImportOpen, setBarbImportOpen] = useState(false);
   const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
   const transfer = useRef<CalendarTransferHandle>(null);
   const {
@@ -656,7 +653,8 @@ export function CalendarView() {
           <PageActions
             primary={
               phone ? undefined : (
-                <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
+                // Oggi se si vede, altrimenti il primo giorno mostrato; l'ora è la prossima mezz'ora (o le 9).
+                <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)))}>
                   {CALENDAR_TEXT.newEvent}
                 </Button>
               )
@@ -676,9 +674,9 @@ export function CalendarView() {
                 : []),
               { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
               { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
-              { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
               transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
+              // Date ufficiali e «Aggiungi appelli ufficiali» nello stesso posto: la scheda degli appelli ufficiali.
               {
                 label: CALENDAR_TEXT.officialDates,
                 icon: "Landmark",
@@ -695,7 +693,6 @@ export function CalendarView() {
         }
       />
       <CalendarTransfer ref={transfer} />
-      {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
       {typeColorsOpen ? (
         <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
       ) : null}

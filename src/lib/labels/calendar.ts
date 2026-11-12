@@ -9,7 +9,8 @@ export const CALENDAR_TEXT = {
   importFile: "Importa da un altro calendario",
   exportFile: "Esporta il calendario",
   share: "Condividi",
-  officialDates: "Date ufficiali degli appelli",
+  /** Una voce per le date ufficiali e per aggiungerle al calendario (scheda «Date ufficiali» di Esami, con «Aggiungi appelli ufficiali»). */
+  officialDates: "Appelli ufficiali",
   subjectSummary: "Riepilogo per materia",
   examSummary: "Riepilogo esami",
   backToCalendar: "Torna al calendario",

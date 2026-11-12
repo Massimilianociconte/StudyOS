@@ -14,6 +14,7 @@ import {
   followingPatch,
   initialColorCustom,
   newEventDraft,
+  proposedStart,
   recipientEventUpdate,
   reminderChoices,
   removeReminder,
@@ -66,6 +67,17 @@ test("nuovo evento: un'ora dall'inizio scelto, colore della tipologia", () => {
   assert.equal(draft.repeat, null);
   // Con una materia, Studio prende il colore della materia.
   assert.equal(newEventDraft({ start: at(2026, 11, 12, 10), subjectId: "s1", subjectColor: "#123456" }).color, "#123456");
+});
+
+test("nuovo evento: oggi parte alla prossima mezz'ora, un altro giorno alle 9, l'ora toccata resta", () => {
+  const now = new Date(2026, 10, 12, 4, 46, 31);
+  const today = new Date(2026, 10, 12);
+  const hhmm = (date) => `${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
+  assert.equal(hhmm(proposedStart(today, now)), "12 5:00", "non le 4:46 di adesso");
+  assert.equal(hhmm(proposedStart(today, new Date(2026, 10, 12, 4, 10))), "12 4:30");
+  assert.equal(hhmm(proposedStart(new Date(2026, 11, 14), now)), "14 9:00", "primo giorno mostrato (un'altra settimana)");
+  assert.equal(hhmm(proposedStart(new Date(2026, 11, 14, 15, 30), now)), "14 15:30", "ora toccata nella griglia");
+  assert.equal(proposedStart(today, now).getSeconds(), 0);
 });
 
 test("colore scelto a mano: esplicito, oppure dedotto per gli eventi di prima", () => {

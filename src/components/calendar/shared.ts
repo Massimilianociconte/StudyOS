@@ -1,11 +1,11 @@
 // Piccoli aiuti comuni alle viste del calendario: chi si può trascinare, materia mostrata, bordo
 // tratteggiato degli eventi altrui, punto del mouse per l'anteprima, orario proposto per un nuovo evento.
 import { useCallback, useSyncExternalStore, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
-import { isSameDay, setHours, startOfDay } from "date-fns";
 import type { CalendarEvent } from "../../types";
 import { subjectName } from "../../lib/selectors";
 import { ALL_DAY_LABEL } from "../../lib/labels";
 import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
+import { proposedStart } from "../../lib/eventEditor";
 import type { CalendarOccurrence, Handlers, PreviewPoint, ShownEvent, Subjects } from "./types";
 
 /** Si trascina solo ciò che si può modificare: gli eventi altrui in sola lettura non sono trascinabili. */
@@ -30,21 +30,8 @@ export const sharedOutline = (item: ShownEvent): CSSProperties =>
 
 export const pointerPoint = (event: ReactMouseEvent<HTMLElement>): PreviewPoint => ({ x: event.clientX, y: event.clientY });
 
-/** Prossima mezz'ora utile (o le 9:00 per un giorno senza orario). */
-export const defaultStartFor = (day: Date) => {
-  if (day.getHours() || day.getMinutes()) {
-    const selected = new Date(day);
-    selected.setSeconds(0, 0);
-    return selected;
-  }
-  if (isSameDay(day, new Date())) {
-    const next = new Date();
-    next.setSeconds(0, 0);
-    next.setMinutes(next.getMinutes() < 30 ? 30 : 60);
-    return next;
-  }
-  return setHours(startOfDay(day), 9);
-};
+/** Prossima mezz'ora utile oggi, l'ora toccata, o le 9:00 per un altro giorno (vedi `proposedStart`). */
+export const defaultStartFor = (day: Date) => proposedStart(day);
 
 export const allDayEventLabel = (event: CalendarEvent) => (event.tags?.includes("appello-importato") ? CALENDAR_VIEW_TEXT.examDate : ALL_DAY_LABEL);
 
