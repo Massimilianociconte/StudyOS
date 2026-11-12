@@ -812,7 +812,8 @@ function GettingStarted({
                 )}
               </button>
               {askDegree ? (
-                <label className="block min-w-0 px-3 pb-3">
+                // pt-2: l'anello del focus del pulsante sopra (3 px + 3 px di distanza) non copre l'etichetta.
+                <label className="block min-w-0 px-3 pb-3 pt-2">
                   <span className="mb-1 block text-xs font-bold text-[var(--muted)]">{HOME_GUIDE_TEXT.degreeLabel}</span>
                   <select className={inputClass} value={degree} onChange={(event) => onDegree(event.target.value as DegreeProgramId)}>
                     {DEGREE_PROGRAM_IDS.map((id) => (
