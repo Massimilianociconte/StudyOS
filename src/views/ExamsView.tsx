@@ -160,6 +160,7 @@ function PersonalExamsView({
   // Il modulo com'era all'apertura: Esc, ✕ o tocco fuori con dati cambiati chiedono «Scartare le modifiche?».
   const [pristine, setPristine] = useState<ExamDraft>(() => draft);
   const [asking, setAsking] = useState(false);
+  const promptRef = useRef<HTMLDivElement>(null);
   /** Riempie il modulo e ne fa la versione «com'era all'apertura». */
   const startDraft = (next: ExamDraft) => {
     setDraft(next);
@@ -279,10 +280,20 @@ function PersonalExamsView({
     onEditingChange(null);
   };
 
-  /** Esc, ✕, tocco fuori: con dati cambiati chiede prima, al posto dei pulsanti in fondo. */
+  /**
+   * Esc, ✕, tocco fuori: con dati cambiati chiede prima, al posto dei pulsanti in fondo. Se la
+   * domanda c'è già (magari scorsa via, in fondo al modulo), ci riporta su «Continua a modificare».
+   */
   const requestClose = () => {
-    if (examDraftChanged(draft, pristine)) setAsking(true);
-    else closeForm();
+    if (!examDraftChanged(draft, pristine)) closeForm();
+    else if (asking) showPrompt();
+    else setAsking(true);
+  };
+  // Il fuoco da solo non scorre se è già lì (tocco fuori e Esc non lo spostano): si scorre anche.
+  const showPrompt = () => {
+    const prompt = promptRef.current;
+    prompt?.scrollIntoView({ block: "nearest" });
+    prompt?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   };
 
   const followLink = (target: ExamLinkTarget, subjectId: string) => {
@@ -691,7 +702,7 @@ function PersonalExamsView({
 
               {asking ? (
                 // Stesso schema dei pannelli (Attività, Materie, Obiettivi): chiudere con dati cambiati chiede prima, sul posto.
-                <div role="group" aria-label={EXAMS_TEXT.unsavedTitle} className="mt-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+                <div ref={promptRef} role="group" aria-label={EXAMS_TEXT.unsavedTitle} className="mt-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
                   <p className="text-sm font-black">{EXAMS_TEXT.unsavedTitle}</p>
                   <p className="text-sm font-bold text-[var(--muted)]">{EXAMS_TEXT.unsavedText}</p>
                   <div className="mt-2 flex flex-wrap justify-end gap-2">
