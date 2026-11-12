@@ -9,7 +9,9 @@ const {
   examPrefillFromEvent,
   findCalendarExam,
   isNullableCalendarExamRef,
-  removalUndo,
+  removalEntries,
+  removalFootprint,
+  removalUndoPlan,
   removeCalendarExam
 } = await import("../src/lib/calendarExams.ts");
 const { expandEvents } = await import("../src/lib/recurrence.ts");
@@ -157,23 +159,94 @@ test("calendarExamRemoval: evento singolo con deleteEvent, giorno di una serie c
   assert.deepEqual(calendarExamRemoval(row), { kind: "occurrence", seriesId: "s", date: "2026-11-16" });
 });
 
-test("removalUndo: rimette ciò che è sparito o cambiato, toglie ciò che è nato", () => {
+test("removalFootprint: solo l'evento tolto (con le sue righe), la riga annullata e i collegati", () => {
+  const linkedToX1 = { id: "a1", name: "Slide", linkedEntityType: "calendarEvent", linkedEntityId: "x1", updatedAt: OLD };
+  const linkedToSeries = { id: "a2", name: "Programma", linkedEntityType: "calendarEvent", linkedEntityId: "s", updatedAt: OLD };
+  const free = { id: "a3", name: "Altro", updatedAt: OLD };
+  const note = { id: "n1", title: "N", body: "b", linkedEntityType: "calendarEvent", linkedEntityId: "x1", updatedAt: OLD };
+  const state = { events: [SINGLE, SERIES, event({ id: "other", start: SINGLE.start, end: SINGLE.end })], attachments: [linkedToX1, linkedToSeries, free], notes: [note] };
+  assert.deepEqual(removalFootprint(state, { kind: "event", id: "x1" }), { events: ["x1"], attachments: ["a1"], notes: ["n1"] });
+  // Un giorno della serie: solo la riga `serie@giorno`; la serie resta, i suoi allegati restano collegati.
+  assert.deepEqual(removalFootprint(state, { kind: "occurrence", seriesId: "s", date: "2026-11-16" }), { events: ["s@2026-11-16"], attachments: [], notes: [] });
+  // Una serie tolta per intero si porta via le sue righe (e i loro collegati).
+  const row = { ...SERIES, id: "s@2026-11-23", seriesId: "s", originalDate: "2026-11-23", title: "Spostata" };
+  const withRow = { ...state, events: [...state.events, row], notes: [{ ...note, id: "n2", linkedEntityId: "s@2026-11-23" }] };
+  assert.deepEqual(removalFootprint(withRow, { kind: "event", id: "s" }), { events: ["s", "s@2026-11-23"], attachments: ["a2"], notes: ["n2"] });
+});
+
+test("removalUndoPlan: rimette solo ciò che la rimozione ha cambiato, e solo se nessuno l'ha toccato dopo", () => {
   const attachment = { id: "a1", name: "Slide", linkedEntityType: "calendarEvent", linkedEntityId: "x1", updatedAt: OLD };
-  const other = { id: "a2", name: "Altro", updatedAt: OLD };
-  const before = { events: [SINGLE, SERIES], attachments: [attachment, other], notes: [] };
-  const row = { ...SERIES, id: "s@2026-11-16", seriesId: "s", originalDate: "2026-11-16", cancelled: true, archived: true };
-  const after = { events: [row, SERIES], attachments: [{ ...attachment, linkedEntityType: undefined, linkedEntityId: undefined }, other], notes: [] };
-  const undo = removalUndo(before, after);
+  const before = { events: [SINGLE, SERIES], attachments: [attachment], notes: [] };
+  const LATER = "2026-11-12T08:00:00.000Z";
+  const row = { ...SERIES, id: "s@2026-11-16", seriesId: "s", originalDate: "2026-11-16", cancelled: true, archived: true, updatedAt: LATER };
+  const unlinked = { ...attachment, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: LATER };
+  const after = { events: [row, SERIES], attachments: [unlinked], notes: [] };
+  const entries = removalEntries(before, after, { events: ["x1", "s@2026-11-16", "s"], attachments: ["a1"], notes: [] });
+  // La serie non è cambiata: non è una voce dell'Annulla.
   assert.deepEqual(
-    undo.restore.map((version) => [version.entityType, version.entityId, version.complete]),
+    entries.map((entry) => [entry.key, entry.id]),
     [
-      ["calendarEvent", "x1", true],
-      ["attachment", "a1", true]
+      ["events", "x1"],
+      ["events", "s@2026-11-16"],
+      ["attachments", "a1"]
     ]
   );
-  assert.equal(undo.restore[1].payload.linkedEntityId, "x1");
-  assert.deepEqual(undo.remove, ["s@2026-11-16"]);
-  assert.deepEqual(removalUndo(before, before), { restore: [], remove: [] });
+  const plan = removalUndoPlan(entries, after);
+  assert.deepEqual(
+    plan.restore.map((version) => [version.entityType, version.entityId, version.complete, version.payload.updatedAt]),
+    [
+      ["calendarEvent", "x1", true, OLD],
+      ["attachment", "a1", true, OLD]
+    ]
+  );
+  assert.deepEqual(plan.remove, ["s@2026-11-16"]);
+  assert.equal(plan.skipped, 0);
+  // Dopo la rimozione: l'evento torna da un altro dispositivo, l'allegato viene modificato, la riga anche.
+  const NEWER = "2026-11-12T09:00:00.000Z";
+  const later = {
+    events: [{ ...row, updatedAt: NEWER }, SERIES, { ...SINGLE, title: "Esame Chimica (dal telefono)", updatedAt: NEWER }],
+    attachments: [{ ...unlinked, name: "Slide v2", updatedAt: NEWER }],
+    notes: []
+  };
+  assert.deepEqual(removalUndoPlan(entries, later), { restore: [], remove: [], skipped: 3 });
+});
+
+test("removeCalendarExam: un evento arrivato durante il salvataggio sopravvive ad Annulla", async () => {
+  const store = useStudyStore;
+  const note = { id: "n1", title: "Appunti", body: "v1", tags: [], archived: false, createdAt: OLD, updatedAt: OLD };
+  store.setState({ loading: true, events: [SINGLE], attachments: [], notes: [note], reminders: [] });
+  const pending = removeCalendarExam(store, calendarExamRef(SINGLE));
+  // Stesso giro di un'unione dalla sync o di un'altra scheda, mentre la rimozione salva.
+  const REMOTE = "2026-11-12T08:00:00.000Z";
+  const remote = event({ id: "remote1", title: "Evento da altro dispositivo", start: SINGLE.start, end: SINGLE.end, updatedAt: REMOTE });
+  store.setState((state) => ({
+    events: [remote, ...state.events],
+    notes: state.notes.map((item) => ({ ...item, body: "v2 remota", updatedAt: REMOTE }))
+  }));
+  const undo = await pending;
+  assert.equal(await undo(), 1);
+  const state = store.getState();
+  assert.equal(state.events.some((item) => item.id === "x1"), true);
+  assert.equal(state.events.some((item) => item.id === "remote1"), true);
+  assert.equal(state.notes[0].body, "v2 remota");
+  assert.equal(state.notes[0].updatedAt, REMOTE);
+});
+
+test("removeCalendarExam: una nota collegata modificata dopo la rimozione non torna indietro", async () => {
+  const store = useStudyStore;
+  const note = { id: "n1", title: "Appunti", body: "v1", tags: [], archived: false, createdAt: OLD, updatedAt: OLD, linkedEntityType: "calendarEvent", linkedEntityId: "x1" };
+  store.setState({ loading: true, events: [SINGLE], attachments: [], notes: [note], reminders: [] });
+  const undo = await removeCalendarExam(store, calendarExamRef(SINGLE));
+  assert.equal(store.getState().notes[0].linkedEntityId, undefined);
+  const EDITED = "2026-11-12T08:30:00.000Z";
+  store.setState((state) => ({ notes: state.notes.map((item) => ({ ...item, body: "v2", updatedAt: EDITED })) }));
+  // L'evento torna; la nota, cambiata dopo, resta com'è (staccata, v2): niente versione vecchia più recente.
+  assert.equal(await undo(), 1);
+  const state = store.getState();
+  assert.equal(state.events.some((item) => item.id === "x1"), true);
+  assert.equal(state.notes[0].body, "v2");
+  assert.equal(state.notes[0].updatedAt, EDITED);
+  assert.equal(state.notes[0].linkedEntityId, undefined);
 });
 
 test("removeCalendarExam: toglie quell'occorrenza dal negozio e Annulla la rimette", async () => {
@@ -192,7 +265,7 @@ test("removeCalendarExam: toglie quell'occorrenza dal negozio e Annulla la rimet
   assert.equal(typeof undoSingle, "function");
   assert.equal(store.getState().events.some((item) => item.id === "x1"), false);
   assert.equal(store.getState().attachments[0].linkedEntityId, undefined);
-  await undoSingle();
+  assert.equal(await undoSingle(), 2);
   const back = store.getState().events.find((item) => item.id === "x1");
   assert.equal(back?.title, "Esame Chimica");
   assert.equal(back?.start, SINGLE.start);
@@ -203,7 +276,7 @@ test("removeCalendarExam: toglie quell'occorrenza dal negozio e Annulla la rimet
   const undoDay = await removeCalendarExam(store, calendarExamRef(day));
   const without = occurrencesOf(store.getState().events, "s");
   assert.deepEqual(without, seriesBefore.filter((date) => date !== "2026-11-16"));
-  await undoDay();
+  assert.equal(await undoDay(), 1);
   assert.deepEqual(occurrencesOf(store.getState().events, "s"), seriesBefore);
   assert.equal(store.getState().events.some((item) => item.id === "s@2026-11-16"), false);
 

@@ -9,7 +9,7 @@ import { daySpanOf } from "./calendarRender";
 import { todayYmd } from "./datePicker";
 import { occurrenceTarget } from "./occurrenceLookup";
 import { expandEvents, type EventOccurrence } from "./recurrence";
-import { isOccurrenceRow } from "./repeat";
+import { isOccurrenceRow, planDelete } from "./repeat";
 
 /** Chiave condivisa (ambito scheda): evento da cui aggiungere l'esame, o null. Esami la legge e la cancella. */
 export const EXAMS_NEW_KEY = "exams.new";
@@ -79,26 +79,74 @@ export const calendarExamRemoval = (item: Pick<EventOccurrence, "id" | "seriesId
 
 /** Collezioni che togliere un evento può cambiare: l'evento (o la serie) e ciò che vi era collegato. */
 type RemovalSnapshot = { events: readonly CalendarEvent[]; attachments: readonly Attachment[]; notes: readonly Note[] };
-const REMOVAL_COLLECTIONS = ["events", "attachments", "notes"] as const;
+type RemovalCollection = keyof RemovalSnapshot;
+type Versioned = { id: string; updatedAt: string };
 
-const snapshotOf = (state: RemovalSnapshot): RemovalSnapshot => ({ events: state.events, attachments: state.attachments, notes: state.notes });
+/** Ids di ciò che la rimozione tocca, e solo quelli: niente confronto di tutto il negozio. */
+export type RemovalFootprint = Record<RemovalCollection, string[]>;
 
 /**
- * Annulla di una rimozione, dal prima e dal dopo: le versioni di prima di ciò che è cambiato o sparito
- * (da riscrivere con `restoreEntities`) e gli eventi nati con la rimozione (il giorno annullato di una
- * serie), da eliminare.
+ * Cosa tocca la rimozione, calcolato come la fa il negozio: deleteEvent toglie l'evento e, se è una
+ * serie, le sue righe; deleteOccurrence "this" scrive la riga `serie@giorno` annullata (e la serie, se
+ * le fissa il fuso). Più gli allegati e le note collegati agli eventi tolti, che si staccano.
  */
-export const removalUndo = (before: RemovalSnapshot, after: RemovalSnapshot): { restore: RestoreVersion[]; remove: string[] } => {
-  const restore: RestoreVersion[] = [];
-  for (const key of REMOVAL_COLLECTIONS) {
-    const now = new Map<string, unknown>(after[key].map((item) => [item.id, item]));
-    for (const item of before[key]) {
-      if (now.get(item.id) === item) continue;
-      restore.push({ entityType: ENTITY_TYPES[key], entityId: item.id, payload: item as unknown as Record<string, unknown>, complete: true });
-    }
+export const removalFootprint = (state: RemovalSnapshot, removal: CalendarExamRemoval): RemovalFootprint => {
+  let written: string[] = [];
+  let removed: string[];
+  if (removal.kind === "event") {
+    const target = state.events.find((event) => event.id === removal.id);
+    const rows = target && !isOccurrenceRow(target) ? state.events.filter((event) => event.seriesId === removal.id).map((event) => event.id) : [];
+    removed = [removal.id, ...rows];
+  } else {
+    const plan = planDelete(state.events, removal.seriesId, removal.date, "this");
+    written = plan.puts.map((event) => event.id);
+    removed = plan.deletes;
   }
-  const had = new Set(before.events.map((event) => event.id));
-  return { restore, remove: after.events.filter((event) => !had.has(event.id)).map((event) => event.id) };
+  const gone = new Set(removed);
+  const linked = (item: Pick<Note, "linkedEntityType" | "linkedEntityId">) =>
+    item.linkedEntityType === "calendarEvent" && typeof item.linkedEntityId === "string" && gone.has(item.linkedEntityId);
+  return {
+    events: [...new Set([...written, ...removed])],
+    attachments: state.attachments.filter(linked).map((item) => item.id),
+    notes: state.notes.filter(linked).map((item) => item.id)
+  };
+};
+
+/** Una voce dell'Annulla: com'era prima e com'è rimasta subito dopo la rimozione (undefined = non c'è). */
+export interface RemovalEntry {
+  key: RemovalCollection;
+  id: string;
+  before?: Versioned;
+  after?: Versioned;
+}
+
+const byId = (items: readonly Versioned[], id: string) => items.find((item) => item.id === id);
+
+/** Le voci della rimozione: solo gli ids dell'impronta, solo quelli che la rimozione ha davvero cambiato. */
+export const removalEntries = (before: RemovalSnapshot, after: RemovalSnapshot, footprint: RemovalFootprint): RemovalEntry[] =>
+  (Object.keys(footprint) as RemovalCollection[]).flatMap((key) =>
+    footprint[key]
+      .map((id) => ({ key, id, before: byId(before[key], id), after: byId(after[key], id) }))
+      .filter((entry) => entry.before !== entry.after)
+  );
+
+/**
+ * Annulla: le versioni di prima da riscrivere e la riga annullata (nata con la rimozione) da eliminare.
+ * Ciò che è cambiato dopo la rimozione (sync, un'altra scheda, una modifica) si salta: niente di più
+ * recente viene sovrascritto o eliminato.
+ */
+export const removalUndoPlan = (entries: readonly RemovalEntry[], current: RemovalSnapshot): { restore: RestoreVersion[]; remove: string[]; skipped: number } => {
+  const restore: RestoreVersion[] = [];
+  const remove: string[] = [];
+  let skipped = 0;
+  for (const entry of entries) {
+    const now = byId(current[entry.key], entry.id);
+    const untouched = entry.after ? now?.updatedAt === entry.after.updatedAt : now === undefined;
+    if (!untouched) skipped += 1;
+    else if (entry.before) restore.push({ entityType: ENTITY_TYPES[entry.key], entityId: entry.id, payload: entry.before as unknown as Record<string, unknown>, complete: true });
+    else if (entry.key === "events") remove.push(entry.id);
+  }
+  return { restore, remove, skipped };
 };
 
 /** Azioni del negozio che servono (useStudyStore le ha tutte). */
@@ -113,20 +161,26 @@ export interface CalendarExamStore {
 /**
  * Toglie dal calendario l'occorrenza a cui punta `ref` (deleteOccurrence per un giorno di una serie,
  * deleteEvent per un evento singolo) e restituisce l'Annulla, o null se non c'era più niente da togliere.
+ * L'Annulla restituisce quante cose ha rimesso (0: tutto era cambiato nel frattempo).
  */
-export const removeCalendarExam = async (store: CalendarExamStore, ref: CalendarExamRef): Promise<(() => Promise<void>) | null> => {
+export const removeCalendarExam = async (store: CalendarExamStore, ref: CalendarExamRef): Promise<(() => Promise<number>) | null> => {
   const state = store.getState();
   const item = findCalendarExam(state.events, ref);
   if (!item) return null;
   const removal = calendarExamRemoval(item);
-  const before = snapshotOf(state);
-  if (removal.kind === "event") await state.deleteEvent(removal.id);
-  else await state.deleteOccurrence(removal.seriesId, removal.date, "this");
-  const { restore, remove } = removalUndo(before, snapshotOf(store.getState()));
-  if (!restore.length && !remove.length) return null;
+  const footprint = removalFootprint(state, removal);
+  const pending = removal.kind === "event" ? state.deleteEvent(removal.id) : state.deleteOccurrence(removal.seriesId, removal.date, "this");
+  // Il negozio scrive subito (prima di salvare): il dopo si legge qui, prima che altro arrivi durante il
+  // salvataggio. Se un giorno scrivesse più tardi, si rilegge dopo, sempre e solo per gli ids dell'impronta.
+  let entries = removalEntries(state, store.getState(), footprint);
+  await pending;
+  if (!entries.length) entries = removalEntries(state, store.getState(), footprint);
+  if (!entries.length) return null;
   return async () => {
-    if (restore.length) await store.getState().restoreEntities(restore);
+    const { restore, remove } = removalUndoPlan(entries, store.getState());
+    const written = restore.length ? await store.getState().restoreEntities(restore) : 0;
     for (const id of remove) await store.getState().deleteEvent(id);
+    return written + remove.length;
   };
 };
 

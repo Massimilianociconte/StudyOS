@@ -178,7 +178,7 @@ function PersonalExamsView({
   // modulo vuoto e niente casella.
   const [fromCalendar, setFromCalendar] = useState<{ ref: CalendarExamRef; title: string } | null>(null);
   const [replaceEvent, setReplaceEvent] = useState(true);
-  const [replaced, setReplaced] = useState<{ title: string; undo: () => Promise<void> } | null>(null);
+  const [replaced, setReplaced] = useState<{ title: string; undo: () => Promise<number> } | null>(null);
   if (!formOpen && fromCalendar) setFromCalendar(null);
   useEffect(() => {
     if (!prefill) return;
@@ -303,6 +303,7 @@ function PersonalExamsView({
     // L'esame è salvato: si toglie quella sola occorrenza (deleteOccurrence o deleteEvent), con Annulla.
     try {
       const undo = await removeCalendarExam(useStudyStore, replacing.ref);
+      setNotice("");
       setReplaced(undo ? { title: replacing.title, undo } : null);
     } catch {
       // Evento rimasto nel calendario: l'esame c'è comunque, lo si può togliere a mano.
@@ -384,7 +385,11 @@ function PersonalExamsView({
       ) : null}
       {replaced ? (
         <div className="mb-4">
-          <UndoNotice text={EXAMS_TEXT.eventReplaced(replaced.title)} onUndo={() => void replaced.undo()} onDone={() => setReplaced(null)} />
+          <UndoNotice
+            text={EXAMS_TEXT.eventReplaced(replaced.title)}
+            onUndo={() => void replaced.undo().then((count) => setNotice(count ? EXAMS_TEXT.eventRestored : EXAMS_TEXT.eventNotRestored))}
+            onDone={() => setReplaced(null)}
+          />
         </div>
       ) : null}
 
