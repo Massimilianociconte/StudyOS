@@ -532,19 +532,6 @@ const lastAllDay = (value: unknown): Date | null => {
   return midnight ? addDays(startOfDay(date), -1) : startOfDay(date);
 };
 
-/** Come nextEventRange, ma un tutto il giorno su più giorni (vacanza) tiene i suoi giorni e accetta end. */
-const nextRange = (event: Pick<CalendarEvent, "start" | "end" | "allDay">, args: Args) => {
-  const range = nextEventRange(event, args);
-  if (range === null || typeof range === "string") return range;
-  const allDay = typeof args.allDay === "boolean" ? args.allDay : event.allDay === true;
-  if (!allDay) return range;
-  const first = new Date(range.start);
-  if (args.end !== undefined) return daySpan(first, lastAllDay(args.end));
-  if (event.allDay !== true) return range;
-  const days = Math.max(1, differenceInCalendarDays(parseISO(event.end), parseISO(event.start)));
-  return daySpan(first, addDays(first, days - 1));
-};
-
 /** Ripetizione, ricorrenza, promemoria, colore e luogo dagli argomenti (un testo = errore). */
 const eventExtras = (args: Args): Partial<CalendarEvent> | string => {
   const extra: Partial<CalendarEvent> = {};
@@ -655,7 +642,8 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
     return fail("invalid", "Con scope=this non si cambia la ripetizione: usa following o all.");
   }
 
-  const range = nextRange(day ? day.occurrence : event, args);
+  // Un tutto il giorno: date nel fuso della serie o dell'evento, non del dispositivo (vedi GOTCHAS).
+  const range = nextEventRange(day ? day.occurrence : event, args, (day ? day.series : event).timeZone);
   if (typeof range === "string") return fail("invalid", range);
   if (range) {
     patch.start = range.start;

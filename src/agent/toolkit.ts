@@ -3,7 +3,9 @@
 
 import { addDays, addMinutes, differenceInCalendarDays, endOfDay, isValid, parseISO, startOfDay } from "date-fns";
 import type { AgentCallResult } from "./types";
+import { allDayDays, allDayTimes } from "../lib/repeat";
 import { allDayRange } from "../lib/selectors";
+import { civilAddDays, civilDaysBetween, civilFromParts, isValidTimeZone, utcToZonedParts } from "../lib/tz";
 import { useStudyStore } from "../store/useStudyStore";
 import type { CalendarEvent } from "../types";
 
@@ -71,10 +73,53 @@ export const dateWindow = (args: Args): { from: Date; to: Date } | string => {
   return { from, to };
 };
 
-/** Nuovo intervallo di un evento dopo una modifica di start, end o allDay (null = invariato). */
-export const nextEventRange = (event: Pick<CalendarEvent, "start" | "end" | "allDay">, args: Args): { start: string; end: string } | string | null => {
+/** Un'ora con offset (Z, +01:00) è un istante preciso; senza offset vale l'ora locale, come nell'app. */
+const WITH_OFFSET = /T.*(?:Z|[+-]\d{2}(?::?\d{2})?)$/i;
+
+/**
+ * Giorno civile di una data dell'agente per un tutto il giorno nel fuso `zone` dell'evento, e se è
+ * mezzanotte: "YYYY-MM-DD" (o un'ora senza offset) è quel giorno; un istante con offset, il suo giorno
+ * in quel fuso. Mai il giorno del dispositivo di una mezzanotte di un altro fuso (vedi GOTCHAS).
+ */
+const allDayArg = (value: unknown, zone: string | undefined) => {
+  const raw = text(value).trim();
+  const date = instant(raw);
+  if (!date) return null;
+  const parts = utcToZonedParts(date, WITH_OFFSET.test(raw) && isValidTimeZone(zone) ? zone : undefined);
+  return { day: civilFromParts(parts.year, parts.month, parts.day), midnight: !parts.hour && !parts.minute && !parts.second && !parts.millisecond };
+};
+
+/**
+ * Nuove date di un tutto il giorno (`event` è o diventa tutto il giorno), salvate come mezzanotti nel
+ * fuso `zone` dell'evento (allDayTimes): start è il primo giorno, end l'ultimo compreso ("YYYY-MM-DD")
+ * o la fine esclusiva a mezzanotte. Senza end tiene quanti giorni durava (un evento con orario: uno).
+ */
+const allDayNextRange = (event: Pick<CalendarEvent, "start" | "end" | "allDay">, args: Args, zone: string | undefined) => {
+  const valid = isValidTimeZone(zone) ? zone : undefined;
+  // Un'occorrenza espansa (occurrenceKey) si legge nel dispositivo; il resto nel fuso dell'evento.
+  const shown = event.allDay === true ? allDayDays({ ...event, timeZone: valid }) : null;
+  const from = args.start === undefined ? null : allDayArg(args.start, valid);
+  if (args.start !== undefined && !from) return "start non è una data valida.";
+  const first = from?.day ?? shown?.first ?? allDayArg(event.start, valid)?.day;
+  if (!first) return "start non è una data valida.";
+  let last = shown ? civilAddDays(first, civilDaysBetween(shown.first, shown.last)) : first;
+  if (args.end !== undefined) {
+    const to = allDayArg(args.end, valid);
+    if (!to) return "end non è una data valida.";
+    last = DAY_RE.test(text(args.end).trim()) || !to.midnight ? to.day : civilAddDays(to.day, -1);
+    if (last < first) return "L'ultimo giorno deve essere uguale o successivo al primo.";
+  }
+  return allDayTimes(first, last, valid);
+};
+
+/**
+ * Nuovo intervallo di un evento dopo una modifica di start, end o allDay (null = invariato). Un tutto
+ * il giorno (anche su più giorni) tiene i suoi giorni nel fuso `zone` dell'evento (vedi allDayNextRange).
+ */
+export const nextEventRange = (event: Pick<CalendarEvent, "start" | "end" | "allDay">, args: Args, zone?: string): { start: string; end: string } | string | null => {
   if (args.start === undefined && args.end === undefined && typeof args.allDay !== "boolean") return null;
   const allDay = typeof args.allDay === "boolean" ? args.allDay : event.allDay === true;
+  if (allDay) return allDayNextRange(event, args, zone);
   const oldStart = parseISO(event.start);
   const oldEnd = parseISO(event.end);
   const start = args.start === undefined ? oldStart : instant(args.start);

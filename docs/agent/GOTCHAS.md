@@ -234,6 +234,13 @@
   arrotondata, come `timingOf` in ics.ts. Le occorrenze espanse invece stanno alla mezzanotte del
   DISPOSITIVO dei loro giorni (la griglia legge così): `allDayDays` le riconosce da `occurrenceKey`,
   `startDayOf(…, true, zona)` è per inizi salvati e modifiche, `shownDayOf` per l'occorrenza mostrata.
+  L'agente uguale: `nextEventRange(evento, args, zona)` (toolkit.ts) legge start/end come giorni
+  ("YYYY-MM-DD" o un'ora senza offset = quel giorno; con offset = il suo giorno nel fuso dell'evento)
+  e scrive con `allDayTimes` nel fuso della serie o dell'evento (update_event, update_shared_item).
+  Mai `allDayRange` (mezzanotte del dispositivo) su un evento che esiste: da ≥ 12 h di distanza
+  (Roma aperta da Auckland) la mezzanotte più vicina è a pari merito e vince il giorno prima. Un
+  evento altrui spostato da un'occorrenza resta nel riferimento del dispositivo (lo scarto si somma
+  alla serie); un tutto il giorno condiviso creato dall'agente porta il fuso di chi lo crea.
 - «Tutti» con una regola nuova che non comprende il giorno aperto (da lunedì 16 «mar e gio»): la
   serie parte dal primo giorno della regola nuova dal suo primo giorno di prima in poi (martedì 3,
   `alignedSeriesStart`), mai un giorno in più che la regola non ha; la scelta dice quel giorno
