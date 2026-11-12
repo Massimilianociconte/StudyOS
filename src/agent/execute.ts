@@ -15,6 +15,8 @@ import {
 } from "./project";
 import { readAudit, readStoredPolicy } from "../lib/agentLocal";
 import { splitPages } from "./pageSplit";
+import { checkConsistencyTool, createReminderTool, deleteReminderTool, deleteSubjectTool, listReminders, listTags, tagItems, updateReminderTool } from "./personalExtraTools";
+import { linkedCounts } from "../lib/subjectLinks";
 import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats } from "../lib/grades";
 import { examDateOut } from "../lib/examOutcome";
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
@@ -172,7 +174,7 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
       case "studyos_list_subjects":
         return listSubjects(args);
       case "studyos_get_subject":
-        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => publicSubject(item, true));
+        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => ({ ...publicSubject(item, true), linkedCounts: linkedCounts(current, item.id) }));
       case "studyos_create_subject":
         return createSubject(args);
       case "studyos_update_subject":
@@ -289,6 +291,22 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
         return sharedCall((tools) => tools.updateOwnShare(args));
       case "studyos_revoke_share":
         return sharedCall((tools) => tools.revokeOwnShare(text(args.id)));
+      case "studyos_delete_subject":
+        return deleteSubjectTool(args);
+      case "studyos_list_tags":
+        return listTags(args);
+      case "studyos_tag_items":
+        return tagItems(args);
+      case "studyos_list_reminders":
+        return listReminders(args);
+      case "studyos_create_reminder":
+        return createReminderTool(args);
+      case "studyos_update_reminder":
+        return updateReminderTool(args);
+      case "studyos_delete_reminder":
+        return deleteReminderTool(args);
+      case "studyos_check_consistency":
+        return checkConsistencyTool(args);
       case "studyos_list_group_exam_sessions":
         return groupExamCall((tools) => tools.listGroupExamSessions(args));
       case "studyos_create_group_exam_session":
