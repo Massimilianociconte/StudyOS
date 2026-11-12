@@ -3,6 +3,7 @@ import { it } from "date-fns/locale";
 import type { AppNotification } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { writeUiState } from "../lib/uiState";
+import { NOTIFICATIONS_TEXT } from "../lib/labels/notifications";
 import { Button, Drawer, EmptyState } from "./ui";
 import { Icon } from "./Icon";
 
@@ -39,21 +40,21 @@ export function NotificationsPanel({ onClose }: { onClose: () => void }) {
     <Drawer
       open
       onClose={onClose}
-      title="Notifiche"
-      eyebrow={unread ? `${unread} non ${unread === 1 ? "letta" : "lette"}` : "Tutto letto"}
+      title={NOTIFICATIONS_TEXT.title}
+      eyebrow={unread ? NOTIFICATIONS_TEXT.unreadCount(unread) : NOTIFICATIONS_TEXT.allRead}
       // Solo con qualcosa da leggere: un pulsante spento in un pannello vuoto non serve.
       footer={
         unread ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="soft" icon="CheckCheck" onClick={() => void markAllNotificationsRead()}>
-              Segna tutte come lette
+              {NOTIFICATIONS_TEXT.markAllRead}
             </Button>
           </div>
         ) : undefined
       }
     >
       {visible.length === 0 ? (
-        <EmptyState icon="Bell" title="Nessuna notifica" body="Inviti ai gruppi e novità importanti compariranno qui." />
+        <EmptyState icon="Bell" title={NOTIFICATIONS_TEXT.emptyTitle} body={NOTIFICATIONS_TEXT.emptyBody} />
       ) : (
         <ul className="grid grid-cols-1 gap-2">
           {visible.map((item) => (
@@ -73,31 +74,31 @@ export function NotificationsPanel({ onClose }: { onClose: () => void }) {
                     <button
                       type="button"
                       onClick={() => void openLinked(item)}
-                      className="inline-flex min-h-8 items-center gap-1 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]"
+                      className="inline-flex min-h-11 items-center gap-1 rounded-full bg-[var(--surface-strong)] px-4 text-xs font-black hover:bg-[var(--surface)]"
                     >
-                      Apri <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+                      {NOTIFICATIONS_TEXT.open} <Icon name="ChevronRight" className="h-3.5 w-3.5" />
                     </button>
                   ) : null}
                   {!item.readAt ? (
                     <button
                       type="button"
                       onClick={() => void markNotificationRead(item.id)}
-                      className="inline-flex min-h-8 items-center rounded-full px-3 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]"
+                      className="inline-flex min-h-11 items-center rounded-full px-3 text-xs font-black text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
                     >
-                      Segna come letta
+                      {NOTIFICATIONS_TEXT.markRead}
                     </button>
                   ) : null}
                   <button
                     type="button"
                     onClick={() => void deleteNotification(item.id)}
-                    className="inline-flex min-h-8 items-center rounded-full px-3 text-xs font-black text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
-                    aria-label={`Elimina notifica "${item.title}"`}
+                    className="inline-flex min-h-11 items-center rounded-full px-3 text-xs font-black text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+                    aria-label={NOTIFICATIONS_TEXT.removeAria(item.title)}
                   >
-                    Elimina
+                    {NOTIFICATIONS_TEXT.remove}
                   </button>
                 </div>
               </div>
-              {!item.readAt ? <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--accent)]" aria-label="Non letta" /> : null}
+              {!item.readAt ? <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--accent)]" aria-label={NOTIFICATIONS_TEXT.unreadDot} /> : null}
             </li>
           ))}
         </ul>
