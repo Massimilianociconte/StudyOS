@@ -6,9 +6,11 @@ import { collapseForWidth, eventDaySpan, layoutDayColumns, multiDaySegments, typ
 import { formatRangeField, parseYmd, todayYmd } from "./datePicker";
 import {
   EVENT_TYPE_COLORS,
+  contrastRatio,
   eventColorStyle,
   eventTypeIcon,
   eventTypeKey,
+  mixHex,
   resolveEventColor,
   type EventTheme,
   type EventTypeKey,
@@ -194,6 +196,31 @@ export function laneRows(items: readonly DayRangeItem[], weekStarts: readonly st
 }
 
 /**
+ * Fondi più difficili su cui stanno i pallini, con colori pieni: la cella del Mese (quella di oggi, la
+ * più chiara nel tema scuro) e il pulsante della fascia raccolta (--surface-strong). Nel tema chiaro
+ * entrambi sono quasi bianchi.
+ */
+export const DOT_SURFACES = {
+  dark: { cell: "#3C3E48", pill: "#4A4C57" },
+  light: { cell: "#FFFFFF", pill: "#FFFFFF" }
+} as const;
+
+/**
+ * Colore di un pallino: quello della tipologia (o della materia), avvicinato al testo del tema finché
+ * ha almeno 3:1 sul fondo (contrasto degli oggetti grafici, WCAG 1.4.11). Colore non valido: "Altro".
+ */
+export function dotColor(hex: string, theme: EventTheme, surface: "cell" | "pill" = "cell"): string {
+  const start = /^#[0-9a-f]{6}$/i.test(hex) ? hex : EVENT_TYPE_COLORS.other;
+  const against = DOT_SURFACES[theme][surface];
+  const toward = theme === "dark" ? "#FFFFFF" : "#16181F";
+  for (let step = 0; step <= 20; step += 1) {
+    const candidate = mixHex(toward, start, step / 20);
+    if (contrastRatio(candidate, against) >= 3) return candidate;
+  }
+  return toward;
+}
+
+/**
  * Pallini di una cella (Mese sul telefono, fascia raccolta della Settimana): uno per voce nel colore
  * della sua tipologia, al più `max`; le altre si contano in «+N».
  */
@@ -217,6 +244,18 @@ export function listDayOf(item: Timed, firstDay: string, lastDay: string): strin
   const span = daySpanOf(item);
   if (!span || span.endDay < firstDay || span.startDay > lastDay) return null;
   return span.startDay < firstDay ? firstDay : span.startDay;
+}
+
+/**
+ * Voce con orario mostrata in un elenco sotto `listDay` ma cominciata prima (un evento della sera prima
+ * che passa la mezzanotte, in cima al primo giorno dell'Agenda): il giorno in cui è cominciata, per
+ * dirla «continua» e non farla sembrare di quel giorno. null se comincia quel giorno, e per le barre
+ * (tutto il giorno, più giorni), che dicono già il loro periodo.
+ */
+export function continuedFrom(item: Timed, listDay: string): string | null {
+  if (isBarEvent(item)) return null;
+  const span = daySpanOf(item);
+  return span && span.startDay < listDay ? span.startDay : null;
 }
 
 /** "ven 4 – dom 6 dic" per una barra su più giorni; null per tutto il resto. */

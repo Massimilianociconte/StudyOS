@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const render = await import("../src/lib/calendarRender.ts");
-const { CALENDAR_LAYOUT_TEXT } = await import("../src/lib/labels/calendar.ts");
+const { CALENDAR_LAYOUT_TEXT, CALENDAR_VIEW_TEXT } = await import("../src/lib/labels/calendar.ts");
 const { EVENT_TYPE_COLORS } = await import("../src/lib/eventColors.ts");
 
 // Date locali del dispositivo: i test valgono in ogni fuso (Roma, New York, UTC).
@@ -136,6 +136,23 @@ test("layoutTimedDay: in una colonna stretta (Settimana sul tablet) la fascia di
   assert.deepEqual(tablet.more[0].items.map((item) => item.id), ["a", "b"]);
 });
 
+test("dotColor: ogni colore di tipologia ha almeno 3:1 sulla cella e sul pulsante, nei due temi", async () => {
+  const { contrastRatio } = await import("../src/lib/eventColors.ts");
+  for (const theme of ["dark", "light"]) {
+    for (const surface of ["cell", "pill"]) {
+      const against = render.DOT_SURFACES[theme][surface];
+      for (const color of [...Object.values(EVENT_TYPE_COLORS), "#000000", "#FFFFFF", "#123456", "rotto"]) {
+        const dot = render.dotColor(color, theme, surface);
+        assert.match(dot, /^#[0-9A-F]{6}$/i);
+        assert.ok(contrastRatio(dot, against) >= 3, `${theme} ${surface} ${color} → ${dot}`);
+      }
+    }
+  }
+  // Un colore già leggibile resta quello.
+  assert.equal(render.dotColor("#7CF7C8", "dark", "cell").toUpperCase(), "#7CF7C8");
+  assert.equal(render.dotColor("#3B82F6", "light", "cell").toUpperCase(), "#3B82F6");
+});
+
 test("monthDots: un pallino per voce nel suo colore, al più 3, poi «+N»", () => {
   assert.deepEqual(render.monthDots([]), { dots: [], more: 0 });
   assert.deepEqual(render.monthDots(["#111111", "#222222"]), { dots: ["#111111", "#222222"], more: 0 });
@@ -234,6 +251,18 @@ test("listDayOf: una voce sola, nel primo giorno mostrato in cui c'è", () => {
   const night = timed("night", [2026, 12, 4, 22], [2026, 12, 5, 2]);
   assert.equal(render.listDayOf(night, "2026-12-01", "2026-12-14"), "2026-12-04");
   assert.equal(render.listDayOf(night, "2026-12-05", "2026-12-14"), "2026-12-05");
+});
+
+test("continuedFrom: l'evento di ieri sera che passa la mezzanotte è «continua» sotto oggi, non un evento di oggi", () => {
+  const night = timed("night", [2026, 11, 11, 23, 17], [2026, 11, 12, 0, 17]);
+  assert.equal(render.continuedFrom(night, "2026-11-12"), "2026-11-11");
+  assert.equal(render.continuedFrom(night, "2026-11-11"), null, "nel suo giorno è un evento normale");
+  const lesson = timed("lesson", [2026, 11, 12, 9], [2026, 11, 12, 11]);
+  assert.equal(render.continuedFrom(lesson, "2026-11-12"), null);
+  // Le barre (tutto il giorno, più giorni) dicono già il loro periodo ("ven 4 – dom 6").
+  const trip = timed("trip", [2026, 12, 4], [2026, 12, 7], { allDay: true });
+  assert.equal(render.continuedFrom(trip, "2026-12-05"), null);
+  assert.equal(CALENDAR_VIEW_TEXT.continuedFrom("mer 11 nov", "23:17", "00:17"), "Dal mer 11 nov, 23:17–00:17");
 });
 
 test("spanText: 'ven 4 – dom 6 dic' per le voci su più giorni, niente per le altre", () => {

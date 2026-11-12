@@ -380,6 +380,11 @@ export const CALENDAR_VIEW_TEXT = {
   noItems: "Nessun impegno",
   addOn: (day: string) => `Aggiungi un evento il ${day}`,
   recurring: "Si ripete",
+  /** Evento cominciato il giorno prima (passa la mezzanotte), in un elenco sotto il giorno dopo. */
+  continues: "continua",
+  continuedFrom: (day: string, start: string, end: string) => `Dal ${day}, ${start}–${end}`,
+  /** Mese sul telefono: pallini delle voci del giorno, oltre i primi tre. */
+  moreDots: (count: number) => `+${count}`,
   exam: (name: string) => `Esame · ${name}`,
   examTitle: (name: string, preparation: number) => `Esame di ${name} · preparazione al ${preparation}%`,
   /** Azione detta solo a voce dopo il testo visibile di una voce. */

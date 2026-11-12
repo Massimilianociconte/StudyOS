@@ -12,7 +12,7 @@ import { isAllDayEvent, timeLabel } from "../../lib/selectors";
 import { todayYmd } from "../../lib/datePicker";
 import { eventTypeLabel } from "../../lib/eventColors";
 import type { Holiday } from "../../lib/holidays";
-import { holidaysByDay, listDayOf, occasionText, spanText } from "../../lib/calendarRender";
+import { continuedFrom, holidaysByDay, listDayOf, occasionText, spanText } from "../../lib/calendarRender";
 import { HolidayChip, HolidaysNote, TypeIcon, useEventPaint, useEventTheme } from "./bars";
 import { ExamChip, TaskChip } from "./chips";
 import { allDayEventLabel, defaultStartFor, editOccurrence, occurrenceSubject, pointerPoint, sharedOutline, sharedOutlineClass } from "./shared";
@@ -106,7 +106,7 @@ export function DayList({
                 ))}
                 {dayEvents.map((item) => (
                   <li key={item.occurrenceKey}>
-                    <EventRow item={item} handlers={handlers} />
+                    <EventRow item={item} handlers={handlers} listDay={todayYmd(day)} />
                   </li>
                 ))}
                 {dayTasks.map((task) => (
@@ -123,13 +123,21 @@ export function DayList({
   );
 }
 
-export function EventRow({ item, handlers }: { item: CalendarOccurrence; handlers: Handlers }) {
+/**
+ * Un evento in un elenco. `listDay` (YYYY-MM-DD): il giorno sotto cui compare; se l'evento è cominciato
+ * prima (la sera prima, oltre la mezzanotte) si dice «continua» con il giorno e l'ora d'inizio.
+ */
+export function EventRow({ item, handlers, listDay }: { item: CalendarOccurrence; handlers: Handlers; listDay?: string }) {
   const paint = useEventPaint()(item, handlers.subjects);
   const allDay = isAllDayEvent(item);
   // Su più giorni: il periodo al posto di "Tutto il giorno" o dell'orario.
   const range = spanText(item);
   const occasion = occasionText(item);
   const subject = occurrenceSubject(item, handlers.subjects);
+  const from = listDay ? continuedFrom(item, listDay) : null;
+  const when = from
+    ? CALENDAR_VIEW_TEXT.continuedFrom(format(parseISO(item.start), "EEE d MMM", { locale: it }), timeLabel(item.start), timeLabel(item.end))
+    : range ?? (allDay ? allDayEventLabel(item) : `${timeLabel(item.start)}–${timeLabel(item.end)}`);
   return (
     <button
       type="button"
@@ -143,6 +151,11 @@ export function EventRow({ item, handlers }: { item: CalendarOccurrence; handler
       {allDay ? (
         <span className="w-12 shrink-0 text-center text-xs font-black text-[var(--faint)]" title={allDayEventLabel(item)} aria-hidden="true">
           —
+        </span>
+      ) : from ? (
+        // Il giorno e l'ora d'inizio sono nella riga sotto il titolo ("Dal mer 11 nov, 23:17–00:17").
+        <span className="w-12 shrink-0 text-[11px] font-black text-[var(--muted)]" aria-hidden="true">
+          {CALENDAR_VIEW_TEXT.continues}
         </span>
       ) : (
         <span className="w-12 shrink-0 text-xs font-black tabular-nums">{timeLabel(item.start)}</span>
@@ -164,7 +177,7 @@ export function EventRow({ item, handlers }: { item: CalendarOccurrence; handler
           {item.title}
         </span>
         <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
-          {range ?? (allDay ? allDayEventLabel(item) : `${timeLabel(item.start)}–${timeLabel(item.end)}`)}
+          {when}
           {occasion ? ` · ${occasion}` : ""}
           {subject ? ` · ${subject}` : ""}
         </span>

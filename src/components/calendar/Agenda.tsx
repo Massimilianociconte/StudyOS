@@ -120,7 +120,7 @@ export function Agenda({
               ))}
               {section.events.map((item) => (
                 <li key={item.occurrenceKey}>
-                  <EventRow item={item} handlers={handlers} />
+                  <EventRow item={item} handlers={handlers} listDay={todayYmd(section.day)} />
                 </li>
               ))}
               {section.tasks.length ? (
