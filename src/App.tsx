@@ -8,7 +8,8 @@ import { LockScreen } from "./components/LockScreen";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { lazyView } from "./lib/lazyView";
 import { cloudConfigured, subscribeCloudSync } from "./lib/cloudSyncState";
-import { startPushSessionGuard } from "./lib/pushDevice";
+import { startPushSessionGuard, syncPushPrivacy } from "./lib/pushDevice";
+import { pushPrivateOf } from "./lib/pushLocal";
 import { useViewMemory } from "./lib/uiState";
 import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
 import { useShareInviteLinks } from "./hooks/useShareInviteLinks";
@@ -86,11 +87,19 @@ export default function App() {
   // Notifiche push: se questo dispositivo le aveva già attivate, si riallinea l'iscrizione all'avvio
   // e dopo ogni accesso; se la sessione finisce da sola (scaduta, revocata, uscita altrove) le
   // notifiche dell'account uscito smettono di arrivare qui. Il codice push si carica solo con il
-  // permesso già concesso.
+  // permesso concesso (anche più tardi) o le notifiche già accese qui.
   useEffect(() => {
     if (loading || !cloudConfigured) return;
-    return startPushSessionGuard(subscribeCloudSync);
+    return startPushSessionGuard(subscribeCloudSync, undefined, { isPrivate: () => pushPrivateOf(useStudyStore.getState().settings) });
   }, [loading]);
+
+  // Password dell'app: i promemoria push di questo dispositivo arrivano senza titolo, salvo «Mostra il
+  // titolo nelle notifiche» (pushPrivateOf). Cambiata la scelta, si riscrive la riga del dispositivo.
+  const pushPrivate = useStudyStore((state) => pushPrivateOf(state.settings));
+  useEffect(() => {
+    if (loading || !cloudConfigured) return;
+    syncPushPrivacy(pushPrivate);
+  }, [loading, pushPrivate]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;

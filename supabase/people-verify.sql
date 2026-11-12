@@ -119,6 +119,18 @@ select
         where u.id = i.recipient_user_id and lower(u.email) = lower(i.recipient_email)
           and u.deleted_at is null and u.email_confirmed_at < timestamptz '2026-11-11 00:00:00+01'))
     as legacy_invites_safe_ready,
+  -- Revisione del 12/11/2026 (promemoria con l'app chiusa): sessione e testo privato per iscrizione,
+  -- sessione scritta dal server, account di ogni iscrizione nelle push (filtro del service worker).
+  (select count(*) from information_schema.columns where table_schema = 'public'
+    and table_name = 'studyos_push_subscriptions' and column_name in ('session_id', 'private')) = 2
+    and exists (select 1 from pg_trigger where not tgisinternal
+      and tgrelid = to_regclass('public.studyos_push_subscriptions') and tgname = 'studyos_push_subscriptions_session')
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_notify(uuid[],text,text,text,text,text)'))
+      like '%''account'', s.user_id%', false) as push_devices_ready,
+  -- Facoltativo: false se il progetto non permette trigger su auth.sessions; allora le iscrizioni
+  -- delle sessioni finite si tolgono alla prima notifica respinta (push_gone).
+  exists (select 1 from pg_trigger where not tgisinternal
+    and tgrelid = to_regclass('auth.sessions') and tgname = 'studyos_push_session_ended') as session_cleanup_ready,
   exists (select 1 from pg_extension where extname = 'pg_net')
     and exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'net' and p.proname = 'http_post') as pg_net_ready,

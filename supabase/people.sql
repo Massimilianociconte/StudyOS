@@ -87,6 +87,14 @@ alter table public.studyos_push_subscriptions add constraint studyos_push_subscr
   );
 create index if not exists studyos_push_subscriptions_user_idx
   on public.studyos_push_subscriptions (user_id, last_seen_at desc);
+-- Sessione di Supabase Auth che ha registrato l'iscrizione (la scrive il server dal token, vedi
+-- studyos_push_subscriptions_session): quando la sessione finisce (uscita, revoca, «esci ovunque»)
+-- l'iscrizione si toglie (studyos_push_session_ended). `private`: il dispositivo ha la password
+-- dell'app e vuole i promemoria senza titolo (push-reminders.sql manda «Promemoria StudyOS»).
+alter table public.studyos_push_subscriptions add column if not exists session_id uuid;
+alter table public.studyos_push_subscriptions add column if not exists private boolean not null default false;
+create index if not exists studyos_push_subscriptions_session_idx
+  on public.studyos_push_subscriptions (session_id) where session_id is not null;
 
 -- Registro delle notifiche push mandate per conto di chi agisce (studyos_push_notify): al massimo 30
 -- all'ora per account. Nessuna policy: lo toccano solo le funzioni DEFINER.
@@ -225,6 +233,61 @@ drop trigger if exists studyos_push_subscriptions_cap on public.studyos_push_sub
 create trigger studyos_push_subscriptions_cap
 after insert on public.studyos_push_subscriptions
 for each row execute function public.studyos_push_subscriptions_cap();
+
+-- La sessione dell'iscrizione la decide il server (claim `session_id` del token di chi scrive), mai
+-- il client. Le scritture delle funzioni interne (senza account) non la toccano.
+create or replace function public.studyos_push_subscriptions_session()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  v_session text;
+begin
+  if auth.uid() is null then
+    return new;
+  end if;
+  v_session := coalesce(auth.jwt() ->> 'session_id', '');
+  new.session_id := case
+    when v_session ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then v_session::uuid
+    else null
+  end;
+  return new;
+end;
+$$;
+
+drop trigger if exists studyos_push_subscriptions_session on public.studyos_push_subscriptions;
+create trigger studyos_push_subscriptions_session
+before insert or update on public.studyos_push_subscriptions
+for each row execute function public.studyos_push_subscriptions_session();
+
+-- Una sessione finita (uscita da questo dispositivo, revoca, «esci ovunque», account eliminato) porta
+-- via le iscrizioni registrate con lei: il dispositivo non riceve più le notifiche dell'account, anche
+-- se l'app lì resta chiusa. Il trigger su auth.sessions si crea qui sotto solo se il progetto lo permette.
+create or replace function public.studyos_push_session_ended()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from public.studyos_push_subscriptions where session_id = old.id;
+  return null;
+end;
+$$;
+
+do $$
+begin
+  if to_regclass('auth.sessions') is null then
+    raise notice 'auth.sessions assente: le iscrizioni push delle sessioni finite si tolgono alla prima notifica respinta';
+    return;
+  end if;
+  execute 'drop trigger if exists studyos_push_session_ended on auth.sessions';
+  execute 'create trigger studyos_push_session_ended after delete on auth.sessions '
+    || 'for each row execute function public.studyos_push_session_ended()';
+exception when others then
+  raise notice 'Pulizia delle iscrizioni alla fine della sessione non attiva: %', sqlerrm;
+end $$;
 
 -- ─── Funzioni di appoggio (interne) ─────────────────────────────────────────
 
@@ -903,9 +966,11 @@ begin
       'tag', left(coalesce(nullif(p_tag, ''), p_kind), 200)
     );
     for v_batch in
-      select jsonb_agg(jsonb_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth) order by s.rn)
+      -- account: il service worker del dispositivo non mostra le push di un account che non è più
+      -- quello entrato lì (public/sw.js).
+      select jsonb_agg(jsonb_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth, 'account', s.user_id) order by s.rn)
       from (
-        select sub.endpoint, sub.p256dh, sub.auth,
+        select sub.endpoint, sub.p256dh, sub.auth, sub.user_id,
           row_number() over (order by sub.user_id, sub.created_at, sub.id) as rn
         from public.studyos_push_subscriptions sub
         where sub.user_id = any (v_users)
@@ -1235,6 +1300,8 @@ revoke all on function public.studyos_share_audience(uuid, uuid, text) from publ
 revoke all on function public.studyos_profiles_touch() from public, anon, authenticated;
 revoke all on function public.studyos_push_subscriptions_claim() from public, anon, authenticated;
 revoke all on function public.studyos_push_subscriptions_cap() from public, anon, authenticated;
+revoke all on function public.studyos_push_subscriptions_session() from public, anon, authenticated;
+revoke all on function public.studyos_push_session_ended() from public, anon, authenticated;
 revoke all on function public.studyos_push_group_invite() from public, anon, authenticated;
 revoke all on function public.studyos_push_share_invite() from public, anon, authenticated;
 revoke all on function public.studyos_push_share_accepted() from public, anon, authenticated;

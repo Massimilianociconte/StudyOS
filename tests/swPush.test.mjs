@@ -22,7 +22,32 @@ const makeClient = (url, { focused = false, navigateFails = false } = {}) => {
   };
 };
 
-const loadWorker = (windows = []) => {
+/** Cache Storage finto, con le stesse regole usate da sw.js e pushLocal (ignoreSearch). */
+const fakeCaches = () => {
+  const stores = new Map();
+  const strip = (url) => url.split("?")[0];
+  const open = async (name) => {
+    if (!stores.has(name)) {
+      const entries = new Map();
+      const matches = (url, request, options) => (options?.ignoreSearch ? strip(url) === strip(request) : url === request);
+      stores.set(name, {
+        entries,
+        keys: async (request, options) =>
+          [...entries.keys()].filter((url) => request === undefined || matches(url, request, options)).map((url) => ({ url })),
+        put: async (request, response) => void entries.set(request, response),
+        delete: async (request, options) => {
+          let removed = false;
+          for (const url of [...entries.keys()]) if (matches(url, request, options)) removed = entries.delete(url) || removed;
+          return removed;
+        }
+      });
+    }
+    return stores.get(name);
+  };
+  return { open, stores };
+};
+
+const loadWorker = (windows = [], extra = {}) => {
   const handlers = new Map();
   const shown = [];
   const opened = [];
@@ -46,7 +71,7 @@ const loadWorker = (windows = []) => {
     addEventListener: (type, handler) => handlers.set(type, handler),
     skipWaiting: () => undefined
   };
-  vm.runInNewContext(source, { self, URL, Promise, Date, console });
+  vm.runInNewContext(source, { self, URL, Promise, Date, console, ...extra });
   return { handlers, shown, opened };
 };
 
@@ -153,4 +178,76 @@ test("click: se la scheda non si lascia navigare si apre una nuova finestra", as
   await fire(worker, "notificationclick", clickOn("?apri=gruppi").event);
   assert.equal(client.calls.focus, 1);
   assert.deepEqual(worker.opened, [`${SCOPE}?apri=gruppi`]);
+});
+
+// ─── Promemoria e account (Cache Storage condiviso con la pagina, src/lib/pushLocal.ts) ─────
+
+const local = await import("../src/lib/pushLocal.ts");
+const ORIGIN = "https://massimilianociconte.github.io";
+const ACCOUNT_A = "504b3482-7f1b-4add-bfbc-7b3effbf21d7";
+const ACCOUNT_B = "fc0191e0-6663-4a43-b060-131e397f02cc";
+const reminder = (tag, account = ACCOUNT_A) => pushWith({ kind: "reminder", title: "Lezione", body: "Tra 15 minuti · 10:00", url: "?apri=calendario", tag, account });
+
+test("promemoria dalla push: si ricorda, la pagina lo ritrova e non lo ripete", async () => {
+  const caches = fakeCaches();
+  const worker = loadWorker([], { caches, Response });
+  const before = Date.now();
+  await fire(worker, "push", reminder("studyos-reminder-e1@2026-11-12#0d15m@1"));
+  assert.equal(worker.shown.length, 1);
+  assert.equal(worker.shown[0].options.silent, undefined, "la prima notifica suona");
+  const record = await local.readReminderShown("studyos-reminder-e1@2026-11-12#0d15m@1", caches, ORIGIN);
+  assert.equal(record.by, "push");
+  assert.ok(record.at >= before);
+  assert.equal(local.alreadyShown(record, before), true, "la pagina (EventReminderWatcher) mostra solo la campanella");
+  assert.equal(await local.readReminderShown("studyos-reminder-altro", caches, ORIGIN), null);
+});
+
+test("promemoria già mostrato dalla scheda aperta: la push lo sostituisce in silenzio (una notifica)", async () => {
+  const caches = fakeCaches();
+  await local.recordReminderShown("studyos-reminder-e2", "page", Date.now(), caches, ORIGIN);
+  const worker = loadWorker([], { caches, Response });
+  await fire(worker, "push", reminder("studyos-reminder-e2"));
+  assert.equal(worker.shown.length, 1, "deve comparire qualcosa (userVisibleOnly), con lo stesso tag");
+  assert.equal(worker.shown[0].options.tag, "studyos-reminder-e2");
+  assert.equal(worker.shown[0].options.silent, true);
+  assert.equal((await local.readReminderShown("studyos-reminder-e2", caches, ORIGIN)).by, "page", "resta il ricordo della pagina");
+  // Mostrato dalla pagina molto prima (oltre 2 ore): non conta più.
+  await local.recordReminderShown("studyos-reminder-e3", "page", Date.now() - 3 * 60 * 60_000, caches, ORIGIN);
+  await fire(worker, "push", reminder("studyos-reminder-e3"));
+  assert.equal(worker.shown[1].options.silent, undefined);
+});
+
+test("account: la push di un altro account non si mostra; uscito → nessuna; mai scritto → come prima", async () => {
+  const caches = fakeCaches();
+  const worker = loadWorker([], { caches, Response });
+  await fire(worker, "push", reminder("studyos-reminder-a", ACCOUNT_B));
+  assert.equal(worker.shown.length, 1, "nessun account scritto dalla pagina: si mostra");
+  await local.writePushAccount(ACCOUNT_A, caches, ORIGIN);
+  assert.equal(await local.readPushAccount(caches, ORIGIN), ACCOUNT_A);
+  await fire(worker, "push", reminder("studyos-reminder-b", ACCOUNT_B));
+  assert.equal(worker.shown.length, 1, "account diverso: niente");
+  await fire(worker, "push", reminder("studyos-reminder-c", ACCOUNT_A));
+  assert.equal(worker.shown.length, 2);
+  await fire(worker, "push", pushWith({ kind: "invite", title: "Invito", body: "", url: "?apri=notifiche", tag: "group-invite:1" }));
+  assert.equal(worker.shown.length, 3, "senza account nel messaggio (Worker vecchio): si mostra");
+  await local.writePushAccount(null, caches, ORIGIN);
+  assert.equal(await local.readPushAccount(caches, ORIGIN), null);
+  await fire(worker, "push", reminder("studyos-reminder-d", ACCOUNT_A));
+  assert.equal(worker.shown.length, 3, "uscito da questo dispositivo: niente");
+  assert.equal([...caches.stores.get(local.PUSH_LOCAL_CACHE).entries.keys()].filter((url) => url.includes("push-account")).length, 1, "una sola chiave dell'account");
+});
+
+test("senza Cache Storage o con lo storage che fallisce: la notifica compare lo stesso", async () => {
+  const plain = loadWorker();
+  await fire(plain, "push", reminder("studyos-reminder-x"));
+  assert.equal(plain.shown.length, 1);
+  const broken = loadWorker([], { caches: { open: () => Promise.reject(new Error("quota")) }, Response });
+  await fire(broken, "push", reminder("studyos-reminder-y"));
+  assert.equal(broken.shown.length, 1);
+});
+
+test("activate tiene la cache condivisa con la pagina", () => {
+  assert.match(source, /key !== CACHE_NAME && key !== PUSH_LOCAL_CACHE/);
+  assert.match(source, /const PUSH_LOCAL_CACHE = "studyos-push-local-v1";/);
+  assert.equal(local.PUSH_LOCAL_CACHE, "studyos-push-local-v1");
 });

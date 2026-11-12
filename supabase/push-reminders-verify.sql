@@ -7,9 +7,15 @@ select
   to_regclass('public.studyos_push_reminders') is not null
     and (select count(*) from information_schema.columns where table_schema = 'public'
       and table_name = 'studyos_push_reminders'
-      and column_name in ('user_id', 'id', 'fire_at', 'title', 'body', 'url', 'tag', 'sent_at', 'skipped', 'updated_at')) = 10
+      and column_name in ('user_id', 'id', 'fire_at', 'title', 'body', 'url', 'tag', 'sent_at', 'skipped', 'updated_at', 'zone')) = 11
     and exists (select 1 from pg_constraint where conname = 'studyos_push_reminders_values_check')
     as table_ready,
+  -- Registro dei promemoria mandati (tetto orario per account): nessun client lo legge o lo scrive.
+  to_regclass('public.studyos_push_reminder_sends') is not null
+    and coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.studyos_push_reminder_sends')), false)
+    and not coalesce(has_any_column_privilege('authenticated', to_regclass('public.studyos_push_reminder_sends'), 'SELECT')
+      or has_any_column_privilege('anon', to_regclass('public.studyos_push_reminder_sends'), 'SELECT'), true)
+    as send_log_ready,
   coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.studyos_push_reminders')), false) as rls_ready,
   (select count(*) from pg_policies where schemaname = 'public' and tablename = 'studyos_push_reminders') = 4
     and not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'studyos_push_reminders'
@@ -24,14 +30,20 @@ select
   coalesce((select count(*) = 1 from pg_trigger where not tgisinternal
     and tgrelid = to_regclass('public.studyos_push_reminders') and tgname = 'studyos_push_reminders_guard'), false)
     and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_reminders_guard()')) like '%interval ''14 days''%', false)
-    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_reminders_guard()')) like '%>= 300%', false)
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_reminders_guard()')) like '%>= 400%', false)
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_reminders_guard()')) like '%new.sent_at := old.sent_at%', false)
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_reminders_guard()')) like '%new.fire_at := old.fire_at%', false)
     as guard_ready,
-  -- La funzione del job: DEFINER con search_path fisso, mai eseguibile dai client, non blocca mai.
+  -- La funzione del job: DEFINER con search_path fisso, mai eseguibile dai client, non blocca mai,
+  -- a turno tra gli account con il tetto orario, titolo nascosto ai dispositivi con la password.
   coalesce((select p.prosecdef and exists (select 1 from unnest(p.proconfig) c where c like 'search_path=%')
     from pg_proc p where p.oid = to_regprocedure('public.studyos_push_due_reminders()')), false)
     and not coalesce(has_function_privilege('anon', to_regprocedure('public.studyos_push_due_reminders()'), 'EXECUTE')
       or has_function_privilege('authenticated', to_regprocedure('public.studyos_push_due_reminders()'), 'EXECUTE'), true)
     and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_due_reminders()')) like '%exception when others%', false)
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_due_reminders()')) like '%order by d.rn, d.fire_at%', false)
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_due_reminders()')) like '%60 - coalesce(u.n, 0)%', false)
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_due_reminders()')) like '%Promemoria StudyOS%', false)
     as due_function_ready,
   -- «Cancella anche dall'account» (schema.sql) toglie anche queste righe.
   coalesce(pg_get_functiondef(to_regprocedure('public.erase_studyos_account_items()')) like '%studyos_push_reminders%', false)

@@ -182,15 +182,117 @@ test("impronta, interruttore dell'account, pezzi, sync aggiornata, tabella manca
   assert.equal(push.isMissingReminderTable(null), false);
 });
 
+test("cambio di account (L1): i dati valgono solo dopo un giro di sync dell'account entrato", () => {
+  const pageStart = Date.parse("2026-11-12T08:00:00.000Z");
+  let track = push.trackReminderAccount(null, "b", pageStart + 1000, pageStart);
+  assert.deepEqual(track, { userId: "b", sinceMs: pageStart }, "primo account visto: vale dall'apertura della pagina");
+  const ready = (cloud) => push.reminderSyncReady({ status: "idle", accountChoice: false, ...cloud }, track);
+  assert.equal(ready({ userId: "b", lastSync: "2026-11-12T08:00:05.000Z" }), true);
+  // b esce, entra a, poi di nuovo b nella stessa pagina: il lastSync di b salvato prima non basta.
+  track = push.trackReminderAccount(track, null, pageStart + 60_000, pageStart);
+  track = push.trackReminderAccount(track, "a", pageStart + 120_000, pageStart);
+  track = push.trackReminderAccount(track, "b", pageStart + 180_000, pageStart);
+  assert.equal(track.sinceMs, pageStart + 180_000);
+  assert.equal(ready({ userId: "b", lastSync: "2026-11-12T08:00:05.000Z" }), false, "giro vecchio di b: i dati nello store sono ancora di a");
+  assert.equal(ready({ userId: "b", lastSync: "2026-11-12T08:03:30.000Z", accountChoice: true }), false, "scelta «ask» aperta");
+  assert.equal(ready({ userId: "b", lastSync: "2026-11-12T08:03:30.000Z", status: "syncing" }), false);
+  assert.equal(ready({ userId: "a", lastSync: "2026-11-12T08:03:30.000Z" }), false, "sessione e account seguito diversi");
+  assert.equal(ready({ userId: "b", lastSync: "2026-11-12T08:03:30.000Z" }), true);
+  assert.equal(push.trackReminderAccount(track, "b", pageStart + 999_999, pageStart), track, "stesso account: niente di nuovo");
+  assert.equal(push.reminderSyncReady({ userId: null, status: "idle", lastSync: "2026-11-12T09:00:00.000Z" }, track), false);
+});
+
+test("fuso nella riga e testo nell'ora di un altro fuso", () => {
+  const rows = push.pushReminderRows([event({ timeZone: ROME, reminders: [{ minutesBefore: 15 }] })], at("2026-11-12T08:00:00.000Z"));
+  assert.equal(rows[0].zone, push.rowZoneOf(Intl.DateTimeFormat().resolvedOptions().timeZone));
+  assert.deepEqual(Object.keys(push.serverRowOf(rows[0])).sort(), ["body", "fire_at", "id", "tag", "title", "url", "zone"], "niente campi in più nell'upsert");
+  assert.equal(push.rowZoneOf("Europe/Rome"), "Europe/Rome");
+  assert.equal(push.rowZoneOf("Fuso/Inventato"), null);
+  assert.equal(push.rowZoneOf("Europe/Rome; drop"), null);
+  // 09:00Z = 10:00 a Roma, 09:00 a Londra.
+  const start = Date.parse("2026-11-12T09:00:00.000Z");
+  assert.equal(push.reminderTextIn(start, false, start - 15 * MIN, ROME), "Tra 15 minuti · 10:00");
+  assert.equal(push.reminderTextIn(start, false, start - 15 * MIN, "Europe/London"), "Tra 15 minuti · 09:00");
+  assert.equal(push.reminderTextIn(start, false, start - 3 * HOUR, "America/New_York"), "Oggi alle 04:00");
+});
+
+test("dispositivi in fusi diversi (L5): non si cancellano né riscrivono le righe a vicenda", () => {
+  const LONDON = "Europe/London";
+  const now = at("2026-11-12T08:00:00.000Z");
+  const nowMs = now.getTime();
+  // Un esame tutto il giorno senza fuso suo: «il giorno prima alle 20:00» è un altro istante a Roma e a Londra.
+  const floating = event({ id: "f", allDay: true, ...allDayTimes("2026-11-15", "2026-11-15"), reminders: [{ daysBefore: 1, at: "20:00" }] });
+  // Una lezione con il suo fuso: stesso istante ovunque, cambia solo l'ora scritta nel testo.
+  const zoned = event({ id: "z", timeZone: ROME, start: "2026-11-13T09:00:00.000Z", end: "2026-11-13T10:00:00.000Z", reminders: [{ minutesBefore: 15 }] });
+  const events = [floating, zoned];
+  const rowsIn = (zone) => push.pushReminderRows(events, now, { zone });
+  const rome = rowsIn(ROME);
+  const london = rowsIn(LONDON);
+  assert.equal(rome.length, 2);
+  const [romeFloating, londonFloating] = [rome, london].map((rows) => rows.find((row) => row.id.startsWith("event:f@")));
+  assert.notEqual(romeFloating.id, londonFloating.id, "evento senza fuso: istante diverso");
+  assert.equal(push.reminderSlotOf(romeFloating.id), push.reminderSlotOf(londonFloating.id), "stesso promemoria");
+  assert.equal(Date.parse(romeFloating.fire_at) - Date.parse(londonFloating.fire_at), -HOUR);
+  const romeZoned = rome.find((row) => row.id.startsWith("event:z@"));
+  const londonZoned = london.find((row) => row.id.startsWith("event:z@"));
+  assert.equal(romeZoned.id, londonZoned.id, "evento con fuso: stesso istante");
+  assert.notEqual(romeZoned.body, londonZoned.body, "ma l'ora nel testo è quella di chi scrive");
+
+  const server = london.map(push.serverRowOf);
+  const options = (zone) => ({ zone, rowsInZone: rowsIn });
+  // Roma trova le righe scritte da Londra: giuste per Londra, restano.
+  assert.deepEqual(push.diffPushReminders(rome, server, nowMs, options(ROME)), { upserts: [], deletes: [] });
+  // Prima della correzione: Roma toglieva quella di Londra e scriveva la sua (e Londra il contrario).
+  const before = push.diffPushReminders(rome, server, nowMs);
+  assert.deepEqual(before.deletes, [londonFloating.id], "senza rowsInZone: comportamento di prima (interruttore spento, nessun dispositivo)");
+  // Londra rilegge: niente da fare.
+  assert.deepEqual(push.diffPushReminders(london, server, nowMs, options(LONDON)), { upserts: [], deletes: [] });
+
+  // Evento cambiato da Roma: la riga di Londra non è più giusta per Londra → Roma la sostituisce, una volta.
+  const moved = [{ ...floating, ...allDayTimes("2026-11-16", "2026-11-16") }, { ...zoned, title: "Lezione spostata" }];
+  const romeAfter = push.pushReminderRows(moved, now, { zone: ROME });
+  const afterOptions = { zone: ROME, rowsInZone: (zone) => push.pushReminderRows(moved, now, { zone }) };
+  const change = push.diffPushReminders(romeAfter, server, nowMs, afterOptions);
+  assert.deepEqual(change.upserts.map((row) => row.id).sort(), romeAfter.map((row) => row.id).sort());
+  assert.deepEqual(change.deletes, [londonFloating.id], "quella con l'id dell'evento con fuso si sovrascrive, l'altra si toglie");
+  // Poi Londra trova le righe di Roma, giuste per Roma: le lascia.
+  const serverAfter = romeAfter.map(push.serverRowOf);
+  const londonAfter = push.pushReminderRows(moved, now, { zone: LONDON });
+  assert.deepEqual(
+    push.diffPushReminders(londonAfter, serverAfter, nowMs, { zone: LONDON, rowsInZone: (zone) => push.pushReminderRows(moved, now, { zone }) }),
+    { upserts: [], deletes: [] }
+  );
+
+  // Due righe per lo stesso promemoria (versioni vecchie): ne resta una.
+  const both = [...server, push.serverRowOf(romeFloating)];
+  const cleanup = push.diffPushReminders(rome, both, nowMs, options(ROME));
+  assert.deepEqual(cleanup.upserts, []);
+  assert.deepEqual(cleanup.deletes, [londonFloating.id], "resta la propria");
+  // Righe senza fuso (versione precedente): come prima.
+  const legacy = rome.map((row) => ({ ...push.serverRowOf(row), zone: null }));
+  assert.deepEqual(push.diffPushReminders(rome, legacy, nowMs, options(ROME)), { upserts: [], deletes: [] });
+  // Fuso illeggibile: la riga si tratta come propria (e si riscrive se diversa).
+  const odd = server.map((row) => ({ ...row, zone: "Fuso/Inventato" }));
+  const fix = push.diffPushReminders(rome, odd, nowMs, options(ROME));
+  assert.ok(fix.deletes.includes(londonFloating.id));
+});
+
 // ─── Collegamenti (sorgente) ───────────────────────────────────────────────
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("scheda aperta: stesso tag e stesso indirizzo della push; segna la riga solo se la notifica di sistema è comparsa", () => {
+test("scheda aperta: stesso tag della push, una notifica per dispositivo, segna la riga solo se la scheda è in uso", () => {
   const watcher = read("src/components/calendar/EventReminderWatcher.tsx");
   assert.match(watcher, /tag: reminderTagOf\(key\)/);
   assert.match(watcher, /data: \{ url: PUSH_REMINDER_URL \}/);
-  assert.match(watcher, /if \(shown\) markShownOnServer\(item\.key\)/);
+  const once = watcher.slice(watcher.indexOf("async function showReminderOnce"));
+  const check = once.indexOf("if (alreadyShown(await readReminderShown(tag), item.at)) return;");
+  const show = once.indexOf("await showSystemReminder(");
+  assert.ok(check > 0 && check < show, "mostrato dalla push: solo la campanella, niente seconda notifica di sistema");
+  assert.match(once, /if \(!shown\) return;\s*await recordReminderShown\(tag, "page"\);\s*if \(inUse\(\)\) markShownOnServer\(item\.key\);/);
+  assert.match(watcher, /document\.visibilityState === "visible" && document\.hasFocus\(\)/, "una scheda dimenticata non toglie la push al telefono");
+  assert.match(watcher, /hidden \? PRIVATE_REMINDER_TITLE : title/, "password dell'app: niente titolo anche qui");
+  assert.match(watcher, /if \(system\) void showReminderOnce\(item, title, body\)/);
   assert.match(watcher, /import\("\.\.\/\.\.\/lib\/pushReminderSync"\)/, "supabase-js resta fuori dal pezzo del watcher");
   assert.match(watcher, /module\.startPushReminderSync\(\)/);
   assert.doesNotMatch(watcher, /from "\.\.\/\.\.\/lib\/pushReminderSync"/);
@@ -199,7 +301,13 @@ test("scheda aperta: stesso tag e stesso indirizzo della push; segna la riga sol
 test("sincronizzazione: solo con un account, dopo un giro della sync di questa pagina, per l'account, a pezzi", () => {
   const sync = read("src/lib/pushReminderSync.ts");
   assert.match(sync, /if \(!userId\) return "signed-out"/, "ospite: niente");
-  assert.match(sync, /cloud\.status !== "idle" \|\| !syncedSincePageStart\(cloud\.lastSync, PAGE_START_MS\)/);
+  assert.match(sync, /if \(!readyFor\(cloud\)\) return "waiting"/);
+  assert.match(sync, /accountChoice: cloud\.accountChoice/);
+  assert.match(sync, /track = trackReminderAccount\(track, state\.session\?\.user\.id \?\? null, Date\.now\(\), PAGE_START_MS\)/);
+  assert.match(sync, /if \(!stillSignedIn\(userId\)\) return "waiting";/, "account cambiato durante la rete: niente scritture");
+  assert.match(sync, /\.select\("id, fire_at, title, body, url, tag, zone"\)/);
+  assert.match(sync, /\.\.\.serverRowOf\(row\)/, "solo le colonne della tabella");
+  assert.match(sync, /rowsInZone: \(other\) => pushReminderRows\(events, now, \{ zone: other \}\)/);
   assert.match(sync, /store\.loading \|\| store\.locked/);
   assert.match(sync, /pushRemindersWanted\(selectPreferences\(store\)\)/);
   assert.match(sync, /from\(SUBSCRIPTIONS\)\.select\("id", \{ count: "exact", head: true \}\)/, "senza dispositivi le righe si tolgono");
@@ -234,7 +342,12 @@ test("SQL: tabella per account, controlli, job DEFINER chiuso ai client, pg_cron
   assert.match(sql, /char_length\(title\) between 1 and 120/);
   assert.match(sql, /char_length\(body\) <= 400/);
   assert.match(sql, /interval '14 days'/);
-  assert.match(sql, /v_pending >= 300/);
+  assert.match(sql, /v_total >= 400/);
+  assert.match(sql, /new\.fire_at := old\.fire_at;/, "un client non sposta un promemoria");
+  assert.match(sql, /if old\.sent_at is not null then\s*new\.sent_at := old\.sent_at;\s*new\.skipped := old\.skipped;/, "un client non rimette in coda");
+  assert.match(sql, /order by d\.rn, d\.fire_at, d\.user_id, d\.id/, "a turno tra gli account");
+  assert.match(sql, /d\.rn <= least\(10, 60 - coalesce\(u\.n, 0\)\)/, "al più 10 a giro e 60 all'ora per account");
+  assert.match(sql, /zone is null or zone ~ '\^\[A-Za-z0-9_\+\/-\]\{1,64\}\$'/);
   assert.match(sql, /fire_at < now\(\) - interval '30 minutes'/);
   assert.match(sql, /'kind', 'reminder'/);
   assert.match(sql, /function public\.studyos_push_due_reminders\(\)\s*returns integer\s*language plpgsql\s*security definer\s*set search_path = public/);
@@ -251,7 +364,7 @@ test("SQL: tabella per account, controlli, job DEFINER chiuso ai client, pg_cron
   const settings = read("src/views/SettingsView.tsx");
   assert.match(settings, /if \(alsoCloud\) await import\("\.\.\/lib\/pushReminderSync"\)\.then\(\(module\) => module\.clearPushReminders\(\)\)/);
   const verify = read("supabase/push-reminders-verify.sql");
-  for (const column of ["table_ready", "rls_ready", "policies_ready", "grants_ready", "guard_ready", "due_function_ready", "erase_ready", "pg_net_ready", "vault_ready", "cron_ready"]) {
+  for (const column of ["table_ready", "send_log_ready", "rls_ready", "policies_ready", "grants_ready", "guard_ready", "due_function_ready", "erase_ready", "pg_net_ready", "vault_ready", "cron_ready"]) {
     assert.match(verify, new RegExp(`as ${column}`));
   }
 });

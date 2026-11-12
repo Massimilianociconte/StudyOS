@@ -64,7 +64,7 @@ Ordine esatto nel SQL Editor, una query alla volta:
    togliere a «Cancella tutti i dati» anche i promemoria con l'app chiusa);
 2. `groups.sql`;
 3. `sharing.sql`;
-4. `people.sql`;
+4. `people.sql` (prima di `push-reminders.sql`, che ne usa le colonne `private` e `session_id`);
 5. `push-reminders.sql` (promemoria con l'app chiusa, opzionale, vedi sotto);
 6. `verify.sql`;
 7. `sharing-verify.sql`;
@@ -310,14 +310,23 @@ iscrizioni di quell'account soltanto. Dettagli in
 [docs/push-reminders.md](../docs/push-reminders.md).
 
 1. Prima i passi delle notifiche push qui sopra (`pg_net`, Vault, Worker con il deploy che
-   accetta il tipo `reminder`).
+   accetta il tipo `reminder` e l'`account` di ogni iscrizione).
 2. **pg_cron**: Dashboard → **Database → Extensions** → cerca `pg_cron` → **Enable**.
-3. Esegui `push-reminders.sql` dopo `people.sql`, come un unico script; si può rieseguire (il
+3. Riesegui `people.sql` (anche se l'avevi già eseguito): aggiunge alle iscrizioni `private`
+   (promemoria senza titolo con la password dell'app) e `session_id` (iscrizione tolta quando la
+   sessione finisce), e l'account di ogni iscrizione nelle notifiche. `push-reminders.sql` si
+   ferma con un messaggio se `people.sql` non è aggiornato.
+4. Esegui `push-reminders.sql` dopo `people.sql`, come un unico script; si può rieseguire (il
    job `studyos-push-reminders` resta uno solo). Senza `pg_cron` lo script va a buon fine e
-   avvisa: rieseguilo dopo averlo attivato.
-4. Riesegui `schema.sql` (la funzione di «Cancella tutti i dati» toglie anche queste righe).
-5. Incolla [push-reminders-verify.sql](push-reminders-verify.sql): tutte le colonne `*_ready`
-   devono essere `true`.
+   avvisa: rieseguilo dopo averlo attivato. Rieseguilo anche se l'avevi già eseguito il
+   12/11/2026: tetto di 400 righe per account (anche mandate), righe mandate che un client non
+   rimette in coda, turni tra account e al più 60 promemoria all'ora per account, colonna `zone`.
+5. Riesegui `schema.sql` (la funzione di «Cancella tutti i dati» toglie anche queste righe).
+6. Incolla [push-reminders-verify.sql](push-reminders-verify.sql) e
+   [people-verify.sql](people-verify.sql): tutte le colonne `*_ready` devono essere `true`, tranne
+   `session_cleanup_ready`, che può restare `false` se il progetto non permette un trigger su
+   `auth.sessions` (lo script avvisa e va avanti; restano «Rimuovi» nelle Impostazioni e la
+   pulizia alla prima notifica respinta).
 
 Senza questo script l'app funziona come prima: i promemoria arrivano solo con StudyOS aperto.
 Per controllare: `select jobname, schedule from cron.job;` e

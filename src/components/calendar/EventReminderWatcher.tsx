@@ -22,6 +22,7 @@ import {
 import { systemNotificationState } from "../../lib/timerAlerts";
 import { PUSH_REMINDER_URL, reminderTagOf } from "../../lib/pushReminders";
 import { cloudConfigured, getCloudSyncState } from "../../lib/cloudSyncState";
+import { PRIVATE_REMINDER_TITLE, alreadyShown, pushPrivateOf, readReminderShown, recordReminderShown } from "../../lib/pushLocal";
 
 /** Si ripianifica anche da solo ogni tanto (timer rallentati in background, giorno che cambia). */
 const REPLAN_MS = 10 * 60_000;
@@ -72,6 +73,33 @@ const markShownOnServer = (key: string) => {
   if (!cloudConfigured || !getCloudSyncState().session) return;
   void import("../../lib/pushReminderSync").then((module) => module.markReminderShown(key)).catch(() => undefined);
 };
+
+/** La persona sta usando questa scheda: solo allora la notifica di qui vale per tutti i dispositivi. */
+const inUse = () => {
+  try {
+    return document.visibilityState === "visible" && document.hasFocus();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Notifica di sistema di un promemoria, una sola per dispositivo in ogni ordine di arrivo:
+ * - la push del server l'ha già mostrata (service worker → pushLocal): niente, resta la campanella;
+ * - mostrata qui: si ricorda (la push che arriva dopo la sostituisce in silenzio) e, solo se la
+ *   scheda è in uso, il server non la manda più agli altri dispositivi. Una scheda dimenticata
+ *   aperta su un computer non toglie il promemoria al telefono.
+ * Con la password dell'app (e «Mostra il titolo nelle notifiche» spento) il titolo non compare.
+ */
+async function showReminderOnce(item: PlannedReminder, title: string, body: string) {
+  const tag = reminderTagOf(item.key);
+  if (alreadyShown(await readReminderShown(tag), item.at)) return;
+  const hidden = pushPrivateOf(useStudyStore.getState().settings);
+  const shown = await showSystemReminder(item.key, hidden ? PRIVATE_REMINDER_TITLE : title, body);
+  if (!shown) return;
+  await recordReminderShown(tag, "page");
+  if (inUse()) markShownOnServer(item.key);
+}
 
 export function EventReminderWatcher() {
   const { events, ready, addNotification } = useStudyStore(
@@ -127,13 +155,8 @@ export function EventReminderWatcher() {
       // dopo su un altro dispositivo è più recente e vince (e nell'elenco sta al suo posto).
       const createdAt = new Date(Math.min(item.at, nowMs)).toISOString();
       void addNotification({ id: notificationIdOf(item.key), kind: "system", title, body, linkView: "calendar", createdAt }).catch(() => undefined);
-      // Solo una notifica di sistema vera toglie la push: un avviso rimasto nella campanella di una
-      // scheda dimenticata aperta non deve far perdere il promemoria sul telefono.
-      if (system) {
-        void showSystemReminder(item.key, title, body).then((shown) => {
-          if (shown) markShownOnServer(item.key);
-        });
-      }
+      // Solo una notifica di sistema vera, in una scheda in uso, toglie la push agli altri dispositivi.
+      if (system) void showReminderOnce(item, title, body).catch(() => undefined);
     };
     // Sta fuori dai riquadri d'errore delle viste: un dato strano non deve far cadere l'app.
     let plan: PlannedReminder[] = [];

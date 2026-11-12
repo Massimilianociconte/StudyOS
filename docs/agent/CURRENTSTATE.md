@@ -352,6 +352,22 @@ SQL su Postgres 17 temporaneo con stub di `pg_net`, Vault e `pg_cron` (script ap
 `push-reminders.sql` e rieseguire `schema.sql`, `push-reminders-verify.sql` tutto verde, deploy del
 Worker. La consegna vera con l'app chiusa si prova su un browser vero dopo il deploy.
 
+Promemoria, dopo la revisione (12 novembre 2026, sera): una notifica per promemoria su ogni
+dispositivo in ogni ordine (pagina e service worker condividono la cache `studyos-push-local-v1`:
+la push mostrata non si ripete nella pagina, quella della pagina rende silenziosa la push);
+`sent_at` dalla scheda solo se in uso; trigger che non lascia spostare né rimettere in coda le
+righe, tetto di 400 righe per account (anche mandate), job a turno tra gli account e al più 60
+promemoria all'ora per account (`studyos_push_reminder_sends`); con la password dell'app i
+promemoria dicono solo «Promemoria StudyOS» e l'ora (colonna `private` per dispositivo,
+interruttore «Mostra il titolo nelle notifiche»); dispositivi dell'account con «Rimuovi»; righe di
+dispositivi in fusi diversi che non si cancellano a vicenda (colonna `zone`); cambio di account
+che non scrive i promemoria di un account nell'altro; guardia della sessione anche con il permesso
+dato dopo; filtro per account nel service worker (`account` per iscrizione nel messaggio cifrato)
+e iscrizione tolta dal server quando la sessione finisce (`session_id`, trigger su
+`auth.sessions`, facoltativo). Sul progetto reale: rieseguire `people.sql`, poi
+`push-reminders.sql`, i due verify, deploy del Worker. Verifiche: `npm test` (1427, anche con
+`TZ=UTC`), lint, build; SQL su Postgres temporaneo con le sonde della revisione.
+
 Dopo la revisione: le voci hanno `call_id` (una chiamata dello strumento, anche su più push) e si
 elencano e si annullano per chiamata, tutto o niente, con l'elemento in conflitto nella risposta
 (`studyos_agent_restore_call(_own)`; `onlyThisChange` per una voce sola); frasi «Hai…» per i

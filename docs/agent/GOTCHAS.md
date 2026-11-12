@@ -543,14 +543,22 @@
   `studyos-auth` non c'è più o è di un altro account (offline la sessione resta salvata e non si
   tocca niente). La riga sul server la toglie `push_gone` alla prima notifica respinta.
 - Promemoria con l'app chiusa (`supabase/push-reminders.sql`, `src/lib/pushReminderSync.ts`):
-  scheda aperta e push usano lo **stesso tag** `studyos-reminder-<chiave>` (`reminderTagOf`), così
-  il sistema mostra una notifica sola. La scheda segna `sent_at` solo dopo aver mostrato una
-  notifica di sistema vera (non solo la campanella). Il client confronta i promemoria voluti con le
-  righe in attesa sul server solo dopo un giro completo della sync in questa pagina (`status`
-  `idle` e `lastSync` dopo l'apertura): prima i dati locali possono essere vecchi e toglierebbero
-  le righe scritte da un altro dispositivo. Il Worker accetta corpi fino a ≈ 617 kB
-  (`MAX_PUSH_BODY_BYTES`: lotto pieno nel caso peggiore) e scarta uno per uno gli endpoint non
-  ASCII: le iscrizioni di un account non fanno mai respingere quelle degli altri.
+  scheda aperta e push usano lo **stesso tag** `studyos-reminder-<chiave>` (`reminderTagOf`).
+  Pagina e service worker condividono la cache `studyos-push-local-v1` (`src/lib/pushLocal.ts`,
+  stesse chiavi in `public/sw.js`; l'`activate` non deve cancellarla): il promemoria mostrato
+  dalla push non si ripete nella pagina, quello della pagina rende silenziosa la push. La scheda
+  segna `sent_at` solo dopo una notifica di sistema vera e solo se è in uso (visibile e con il
+  focus). Il client confronta le righe solo quando lo store è dell'account della sessione e
+  aggiornato (`reminderSyncReady`: un giro di sync dopo che l'account è diventato quello della
+  sessione, nessuna scelta «ask» aperta). Il trigger non lascia a un client spostare `fire_at` né
+  togliere `sent_at`: non cambiare l'id (contiene l'istante) senza cambiare la riga. Righe di
+  altri fusi (`zone`) ancora giuste per il loro fuso restano (`diffPushReminders` con
+  `rowsInZone`). Il Worker accetta corpi fino a ≈ 620 kB (`MAX_PUSH_BODY_BYTES`: lotto pieno nel
+  caso peggiore, con `account`) e scarta uno per uno gli endpoint non ASCII.
+- Push e password dell'app: con il vault attivo i promemoria non portano il titolo (riga
+  dell'iscrizione `private`, `pushPrivateOf`); il job manda una richiesta per tipo di testo. Un
+  testo nuovo che contiene titoli di eventi va nascosto allo stesso modo. Il service worker non
+  mostra le push con un `account` diverso da quello scritto dalla pagina (`writePushAccount`).
 - `public/sw.js`: l'indirizzo della notifica (`data.url`, es. `?apri=notifiche`) si risolve
   sempre contro `self.registration.scope` e fuori dall'app ripiega sulla pagina iniziale. Il
   cassetto Notifiche non è una sezione: lo apre l'evento `studyos:open-notifications`.
