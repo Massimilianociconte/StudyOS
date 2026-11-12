@@ -61,9 +61,10 @@ export const TASK_EDITOR_TEXT = {
   discardTitle: "Scartare le modifiche?",
   discardText: "Quello che hai cambiato non è ancora salvato.",
   keepEditing: "Continua a modificare",
-  discard: "Scarta le modifiche",
+  discard: "Scarta",
   minutesHint: "Se usi il timer si aggiorna da solo.",
   minutesRunning: "Il timer è in corso: se cambi i minuti, riparte da lì.",
+  archivedHint: "Le archiviate spariscono dall'elenco: le ritrovi in fondo, con «Mostra le archiviate».",
   steps: "Passaggi",
   stepsCount: (done: number, total: number) => `${done} di ${total} fatti`,
   stepsHint: "Dividi l'attività in piccoli passi da spuntare.",
@@ -81,6 +82,15 @@ export const QUICK_TASK_TEXT = {
   deletedSubject: "Materia eliminata",
   due: (date: string) => `Scade il ${date}`,
   clear: (label: string) => `Togli «${label}» dalle prossime attività`
+} as const;
+
+/** Elenco: nomi brevi delle viste sul telefono (a 375 px stanno tutti in una riga), archiviate. */
+export const TASKS_LIST_TEXT = {
+  viewsShort: { list: "Lista", focus: "Oggi", subject: "Materie", kanban: "Stato", matrix: "Urgenza" },
+  showArchived: "Mostra le archiviate",
+  hideArchived: "Nascondi le archiviate",
+  restore: "Ripristina",
+  restoreAria: (title: string) => `Ripristina «${title}» tra le attività da fare`
 } as const;
 
 export const TASKS_HELP = {

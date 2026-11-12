@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Drawer, Field, HelpTip, IconButton, inputClass } from "./ui";
@@ -73,6 +73,11 @@ export function TaskEditorModal({
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
   const completedLate = isTaskCompletedLate(task);
+
+  // La domanda prende il focus sulla scelta sicura (Invio o Esc tornano a modificare).
+  useEffect(() => {
+    if (asking) footerRef.current?.querySelector<HTMLElement>("[data-keep]")?.focus();
+  }, [asking]);
 
   const keepEditing = () => {
     setAsking(false);
@@ -151,7 +156,7 @@ export function TaskEditorModal({
 
   const statusHint =
     draft.status === "archived"
-      ? "Le attività archiviate spariscono dall'elenco."
+      ? TASK_EDITOR_TEXT.archivedHint
       : timerRunning && draft.status !== "doing"
         ? "Salvando, il timer si ferma e il tempo fatto resta registrato."
         : timerRunning
@@ -171,13 +176,13 @@ export function TaskEditorModal({
   );
 
   const footer = asking ? (
-    <div role="group" aria-label={TASK_EDITOR_TEXT.discardTitle} className="grid grid-cols-1 gap-2">
+    <div key="ask" ref={footerRef} role="group" aria-label={TASK_EDITOR_TEXT.discardTitle} className="grid grid-cols-1 gap-2">
       <div>
         <p className="text-sm font-black">{TASK_EDITOR_TEXT.discardTitle}</p>
         <p className="text-xs font-bold text-[var(--muted)]">{TASK_EDITOR_TEXT.discardText}</p>
       </div>
       <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="soft" onClick={keepEditing} autoFocus>
+        <Button data-keep variant="soft" onClick={keepEditing}>
           {TASK_EDITOR_TEXT.keepEditing}
         </Button>
         <Button variant="danger" icon="X" onClick={onClose}>
@@ -186,7 +191,7 @@ export function TaskEditorModal({
       </div>
     </div>
   ) : (
-    <div ref={footerRef} className="flex items-center justify-between gap-2">
+    <div key="edit" ref={footerRef} className="flex items-center justify-between gap-2">
       {/* Solo icona sul telefono, così i tre pulsanti stanno in una riga. */}
       <Button
         variant="danger"
