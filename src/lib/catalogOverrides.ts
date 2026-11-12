@@ -2,16 +2,11 @@
 // studyos_catalog_override_clean) e valori effettivi (ufficiale + correzione del gruppo).
 // Il catalogo ufficiale resta com'è: la correzione vale solo per chi è nel gruppo.
 import type { CatalogOverride, CatalogTargetKind, CleanResult } from "./groupExams";
-import { normalizeCourseName } from "./groupExams";
+import { CATALOG_OVERRIDE_FIELDS, normalizeCourseName, safeOverrideValue } from "./groupExams";
 import { institutionalEmail, onlyInstitutionalEmails } from "./institutionalEmail";
 import { GROUP_EXAM_FIELD_ERROR } from "./labels";
 
-export const CATALOG_OVERRIDE_FIELDS: Record<CatalogTargetKind, readonly string[]> = {
-  teacher: ["officeHours", "officeHoursPlace", "office", "phone", "email", "website", "note"],
-  course: ["room", "building", "site", "lessonTimes", "note"],
-  schedule_rule: ["room", "building", "site", "note"],
-  contact: ["label", "value", "url", "note"]
-};
+export { CATALOG_OVERRIDE_FIELDS };
 
 const MAX_LENGTH: Record<string, number> = { phone: 40, note: 500, officeHours: 300, lessonTimes: 300, value: 300, url: 300, website: 300 };
 const PHONE = /^[0-9 +()./-]{3,40}$/;
@@ -73,9 +68,11 @@ export const withOverride = <T extends Record<string, unknown>>(official: T, ove
   const value: Record<string, unknown> = { ...official };
   const changed: string[] = [];
   for (const [key, text] of Object.entries(override.fields)) {
-    if (key === "note") continue;
-    if (value[key] !== text) changed.push(key);
-    value[key] = text;
+    // Il client controlla di nuovo: solo campi previsti per quel tipo e indirizzi istituzionali.
+    const safe = safeOverrideValue(override.targetKind, key, text);
+    if (key === "note" || safe === null) continue;
+    if (value[key] !== safe) changed.push(key);
+    value[key] = safe;
   }
   return { value: value as T, changed, override };
 };

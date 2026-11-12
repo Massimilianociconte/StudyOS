@@ -143,6 +143,16 @@ test("cronologia leggibile", () => {
   assert.equal(historyFromRow({ id: "x" }), null);
 });
 
+test("righe di cronologia: valori lunghi accorciati, solo corso collegato (L3)", () => {
+  const long = "x".repeat(500);
+  const entry = historyFromRow({ id: 9, group_id: "gx", record_kind: "exam_session", record_id: "gexam_a1", action: "update", version: 2, before: row({ notes: "" }), after: row({ version: 2, notes: long }), changed_fields: ["notes"], actor_user_id: "u", actor_name: "A", changed_at: "" });
+  const [line] = describeHistoryEntry(entry);
+  assert.ok(line.length < 120, line.length);
+  assert.ok(line.includes("…"));
+  const linked = historyFromRow({ id: 10, group_id: "gx", record_kind: "exam_session", record_id: "gexam_a1", action: "update", version: 2, before: row({ course_id: null, course_key: "nome:farmacologia speciale" }), after: row({ version: 2 }), changed_fields: ["course"], actor_user_id: "u", actor_name: "A", changed_at: "" });
+  assert.deepEqual(describeHistoryEntry(linked), ["Corso: collegato al catalogo"]);
+});
+
 test("titolo e materia", () => {
   const session = sessionFromRow(row({ label: "Modulo A" }));
   assert.equal(sessionTitle(session), "Preappello · Farmacologia Speciale · Modulo A");

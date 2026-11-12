@@ -28,12 +28,42 @@ test("nuovo appello di un altro membro per una mia materia", () => {
   assert.deepEqual(planGroupExamNotifications({ ...base, me: "u-bea", sessions: [session()], watermark: "2026-11-11T00:00:00Z" }).notifications, [], "le mie aggiunte non mi avvisano");
 });
 
+const LATER = "2026-11-13T09:00:00Z";
+const planOf = () => applyPlanPatch(newExamPlan(session(), "Farmaco", "2026-11-12T10:00:00Z"), { selected: true }, session(), "Farmaco", "2026-11-12T10:00:00Z");
+
 test("appello scelto: cambiato o eliminato da altri", () => {
-  const plan = applyPlanPatch(newExamPlan(session(), "Farmaco", "2026-11-12T10:00:00Z"), { selected: true }, session(), "Farmaco", "2026-11-12T10:00:00Z");
-  const changed = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-12T10:00:00Z", sessions: [session({ version: 2, exam_date: "2027-01-14", updated_by: "u-ada", updated_by_name: "Ada" })] });
+  const plan = planOf();
+  const changed = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-12T10:00:00Z", sessions: [session({ version: 2, exam_date: "2027-01-14", updated_at: LATER, updated_by: "u-ada", updated_by_name: "Ada" })] });
   assert.deepEqual(changed.notifications.map((item) => [item.id, item.body]), [["notif-gexam-gexam_a1-v2", "Preappello · Farmacologia Speciale: Data: 12/01/2027 → 14/01/2027 · da Ada"]]);
-  const notes = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-12T10:00:00Z", sessions: [session({ version: 2, notes: "porta il libretto", updated_by: "u-ada" })] });
+  const notes = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-12T10:00:00Z", sessions: [session({ version: 2, notes: "porta il libretto", updated_at: LATER, updated_by: "u-ada" })] });
   assert.deepEqual(notes.notifications, [], "solo data, tipo, ora, aula e iscrizioni avvisano");
-  const deleted = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-12T10:00:00Z", sessions: [session({ version: 2, deleted_at: "2026-11-13T00:00:00Z", deleted_by_name: "Olga", updated_by: "u-olga" })] });
+  const deleted = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-12T10:00:00Z", sessions: [session({ version: 2, updated_at: LATER, deleted_at: "2026-11-13T00:00:00Z", deleted_by_name: "Olga", updated_by: "u-olga" })] });
   assert.deepEqual(deleted.notifications.map((item) => item.id), ["notif-gexam-gexam_a1-deleted"]);
+});
+
+test("una notifica tolta dalla persona non torna al ciclo dopo (M1)", () => {
+  const plan = planOf();
+  const sessions = [session({ version: 2, exam_date: "2027-01-14", updated_at: LATER, updated_by: "u-ada", updated_by_name: "Ada" })];
+  const first = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-12T10:00:00Z", sessions });
+  assert.equal(first.notifications.length, 1);
+  assert.equal(first.watermark, LATER, "il segno avanza fino all'ultima modifica vista");
+  const again = planGroupExamNotifications({ ...base, plans: [plan], watermark: first.watermark, sessions });
+  assert.deepEqual(again.notifications, [], "stessa riga, stesso segno: niente di nuovo");
+  const gone = [session({ version: 3, updated_at: "2026-11-14T00:00:00Z", deleted_at: "2026-11-14T00:00:00Z", deleted_by_name: "Olga", updated_by: "u-olga" })];
+  const deleted = planGroupExamNotifications({ ...base, plans: [plan], watermark: first.watermark, sessions: gone });
+  assert.equal(deleted.notifications.length, 1);
+  assert.deepEqual(planGroupExamNotifications({ ...base, plans: [plan], watermark: deleted.watermark, sessions: gone }).notifications, []);
+});
+
+test("segni con formati di data diversi si confrontano come istanti", () => {
+  const plan = planOf();
+  const result = planGroupExamNotifications({ ...base, plans: [plan], watermark: "2026-11-13T09:00:00.000Z", sessions: [session({ version: 2, exam_date: "2027-01-14", updated_at: "2026-11-13T10:00:00+01:00", updated_by: "u-ada" })] });
+  assert.deepEqual(result.notifications, [], "10:00+01:00 è le 09:00Z: non è più nuovo del segno");
+});
+
+test("gruppo vuoto al primo avvio: il segno esiste e il primo appello aggiunto avvisa (M2)", () => {
+  const first = planGroupExamNotifications({ ...base, sessions: [], watermark: undefined });
+  assert.ok(first.watermark, "il segno non è vuoto");
+  const next = planGroupExamNotifications({ ...base, sessions: [session()], watermark: first.watermark });
+  assert.deepEqual(next.notifications.map((item) => item.id), ["notif-gexam-new-gexam_a1"]);
 });

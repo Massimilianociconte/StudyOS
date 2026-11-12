@@ -4,6 +4,7 @@ import type { CalendarEvent, Exam, ExamPlan, Subject } from "../types";
 import type { GroupExamSession } from "./groupExams";
 import { sessionMatchesSubject, sessionTitle } from "./groupExams";
 import { OPEN_PLAN_STATUSES } from "./examPlans";
+import { GROUP_EXAM_TEXT } from "./labels";
 
 export const GROUP_EXAM_EVENT_PREFIX = "gexam:";
 export const GROUP_EXAM_REGISTRATION_PREFIX = "gexam-reg:";
@@ -94,7 +95,7 @@ export const groupExamEvents = ({ sessions, plans, groupNames, subjects, events,
     out.push({
       ...allDayEvent(groupExamEventId(session.id), session.date, {
         title: sessionTitle(session),
-        description: [groupName && `Gruppo: ${groupName}`, session.time && `Ora: ${session.time}`, session.room && `Aula: ${session.room}`].filter(Boolean).join("\n"),
+        description: [groupName && GROUP_EXAM_TEXT.calendarGroup(groupName), session.time && GROUP_EXAM_TEXT.calendarTime(session.time), session.room && GROUP_EXAM_TEXT.calendarRoom(session.room)].filter(Boolean).join("\n"),
         subjectId: subject?.id,
         priority: selected ? "high" : "medium",
         createdAt: session.createdAt,
@@ -149,7 +150,7 @@ export const groupExamReminderEvents = (sessions: readonly GroupExamSession[], p
     const closes = live ? live.registrationCloses : plan.snapshot.registrationCloses;
     if (plan.remindRegistration && plan.status === "planned" && closes) {
       out.push(allDayEvent(`${GROUP_EXAM_REGISTRATION_PREFIX}${plan.sessionId}`, closes, {
-        title: `Chiusura iscrizioni · ${title}`,
+        title: GROUP_EXAM_TEXT.registrationClosesTitle(title),
         reminders: [{ daysBefore: 1, at: "09:00" }, { daysBefore: 0, at: "09:00" }]
       }));
     }

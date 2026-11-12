@@ -959,6 +959,28 @@ export const GROUP_EXAM_FIELD_LABEL = {
   deleted: "Eliminato"
 } as const;
 
+/** Testi degli appelli di gruppo usati da più moduli di logica (calendario, cronologia, notifiche, controllo). */
+export const GROUP_EXAM_TEXT = {
+  someMember: "un membro",
+  someGroup: "un gruppo",
+  someItem: "un elemento",
+  restored: "Ripristinato",
+  added: (title: string, day: string) => `Aggiunto: ${title} del ${day}`,
+  courseLinked: "Corso: collegato al catalogo",
+  calendarGroup: (name: string) => `Gruppo: ${name}`,
+  calendarTime: (time: string) => `Ora: ${time}`,
+  calendarRoom: (room: string) => `Aula: ${room}`,
+  registrationClosesTitle: (title: string) => `Chiusura iscrizioni · ${title}`,
+  matchEvent: (title: string) => `Evento «${title}»`,
+  matchExam: (title: string) => `Esame di ${title}`,
+  notifyNewTitle: "Nuovo appello nel gruppo",
+  notifyNewBody: (title: string, day: string, who: string) => `${title}, ${day} · da ${who}`,
+  notifyDeletedTitle: "Appello eliminato",
+  notifyDeletedBody: (title: string, day: string, who: string) => `${title} del ${day} · eliminato da ${who}. È ancora nel tuo piano.`,
+  notifyChangedTitle: "Appello cambiato",
+  notifyChangedBody: (title: string, changes: string, who: string) => `${title}: ${changes} · da ${who}`
+} as const;
+
 /** Messaggi dei controlli sui campi: gli stessi che restituisce il server. */
 export const GROUP_EXAM_FIELD_ERROR = {
   fields: "Dati dell'appello mancanti.",

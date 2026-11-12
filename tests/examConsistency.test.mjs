@@ -96,6 +96,23 @@ test("collegamenti rotti e doppioni personali", () => {
   assert.deepEqual(codes(report).sort(), ["orphan_exam_subject", "orphan_link"]);
 });
 
+test("testi senza id grezzi (L2) e «oggi» è il giorno locale (L5)", () => {
+  const twin = session({ id: "gexam_a2", group_id: "gz", created_at: "2026-11-13T10:00:00Z" });
+  const report = checkConsistency(withGroup([session(), twin]));
+  const other = report.issues.find((issue) => issue.code === "same_session_other_group");
+  assert.ok(!/gz/.test(other.detail), other.detail);
+  assert.match(other.detail, /un gruppo/);
+  const override = overrideFromRow({ id: "gover_1", group_id: "gx", target_kind: "teacher", target_id: "unimi-ex-docente", target_label: "", fields: { office: "Studio 3" }, version: 1, created_by: "u", created_by_name: "B", updated_by: "u", updated_by_name: "B", deleted_at: null, deleted_by_name: null, created_at: "", updated_at: "" });
+  const missing = checkConsistency(base({ catalog: { teacher: new Set(), course: new Set(), schedule_rule: new Set(), contact: new Set() }, groupExams: { ...base().groupExams, overrides: [override] } }));
+  assert.ok(!missing.issues[0].title.includes("unimi-ex-docente"), missing.issues[0].title);
+  // 00:10 locale del 5 gennaio: le iscrizioni chiuse il 4 non sono «in chiusura», in qualunque fuso.
+  const s = session({ registration_closes: "2027-01-04" });
+  const justAfterMidnight = new Date(2027, 0, 5, 0, 10);
+  assert.deepEqual(codes(checkConsistency(withGroup([s], { now: justAfterMidnight, plans: [plan(s)] }))), []);
+  const lateEvening = new Date(2027, 0, 4, 23, 50);
+  assert.deepEqual(codes(checkConsistency(withGroup([s], { now: lateEvening, plans: [plan(s)] }))), ["registration_closing"]);
+});
+
 test("correzioni per elementi spariti dal catalogo; id stabili", () => {
   const override = overrideFromRow({ id: "gover_1", group_id: "gx", target_kind: "teacher", target_id: "unimi-ex-docente", target_label: "Ex docente", fields: { office: "Studio 3" }, version: 2, created_by: "u", created_by_name: "Bea", updated_by: "u", updated_by_name: "Bea", deleted_at: null, deleted_by_name: null, created_at: "", updated_at: "" });
   const catalog = { teacher: new Set(["unimi-mario-rossi"]), course: new Set(), schedule_rule: new Set(), contact: new Set() };

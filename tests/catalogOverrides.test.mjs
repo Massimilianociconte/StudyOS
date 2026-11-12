@@ -25,6 +25,40 @@ test("testi: indirizzi non istituzionali nascosti, istituzionali tenuti solo se 
   assert.ok(!onlyInstitutionalEmails("x@unimi.it.evil.com"));
 });
 
+test("indirizzi: ogni forma di indirizzo non istituzionale sparisce (H1)", () => {
+  const hidden = [
+    "josé@gmail.com", "à@gmail.com", "o'brien@gmail.com", "x@münchen.de", "x@unimi.it​@gmail.com",
+    "x@unimi.it@gmail.com", "a@@b.com", "x@unimi.it.evil.com", "x@xunimi.it", "x@UNIMI.IT.evil.com",
+    "mailto:anna@gmail.com", "<anna@gmail.com>", "a​@unimi.it", "x@unimi.it‍@evil.com", "x＠gmail.com", "anna@gmail.com."
+  ];
+  for (const address of hidden) {
+    for (const keep of [true, false]) {
+      const out = redactEmails(`scrivi a ${address} grazie`, keep);
+      assert.ok(!/gmail|evil|münchen|brien|josé|à@/.test(out), `${JSON.stringify(address)} keep=${keep} -> ${out}`);
+      assert.ok(!/[@＠]/.test(out), `nessuna @ resta: ${out}`);
+    }
+  }
+  assert.equal(redactEmails("mailto:Mario@UNIMI.IT.", true), "mailto:mario@unimi.it.");
+  assert.equal(redactEmails("<Mario@UNIMI.IT>, ok", true), "<mario@unimi.it>, ok");
+  assert.equal(redactEmails("(cl.biol@unimi.it)", true), "(cl.biol@unimi.it)");
+  assert.equal(redactEmails("cl.biol@unimi.it", false), EMAIL_HIDDEN);
+  assert.equal(redactEmails("niente da nascondere", false), "niente da nascondere");
+  assert.equal(institutionalEmail("x@unimi.it\n"), "x@unimi.it", "gli spazi ai bordi si tolgono, quelli dentro no");
+  assert.equal(institutionalEmail("x@unimi.it\n@evil.com"), null);
+  assert.equal(institutionalEmail("evil%x.com@unimi.it"), "evil%x.com@unimi.it", "il % è ammesso come nella regola del server");
+  assert.equal(institutionalEmail("a​@unimi.it"), null);
+});
+
+test("righe di correzione: il client filtra di nuovo (L4)", () => {
+  const row = (fields, kind = "teacher") => overrideFromRow({ id: "gover_9", group_id: "gx", target_kind: kind, target_id: "t1", target_label: "T", fields, version: 1, created_by: "u", created_by_name: "B", updated_by: "u", updated_by_name: "B", deleted_at: null, deleted_by_name: null, created_at: "", updated_at: "" });
+  assert.deepEqual(row({ id: "x", officeHours: "Lun 9", email: "a@gmail.com", note: "scrivi a b@gmail.com" }).fields, { officeHours: "Lun 9" });
+  assert.deepEqual(row({ email: "A@UNIMI.IT", room: "C1" }).fields, { email: "a@unimi.it" });
+  const effective = withOverride({ id: "official", email: "x@unimi.it" }, { ...row({ officeHours: "Lun 9" }), fields: { id: "evil", email: "a@gmail.com", officeHours: "Lun 9" } });
+  assert.equal(effective.value.id, "official");
+  assert.equal(effective.value.email, "x@unimi.it");
+  assert.equal(effective.value.officeHours, "Lun 9");
+});
+
 test("correzioni: stessi controlli del server", () => {
   assert.deepEqual(cleanOverrideFields("teacher", { email: "Mario.Rossi@UNIMI.IT", officeHours: " Mar  10-12 ", phone: null }), { ok: true, value: { email: "mario.rossi@unimi.it", officeHours: "Mar 10-12" } });
   assert.equal(cleanOverrideFields("teacher", { email: "mario@gmail.com" }).field, "email");
