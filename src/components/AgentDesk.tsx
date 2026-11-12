@@ -19,6 +19,7 @@ import {
 } from "../lib/agentLink";
 import { agentDeskStatus, remoteConnectorView, type DeskStatus, type RemoteRevokeResult } from "../lib/agentDesk";
 import { readSavedHub } from "../lib/agentLocal";
+import { requestSettingsSection, type SettingsSection } from "../lib/settingsJump";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
 import { agentAccountLabels, agentCloudLabels } from "../lib/labels";
 import { AGENT_DESK_TEXT } from "../lib/labels/agents";
@@ -26,6 +27,12 @@ import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { ConfirmWithError } from "./ConfirmWithError";
 import { Icon } from "./Icon";
 import { Button, Field, inputClass } from "./ui";
+
+/** Porta alla categoria di Impostazioni (anche se sono già aperte su un'altra). */
+const openSettingsAt = (section: SettingsSection) => {
+  requestSettingsSection(section);
+  useStudyStore.getState().setActiveView("settings");
+};
 
 const RISK_LABEL: Record<AgentRisk, string> = {
   read: "Letture",
@@ -132,10 +139,7 @@ export function AgentDock() {
         <button
           type="button"
           className="soft-panel flex w-full items-center gap-2 p-3 text-left text-sm font-black"
-          onClick={() => {
-            useStudyStore.getState().setActiveView("settings");
-            window.setTimeout(() => document.getElementById("settings-agenti")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
-          }}
+          onClick={() => openSettingsAt("agenti")}
         >
           <Icon name="AlertTriangle" className="h-4 w-4 shrink-0 text-[var(--danger-text)]" />
           <span>{window.location.hostname === "massimilianociconte.github.io" ? "Agenti AI: riapri StudyOS per ricollegarli" : "Agenti AI: il programma sul computer non risponde"}</span>
@@ -207,7 +211,7 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
       ) : view.kind === "noName" ? (
         <p className="text-sm font-bold text-[var(--muted)]">
           {text.noName}{" "}
-          <a href="#settings-profilo" className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+          <button type="button" onClick={() => openSettingsAt("profilo")} className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</button>
         </p>
       ) : (
         <p className="text-sm font-bold text-[var(--muted)]">{view.kind === "noCloud" ? agentCloudLabels.noCloud : view.kind === "off" ? text.off : text.noHub}</p>
@@ -354,7 +358,7 @@ export function AgentSettings() {
         {accountName ? null : (
           <p className={MUTED}>
             {agentAccountLabels.unnamed}{" "}
-            <a href="#settings-profilo" className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+            <button type="button" onClick={() => openSettingsAt("profilo")} className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</button>
           </p>
         )}
       </section>

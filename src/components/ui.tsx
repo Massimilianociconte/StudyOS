@@ -506,8 +506,11 @@ const drawerHistory =
       });
 if (drawerHistory) window.addEventListener("popstate", (event) => drawerHistory.popstate(event.state));
 
-/** Collega il drawer aperto a Indietro. `onBack` restituisce false se il drawer resta aperto. */
-function useBackCloses(open: boolean, onBack: () => boolean) {
+/**
+ * Collega il drawer aperto a Indietro. `onBack` restituisce false se il drawer resta aperto.
+ * Esportato anche per i «passi» che su telefono fanno da pagina (categoria delle Impostazioni).
+ */
+export function useBackCloses(open: boolean, onBack: () => boolean) {
   const backRef = useRef(onBack);
   backRef.current = onBack;
   const tokenRef = useRef<symbol | null>(null);

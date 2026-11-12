@@ -85,6 +85,13 @@
 - «Esci dall'account» esce solo da questo dispositivo (`signOut("local")`): con `global` si
   chiudevano anche gli altri dispositivi dell'account. «Togli i dati da qui» riusa il flusso di
   «Ho dimenticato la password» (`signOutThisDevice` poi `resetAllData({ propagate: false })`).
+  Prima dello svuotamento si attende la sync in volo (`whenSyncIdle`); una passata che scopre la
+  sessione cambiata si ferma (`SessionChangedError`) senza applicare righe né scrivere cursori.
+- Impostazioni mostra una categoria per volta (elenco + dettaglio; su telefono il dettaglio è una
+  pagina con Indietro). Le altre categorie non sono nel DOM: per portarci l'utente usare
+  `requestSettingsSection(id)` + `setActiveView("settings")`, mai ancore `#settings-<id>` o
+  `getElementById`. Con Impostazioni già aperte la richiesta arriva con `SETTINGS_JUMP_EVENT`.
+  Nuove voci vanno nella categoria giusta di `SettingsView` e i testi in `labels/settings.ts`.
 - Aggiungendo una collezione sincronizzata: registrarla in `collections.ts`, nuova versione
   Dexie in `db.ts`, backup parziali in SettingsView e incrementare `SYNC_SCHEMA`.
 - I menu di scelta della materia usano `selectableSubjects` (niente materie archiviate o già

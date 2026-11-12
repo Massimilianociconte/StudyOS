@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { PaletteName, ThemeMode, UserSettings } from "../types";
+import type { PaletteName, StudySnapshot, ThemeMode, UserSettings } from "../types";
 import {
   backupSummary,
   createBackupEnvelope,
@@ -10,11 +10,14 @@ import {
 } from "../lib/backup";
 import { selectPreferences, useStudyStore, snapshotFromState } from "../store/useStudyStore";
 import { whenPersisted } from "../lib/persistence";
-import { getCloudSyncState, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
+import { isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
+import { cloudConfigured, getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSyncState";
 import { resizeImageFile } from "../lib/files";
-import { takeSettingsSection, type SettingsSection } from "../lib/settingsJump";
+import { SETTINGS_JUMP_EVENT, settingsSectionFromEvent, takeSettingsSection, type SettingsSection } from "../lib/settingsJump";
 import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
-import { Button, Field, Panel, Pill, SectionTitle, fileInputClass, inputClass } from "../components/ui";
+import { SETTINGS_TEXT } from "../lib/labels/settings";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+import { Button, Field, Panel, Pill, SectionTitle, fileInputClass, inputClass, useBackCloses } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CloudPanel } from "../components/CloudPanel";
 import { AgentSettings } from "../components/AgentDesk";
@@ -30,6 +33,35 @@ const palettes: { id: PaletteName; label: string; colors: string[] }[] = [
 ];
 
 const THEME_LABEL: Record<ThemeMode, string> = { dark: "Scuro", light: "Chiaro", focus: "Focus" };
+
+/** Da 1024 px elenco e categoria stanno affiancati; sotto, prima l'elenco e poi la categoria. */
+const WIDE_QUERY = "(min-width: 1024px)";
+
+/** Categorie raggruppate per quello che si vuole fare: id invariati (salti da altre schermate). */
+const GROUPS: { label: string; sections: { id: SettingsSection; icon: string }[] }[] = [
+  { label: SETTINGS_TEXT.groups.you, sections: [{ id: "profilo", icon: "User" }] },
+  {
+    label: SETTINGS_TEXT.groups.account,
+    sections: [
+      { id: "account", icon: "LogIn" },
+      { id: "agenti", icon: "Sparkles" }
+    ]
+  },
+  {
+    label: SETTINGS_TEXT.groups.device,
+    sections: [
+      { id: "aspetto", icon: "Palette" },
+      { id: "privacy", icon: "Shield" }
+    ]
+  },
+  {
+    label: SETTINGS_TEXT.groups.data,
+    sections: [
+      { id: "backup", icon: "Download" },
+      { id: "dati", icon: "Trash2" }
+    ]
+  }
+];
 
 /** Gli errori di password e copie arrivano dalla logica con termini tecnici: qui diventano frasi semplici. */
 const plainError = (error: unknown, fallback: string) => {
@@ -72,24 +104,128 @@ export function SettingsView() {
   const [vaultPassphrase, setVaultPassphrase] = useState("");
   const [vaultHint, setVaultHint] = useState("");
   const [importPassphrase, setImportPassphrase] = useState("");
+  // Esito dell'ultima azione: si mostra dentro la categoria aperta, accanto a dove è successo.
   const [message, setMessage] = useState("");
-  const displayName = settings.profile?.displayName?.trim();
+  // Copia completa scelta: prima di sostituire tutto si chiede sul posto (niente finestra del browser).
+  const [restore, setRestore] = useState<{ snapshot: StudySnapshot; day: string; summary: string } | null>(null);
+  // «Cancella tutti i dati»: domanda sul posto con le scelte esplicite.
+  const [eraseAsk, setEraseAsk] = useState(false);
+  const [cloud, setCloud] = useState<CloudSyncState>(() => getCloudSyncState());
+  useEffect(() => (cloudConfigured ? subscribeCloudSync(setCloud) : undefined), []);
+  const signedIn = Boolean(cloud.session);
+
+  const wide = useMediaQuery(WIDE_QUERY);
+  // Categoria scelta. Su schermo largo senza scelta si mostra la prima; su telefono l'elenco.
+  const [chosen, setChosen] = useState<SettingsSection | null>(null);
+  const section: SettingsSection | null = chosen ?? (wide ? "profilo" : null);
+  const detailRef = useRef<HTMLElement>(null);
+  const rowRefs = useRef(new Map<SettingsSection, HTMLButtonElement>());
+  // Dopo il cambio di categoria: focus sul titolo della categoria (`detail`), solo scorrimento
+  // (`scroll`, schermo largo) o la riga da cui si era entrati. Vale quando sullo schermo c'è la
+  // categoria `at`: al montaggio la prima resa mostra ancora quella predefinita.
+  const focusNext = useRef<{ at: SettingsSection | null; to: "detail" | "scroll" | SettingsSection } | null>(null);
+  // Fa ripartire lo spostamento del focus anche quando si riapre la stessa categoria.
+  const [focusTick, setFocusTick] = useState(0);
   // undefined = ancora da leggere. Il ref sopravvive al doppio effetto di StrictMode,
   // mentre takeSettingsSection consuma la richiesta alla prima lettura.
   const jumpRef = useRef<SettingsSection | null | undefined>(undefined);
+  // Turno delle azioni lente (copia, ripristino, cancellazione): cambiata categoria o scelto un altro
+  // file, l'esito arrivato tardi non compare più sotto un'altra categoria né sostituisce la domanda.
+  const actionTurn = useRef(0);
+
+  const resetTransient = () => {
+    actionTurn.current += 1;
+    setMessage("");
+    setRestore(null);
+    setEraseAsk(false);
+  };
+
+  const planFocus = (at: SettingsSection | null, to: "detail" | "scroll" | SettingsSection) => {
+    focusNext.current = { at, to };
+    setFocusTick((tick) => tick + 1);
+  };
+
+  const openSection = (next: SettingsSection) => {
+    resetTransient();
+    setChosen(next);
+    planFocus(next, wide ? "scroll" : "detail");
+  };
+
+  const backToList = () => {
+    const from = section;
+    resetTransient();
+    setChosen(null);
+    if (from) planFocus(null, from);
+  };
+
+  // Chiusa una domanda sul posto, il focus torna a ciò che l'aveva aperta (non si perde in cima alla pagina).
+  const focusInDetail = (selector: string) =>
+    window.requestAnimationFrame(() => detailRef.current?.querySelector<HTMLElement>(selector)?.focus());
+  const cancelErase = () => {
+    setEraseAsk(false);
+    focusInDetail("[data-erase-open]");
+  };
+  const cancelRestore = () => {
+    setRestore(null);
+    focusInDetail("[data-restore-file]");
+  };
+
+  // Telefono: la categoria aperta fa da pagina, Indietro (anche il gesto) torna all'elenco.
+  useBackCloses(!wide && chosen !== null, () => {
+    backToList();
+    return true;
+  });
 
   useEffect(() => {
     if (jumpRef.current === undefined) jumpRef.current = takeSettingsSection();
     const target = jumpRef.current;
     if (!target) return;
-    const frame = window.requestAnimationFrame(() => {
-      jumpRef.current = null;
-      document.getElementById(`settings-${target}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    return () => window.cancelAnimationFrame(frame);
+    jumpRef.current = null;
+    setChosen(target);
+    planFocus(target, "detail");
   }, []);
 
+  // Richiesta arrivata con Impostazioni già aperte (badge dell'account, link «vai al profilo» degli agenti).
+  useEffect(() => {
+    const onJump = (event: Event) => {
+      const target = takeSettingsSection() ?? settingsSectionFromEvent(event);
+      if (!target) return;
+      resetTransient();
+      setChosen(target);
+      planFocus(target, "detail");
+    };
+    window.addEventListener(SETTINGS_JUMP_EVENT, onJump);
+    return () => window.removeEventListener(SETTINGS_JUMP_EVENT, onJump);
+  }, []);
+
+  useEffect(() => {
+    const plan = focusNext.current;
+    if (!plan || plan.at !== section) return;
+    // Il piano si consuma solo nel fotogramma: se l'effetto viene ripulito prima (StrictMode,
+    // nuova resa) il giro successivo lo ritrova.
+    const frame = window.requestAnimationFrame(() => {
+      if (focusNext.current !== plan) return;
+      focusNext.current = null;
+      const target = plan.to;
+      const detail = detailRef.current;
+      if (target === "scroll") {
+        // Schermo largo: il focus resta sull'elenco; se la categoria parte sopra lo schermo si torna su.
+        if (detail && detail.getBoundingClientRect().top < 0) detail.scrollIntoView({ block: "start" });
+      } else if (target === "detail") {
+        detail?.scrollIntoView({ block: "start" });
+        detail?.focus({ preventScroll: true });
+      } else {
+        rowRefs.current.get(target)?.focus();
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [section, focusTick]);
+
   const exportBackup = async (scope: "full" | "tasks" | "calendar" | "subjects" = "full") => {
+    const turn = actionTurn.current;
+    const report = (text: string) => {
+      if (turn === actionTurn.current) setMessage(text);
+    };
     setMessage("");
     if (exportEncrypted && backupPassphrase.length < 8) {
       setMessage("Per proteggere la copia scegli una password di almeno 8 caratteri.");
@@ -123,63 +259,75 @@ export function SettingsView() {
       };
       const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined, scope);
       downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
-      setMessage("Copia scaricata: la trovi nella cartella dei download. Conservala in un posto sicuro.");
+      report("Copia scaricata: la trovi nella cartella dei download. Conservala in un posto sicuro.");
     } catch (error) {
-      setMessage(plainError(error, "Download della copia non riuscito. Riprova."));
+      report(plainError(error, "Download della copia non riuscito. Riprova."));
     }
   };
 
   const importBackup = async (file?: File) => {
     if (!file) return;
+    // Un nuovo file prende il turno: l'esito di uno scelto prima e ancora in lettura non conta più.
+    const turn = ++actionTurn.current;
+    const current = () => turn === actionTurn.current;
     setMessage("");
+    setRestore(null);
     try {
       const backup = await readBackupEnvelope(file);
       const snapshot = await snapshotFromBackup(backup, backup.encrypted ? importPassphrase : undefined);
+      if (!current()) return;
       const scope = inferBackupScope(backup, snapshot);
       const summary = backupSummary(snapshot);
       if (scope === "full") {
-        const ok = window.confirm(
-          `Copia completa del ${formatDay(backup.exportedAt)} (${summary.text}).\n\nSostituire TUTTI i dati attuali con quelli della copia? I dati attuali verranno cancellati e non si potrà annullare.${
-            isSignedIn() ? "\nLa sostituzione arriverà anche al tuo account e agli altri dispositivi collegati." : ""
-          }`
-        );
-        if (!ok) return;
-        await replaceAllData(snapshot);
-        setMessage(`Copia ripristinata: ${summary.text}.`);
-      } else {
-        const result = await mergeData(snapshot);
-        const scopeLabel = scope === "tasks" ? "attività" : scope === "calendar" ? "calendario" : scope === "subjects" ? "materie" : scope;
-        setMessage(`Copia parziale (${scopeLabel}) aggiunta ai tuoi dati: ${result.added} elementi nuovi, ${result.updated} aggiornati.`);
+        // Si sostituisce solo dopo «Sostituisci tutti i dati» nella domanda qui sotto.
+        setRestore({ snapshot, day: formatDay(backup.exportedAt), summary: summary.text });
+        return;
       }
+      const result = await mergeData(snapshot);
+      const scopeLabel = scope === "tasks" ? "attività" : scope === "calendar" ? "calendario" : scope === "subjects" ? "materie" : scope;
+      if (current()) setMessage(`Copia parziale (${scopeLabel}) aggiunta ai tuoi dati: ${result.added} elementi nuovi, ${result.updated} aggiornati.`);
     } catch (error) {
-      setMessage(plainError(error, "Ripristino non riuscito. Controlla di aver scelto il file giusto e riprova."));
+      if (current()) setMessage(plainError(error, "Ripristino non riuscito. Controlla di aver scelto il file giusto e riprova."));
     }
   };
 
-  const resetData = async () => {
-    if (
-      !window.confirm(
-        "Cancellare tutti i dati di StudyOS da questo dispositivo?\n\nMaterie, esami, attività, eventi, allegati, profilo e tutto il resto verranno eliminati (restano solo le scelte di aspetto) e la protezione con password verrà tolta. Non si può annullare: se non hai una copia di sicurezza, premi Annulla e scaricala prima."
-      )
-    )
-      return;
-    setMessage("");
+  const confirmRestore = async () => {
+    if (!restore) return;
+    const { snapshot, summary } = restore;
+    const turn = actionTurn.current;
+    setRestore(null);
+    focusInDetail("[data-restore-file]");
     try {
-      if (isSignedIn()) {
-        const alsoCloud = window.confirm(
-          "Sei collegato al tuo account.\n\nOK = cancella i dati anche dall'account e da tutti i dispositivi collegati (non si può annullare).\nAnnulla = l'account resta com'è: dopo scegli se svuotare solo questo dispositivo."
-        );
-        // Annulla non deve mai cancellare: svuotare solo il dispositivo richiede un OK esplicito.
-        if (
-          !alsoCloud &&
-          !window.confirm("Svuotare solo questo dispositivo? I dati restano nell'account e verranno riscaricati.\n\nAnnulla = non cancella nulla.")
-        )
-          return;
+      await replaceAllData(snapshot);
+      if (turn === actionTurn.current) setMessage(`Copia ripristinata: ${summary}.`);
+    } catch (error) {
+      if (turn === actionTurn.current) setMessage(plainError(error, "Ripristino non riuscito. Controlla di aver scelto il file giusto e riprova."));
+    }
+  };
+
+  /**
+   * - `local`: nessun account collegato, si svuota questo dispositivo.
+   * - `device`: account collegato, si svuota solo questo dispositivo e si riscarica dall'account.
+   * - `cloud`: account collegato, si cancella anche dall'account e dagli altri dispositivi.
+   */
+  const eraseData = async (mode: "local" | "device" | "cloud") => {
+    // L'account si è collegato o scollegato mentre la domanda era aperta: si richiede con le scelte giuste.
+    if ((mode === "local") === isSignedIn()) return;
+    const turn = actionTurn.current;
+    const report = (text: string) => {
+      if (turn === actionTurn.current) setMessage(text);
+    };
+    setEraseAsk(false);
+    setMessage("");
+    focusInDetail("[data-erase-open]");
+    try {
+      if (mode !== "local") {
+        const alsoCloud = mode === "cloud";
         await resetAllData({ propagate: alsoCloud });
         if (alsoCloud) await requestSync();
         else await resetCloudDeviceState();
         const sync = getCloudSyncState();
-        setMessage(alsoCloud
+        report(alsoCloud
           ? sync.pendingChanges || sync.status === "error" || sync.status === "offline"
             ? "Dati cancellati da questo dispositivo. Verranno cancellati anche dall'account appena la sincronizzazione riprende."
             : "Dati cancellati da questo dispositivo e dall'account."
@@ -189,9 +337,9 @@ export function SettingsView() {
         return;
       }
       await resetAllData({ propagate: false });
-      setMessage("Tutti i dati di questo dispositivo sono stati cancellati.");
+      report("Tutti i dati di questo dispositivo sono stati cancellati.");
     } catch (error) {
-      setMessage(plainError(error, "Cancellazione non riuscita. Riprova."));
+      report(plainError(error, "Cancellazione non riuscita. Riprova."));
     }
   };
 
@@ -230,41 +378,30 @@ export function SettingsView() {
     }
   };
 
-  return (
-    <div>
-      <SectionTitle
-        title="Impostazioni"
-        subtitle="Il tuo profilo, l'aspetto dell'app, l'account e la protezione dei tuoi dati."
-      />
+  const vaultOn = settings.security.mode === "vault";
+  const degreeId: DegreeProgramId = isDegreeProgramId(preferences.degreeProgram) ? preferences.degreeProgram : "barb";
+  const displayName = preferences.displayName.trim();
 
-      {message ? (
-        <p role="status" className="mb-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
-          {message}
-        </p>
-      ) : null}
+  // Com'è impostata adesso ogni categoria: si legge nell'elenco senza aprirla.
+  const summaries: Record<SettingsSection, string> = {
+    profilo: `${displayName || SETTINGS_TEXT.summaries.noName} · ${DEGREE_PROGRAMS[degreeId].name}`,
+    account: !cloudConfigured
+      ? SETTINGS_TEXT.summaries.cloudOff
+      : cloud.session?.user.email
+        ? SETTINGS_TEXT.summaries.signedIn(cloud.session.user.email)
+        : SETTINGS_TEXT.summaries.signedOut,
+    agenti: SETTINGS_TEXT.summaries.agents,
+    aspetto: `${THEME_LABEL[settings.themeMode]} · ${palettes.find((palette) => palette.id === settings.palette)?.label ?? ""}`,
+    privacy: vaultOn ? SETTINGS_TEXT.summaries.vaultOn : SETTINGS_TEXT.summaries.vaultOff,
+    backup: SETTINGS_TEXT.summaries.backup,
+    dati: SETTINGS_TEXT.summaries.data(subjects.length, tasks.length, events.length)
+  };
 
-      <nav aria-label="Categorie di impostazioni" className="mb-5 flex gap-1.5 overflow-x-auto pb-1">
-        {SECTIONS.map((section) => (
-          <button
-            key={section.id}
-            type="button"
-            onClick={() => document.getElementById(`settings-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-[var(--surface-soft)] px-3.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]"
-          >
-            <Icon name={section.icon} className="h-3.5 w-3.5" />
-            {section.label}
-          </button>
-        ))}
-      </nav>
-
+  const content: Record<SettingsSection, ReactNode> = {
+    profilo: (
       <div className="grid grid-cols-1 gap-4">
-        <section id="settings-profilo" aria-labelledby="settings-profilo-title" className="scroll-mt-24">
         <Panel>
-          <SettingHeader
-            section="profilo"
-            title="Profilo e obiettivi"
-            description={`${displayName ? `Ciao, ${displayName}. ` : ""}Il tuo nome, il tuo corso e quanto vuoi studiare. Se accedi con l'account li ritrovi su ogni dispositivo.`}
-          />
+          <h4 className="mb-3 text-lg font-black">{SETTINGS_TEXT.profile.whoTitle}</h4>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <div className="grid grid-cols-1 h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-super bg-[var(--surface-soft)]">
               {preferences.avatarDataUrl ? (
@@ -284,7 +421,7 @@ export function SettingsView() {
                 />
               </Field>
               <div className="flex flex-wrap gap-2">
-                <label className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)]">
+                <label className="motion-safe inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold hover:bg-[var(--surface)] focus-within:outline focus-within:outline-[3px] focus-within:outline-offset-[3px] focus-within:outline-[var(--focus-ring)]">
                   <Icon name="Upload" className="h-4 w-4" />
                   {preferences.avatarDataUrl ? "Cambia foto" : "Carica una foto"}
                   <input
@@ -311,10 +448,14 @@ export function SettingsView() {
               </div>
             </div>
           </div>
-          <Field label="Corso di laurea" className="mt-4">
+        </Panel>
+
+        <Panel>
+          <h4 className="mb-3 text-lg font-black">{SETTINGS_TEXT.profile.studyTitle}</h4>
+          <Field label="Corso di laurea">
             <select
               className={inputClass}
-              value={isDegreeProgramId(preferences.degreeProgram) ? preferences.degreeProgram : "barb"}
+              value={degreeId}
               onChange={(event) => {
                 const id = event.target.value as DegreeProgramId;
                 // Cambiare corso aggiorna CFU totali e sezione BARB (entrambi restano modificabili).
@@ -351,53 +492,63 @@ export function SettingsView() {
             <span className="min-w-0 flex-1">Mostra la sezione Corso di laurea (BARB · UNIMI)</span>
           </label>
         </Panel>
-        </section>
+      </div>
+    ),
 
-        <section id="settings-aspetto" aria-labelledby="settings-aspetto-title" className="scroll-mt-24">
-        <Panel>
-          <SettingHeader section="aspetto" title="Aspetto" description="Scegli tema e colori. Valgono solo su questo dispositivo." />
-          <div className="grid grid-cols-1 gap-4">
-            <Field label="Tema">
-              <div className="grid grid-cols-3 gap-2">
-                {(["dark", "light", "focus"] as ThemeMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    aria-pressed={settings.themeMode === mode}
-                    onClick={() => updateSettings({ themeMode: mode })}
-                    className={`min-h-12 rounded-[20px] border px-3 text-sm font-black ${
-                      settings.themeMode === mode ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)]"
-                    }`}
-                  >
-                    {THEME_LABEL[mode]}
-                  </button>
-                ))}
-              </div>
-            </Field>
+    account: <CloudPanel />,
 
-            <Field label="Colori">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {palettes.map((palette) => (
-                  <button
-                    key={palette.id}
-                    type="button"
-                    aria-pressed={settings.palette === palette.id}
-                    onClick={() => updateSettings({ palette: palette.id })}
-                    className={`flex min-h-14 items-center justify-between rounded-[22px] border p-3 text-left ${
-                      settings.palette === palette.id ? "border-[var(--accent)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--surface-soft)]"
-                    }`}
-                  >
-                    <span className="font-black">{palette.label}</span>
-                    <span className="flex gap-1">
-                      {palette.colors.map((color) => (
-                        <span key={color} className="h-5 w-5 rounded-full" style={{ background: color }} />
-                      ))}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </Field>
+    agenti: (
+      <Panel>
+        <AgentSettings />
+      </Panel>
+    ),
 
+    aspetto: (
+      <Panel>
+        <div className="grid grid-cols-1 gap-4">
+          <Field label="Tema">
+            <div className="grid grid-cols-3 gap-2">
+              {(["dark", "light", "focus"] as ThemeMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={settings.themeMode === mode}
+                  onClick={() => updateSettings({ themeMode: mode })}
+                  className={`min-h-12 rounded-[20px] border px-3 text-sm font-black ${
+                    settings.themeMode === mode ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)]"
+                  }`}
+                >
+                  {THEME_LABEL[mode]}
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Colori">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {palettes.map((palette) => (
+                <button
+                  key={palette.id}
+                  type="button"
+                  aria-pressed={settings.palette === palette.id}
+                  onClick={() => updateSettings({ palette: palette.id })}
+                  className={`flex min-h-14 items-center justify-between rounded-[22px] border p-3 text-left ${
+                    settings.palette === palette.id ? "border-[var(--accent)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--surface-soft)]"
+                  }`}
+                >
+                  <span className="font-black">{palette.label}</span>
+                  <span className="flex gap-1">
+                    {palette.colors.map((color) => (
+                      <span key={color} className="h-5 w-5 rounded-full" style={{ background: color }} />
+                    ))}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          <div>
+            <h4 className="mb-2 text-sm font-black">{SETTINGS_TEXT.appearance.comfortTitle}</h4>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Densità">
                 <select className={inputClass} value={settings.density} onChange={(event) => updateSettings({ density: event.target.value as "comfortable" | "compact" })}>
@@ -416,98 +567,87 @@ export function SettingsView() {
               </Field>
             </div>
           </div>
-        </Panel>
-        </section>
+        </div>
+      </Panel>
+    ),
 
-        <section id="settings-account" aria-labelledby="settings-account-title" className="scroll-mt-24">
-          <SettingHeader section="account" title="Account" description="Accedi per avere i tuoi dati su telefono e computer." />
-          <CloudPanel />
-        </section>
-
-        <section id="settings-privacy" aria-labelledby="settings-privacy-title" className="scroll-mt-24">
-        <Panel>
-          <SettingHeader
-            section="privacy"
-            title="Privacy"
-            description="Puoi chiedere una password ogni volta che StudyOS si apre su questo dispositivo."
-            action={<Pill active={settings.security.mode === "vault"}>{settings.security.mode === "vault" ? "Protetto da password" : "Senza password"}</Pill>}
-          />
-
-          <div className="grid grid-cols-1 gap-3">
-            <div className="quiet-panel flex items-center gap-3 p-4">
-              <span className="grid grid-cols-1 h-12 w-12 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
-                <Icon name={settings.security.mode === "vault" ? "Lock" : "Shield"} className="h-5 w-5" />
-              </span>
-              <div className="min-w-0">
-                <p className="font-black">{settings.security.mode === "vault" ? "I dati su questo dispositivo sono protetti" : "Protezione non attiva"}</p>
-                <p className="text-sm text-[var(--muted)]">
-                  {settings.security.mode === "vault"
-                    ? "Sono cifrati con la tua password, che non viene salvata da nessuna parte: serve ogni volta che apri StudyOS."
-                    : "Chi usa questo browser può aprire StudyOS e vedere i tuoi dati."}
-                </p>
-              </div>
+    privacy: (
+      <Panel>
+        <div className="grid grid-cols-1 gap-3">
+          <div className="quiet-panel flex items-center gap-3 p-4">
+            <span className="grid grid-cols-1 h-12 w-12 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
+              <Icon name={vaultOn ? "Lock" : "Shield"} className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <p className="font-black">{vaultOn ? "I dati su questo dispositivo sono protetti" : "Protezione non attiva"}</p>
+              <p className="text-sm text-[var(--muted)]">
+                {vaultOn
+                  ? "Sono cifrati con la tua password, che non viene salvata da nessuna parte: serve ogni volta che apri StudyOS."
+                  : "Chi usa questo browser può aprire StudyOS e vedere i tuoi dati."}
+              </p>
             </div>
+          </div>
 
-            {settings.security.mode === "standard" ? (
-              <>
-                <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
-                  Se dimentichi la password, i dati di questo dispositivo non si possono più recuperare. Prima di attivarla scarica una copia di sicurezza.
-                </p>
-                <Field label="Scegli una password (almeno 10 caratteri)">
-                  <input
-                    className={inputClass}
-                    type="password"
-                    autoComplete="new-password"
-                    value={vaultPassphrase}
-                    onChange={(event) => setVaultPassphrase(event.target.value)}
-                  />
-                </Field>
-                <Field label="Promemoria della password (facoltativo, visibile a chi apre l'app)">
-                  <input
-                    className={inputClass}
-                    value={vaultHint}
-                    onChange={(event) => setVaultHint(event.target.value)}
-                    placeholder="Es. il titolo del mio libro preferito"
-                  />
-                </Field>
-              </>
-            ) : (
-              <Field label="Password attuale (serve solo per togliere la protezione)">
+          {!vaultOn ? (
+            <>
+              <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
+                Se dimentichi la password, i dati di questo dispositivo non si possono più recuperare. Prima di attivarla scarica una copia di sicurezza.
+              </p>
+              <Field label="Scegli una password (almeno 10 caratteri)">
                 <input
                   className={inputClass}
                   type="password"
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   value={vaultPassphrase}
                   onChange={(event) => setVaultPassphrase(event.target.value)}
                 />
               </Field>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {settings.security.mode === "standard" ? (
-                <Button icon="Lock" variant="primary" onClick={activateVault}>
-                  Proteggi con una password
+              <Field label="Promemoria della password (facoltativo, visibile a chi apre l'app)">
+                <input
+                  className={inputClass}
+                  value={vaultHint}
+                  onChange={(event) => setVaultHint(event.target.value)}
+                  placeholder="Es. il titolo del mio libro preferito"
+                />
+              </Field>
+            </>
+          ) : (
+            <Field label="Password attuale (serve solo per togliere la protezione)">
+              <input
+                className={inputClass}
+                type="password"
+                autoComplete="current-password"
+                value={vaultPassphrase}
+                onChange={(event) => setVaultPassphrase(event.target.value)}
+              />
+            </Field>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {!vaultOn ? (
+              <Button icon="Lock" variant="primary" onClick={activateVault}>
+                Proteggi con una password
+              </Button>
+            ) : (
+              <>
+                <Button icon="Lock" variant="soft" onClick={() => void lockNow()}>
+                  Blocca ora
                 </Button>
-              ) : (
-                <>
-                  <Button icon="Lock" variant="soft" onClick={() => void lockNow()}>
-                    Blocca ora
-                  </Button>
-                  <Button icon="Shield" variant="danger" onClick={deactivateVault}>
-                    Togli la password
-                  </Button>
-                </>
-              )}
-            </div>
+                <Button icon="Shield" variant="danger" onClick={deactivateVault}>
+                  Togli la password
+                </Button>
+              </>
+            )}
           </div>
-        </Panel>
-        </section>
+        </div>
+      </Panel>
+    ),
 
-        <section id="settings-backup" aria-labelledby="settings-backup-title" className="scroll-mt-24">
+    backup: (
+      <div className="grid grid-cols-1 gap-4">
         <Panel>
-          <SettingHeader section="backup" title="Copia di sicurezza" description="Salva tutti i tuoi dati in un file, per ripristinarli qui o su un altro dispositivo." />
+          <h4 className="mb-3 text-lg font-black">{SETTINGS_TEXT.backup.downloadTitle}</h4>
           <div className="grid grid-cols-1 gap-4">
-            <h4 className="text-sm font-black">Scarica una copia</h4>
-            <label className="flex items-center gap-3 rounded-[22px] bg-[var(--surface-soft)] p-3 text-sm font-black">
+            <label className="flex min-h-11 items-center gap-3 rounded-[22px] bg-[var(--surface-soft)] p-3 text-sm font-black">
               <input
                 type="checkbox"
                 checked={exportEncrypted}
@@ -548,13 +688,15 @@ export function SettingsView() {
                 </Button>
               </div>
             </div>
+          </div>
+        </Panel>
 
-            <div>
-              <h4 className="text-sm font-black">Ripristina da una copia</h4>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                Una copia completa sostituisce tutti i dati attuali (prima ti chiediamo conferma). Una copia parziale si aggiunge a quelli che hai già.
-              </p>
-            </div>
+        <Panel>
+          <h4 className="text-lg font-black">{SETTINGS_TEXT.backup.restoreTitle}</h4>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Una copia completa sostituisce tutti i dati attuali (prima ti chiediamo conferma). Una copia parziale si aggiunge a quelli che hai già.
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-4">
             <Field label="Password della copia (solo se l'hai protetta)">
               <input
                 className={inputClass}
@@ -566,6 +708,7 @@ export function SettingsView() {
             </Field>
             <Field label="Scegli il file della copia (.json)">
               <input
+                data-restore-file
                 className={fileInputClass}
                 type="file"
                 accept="application/json,.json"
@@ -576,60 +719,196 @@ export function SettingsView() {
                 }}
               />
             </Field>
+            {restore ? (
+              <div role="group" aria-labelledby="settings-restore-title" className="rounded-[20px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-4">
+                <p id="settings-restore-title" className="text-sm font-black text-[var(--danger-text)]">
+                  {SETTINGS_TEXT.backup.restoreAskTitle(restore.day)}
+                </p>
+                <p className="mt-1 text-sm font-bold text-[var(--text)]">{SETTINGS_TEXT.backup.restoreAskText(restore.summary)}</p>
+                {signedIn ? <p className="mt-1 text-sm font-bold text-[var(--text)]">{SETTINGS_TEXT.backup.restoreAskCloud}</p> : null}
+                <div className="mt-3 flex flex-wrap justify-end gap-2">
+                  <Button variant="soft" onClick={cancelRestore} autoFocus>
+                    {SETTINGS_TEXT.backup.cancel}
+                  </Button>
+                  <Button variant="danger" icon="Upload" onClick={() => void confirmRestore()}>
+                    {SETTINGS_TEXT.backup.restoreConfirm}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </Panel>
-        </section>
+      </div>
+    ),
 
-        <section id="settings-agenti" aria-labelledby="settings-agenti-title" className="scroll-mt-24">
-        <Panel>
-          <SettingHeader
-            section="agenti"
-            title="Agenti AI"
-            description="Collega ChatGPT, Claude o un altro assistente AI: potrà leggere il tuo studio e, se lo permetti, aggiornarlo con la tua conferma."
-          />
-          <AgentSettings />
-        </Panel>
-        </section>
-
-        <section id="settings-dati" aria-labelledby="settings-dati-title" className="scroll-mt-24">
-        <Panel>
-          <SettingHeader
-            section="dati"
-            title="Spazio e dati"
-            description="Quanti elementi hai salvato su questo dispositivo e, solo se serve davvero, come ripartire da zero."
-          />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <DataStat label="Materie" value={subjects.length} />
-            <DataStat label="Esami" value={exams.length} />
-            <DataStat label="Attività" value={tasks.length} />
-            <DataStat label="Eventi" value={events.length} />
-            <DataStat label="Allegati" value={attachments.length} />
-          </div>
-          <div className="mt-5 rounded-[20px] border border-[var(--danger-border)] p-3">
-            <p className="text-sm font-black text-[var(--danger-text)]">Cancella tutti i dati</p>
-            <p className="mt-0.5 text-xs text-[var(--muted)]">
-              Elimina materie, esami, attività, eventi, allegati e profilo da questo dispositivo. Non si può annullare: scarica prima una copia di sicurezza. Se hai un account, potrai scegliere se cancellarli anche lì.
-            </p>
-            <Button className="mt-3" icon="Trash2" variant="danger" onClick={() => void resetData()}>
+    dati: (
+      <Panel>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <DataStat label="Materie" value={subjects.length} />
+          <DataStat label="Esami" value={exams.length} />
+          <DataStat label="Attività" value={tasks.length} />
+          <DataStat label="Eventi" value={events.length} />
+          <DataStat label="Allegati" value={attachments.length} />
+        </div>
+        <div className="mt-5 rounded-[20px] border border-[var(--danger-border)] p-3">
+          <p className="text-sm font-black text-[var(--danger-text)]">Cancella tutti i dati</p>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
+            Elimina materie, esami, attività, eventi, allegati e profilo da questo dispositivo. Non si può annullare: scarica prima una copia di sicurezza. Se hai un account, potrai scegliere se cancellarli anche lì.
+          </p>
+          {eraseAsk ? (
+            <div role="group" aria-labelledby="settings-erase-title" className="mt-3 grid grid-cols-1 gap-2 rounded-[18px] bg-[var(--danger-bg)] p-3">
+              <p id="settings-erase-title" className="text-sm font-black text-[var(--danger-text)]">
+                {SETTINGS_TEXT.erase.askTitle}
+              </p>
+              <p className="text-sm font-bold text-[var(--text)]">{SETTINGS_TEXT.erase.askText}</p>
+              {signedIn ? (
+                <>
+                  <p className="text-sm font-bold text-[var(--text)]">{SETTINGS_TEXT.erase.askSignedIn}</p>
+                  <p className="text-sm text-[var(--muted)]">{SETTINGS_TEXT.erase.deviceOnlyHint}</p>
+                  <p className="text-sm text-[var(--muted)]">{SETTINGS_TEXT.erase.alsoCloudHint}</p>
+                </>
+              ) : null}
+              <div className="mt-1 flex flex-wrap justify-end gap-2">
+                <Button variant="soft" onClick={cancelErase} autoFocus>
+                  {SETTINGS_TEXT.erase.cancel}
+                </Button>
+                {signedIn ? (
+                  <>
+                    <Button variant="danger" icon="Smartphone" onClick={() => void eraseData("device")}>
+                      {SETTINGS_TEXT.erase.deviceOnly}
+                    </Button>
+                    <Button variant="danger" icon="Trash2" onClick={() => void eraseData("cloud")}>
+                      {SETTINGS_TEXT.erase.alsoCloud}
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="danger" icon="Trash2" onClick={() => void eraseData("local")}>
+                    {SETTINGS_TEXT.erase.confirmLocal}
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <Button
+              data-erase-open
+              className="mt-3"
+              icon="Trash2"
+              variant="danger"
+              onClick={() => {
+                setMessage("");
+                setEraseAsk(true);
+              }}
+            >
               Cancella tutti i dati
             </Button>
+          )}
+        </div>
+      </Panel>
+    )
+  };
+
+  return (
+    <div>
+      {/* Telefono con una categoria aperta: in cima c'è «‹ Impostazioni», il titolo resta solo per i lettori di schermo. */}
+      <div className={section && !wide ? "sr-only" : undefined}>
+        <SectionTitle
+          title={SETTINGS_TEXT.title}
+          subtitle={`${displayName ? `${SETTINGS_TEXT.profile.hello(displayName)} ` : ""}${SETTINGS_TEXT.subtitle}`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] lg:items-start">
+        <nav aria-label={SETTINGS_TEXT.listLabel} className={`${section && !wide ? "hidden" : ""} lg:[@media(min-height:760px)]:sticky lg:[@media(min-height:760px)]:top-24`}>
+          <div className="grid grid-cols-1 gap-4">
+            {GROUPS.map((group) => (
+              <div key={group.label} role="group" aria-label={group.label}>
+                <p className="mb-1.5 px-2 text-xs font-black uppercase tracking-wide text-[var(--faint)]">{group.label}</p>
+                <ul className="soft-panel grid grid-cols-1 gap-1 !rounded-[26px] p-1.5">
+                  {group.sections.map(({ id, icon }) => {
+                    const selected = wide && section === id;
+                    return (
+                      <li key={id}>
+                        <button
+                          ref={(element) => {
+                            if (element) rowRefs.current.set(id, element);
+                            else rowRefs.current.delete(id);
+                          }}
+                          type="button"
+                          aria-current={selected ? "true" : undefined}
+                          onClick={() => openSection(id)}
+                          className={`flex min-h-14 w-full items-center gap-3 rounded-[20px] px-2.5 py-2 text-left ${
+                            selected ? "bg-[var(--surface-strong)]" : "hover:bg-[var(--surface)]"
+                          }`}
+                        >
+                          <span
+                            className={`grid h-10 w-10 shrink-0 grid-cols-1 place-items-center rounded-[14px] ${
+                              selected ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--accent-ink)]"
+                            }`}
+                          >
+                            <Icon name={icon} className="h-[18px] w-[18px]" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-black">{SETTINGS_TEXT.titles[id]}</span>
+                            <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">{summaries[id]}</span>
+                          </span>
+                          <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)] lg:hidden" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
           </div>
-        </Panel>
-        </section>
+        </nav>
+
+        {section ? (
+          <section
+            key={section}
+            ref={detailRef}
+            id={`settings-${section}`}
+            aria-labelledby={`settings-${section}-title`}
+            tabIndex={-1}
+            className="min-w-0 scroll-mt-24 outline-none"
+            // Su schermo largo Profilo si vede anche senza sceglierlo: appena ci si lavora diventa la
+            // scelta, così ruotando il tablet sotto i 1024 px resta aperto invece di tornare all'elenco.
+            onFocus={() => {
+              if (chosen === null) setChosen(section);
+            }}
+          >
+            {!wide ? (
+              <button
+                type="button"
+                onClick={backToList}
+                aria-label={SETTINGS_TEXT.backLabel}
+                className="mb-3 inline-flex min-h-11 items-center gap-1.5 rounded-full px-2 text-sm font-black text-[var(--accent-ink)] hover:bg-[var(--surface)]"
+              >
+                <Icon name="ChevronLeft" className="h-4 w-4" />
+                {SETTINGS_TEXT.back}
+              </button>
+            ) : null}
+            <SettingHeader
+              section={section}
+              title={SETTINGS_TEXT.titles[section]}
+              description={SETTINGS_TEXT.descriptions[section]}
+              action={
+                section === "privacy" ? <Pill active={vaultOn}>{vaultOn ? "Protetto da password" : "Senza password"}</Pill> : undefined
+              }
+            />
+            {/* Sempre presente: i lettori di schermo annunciano il testo quando cambia. */}
+            <p
+              role="status"
+              className={message ? "mb-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]" : "sr-only"}
+            >
+              {message}
+            </p>
+            {content[section]}
+          </section>
+        ) : null}
       </div>
     </div>
   );
 }
-
-const SECTIONS: { id: SettingsSection; label: string; icon: string }[] = [
-  { id: "profilo", label: "Profilo", icon: "User" },
-  { id: "aspetto", label: "Aspetto", icon: "Palette" },
-  { id: "account", label: "Account", icon: "LogIn" },
-  { id: "privacy", label: "Privacy", icon: "Shield" },
-  { id: "backup", label: "Copia di sicurezza", icon: "Download" },
-  { id: "agenti", label: "Agenti AI", icon: "Sparkles" },
-  { id: "dati", label: "Dati", icon: "Trash2" }
-];
 
 /** Intestazione di categoria: titolo + descrizione breve + eventuale azione. */
 function SettingHeader({ section, title, description, action }: { section: string; title: string; description: string; action?: ReactNode }) {
