@@ -572,7 +572,8 @@ export function Drawer({
               <IconButton icon="X" label="Chiudi" onClick={onClose} className="h-10 w-10" />
             </header>
             <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">{children}</div>
-            {footer ? <footer className="safe-bottom border-t border-[var(--border)] p-3 sm:p-4">{footer}</footer> : null}
+            {/* Spazio sotto = padding + area sicura (`safe-bottom` da solo lo azzerava sui telefoni senza tacca). */}
+            {footer ? <footer className="border-t border-[var(--border)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">{footer}</footer> : null}
           </m.div>
         </m.div>
       ) : null}
