@@ -85,6 +85,23 @@ as $$
     '[a-z0-9._%+-]+@unimi\.it(?![a-z0-9-]|\.[a-z0-9])', '', 'g')) = 0
 $$;
 
+-- Nasconde ogni indirizzo email che non finisce esattamente con @unimi.it (maiuscole ignorate, niente
+-- sottodomini). Stesso segnaposto di EMAIL_HIDDEN in src/lib/institutionalEmail.ts. Per il connettore.
+create or replace function public.studyos_hide_emails(p_text text)
+returns text
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  -- Il secondo passaggio toglie il resto di «x@unimi.it@evil.com» (due chiocciole di fila).
+  select regexp_replace(regexp_replace(p_text,
+    '[A-Za-z0-9._%+-]+@(?!unimi\.it(?![A-Za-z0-9@-]|\.[A-Za-z0-9]))[A-Za-z0-9.-]*',
+    '[email nascosta]', 'gi'),
+    '\[email nascosta\](@[A-Za-z0-9.-]+)+', '[email nascosta]', 'g')
+$$;
+
+revoke all on function public.studyos_hide_emails(text) from public, anon, authenticated;
+
 -- Esito delle funzioni di scrittura: { status, row?, message?, field? }.
 create or replace function public.studyos_group_result(p_status text, p_row jsonb default null, p_message text default null, p_field text default null)
 returns jsonb
@@ -426,7 +443,8 @@ as $$
   select coalesce(array_agg(x.name order by x.ord), '{}') from (
     select f.ord, f.name
     from (values
-      (1, 'course', array['course_key', 'course_name']),
+      -- Il collegamento al catalogo ufficiale (course_id, barb_session_id, source) conta come cambio del corso.
+      (1, 'course', array['course_key', 'course_name', 'course_id', 'barb_session_id', 'source']),
       (2, 'date', array['exam_date']),
       (3, 'kind', array['kind']),
       (4, 'label', array['label']),
@@ -711,7 +729,7 @@ begin
   if v_cur.created_by <> v_me and coalesce(v_role, '') not in ('owner', 'admin') then
     return public.studyos_group_result('denied', to_jsonb(v_cur), 'Può eliminarlo solo chi l''ha aggiunto o chi gestisce il gruppo.');
   end if;
-  if v_cur.version <> p_expected_version then
+  if v_cur.version is distinct from p_expected_version then
     return public.studyos_group_result('conflict', to_jsonb(v_cur), 'Nel frattempo qualcuno ha modificato questo appello.');
   end if;
   update public.studyos_group_exam_sessions set
@@ -761,6 +779,9 @@ begin
   v_name := public.studyos_group_member_name(p_group_id);
   if v_name is null then
     return public.studyos_group_result('denied', null, 'Non fai parte di questo gruppo.');
+  end if;
+  if not public.studyos_only_unimi_emails(v_label) then
+    return public.studyos_group_result('invalid', null, 'Solo indirizzi istituzionali che finiscono con @unimi.it.', 'targetLabel');
   end if;
   v_clean := public.studyos_catalog_override_clean(p_target_kind, p_fields);
   if not (v_clean ->> 'ok')::boolean then
@@ -859,7 +880,7 @@ begin
   if v_cur.created_by <> v_me and coalesce(v_role, '') not in ('owner', 'admin') then
     return public.studyos_group_result('denied', to_jsonb(v_cur), 'Può eliminarla solo chi l''ha scritta o chi gestisce il gruppo.');
   end if;
-  if v_cur.version <> p_expected_version then
+  if v_cur.version is distinct from p_expected_version then
     return public.studyos_group_result('conflict', to_jsonb(v_cur), 'Nel frattempo qualcuno ha modificato questa correzione.');
   end if;
   update public.studyos_group_catalog_overrides set
@@ -911,17 +932,24 @@ begin
   if v_b is null then
     return public.studyos_group_result('invalid', null, 'Un''aggiunta non si ripristina: per toglierla, elimina l''elemento.', 'historyId');
   end if;
+  -- Lo stato salvato deve essere dello stesso gruppo e dello stesso elemento della voce.
+  if (v_b ->> 'group_id') is distinct from v_hist.group_id or (v_b ->> 'id') is distinct from v_hist.record_id then
+    return public.studyos_group_result('not_found', null, 'Modifica non trovata nella cronologia.');
+  end if;
   if not public.studyos_group_write_gate(v_hist.group_id) then
     return public.studyos_group_result('invalid', null, 'Troppe modifiche in un''ora: riprova più tardi.', 'rate');
   end if;
   v_role := public.studyos_group_role(v_hist.group_id);
 
   if v_hist.record_kind = 'exam_session' then
-    select * into v_s from public.studyos_group_exam_sessions where id = v_hist.record_id for update;
+    -- Solo la riga dello stesso gruppo della voce di cronologia: un id può tornare in un altro
+    -- gruppo dopo la pulizia, e la sua cronologia vecchia non deve toccarlo.
+    select * into v_s from public.studyos_group_exam_sessions
+      where id = v_hist.record_id and group_id = v_hist.group_id for update;
     if not found then
       return public.studyos_group_result('gone', null, 'L''appello non c''è più: è stato tolto definitivamente.');
     end if;
-    if v_s.version <> p_expected_version then
+    if v_s.version is distinct from p_expected_version then
       return public.studyos_group_result('conflict', to_jsonb(v_s), 'Nel frattempo qualcuno ha modificato questo appello.');
     end if;
     if (v_b ->> 'deleted_at') is not null and v_s.deleted_at is null
@@ -945,7 +973,8 @@ begin
       registration_opens = (v_b ->> 'registration_opens')::date,
       registration_closes = (v_b ->> 'registration_closes')::date,
       barb_session_id = v_b ->> 'barb_session_id', source = v_b ->> 'source',
-      deleted_at = (v_b ->> 'deleted_at')::timestamptz,
+      -- Un ripristino che elimina scrive la data di adesso, non quella vecchia (la finestra di 180 giorni riparte).
+      deleted_at = case when (v_b ->> 'deleted_at') is null then null else now() end,
       deleted_by = case when (v_b ->> 'deleted_at') is null then null else v_me end,
       deleted_by_name = case when (v_b ->> 'deleted_at') is null then null else v_name end,
       version = v_s.version + 1, updated_by = v_me, updated_by_name = v_name
@@ -960,16 +989,22 @@ begin
     return public.studyos_group_result('ok', to_jsonb(v_s_row));
   end if;
 
-  select * into v_o from public.studyos_group_catalog_overrides where id = v_hist.record_id for update;
+  select * into v_o from public.studyos_group_catalog_overrides
+    where id = v_hist.record_id and group_id = v_hist.group_id for update;
   if not found then
     return public.studyos_group_result('gone', null, 'La correzione non c''è più: è stata tolta definitivamente.');
   end if;
-  if v_o.version <> p_expected_version then
+  if v_o.version is distinct from p_expected_version then
     return public.studyos_group_result('conflict', to_jsonb(v_o), 'Nel frattempo qualcuno ha modificato questa correzione.');
   end if;
   if (v_b ->> 'deleted_at') is not null and v_o.deleted_at is null
      and v_o.created_by <> v_me and coalesce(v_role, '') not in ('owner', 'admin') then
     return public.studyos_group_result('denied', to_jsonb(v_o), 'Può eliminarla solo chi l''ha scritta o chi gestisce il gruppo.');
+  end if;
+  -- Una correzione vecchia con un indirizzo non istituzionale (etichetta o campi) non si rimette in vigore.
+  if not public.studyos_only_unimi_emails(coalesce(v_b ->> 'target_label', ''))
+     or not public.studyos_only_unimi_emails(coalesce((v_b -> 'fields')::text, '')) then
+    return public.studyos_group_result('invalid', null, 'Solo indirizzi istituzionali che finiscono con @unimi.it.', 'targetLabel');
   end if;
   if (v_b ->> 'deleted_at') is null and exists (
     select 1 from public.studyos_group_catalog_overrides
@@ -983,7 +1018,7 @@ begin
   end if;
   update public.studyos_group_catalog_overrides set
     fields = coalesce(v_b -> 'fields', '{}'::jsonb), target_label = coalesce(v_b ->> 'target_label', ''),
-    deleted_at = (v_b ->> 'deleted_at')::timestamptz,
+    deleted_at = case when (v_b ->> 'deleted_at') is null then null else now() end,
     deleted_by = case when (v_b ->> 'deleted_at') is null then null else v_me end,
     deleted_by_name = case when (v_b ->> 'deleted_at') is null then null else v_name end,
     version = v_o.version + 1, updated_by = v_me, updated_by_name = v_name
@@ -1028,12 +1063,23 @@ begin
   v_me := v_user::text;
   return jsonb_build_object(
     'groups', coalesce((
-      select jsonb_agg(jsonb_build_object('id', g.id, 'name', g.name) order by g.name, g.id)
+      select jsonb_agg(jsonb_build_object('id', g.id, 'name', public.studyos_hide_emails(g.name)) order by g.name, g.id)
       from public.studyos_groups as g
       join public.studyos_group_members as m on m.group_id = g.id and m.user_id = v_me), '[]'::jsonb),
     'sessions', coalesce((
-      select jsonb_agg(to_jsonb(s) - 'created_by' - 'updated_by' - 'deleted_by'
-          || jsonb_build_object('mine', s.created_by = v_me) order by s.exam_date, s.id)
+      select jsonb_agg(jsonb_build_object(
+          'id', s.id, 'group_id', s.group_id, 'course_key', s.course_key, 'course_id', s.course_id,
+          'course_name', public.studyos_hide_emails(s.course_name), 'course_norm', s.course_norm,
+          'exam_date', s.exam_date, 'kind', s.kind, 'label', public.studyos_hide_emails(s.label),
+          'exam_time', s.exam_time, 'room', public.studyos_hide_emails(s.room),
+          'notes', public.studyos_hide_emails(s.notes),
+          'registration_opens', s.registration_opens, 'registration_closes', s.registration_closes,
+          'barb_session_id', s.barb_session_id, 'source', s.source, 'version', s.version,
+          'created_by_name', public.studyos_hide_emails(s.created_by_name),
+          'updated_by_name', public.studyos_hide_emails(s.updated_by_name),
+          'deleted_at', s.deleted_at, 'deleted_by_name', public.studyos_hide_emails(s.deleted_by_name),
+          'created_at', s.created_at, 'updated_at', s.updated_at,
+          'mine', s.created_by = v_me) order by s.exam_date, s.id)
       from (
         select * from public.studyos_group_exam_sessions
         where group_id in (select group_id from public.studyos_group_members where user_id = v_me)
@@ -1041,8 +1087,15 @@ begin
         limit 2000
       ) as s), '[]'::jsonb),
     'overrides', coalesce((
-      select jsonb_agg(to_jsonb(o) - 'created_by' - 'updated_by' - 'deleted_by'
-          || jsonb_build_object('mine', o.created_by = v_me) order by o.target_kind, o.target_id)
+      select jsonb_agg(jsonb_build_object(
+          'id', o.id, 'group_id', o.group_id, 'target_kind', o.target_kind, 'target_id', o.target_id,
+          'target_label', public.studyos_hide_emails(o.target_label),
+          'fields', public.studyos_hide_emails(o.fields::text)::jsonb, 'version', o.version,
+          'created_by_name', public.studyos_hide_emails(o.created_by_name),
+          'updated_by_name', public.studyos_hide_emails(o.updated_by_name),
+          'deleted_at', o.deleted_at, 'deleted_by_name', public.studyos_hide_emails(o.deleted_by_name),
+          'created_at', o.created_at, 'updated_at', o.updated_at,
+          'mine', o.created_by = v_me) order by o.target_kind, o.target_id)
       from public.studyos_group_catalog_overrides as o
       where o.deleted_at is null
         and o.group_id in (select group_id from public.studyos_group_members where user_id = v_me)), '[]'::jsonb)

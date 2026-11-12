@@ -77,18 +77,46 @@ select
     and to_regprocedure('public.save_group_catalog_override(text,text,integer,text,text,text,jsonb)') is not null
     and to_regprocedure('public.delete_group_catalog_override(text,integer)') is not null
     and to_regprocedure('public.restore_group_record(bigint,integer)') is not null
-    and coalesce(has_function_privilege('authenticated',
-      to_regprocedure('public.save_group_exam_session(text,text,integer,jsonb)'), 'EXECUTE'), false) as group_exams_rpc_ready,
-  -- Nessuna scrittura diretta e niente anon: si scrive solo con le funzioni.
-  not coalesce(has_function_privilege('anon',
-      to_regprocedure('public.save_group_exam_session(text,text,integer,jsonb)'), 'EXECUTE'), true)
-    and not coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_group_exam_sessions'), 'INSERT'), true)
-    and not coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_group_catalog_overrides'), 'UPDATE'), true)
-    and not coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_group_history'), 'INSERT'), true)
-    and not coalesce(has_table_privilege('anon', to_regclass('public.studyos_group_exam_sessions'), 'SELECT'), true)
+    -- Tutte e cinque le funzioni le può eseguire chi ha fatto l'accesso.
+    and coalesce((select bool_and(coalesce(has_function_privilege('authenticated', f, 'EXECUTE'), false))
+      from unnest(array[
+        to_regprocedure('public.save_group_exam_session(text,text,integer,jsonb)'),
+        to_regprocedure('public.delete_group_exam_session(text,integer)'),
+        to_regprocedure('public.save_group_catalog_override(text,text,integer,text,text,text,jsonb)'),
+        to_regprocedure('public.delete_group_catalog_override(text,integer)'),
+        to_regprocedure('public.restore_group_record(bigint,integer)')]) as f), false) as group_exams_rpc_ready,
+  -- Si scrive solo con le funzioni: niente anon su nulla, nessuna scrittura diretta (INSERT, UPDATE, DELETE,
+  -- TRUNCATE) per chi ha fatto l'accesso, funzioni interne chiuse a tutti.
+  coalesce((select bool_and(not coalesce(has_function_privilege('anon', f, 'EXECUTE'), true))
+      from unnest(array[
+        to_regprocedure('public.save_group_exam_session(text,text,integer,jsonb)'),
+        to_regprocedure('public.delete_group_exam_session(text,integer)'),
+        to_regprocedure('public.save_group_catalog_override(text,text,integer,text,text,text,jsonb)'),
+        to_regprocedure('public.delete_group_catalog_override(text,integer)'),
+        to_regprocedure('public.restore_group_record(bigint,integer)')]) as f), false)
+    and coalesce((select bool_and(
+        not coalesce(has_table_privilege('authenticated', t, 'INSERT, UPDATE, DELETE, TRUNCATE'), true)
+        and not coalesce(has_table_privilege('anon', t, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE'), true))
+      from unnest(array[
+        to_regclass('public.studyos_group_exam_sessions'),
+        to_regclass('public.studyos_group_catalog_overrides'),
+        to_regclass('public.studyos_group_history')]) as t), false)
+    and coalesce((select bool_and(
+        f is not null
+        and not coalesce(has_function_privilege('authenticated', f, 'EXECUTE'), true)
+        and not coalesce(has_function_privilege('anon', f, 'EXECUTE'), true))
+      from unnest(array[
+        to_regprocedure('public.studyos_group_member_name(text)'),
+        to_regprocedure('public.studyos_group_write_gate(text)'),
+        to_regprocedure('public.studyos_group_history_write(text,text,text,text,integer,jsonb,jsonb,text[],text)'),
+        to_regprocedure('public.studyos_group_activity_write(text,text,text)'),
+        to_regprocedure('public.studyos_exam_session_twin(text,jsonb,text)'),
+        to_regprocedure('public.studyos_hide_emails(text)')]) as f), false)
     as group_exams_closed_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
       and schemaname = 'public' and tablename = 'studyos_group_exam_sessions')
     and exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
       and schemaname = 'public' and tablename = 'studyos_group_catalog_overrides') as group_exams_realtime_ready,
-  to_regprocedure('public.studyos_agent_group_snapshot(text)') is not null as group_exams_agent_ready;
+  -- Il connettore remoto: la funzione dello snapshot e quella che riconosce il segreto (agent.sql).
+  to_regprocedure('public.studyos_agent_group_snapshot(text)') is not null
+    and to_regprocedure('public.studyos_agent_user(text)') is not null as group_exams_agent_ready;
