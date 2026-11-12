@@ -65,6 +65,8 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
   const [draft, setDraft] = useState({ title: "", body: "" });
   const [removed, setRemoved] = useState<Note | null>(null);
   const [busy, setBusy] = useState(false);
+  // Chiusura in attesa della risposta a «Scartare le modifiche?».
+  const [asking, setAsking] = useState(false);
   const removedRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const wasDeleted = useRef(false);
@@ -75,14 +77,22 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
     setEditing(false);
     setRemoved(null);
     setBusy(false);
+    setAsking(false);
   }, [noteId]);
 
   const shown = note ?? (removed && removed.id === noteId ? removed : null);
   const open = Boolean(noteId && shown);
+  // Mentre si modifica, chiudere con titolo o testo cambiati non perde nulla senza chiedere.
+  const dirty = editing && Boolean(note) && (draft.title !== note?.title || draft.body !== note?.body);
+  const close = () => {
+    if (dirty) setAsking(true);
+    else onClose();
+  };
 
   const startEdit = () => {
     if (!note) return;
     setDraft({ title: note.title, body: note.body });
+    setAsking(false);
     setEditing(true);
   };
   const save = async () => {
@@ -135,6 +145,28 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
         {NOTES_TEXT.close}
       </Button>
     </div>
+  ) : editing && asking ? (
+    // Stesso schema di Attività, Materie e Obiettivi: la domanda sul posto, al posto dei pulsanti.
+    <div role="group" aria-label={NOTES_TEXT.unsavedTitle} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
+      <p className="text-sm font-black">{NOTES_TEXT.unsavedTitle}</p>
+      <p className="text-sm font-bold text-[var(--muted)]">{NOTES_TEXT.unsavedText}</p>
+      <div className="mt-2 flex flex-wrap justify-end gap-2">
+        <Button variant="soft" onClick={() => setAsking(false)} autoFocus>
+          {NOTES_TEXT.unsavedKeep}
+        </Button>
+        <Button
+          variant="danger"
+          icon="X"
+          onClick={() => {
+            setAsking(false);
+            setEditing(false);
+            onClose();
+          }}
+        >
+          {NOTES_TEXT.unsavedDiscard}
+        </Button>
+      </div>
+    </div>
   ) : editing ? (
     <div className="flex flex-wrap items-center justify-end gap-2">
       <Button variant="soft" onClick={() => setEditing(false)} disabled={busy}>
@@ -157,7 +189,7 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
   );
 
   return (
-    <Drawer open={open} onClose={onClose} eyebrow={NOTES_TEXT.eyebrow} title={shown ? noteTitle(shown) : ""} width="max-w-[560px]" footer={footer}>
+    <Drawer open={open} onClose={close} eyebrow={NOTES_TEXT.eyebrow} title={shown ? noteTitle(shown) : ""} width="max-w-[560px]" footer={footer}>
       {!shown ? null : deleted ? (
         <div ref={removedRef} role="status" className="flex flex-wrap items-center gap-2">
           <p className="safe-text min-w-0 flex-1 text-sm font-bold">{NOTES_TEXT.removed(noteTitle(shown))}</p>

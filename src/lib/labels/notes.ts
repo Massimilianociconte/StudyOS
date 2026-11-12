@@ -27,6 +27,11 @@ export const NOTES_TEXT = {
   bodyPlaceholder: "Scrivi qui la nota",
   save: "Salva nota",
   cancelEdit: "Annulla modifiche",
+  // Chiudere (✕, Esc, tocco fuori, Indietro) mentre si modifica, con testo cambiato, chiede prima.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: "Hai cambiato la nota senza salvarla.",
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche",
   remove: "Elimina",
   removeAria: (title: string) => `Elimina la nota «${title}»`,
   removed: (title: string) => `Nota «${title}» eliminata.`,

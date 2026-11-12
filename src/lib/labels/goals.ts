@@ -17,7 +17,12 @@ export const GOALS_TEXT = {
   deleted: (title: string) => `Obiettivo «${title}» eliminato.`,
   undo: "Annulla",
   remove: "Elimina",
-  removeAria: (title: string) => `Elimina l'obiettivo «${title}»`
+  removeAria: (title: string) => `Elimina l'obiettivo «${title}»`,
+  // Chiudere il dettaglio (✕, Esc, tocco fuori, Indietro, Archivia) con dati cambiati chiede prima.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: "Hai cambiato l'obiettivo (titolo, progresso, note…) senza salvarlo.",
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche"
 } as const;
 
 export const GOALS_HELP = {

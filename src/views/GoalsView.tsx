@@ -12,7 +12,9 @@ import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, useUiState } from "../lib/uiState";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
-import { GOAL_STEP, goalDraftWith, goalMove, goalStep, statusForProgress } from "../lib/goalProgress";
+import { GOAL_STEP, goalDraftChanged, goalDraftOf, goalDraftWith, goalMove, goalStep, statusForProgress, type GoalDraft } from "../lib/goalProgress";
+
+const EMPTY_GOAL_DRAFT: GoalDraft = { title: "", description: "", category: "study", deadline: "", progress: 0, status: "active", notes: "" };
 
 const CATEGORY_ICON: Record<Goal["category"], string> = {
   study: "BookOpen",
@@ -281,21 +283,25 @@ function GoalDrawer({
   /** Subito: l'avviso nella pagina offre «Annulla». */
   onDelete: () => void;
 }) {
-  // «Come lo misuri» non compare da nessuna parte: il campo non si mostra più, il valore salvato resta.
-  const [draft, setDraft] = useState({ title: "", description: "", category: "study" as Goal["category"], deadline: "", progress: 0, status: "active" as Goal["status"], notes: "" });
+  const [draft, setDraft] = useState<GoalDraft>(EMPTY_GOAL_DRAFT);
+  // Dati come sono salvati: il confronto dice se chiudere perderebbe qualcosa.
+  const [saved, setSaved] = useState<GoalDraft>(EMPTY_GOAL_DRAFT);
+  // Chiusura (✕, Esc, tocco fuori, Indietro, Archivia) in attesa della risposta a «Scartare le modifiche?».
+  const [pending, setPending] = useState<(() => void) | null>(null);
 
   useEffect(() => {
     if (!goal) return;
-    setDraft({
-      title: goal.title,
-      description: goal.description,
-      category: goal.category,
-      deadline: goal.deadline?.slice(0, 10) ?? "",
-      progress: goal.progress,
-      status: goal.status,
-      notes: goal.notes
-    });
+    const next = goalDraftOf(goal);
+    setDraft(next);
+    setSaved(next);
+    setPending(null);
   }, [goal?.id]);
+
+  const dirty = Boolean(goal) && goalDraftChanged(draft, saved);
+  const guard = (action: () => void) => {
+    if (dirty) setPending(() => action);
+    else action();
+  };
 
   const save = async () => {
     if (!draft.title.trim()) return;
@@ -314,31 +320,56 @@ function GoalDrawer({
   return (
     <Drawer
       open={Boolean(goal)}
-      onClose={onClose}
+      onClose={() => guard(onClose)}
       eyebrow="Obiettivo"
       title={goal?.title ?? ""}
       width="max-w-[520px]"
       footer={
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="soft"
-            icon="Archive"
-            onClick={() => {
-              if (!goal) return;
-              // Ripristinato al 100% è raggiunto, non «in corso».
-              void onSave({ status: goal.status === "archived" ? statusForProgress("active", goal.progress) : "archived" }).then(onClose);
-            }}
-          >
-            {goal?.status === "archived" ? "Ripristina obiettivo" : "Archivia obiettivo"}
-          </Button>
-          <Button variant="danger" icon="Trash2" onClick={onDelete} aria-label={goal ? GOALS_TEXT.removeAria(goal.title) : undefined}>
-            {GOALS_TEXT.remove}
-          </Button>
-          {/* A destra anche quando, sui telefoni, va a capo. */}
-          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={!draft.title.trim()} className="ml-auto">
-            Salva modifiche
-          </Button>
-        </div>
+        goal && pending ? (
+          // Stesso schema di Attività e Materie: chiudere con dati cambiati chiede prima, sul posto.
+          <div role="group" aria-label={GOALS_TEXT.unsavedTitle} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
+            <p className="text-sm font-black">{GOALS_TEXT.unsavedTitle}</p>
+            <p className="text-sm font-bold text-[var(--muted)]">{GOALS_TEXT.unsavedText}</p>
+            <div className="mt-2 flex flex-wrap justify-end gap-2">
+              <Button variant="soft" onClick={() => setPending(null)} autoFocus>
+                {GOALS_TEXT.unsavedKeep}
+              </Button>
+              <Button
+                variant="danger"
+                icon="X"
+                onClick={() => {
+                  const action = pending;
+                  setDraft(saved);
+                  setPending(null);
+                  action();
+                }}
+              >
+                {GOALS_TEXT.unsavedDiscard}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="soft"
+              icon="Archive"
+              onClick={() => {
+                if (!goal) return;
+                // Ripristinato al 100% è raggiunto, non «in corso».
+                guard(() => void onSave({ status: goal.status === "archived" ? statusForProgress("active", goal.progress) : "archived" }).then(onClose));
+              }}
+            >
+              {goal?.status === "archived" ? "Ripristina obiettivo" : "Archivia obiettivo"}
+            </Button>
+            <Button variant="danger" icon="Trash2" onClick={onDelete} aria-label={goal ? GOALS_TEXT.removeAria(goal.title) : undefined}>
+              {GOALS_TEXT.remove}
+            </Button>
+            {/* A destra anche quando, sui telefoni, va a capo. */}
+            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={!draft.title.trim()} className="ml-auto">
+              Salva modifiche
+            </Button>
+          </div>
+        )
       }
     >
       <div className="grid grid-cols-1 gap-3">

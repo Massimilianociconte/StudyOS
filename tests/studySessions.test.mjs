@@ -9,6 +9,7 @@ import {
   readSessionDraft,
   relinkSession,
   reviewedSessionTimes,
+  sessionDraftChanged,
   sessionDraftEnd,
   sessionEditPatch,
   sessionEndsInFuture,
@@ -276,4 +277,15 @@ test("sessionLinksOf e relinkSession: Annulla rimette obiettivi, file, note e pr
   const twice = relinkSession(restored, "s1", links, NOW);
   assert.deepEqual(twice.goals[0].linkedSessionIds, ["s0", "s1"]);
   assert.equal(twice.goals, restored.goals);
+});
+
+test("sessionDraftChanged: chiudere chiede solo se il modulo è cambiato", () => {
+  const saved = { subjectId: "s1", topicId: "", title: "", notes: "", minutes: "60", template: "new-topic", date: "2026-11-12", time: "09:00" };
+  assert.equal(sessionDraftChanged({ ...saved }, saved), false);
+  assert.equal(sessionDraftChanged({ ...saved, notes: "Rivedere il cap. 4" }, saved), true);
+  assert.equal(sessionDraftChanged({ ...saved, minutes: "45" }, saved), true);
+  assert.equal(sessionDraftChanged({ ...saved, time: "09:30" }, saved), true);
+  // Senza giorno e ora (riepilogo del timer): mancante e vuoto sono la stessa cosa.
+  const noStart = { subjectId: "", topicId: "", title: "", notes: "", minutes: "30", template: "review" };
+  assert.equal(sessionDraftChanged({ ...noStart, date: "", time: "" }, noStart), false);
 });

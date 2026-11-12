@@ -31,6 +31,23 @@ export const goalDraftWith = <T extends Pick<Goal, "progress" | "status">>(draft
   return { ...draft, status };
 };
 
+/** Campi del dettaglio come sono salvati («Come lo misuri» non si mostra: il valore salvato resta). */
+export const goalDraftOf = (goal: Goal) => ({
+  title: goal.title,
+  description: goal.description,
+  category: goal.category,
+  deadline: goal.deadline?.slice(0, 10) ?? "",
+  progress: goal.progress,
+  status: goal.status,
+  notes: goal.notes
+});
+
+export type GoalDraft = ReturnType<typeof goalDraftOf>;
+
+/** Il modulo è diverso da quanto salvato: chiudere chiede prima «Scartare le modifiche?». */
+export const goalDraftChanged = (draft: GoalDraft, saved: GoalDraft) =>
+  (Object.keys(saved) as (keyof GoalDraft)[]).some((key) => draft[key] !== saved[key]);
+
 const isClosed = (status: Status) => status === "done" || status === "archived";
 
 /** Passaggio tra «in corso» (attivi e in pausa) e «Raggiunti e archiviati»: la scheda cambia gruppo. */

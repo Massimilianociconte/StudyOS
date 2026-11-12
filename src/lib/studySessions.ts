@@ -177,6 +177,12 @@ export interface SessionDraft {
   time?: string;
 }
 
+const SESSION_DRAFT_KEYS: readonly (keyof SessionDraft)[] = ["subjectId", "topicId", "title", "notes", "minutes", "template", "date", "time"];
+
+/** Il modulo è diverso da com'era all'apertura: chiudere chiede prima «Scartare le modifiche?». */
+export const sessionDraftChanged = (draft: SessionDraft, saved: SessionDraft) =>
+  SESSION_DRAFT_KEYS.some((key) => (draft[key] ?? "") !== (saved[key] ?? ""));
+
 /** Il modulo letto e controllato: pronto per una sessione nuova o da modificare. */
 export interface SessionEdit {
   subjectId?: string;

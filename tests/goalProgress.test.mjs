@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { goalDraftWith, goalMove, goalStep, statusForProgress } from "../src/lib/goalProgress.ts";
+import { goalDraftChanged, goalDraftOf, goalDraftWith, goalMove, goalStep, statusForProgress } from "../src/lib/goalProgress.ts";
 
 test("obiettivi: lo stato segue il progresso (100 → raggiunto, sotto 100 un raggiunto torna attivo)", () => {
   assert.equal(statusForProgress("active", 100), "done");
@@ -45,4 +45,20 @@ test("obiettivi: cambia gruppo solo passando tra «in corso» e «raggiunti e ar
   assert.equal(goalMove("archived", "paused"), "reopened");
   assert.equal(goalMove("active", "paused"), null);
   assert.equal(goalMove("done", "done"), null);
+});
+
+test("obiettivi: il dettaglio sa se chiudere perderebbe modifiche", () => {
+  const goal = {
+    id: "g1", title: "Finire Anatomia", description: "", category: "study", startDate: "2026-11-01",
+    deadline: "2026-12-20T00:00:00.000Z", progress: 40, metric: "", linkedTaskIds: [], linkedSessionIds: [],
+    status: "active", notes: "", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z"
+  };
+  const saved = goalDraftOf(goal);
+  assert.deepEqual(saved, { title: "Finire Anatomia", description: "", category: "study", deadline: "2026-12-20", progress: 40, status: "active", notes: "" });
+  assert.equal(goalDraftOf({ ...goal, deadline: undefined }).deadline, "");
+  assert.equal(goalDraftChanged({ ...saved }, saved), false);
+  // Il cursore al 100% cambia anche lo stato: è una modifica da non perdere.
+  assert.equal(goalDraftChanged(goalDraftWith(saved, { progress: 100 }), saved), true);
+  assert.equal(goalDraftChanged({ ...saved, notes: "Capitoli 3-5" }, saved), true);
+  assert.equal(goalDraftChanged({ ...saved, deadline: "" }, saved), true);
 });

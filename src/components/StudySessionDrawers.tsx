@@ -18,6 +18,7 @@ import {
   matchTopic,
   parseSessionMinutes,
   readSessionDraft,
+  sessionDraftChanged,
   sessionDraftEnd,
   sessionEditPatch,
   sessionSourceLabel,
@@ -427,16 +428,27 @@ export function SessionEditorDrawer({
   const updateSession = useStudyStore((state) => state.updateSession);
   const deleteSession = useStudyStore((state) => state.deleteSession);
   const [draft, setDraft] = useState<SessionDraft | null>(null);
+  // Il modulo com'era all'apertura: il confronto dice se chiudere perderebbe qualcosa.
+  const [saved, setSaved] = useState<SessionDraft | null>(null);
+  const [asking, setAsking] = useState(false);
   const [error, setError] = useState<SessionDraftError | "">("");
   const [openFor, setOpenFor] = useState<string | null>(null);
   const once = useOnce();
   const open = Boolean(session);
   if ((session?.id ?? null) !== openFor) {
     setOpenFor(session?.id ?? null);
-    setDraft(session ? draftFromSession(session, subjects, topics) : null);
+    const initial = session ? draftFromSession(session, subjects, topics) : null;
+    setDraft(initial);
+    setSaved(initial);
+    setAsking(false);
     setError("");
     if (session) once.release();
   }
+  const dirty = Boolean(draft && saved && sessionDraftChanged(draft, saved));
+  const close = () => {
+    if (dirty) setAsking(true);
+    else onClose();
+  };
 
   const save = async () => {
     if (!session || !draft || !once.take()) return;
@@ -465,25 +477,29 @@ export function SessionEditorDrawer({
   return (
     <Drawer
       open={open}
-      onClose={onClose}
+      onClose={close}
       eyebrow={SESSION_FORM_TEXT.eyebrow}
       title={SESSION_FORM_TEXT.editTitle}
       width="max-w-[520px]"
       footer={
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Elimina subito: «Annulla» nell'avviso la ripristina con i suoi collegamenti. */}
-          <Button variant="ghost" icon="Trash2" onClick={() => void remove()} disabled={once.busy}>
-            {SESSION_FORM_TEXT.delete}
-          </Button>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              {SESSION_FORM_TEXT.cancel}
+        asking ? (
+          <UnsavedPrompt text={SESSION_FORM_TEXT.unsavedEditText} onKeep={() => setAsking(false)} onDiscard={() => { setAsking(false); onClose(); }} />
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Elimina subito: «Annulla» nell'avviso la ripristina con i suoi collegamenti. */}
+            <Button variant="ghost" icon="Trash2" onClick={() => void remove()} disabled={once.busy}>
+              {SESSION_FORM_TEXT.delete}
             </Button>
-            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
-              {SESSION_FORM_TEXT.save}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                {SESSION_FORM_TEXT.cancel}
+              </Button>
+              <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
+                {SESSION_FORM_TEXT.save}
+              </Button>
+            </div>
           </div>
-        </div>
+        )
       }
     >
       {session && draft ? (
@@ -537,6 +553,9 @@ export function ManualSessionDrawer({
     };
   };
   const [draft, setDraft] = useState<SessionDraft>(initial);
+  // Il modulo com'era all'apertura: il confronto dice se chiudere perderebbe qualcosa.
+  const [pristine, setPristine] = useState<SessionDraft>(() => draft);
+  const [asking, setAsking] = useState(false);
   const [error, setError] = useState<SessionDraftError | "">("");
   const [wasOpen, setWasOpen] = useState(open);
   // Id deciso all'apertura: anche se Salva partisse due volte, lo store aggiunge una sola sessione.
@@ -545,12 +564,19 @@ export function ManualSessionDrawer({
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      setDraft(initial());
+      const next = initial();
+      setDraft(next);
+      setPristine(next);
+      setAsking(false);
       setError("");
       setSessionId(createId("session"));
       once.release();
     }
   }
+  const close = () => {
+    if (sessionDraftChanged(draft, pristine)) setAsking(true);
+    else onClose();
+  };
 
   const save = async () => {
     if (!once.take()) return;
@@ -583,19 +609,23 @@ export function ManualSessionDrawer({
   return (
     <Drawer
       open={open}
-      onClose={onClose}
+      onClose={close}
       eyebrow={SESSION_FORM_TEXT.eyebrow}
       title={SESSION_FORM_TEXT.addTitle}
       width="max-w-[520px]"
       footer={
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            {SESSION_FORM_TEXT.cancel}
-          </Button>
-          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
-            {SESSION_FORM_TEXT.saveAdd}
-          </Button>
-        </div>
+        asking ? (
+          <UnsavedPrompt text={SESSION_FORM_TEXT.unsavedAddText} onKeep={() => setAsking(false)} onDiscard={() => { setAsking(false); onClose(); }} />
+        ) : (
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              {SESSION_FORM_TEXT.cancel}
+            </Button>
+            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
+              {SESSION_FORM_TEXT.saveAdd}
+            </Button>
+          </div>
+        )
       }
     >
       <div className="grid grid-cols-1 gap-4">
@@ -614,6 +644,24 @@ export function ManualSessionDrawer({
         <FormError error={error} />
       </div>
     </Drawer>
+  );
+}
+
+/** «Scartare le modifiche?» sul posto dei pulsanti, come in Attività, Materie e Obiettivi. */
+function UnsavedPrompt({ text, onKeep, onDiscard }: { text: string; onKeep: () => void; onDiscard: () => void }) {
+  return (
+    <div role="group" aria-label={SESSION_FORM_TEXT.unsavedTitle} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
+      <p className="text-sm font-black">{SESSION_FORM_TEXT.unsavedTitle}</p>
+      <p className="text-sm font-bold text-[var(--muted)]">{text}</p>
+      <div className="mt-2 flex flex-wrap justify-end gap-2">
+        <Button variant="soft" onClick={onKeep} autoFocus>
+          {SESSION_FORM_TEXT.unsavedKeep}
+        </Button>
+        <Button variant="danger" icon="X" onClick={onDiscard}>
+          {SESSION_FORM_TEXT.unsavedDiscard}
+        </Button>
+      </div>
+    </div>
   );
 }
 

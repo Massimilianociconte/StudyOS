@@ -284,6 +284,12 @@ export const SESSION_FORM_TEXT = {
   discardYes: "Sì, scarta",
   discardNo: "No",
   discarded: (studied: string) => `Sessione scartata (${studied}).`,
+  // Chiudere «Modifica sessione» o «Aggiungi studio fatto» (✕, Esc, tocco fuori, Indietro) con dati cambiati.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedEditText: "Hai cambiato la sessione senza salvarla.",
+  unsavedAddText: "Hai scritto una sessione senza salvarla.",
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche",
   delete: "Elimina",
   deleted: (title: string) => `Sessione eliminata: ${title}.`,
   loadFailedReview: "Non riesco ad aprire il riepilogo",
