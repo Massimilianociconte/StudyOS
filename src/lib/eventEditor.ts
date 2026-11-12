@@ -449,7 +449,12 @@ export interface ScopeOption {
   label: string;
   /** Una riga breve e vera (quali date): si vede sempre. */
   summary: string;
-  /** Conseguenze, in frasi brevi: in «Dettagli» (e nella descrizione accessibile della scelta). */
+  /** Ciò che si perde, sparisce, raddoppia, si sposta o torna (SCOPE_WARNING_KEYS): sempre visibile. */
+  warnings: string[];
+  /**
+   * Tutte le conseguenze, in ordine (descrizione accessibile della scelta). In «Dettagli» quelle che
+   * non sono in `warnings`.
+   */
   details: string[];
 }
 
@@ -494,33 +499,94 @@ export const shortDatesText = (dates: readonly string[]) => {
 /** Date che spariscono dette per nome: le prime, poi "e altre date dopo". */
 const GONE_SHOWN = 6;
 
+/**
+ * Righe della scelta SEMPRE VISIBILI (sotto la riga breve): dicono che qualcosa si perde, viene
+ * sostituito, sparisce, raddoppia, si sposta o torna, o che la scelta tocca anche date fuori da quelle
+ * scelte (materia, fuso, inizio della serie). Unico elenco: ogni riga nuova della scelta va messa qui o
+ * in SCOPE_DETAIL_KEYS (il tipo lo impone).
+ */
+export const SCOPE_WARNING_KEYS = [
+  "thisSubject",
+  "followingDaysShift",
+  "allDaysShift",
+  "followingTakesDay",
+  "changedLost",
+  "changedGone",
+  "cancelledBack",
+  "ownLost",
+  "followingSplits",
+  "followingGone",
+  "followingMovesSplits",
+  "followingBoth",
+  "newStart",
+  "pinZone"
+] as const satisfies readonly (keyof typeof SCOPE_TEXT)[];
+
+/** Righe solo in «Dettagli»: la scelta detta per intero, ciò che resta così, la fine della serie. */
+export const SCOPE_DETAIL_KEYS = [
+  "thisEdit",
+  "thisMove",
+  "thisDelete",
+  "followingEdit",
+  "followingMove",
+  "followingDelete",
+  "allEdit",
+  "allMove",
+  "allDelete",
+  "allDeleteFamily",
+  "sharedAll",
+  "rowsKept",
+  "othersKept",
+  "followingKeepsSplits",
+  "followingSplitsOwnDays",
+  "followingSplitsOwnTime",
+  "followingKeepsEnd",
+  "followingNewEnd"
+] as const satisfies readonly (keyof typeof SCOPE_TEXT)[];
+
+type ScopeLineKey = (typeof SCOPE_WARNING_KEYS)[number] | (typeof SCOPE_DETAIL_KEYS)[number];
+type ScopeLine = readonly [ScopeLineKey, string];
+const WARNING_KEYS: ReadonlySet<ScopeLineKey> = new Set(SCOPE_WARNING_KEYS);
+
+/** Opzione con le sue righe: `details` tutte, in ordine; `warnings` quelle da non nascondere mai. */
+const scopeOption = (id: OccurrenceScope, label: string, summary: string, lines: readonly ScopeLine[]): ScopeOption => ({
+  id,
+  label,
+  summary,
+  warnings: lines.filter(([key]) => WARNING_KEYS.has(key)).map(([, text]) => text),
+  details: lines.map(([, text]) => text)
+});
+
 /** Che cosa fa "Questo e i successivi" alle parti cambiate prima (assorbite con una regola nuova, o lasciate). */
-const splitLines = (impact: ScopeImpact | undefined) => {
+const splitLines = (impact: ScopeImpact | undefined): ScopeLine[] => {
   if (!impact) return [];
   if (impact.absorbed) {
     const gone = impact.gone ?? [];
     const more = gone.length > GONE_SHOWN || impact.goneMore === true;
-    return [SCOPE_TEXT.followingSplits, ...(gone.length ? [SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), more)] : [])];
+    return [
+      ["followingSplits", SCOPE_TEXT.followingSplits],
+      ...(gone.length ? [["followingGone", SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), more)] as const] : [])
+    ];
   }
   if (!impact.laterParts) return [];
   // Spostando il giorno si spostano le parti con gli stessi giorni e orario; le altre restano (e lo si dice se ce ne sono di tutti e due i tipi).
   const moved = impact.laterMoved ?? 0;
   return [
-    moved ? SCOPE_TEXT.followingMovesSplits : SCOPE_TEXT.followingKeepsSplits,
-    ...(moved && impact.laterOwnDays ? [SCOPE_TEXT.followingSplitsOwnDays] : []),
-    ...(impact.laterOwnTime ? [SCOPE_TEXT.followingSplitsOwnTime] : [])
+    moved ? ["followingMovesSplits", SCOPE_TEXT.followingMovesSplits] : ["followingKeepsSplits", SCOPE_TEXT.followingKeepsSplits],
+    ...(moved && impact.laterOwnDays ? [["followingSplitsOwnDays", SCOPE_TEXT.followingSplitsOwnDays] as const] : []),
+    ...(impact.laterOwnTime ? [["followingSplitsOwnTime", SCOPE_TEXT.followingSplitsOwnTime] as const] : [])
   ];
 };
 
 /** Righe sui giorni cambiati o annullati da soli: quanti perdono la modifica, quanti restano. */
-const rowLines = (impact: ScopeImpact | undefined) => {
+const rowLines = (impact: ScopeImpact | undefined): ScopeLine[] => {
   if (!impact) return [];
-  const lost = [
-    ...(impact.changedLost ? [SCOPE_TEXT.changedLost(impact.changedLost)] : []),
-    ...(impact.changedGone ? [SCOPE_TEXT.changedGone(impact.changedGone)] : []),
-    ...(impact.cancelledLost ? [SCOPE_TEXT.cancelledBack(impact.cancelledLost)] : [])
+  const lost: ScopeLine[] = [
+    ...(impact.changedLost ? [["changedLost", SCOPE_TEXT.changedLost(impact.changedLost)] as const] : []),
+    ...(impact.changedGone ? [["changedGone", SCOPE_TEXT.changedGone(impact.changedGone)] as const] : []),
+    ...(impact.cancelledLost ? [["cancelledBack", SCOPE_TEXT.cancelledBack(impact.cancelledLost)] as const] : [])
   ];
-  return [...lost, ...(impact.kept ? [lost.length ? SCOPE_TEXT.othersKept : SCOPE_TEXT.rowsKept] : [])];
+  return [...lost, ...(impact.kept ? [lost.length ? (["othersKept", SCOPE_TEXT.othersKept] as const) : (["rowsKept", SCOPE_TEXT.rowsKept] as const)] : [])];
 };
 
 const WEEK: readonly Weekday[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
@@ -591,7 +657,7 @@ export const scopeOptions = ({
   daysShift?: { from: readonly Weekday[]; to: readonly Weekday[] };
 }): ScopeOption[] => {
   const day = occurrenceDayText(date);
-  const pin = pinsZone ? [SCOPE_TEXT.pinZone(pinsZone)] : [];
+  const pin: ScopeLine[] = pinsZone ? [["pinZone", SCOPE_TEXT.pinZone(pinsZone)]] : [];
   const shift = daysShift && action !== "delete" ? { from: weekdaysText(daysShift.from), to: weekdaysText(daysShift.to) } : null;
   const range = {
     ...(span?.from ? { from: occurrenceDayText(span.from) } : {}),
@@ -599,55 +665,65 @@ export const scopeOptions = ({
     past: span?.past ?? false
   };
   const family = action === "delete" && Boolean(span && span.parts > 1);
-  const all: ScopeOption = {
-    id: "all",
-    label: SCOPE_TEXT.all,
-    summary: sharedOnly
+  const allShift: ScopeLine[] = shift ? [["allDaysShift", SCOPE_TEXT.allDaysShift(shift.from, shift.to)]] : [];
+  const all = scopeOption(
+    "all",
+    SCOPE_TEXT.all,
+    sharedOnly
       ? SCOPE_TEXT.sharedAllShort
       : action === "delete"
         ? family
           ? SCOPE_TEXT.allDeleteFamilyShort
           : SCOPE_TEXT.allDeleteShort(range.past)
         : SCOPE_TEXT.allShort(range),
-    details: sharedOnly
-      ? [SCOPE_TEXT.sharedAll, ...(shift ? [SCOPE_TEXT.allDaysShift(shift.from, shift.to)] : [])]
+    sharedOnly
+      ? [["sharedAll", SCOPE_TEXT.sharedAll], ...allShift]
       : action === "delete"
-        ? [family ? SCOPE_TEXT.allDeleteFamily : SCOPE_TEXT.allDelete(range.past)]
+        ? [family ? ["allDeleteFamily", SCOPE_TEXT.allDeleteFamily] : ["allDelete", SCOPE_TEXT.allDelete(range.past)]]
         : [
-            action === "move" ? SCOPE_TEXT.allMove(range) : SCOPE_TEXT.allEdit(range),
-            ...(shift ? [SCOPE_TEXT.allDaysShift(shift.from, shift.to)] : []),
-            ...(impacts.all?.ownLost ? [SCOPE_TEXT.ownLost] : []),
-            ...(newStart ? [SCOPE_TEXT.newStart(occurrenceDayText(newStart))] : []),
+            action === "move" ? ["allMove", SCOPE_TEXT.allMove(range)] : ["allEdit", SCOPE_TEXT.allEdit(range)],
+            ...allShift,
+            ...(impacts.all?.ownLost ? [["ownLost", SCOPE_TEXT.ownLost] as const] : []),
+            ...(newStart ? [["newStart", SCOPE_TEXT.newStart(occurrenceDayText(newStart))] as const] : []),
             ...rowLines(impacts.all),
             ...pin
           ]
-  };
+  );
   if (sharedOnly) return [all];
   const options: ScopeOption[] = [];
   if (!(action === "edit" && ruleChanged)) {
-    const text = action === "delete" ? SCOPE_TEXT.thisDelete(day) : action === "move" ? SCOPE_TEXT.thisMove(day) : SCOPE_TEXT.thisEdit(day);
-    options.push({ id: "this", label: SCOPE_TEXT.this, summary: SCOPE_TEXT.thisShort(day), details: [text, ...(action === "edit" && subjectChanged ? [SCOPE_TEXT.thisSubject] : []), ...pin] });
+    const text: ScopeLine =
+      action === "delete" ? ["thisDelete", SCOPE_TEXT.thisDelete(day)] : action === "move" ? ["thisMove", SCOPE_TEXT.thisMove(day)] : ["thisEdit", SCOPE_TEXT.thisEdit(day)];
+    options.push(
+      scopeOption("this", SCOPE_TEXT.this, SCOPE_TEXT.thisShort(day), [text, ...(action === "edit" && subjectChanged ? [["thisSubject", SCOPE_TEXT.thisSubject] as const] : []), ...pin])
+    );
   }
-  const following =
+  const following: ScopeLine[] =
     action === "delete"
-      ? [SCOPE_TEXT.followingDelete(day)]
+      ? [["followingDelete", SCOPE_TEXT.followingDelete(day)]]
       : [
-          action === "move" ? SCOPE_TEXT.followingMove(day) : SCOPE_TEXT.followingEdit(day),
-          ...(shift ? [SCOPE_TEXT.followingDaysShift(shift.from, shift.to)] : []),
-          ...(rowContent ? [SCOPE_TEXT.followingTakesDay] : []),
+          action === "move" ? ["followingMove", SCOPE_TEXT.followingMove(day)] : ["followingEdit", SCOPE_TEXT.followingEdit(day)],
+          ...(shift ? [["followingDaysShift", SCOPE_TEXT.followingDaysShift(shift.from, shift.to)] as const] : []),
+          ...(rowContent ? [["followingTakesDay", SCOPE_TEXT.followingTakesDay] as const] : []),
           ...rowLines(impacts.following),
           ...splitLines(impacts.following),
           // Spostando, i giorni in cui una data spostata arriva su quella di un'altra parte: ci sono tutte e due.
-          ...(impacts.following?.both?.length ? [SCOPE_TEXT.followingBoth(shortDatesText(impacts.following.both.slice(0, GONE_SHOWN)))] : []),
+          ...(impacts.following?.both?.length
+            ? [["followingBoth", SCOPE_TEXT.followingBoth(shortDatesText(impacts.following.both.slice(0, GONE_SHOWN)))] as const]
+            : []),
           // Se spariscono date, la fine di prima non vale più per tutto ciò che viene dopo; se la
           // modifica sposta l'ultima data, si dice quella nuova.
           ...(ruleChanged || impacts.following?.gone?.length
             ? []
-            : [impacts.following?.endsOn ? SCOPE_TEXT.followingNewEnd(occurrenceDayText(impacts.following.endsOn)) : SCOPE_TEXT.followingKeepsEnd]),
+            : [
+                impacts.following?.endsOn
+                  ? (["followingNewEnd", SCOPE_TEXT.followingNewEnd(occurrenceDayText(impacts.following.endsOn))] as const)
+                  : (["followingKeepsEnd", SCOPE_TEXT.followingKeepsEnd] as const)
+              ]),
           ...pin
         ];
   const firstDay = span?.start === date && span.parts === 1;
-  if (!firstDay) options.push({ id: "following", label: SCOPE_TEXT.following, summary: SCOPE_TEXT.followingShort(day), details: following });
+  if (!firstDay) options.push(scopeOption("following", SCOPE_TEXT.following, SCOPE_TEXT.followingShort(day), following));
   options.push(all);
   return options;
 };

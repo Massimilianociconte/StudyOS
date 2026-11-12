@@ -10,8 +10,9 @@ const SCOPE_ICON: Record<OccurrenceScope, string> = { this: "CircleDot", followi
 
 /**
  * "Solo questo · Questo e i successivi · Tutti" per un evento che si ripete (modifica, spostamento,
- * eliminazione): ogni scelta ha una riga breve (quali date) e «Dettagli» con tutte le conseguenze,
- * che sono anche la descrizione accessibile della scelta. Finestra sopra il modulo: Esc o Annulla = niente.
+ * eliminazione): ogni scelta ha una riga breve (quali date), gli avvisi sempre visibili (ciò che si
+ * perde, sparisce, raddoppia, si sposta o torna) e «Dettagli» con il resto; avvisi e dettagli sono la
+ * descrizione accessibile della scelta. Finestra sopra il modulo: Esc o Annulla = niente.
  */
 export function ScopeChoice({
   heading,
@@ -57,37 +58,54 @@ export function ScopeChoice({
         </div>
         <ul className="grid grid-cols-1 gap-2">
           {options.map((option, index) => {
-            const detailsId = `${titleId}-${option.id}`;
+            const id = `${titleId}-${option.id}`;
             const expanded = open.includes(option.id);
+            const more = option.details.filter((line) => !option.warnings.includes(line));
             return (
               <li key={option.id} className={`rounded-[18px] border bg-[var(--surface-soft)] ${danger ? "border-[var(--danger-border)]" : "border-[var(--border)]"}`}>
-                {/* Nome: la scelta e la riga breve; descrizione: tutte le conseguenze, anche a dettagli chiusi. */}
+                {/* Nome: la scelta e la riga breve. Descrizione: gli avvisi (sempre visibili) e i dettagli, anche chiusi. */}
                 <button
                   type="button"
                   data-autofocus={index === 0 ? true : undefined}
-                  aria-describedby={detailsId}
+                  aria-labelledby={`${id}-label ${id}-summary`}
+                  aria-describedby={`${id}-warnings ${id}-details`}
                   onClick={() => onChoose(option.id)}
                   className="flex min-h-11 w-full min-w-0 items-start gap-3 rounded-[18px] p-3 pb-1.5 text-left hover:bg-[var(--surface)]"
                 >
                   <Icon name={SCOPE_ICON[option.id]} className={`mt-0.5 h-5 w-5 shrink-0 ${danger ? "text-[var(--danger-text)]" : "text-[var(--accent-ink)]"}`} />
                   <span className="min-w-0 flex-1">
-                    <span className={`block text-base font-black ${danger ? "text-[var(--danger-text)]" : ""}`}>{option.label}</span>
-                    <span className="mt-0.5 block text-sm font-bold text-[var(--muted)]">{option.summary}</span>
+                    <span id={`${id}-label`} className={`block text-base font-black ${danger ? "text-[var(--danger-text)]" : ""}`}>
+                      {option.label}
+                    </span>
+                    <span id={`${id}-summary`} className="mt-0.5 block text-sm font-bold text-[var(--muted)]">
+                      {option.summary}
+                    </span>
+                    {/* Ciò che si perde, sparisce, raddoppia, si sposta o torna: mai dietro «Dettagli». */}
+                    <span id={`${id}-warnings`} className="block">
+                      {option.warnings.map((line) => (
+                        <span key={line} className="mt-1.5 flex items-start gap-1.5 text-sm font-bold text-[var(--warning-text)]">
+                          <Icon name="AlertTriangle" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span className="min-w-0">{line}</span>
+                        </span>
+                      ))}
+                    </span>
                   </span>
                 </button>
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  aria-controls={detailsId}
-                  onClick={() => setOpen((list) => (list.includes(option.id) ? list.filter((id) => id !== option.id) : [...list, option.id]))}
-                  className="ml-9 inline-flex min-h-11 items-center gap-1 rounded-full px-2 text-xs font-black text-[var(--accent-ink)] hover:bg-[var(--surface)]"
-                >
-                  {SCOPE_TEXT.details}
-                  <Icon name="ChevronDown" className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
-                </button>
-                {/* Chiuso: display none (resta la descrizione accessibile della scelta). */}
-                <div id={detailsId} className={`${expanded ? "grid" : "hidden"} grid-cols-1 gap-1 px-3 pb-3 pl-11`}>
-                  {option.details.map((line) => (
+                {more.length ? (
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    aria-controls={`${id}-details`}
+                    onClick={() => setOpen((list) => (list.includes(option.id) ? list.filter((scope) => scope !== option.id) : [...list, option.id]))}
+                    className="ml-9 inline-flex min-h-11 items-center gap-1 rounded-full px-2 text-xs font-black text-[var(--accent-ink)] hover:bg-[var(--surface)]"
+                  >
+                    {SCOPE_TEXT.details}
+                    <Icon name="ChevronDown" className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                  </button>
+                ) : null}
+                {/* Chiuso: display none (resta nella descrizione accessibile della scelta). */}
+                <div id={`${id}-details`} className={`${expanded ? "grid" : "hidden"} grid-cols-1 gap-1 px-3 pb-3 pl-11`}>
+                  {more.map((line) => (
                     <p key={line} className="text-sm font-bold text-[var(--muted)]">
                       {line}
                     </p>

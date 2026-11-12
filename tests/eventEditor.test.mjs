@@ -329,6 +329,65 @@ test("scelta della portata: una riga breve per scelta, le conseguenze restano ne
   // Le frasi lunghe restano tutte, invariate, nei dettagli.
   const following = scopeOptions({ action: "edit", date: "2026-11-12" }).find((option) => option.id === "following");
   assert.equal(following.details.length, 2);
+  assert.deepEqual(following.warnings, []);
+});
+
+test("scelta della portata: ciò che si perde, sparisce, raddoppia, si sposta o torna è sempre visibile", async () => {
+  const { SCOPE_TEXT } = await import("../src/lib/labels/calendar.ts");
+  const { SCOPE_WARNING_KEYS, SCOPE_DETAIL_KEYS } = await import("../src/lib/eventEditor.ts");
+  const impact = (patch) => ({
+    changedLost: 0, changedGone: 0, cancelledLost: 0, kept: 0, ownLost: false, absorbed: 0, gone: [], goneMore: false,
+    laterParts: 0, laterOwnTime: 0, laterMoved: 0, laterOwnDays: 0, both: [], ...patch
+  });
+  const shift = { from: ["MO", "WE"], to: ["TU", "TH"] };
+  const losing = impact({ changedLost: 2, changedGone: 1, cancelledLost: 3, kept: 1 });
+  // Scenari che accendono ogni riga di avviso, per ogni scelta e ogni azione.
+  const scenarios = [
+    {
+      options: scopeOptions({
+        action: "edit", date: "2026-11-24", subjectChanged: true, pinsZone: "Europe/Rome", daysShift: shift, rowContent: true, newStart: "2026-11-03",
+        impacts: { following: losing, all: { ...losing, ownLost: true } }
+      }),
+      expected: {
+        this: [SCOPE_TEXT.thisSubject, SCOPE_TEXT.pinZone("Europe/Rome")],
+        following: [
+          SCOPE_TEXT.followingDaysShift("lun, mer", "mar, gio"), SCOPE_TEXT.followingTakesDay, SCOPE_TEXT.changedLost(2), SCOPE_TEXT.changedGone(1),
+          SCOPE_TEXT.cancelledBack(3), SCOPE_TEXT.pinZone("Europe/Rome")
+        ],
+        all: [
+          SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio"), SCOPE_TEXT.ownLost, SCOPE_TEXT.newStart("martedì 3 novembre"), SCOPE_TEXT.changedLost(2),
+          SCOPE_TEXT.changedGone(1), SCOPE_TEXT.cancelledBack(3), SCOPE_TEXT.pinZone("Europe/Rome")
+        ]
+      }
+    },
+    {
+      options: scopeOptions({ action: "edit", date: "2026-11-24", ruleChanged: true, impacts: { following: impact({ absorbed: 1, gone: ["2026-12-04", "2026-12-11"] }) } }),
+      expected: { following: [SCOPE_TEXT.followingSplits, SCOPE_TEXT.followingGone("ven 4, 11 dic", false)], all: [] }
+    },
+    {
+      options: scopeOptions({ action: "move", date: "2026-11-24", impacts: { following: impact({ laterParts: 2, laterMoved: 1, laterOwnDays: 1, both: ["2026-11-30"] }) } }),
+      expected: { this: [], following: [SCOPE_TEXT.followingMovesSplits, SCOPE_TEXT.followingBoth("lun 30 nov")], all: [] }
+    },
+    { options: scopeOptions({ action: "move", date: "2026-11-24", sharedOnly: true, daysShift: shift }), expected: { all: [SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio")] } },
+    { options: scopeOptions({ action: "delete", date: "2026-11-24", span: { start: "2026-11-02", parts: 2, past: true } }), expected: { this: [], following: [], all: [] } }
+  ];
+  for (const { options, expected } of scenarios) {
+    assert.deepEqual(options.map((option) => option.id), Object.keys(expected));
+    for (const option of options) {
+      // Ogni avviso atteso è tra quelli sempre visibili, nello stesso ordine; i dettagli sono il resto.
+      assert.deepEqual(option.warnings, expected[option.id], option.id);
+      const inDetails = option.details.filter((line) => !option.warnings.includes(line));
+      for (const line of expected[option.id]) assert.ok(!inDetails.includes(line), `${option.id}: «${line}» non solo nei dettagli`);
+      assert.ok(inDetails.length >= 1, "la scelta detta per intero resta nei dettagli");
+    }
+  }
+  // Le righe che non avvisano restano nei dettagli: la fine della serie, «restano così».
+  const kept = scopeOptions({ action: "edit", date: "2026-11-24", impacts: { following: impact({ kept: 2, laterParts: 1, laterOwnTime: 1 }) } }).find((o) => o.id === "following");
+  assert.deepEqual(kept.warnings, []);
+  assert.ok(kept.details.includes(SCOPE_TEXT.rowsKept) && kept.details.includes(SCOPE_TEXT.followingKeepsEnd) && kept.details.includes(SCOPE_TEXT.followingKeepsSplits));
+  // Un solo elenco, senza doppioni: ogni riga è avviso o dettaglio.
+  assert.equal(new Set([...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]).size, SCOPE_WARNING_KEYS.length + SCOPE_DETAIL_KEYS.length);
+  for (const key of [...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]) assert.ok(key in SCOPE_TEXT, key);
 });
 
 test("spostare inizio e fine di qualche giorno (per «Tutti» con tutto il giorno)", () => {
