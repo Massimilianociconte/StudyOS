@@ -576,3 +576,18 @@
   sempre contro `self.registration.scope` e fuori dall'app ripiega sulla pagina iniziale. Il
   cassetto Notifiche non è una sezione: lo apre l'evento `studyos:open-notifications`.
   I test di `sw.js` (`tests/swPush.test.mjs`) lo eseguono in un contesto `node:vm`.
+- Appelli dei gruppi: `useGroupExamStore` vive solo in memoria e prima del primo pull (`ready = false`)
+  niente dice «non c'è»: gli agenti rispondono `not_connected`. `lib/groupExamSync` si carica solo con
+  `import()`. Un pull non abbassa la versione di una riga già in memoria. Il piano (`examPlans`) è
+  personale e passa da `normalizeExamPlan` a ogni lettura. I promemoria degli appelli scelti aspettano il
+  primo pull dei gruppi, quelli personali e autonomi mai.
+- Email degli appelli: una sola regola per SQL e TS (NFKC, invisibili tolti, minuscolo solo ASCII, vettori
+  in `tests/fixtures/emailVectors.json`; `scripts/supabase/email-vectors-tests.sql` si rigenera con
+  `gen-email-vectors.mjs` e un test fallisce se è vecchio). Agli agenti solo `agentMemberText` per i testi
+  dei membri (tutte le email nascoste, anche `@unimi.it`); `@unimi.it` solo in `email`, `website`, `url` e
+  `value` delle correzioni, con `AGENT_INSTITUTIONAL_EMAILS` acceso.
+- Il reset dei test end-to-end (`tests/e2e/support/stack.ts`) cancella le tabelle degli appelli
+  (cronologia, correzioni, appelli) a mano: gira in modalità replica e le cascate delle chiavi esterne non
+  scattano. Una tabella nuova dei gruppi va aggiunta lì.
+- Gruppi con id di forma insolita (prima di `studyos_groups_id_shape`): lo snapshot del connettore li salta.
+  Una riga di membro non cambia `user_id` né `group_id` (trigger in `groups.sql`).

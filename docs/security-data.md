@@ -23,6 +23,7 @@ La «Password dell'app» cifra solo la copia sul dispositivo (vedi sotto).
 | File dei materiali | Supabase Storage, spazio privato `studyos-files`, cartella del tuo account | Privato: solo tu e chi riceve una condivisione dei materiali |
 | Copia di lavoro | Browser del dispositivo (IndexedDB) | Con la «Password dell'app»: cifrata (AES-GCM, chiave dalla password). Senza: in chiaro nel browser |
 | Gruppi | `studyos_groups`, `studyos_group_members`, `studyos_group_invites`, `studyos_group_resources`, `studyos_group_activity` | Nome scelto e ruolo dei membri, risorse e attività. L'email dei membri non si salva più |
+| Appelli dei gruppi | `studyos_group_exam_sessions`, `studyos_group_catalog_overrides`, `studyos_group_history` | Appelli, correzioni a docenti e aule e la loro cronologia, leggibili solo dai membri del gruppo. Le email nelle correzioni sono solo istituzionali (`@unimi.it`). Il piano d'esame di ognuno è un elemento personale in `studyos_items` |
 | Condivisioni | `studyos_shares`, `studyos_share_invites`, `studyos_item_revisions` | Chi riceve cosa e con quale permesso; dei link solo l'impronta (hash). Le versioni precedenti delle modifiche fatte da altri ai tuoi dati restano 90 giorni |
 | Profilo online | `studyos_profiles` | Nome, @nome e «Gli altri possono trovarmi» |
 | Notifiche | `studyos_push_subscriptions`, `studyos_push_reminders` | Indirizzo del servizio di notifiche del browser e le sue chiavi; titolo e testo dei promemoria finché non partono (poi un giorno) |
@@ -89,6 +90,7 @@ In Impostazioni → Spazio e dati. Non si può annullare.
 | Profilo online | Nome e @nome svuotati. «Gli altri possono trovarmi» resta com'era |
 | Resoconti della sincronizzazione BARB (`university.sql`, oggi non usato) | Tolti |
 | Gruppi: tuo nome di membro, risorse e attività che hai scritto | **Restano**: sono anche degli altri membri. Il nome resta quello che avevi scelto (mai l'email). Per andartene usa «Esci dal gruppo» |
+| Appelli e correzioni che hai scritto nei gruppi, con la loro cronologia | **Restano**: sono del gruppo. Il tuo piano d'esame (scelte, note, esiti) sparisce con gli altri dati personali |
 | Condivisioni e inviti che altri ti hanno mandato | **Restano**: sono di chi li ha mandati |
 | Dispositivi con le notifiche | Questo dispositivo smette di riceverle; gli altri restano finché non esci da lì o non li togli con «Rimuovi» |
 | Registri dei limiti (circa un'ora, senza contenuti) | Restano e si cancellano alla ricerca o all'invio successivo: toglierli permetterebbe di aggirare i limiti |
@@ -138,8 +140,9 @@ prefisso `studyos_`, tranne quelle di un'estensione) e ogni funzione `SECURITY D
 - **`anon_closed_ready`**: `anon` (chi usa la chiave pubblica senza accesso) non ha privilegi
   su quelle tabelle e nessuna policy vale per `anon` o `public`, nemmeno sui file.
 - **`definer_functions_ready`**: ogni funzione definer fissa il `search_path`, e `anon` non la
-  può chiamare. Le eccezioni sono sette:
-  - i cinque ingressi del connettore remoto e `push_gone`, che controllano un segreto;
+  può chiamare. Le eccezioni sono otto:
+  - i cinque ingressi del connettore remoto, la lettura degli appelli dei gruppi per il connettore
+    (`studyos_agent_group_snapshot`) e `push_gone`, che controllano un segreto;
   - `studyos_keepalive`, che non tocca dati.
 - **`security_issues`**: vuota se va tutto bene, altrimenti l'elenco degli oggetti da sistemare
   (solo nomi).
@@ -194,6 +197,14 @@ e `authenticated` su ogni oggetto nuovo di `public`. Ogni script deve quindi:
   `anon`.
 
 Poi riesegui `verify.sql`.
+
+## Email negli appelli dei gruppi
+
+Una sola regola in SQL e in TypeScript (`studyos_hide_emails`, `src/lib/institutionalEmail.ts`, casi in
+`tests/fixtures/emailVectors.json`). Agli agenti il testo scritto dai membri arriva sempre senza
+indirizzi, `@unimi.it` compreso; solo i campi `email`, `website`, `url` e `value` di una correzione del
+catalogo possono mostrarlo. Lo snapshot del connettore (`studyos_agent_group_snapshot`) redige valore per
+valore e salta i gruppi con id di forma insolita. Dettagli in [group-exams.md](group-exams.md).
 
 ## Limiti noti
 

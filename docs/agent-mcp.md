@@ -60,7 +60,7 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.8.0 (`/health` la mostra dopo il deploy). La 1.8.0 aggiunge `studyos_split_pages` (vedi
+versione 1.9.0 (`/health` la mostra dopo il deploy). La 1.8.0 aggiunge `studyos_split_pages` (vedi
 «Pagine da studiare») e, sul connettore remoto, il registro del server con il ripristino (vedi
 «Registro e ripristino del connettore remoto»). Dalla 1.7.0, negli elenchi di attività, eventi,
 sessioni, argomenti e obiettivi descrizioni e note oltre 300 caratteri arrivano accorciate con
@@ -76,6 +76,21 @@ accessi»). La 1.5.0 aveva corretto fuso orario, serie ripetute, link della bach
 di elenchi e modifiche di attività, eventi e obiettivi: ricrea il connettore perché
 l'assistente le legga (vedi «Ripubblicare dopo una modifica»). Anche la 1.8.0 cambia l'elenco
 degli strumenti e le istruzioni del server: ricrea il connettore dopo il deploy.
+
+La 1.9.0 porta gli strumenti da 73 a 94 (21 nuovi): appelli dei gruppi e cronologia
+(`studyos_list_group_exam_sessions`, `studyos_create_group_exam_session`,
+`studyos_update_group_exam_session`, `studyos_delete_group_exam_session`, `studyos_list_group_history`,
+`studyos_restore_group_change`), piano d'esame (`studyos_plan_exam`, `studyos_list_exam_plan`),
+`studyos_delete_subject`, etichette (`studyos_list_tags`, `studyos_tag_items`), promemoria autonomi
+(`studyos_list_reminders`, `studyos_create_reminder`, `studyos_update_reminder`,
+`studyos_delete_reminder`), `studyos_check_consistency`, catalogo BARB (`studyos_list_barb_teachers`,
+`studyos_get_barb_course`, `studyos_list_barb_contacts`) e correzioni del gruppo
+(`studyos_save_catalog_override`, `studyos_delete_catalog_override`). Le scritture sul gruppo hanno
+`expectedVersion` e rispondono `code: "conflict"` con `data.current`; seguono la stessa conferma delle
+altre scritture visibili al gruppo. Email: tutti gli indirizzi scritti dai membri (note, aule, nomi,
+cronologia) sono nascosti sempre, anche `@unimi.it`; solo i campi `email`, `website`, `url` e `value` di
+una correzione del catalogo possono mostrare `@unimi.it` (costante `AGENT_INSTITUTIONAL_EMAILS`, mai
+sottodomini). Dettagli in [group-exams.md](group-exams.md). Ricrea il connettore dopo il deploy.
 
 ## Pagine da studiare
 
@@ -293,6 +308,11 @@ Differenze dal primo connettore:
   1.8.0, ma legge il registro del server (vedi sotto); in più c'è `studyos_restore_change`.
   I gruppi condivisi stanno nelle tabelle dei gruppi e non nel cloud personale che l'hub legge:
   da lì si vedrebbe una copia vecchia. Panoramica e ricerca remote non contano i gruppi.
+- Appelli dei gruppi: si leggono (snapshot del server a ogni chiamata, `studyos_agent_group_snapshot`),
+  si scelgono nel piano e si controllano; aggiungerli, modificarli, eliminarli, leggerne la cronologia e
+  correggere il catalogo (`CLOUD_UNAVAILABLE`) richiedono il connettore principale. Registro e
+  ripristino del piano d'esame riducono l'elemento a gruppo, data, tipo, ora e versione. Nel controllo di
+  coerenza i suggerimenti nominano solo strumenti che il remoto ha.
 - File, copertine e foto non arrivano all'hub. Quando l'hub modifica un elemento, il
   database li rimette dalla riga attuale.
 - Se l'app ha cambiato lo stesso elemento dopo l'ultima lettura dell'hub, la scrittura è

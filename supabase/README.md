@@ -456,5 +456,6 @@ successiva: la revisione di questo giro aggiunge un controllo sulle righe dei me
 `group-exams.sql` può girare prima o dopo `agent.sql`: la funzione per il connettore remoto
 (`studyos_agent_group_snapshot`) usa `studyos_agent_user` solo quando viene chiamata.
 
+Il client nuovo vuole `people.sql` e `group-exams.sql` (vedi anche «Ordine di pubblicazione» sopra): esegui l'SQL e pubblica il client subito dopo.
 Prima di pubblicare il sito che legge gli appelli: senza lo script l'app mostra «Gli appelli del gruppo
 non sono ancora attivi.» e non perde nulla, ma la persona non può aggiungerne.

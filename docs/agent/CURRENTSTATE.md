@@ -375,3 +375,24 @@ ripristini fatti dall'app; nessun file nelle immagini dei tombstone; potatura de
 oltre 2100; il Worker riprova la push nuova ogni 10 minuti dopo un PGRST202; `studyos_split_pages`
 sul remoto non legge il cloud. `agent-audit-check.sql` 59 controlli, anche sopra l'`agent.sql`
 della prima revisione.
+
+## Appelli condivisi dei gruppi (12 novembre 2026)
+
+Costruito: appelli, correzioni al catalogo BARB e cronologia nei gruppi (`supabase/group-exams.sql`,
+[../group-exams.md](../group-exams.md)); piano d'esame personale (`examPlans`, Dexie 8, `SYNC_SCHEMA` 4);
+appelli nel calendario (default «tutti»), nella pagina della materia e nella scheda «Appelli» del gruppo;
+«Docenti e aule» per le correzioni; promemoria autonomi nel pannello Notifiche; 21 strumenti MCP nuovi
+(94 in tutto, 73 in `catalog.ts`, server 1.9.0); il connettore remoto legge appelli e correzioni da
+`studyos_agent_group_snapshot` ma non li scrive. Una sola regola per le email (SQL e TS, vettori
+condivisi); trigger che tiene fissi `user_id` e `group_id` dei membri (`groups.sql`). Le notifiche di
+appelli nuovi o cambiati sono solo in app (niente push, Task 23 non fatto); i promemoria di un appello
+scelto partono anche con l'app chiusa.
+
+Verifiche: `npm test` e `TZ=UTC npm test` 1606/1606, `npm run lint` pulito. Build, bundle d'ingresso, prove
+SQL su Postgres usa e getta (anche con `en_US.UTF-8`) e `tests/e2e/08-group-exams.spec.ts` sono state
+eseguite nei singoli giri di lavoro; la verifica finale unica (Task 25) è ancora da fare.
+
+Resta alla persona sul progetto reale: eseguire `group-exams.sql` (dopo `schema`, `groups`, `sharing`,
+`people`, `storage`, `agent` e `push-reminders`) e le verifiche (`verify.sql`, `sharing-verify.sql` con le
+`group_exams_*` vere), pubblicare il client subito dopo (vuole `people.sql` e `group-exams.sql`),
+ridistribuire il Worker 1.9.0 e ricreare i connettori.

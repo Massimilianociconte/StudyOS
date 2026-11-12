@@ -51,6 +51,10 @@ o singola data e aggiungere al **Calendario**, evitando duplicati. Corsi e mater
 mostrano semestri distinti e icone scientifiche. Copertura, fonti e aggiornamento
 degli appelli: [`docs/barb-exams.md`](docs/barb-exams.md).
 
+Nei gruppi si possono condividere gli **appelli** (con cronologia e ripristino): ognuno li sceglie per sé nel
+piano d'esame personale, che il gruppo non vede. I membri correggono anche docenti e aule del catalogo BARB e
+i promemoria autonomi stanno nel pannello Notifiche. Dettagli: [`docs/group-exams.md`](docs/group-exams.md).
+
 ## Agenti
 
 ChatGPT usa il sito pubblicato, anche dal telefono: la chiave si incolla in

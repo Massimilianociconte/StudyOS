@@ -413,6 +413,14 @@ Prova automatica sullo stack locale: `scripts/supabase/local-stack.md` e
 `scripts/supabase/people-check.mjs` (ricerca esatta, non trovabile = inesistente, limiti, inviti
 solo al destinatario, email rifiutate, migrazione, trigger push verso un Worker finto).
 
+## Appelli condivisi e correzioni al catalogo (`group-exams.sql`)
+
+Tabelle, funzioni e regole in [group-exams.md](group-exams.md). Le stesse regole dei gruppi: si legge da
+membri, si scrive solo con le funzioni, realtime sulle due tabelle. «Cancella anche dall'account» non
+toglie appelli, correzioni e cronologia scritti dalla persona: sono del gruppo e restano (il piano
+d'esame, che è personale, sparisce). Un trigger di `groups.sql` tiene fissi `user_id` e `group_id` delle
+righe dei membri.
+
 ## Limiti noti
 
 - I file condivisi sono riferimenti (nome come testo): nessun bucket Storage.
