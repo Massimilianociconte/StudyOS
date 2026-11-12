@@ -1245,7 +1245,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
         examDate: subject.examDate,
         notes: subject.notes ?? ""
       };
-      set((state) => ({ subjects: [created, ...state.subjects] }));
+      // In fondo: è l'ordine che dà la ricarica (id crescenti, nati dall'ora di creazione).
+      set((state) => ({ subjects: [...state.subjects, created] }));
       await commit();
       return created.id;
     },
