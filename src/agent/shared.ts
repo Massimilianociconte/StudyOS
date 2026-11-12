@@ -10,6 +10,7 @@ import {
   SHARE_SCOPE_LABEL,
   TASK_STATUS_LABEL
 } from "../lib/labels";
+import { examDateOut, isDateToDecideTag } from "../lib/examOutcome";
 import { expandEvents } from "../lib/recurrence";
 import { seriesMovePatch } from "../lib/occurrenceEdit";
 import { startDayOf } from "../lib/occurrenceLookup";
@@ -186,6 +187,11 @@ export const publicSharedItem = (
     if (clean === undefined) continue;
     output[key] = clean;
     if (brief && Array.isArray(value) && value.length > BRIEF_ITEMS) output[`${key}Count`] = value.length;
+  }
+  if (entry.entityType === "exam") {
+    // Non superato senza la nuova data: l'etichetta interna resta fuori, al suo posto `dateToDecide`.
+    if (Array.isArray(output.tags)) output.tags = output.tags.filter((tag) => !isDateToDecideTag(tag));
+    if (examDateOut({ status: entity.status, date: entity.date, tags: entity.tags }).dateToDecide) output.dateToDecide = true;
   }
   if (entry.entityType === "studySession") {
     // Come nell'app: un'origine sconosciuta o un argomento non di testo valgono come assenti.

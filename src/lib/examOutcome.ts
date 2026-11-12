@@ -8,14 +8,25 @@ export type ExamOutcome = "grade" | "passFail" | "failed";
 
 const DATE_TO_DECIDE = "data-da-decidere:";
 
-const isDateTag = (tag: string) => tag.startsWith(DATE_TO_DECIDE);
+/** Etichetta interna della data da decidere (di qualsiasi data). Accetta valori qualsiasi (dati altrui). */
+export const isDateToDecideTag = (tag: unknown) => typeof tag === "string" && tag.startsWith(DATE_TO_DECIDE);
 
 /** Etichette dell'esame senza quella della data da decidere (le altre restano). */
-export const withoutDateToDecide = (tags: readonly string[] | undefined): string[] => (tags ?? []).filter((tag) => !isDateTag(tag));
+export const withoutDateToDecide = (tags: readonly string[] | undefined): string[] => (tags ?? []).filter((tag) => !isDateToDecideTag(tag));
 
 /** Esame non superato senza una nuova data: la data passata non chiede più «com'è andata?». */
 export const isDateToDecide = (exam: Pick<Exam, "status" | "date" | "tags">) =>
   exam.status !== "done" && (exam.tags ?? []).includes(`${DATE_TO_DECIDE}${exam.date}`);
+
+/**
+ * Per gli agenti (anche esami condivisi da altri, con tipi qualsiasi): etichette senza quella interna
+ * e `dateToDecide` se la nuova data va ancora scelta (la data in `date` è quella passata).
+ */
+export const examDateOut = (exam: { status?: unknown; date?: unknown; tags?: unknown }) => {
+  const tags = Array.isArray(exam.tags) ? exam.tags.filter((tag): tag is string => typeof tag === "string") : [];
+  const dateToDecide = typeof exam.date === "string" && isDateToDecide({ status: exam.status as Exam["status"], date: exam.date, tags });
+  return { tags: withoutDateToDecide(tags), dateToDecide };
+};
 
 /** Stato in cui torna un esame non superato: quello di preparazione che aveva, «In preparazione» se era «Sostenuto». */
 export const reopenedStatus = (exam: Pick<Exam, "status">): Exam["status"] => (exam.status === "done" ? "studying" : exam.status);
