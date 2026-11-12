@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { homeLinks } = await import("../src/lib/homeFirstRun.ts");
+const { homeLinks, currentDegree, degreePatch, degreeOptionLabel } = await import("../src/lib/homeFirstRun.ts");
+const { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS } = await import("../src/lib/graduation.ts");
 
 const allEmpty = { today: true, next: true, exams: true, subjects: true, goals: true, materials: true };
 const noneEmpty = { today: false, next: false, exams: false, subjects: false, goals: false, materials: false };
@@ -52,4 +53,23 @@ test("con la guida, «Tutti…» resta accanto agli elenchi pieni", () => {
   assert.equal(mixed.allExams, true);
   assert.equal(mixed.allGoals, true);
   assert.equal(mixed.allSubjects, false);
+});
+
+test("corso di laurea: valore salvato o BARB come nelle Impostazioni", () => {
+  assert.equal(currentDegree("scienze-biologiche"), "scienze-biologiche");
+  assert.equal(currentDegree("barb"), "barb");
+  assert.equal(currentDegree(undefined), "barb");
+  assert.equal(currentDegree("medicina"), "barb");
+});
+
+test("cambiare corso aggiorna CFU totali e sezione del catalogo, come nelle Impostazioni", () => {
+  for (const id of DEGREE_PROGRAM_IDS) {
+    assert.deepEqual(degreePatch(id), { degreeProgram: id, degreeCfu: DEGREE_PROGRAMS[id].totalCfu, showBarb: id === "barb" });
+  }
+});
+
+test("nome del corso nel menu: per esteso con la classe, senza sigle interne", () => {
+  assert.equal(degreeOptionLabel("scienze-biologiche"), "Scienze biologiche (L-13)");
+  assert.equal(degreeOptionLabel("barb"), "Biologia applicata alla ricerca biomedica (LM-6)");
+  for (const id of DEGREE_PROGRAM_IDS) assert.doesNotMatch(degreeOptionLabel(id), /BARB/);
 });

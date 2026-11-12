@@ -39,8 +39,9 @@ import {
   formatMinutes,
   occasionAgeText
 } from "../lib/labels";
-import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
-import { homeLinks } from "../lib/homeFirstRun";
+import { HOME_GUIDE_TEXT, HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
+import { currentDegree, degreeOptionLabel, degreePatch, homeLinks } from "../lib/homeFirstRun";
+import { DEGREE_PROGRAM_IDS, type DegreeProgramId } from "../lib/graduation";
 import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import { useToday } from "../hooks/useToday";
 import { homeTimerSummary } from "../lib/homeTimer";
@@ -50,7 +51,7 @@ import { CalendarExamsHint } from "../components/CalendarExamsHint";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
-import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
+import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { CourseIcon } from "../components/CourseIcon";
 import { safeCssColor } from "../lib/sharing";
 import { goToView } from "../hooks/useLinkedUiState";
@@ -188,7 +189,7 @@ function StudyAction({ onGo }: { onGo: () => void }) {
 
 export function DashboardView() {
   const store = useStudyStore();
-  const { events, tasks, subjects, exams, sessions, attachments, goals, topics, setActiveView, toggleTask } = store;
+  const { events, tasks, subjects, exams, sessions, attachments, goals, topics, setActiveView, toggleTask, updatePreferences } = store;
   // Oggi e settimana si aggiornano a mezzanotte anche con la Home aperta.
   useToday();
   const today = todayEvents(events);
@@ -303,6 +304,8 @@ export function DashboardView() {
       {guideVisible ? (
         <GettingStarted
           showBarb={preferences.showBarb}
+          degree={currentDegree(preferences.degreeProgram)}
+          onDegree={(id) => void updatePreferences(degreePatch(id))}
           done={guideDone}
           onGo={setActiveView}
           onHide={hideGuide}
@@ -705,11 +708,16 @@ function useGuideHidden(): [boolean, () => void] {
  */
 function GettingStarted({
   showBarb,
+  degree,
+  onDegree,
   done,
   onGo,
   onHide
 }: {
   showBarb: boolean;
+  /** Corso di laurea: si sceglie nel primo passo, prima di aprire il catalogo dei corsi. */
+  degree: DegreeProgramId;
+  onDegree: (id: DegreeProgramId) => void;
   done: { subjects: boolean; calendar: boolean; tasks: boolean; profile: boolean };
   onGo: (view: AppView) => void;
   onHide: () => void;
@@ -776,13 +784,15 @@ function GettingStarted({
         {steps.map((step, index) => {
           const isDone = done[step.key];
           const isNext = step.key === nextKey;
+          // Il corso decide il primo passo (catalogo del corso o materia a mano): si sceglie qui, non al passo 4.
+          const askDegree = step.key === "subjects" && !isDone;
           return (
-            <li key={step.key}>
+            <li key={step.key} className={`flex min-w-0 flex-col rounded-[20px] bg-[var(--surface-soft)] ${isDone ? "opacity-60" : ""}`}>
               <button
                 type="button"
                 onClick={step.run}
                 aria-label={`${isDone ? "Fatto: " : `Passo ${index + 1}: `}${step.title}. ${step.action}`}
-                className={`flex h-full w-full min-w-0 flex-col items-start gap-1 rounded-[20px] bg-[var(--surface-soft)] p-3 text-left hover:bg-[var(--surface)] ${isDone ? "opacity-60" : ""}`}
+                className="flex w-full min-w-0 flex-1 flex-col items-start gap-1 rounded-[20px] p-3 text-left hover:bg-[var(--surface)]"
               >
                 <span className="flex items-center gap-2 text-sm font-black">
                   <span
@@ -801,6 +811,18 @@ function GettingStarted({
                   </span>
                 )}
               </button>
+              {askDegree ? (
+                <label className="block min-w-0 px-3 pb-3">
+                  <span className="mb-1 block text-xs font-bold text-[var(--muted)]">{HOME_GUIDE_TEXT.degreeLabel}</span>
+                  <select className={inputClass} value={degree} onChange={(event) => onDegree(event.target.value as DegreeProgramId)}>
+                    {DEGREE_PROGRAM_IDS.map((id) => (
+                      <option key={id} value={id}>
+                        {degreeOptionLabel(id)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
             </li>
           );
         })}
