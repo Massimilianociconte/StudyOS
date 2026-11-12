@@ -47,6 +47,28 @@ export const writeSavedHub = (value: string | null) => {
   else store.removeItem(HUB_KEY);
 };
 
+const SECRET_KEY = "studyos-agent-secret";
+const SECRET_RE = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * Segreto di questo browser dato dall'hub (a /pair o a /bridge/secret): approva i consensi e revoca
+ * solo quelli. Resta anche dopo «Scollega questo browser», così i consensi già approvati restano
+ * revocabili da qui. Va solo all'hub, nel corpo delle richieste: mai agli agenti, mai in un URL.
+ */
+export const readBrowserSecret = () => {
+  const saved = storage()?.getItem(SECRET_KEY) ?? "";
+  return SECRET_RE.test(saved) ? saved : "";
+};
+
+export const writeBrowserSecret = (secret: string) => {
+  if (!SECRET_RE.test(secret)) return;
+  try {
+    storage()?.setItem(SECRET_KEY, secret);
+  } catch {
+    // spazio pieno: l'hub ne darà un altro alla prossima apertura
+  }
+};
+
 export const writeAgentToken = (token: string | null) => {
   const store = storage();
   if (!store) return;

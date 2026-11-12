@@ -5,20 +5,25 @@ import type { AgentRisk, PolicyChoice } from "../agent/policy";
 import {
   allowWritesFor15Minutes,
   approvePendingCall,
+  checkScopedRevoke,
   clearTrustedWrites,
   decideAgentConsent,
   denyPendingCall,
   disconnectAgent,
   pairAgent,
   revokeAgentAccess,
+  revokeRemoteConnector,
   saveAgentHubAddress,
   setAgentPolicyChoice,
   useAgentLink
 } from "../lib/agentLink";
+import { agentDeskStatus, remoteConnectorView, type DeskStatus, type RemoteRevokeResult } from "../lib/agentDesk";
 import { readSavedHub } from "../lib/agentLocal";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
 import { agentAccountLabels, agentCloudLabels } from "../lib/labels";
+import { AGENT_DESK_TEXT } from "../lib/labels/agents";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
+import { ConfirmWithError } from "./ConfirmWithError";
 import { Icon } from "./Icon";
 import { Button, Field, inputClass } from "./ui";
 
@@ -140,19 +145,139 @@ export function AgentDock() {
   );
 }
 
+/** Indirizzo da incollare in ChatGPT o Claude, con il pulsante per copiarlo. */
+function CopyAddress({ value }: { value: string }) {
+  const [status, setStatus] = useState("");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setStatus(AGENT_DESK_TEXT.copied);
+    } catch {
+      setStatus(AGENT_DESK_TEXT.copyFailed);
+    }
+  };
+  return (
+    <div className="grid grid-cols-1 gap-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-[14px] bg-[var(--surface-soft)] p-2 pl-3">
+        <code className="min-w-0 flex-1 break-all text-xs font-black text-[var(--text)]">{value}</code>
+        <Button variant="soft" icon="Copy" onClick={() => void copy()} aria-label={`${AGENT_DESK_TEXT.copy} ${value}`}>
+          {AGENT_DESK_TEXT.copy}
+        </Button>
+      </div>
+      {status ? <p role="status" className="text-xs font-bold text-[var(--muted)]">{status}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Connettore remoto (`/u/<nome>/mcp`): lavora sui dati cloud con l'app chiusa e senza conferme.
+ * Mostra cosa fa, l'indirizzo di questo account (o come averlo) e la sua revoca.
+ */
+function RemoteConnector({ hub, accountName, paired }: { hub: string | null; accountName: string; paired: boolean }) {
+  const link = useAgentLink();
+  const signedIn = useSignedIn();
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<RemoteRevokeResult | null>(null);
+  const text = AGENT_DESK_TEXT.remote;
+  const view = remoteConnectorView({ cloud: cloudConfigured, hub, remote: link.remote, displayName: accountName });
+  const revoke = async () => {
+    setBusy(true);
+    setOutcome(null);
+    try {
+      setOutcome(await revokeRemoteConnector());
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section aria-labelledby="agent-remote-title" className="grid grid-cols-1 gap-2 rounded-[20px] border border-[var(--border)] p-3">
+      <h4 id="agent-remote-title" className="text-sm font-black">{text.title}</h4>
+      <p className="text-sm font-bold text-[var(--muted)]">{text.what}</p>
+      <p className="flex items-start gap-2 text-sm font-black">
+        <Icon name="AlertTriangle" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--danger-text)]" />
+        <span>{text.noConfirm}</span>
+      </p>
+      {view.kind === "address" ? (
+        <>
+          <p className="text-sm font-bold text-[var(--muted)]">{text.howTo}</p>
+          <CopyAddress value={view.address} />
+          {!paired ? <p className="text-sm font-bold text-[var(--muted)]">{text.pairFirst}</p> : null}
+          {paired && !signedIn ? <p className="text-sm font-bold text-[var(--muted)]">{agentCloudLabels.signInHint}</p> : null}
+        </>
+      ) : view.kind === "noName" ? (
+        <p className="text-sm font-bold text-[var(--muted)]">
+          {text.noName}{" "}
+          <a href="#settings-profilo" className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+        </p>
+      ) : (
+        <p className="text-sm font-bold text-[var(--muted)]">{view.kind === "noCloud" ? agentCloudLabels.noCloud : view.kind === "off" ? text.off : text.noHub}</p>
+      )}
+      {cloudConfigured && (paired || signedIn) ? (
+        outcome?.kind === "failed" ? (
+          <div className="grid grid-cols-1 gap-2">
+            <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{outcome.text}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="soft" icon="RotateCcw" disabled={busy} onClick={() => void revoke()}>{text.retry}</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {outcome ? <p role="status" className="rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{outcome.text}</p> : null}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="soft" icon="LogOut" disabled={busy} onClick={() => void revoke()}>{text.revoke}</Button>
+            </div>
+          </>
+        )
+      ) : null}
+    </section>
+  );
+}
+
+const TONE_CLASS: Record<DeskStatus["tone"], string> = {
+  ok: "bg-[var(--accent)] text-[#10131d]",
+  warn: "bg-[var(--danger-bg)] text-[var(--danger-text)]",
+  neutral: "bg-[var(--surface-soft)] text-[var(--muted)]"
+};
+
+const MUTED = "text-sm font-bold text-[var(--muted)]";
+
+/**
+ * Impostazioni → Agenti AI. Prima l'essenziale («Collega ChatGPT o Claude»: stato, chiave, indirizzo),
+ * poi il connettore remoto e le revoche; regole, 15 minuti e ultime azioni in «Avanzate».
+ */
 export function AgentSettings() {
   const link = useAgentLink();
+  const signedIn = useSignedIn();
   const [code, setCode] = useState("");
   const [hubAddress, setHubAddress] = useState(() => readSavedHub());
   const [busy, setBusy] = useState(false);
+  const [confirmAll, setConfirmAll] = useState(false);
+  /** Hub di prima: «Revoca gli accessi di questo browser» sa solo scollegare tutti, quindi chiede conferma. */
+  const [confirmOldHub, setConfirmOldHub] = useState(false);
   const accountName = useStudyStore((state) => selectPreferences(state).displayName.trim());
   const trusted = trustedWritesActive(link.policy);
   const localPage = isLocalPage(window.location.origin);
   const published = window.location.hostname === "massimilianociconte.github.io";
   const hostedHub = published ? normalizePublicHub(import.meta.env.VITE_AGENT_HUB_ORIGIN ?? "") : null;
+  const status = agentDeskStatus({ paired: link.paired, hub: link.hub, attempted: link.attempted });
   const pairReady = localPage
     ? code.replace(/[^A-Za-z0-9]/g, "").length === 8
     : code.trim().length >= 20 && !/\s/.test(code.trim());
+
+  const revokeMine = async () => {
+    if (!link.paired) {
+      await revokeAgentAccess("browser");
+      return;
+    }
+    setBusy(true);
+    try {
+      // Mai una revoca limitata a un hub di prima o di versione ignota: la scollegherebbe a tutti.
+      if ((await checkScopedRevoke()) === "allOnly") setConfirmOldHub(true);
+      else await revokeAgentAccess("browser");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submitCode = async () => {
     setBusy(true);
@@ -168,135 +293,194 @@ export function AgentSettings() {
 
   return (
     <div className="grid grid-cols-1 gap-4">
-      <div className="flex flex-wrap items-center gap-2 text-sm font-black">
-        <span className={`inline-flex min-h-8 items-center rounded-full px-3 ${link.hub === "up" ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--muted)]"}`}>
-          {link.hub === "up" ? "Collegamento attivo" : link.hub === "down" ? "Collegamento non raggiungibile" : "Controllo in corso…"}
-        </span>
-        <span className="inline-flex min-h-8 items-center rounded-full bg-[var(--surface-soft)] px-3 text-[var(--muted)]">
-          {link.paired ? "Questo browser è collegato" : "Questo browser non è collegato"}
-        </span>
-      </div>
+      <section aria-labelledby="agent-connect-title" className="grid grid-cols-1 gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 id="agent-connect-title" className="text-base font-black">{AGENT_DESK_TEXT.connectTitle}</h4>
+          <span className={`inline-flex min-h-8 items-center rounded-full px-3 text-sm font-black ${TONE_CLASS[status.tone]}`}>{status.label}</span>
+        </div>
 
-      {link.error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{link.error}</p> : null}
-      {link.notice ? <p role="status" className="rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{link.notice}</p> : null}
+        {link.error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{link.error}</p> : null}
+        {link.notice ? <p role="status" className="rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{link.notice}</p> : null}
 
-      <form
-        className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submitCode();
-        }}
-      >
-        <Field label={localPage ? "Codice di collegamento" : "Chiave di collegamento"}>
-          <input
-            className={inputClass}
-            value={code}
-            onChange={(event) => setCode(localPage ? event.target.value.toUpperCase() : event.target.value)}
-            placeholder={localPage ? "Es. ABCD-EFGH" : "Incolla qui la chiave"}
-            autoComplete="off"
-            spellCheck={false}
-            inputMode="text"
-            aria-describedby="agent-pair-help"
-          />
-        </Field>
-        <Button type="submit" variant="primary" icon="Link" disabled={busy || !pairReady}>
-          Collega questo browser
-        </Button>
-      </form>
-      <p id="agent-pair-help" className="text-sm font-bold text-[var(--muted)]">
-        {localPage
-          ? <>Il codice compare nel terminale quando avvii <code className="font-black">npm run agent</code> nella cartella di StudyOS. Vale 15 minuti e si usa una volta sola.</>
-          : "Incolla la chiave una sola volta: resta salvata in questo browser, anche sul telefono, e non serve tenere acceso il computer."}
-      </p>
-      {hostedHub ? (
-        <p className="text-sm font-bold text-[var(--muted)]">
-          Per usarlo con ChatGPT, aggiungi in ChatGPT un connettore personalizzato (server MCP) con questo indirizzo. La richiesta di accesso comparirà qui, da confermare:
-          <code className="mt-2 block overflow-x-auto rounded-[14px] bg-[var(--surface-soft)] p-3 text-xs font-black text-[var(--text)]">{hostedHub}/mcp</code>
-        </p>
-      ) : null}
-      {link.paired ? <Button variant="soft" icon="LogOut" onClick={() => disconnectAgent()}>Scollega questo browser</Button> : null}
-
-      <div className="grid grid-cols-1 gap-1">
-        <h4 className="text-sm font-black">{agentAccountLabels.title}</h4>
-        <p className="text-sm font-bold text-[var(--muted)]">
-          {accountName ? agentAccountLabels.named(accountName) : agentAccountLabels.unnamed}
-          {accountName ? null : (
-            <>
-              {" "}
-              <a href="#settings-profilo" className="font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
-            </>
-          )}
-        </p>
-        <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.help}</p>
-      </div>
-
-      <div>
-        <h4 className="text-sm font-black">Cosa può fare un assistente</h4>
-        <p className="mt-1 text-sm font-bold text-[var(--muted)]">
-          All'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero. Condividere i tuoi dati con altre persone, o cambiare una condivisione, chiede sempre la tua conferma.
-        </p>
-      </div>
-      <div className="grid grid-cols-1 gap-3">
-        {(Object.keys(RISK_LABEL) as AgentRisk[]).map((risk) => (
-          <fieldset key={risk} className="min-w-0">
-            <legend className="mb-1.5 text-xs font-black uppercase text-[var(--faint)]">{RISK_LABEL[risk]}</legend>
-            <div className="flex flex-wrap gap-2">
-              {(Object.keys(CHOICE_LABEL) as PolicyChoice[]).map((choice) => {
-                const active = link.policy[risk] === choice;
-                return (
-                  <button
-                    key={choice}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setAgentPolicyChoice(risk, choice)}
-                    className={`min-h-11 rounded-full border px-4 text-sm font-black ${active ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)]"}`}
-                  >
-                    {CHOICE_LABEL[choice]}
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="soft" icon="Clock" onClick={() => allowWritesFor15Minutes()} disabled={link.policy.write === "deny"}>
-          Consenti le modifiche per 15 minuti
-        </Button>
-        {trusted ? <Button variant="ghost" onClick={() => clearTrustedWrites()}>Torna a chiedere conferma</Button> : null}
-      </div>
-      {trusted && link.policy.trustedWritesUntil ? (
-        <p className="text-sm font-bold text-[var(--muted)]">Modifiche senza conferma fino alle {when(link.policy.trustedWritesUntil)}. Le eliminazioni e le condivisioni chiedono ancora conferma.</p>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2">
-        <Button variant="danger" icon="Shield" onClick={() => void revokeAgentAccess()}>
-          Revoca l'accesso agli assistenti
-        </Button>
-      </div>
-      <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.revokeHint}</p>
-
-      <div>
-        <h4 className="text-sm font-black">Ultime azioni</h4>
-        {link.audit.length ? (
-          <ul className="mt-2 grid grid-cols-1 gap-2">
-            {link.audit.map((entry) => (
-              <li key={entry.id} className="rounded-[18px] bg-[var(--surface-soft)] px-3 py-2">
-                <p className="text-sm font-black">{entry.summary}</p>
-                <p className="text-xs font-bold text-[var(--muted)]">
-                  {when(entry.at)} · {entry.actor} · {STATUS_LABEL[entry.status]}
-                </p>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-1 text-sm font-bold text-[var(--muted)]">Ancora nessuna azione. Qui vedrai cosa fanno gli assistenti; l'elenco resta solo in questo browser.</p>
+        {link.paired ? null : (
+          <>
+            <form
+              className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitCode();
+              }}
+            >
+              <Field label={localPage ? AGENT_DESK_TEXT.codeLabel : AGENT_DESK_TEXT.keyLabel}>
+                <input
+                  className={inputClass}
+                  value={code}
+                  onChange={(event) => setCode(localPage ? event.target.value.toUpperCase() : event.target.value)}
+                  placeholder={localPage ? AGENT_DESK_TEXT.codePlaceholder : AGENT_DESK_TEXT.keyPlaceholder}
+                  autoComplete="off"
+                  spellCheck={false}
+                  inputMode="text"
+                  aria-describedby="agent-pair-help"
+                />
+              </Field>
+              <Button type="submit" variant="primary" icon="Link" disabled={busy || !pairReady}>
+                {AGENT_DESK_TEXT.pairButton}
+              </Button>
+            </form>
+            <p id="agent-pair-help" className={MUTED}>
+              {localPage
+                ? <>Il codice compare nel terminale quando avvii <code className="font-black">npm run agent</code> nella cartella di StudyOS. Vale 15 minuti e si usa una volta sola.</>
+                : AGENT_DESK_TEXT.keyHelp}
+            </p>
+          </>
         )}
-      </div>
 
-      <details className="rounded-[20px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
-        <summary className="cursor-pointer font-black text-[var(--text)]">Istruzioni tecniche</summary>
-        <p className="mt-3">
+        {hostedHub ? (
+          <div className="grid grid-cols-1 gap-2">
+            <p className={MUTED}>{AGENT_DESK_TEXT.addressIntro}</p>
+            <CopyAddress value={`${hostedHub}/mcp`} />
+          </div>
+        ) : null}
+
+        {link.paired ? (
+          <>
+            {localPage ? null : <p className={MUTED}>{AGENT_DESK_TEXT.pairedHint}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="soft" icon="LogOut" onClick={() => disconnectAgent()}>{AGENT_DESK_TEXT.disconnectBrowser}</Button>
+            </div>
+          </>
+        ) : null}
+
+        {accountName ? null : (
+          <p className={MUTED}>
+            {agentAccountLabels.unnamed}{" "}
+            <a href="#settings-profilo" className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+          </p>
+        )}
+      </section>
+
+      {trusted && link.policy.trustedWritesUntil ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+          <p className="min-w-0 flex-1 text-sm font-bold">{AGENT_DESK_TEXT.trustedUntil(when(link.policy.trustedWritesUntil))}</p>
+          <Button variant="ghost" onClick={() => clearTrustedWrites()}>{AGENT_DESK_TEXT.trustBack}</Button>
+        </div>
+      ) : null}
+
+      <RemoteConnector hub={hostedHub} accountName={accountName} paired={link.paired} />
+
+      {link.paired || (cloudConfigured && signedIn) ? (
+        <div className="grid grid-cols-1 gap-2">
+          {confirmOldHub ? (
+            <ConfirmWithError
+              text={`${AGENT_DESK_TEXT.oldHubAllOnly} ${AGENT_DESK_TEXT.revokeAllConfirm}`}
+              confirmLabel={AGENT_DESK_TEXT.revokeAllConfirmLabel}
+              icon="Shield"
+              onCancel={() => setConfirmOldHub(false)}
+              onConfirm={async () => {
+                const failure = await revokeAgentAccess("all");
+                if (!failure) setConfirmOldHub(false);
+                return failure;
+              }}
+            />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="danger" icon="Shield" disabled={busy} onClick={() => void revokeMine()}>
+                {AGENT_DESK_TEXT.revokeButton}
+              </Button>
+            </div>
+          )}
+          <p className={MUTED}>{agentAccountLabels.revokeHint}</p>
+        </div>
+      ) : null}
+
+      <details className="rounded-[20px] bg-[var(--surface-soft)] px-3 open:pb-3">
+        <summary className="min-h-11 cursor-pointer py-3 text-sm font-black text-[var(--text)]">
+          {AGENT_DESK_TEXT.advanced}
+          <span className="mt-0.5 block text-xs font-bold text-[var(--muted)]">{AGENT_DESK_TEXT.advancedHint}</span>
+        </summary>
+        <div className="grid grid-cols-1 gap-4">
+          <div>
+            <h4 className="text-sm font-black">{AGENT_DESK_TEXT.rulesTitle}</h4>
+            <p className={`mt-1 ${MUTED}`}>{AGENT_DESK_TEXT.rulesBody}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            {(Object.keys(RISK_LABEL) as AgentRisk[]).map((risk) => (
+              <fieldset key={risk} className="min-w-0">
+                <legend className="mb-1.5 text-xs font-black uppercase text-[var(--faint)]">{RISK_LABEL[risk]}</legend>
+                <div className="flex flex-wrap gap-2">
+                  {(Object.keys(CHOICE_LABEL) as PolicyChoice[]).map((choice) => {
+                    const active = link.policy[risk] === choice;
+                    return (
+                      <button
+                        key={choice}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setAgentPolicyChoice(risk, choice)}
+                        className={`min-h-11 rounded-full border px-4 text-sm font-black ${active ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"}`}
+                      >
+                        {CHOICE_LABEL[choice]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="soft" icon="Clock" onClick={() => allowWritesFor15Minutes()} disabled={link.policy.write === "deny"}>
+              {AGENT_DESK_TEXT.trustWrites}
+            </Button>
+            {trusted ? <Button variant="ghost" onClick={() => clearTrustedWrites()}>{AGENT_DESK_TEXT.trustBack}</Button> : null}
+          </div>
+
+          <div className="grid grid-cols-1 gap-1">
+            <h4 className="text-sm font-black">{agentAccountLabels.title}</h4>
+            {accountName ? <p className={MUTED}>{agentAccountLabels.named(accountName)}</p> : null}
+            <p className={MUTED}>{agentAccountLabels.help(localPage)}</p>
+            {link.paired ? (
+              confirmAll ? (
+                <ConfirmWithError
+                  text={AGENT_DESK_TEXT.revokeAllConfirm}
+                  confirmLabel={AGENT_DESK_TEXT.revokeAllConfirmLabel}
+                  icon="Shield"
+                  onCancel={() => setConfirmAll(false)}
+                  onConfirm={async () => {
+                    const failure = await revokeAgentAccess("all");
+                    if (!failure) setConfirmAll(false);
+                    return failure;
+                  }}
+                />
+              ) : (
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <Button variant="ghost" onClick={() => setConfirmAll(true)}>{AGENT_DESK_TEXT.revokeAllButton}…</Button>
+                </div>
+              )
+            ) : null}
+          </div>
+
+          <div>
+            <h4 className="text-sm font-black">{AGENT_DESK_TEXT.activityTitle}</h4>
+            {link.audit.length ? (
+              <ul className="mt-2 grid grid-cols-1 gap-2">
+                {link.audit.map((entry) => (
+                  <li key={entry.id} className="rounded-[18px] bg-[var(--surface)] px-3 py-2">
+                    <p className="text-sm font-black">{entry.summary}</p>
+                    <p className="text-xs font-bold text-[var(--muted)]">
+                      {when(entry.at)} · {entry.actor} · {STATUS_LABEL[entry.status]}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className={`mt-1 ${MUTED}`}>{AGENT_DESK_TEXT.activityEmpty}</p>
+            )}
+          </div>
+        </div>
+      </details>
+
+      <details className="rounded-[20px] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--muted)] open:pb-3">
+        <summary className="min-h-11 cursor-pointer py-3 font-black text-[var(--text)]">Istruzioni tecniche</summary>
+        <p>
           {published
             ? "ChatGPT modifica i dati di questo sito pubblicato. La finestra di localhost resta una copia a parte e riceve le modifiche solo se questa scheda è chiusa."
             : "ChatGPT modifica i dati di questa finestra. Con il sito pubblicato aperto e collegato, le modifiche vanno lì."}
@@ -323,11 +507,11 @@ export function AgentSettings() {
             <Button type="submit" variant="soft" icon="Link">Salva indirizzo</Button>
           </form>
         )}
-        <p className="mt-3">Claude, Cursor e gli altri programmi sul computer si collegano con questo comando, lanciato dalla cartella di StudyOS:</p>
+        <p className="mt-3">Con la finestra di sviluppo, Claude Code, Cursor e gli altri programmi sul computer si collegano anche con questo comando, lanciato dalla cartella di StudyOS:</p>
         <code className="mt-2 block overflow-x-auto rounded-[14px] bg-[var(--surface)] p-3 text-xs font-black text-[var(--text)]">node --import ./scripts/lib/register-ts.mjs ./scripts/agent.ts --stdio</code>
         <p className="mt-3">
           {hostedHub
-            ? "ChatGPT, sul web e nell’app per Mac, usa l’indirizzo MCP qui sopra. L’accesso passa da OAuth e la conferma compare in questa schermata. Tieni aperta questa pagina, anche dal telefono: i dati restano in questo browser."
+            ? "ChatGPT e Claude, sul web e nelle app, usano l’indirizzo qui sopra. L’accesso passa da OAuth e la conferma compare in questa schermata. Tieni aperta questa pagina, anche dal telefono: i dati restano in questo browser."
             : "ChatGPT sul web parla con il sito pubblicato, non con questa finestra di sviluppo. Qui colleghi solo i programmi sul computer, con il codice del terminale."}
         </p>
         <p className="mt-3">

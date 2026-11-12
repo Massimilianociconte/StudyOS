@@ -342,8 +342,26 @@
   non sono quelli del Worker: misura `cpuTime` con `wrangler tail` sull'account vero prima di
   concludere che serve il piano a pagamento.
 - Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
-  legato al token OAuth); il database ne tiene l'hash. «Revoca l'accesso agli assistenti» revoca
-  tutti i permessi dell'account (`studyos_revoke_agent_grants`), anche a browser scollegato.
+  legato al token OAuth); il database ne tiene l'hash. «Revoca gli accessi di questo browser» e
+  «Scollega il connettore remoto» revocano tutti i permessi dell'account
+  (`studyos_revoke_agent_grants`), anche a browser scollegato. Un errore del cloud non è mai «niente
+  da togliere»: `revokeCloudGrants` lo riporta (`failed`) e `remoteRevokeResult` mostra il fallimento
+  con «Riprova», perché il permesso può essere ancora attivo.
+- Revoca per browser (hub 1.6.0): mai attribuire una revoca al nome del profilo o all'accountKey,
+  che chiunque con la chiave può copiare o cambiare. L'hub dà a ogni browser un segreto casuale di
+  256 bit (`/pair`, o `/bridge/secret` per chi era collegato prima, chiesto da solo all'avvio) e
+  salva solo il suo SHA-256 (`approver`) su consenso, codice e token approvati con quel segreto
+  (`secret` in `/oauth/decide`). `/oauth/revoke` senza `scope` o con `scope: "cloud"` vuole il
+  segreto e toglie solo ciò che ha approvato (`revokeApprover`); `scope: "all"` toglie tutto
+  (`revokeAll`, solo dopo la conferma nell'app). Senza segreto valido: 400, niente tolto. Le
+  concessioni senza `approver` (di prima) restano e si contano in `legacy`. Il segreto non va mai
+  agli agenti MCP, in un URL o nello stato salvato dell'hub; il browser lo tiene anche dopo
+  «Scollega questo browser». Non è un'identità cloud: un altro dispositivo ha un altro segreto.
+  Un client si toglie solo se aveva qualcosa di quel segreto e resta senza niente. Un hub
+  sotto la 1.6.0, o di versione ignota, scollega tutti a ogni `/oauth/revoke`: `revokePlan` non gli
+  manda mai una revoca limitata (`confirmAll` per quella del browser, apre la conferma per tutti;
+  `skip` per il remoto, basta il permesso nel cloud) e l'app rilegge `/health` prima di decidere
+  (`checkScopedRevoke`).
 - OAuth dell'hub: `/register` e `/authorize` sono aperti a chiunque. `oauth.ts` tiene al massimo
   50 client (al limite toglie quelli senza token, consensi o codici, dal più vecchio, ma non nei
   2 minuti dopo la registrazione; una registrazione mai usata scade dopo 24 ore) e 5 consensi

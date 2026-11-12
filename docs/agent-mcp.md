@@ -36,7 +36,15 @@ della materia accanto all'id, e `studyos_status` e `studyos_overview` danno data
 ora e fuso orario della persona. Le letture, di base, passano. Modifiche ed eliminazioni chiedono
 conferma nell'app. Si può consentire le sole modifiche per 15 minuti. Le
 eliminazioni chiedono comunque conferma, e un agente non può cambiare queste
-regole.
+regole. Valgono per il connettore `/mcp`, non per il connettore remoto (vedi sotto), che non
+chiede conferme.
+
+In **Impostazioni → Agenti** c'è prima l'essenziale: «Collega ChatGPT o Claude» con un solo
+stato («Non ancora collegato» finché non provi a collegarti, poi «Collegato» o «Collegamento
+non raggiungibile»), la chiave (o il codice di `npm run agent`) e l'indirizzo `/mcp` da
+copiare, poi il connettore remoto e le revoche. Regole di conferma, i 15 minuti, più persone
+sullo stesso connettore e ultime azioni sono in «Avanzate»; i dettagli per lo sviluppo in
+«Istruzioni tecniche».
 
 Con un account e `supabase/sharing.sql` attivo, l'agente vede anche i dati che altre
 persone condividono con te (`studyos_list_shares`, `studyos_list_shared_items`) e, solo
@@ -52,9 +60,11 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.5.0 (`/health` la mostra dopo il deploy): rispetto alla 1.4.0, che ha aggiunto il
-connettore remoto di un solo account (vedi sotto), corregge fuso orario, serie ripetute,
-link della bacheca e limiti di `/register` e `/authorize`. Strumenti e parametri del
+versione 1.6.0 (`/health` la mostra dopo il deploy): rispetto alla 1.5.0 la revoca in
+Impostazioni → Agenti toglie solo gli accessi approvati da quel browser (vedi «Revocare gli
+accessi»). La 1.5.0 aveva corretto fuso orario, serie ripetute, link della bacheca e limiti di
+`/register` e `/authorize`; la 1.4.0 aveva aggiunto il connettore remoto di un solo account
+(vedi sotto). Strumenti e parametri del
 connettore `/mcp` sono quelli della 1.3.0; cambiano solo le descrizioni di
 `studyos_update_event` e `studyos_delete_event`, quindi ricrea il connettore perché
 l'assistente le legga (vedi «Ripubblicare dopo una modifica»).
@@ -81,7 +91,9 @@ del sito pubblicato: `https://studyos-agent.<account>.workers.dev/mcp`. È l'hub
 Cloudflare sempre acceso. Non serve `npm run dev`, `npm run agent` né un tunnel.
 Apri il sito pubblicato (`https://massimilianociconte.github.io/StudyOS/`),
 anche dal telefono, incolla la chiave di collegamento una volta e tieni la
-pagina aperta mentre l'agente lavora: i dati restano nel suo IndexedDB.
+pagina aperta mentre l'agente lavora: i dati restano nel suo IndexedDB. La chiave è il
+secret `STUDYOS_PAIR_KEY` del Worker: la dà chi gestisce StudyOS, ed è la stessa per tutte le
+persone che usano lo stesso connettore.
 
 L'accesso è OAuth 2.1 con PKCE e registrazione dinamica del client. Al primo
 collegamento la conferma compare in Impostazioni → Agenti del browser
@@ -93,11 +105,60 @@ mai uno registrato da meno di 2 minuti, e una registrazione mai usata scade dopo
 richiesta di consenso vale 5 minuti; ne restano aperte al massimo 5 per client (la nuova prende
 il posto della più vecchia) e 20 in tutto: oltre, la nuova prende il posto della più vecchia,
 prima tra quelle di client che non hanno mai ottenuto un accesso, così chi si collega davvero
-non resta fuori. «Revoca
-l'accesso agli assistenti» toglie token, consensi e client registrati: per riaverlo, scollega e
-ricollega il connettore nell'assistente. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
+non resta fuori. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
 (`initialize` per i client precedenti, `server/discover` per il 2026), sempre in
 JSON e mai in stream.
+
+## Revocare gli accessi
+
+In **Impostazioni → Agenti** ci sono tre revoche, tutte con il browser collegato:
+
+- **«Revoca gli accessi di questo browser»** toglie gli assistenti approvati con «Consenti» in
+  questo browser, anche il connettore remoto approvato qui, e i permessi remoti del tuo account
+  nel cloud. Gli assistenti approvati da altri browser restano, anche quelli tuoi su un altro
+  dispositivo: revocali da lì, oppure usa «Scollega gli assistenti di tutti». Un client che
+  resta senza accessi viene tolto: per ridare l'accesso, togli il connettore StudyOS
+  nell'assistente e aggiungilo di nuovo.
+- **«Scollega il connettore remoto»** toglie solo il connettore remoto del tuo account (vedi
+  sotto); il connettore principale resta.
+- **«Scollega gli assistenti di tutti»**, in «Avanzate» e dopo una conferma che lo dice, toglie
+  token, consensi e client di tutte le persone: ognuno dovrà ricollegare il connettore.
+
+### Il segreto del browser
+
+L'hub riconosce chi ha approvato un accesso da un segreto del browser, non dal nome del profilo
+(che chiunque può scrivere uguale o cambiare):
+
+- `/pair` restituisce, oltre al token del ponte, un segreto casuale di 256 bit (`secret`, 43
+  caratteri base64url). Un browser collegato prima lo chiede da solo all'avvio con
+  `/bridge/secret` (serve il token del ponte), senza ricollegarsi. Il browser lo tiene in
+  `localStorage` accanto al collegamento, e lo tiene anche dopo «Scollega questo browser», così
+  quello che ha approvato resta revocabile da lì.
+- `/oauth/decide` con «Consenti» manda `secret`. L'hub ne salva solo lo SHA-256 (`approver`) su
+  consenso, codice, token di accesso e di rinnovo. Il segreto in chiaro non viene salvato, non
+  va mai agli agenti MCP né in un URL: viaggia solo nel corpo delle richieste dal browser all'hub.
+- `/oauth/revoke` limitato (senza `scope`, o `scope: "cloud"` per i soli remoti) richiede
+  `secret` e toglie solo ciò che quel segreto ha approvato. Senza segreto valido risponde 400 e
+  non tocca niente: un'app di prima non scollega più tutti per sbaglio. La risposta conta solo
+  le concessioni di chi chiede (`revoked`) e quelle senza approvatore (`legacy`).
+- Gli accessi approvati prima, o da un'app senza segreto, non hanno approvatore: la revoca
+  limitata non li tocca, li conta in `legacy` e l'app spiega che per toglierli serve «Scollega
+  gli assistenti di tutti».
+
+Cosa protegge: chi conosce la chiave di collegamento (la stessa per tutti) non può revocare gli
+assistenti degli altri scrivendo il loro nome nel profilo, e rinominare il proprio profilo non
+fa perdere la revoca. Cosa non è: non è un'identità cloud né un account. Vale per un solo
+browser: un altro dispositivo della stessa persona ha un altro segreto, e chi cancella i dati
+del sito ne riceve uno nuovo (gli accessi approvati con il vecchio si tolgono solo con
+«Scollega gli assistenti di tutti»). Chi ha la chiave può comunque scollegare tutti con `scope:
+"all"`, come prima.
+
+Un hub di prima della 1.6.0 tratta qualunque `/oauth/revoke` come «scollega tutti». Per questo
+l'app rilegge `/health` prima di «Revoca gli accessi di questo browser»: se la versione è sotto la
+1.6.0 o manca, non manda una revoca limitata, ma apre la stessa conferma di «Scollega gli
+assistenti di tutti», con una riga che dice che questo collegamento, finché non è aggiornato, sa
+solo scollegare tutti. Allo stesso modo manda «Scollega il connettore remoto» all'hub solo dalla
+1.6.0: prima toglie solo il permesso nel cloud, che basta a fermare il connettore.
 
 ## Più account sullo stesso connettore
 
@@ -142,6 +203,12 @@ StudyOS aperto: legge e scrive direttamente i dati cloud di quell'account. L'ind
 dove `<nome>` è il nome del profilo con i trattini al posto degli spazi, per esempio
 `/u/camilla-rossi/mcp`. Il nome segue le regole della sezione precedente (maiuscole,
 accenti e ordine delle parole non contano).
+
+In **Impostazioni → Agenti** del sito pubblicato il riquadro «Connettore remoto (app chiusa)»
+dice cosa fa, avvisa che non chiede conferme nell'app, mostra questo indirizzo con il nome
+del profilo, pronto da copiare, e ha «Scollega il connettore remoto». Senza nome nel profilo
+chiede di scriverlo; se `/health` dice `cloud: false` spiega che chi gestisce StudyOS deve
+attivarlo; nella finestra di sviluppo rimanda al sito pubblicato.
 
 Una volta sola, prima del primo collegamento:
 
@@ -188,9 +255,11 @@ Differenze dal primo connettore:
   rifiutata: la risposta è un errore di conflitto, l'hub rilegge i dati e l'azione si può
   ripetere.
 
-«Revoca l'accesso agli assistenti» in Impostazioni → Agenti revoca anche tutti i permessi
-remoti dell'account: da lì il connettore risponde che il collegamento non è più valido, e
-per riaverlo serve un nuovo «Consenti».
+«Scollega il connettore remoto» e «Revoca gli accessi di questo browser» in Impostazioni →
+Agenti revocano tutti i permessi remoti dell'account (anche senza browser collegato, con
+l'accesso all'account fatto) e i token remoti dell'hub approvati da questo browser: da lì il
+connettore risponde che il collegamento non è più valido, e per riaverlo serve un nuovo
+«Consenti».
 
 Limite di CPU del piano Free: 10 ms per richiesta. Su un account di prova con 1340 righe
 (935 KB) ogni chiamata a Worker caldo costa 0,2–6 ms, la prima lettura completa

@@ -341,8 +341,12 @@ test("hub: /register e /authorize aperti a tutti non si riempiono per sempre", a
   assert.equal(agent.exportState().oauth.clients.length, 50);
   assert.ok(agent.exportState().oauth.clients.some((client) => client.clientId === fresh), "il client con un consenso aperto resta");
 
-  // «Revoca l'accesso agli assistenti» nell'app toglie anche i client registrati.
-  const revoked = await ask(agent, "/oauth/revoke", { method: "POST", headers: site, body: JSON.stringify({ token }) });
+  // «Scollega gli assistenti di tutti» nell'app toglie anche i client registrati. Senza scope e
+  // senza dire di quale browser è (app di prima) la revoca non tocca niente.
+  const anonymous = await ask(agent, "/oauth/revoke", { method: "POST", headers: site, body: JSON.stringify({ token }) });
+  assert.equal(anonymous.status, 400);
+  assert.equal(agent.exportState().oauth.clients.length, 50);
+  const revoked = await ask(agent, "/oauth/revoke", { method: "POST", headers: site, body: JSON.stringify({ token, scope: "all" }) });
   assert.equal(revoked.status, 200);
   assert.equal(agent.exportState().oauth.clients.length, 0);
   assert.equal((await register()).status, 201);
