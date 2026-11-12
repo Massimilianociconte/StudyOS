@@ -23,7 +23,16 @@ import {
   storageErrorText,
   uploadMime,
   withLocalFile,
-  withStoredFile
+  withStoredFile,
+  BACKUP_FILES_LIMIT_BYTES,
+  FILE_RETENTION_MS,
+  backgroundStamp,
+  objectFate,
+  orphanCopyFate,
+  planBackupFiles,
+  pullTransition,
+  sealingAction,
+  sharedDownloadName
 } from "../src/lib/attachments.ts";
 import { FILE_TEXT } from "../src/lib/labels.ts";
 import { publicAttachment } from "../src/agent/project.ts";
@@ -358,3 +367,212 @@ test("Impostazioni: backup completo con i file, cancellazioni con i file", () =>
   assert.ok(erase.indexOf("eraseAccountFiles()") < erase.indexOf("requestSync()"));
   assert.match(erase, /resetAllData\(\{ propagate: false, wipeFiles: true \}\)/, "senza account i file esistono solo qui");
 });
+
+// ─── Revisione, fix 1 (wave2/R-A5-findings.md) ────────────────────────────────
+
+const syncSource = () => read("src/lib/attachmentSync.ts");
+const bodyOf = (source, start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start) + start.length));
+
+test("H1: un materiale sparito dalla memoria non fa mai togliere l'oggetto né la copia locale", () => {
+  const source = syncSource();
+  const markStored = bodyOf(source, "const markStored = async", "const uploadLocal");
+  assert.doesNotMatch(markStored, /removeObjects|deleteLocalFiles/, "missing: niente rimozioni");
+  assert.doesNotMatch(markStored, /missing/);
+  // Le uniche rimozioni di oggetti: pulizia (riga eliminata da 90 giorni) e «Cancella anche dall'account».
+  const removals = [...source.matchAll(/await removeObjects\(/g)].map((match) => match.index);
+  assert.equal(removals.length, 2);
+  for (const at of removals) {
+    const owner = source.lastIndexOf("const ", at);
+    assert.match(source.slice(owner, owner + 40), /const (doomed|cleanupObjects|runPendingErase)/);
+  }
+  assert.ok(bodyOf(source, "const cleanupObjects", "const runPendingErase").includes('objectFate(states.get(id), now) === "remove"'));
+});
+
+test("H1: svuotamento del dispositivo durante un caricamento: controllo prima di ogni scrittura", () => {
+  const source = syncSource();
+  const pass = bodyOf(source, "const pass = async", "let running");
+  assert.match(pass, /const guard = localResetGuard\(\);/);
+  assert.match(pass, /guard\(\);/);
+  assert.ok(pass.indexOf("pulledFor(uid)") < pass.indexOf("planFileWork("), "primo pull prima del piano");
+  assert.ok(pass.indexOf("runPendingErase(uid).catch(") >= 0, "uno svuotamento dell'account che fallisce non ferma la passata");
+  assert.match(bodyOf(source, "const uploadLocal = async", "const migrateEmbedded"), /markUploaded\(id, uid, check\)/);
+  assert.match(bodyOf(source, "const migrateEmbedded = async", "const checkOrphans"), /await uploadObject\(objectPath\(uid, id\), bytes, type\);\s*check\(\);/);
+  assert.match(bodyOf(source, "const checkOrphans = async", "const cleanupObjects"), /deleteLocalFiles\(\[id\], check\)/);
+  assert.match(pass, /deleteLocalFiles\(plan\.dropCache, check\)/);
+  // Dentro la transazione della copia locale.
+  const files = read("src/lib/attachmentFiles.ts");
+  assert.match(bodyOf(files, "export const markUploaded", "export const deleteLocalFiles"), /assertNotHalted\(\);\s*check\?\.\(\);/);
+  assert.match(bodyOf(files, "export const deleteLocalFiles", "export const forgetMaterialFile"), /assertNotHalted\(\);\s*check\?\.\(\);/);
+  // Errori che fermano la passata intera (non contano come errore del file).
+  assert.match(source, /const stopsPass = \(error: unknown\) => error instanceof SessionChangedError \|\| error instanceof LocalResetError;/);
+});
+
+test("M1: riscrittura in sottofondo con il timbro della riga più 1 ms, mai «adesso»", () => {
+  assert.equal(backgroundStamp("2026-11-12T08:00:00.000Z", Date.parse("2026-12-01T00:00:00.000Z")), "2026-11-12T08:00:00.001Z");
+  assert.equal(backgroundStamp(undefined, Date.parse("2026-12-01T00:00:00.000Z")), "2026-12-01T00:00:00.000Z");
+  assert.equal(backgroundStamp("non una data", 0), new Date(0).toISOString());
+  const material = { id: "a", name: "x.pdf", storedFile: "local", updatedAt: "2026-11-12T08:00:00.000Z" };
+  assert.equal(withStoredFile(material, undefined, Date.parse("2026-12-01T00:00:00.000Z")).updatedAt, "2026-11-12T08:00:00.001Z");
+  // Una modifica vera fatta dopo (anche di 1 ms) resta più recente.
+  assert.ok(Date.parse("2026-11-12T08:00:00.002Z") > Date.parse(withStoredFile(material).updatedAt));
+});
+
+test("M1: niente riscritture prima del primo pull della sessione per l'account", () => {
+  const uid = UID;
+  assert.equal(pullTransition(null, { uid, status: "idle", lastSync: "2026-11-01T00:00:00.000Z" }), "none", "lastSync di una sessione di prima: non conta");
+  const started = { uid, lastSync: "2026-11-01T00:00:00.000Z" };
+  assert.equal(pullTransition(null, { uid, status: "syncing", lastSync: started.lastSync }), "start");
+  assert.equal(pullTransition(started, { uid, status: "syncing", lastSync: started.lastSync }), "none");
+  assert.equal(pullTransition(started, { uid, status: "idle", lastSync: "2026-11-12T09:00:00.000Z" }), "pulled");
+  assert.equal(pullTransition(started, { uid, status: "idle", lastSync: started.lastSync }), "end", "dispositivo svuotato a metà: lastSync uguale");
+  assert.equal(pullTransition(started, { uid, status: "error", lastSync: started.lastSync }), "end");
+  assert.equal(pullTransition(started, { uid: "altro", status: "idle", lastSync: "2026-11-12T09:00:00.000Z" }), "end", "account cambiato");
+  assert.equal(pullTransition(started, { uid: null, status: "idle", lastSync: null }), "end");
+  const source = syncSource();
+  const open = bodyOf(source, "export const openMaterialFile", "export const downloadMaterialFile");
+  assert.match(open, /pulledFor\(uid\)/, "anche la correzione all'apertura aspetta il primo pull");
+  assert.match(source, /pulled = \{ uid, guard: syncStart\.guard \}/, "il controllo dello svuotamento parte dall'inizio della sync");
+});
+
+test("M2: il server non riporta «local» su una riga viva già «cloud» (push e connettore remoto)", () => {
+  const schema = read("supabase/schema.sql");
+  const push = bodyOf(schema, "create or replace function public.push_studyos_rows", "$$;");
+  assert.ok(push.indexOf("v_payload->>'storedFile' = 'local'") > 0);
+  assert.ok(push.indexOf("jsonb_set(v_payload, '{storedFile}', '\"cloud\"')") < push.indexOf("insert into public.studyos_items"), "prima dell'insert");
+  assert.match(push, /and not s\.deleted and s\.payload->>'storedFile' = 'cloud'/);
+  const agent = read("supabase/agent.sql");
+  const loop = bodyOf(agent, "foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl', 'storedFile'] loop", "end loop;");
+  assert.match(loop, /elsif v_key = 'storedFile' and v_payload->>v_key = 'local' and v_current->>v_key = 'cloud'/);
+  assert.match(loop, /not coalesce\(v_current_deleted, false\)/);
+  assert.match(read("supabase/verify.sql"), /as stored_file_guard_ready/);
+});
+
+test("M2 e L4: chi riceve prova a scaricare anche un file «local», con un nome sicuro", () => {
+  const drawer = read("src/components/SharedItemDrawer.tsx");
+  assert.match(drawer, /\{storedFile \? \(/);
+  assert.doesNotMatch(drawer, /storedFile === "local" \? <p/);
+  assert.match(drawer, /notUploadedYet: storedFile === "local"/);
+  assert.match(drawer, /download=\{sharedDownloadName\(/);
+  const shared = bodyOf(syncSource(), "export const downloadSharedFile", "// ─── Cancellazione");
+  assert.match(shared, /item\.notUploadedYet \? FILE_TEXT\.sharedNotUploaded : FILE_TEXT\.sharedGone/);
+  assert.match(shared, /sharedDownloadName\(item\.name\)/);
+  assert.match(shared, /allowedMime\(name, undefined\) \?\? FALLBACK_MIME/, "tipo dal nome sicuro, mai quello dichiarato");
+  assert.equal(sharedDownloadName("dispense.pdf"), "dispense.pdf");
+  assert.equal(sharedDownloadName("foto.JPG"), "foto.JPG");
+  assert.equal(sharedDownloadName("pagina.html"), "pagina.html.bin");
+  assert.equal(sharedDownloadName("setup.exe"), "setup.exe.bin");
+  assert.equal(sharedDownloadName("../../x.svg"), "_.._x.svg.bin");
+  assert.ok(sharedDownloadName("a".repeat(300) + ".exe").length <= 120);
+  assert.match(sharedDownloadName("a".repeat(300) + ".exe"), /\.bin$/);
+});
+
+test("M3: copia scritta mentre il vault cambia: si sistema; illeggibile: cache via, da caricare segnalata", () => {
+  const known = new Set(["old"]);
+  assert.equal(sealingAction(undefined, { mode: false }, known), "ok");
+  assert.equal(sealingAction(undefined, { mode: true, salt: "now" }, known), "seal");
+  assert.equal(sealingAction(undefined, { mode: true }, known), "ok", "bloccato: in chiaro si cifra allo sblocco");
+  assert.equal(sealingAction("now", { mode: true, salt: "now" }, known), "ok");
+  assert.equal(sealingAction("now", { mode: true }, known), "locked");
+  assert.equal(sealingAction("old", { mode: false }, known), "rewrite", "vault tolto durante la scrittura");
+  assert.equal(sealingAction("old", { mode: true, salt: "now" }, known), "rewrite", "vault rifatto con un'altra password");
+  assert.equal(sealingAction("lost", { mode: false }, known), "lost");
+  const files = read("src/lib/attachmentFiles.ts");
+  const save = bodyOf(files, "export const saveLocalFile", "const dropUnreadable");
+  assert.match(save, /vaultChangedSince\(written\)/, "dopo la scrittura si ricontrolla il vault");
+  assert.match(save, /rewritePlain\(id, bytes, written\)/);
+  const reader = bodyOf(files, "export const readLocalBytes", "export const touchLocalFile");
+  assert.match(reader, /return dropUnreadable\(row\)/);
+  assert.match(bodyOf(files, "const dropUnreadable", "export const readLocalBytes"), /if \(row\.pending\) throw new FileUnreadableError\(\);/);
+  // Le chiavi tenute in memoria si dimenticano al blocco del vault.
+  assert.match(files, /if \(state\.locked && !previous\.locked\) knownKeys\.clear\(\);/);
+  assert.match(files, /if \(current\.mode && !current\.key\) knownKeys\.clear\(\);/);
+  const source = syncSource();
+  assert.match(bodyOf(source, "const pass = async", "let running"), /reconcileLocalSealing\(\)/);
+  const open = bodyOf(source, "export const openMaterialFile", "export const downloadMaterialFile");
+  assert.match(open, /unreadable = error instanceof FileUnreadableError;/, "copia illeggibile: si prova dall'account");
+  assert.match(source, /error instanceof FileUnreadableError\s*\? FILE_TEXT\.unreadable/);
+  assert.ok(FILE_TEXT.unreadable.length > 20);
+  // Lo store resta com'era (lo cambia la sync del vault).
+  assert.doesNotMatch(read("src/store/useStudyStore.ts"), /reconcileLocalSealing/);
+});
+
+test("M4: file nella copia di sicurezza entro 100 MB, senza cache; senza file se non si riesce", () => {
+  assert.equal(BACKUP_FILES_LIMIT_BYTES, 100 * 1024 * 1024);
+  const mb = 1024 * 1024;
+  const plan = planBackupFiles(
+    [
+      { id: "a", size: 40 * mb, storedFile: "cloud" },
+      { id: "link", size: 0 },
+      { id: "b", size: 50 * mb, storedFile: "local" },
+      { id: "c", size: 20 * mb, storedFile: "cloud" },
+      { id: "d", size: 10 * mb, storedFile: "cloud" }
+    ],
+    BACKUP_FILES_LIMIT_BYTES
+  );
+  assert.deepEqual(plan, { include: ["a", "b", "d"], overLimit: ["c"] });
+  const source = syncSource();
+  const exporting = bodyOf(source, "export const withFilesForExport", "\n};\n");
+  assert.match(exporting, /openMaterialFile\(material, \{ cache: false \}\)/);
+  assert.match(exporting, /if \(total \+ blob\.size > limit\)/, "conta la dimensione vera");
+  assert.match(bodyOf(source, "export const openMaterialFile", "export const downloadMaterialFile"), /options\.cache !== false/);
+  const view = read("src/views/SettingsView.tsx");
+  const exportView = bodyOf(view, "const exportBackup", "const importBackup");
+  assert.match(exportView, /filesLeftOut = true;/);
+  assert.match(exportView, /await save\(plainAttachments\);/, "copia senza file se quella con i file non si crea");
+  assert.match(exportView, /SETTINGS_TEXT\.backup\.filesOverLimit\(overLimitFiles\)/);
+  assert.match(exportView, /SETTINGS_TEXT\.backup\.filesLeftOut/);
+});
+
+test("L1 e L2: oggetti e copie si tolgono solo con la riga eliminata da almeno 90 giorni", () => {
+  const now = Date.parse("2026-11-12T00:00:00.000Z");
+  const day = 24 * 60 * 60_000;
+  assert.equal(FILE_RETENTION_MS, 90 * day);
+  const ago = (days) => new Date(now - days * day).toISOString();
+  assert.equal(objectFate(null, now), "keep", "riga assente: forse non ancora inviata");
+  assert.equal(objectFate(undefined, now), "keep");
+  assert.equal(objectFate({ deleted: false, updatedAt: ago(400) }, now), "keep", "riga viva");
+  assert.equal(objectFate({ deleted: true, updatedAt: ago(10) }, now), "keep", "si può ancora ripristinare");
+  assert.equal(objectFate({ deleted: true, updatedAt: ago(91) }, now), "remove");
+  assert.equal(objectFate({ deleted: true, updatedAt: ago(91), deletedAt: ago(5) }, now), "keep", "conta la più recente");
+  assert.equal(objectFate({ deleted: true, updatedAt: null, deletedAt: null }, now), "keep", "senza ora: resta");
+  assert.equal(orphanCopyFate(null, now), "keep");
+  assert.equal(orphanCopyFate({ deleted: false }, now), "keep");
+  assert.equal(orphanCopyFate({ deleted: true, updatedAt: ago(3) }, now), "upload", "prima si carica, poi si toglie da qui");
+  assert.equal(orphanCopyFate({ deleted: true, updatedAt: ago(120) }, now), "drop");
+  const source = syncSource();
+  const cleanup = bodyOf(source, "const cleanupObjects", "const runPendingErase");
+  assert.match(cleanup, /CLEANUP_EVERY_MS/);
+  assert.match(cleanup, /!again\.has\(id\)/, "un materiale tornato intanto resta");
+  assert.match(cleanup, /setMeta\(cleanupKey\(uid\)/);
+  // Lo stato delle righe: un errore lancia, mai «nessuna riga».
+  assert.match(bodyOf(source, "const rowStates", "// ─── Primo pull"), /if \(error\) throw new Error\(error\.message\);/);
+  const orphans = bodyOf(source, "const checkOrphans", "const cleanupObjects");
+  assert.ok(orphans.indexOf("uploadObject(") < orphans.indexOf("deleteLocalFiles("), "carica prima di togliere");
+});
+
+test("L3: la richiesta di svuotare i file dell'account si salva prima di caricare il modulo; un errore non blocca", () => {
+  const view = read("src/views/SettingsView.tsx");
+  const erase = bodyOf(view, "const eraseData", "const lockNow");
+  assert.ok(erase.indexOf("requestAccountFilesErase(uid)") > 0);
+  assert.ok(erase.indexOf("requestAccountFilesErase(uid)") < erase.indexOf('import("../lib/attachmentSync")'));
+  assert.match(view, /import \{ requestAccountFilesErase \} from "\.\.\/lib\/attachmentFiles";/);
+  const files = read("src/lib/attachmentFiles.ts");
+  assert.match(files, /export const fileEraseKey = \(uid: string\) => `files:erase:\$\{uid\}`;/);
+  const source = syncSource();
+  assert.doesNotMatch(source, /const eraseKey/, "una sola chiave, quella di attachmentFiles");
+  assert.match(source, /getMeta<string>\(fileEraseKey\(uid\)\)/);
+});
+
+test("L5: uscendo con la password dell'app, i file non ancora caricati si eliminano solo con il consenso", () => {
+  const panel = read("src/components/CloudPanel.tsx");
+  const leave = bodyOf(panel, "const leaveRemovingData", "const handleForcePull");
+  assert.ok(leave.indexOf("pendingFilesLeftPlain()") > 0);
+  assert.ok(leave.indexOf("window.confirm(FILE_TEXT.leavePendingAsk(") < leave.indexOf("turnOffPushHere()"), "prima di uscire");
+  assert.match(leave, /if \(!window\.confirm\(FILE_TEXT\.leavePendingAsk\(plainLeft\.length\)\)\) return;/, "Annulla: resta collegato");
+  assert.match(leave, /await deleteLocalFiles\(plainLeft\);/);
+  const files = read("src/lib/attachmentFiles.ts");
+  assert.match(bodyOf(files, "export const pendingFilesLeftPlain", "export const markUploaded"), /if \(!mode \|\| !key\) return \[\];/);
+  assert.match(FILE_TEXT.leavePendingAsk(1), /Un file/);
+  assert.match(FILE_TEXT.leavePendingAsk(3), /3 file/);
+});
+

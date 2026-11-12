@@ -150,6 +150,19 @@ begin
       raise exception 'Entità di sincronizzazione non valida';
     end if;
 
+    -- File dei materiali (storage.sql, revisione del 12/11/2026): una riga viva già «cloud» non torna
+    -- «local». Lo stesso id non riceve mai un altro file, quindi il passo indietro arriva solo da una
+    -- copia vecchia (modificata prima del caricamento) e renderebbe il file irraggiungibile a chi lo
+    -- riceve in condivisione. Il resto della modifica vale come sempre.
+    if v_type = 'attachment' and not v_deleted and v_payload->>'storedFile' = 'local'
+       and exists (
+         select 1 from public.studyos_items as s
+         where s.user_id = p_user_id and s.entity_type = 'attachment' and s.entity_id = v_id
+           and not s.deleted and s.payload->>'storedFile' = 'cloud'
+       ) then
+      v_payload := jsonb_set(v_payload, '{storedFile}', '"cloud"');
+    end if;
+
     v_applied := false;
     insert into public.studyos_items as current_row
       (user_id, entity_type, entity_id, payload, deleted, encrypted, client_id)

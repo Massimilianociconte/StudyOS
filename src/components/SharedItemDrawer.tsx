@@ -13,6 +13,7 @@ import {
   type SharedItem,
   type SharedOrigin
 } from "../lib/sharing";
+import { sharedDownloadName } from "../lib/attachments";
 import { safeDataUrl, safeHref } from "../lib/safeUrl";
 import { useSharedStore } from "../store/useSharedStore";
 import { Button, DIMMED_DISABLED_FIELDS, Drawer, Field, Tag, inputClass } from "./ui";
@@ -123,7 +124,8 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
         entityId: entry.entityId,
         name: typeof entity.name === "string" ? entity.name : "file",
         mimeType: typeof entity.mimeType === "string" ? entity.mimeType : undefined,
-        size: typeof entity.size === "number" ? entity.size : undefined
+        size: typeof entity.size === "number" ? entity.size : undefined,
+        notUploadedYet: storedFile === "local"
       });
     } catch (cause) {
       setFileError(cause instanceof Error && cause.message ? cause.message : FILE_TEXT.downloadFailed);
@@ -290,16 +292,17 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
             ) : null}
             {dataUrl ? (
               // Solo da scaricare (attributo `download`): mai aperto nella pagina.
-              <a className={linkClass} href={dataUrl} download={typeof entity.name === "string" && entity.name.trim() ? entity.name.trim() : "file"}>
+              <a className={linkClass} href={dataUrl} download={sharedDownloadName(typeof entity.name === "string" ? entity.name : "file")}>
                 Scarica il file
               </a>
             ) : null}
-            {storedFile === "cloud" ? (
+            {storedFile ? (
+              // Anche con «local»: il segno può essere rimasto indietro mentre il file è già nell'account
+              // (chi riceve non può correggerlo). Se non c'è, il messaggio dice che non è ancora caricato.
               <button type="button" className={`${linkClass} inline-flex min-h-11 items-center`} onClick={() => void downloadStored()} disabled={fileBusy} aria-busy={fileBusy}>
                 {fileBusy ? FILE_TEXT.opening : FILE_TEXT.sharedDownload}
               </button>
             ) : null}
-            {storedFile === "local" ? <p className="text-sm text-[var(--muted)]">{FILE_TEXT.sharedNotUploaded}</p> : null}
             {fileError ? (
               <p className="w-full text-sm font-bold text-[var(--warning-text)]" role="alert">
                 {fileError}

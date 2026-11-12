@@ -4,7 +4,7 @@
 // Design: docs/superpowers/specs/2026-11-12-attachments-storage-design.md.
 
 import type { Attachment } from "../types";
-import { laterStamp } from "./collections";
+import { timestampOf } from "./collections";
 import { FILE_TEXT } from "./labels";
 
 export type StoredFile = NonNullable<Attachment["storedFile"]>;
@@ -16,6 +16,19 @@ export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 /** Oltre questo totale la copia locale toglie i file già nel cloud usati meno di recente (mai quelli da caricare). */
 export const CACHE_LIMIT_BYTES = 150 * 1024 * 1024;
+
+/**
+ * Un file di un materiale eliminato resta nel bucket per 90 giorni, come la cronologia (sharing.sql):
+ * un ripristino dalla cronologia ritrova il file. Dopo, la pulizia lo toglie.
+ */
+export const FILE_RETENTION_MS = 90 * 24 * 60 * 60_000;
+
+/**
+ * File dentro una copia di sicurezza: al massimo 100 MB in tutto. Tutto finisce in una sola stringa
+ * JSON (Base64, +33%, e ancora una volta se la copia è protetta): oltre, i telefoni esauriscono la
+ * memoria o il browser rifiuta la stringa e non si scaricherebbe nessuna copia.
+ */
+export const BACKUP_FILES_LIMIT_BYTES = 100 * 1024 * 1024;
 
 /**
  * Tipi che si possono caricare: stesso elenco di `allowed_mime_types` in supabase/storage.sql (più
@@ -309,13 +322,24 @@ export const planFileWork = (input: {
 };
 
 /**
- * Riga dopo un caricamento confermato: senza `dataUrl`, con `storedFile: "cloud"` e timbro nuovo.
- * Null se nel frattempo il materiale ha un altro file incorporato (non quello caricato).
+ * Timbro di una riscrittura fatta in sottofondo (caricamento, migrazione, correzione del segno): 1 ms
+ * dopo quello della riga, non «adesso» (come tieBreakStamp in syncMerge.ts). Una modifica o
+ * un'eliminazione vera fatta altrove dopo quel timbro continua a vincere; la riscrittura persa torna
+ * con la passata dopo (il dispositivo che ha caricato risegna il file, il server non toglie «cloud»).
+ */
+export const backgroundStamp = (stamp: string | undefined | null, now = Date.now()) => {
+  const time = timestampOf(stamp);
+  return new Date(time > 0 ? time + 1 : now).toISOString();
+};
+
+/**
+ * Riga dopo un caricamento confermato: senza `dataUrl`, con `storedFile: "cloud"` e timbro della riga
+ * più 1 ms. Null se nel frattempo il materiale ha un altro file incorporato (non quello caricato).
  */
 export const withStoredFile = <T extends Attachment>(material: T, uploadedDataUrl?: string, now = Date.now()): T | null => {
   if (uploadedDataUrl !== undefined && material.dataUrl !== undefined && material.dataUrl !== uploadedDataUrl) return null;
   const { dataUrl: _dropped, ...rest } = material;
-  return { ...rest, storedFile: "cloud", updatedAt: laterStamp(material.updatedAt, now) } as T;
+  return { ...rest, storedFile: "cloud", updatedAt: backgroundStamp(material.updatedAt, now) } as T;
 };
 
 /** Riga di un file incorporato importato da un backup: i byte vanno nella copia locale, mai nella sync. */
@@ -334,6 +358,107 @@ export const planCacheEviction = (rows: readonly ({ id: string } & Pick<LocalFil
     total -= row.size || 0;
   }
   return drop;
+};
+
+/**
+ * Quali file entrano in una copia di sicurezza: in ordine, finché il totale (dimensione dichiarata)
+ * resta entro `limit`. Gli altri restano fuori senza scaricarli: la copia parte comunque.
+ */
+export const planBackupFiles = (materials: readonly (Pick<Attachment, "id" | "size"> & { storedFile?: StoredFile })[], limit = BACKUP_FILES_LIMIT_BYTES) => {
+  const include: string[] = [];
+  const overLimit: string[] = [];
+  let total = 0;
+  for (const material of materials) {
+    if (!material.storedFile) continue;
+    const size = Number.isFinite(material.size) && material.size > 0 ? material.size : 0;
+    if (total + size > limit) {
+      overLimit.push(material.id);
+      continue;
+    }
+    total += size;
+    include.push(material.id);
+  }
+  return { include, overLimit };
+};
+
+/**
+ * Cosa fare di una copia locale rispetto al vault di adesso:
+ * - `ok`: leggibile così;
+ * - `locked`: cifrata e vault bloccato: si aspetta lo sblocco (mai una chiave tenuta da parte: il
+ *   blocco vale anche per i file);
+ * - `rewrite`: cifrata con una chiave che la sessione non usa più ma che è ancora in memoria (vault
+ *   tolto o cambiato durante una scrittura): si riscrive com'è il vault adesso;
+ * - `seal`: in chiaro con il vault attivo e sbloccato: si cifra;
+ * - `lost`: cifrata con una chiave che non c'è più. Una cache si toglie (si riscarica dall'account);
+ *   una copia da caricare resta, con il motivo sulla scheda.
+ */
+export type SealingAction = "ok" | "locked" | "rewrite" | "seal" | "lost";
+
+export const sealingAction = (
+  rowSalt: string | undefined,
+  session: { mode: boolean; salt?: string },
+  knownSalts: ReadonlySet<string>
+): SealingAction => {
+  if (!rowSalt) return session.mode && session.salt ? "seal" : "ok";
+  if (session.mode && session.salt === rowSalt) return "ok";
+  if (session.mode && !session.salt) return "locked";
+  return knownSalts.has(rowSalt) ? "rewrite" : "lost";
+};
+
+/**
+ * Nome con cui si scarica il file di un'altra persona: se l'estensione non è di un tipo ammesso (un
+ * file vecchio caricato come application/octet-stream, o caricato a mano via API con un nome
+ * qualsiasi) si aggiunge `.bin`, così il sistema non lo tratta come pagina o programma.
+ */
+export const sharedDownloadName = (raw: string | undefined | null) => {
+  const name = sanitizeFileName(raw);
+  return allowedMime(name, undefined) ? name : `${name.slice(0, MAX_NAME - 4)}.bin`;
+};
+
+/**
+ * Primo pull della sessione (attachmentSync.ts): finché la sync non ha finito una passata per questo
+ * account in questa pagina, nessuna riscrittura di righe (caricamenti, migrazioni, segni): la copia
+ * di qui può essere indietro di giorni e la riscrittura riporterebbe campi vecchi.
+ * - `start`: inizia una passata (si prende lì il controllo dello svuotamento del dispositivo);
+ * - `pulled`: passata finita con un nuovo `lastSync` per lo stesso account;
+ * - `end`: passata finita senza esito (errore, dispositivo svuotato, account cambiato).
+ */
+export const pullTransition = (
+  start: { uid: string | null; lastSync: string | null } | null,
+  state: { uid: string | null; status: string; lastSync: string | null }
+): "start" | "pulled" | "end" | "none" => {
+  if (state.status === "syncing") return start ? "none" : "start";
+  if (!start) return "none";
+  return state.uid && start.uid === state.uid && state.lastSync && state.lastSync !== start.lastSync ? "pulled" : "end";
+};
+
+/** Riga di un materiale nel cloud, solo quello che serve a decidere dei file (`deletedAt` dal tombstone). */
+export interface FileRowState {
+  deleted: boolean;
+  updatedAt?: string | null;
+  deletedAt?: string | null;
+}
+
+/**
+ * Oggetto nel bucket di un materiale che qui non c'è. Si toglie solo se la riga nel cloud è eliminata
+ * da almeno FILE_RETENTION_MS (ora del server o del tombstone, la più recente): prima un ripristino
+ * dalla cronologia lo chiede ancora. Riga viva (il materiale arriva col pull) o assente (forse non
+ * ancora inviata): resta.
+ */
+export const objectFate = (row: FileRowState | null | undefined, now = Date.now()): "keep" | "remove" => {
+  if (!row?.deleted) return "keep";
+  const at = Math.max(timestampOf(row.updatedAt ?? undefined), timestampOf(row.deletedAt ?? undefined));
+  return at > 0 && at + FILE_RETENTION_MS <= now ? "remove" : "keep";
+};
+
+/**
+ * Copia da caricare il cui materiale qui non c'è: si tiene finché la riga è viva o assente; se è
+ * eliminata da poco prima si carica (un ripristino dalla cronologia ritrova il file) e poi si toglie
+ * da qui; dopo i 90 giorni si toglie e basta.
+ */
+export const orphanCopyFate = (row: FileRowState | null | undefined, now = Date.now()): "keep" | "upload" | "drop" => {
+  if (!row?.deleted) return "keep";
+  return objectFate(row, now) === "remove" ? "drop" : "upload";
 };
 
 /** Attesa prima di riprovare: 30 s, 1 min, 2 min… fino a 30 min. */

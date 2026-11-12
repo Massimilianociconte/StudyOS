@@ -68,7 +68,15 @@ export const SETTINGS_TEXT = {
     filesMissing: (count: number) =>
       count === 1
         ? " Un file dei materiali non è incluso: non è su questo dispositivo e ora non si può scaricare. Riprova online per averlo nella copia."
-        : ` ${count} file dei materiali non sono inclusi: non sono su questo dispositivo e ora non si possono scaricare. Riprova online per averli nella copia.`
+        : ` ${count} file dei materiali non sono inclusi: non sono su questo dispositivo e ora non si possono scaricare. Riprova online per averli nella copia.`,
+    /** La copia porta al massimo 100 MB di file (BACKUP_FILES_LIMIT_BYTES): gli altri restano fuori. */
+    filesOverLimit: (count: number) =>
+      count === 1
+        ? " Un file dei materiali non è incluso: la copia porta al massimo 100 MB di file. Resta nel tuo account o su questo dispositivo, e puoi scaricarlo dalla scheda del materiale."
+        : ` ${count} file dei materiali non sono inclusi: la copia porta al massimo 100 MB di file. Restano nel tuo account o su questo dispositivo, e puoi scaricarli dalla scheda di ogni materiale.`,
+    /** I file non si sono potuti aggiungere (memoria, errore): la copia è stata scaricata senza. */
+    filesLeftOut:
+      " La copia non contiene i file dei materiali: non è stato possibile aggiungerli. Restano nel tuo account o su questo dispositivo, e puoi scaricarli dalla scheda di ogni materiale."
   },
   erase: {
     askTitle: "Cancellare tutti i dati?",

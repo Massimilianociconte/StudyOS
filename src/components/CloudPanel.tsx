@@ -5,7 +5,8 @@ import { signOutThisDevice } from "../lib/deviceSignOut";
 import { turnOffPushHere } from "../lib/pushDevice";
 import { setCloudSyncState } from "../lib/cloudSyncState";
 import { ACCOUNT_TEXT } from "../lib/labels/account";
-import { ACCOUNT_CHOICE_TEXT, CLOUD_STUCK_TEXT } from "../lib/labels";
+import { ACCOUNT_CHOICE_TEXT, CLOUD_STUCK_TEXT, FILE_TEXT } from "../lib/labels";
+import { deleteLocalFiles, pendingFilesLeftPlain } from "../lib/attachmentFiles";
 import { pickCollections } from "../lib/collections";
 import { createBackupEnvelope, downloadJson } from "../lib/backup";
 import { stuckSnapshot, type StuckItem } from "../lib/stuckOutbox";
@@ -377,6 +378,18 @@ export function CloudPanel() {
   // dispositivo si cancellano (nome, foto, materie…). Nell'account resta tutto.
   const leaveRemovingData = async () => {
     if (sync.pendingCount > 0 || sync.stuckCount) return;
+    // Password dell'app attiva e file non ancora caricati: sono l'unica copia, e lo svuotamento li
+    // lascerebbe qui in chiaro (il vault sparisce). Si chiede: eliminarli, o restare e aspettare.
+    const plainLeft = await pendingFilesLeftPlain().catch(() => [] as string[]);
+    if (plainLeft.length) {
+      if (!window.confirm(FILE_TEXT.leavePendingAsk(plainLeft.length))) return;
+      try {
+        await deleteLocalFiles(plainLeft);
+      } catch (error) {
+        setInfo({ kind: "err", text: error instanceof Error ? error.message : ACCOUNT_TEXT.leaveFailed });
+        return;
+      }
+    }
     setBusy(true);
     setInfo(null);
     try {

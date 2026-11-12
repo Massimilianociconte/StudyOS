@@ -882,6 +882,14 @@ export const FILE_TEXT = {
   downloadFailed: "Download non riuscito. Riprova tra poco.",
   storageMissing: "Lo spazio file dell'account non è ancora attivo: il file resta su questo dispositivo finché non viene attivato.",
   uploadFailed: "Caricamento non riuscito: riprovo da solo tra poco.",
+  unreadable:
+    "Questo file non si può più leggere su questo dispositivo: era protetto con una password dell'app tolta o cambiata mentre si salvava.",
+  /**
+   * Uscita con «togli i dati da qui» e password dell'app attiva: i file non ancora caricati sono l'unica
+   * copia e resterebbero sul dispositivo senza protezione. Domanda di conferma (OK = eliminali).
+   */
+  leavePendingAsk: (count: number) =>
+    `${count === 1 ? "Un file aggiunto qui non è ancora stato caricato" : `${count} file aggiunti qui non sono ancora stati caricati`} nel tuo account. Con la password dell'app attiva, uscendo ${count === 1 ? "resterebbe" : "resterebbero"} su questo dispositivo senza protezione.\n\nOK: ${count === 1 ? "eliminalo" : "eliminali"} da qui ed esci (non si può annullare).\nAnnulla: resta collegato e aspetta il caricamento.`,
   // Stato sulla scheda del materiale.
   statusUploading: "Caricamento nel tuo account…",
   statusQueued: "Da caricare nel tuo account",

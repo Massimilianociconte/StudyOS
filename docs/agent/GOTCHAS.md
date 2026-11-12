@@ -18,7 +18,13 @@
   solo `storedFile` (`local` → `cloud` a caricamento confermato), chiave protetta della
   condivisione e mai data agli agenti. I file incorporati di prima (`dataUrl`) si migrano da soli e
   perdono i byte solo dopo il caricamento. I file si scaricano sempre, mai aperti nella pagina.
-  `attachmentSync.ts` (supabase-js) solo con `import()`. Design:
+  `attachmentSync.ts` (supabase-js) solo con `import()`. Mai togliere un oggetto o una copia
+  perché il materiale manca in memoria (dispositivo svuotato a metà caricamento): gli oggetti si
+  tolgono solo con la riga eliminata nel cloud da 90 giorni o con «Cancella anche dall'account».
+  Le riscritture in sottofondo usano `backgroundStamp` (+1 ms) e aspettano il primo pull della
+  sessione; il server non riporta `storedFile` da `cloud` a `local`. Uscendo con la password
+  dell'app attiva, i file non ancora caricati restano in chiaro: `CloudPanel` chiede se eliminarli.
+  Design:
   [../superpowers/specs/2026-11-12-attachments-storage-design.md](../superpowers/specs/2026-11-12-attachments-storage-design.md).
 - La UI BARB legge il dataset incluso nella build: dopo `barb:apply` occorre
   ricompilare e distribuire l'app per vedere l'aggiornamento in browser.

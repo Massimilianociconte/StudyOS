@@ -31,4 +31,6 @@ select
   (select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects'
     and policyname in ('studyos_files_select', 'studyos_files_insert', 'studyos_files_update', 'studyos_files_delete')) as file_policies,
   coalesce(has_function_privilege('authenticated', to_regprocedure('public.studyos_can_read_file(text)'), 'EXECUTE')
-    and not has_function_privilege('anon', to_regprocedure('public.studyos_can_read_file(text)'), 'EXECUTE'), false) as file_read_ready;
+    and not has_function_privilege('anon', to_regprocedure('public.studyos_can_read_file(text)'), 'EXECUTE'), false) as file_read_ready,
+  -- push_studyos_rows di schema.sql dopo la revisione dei file (fix 1): «cloud» non torna «local».
+  coalesce(position('storedFile' in pg_get_functiondef(to_regprocedure('public.push_studyos_rows(uuid,text,jsonb)'))) > 0, false) as stored_file_guard_ready;

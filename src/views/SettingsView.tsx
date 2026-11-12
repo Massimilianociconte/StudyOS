@@ -10,6 +10,7 @@ import {
 } from "../lib/backup";
 import { selectPreferences, useStudyStore, snapshotFromState } from "../store/useStudyStore";
 import { whenPersisted } from "../lib/persistence";
+import { requestAccountFilesErase } from "../lib/attachmentFiles";
 import { eraseAccountData, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSyncState";
 import { turnOffPushHere } from "../lib/pushDevice";
@@ -250,15 +251,25 @@ export function SettingsView() {
       await whenPersisted();
       const state = useStudyStore.getState();
       const snapshot = snapshotFromState(state);
-      // Copia completa con i file dei materiali (copia locale o scaricati ora), incorporati solo nel file.
+      // Copia completa con i file dei materiali (copia locale o scaricati ora), incorporati solo nel file,
+      // fino a 100 MB. Se i file non si possono aggiungere (o la copia con i file non si riesce a
+      // creare) si scarica comunque la copia senza file: mai nessuna copia per colpa dei file.
+      const plainAttachments = snapshot.attachments;
       let missingFiles = 0;
+      let overLimitFiles = 0;
+      let filesLeftOut = false;
       if (scope === "full" && snapshot.attachments.some((item) => item.storedFile)) {
-        const { withFilesForExport } = await import("../lib/attachmentSync");
-        const result = await withFilesForExport(snapshot.attachments);
-        snapshot.attachments = result.attachments;
-        missingFiles = result.missing;
+        try {
+          const { withFilesForExport } = await import("../lib/attachmentSync");
+          const result = await withFilesForExport(snapshot.attachments);
+          snapshot.attachments = result.attachments;
+          missingFiles = result.missing;
+          overLimitFiles = result.overLimit;
+        } catch {
+          filesLeftOut = true;
+        }
       }
-      const scoped = {
+      const scopedFor = (attachments: StudySnapshot["attachments"]) => ({
       ...snapshot,
       subjects: scope === "full" || scope === "subjects" ? snapshot.subjects : [],
       exams: scope === "full" ? snapshot.exams : [],
@@ -266,7 +277,7 @@ export function SettingsView() {
       tasks: scope === "full" || scope === "tasks" ? snapshot.tasks : [],
       sessions: scope === "full" ? snapshot.sessions : [],
       topics: scope === "full" ? snapshot.topics : [],
-      attachments: scope === "full" ? snapshot.attachments : [],
+      attachments: scope === "full" ? attachments : [],
       goals: scope === "full" ? snapshot.goals : [],
       notes: scope === "full" ? snapshot.notes : [],
       tags: scope === "full" ? snapshot.tags : [],
@@ -278,10 +289,25 @@ export function SettingsView() {
       groupInvites: scope === "full" ? snapshot.groupInvites : [],
       groupResources: scope === "full" ? snapshot.groupResources : [],
       groupActivities: scope === "full" ? snapshot.groupActivities : []
+      });
+      const save = async (attachments: StudySnapshot["attachments"]) => {
+        const envelope = await createBackupEnvelope(scopedFor(attachments), settings, exportEncrypted ? backupPassphrase : undefined, scope);
+        downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
       };
-      const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined, scope);
-      downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
-      report(`Copia scaricata: la trovi nella cartella dei download. Conservala in un posto sicuro.${missingFiles ? SETTINGS_TEXT.backup.filesMissing(missingFiles) : ""}`);
+      const withFiles = snapshot.attachments !== plainAttachments;
+      try {
+        await save(snapshot.attachments);
+      } catch (error) {
+        // Copia con i file troppo grande per questo browser: si riprova senza file.
+        if (!withFiles) throw error;
+        snapshot.attachments = plainAttachments;
+        await save(plainAttachments);
+        filesLeftOut = true;
+      }
+      const filesNote = filesLeftOut
+        ? SETTINGS_TEXT.backup.filesLeftOut
+        : `${overLimitFiles ? SETTINGS_TEXT.backup.filesOverLimit(overLimitFiles) : ""}${missingFiles ? SETTINGS_TEXT.backup.filesMissing(missingFiles) : ""}`;
+      report(`Copia scaricata: la trovi nella cartella dei download. Conservala in un posto sicuro.${filesNote}`);
     } catch (error) {
       report(plainError(error, "Download della copia non riuscito. Riprova."));
     }
@@ -349,11 +375,15 @@ export function SettingsView() {
       await turnOffPushHere();
       if (mode !== "local") {
         const alsoCloud = mode === "cloud";
+        const uid = getCloudSyncState().session?.user.id ?? null;
         await resetAllData({ propagate: alsoCloud });
         // Prima della sync: il server elimina anche ciò che questo dispositivo non ha mai ricevuto, e il
         // pull che segue non riporta qui i dati arrivati da altri dispositivi.
         const erased = alsoCloud ? await eraseAccountData() : null;
         // Anche i file dei materiali nello spazio file dell'account: se ora non riesce, si riprova da solo.
+        // La richiesta si salva prima di caricare il modulo dei file: offline (modulo non caricabile)
+        // resta comunque, e la passata dopo la esegue.
+        if (alsoCloud && uid) await requestAccountFilesErase(uid).catch(() => undefined);
         const filesErased = alsoCloud
           ? await import("../lib/attachmentSync").then((module) => module.eraseAccountFiles()).catch(() => false)
           : true;

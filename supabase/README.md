@@ -287,6 +287,13 @@ privato `studyos-files` di Supabase Storage, un file per materiale nel percorso
 5. `verify.sql`: `files_bucket_ready` e `file_read_ready` devono essere `true` e
    `file_policies` deve valere `4`.
 
+Revisione dei file (fix 1, 12/11/2026): riesegui `schema.sql` (e `agent.sql` se usi il
+connettore remoto). `push_studyos_rows` e `studyos_agent_push` non riportano più un materiale
+da «file nello spazio file» (`storedFile: "cloud"`) a «solo sul dispositivo» (`"local"`): una
+copia vecchia lo rendeva irraggiungibile a chi lo riceve. In `verify.sql` la nuova colonna
+`stored_file_guard_ready` deve essere `true`. Un file di un materiale eliminato resta nel bucket
+per 90 giorni (come la cronologia), poi lo toglie l'app del proprietario. Nessuno script nuovo.
+
 `storage.sql` va eseguito dopo `schema.sql`; rispetto a `groups.sql` e `sharing.sql` l'ordine
 non conta. Chi riceve un materiale condiviso ne scarica il file finché può leggere la riga (la
 revoca vale subito); scrivere e cancellare file è solo del proprietario. Senza `storage.sql`
