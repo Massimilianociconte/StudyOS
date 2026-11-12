@@ -27,6 +27,10 @@ import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { sharedOfTypes, useSharedStore } from "../store/useSharedStore";
 import { originOf, ownerColor, safeCssColor, sharedKey, ShareUserError, type SharedEntity } from "../lib/sharing";
 import { createId } from "../lib/id";
+import { groupNamesOf, useGroupExamStore } from "../store/useGroupExamStore";
+import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
+import { groupExamEvents, sessionIdOfEventId, type GroupExamCalendarMode } from "../lib/groupExamCalendar";
+import { sessionDraftFromEvent, type SessionDraft } from "../lib/groupExamForm";
 import type { CalendarEvent, EventOccasion, Exam, OccasionKind } from "../types";
 import {
   Button,
@@ -129,6 +133,8 @@ import type {
 // Pannello Condividi (e CloudPanel con supabase-js) caricato solo quando si apre dal menu.
 const loadShareDrawer = () => import("../components/ShareDrawer");
 const ShareDrawer = lazy(() => loadShareDrawer().then((module) => ({ default: module.ShareDrawer })));
+// Riquadro degli appelli del gruppo: caricato solo quando se ne apre uno.
+const GroupExamDrawer = lazy(() => import("../components/groupExams/GroupExamDrawer"));
 
 type StoredCalendarMode = (typeof STORED_CALENDAR_MODES)[number];
 
@@ -181,6 +187,8 @@ const modes: { id: CalendarViewId; label: string; title: string }[] = [
 /** Titolo accorciato per le conferme. */
 const shortTitle = (title: string) => (title.length > 80 ? `${title.slice(0, 77)}…` : title);
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
+/** «Appelli dei gruppi» nel menu: ogni tocco passa al modo successivo. */
+const NEXT_GROUP_EXAM_MODE: Record<GroupExamCalendarMode, GroupExamCalendarMode> = { all: "subjects", subjects: "off", off: "all" };
 
 /** Campi per un evento nuovo dal modulo: niente campi vuoti in più; il fuso è quello del dispositivo. */
 const newEventFields = (patch: Partial<CalendarEvent>) => {
@@ -292,6 +300,14 @@ export function CalendarView() {
     preferences,
     updatePreferences
   } = useStudyStore();
+  const examPlans = useStudyStore((state) => state.examPlans);
+  const { groupSessions, examGroups } = useGroupExamStore(useShallow((state) => ({ groupSessions: state.sessions, examGroups: state.groups })));
+  const [groupExamMode, setGroupExamMode] = useUiState<GroupExamCalendarMode>("calendar.groupExams", "all", {
+    scope: "device",
+    validate: oneOf("all", "subjects", "off")
+  });
+  // Appello del gruppo aperto nel riquadro: uno esistente, o uno nuovo da un mio evento d'esame.
+  const [groupExamTarget, setGroupExamTarget] = useState<{ key: number; sessionId: string | null; fromEventId?: string; draft?: SessionDraft } | null>(null);
   // "Colori delle tipologie" (preferenza sincronizzata: ripulita prima dell'uso).
   const typeOverrides = useMemo(() => sanitizeTypeColorOverrides(selectPreferences({ preferences }).eventTypeColors), [preferences]);
   // Appelli ufficiali UNIMI di BARB: solo con «Corso di laurea» acceso in Impostazioni.
@@ -315,6 +331,14 @@ export function CalendarView() {
    * in Esami già compilato (chiave `exams.new`, come dalla Home). Niente se quella materia ha già un
    * esame in quel giorno.
    */
+  // «Condividi con il gruppo»: mio evento d'esame singolo, non ancora collegato a un appello.
+  const shareToGroupFor = (item: CalendarEvent) => {
+    if (!examGroups.length || item.category !== "exam" || normalizeRepeat(item) || examPlans.some((plan) => plan.linkedEventId === item.id)) return undefined;
+    return () => {
+      closeEventEditor();
+      setGroupExamTarget({ key: Date.now(), sessionId: null, fromEventId: item.id, draft: sessionDraftFromEvent(item, subjects) });
+    };
+  };
   const trackExamFor = (item: CalendarEvent & { occurrenceDate?: string }) => {
     if (item.category !== "exam" || hasExamOn(exams, examPrefillFromEvent(item, subjects))) return undefined;
     return () => {
@@ -462,8 +486,14 @@ export function CalendarView() {
       ...item,
       occurrenceKey: `${item.sharedFrom.ownerId}:${item.occurrenceKey}`
     }));
-    return [...own, ...shared].sort((a, b) => a.start.localeCompare(b.start));
-  }, [events, sharedEvents, range]);
+    // Appelli dei gruppi: eventi di sola lettura (si aprono nel loro riquadro, non si trascinano).
+    const groupExams = expandEvents(
+      groupExamEvents({ sessions: groupSessions, plans: examPlans, groupNames: groupNamesOf(examGroups), subjects, events, mode: groupExamMode }),
+      range.from,
+      range.to
+    ).map((item) => (item.groupExam.deleted ? { ...item, title: `${GROUP_EXAM_TEXT.deletedInGroup} · ${item.title}` } : item));
+    return [...own, ...shared, ...groupExams].sort((a, b) => a.start.localeCompare(b.start));
+  }, [events, sharedEvents, range, groupSessions, examPlans, examGroups, subjects, groupExamMode]);
 
   // Ciò che le quattro viste mostrano, filtrato per materia (senza filtro: gli stessi elenchi).
   const visible = useMemo(
@@ -644,6 +674,11 @@ export function CalendarView() {
   const handlers: Handlers = {
     subjects,
     onEditEvent: (id, ownerId, occurrence) => {
+      const groupSessionId = sessionIdOfEventId(id);
+      if (groupSessionId) {
+        setGroupExamTarget({ key: Date.now(), sessionId: groupSessionId });
+        return;
+      }
       if (ownerId) {
         setEditingSharedKey(sharedKey(ownerId, "calendarEvent", id));
         return;
@@ -665,7 +700,9 @@ export function CalendarView() {
     onToggleTask: (id) => void toggleTask(id),
     onCreate: (at, kind = "event") => openCreator(at, kind),
     onOpenExam: openExam,
-    onMoveEvent: (item, nextStart) => void moveEvent(item, nextStart),
+    onMoveEvent: (item, nextStart) => {
+      if (!item.groupExam) void moveEvent(item, nextStart);
+    },
     onPreviewEvent: (event, point) => {
       if (supportsHoverPreview()) setPreview({ kind: "event", event, x: point.x, y: point.y });
     },
@@ -714,12 +751,31 @@ export function CalendarView() {
               ...(showBarb ? [{ label: OFFICIAL_EXAMS_ADD_LABEL, icon: "Landmark", onClick: () => setBarbImportOpen(true) } satisfies PageAction] : []),
               { label: CALENDAR_TEXT.subjectSummary, icon: "BookOpen", onClick: () => openSummary("semester") },
               { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") },
+              ...(examGroups.length
+                ? [
+                    {
+                      label: `${GROUP_EXAM_TEXT.calendarMenu}: ${GROUP_EXAM_TEXT.calendarModes[groupExamMode]}`,
+                      icon: "Users",
+                      onClick: () => setGroupExamMode(NEXT_GROUP_EXAM_MODE[groupExamMode])
+                    } satisfies PageAction
+                  ]
+                : []),
               { label: TYPE_COLORS_TEXT.menu, icon: "Palette", onClick: () => setTypeColorsOpen(true) }
             ]}
           />
         }
       />
       <CalendarTransfer ref={transfer} />
+      {groupExamTarget ? (
+        <Suspense fallback={null}>
+          <GroupExamDrawer
+            key={groupExamTarget.key}
+            sessionId={groupExamTarget.sessionId}
+            create={groupExamTarget.sessionId ? null : { draft: groupExamTarget.draft, fromEventId: groupExamTarget.fromEventId }}
+            onClose={() => setGroupExamTarget(null)}
+          />
+        </Suspense>
+      ) : null}
       {barbImportOpen && showBarb ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
       {typeColorsOpen ? (
         <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
@@ -1081,6 +1137,7 @@ export function CalendarView() {
           subjects={subjects}
           deleteConfirmText={(normalizeRepeat(editingEvent) ? EVENT_EDITOR_TEXT.deleteSeriesConfirm : EVENT_EDITOR_TEXT.deleteConfirm)(shortTitle(editingEvent.title))}
           onTrackExam={trackExamFor(editingEvent)}
+          onShareToGroup={shareToGroupFor(editingEvent)}
           onClose={closeEventEditor}
           onSubmit={async ({ changes }) => {
             await updateEvent(editingEvent.id, changes);

@@ -2,11 +2,12 @@
 import type { CalendarEvent, Subject, Task } from "../../types";
 import type { EventOccurrence } from "../../lib/recurrence";
 import type { SharedOrigin } from "../../lib/sharing";
+import type { GroupExamMarker } from "../../lib/groupExamCalendar";
 
 export type Subjects = Subject[];
 
 /** Occorrenza del calendario: propria, oppure di un'altra persona (`sharedFrom`). */
-export type CalendarOccurrence = EventOccurrence & { sharedFrom?: SharedOrigin };
+export type CalendarOccurrence = EventOccurrence & { sharedFrom?: SharedOrigin; groupExam?: GroupExamMarker };
 export type SharedCalendarEvent = CalendarEvent & { sharedFrom: SharedOrigin };
 /** Evento mostrato (chip, anteprima, editor): proprio o di un'altra persona. */
 export type ShownEvent = CalendarEvent & { sharedFrom?: SharedOrigin };

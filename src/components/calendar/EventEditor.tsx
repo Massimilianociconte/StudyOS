@@ -32,6 +32,7 @@ import { selectableSubjects } from "../../lib/selectors";
 import { isValidTimeZone } from "../../lib/tz";
 import { EVENT_CATEGORY_LABEL, EVENT_STATUS_LABEL, NO_SUBJECT_LABEL, PRIORITY_LABEL, formatMinutes } from "../../lib/labels";
 import { EVENT_EDITOR_TEXT, eventLinkLabel } from "../../lib/labels/calendar";
+import { GROUP_EXAM_TEXT } from "../../lib/labels/groupExams";
 
 /** Calendario di un'altra persona in cui posso aggiungere eventi, con le sue materie condivise. */
 export interface EditorCalendar {
@@ -82,7 +83,8 @@ export function EventEditor({
   onSubmit,
   onDelete,
   onDirtyChange,
-  onTrackExam
+  onTrackExam,
+  onShareToGroup
 }: {
   heading: string;
   initial: EventDraft;
@@ -115,6 +117,8 @@ export function EventEditor({
   onDirtyChange?: (dirty: boolean) => void;
   /** Evento «Esame» mio senza un esame per quella materia e quel giorno: «Segui come esame» apre Esami già compilato. */
   onTrackExam?: () => void;
+  /** Mio evento d'esame singolo: «Condividi con il gruppo» apre il riquadro dell'appello già compilato. */
+  onShareToGroup?: () => void;
 }) {
   const creating = createKind !== undefined;
   const readOnly = Boolean(sharedFrom && !sharedFrom.canEdit);
@@ -130,7 +134,7 @@ export function EventEditor({
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<"unsaved" | "delete" | null>(null);
   // «Segui come esame» con modifiche non salvate: dopo «Scarta le modifiche» si va in Esami, non si chiude e basta.
-  const [discardThen, setDiscardThen] = useState<"close" | "trackExam">("close");
+  const [discardThen, setDiscardThen] = useState<"close" | "trackExam" | "shareToGroup">("close");
   const [linkText, setLinkText] = useState("");
   const [linkError, setLinkError] = useState("");
 
@@ -182,6 +186,13 @@ export function EventEditor({
     setDiscardThen("trackExam");
     if (dirty) setConfirm("unsaved");
     else onTrackExam();
+  };
+
+  const shareToGroup = () => {
+    if (busy || !onShareToGroup) return;
+    setDiscardThen("shareToGroup");
+    if (dirty) setConfirm("unsaved");
+    else onShareToGroup();
   };
 
   const update = (change: (value: EventDraft) => EventDraft) => {
@@ -299,7 +310,7 @@ export function EventEditor({
             <Button variant="soft" onClick={() => setConfirm(null)} autoFocus>
               {EVENT_EDITOR_TEXT.unsavedKeep}
             </Button>
-            <Button variant="danger" icon="X" onClick={discardThen === "trackExam" && onTrackExam ? onTrackExam : onClose}>
+            <Button variant="danger" icon="X" onClick={discardThen === "trackExam" && onTrackExam ? onTrackExam : discardThen === "shareToGroup" && onShareToGroup ? onShareToGroup : onClose}>
               {EVENT_EDITOR_TEXT.unsavedDiscard}
             </Button>
           </div>
@@ -429,6 +440,15 @@ export function EventEditor({
             <p className="min-w-0 flex-1 basis-48 text-sm font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.trackExamHint}</p>
             <Button variant="soft" icon="GraduationCap" onClick={trackExam} disabled={busy}>
               {EVENT_EDITOR_TEXT.trackExam}
+            </Button>
+          </div>
+        ) : null}
+        {onShareToGroup && !readOnly ? (
+          // L'evento resta mio: nel gruppo nasce un appello collegato, che i compagni vedono.
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+            <p className="min-w-0 flex-1 basis-48 text-sm font-bold text-[var(--muted)]">{GROUP_EXAM_TEXT.shareToGroupHint}</p>
+            <Button variant="soft" icon="Users" onClick={shareToGroup} disabled={busy}>
+              {GROUP_EXAM_TEXT.shareToGroup}
             </Button>
           </div>
         ) : null}

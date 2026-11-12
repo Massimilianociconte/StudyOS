@@ -9,7 +9,7 @@ import { proposedStart } from "../../lib/eventEditor";
 import type { CalendarOccurrence, Handlers, PreviewPoint, ShownEvent, Subjects } from "./types";
 
 /** Si trascina solo ciò che si può modificare: gli eventi altrui in sola lettura non sono trascinabili. */
-export const canDrag = (item: CalendarOccurrence) => !item.sharedFrom || item.sharedFrom.canEdit;
+export const canDrag = (item: CalendarOccurrence) => !item.groupExam && (!item.sharedFrom || item.sharedFrom.canEdit);
 
 /** Apre l'evento toccato dicendo quale occorrenza è (giorno e serie), per chi sceglie cosa modificare. */
 export const editOccurrence = (handlers: Handlers, item: CalendarOccurrence) =>
