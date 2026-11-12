@@ -434,3 +434,19 @@ npx wrangler secret put SUPABASE_URL -c worker/keepalive.jsonc
 npx wrangler secret put SUPABASE_PUBLISHABLE_KEY -c worker/keepalive.jsonc
 npx wrangler deploy -c worker/keepalive.jsonc
 ```
+
+## Appelli condivisi dei gruppi (12/11/2026)
+
+Esegui nel SQL Editor, in quest'ordine, dopo `schema.sql`, `groups.sql`, `sharing.sql` e `people.sql`:
+
+1. `group-exams.sql` — appelli del gruppo, correzioni al catalogo BARB e cronologia. Rieseguibile.
+   Se manca `groups.sql` aggiornato si ferma con «Esegui prima groups.sql (versione del 12/11)».
+2. `verify.sql`: `definer_functions_ready` deve restare `true` (l'ingresso del connettore
+   `studyos_agent_group_snapshot` è tra quelli permessi); poi `sharing-verify.sql`: le colonne
+   `group_exams_*` devono essere tutte `true`.
+
+`group-exams.sql` può girare prima o dopo `agent.sql`: la funzione per il connettore remoto
+(`studyos_agent_group_snapshot`) usa `studyos_agent_user` solo quando viene chiamata.
+
+Prima di pubblicare il sito che legge gli appelli: senza lo script l'app mostra «Gli appelli del gruppo
+non sono ancora attivi.» e non perde nulla, ma la persona non può aggiungerne.

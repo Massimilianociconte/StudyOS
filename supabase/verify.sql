@@ -11,7 +11,7 @@
 -- - anon_closed_ready: anon (la chiave publishable senza accesso) non ha privilegi su quelle tabelle
 --   e nessuna policy (nemmeno sui file di studyos-files) vale per anon o per public.
 -- - definer_functions_ready: ogni funzione SECURITY DEFINER fissa il search_path e anon non la può
---   eseguire, tranne i sette ingressi protetti da un segreto (connettore remoto, push_gone) o senza dati
+--   eseguire, tranne gli otto ingressi protetti da un segreto (connettore remoto, push_gone) o senza dati
 --   (studyos_keepalive).
 -- - security_issues: vuota (null) quando le tre colonne sopra sono true; altrimenti dice quali oggetti
 --   sistemare (solo nomi, mai dati).
@@ -54,6 +54,7 @@ anon_entry (fn_oid) as (
     (to_regprocedure('public.studyos_agent_audit_list(text,integer,integer,text,text,timestamptz,timestamptz,uuid)')),
     (to_regprocedure('public.studyos_agent_restore(text,uuid)')),
     (to_regprocedure('public.studyos_agent_restore_call(text,uuid)')),
+    (to_regprocedure('public.studyos_agent_group_snapshot(text)')),
     (to_regprocedure('public.push_gone(text,text[])')),
     (to_regprocedure('public.studyos_keepalive(text)'))
   ) as allowed (fn)
