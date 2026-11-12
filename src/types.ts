@@ -541,6 +541,43 @@ export interface VaultRecord {
   updatedAt: string;
 }
 
+/** Tipo di prova di un appello del gruppo (stessi valori della colonna kind di group-exams.sql). */
+export type GroupExamKind = "appello" | "preappello" | "prova_in_itinere" | "scritto" | "orale" | "laboratorio" | "altro";
+
+/** Stato personale di un appello nel piano d'esame. */
+export type ExamPlanStatus = "planned" | "registered" | "taken" | "passed" | "failed" | "withdrawn" | "skipped";
+
+/** Copia dell'appello al momento della scelta: serve offline e per dire «è cambiato da quando l'hai scelto». */
+export interface ExamPlanSnapshot {
+  groupId: ID;
+  groupName: string;
+  courseKey: string;
+  courseName: string;
+  /** Giorno YYYY-MM-DD. */
+  date: string;
+  kind: GroupExamKind;
+  time: string | null;
+  room: string;
+  registrationCloses: string | null;
+  version: number;
+}
+
+/** Piano d'esame personale sopra un appello del gruppo (collezione examPlans, sync personale). */
+export interface ExamPlan extends BaseEntity {
+  sessionId: ID;
+  selected: boolean;
+  status: ExamPlanStatus;
+  notes: string;
+  reminders: EventReminder[];
+  remindRegistration: boolean;
+  subjectId?: ID;
+  examId?: ID;
+  linkedEventId?: ID;
+  /** `event:<id>` / `exam:<id>` scartati con «Tienili separati». */
+  dismissedMatches: string[];
+  snapshot: ExamPlanSnapshot;
+}
+
 export interface StudySnapshot {
   version: 1;
   exportedAt: string;
