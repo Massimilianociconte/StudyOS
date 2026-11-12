@@ -24,6 +24,11 @@ export interface ViewerHooks {
   isPersistent: () => boolean;
   /** Store caricato per la generazione corrente: può partire la prima passata. */
   ready: () => void;
+  /**
+   * Subito, quando l'account di prima se ne va (logout, anche involontario, o altro account): ciò che
+   * era in sospeso per lui su questo dispositivo (un invito aperto da link) non passa al prossimo.
+   */
+  accountLeft?: () => void;
 }
 
 /** Ciò che conta dello stato di useStudyStore: vault bloccato e modalità di sicurezza. */
@@ -102,6 +107,7 @@ export const createViewerLifecycle = (hooks: ViewerHooks): ViewerLifecycle => {
       if (next === current) return;
       const previous = current;
       current = next;
+      if (previous) hooks.accountLeft?.();
       requestSwitch(next, previous);
     },
     studyChanged: (curr, prev) => {

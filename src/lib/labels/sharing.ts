@@ -166,3 +166,14 @@ export const REVERT_TEXT = {
       .filter(Boolean)
       .join(" ")
 } as const;
+
+/**
+ * Uscita dall'account (Impostazioni → Account) con modifiche ai dati di altre persone non ancora inviate:
+ * restano solo su questo dispositivo e si perdono in entrambi i modi di uscire.
+ */
+export const SHARED_PENDING_TEXT = {
+  leave: (count: number) =>
+    count === 1
+      ? "1 modifica ai dati che altre persone condividono con te non è ancora arrivata: uscendo si perde. Premi «Sincronizza ora» qui sotto prima di uscire."
+      : `${count} modifiche ai dati che altre persone condividono con te non sono ancora arrivate: uscendo si perdono. Premi «Sincronizza ora» qui sotto prima di uscire.`
+} as const;

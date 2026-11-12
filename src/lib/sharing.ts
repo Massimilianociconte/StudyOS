@@ -7,6 +7,7 @@ import { fromDatetimeLocal, toDatetimeLocal } from "./dates";
 import { inviteLinkBase } from "./groups";
 import { SHARE_ACTION_FAILED, SHARE_GONE_TEXT, UNKNOWN_PERSON, UNKNOWN_PERSON_IN_SENTENCE, scopesSummary } from "./labels";
 import { normalizeExternalUrl } from "./safeUrl";
+import { chunkBySize } from "./syncMerge";
 import { taskStatusTransitionPatch } from "./taskTimer";
 import type { Task } from "../types";
 
@@ -129,6 +130,8 @@ export interface RemoteSharedRow {
   payload: Record<string, unknown>;
   deleted: boolean;
   updated_at: string;
+  /** Id della riga sul server: c'è solo nel pull, che pagina per (updated_at, id). */
+  id?: string;
 }
 
 type Payload = Record<string, unknown>;
@@ -220,6 +223,39 @@ export const mergeSharedRows = (
 };
 
 /**
+ * Voci in coda che le righe del server (già passate da withoutSupersededRows) superano: la versione
+ * del server è uguale o più recente della modifica in coda, oppure l'elemento in coda come eliminato
+ * è già eliminato lassù (o cambiato dopo l'eliminazione). Inviarle riscriverebbe la versione del
+ * proprietario a nome di chi guarda, con una revisione che non cambia nulla: escono dalla coda, come
+ * dropOutbox di planMerge per i dati personali. Stessa regola di mergeSharedRows.
+ */
+export const supersededOutboxKeys = (
+  items: readonly SharedItem[],
+  ownerId: string,
+  rows: readonly RemoteSharedRow[],
+  outbox: readonly SharedOutboxEntry[]
+): Set<string> => {
+  const queued = new Map(outbox.map((entry) => [entry.key, entry]));
+  const cached = new Map(items.map((entry) => [entry.key, entry]));
+  const superseded = new Set<string>();
+  for (const row of rows) {
+    const key = sharedKey(ownerId, row.entity_type, row.entity_id);
+    const entry = queued.get(key);
+    if (!entry) continue;
+    // Un'eliminazione in coda arriva qui solo con un'eliminazione del server o una modifica più recente.
+    if (entry.deleted) {
+      superseded.add(key);
+      continue;
+    }
+    const local = cached.get(key);
+    const remoteAt = str(row.payload.updatedAt) ?? str(row.payload.deletedAt);
+    if (local && timestampOf(local.entity.updatedAt) > timestampOf(remoteAt)) continue;
+    superseded.add(key);
+  }
+  return superseded;
+};
+
+/**
  * Una mia eliminazione in coda non lascia l'elemento in cache, quindi mergeSharedRows non la
  * riconosce: una riga del server non più recente dell'eliminazione lo riporterebbe in vita.
  * Toglie quelle righe (i tombstone e le modifiche del proprietario successive restano).
@@ -278,6 +314,15 @@ export const dropUnshared = (items: readonly SharedItem[], received: readonly Sh
 /** Campi che puntano a entità del proprietario: chi riceve non li vede, quindi non li cambia. */
 const OWNER_LINK_FIELDS = ["attachmentIds", "goalId", "linkedTaskIds", "linkedSessionIds"] as const;
 
+/**
+ * Scrittura su un elemento altrui, con `updatedAt` = `now`. Non «un millisecondo dopo la versione che si
+ * modifica»: con l'orologio del proprietario avanti quel timbro è nel futuro, il trigger
+ * `studyos_items_recipient_values` (sharing.sql) lo riporta a now() dopo averlo accettato, e il
+ * dispositivo del proprietario, che ha la sua copia più recente e nulla in coda, la ripubblicava
+ * sopra la modifica già accettata: persa in silenzio. Con `now` la modifica perde subito ("stale") e
+ * torna indietro sotto gli occhi di chi l'ha fatta. Il timbro più tardo serve insieme al server
+ * (`greatest(now(), timbro attuale + 1 ms)` nel trigger).
+ */
 export const prepareSharedWrite = (previous: Payload | undefined, next: Payload, now: string): Payload => {
   const result: Payload = { ...next, updatedAt: now };
   for (const field of OWNER_LINK_FIELDS) {
@@ -302,6 +347,12 @@ export interface SharedOutboxEntry {
   deleted: boolean;
   deletedAt?: string;
   queuedAt: string;
+  /**
+   * Inviata almeno una volta (segnato e salvato prima dell'invio). Se la risposta si perde (timeout,
+   * rete caduta) la riga può essere già sul server: un elemento creato qui e poi eliminato deve allora
+   * mandare il tombstone, altrimenti il pull lo riporterebbe in vita. Passa alle modifiche successive.
+   */
+  attempted?: boolean;
 }
 
 export interface SharedPushBatch {
@@ -399,33 +450,142 @@ export const requireAffectedShare = (rows: readonly unknown[] | null | undefined
   if (!rows?.length) throw new ShareUserError(SHARE_GONE_TEXT);
 };
 
-/** Lotti per proprietario (al massimo `maxRows` righe, come push_shared_rows). */
-export const sharedPushBatches = (outbox: readonly SharedOutboxEntry[], items: readonly SharedItem[], maxRows = 200) => {
+/**
+ * Byte per lotto, come l'invio dei dati personali (PUSH_MAX_BYTES in cloudSync.ts, copiato: quel modulo
+ * porta con sé supabase-js). Oltre, la richiesta può essere rifiutata intera.
+ */
+export const SHARE_PUSH_MAX_BYTES = 900_000;
+
+const utf8 = new TextEncoder();
+
+/**
+ * Lotti per proprietario: al massimo `maxRows` righe (come push_shared_rows) e `maxBytes` byte (una
+ * riga più grande va da sola). Un lotto troppo grande non blocca più tutta la coda.
+ */
+export const sharedPushBatches = (
+  outbox: readonly SharedOutboxEntry[],
+  items: readonly SharedItem[],
+  maxRows = 200,
+  maxBytes = SHARE_PUSH_MAX_BYTES
+) => {
   const byKey = new Map(items.map((entry) => [entry.key, entry]));
   const orphans: SharedOutboxEntry[] = [];
-  const batches: SharedPushBatch[] = [];
-  const open = new Map<string, SharedPushBatch>();
+  const byOwner = new Map<string, { entry: SharedOutboxEntry; row: SharedPushBatch["rows"][number]; size: number }[]>();
   for (const entry of [...outbox].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt))) {
     const cached = byKey.get(entry.key);
     if (!entry.deleted && !cached) {
       orphans.push(entry);
       continue;
     }
-    let batch = open.get(entry.ownerId);
-    if (!batch || batch.rows.length >= maxRows) {
-      batch = { ownerId: entry.ownerId, entries: [], rows: [] };
-      open.set(entry.ownerId, batch);
-      batches.push(batch);
-    }
-    batch.entries.push(entry);
-    batch.rows.push({
+    const row = {
       entity_type: entry.entityType,
       entity_id: entry.entityId,
       payload: entry.deleted ? { id: entry.entityId, deletedAt: entry.deletedAt ?? entry.queuedAt } : withoutProtectedKeys((cached as SharedItem).entity),
       deleted: entry.deleted
-    });
+    };
+    const list = byOwner.get(entry.ownerId) ?? [];
+    list.push({ entry, row, size: utf8.encode(JSON.stringify(row)).length });
+    byOwner.set(entry.ownerId, list);
+  }
+  const batches: SharedPushBatch[] = [];
+  for (const [ownerId, list] of byOwner) {
+    for (const chunk of chunkBySize(list, (part) => part.size, maxBytes, maxRows)) {
+      batches.push({ ownerId, entries: chunk.map((part) => part.entry), rows: chunk.map((part) => part.row) });
+    }
   }
   return { batches, orphans };
+};
+
+/** Risposta di push_shared_rows per una riga. */
+export interface SharedPushResult {
+  entity_type: string;
+  entity_id: string;
+  accepted: boolean;
+  reason: string | null;
+}
+
+/**
+ * Esito di un lotto: voci accettate e rifiutate (anche quelle senza risposta), e il motivo del server per
+ * una voce ("stale", "denied" o null).
+ */
+export const sharedPushOutcome = (ownerId: string, entries: readonly SharedOutboxEntry[], results: readonly SharedPushResult[]) => {
+  const byKey = new Map(results.map((result) => [sharedKey(ownerId, result.entity_type, result.entity_id), result]));
+  return {
+    accepted: entries.filter((entry) => byKey.get(entry.key)?.accepted === true),
+    rejected: entries.filter((entry) => byKey.get(entry.key)?.accepted !== true),
+    reason: (entry: SharedOutboxEntry) => byKey.get(entry.key)?.reason ?? null
+  };
+};
+
+/**
+ * Righe del server per le voci rifiutate, una per voce e nello stesso ordine. Una riga che il server non
+ * mostra (permesso tolto, filtro cambiato, mai scritta) torna come eliminazione: l'elemento sparisce dalla cache.
+ */
+export const rowsForEntries = (ownerId: string, entries: readonly SharedOutboxEntry[], found: readonly RemoteSharedRow[]): RemoteSharedRow[] => {
+  const byKey = new Map(found.map((row) => [sharedKey(ownerId, row.entity_type, row.entity_id), row]));
+  return entries.map(
+    (entry) => byKey.get(entry.key) ?? { entity_type: entry.entityType, entity_id: entry.entityId, payload: { id: entry.entityId }, deleted: true, updated_at: "" }
+  );
+};
+
+/**
+ * Se dire che il permesso non c'è più: una voce rifiutata con "denied" la cui riga riletta (`rows`, nello
+ * stesso ordine) è ancora lì. Il server risponde "denied" anche all'eliminazione di una riga che non ha o
+ * che ha già eliminato (risposta persa e nuovo invio, secondo dispositivo, proprietario che ha eliminato
+ * prima): lì l'eliminazione ha comunque l'effetto voluto.
+ */
+export const sharedPushDenied = (
+  rejected: readonly SharedOutboxEntry[],
+  reason: (entry: SharedOutboxEntry) => string | null,
+  rows: readonly RemoteSharedRow[]
+) => rejected.some((entry, index) => reason(entry) === "denied" && !(entry.deleted && rows[index]?.deleted === true));
+
+/**
+ * Invia i lotti uno alla volta. Un lotto che fallisce non ferma gli altri (le sue voci restano in coda) e
+ * il primo errore arriva alla fine. `abort` (chi guarda è cambiato) esce subito; `offline` (rete assente)
+ * ferma i lotti dopo, che fallirebbero uguale, ognuno dopo l'attesa massima.
+ */
+export const pushEachBatch = async <B>(
+  batches: readonly B[],
+  push: (batch: B) => Promise<void>,
+  rules: { abort: (error: unknown) => boolean; offline: (error: unknown) => boolean }
+) => {
+  let failed = false;
+  let failure: unknown;
+  for (const batch of batches) {
+    try {
+      await push(batch);
+    } catch (error) {
+      if (rules.abort(error)) throw error;
+      if (!failed) failure = error;
+      failed = true;
+      if (rules.offline(error)) break;
+    }
+  }
+  if (failed) throw failure;
+};
+
+/**
+ * Lotti con voci fallite nella passata prima messi in fondo (ordine stabile). Un lotto che scade sempre
+ * (troppo lento, timeout del server) ferma i lotti dopo di lui come se la rete mancasse: in testa, li
+ * bloccava a ogni passata, anche quelli di altri proprietari.
+ */
+export const failedBatchesLast = <B extends { entries: readonly { key: string }[] }>(batches: readonly B[], failed: ReadonlySet<string>): B[] => {
+  if (!failed.size) return [...batches];
+  const hit = (batch: B) => batch.entries.some((entry) => failed.has(entry.key));
+  return [...batches.filter((batch) => !hit(batch)), ...batches.filter(hit)];
+};
+
+const quotedFilterValue = (value: string) => `"${value.replace(/["\\]/g, "")}"`;
+
+/**
+ * Filtro PostgREST (per `.or()`) delle righe dopo `after` nell'ordine (updated_at, id): il pull pagina
+ * così, non per posizione. Con l'offset una riga cambiata durante la lettura passava in fondo e faceva
+ * saltare quella dopo, che poi il cursore superava: restava vecchia in cache.
+ */
+export const afterRowFilter = (after: { updatedAt: string; id: string }) => {
+  const at = quotedFilterValue(after.updatedAt);
+  return `updated_at.gt.${at},and(updated_at.eq.${at},id.gt.${quotedFilterValue(after.id)})`;
 };
 
 const stringList = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []);
@@ -573,6 +733,13 @@ export const isMissingSharingObject = (error: ServerError) =>
  */
 const NETWORK_ERROR_RE =
   /failed to fetch|networkerror|load failed|network request failed|timed? ?out|timeout|aborted|err_connection|dynamically imported module|importing a module script failed/i;
+
+/**
+ * Errore di rete o di attesa scaduta (anche già tradotto da shareErrorText): un invio non riuscito così
+ * fallirebbe uguale per gli altri lotti, quindi non si prova con quelli.
+ */
+export const isShareNetworkError = (error: unknown) =>
+  error instanceof Error && (error.message.startsWith(SERVER_UNREACHABLE_TEXT) || NETWORK_ERROR_RE.test(error.message));
 
 /** Sonda sulla tabella delle condivisioni: solo un oggetto mancante vale "non attiva", un errore di rete resta incerto. */
 export const sharingProbeOutcome = (error: ServerError): "available" | "missing" | "failed" =>

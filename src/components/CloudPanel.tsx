@@ -4,7 +4,10 @@ import { whenPersisted } from "../lib/persistence";
 import { signOutThisDevice } from "../lib/deviceSignOut";
 import { setCloudSyncState } from "../lib/cloudSyncState";
 import { ACCOUNT_TEXT } from "../lib/labels/account";
+import { SHARED_PENDING_TEXT } from "../lib/labels/sharing";
+import { clearPendingShare } from "../lib/shareInvite";
 import { useStudyStore } from "../store/useStudyStore";
+import { useSharedStore } from "../store/useSharedStore";
 import {
   isCloudConfigured,
   resendConfirmation,
@@ -60,6 +63,8 @@ export function CloudPanel() {
   const [leaving, setLeaving] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  // Modifiche ai dati di altre persone non ancora inviate: l'uscita dall'account le perde.
+  const sharedPending = useSharedStore((state) => state.outbox.length);
   const [pendingEmail, setPendingEmail] = useState<string | null>(() =>
     typeof window !== "undefined" ? localStorage.getItem(PENDING_EMAIL_KEY) : null
   );
@@ -203,6 +208,9 @@ export function CloudPanel() {
     try {
       const result = await signOut("local");
       setLeaving(false);
+      // Un invito aperto da link resta di chi l'ha aperto: il prossimo account su questo dispositivo non lo vede.
+      // Qui e non solo al cambio di sessione: senza server la pagina si ricarica prima che la sessione cambi.
+      clearPendingShare();
       if (result.localOnly) {
         setInfo({ kind: "pending", text: ACCOUNT_TEXT.leftOffline });
         await whenPersisted().catch(() => undefined);
@@ -231,6 +239,7 @@ export function CloudPanel() {
         dropSession: () => setCloudSyncState({ session: null, lastSync: null, status: "idle", error: undefined }),
         schedule: (fn, ms) => void window.setTimeout(fn, ms)
       });
+      clearPendingShare();
       // Una sincronizzazione già partita finisce prima dello svuotamento (le sue righe tardive
       // vengono comunque scartate: la sessione non c'è più).
       await whenSyncIdle();
@@ -278,7 +287,11 @@ export function CloudPanel() {
   const handleSyncNow = async () => {
     setBusy(true);
     try {
-      await requestSync();
+      await Promise.all([
+        requestSync(),
+        // Anche le modifiche ai dati di altre persone (caricato solo se ce ne sono: resta fuori dal bundle iniziale).
+        sharedPending > 0 ? import("../lib/shareSync").then((module) => module.syncSharedNow()).catch(() => undefined) : undefined
+      ]);
     } finally {
       setBusy(false);
     }
@@ -345,10 +358,13 @@ export function CloudPanel() {
               <p className="text-sm font-bold text-[var(--muted)]">{ACCOUNT_TEXT.leaveText}</p>
               <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveKeepHint}</p>
               <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveRemoveHint}</p>
-              {sync.pendingCount > 0 ? (
+              {sync.pendingCount > 0 || sharedPending > 0 ? (
                 <div className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3">
-                  <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.leavePending(sync.pendingCount)}</p>
-                  {sync.warning ? <p className="text-sm font-bold text-[var(--warning-text)]">{sync.warning}</p> : null}
+                  {sync.pendingCount > 0 ? (
+                    <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.leavePending(sync.pendingCount)}</p>
+                  ) : null}
+                  {sharedPending > 0 ? <p className="text-sm font-bold text-[var(--warning-text)]">{SHARED_PENDING_TEXT.leave(sharedPending)}</p> : null}
+                  {sync.warning && sync.pendingCount > 0 ? <p className="text-sm font-bold text-[var(--warning-text)]">{sync.warning}</p> : null}
                   <div className="flex flex-wrap gap-2">
                     <Button icon="Sparkles" variant="soft" onClick={handleSyncNow} disabled={busy || sync.status === "syncing"}>
                       {ACCOUNT_TEXT.leaveSyncNow}

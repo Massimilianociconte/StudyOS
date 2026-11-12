@@ -21,6 +21,13 @@ import {
   grantFromRow,
   grantSignature,
   inviteFromRow,
+  failedBatchesLast,
+  isShareNetworkError,
+  afterRowFilter,
+  pushEachBatch,
+  rowsForEntries,
+  sharedPushDenied,
+  sharedPushOutcome,
   missingVisibleKeys,
   offerToRow,
   ownerEntityTypes,
@@ -35,7 +42,6 @@ import {
   safeCssColor,
   shareErrorText,
   shareNotices,
-  sharedKey,
   sharedPushBatches,
   sharingProbeOutcome,
   ShareUserError,
@@ -48,8 +54,12 @@ import {
   type ShareOffer,
   type SharePermission,
   type ShareRequest,
-  type ShareScope
+  type ShareScope,
+  type SharedOutboxEntry,
+  type SharedPushBatch,
+  type SharedPushResult
 } from "./sharing";
+import { clearPendingShare } from "./shareInvite";
 import { supabase } from "./supabase";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -69,6 +79,8 @@ import {
 
 const PAGE_SIZE = 200;
 const ID_PAGE_SIZE = 1000;
+/** Id per richiesta nella rilettura delle righe rifiutate. */
+const REFETCH_PAGE_SIZE = 100;
 const CURSOR_OVERLAP_MS = 60_000;
 const DEBOUNCE_MS = 400;
 const PERIODIC_MS = 5 * 60_000;
@@ -85,6 +97,8 @@ const SHARE_COLUMNS =
 // token_hash non è leggibile (grant per colonna): mai chiederlo.
 const INVITE_COLUMNS = "id, owner_id, owner_name, offers, requests, recipient_email, status, accepted_by, expires_at, created_at";
 const ROW_COLUMNS = "entity_type, entity_id, payload, deleted, updated_at";
+/** Il pull pagina per (updated_at, id): serve anche l'id della riga. */
+const PULL_COLUMNS = `id, ${ROW_COLUMNS}`;
 
 // Un id per caricamento di pagina: gli eventi Realtime delle proprie scritture si ignorano.
 const clientId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `share-${Date.now()}`;
@@ -144,7 +158,9 @@ const viewers = createViewerLifecycle({
   },
   isLocked: () => useStudyStore.getState().locked,
   isPersistent,
-  ready: () => schedule(0)
+  ready: () => schedule(0),
+  // Logout o altro account: un invito aperto da link (token su questo dispositivo) non passa al prossimo.
+  accountLeft: () => clearPendingShare()
 });
 
 /** Da chiamare dopo ogni attesa e prima di toccare lo store: un risultato di un'altra generazione si scarta. */
@@ -253,27 +269,38 @@ const pullShares = async (me: string, gen: number) => {
   return { received, invites: inviteList };
 };
 
-/** Righe di `ownerId` cambiate da `since` (tutte con null), pagina per pagina. Ritorna l'ultimo updated_at visto. */
+/**
+ * Righe di `ownerId` cambiate da `since` (tutte con null), pagina per pagina. Ritorna l'ultimo updated_at visto.
+ * Pagine per (updated_at, id), non per posizione (afterRowFilter): con l'offset una riga cambiata durante
+ * la lettura passava in fondo e faceva saltare quella dopo.
+ */
 const pullRows = async (ownerId: string, types: string[], since: string | null, gen: number) => {
   const from = since ? new Date(Date.parse(since) - CURSOR_OVERLAP_MS).toISOString() : null;
   let latest = since;
-  for (let offset = 0; ; offset += PAGE_SIZE) {
+  let after: { updatedAt: string; id: string } | null = null;
+  for (;;) {
     let query = client()
       .from("studyos_items")
-      .select(ROW_COLUMNS)
+      .select(PULL_COLUMNS)
       .eq("user_id", ownerId)
       .in("entity_type", types)
       .order("updated_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (from) query = query.gte("updated_at", from);
+      .limit(PAGE_SIZE);
+    if (after) {
+      query = query.or(afterRowFilter(after));
+    } else if (from) {
+      query = query.gte("updated_at", from);
+    }
     const { data, error } = await query;
     still(gen);
     fail(error);
     const rows = (data ?? []) as RemoteSharedRow[];
     if (rows.length) {
       await useSharedStore.getState().applyRows(ownerId, rows);
-      latest = rows[rows.length - 1].updated_at;
+      const last = rows[rows.length - 1];
+      latest = last.updated_at;
+      after = { updatedAt: last.updated_at, id: String(last.id ?? "") };
     }
     if (rows.length < PAGE_SIZE) break;
   }
@@ -331,58 +358,81 @@ const pullOwner = async (me: string, ownerId: string, types: string[], sig: stri
   return recheck;
 };
 
-const refetchRow = async (ownerId: string, entityType: string, entityId: string, gen: number) => {
-  const { data, error } = await client()
-    .from("studyos_items")
-    .select(ROW_COLUMNS)
-    .eq("user_id", ownerId)
-    .eq("entity_type", entityType)
-    .eq("entity_id", entityId)
-    .maybeSingle();
-  still(gen);
-  fail(error);
-  // Riga non più visibile (permesso tolto, filtro cambiato): sparisce dalla cache.
-  const row: RemoteSharedRow =
-    (data as RemoteSharedRow | null) ?? { entity_type: entityType, entity_id: entityId, payload: { id: entityId }, deleted: true, updated_at: "" };
-  await useSharedStore.getState().applyRows(ownerId, [row]);
+/** Righe del server per le voci rifiutate (rowsForEntries), con una richiesta ogni REFETCH_PAGE_SIZE id. */
+const refetchRows = async (ownerId: string, entries: readonly SharedOutboxEntry[], gen: number): Promise<RemoteSharedRow[]> => {
+  const found: RemoteSharedRow[] = [];
+  const ids = [...new Set(entries.map((entry) => entry.entityId))];
+  const types = [...new Set(entries.map((entry) => entry.entityType))];
+  for (let start = 0; start < ids.length; start += REFETCH_PAGE_SIZE) {
+    const { data, error } = await client()
+      .from("studyos_items")
+      .select(ROW_COLUMNS)
+      .eq("user_id", ownerId)
+      .in("entity_type", types)
+      .in("entity_id", ids.slice(start, start + REFETCH_PAGE_SIZE));
+    still(gen);
+    fail(error);
+    found.push(...((data ?? []) as RemoteSharedRow[]));
+  }
+  return rowsForEntries(ownerId, entries, found);
 };
 
 // ——— Push ———
 
+const pushBatch = async (batch: SharedPushBatch, gen: number) => {
+  // Segnate (e salvate) prima dell'invio: se la risposta si perde, la riga può essere già sul server.
+  await useSharedStore.getState().markAttempted(batch.entries);
+  still(gen);
+  const { data, error } = await client().rpc("push_shared_rows", {
+    p_owner_id: batch.ownerId,
+    p_client_id: clientId,
+    p_rows: batch.rows
+  });
+  still(gen);
+  fail(error);
+  const { accepted, rejected, reason } = sharedPushOutcome(batch.ownerId, batch.entries, (data ?? []) as SharedPushResult[]);
+  // Le accettate diventano note al server: un elemento creato qui ed eliminato durante l'invio
+  // riceve ora il suo tombstone, invece di tornare in vita al pull.
+  await useSharedStore.getState().settlePushed(accepted, accepted);
+  if (!rejected.length) return;
+  // stale: vince la versione remota; denied: si torna a ciò che il server mostra. Le voci escono dalla
+  // coda solo con la riga riletta: se la rilettura fallisce restano, e la passata dopo riprova.
+  const rows = await refetchRows(batch.ownerId, rejected, gen);
+  still(gen);
+  await useSharedStore.getState().settleRejected(batch.ownerId, rejected, rows);
+  if (sharedPushDenied(rejected, reason, rows)) {
+    still(gen);
+    // Mostrato in ogni sezione (AppShell): chi ha modificato dal Calendario lo vede lì.
+    const owner = useSharedStore.getState().received.find((grant) => grant.ownerId === batch.ownerId)?.ownerName ?? "";
+    useSharedStore.getState().setNotice(SHARE_NOTICE_TEXT.denied(owner));
+  }
+};
+
+/** Chiavi delle voci nei lotti falliti nell'ultima passata: alla prossima quei lotti partono per ultimi. */
+let failedLastPass = new Set<string>();
+
+/** Invia la coda, un lotto alla volta: un lotto che fallisce (troppo grande, errore del server) non ferma gli altri. */
 const pushOutbox = async (gen: number) => {
   const store = useSharedStore.getState();
   const { batches, orphans } = sharedPushBatches(store.outbox, store.items);
   if (orphans.length) await store.settleOutbox(orphans);
-  for (const batch of batches) {
-    still(gen);
-    const { data, error } = await client().rpc("push_shared_rows", {
-      p_owner_id: batch.ownerId,
-      p_client_id: clientId,
-      p_rows: batch.rows
-    });
-    still(gen);
-    fail(error);
-    const results = (data ?? []) as { entity_type: string; entity_id: string; accepted: boolean; reason: string | null }[];
-    const accepted = new Set(results.filter((result) => result.accepted).map((result) => sharedKey(batch.ownerId, result.entity_type, result.entity_id)));
-    // Le accettate diventano note al server: un elemento creato qui ed eliminato durante l'invio
-    // riceve ora il suo tombstone, invece di tornare in vita al pull.
-    await useSharedStore.getState().settlePushed(
-      batch.entries,
-      batch.entries.filter((entry) => accepted.has(entry.key))
+  const failedNow = new Set<string>();
+  try {
+    await pushEachBatch(
+      failedBatchesLast(batches, failedLastPass),
+      async (batch) => {
+        still(gen);
+        try {
+          await pushBatch(batch, gen);
+        } catch (error) {
+          if (!(error instanceof ViewerChanged)) for (const entry of batch.entries) failedNow.add(entry.key);
+          throw error;
+        }
+      },
+      { abort: (error) => error instanceof ViewerChanged, offline: isShareNetworkError }
     );
-    let denied = false;
-    for (const result of results) {
-      if (result.accepted) continue;
-      if (result.reason === "denied") denied = true;
-      // stale: vince la versione remota; denied: si torna a ciò che il server mostra.
-      await refetchRow(batch.ownerId, result.entity_type, result.entity_id, gen);
-    }
-    if (denied) {
-      still(gen);
-      // Mostrato in ogni sezione (AppShell): chi ha modificato dal Calendario lo vede lì.
-      const owner = useSharedStore.getState().received.find((grant) => grant.ownerId === batch.ownerId)?.ownerName ?? "";
-      useSharedStore.getState().setNotice(SHARE_NOTICE_TEXT.denied(owner));
-    }
+  } finally {
+    failedLastPass = failedNow;
   }
 };
 
@@ -411,7 +461,10 @@ const notifyNew = async (me: string, received: ShareGrant[], invites: ShareInvit
       kind: "share",
       title: `${grant.ownerName || "Qualcuno"} condivide con te: ${SHARE_SCOPE_LABEL[grant.scope]}`,
       body: grant.permission === "edit" ? "Puoi vedere e modificare. Lo trovi in Condivisione." : "Puoi vedere. Lo trovi in Condivisione.",
-      linkView: "sharing"
+      linkView: "sharing",
+      // Ora del server, non di questo dispositivo: una lettura o eliminazione già fatta altrove resta più
+      // recente e vince la sync, invece di farla ricomparire da leggere.
+      createdAt: grant.createdAt
     });
   }
   for (const invite of notices.invites) {
@@ -421,7 +474,8 @@ const notifyNew = async (me: string, received: ShareGrant[], invites: ShareInvit
       kind: "share",
       title: `${invite.ownerName || "Qualcuno"} ti invita a condividere`,
       body: `${scopesSummary(invite.offers)}. Apri Condivisione per rispondere.`,
-      linkView: "sharing"
+      linkView: "sharing",
+      createdAt: invite.createdAt
     });
   }
   // Segnate come viste dopo le notifiche: una passata interrotta a metà non ne perde nessuna
@@ -508,7 +562,15 @@ const syncOnce = async () => {
     if (!(await isSharingAvailable())) return;
     still(gen);
     useSharedStore.getState().setAvailability("ready");
-    await pushOutbox(gen);
+    // Un invio non riuscito non ferma gli aggiornamenti: revoche, condivisioni nuove e modifiche degli
+    // altri arrivano lo stesso. L'errore si mostra a fine passata.
+    let pushFailure: unknown = null;
+    try {
+      await pushOutbox(gen);
+    } catch (error) {
+      if (error instanceof ViewerChanged || gen !== viewers.generation) throw error;
+      pushFailure = error;
+    }
     const { received, invites } = await pullShares(me, gen);
     const owners = ownerEntityTypes(received);
     await forgetCursors(me, new Set(owners.keys()));
@@ -522,18 +584,22 @@ const syncOnce = async () => {
     await notifyNew(me, received, invites, gen);
     await ensureRealtime(me, [...owners.keys()], gen);
     still(gen);
-    showError(null);
+    showError(pushFailure === null ? null : errorText(pushFailure));
   } catch (error) {
     // Chi guarda è cambiato: la passata della nuova generazione parte da sola (e ricontrolla tutto).
     if (error instanceof ViewerChanged || gen !== viewers.generation) return;
     // Il controllo dei 5 minuti non riuscito si ripete alla passata dopo.
     cadence.passFailed(full);
     // Rete assente o errore temporaneo: si riprova al prossimo segnale o al controllo periodico.
-    // Si passa l'errore stesso, non il suo messaggio: un ShareUserError (da fail()) è già in italiano e
-    // resta com'è; un errore grezzo (TypeError di rete, bug) diventa testo italiano.
-    showError(error instanceof Error ? shareErrorText(error) : "Aggiornamento non riuscito.");
+    showError(errorText(error));
   }
 };
+
+/**
+ * Si passa l'errore stesso, non il suo messaggio: un ShareUserError (da fail()) è già in italiano e
+ * resta com'è; un errore grezzo (TypeError di rete, bug) diventa testo italiano.
+ */
+const errorText = (error: unknown) => (error instanceof Error ? shareErrorText(error) : "Aggiornamento non riuscito.");
 
 /** Una passata completa (single-flight: chiamate concorrenti si uniscono in una passata in più). */
 export const syncSharedNow = (): Promise<void> => {
@@ -560,8 +626,11 @@ export const initShareSync = () => {
   if (initialized || !supabase) return;
   initialized = true;
   subscribeCloudSync((state) => viewers.setViewer(state.session?.user.id ?? null));
+  // Solo voci nuove (chiave e queuedAt): segnarle come tentate o toglierle non chiede un'altra passata.
   useSharedStore.subscribe((curr, prev) => {
-    if (curr.outbox !== prev.outbox && curr.outbox.length) schedule();
+    if (curr.outbox === prev.outbox || !curr.outbox.length) return;
+    const known = new Set(prev.outbox.map((entry) => `${entry.key}|${entry.queuedAt}`));
+    if (curr.outbox.some((entry) => !known.has(`${entry.key}|${entry.queuedAt}`))) schedule();
   });
   viewers.watch();
   const flags = (state: ReturnType<typeof useStudyStore.getState>) => ({ locked: state.locked, mode: state.settings.security.mode });
