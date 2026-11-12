@@ -755,14 +755,18 @@ interface Transition {
   to: number;
 }
 
-/** Cambi d'ora del fuso tra l'inizio di `fromYear` e la fine di `toYear`, al secondo (da Intl). */
+/**
+ * Cambi d'ora del fuso tra l'inizio di `fromYear` e la fine di `toYear`, al secondo (da Intl). Passi di 3
+ * giorni: i due cambi più vicini dei dati IANA distano 7 giorni (Gaza nel 2040, Ramadan; Brasile nel 2000),
+ * e con passi di una settimana sparivano entrambi.
+ */
 const transitionsOf = (zone: string, fromYear: number, toYear: number): Transition[] => {
   const out: Transition[] = [];
   const end = utcMs(toYear + 1, 1, 1);
   let t = utcMs(fromYear, 1, 1);
   let previous = timeZoneOffset(t, zone);
   while (t < end && out.length < 1000) {
-    const next = Math.min(t + 7 * DAY_MS, end);
+    const next = Math.min(t + 3 * DAY_MS, end);
     const offset = timeZoneOffset(next, zone);
     if (offset === previous) {
       t = next;
@@ -783,37 +787,88 @@ const transitionsOf = (zone: string, fromYear: number, toYear: number): Transiti
   return out;
 };
 
+/** Il cambio d'ora come lo scrive un VTIMEZONE: tipo, ora locale prima del cambio, n-esimo giorno della settimana. */
+const describeTransition = (transition: Transition) => {
+  const local = new Date(transition.ms + transition.from);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + 1;
+  const day = local.getUTCDate();
+  const nth = day + 7 > daysInMonth(year, month) ? -1 : Math.ceil(day / 7);
+  const time = `${pad(local.getUTCHours())}${pad(local.getUTCMinutes())}${pad(local.getUTCSeconds())}`;
+  const kind = transition.to > transition.from ? "DAYLIGHT" : "STANDARD";
+  return {
+    ...transition,
+    kind,
+    year,
+    month,
+    byDay: `${nth}${WEEKDAY_BY_NUMBER[local.getUTCDay()]}`,
+    local: `${pad(year, 4)}${pad(month)}${pad(day)}T${time}`,
+    key: `${kind}|${month}|${nth}${local.getUTCDay()}|${time}|${transition.from}|${transition.to}`
+  };
+};
+
 /**
  * VTIMEZONE del fuso IANA per gli anni dati, dalle regole di Intl: gli anni con lo stesso cambio
  * (mese, n-esimo giorno della settimana, ora) diventano una regola annuale; quando le regole
  * cambiano, la regola vecchia ha UNTIL; un fuso senza cambi ha un solo STANDARD.
+ *
+ * `checkYear` (≥ toYear): ultimo anno in cui il file usa il fuso (una serie senza fine va avanti). Le
+ * regole annuali si controllano con i cambi veri di Intl fino a lì: se in un anno sbagliano (Gerusalemme,
+ * «il venerdì prima dell'ultima domenica», a volte è il penultimo venerdì; Santiago, Il Cairo, Nuuk, Gaza,
+ * Casablanca), il fuso esce con ogni cambio scritto come data (DTSTART e RDATE), fino a `checkYear`.
  */
-export const buildVTimezone = (zone: string, fromYear: number, toYear: number): string[] => {
+export const buildVTimezone = (zone: string, fromYear: number, toYear: number, checkYear = toYear): string[] => {
+  const lastYear = Math.max(toYear, checkYear);
+  const all = transitionsOf(zone, fromYear, lastYear);
+  const ruled = ruleVTimezone(zone, fromYear, toYear, all.filter((transition) => transition.ms < utcMs(toYear + 1, 1, 1)));
+  if (matchesIntl(ruled, zone, all, fromYear, lastYear)) return ruled;
+  return datedVTimezone(zone, all);
+};
+
+/** Il VTIMEZONE scritto, riletto, dà gli stessi cambi di Intl (`transitions`) e nessun altro tra fromYear e toYear. */
+const matchesIntl = (lines: readonly string[], zone: string, transitions: readonly Transition[], fromYear: number, toYear: number) => {
+  const component = parseComponents(lines.join("\r\n")).find((item) => item.name === "VTIMEZONE");
+  if (!component) return false;
+  const rules = zoneRules(component);
+  const start = utcMs(fromYear, 1, 1);
+  const end = utcMs(toYear + 1, 1, 1);
+  if (rules.offsetAt(start) !== timeZoneOffset(start, zone)) return false;
+  for (const transition of transitions) {
+    if (rules.offsetAt(transition.ms) !== transition.to || rules.offsetAt(transition.ms - 1000) !== transition.from) return false;
+  }
+  const real = new Set(transitions.map((transition) => transition.ms));
+  for (let year = fromYear; year <= toYear; year += 1) {
+    for (const ms of rules.onsets(year)) if (ms >= start && ms < end && !real.has(ms)) return false;
+  }
+  return true;
+};
+
+/** Ogni cambio come data: per tipo e scarti, il primo in DTSTART e gli altri in RDATE (uno per anno). */
+const datedVTimezone = (zone: string, transitions: readonly Transition[]): string[] => {
+  const groups = new Map<string, ReturnType<typeof describeTransition>[]>();
+  for (const item of transitions.map(describeTransition)) {
+    const key = `${item.kind}|${item.from}|${item.to}`;
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
   const lines = ["BEGIN:VTIMEZONE", `TZID:${zone}`, `X-LIC-LOCATION:${zone}`];
-  const transitions = transitionsOf(zone, fromYear, toYear);
+  for (const [head, ...rest] of groups.values()) {
+    lines.push(`BEGIN:${head.kind}`, `TZOFFSETFROM:${offsetText(head.from)}`, `TZOFFSETTO:${offsetText(head.to)}`, `DTSTART:${head.local}`);
+    for (const item of rest) lines.push(`RDATE:${item.local}`);
+    lines.push(`END:${head.kind}`);
+  }
+  lines.push("END:VTIMEZONE");
+  return lines;
+};
+
+/** VTIMEZONE con le regole annuali (vedi `buildVTimezone`), dai cambi tra fromYear e toYear. */
+const ruleVTimezone = (zone: string, fromYear: number, toYear: number, transitions: readonly Transition[]): string[] => {
+  const lines = ["BEGIN:VTIMEZONE", `TZID:${zone}`, `X-LIC-LOCATION:${zone}`];
   if (!transitions.length) {
     const offset = offsetText(timeZoneOffset(utcMs(fromYear, 1, 1), zone));
     lines.push("BEGIN:STANDARD", `TZOFFSETFROM:${offset}`, `TZOFFSETTO:${offset}`, "DTSTART:19700101T000000", "END:STANDARD", "END:VTIMEZONE");
     return lines;
   }
-  const described = transitions.map((transition) => {
-    const local = new Date(transition.ms + transition.from);
-    const year = local.getUTCFullYear();
-    const month = local.getUTCMonth() + 1;
-    const day = local.getUTCDate();
-    const nth = day + 7 > daysInMonth(year, month) ? -1 : Math.ceil(day / 7);
-    const time = `${pad(local.getUTCHours())}${pad(local.getUTCMinutes())}${pad(local.getUTCSeconds())}`;
-    const kind = transition.to > transition.from ? "DAYLIGHT" : "STANDARD";
-    return {
-      ...transition,
-      kind,
-      year,
-      month,
-      byDay: `${nth}${WEEKDAY_BY_NUMBER[local.getUTCDay()]}`,
-      local: `${pad(year, 4)}${pad(month)}${pad(day)}T${time}`,
-      key: `${kind}|${month}|${nth}${local.getUTCDay()}|${time}|${transition.from}|${transition.to}`
-    };
-  });
+  const described = transitions.map(describeTransition);
   type Item = (typeof described)[number];
   // Gruppi di anni consecutivi con lo stesso cambio, per tipo.
   const runs: Item[][] = [];
@@ -1067,6 +1122,18 @@ const formatDuration = (sign: number, days: number, minutes: number) => {
 
 const signedMinutes = (minutes: number) => formatDuration(minutes < 0 ? -1 : 1, 0, Math.abs(minutes));
 
+/** Anni dopo oggi in cui il VTIMEZONE di una serie senza fine deve essere giusto (oltre, le sue regole). */
+const RULE_HORIZON_YEARS = 20;
+const PERIOD_DAYS: Record<RepeatRule["freq"], number> = { daily: 1, weekly: 7, monthly: 31, yearly: 366 };
+
+/** Ultimo anno (al più `horizon`) in cui la serie può avere un'occorrenza; con un conteggio, una stima per eccesso. */
+const reachYear = (rule: RepeatRule, startDate: string, horizon: number) => {
+  const startYear = Number(startDate.slice(0, 4));
+  if (rule.end?.type === "until") return Math.min(Number(rule.end.date.slice(0, 4)), horizon);
+  if (rule.end?.type === "count") return Math.min(startYear + Math.ceil((PERIOD_DAYS[rule.freq] * (rule.interval ?? 1) * rule.end.count) / 365), horizon);
+  return horizon;
+};
+
 /** TRIGGER relativo all'inizio per un promemoria. */
 const triggerOf = (reminder: EventReminder, timing: Timing) => {
   const days = reminder.daysBefore ?? 0;
@@ -1083,6 +1150,9 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
   const label = categoryLabel ?? ((category: EventCategory) => EVENT_CATEGORY_LABEL[category] ?? category);
   const subjectName = (id?: string) => subjects.find((subject) => subject.id === id)?.name;
   const zoneYears = new Map<string, { min: number; max: number }>();
+  /** Fin dove arrivano le serie di ogni fuso (anno): il suo VTIMEZONE deve essere giusto fino a lì. */
+  const zoneReach = new Map<string, number>();
+  const horizon = now.getUTCFullYear() + RULE_HORIZON_YEARS;
   const body: string[] = [];
 
   const useZone = (zone: string, ms: number) => {
@@ -1185,6 +1255,7 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     if (cut !== undefined && cut <= timing.startDate) continue;
     let rule = normalizeRepeat(event);
     if (rule && cut !== undefined) rule = truncatedRule(rule, timing.startDate, cut);
+    if (rule && !timing.allDay) zoneReach.set(timing.zone, Math.max(zoneReach.get(timing.zone) ?? 0, reachYear(rule, timing.startDate, horizon)));
     const rows = rowsBySeries.get(event.id);
     if (!rule) {
       // Evento singolo: una riga sul suo giorno lo cancella o lo sostituisce.
@@ -1266,7 +1337,7 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
   for (const [zone, years] of [...zoneYears].sort((a, b) => compareText(a[0], b[0]))) {
     const toYear = Math.max(years.max, nowYear) + 1;
     const fromYear = Math.max(years.min - 1, toYear - 60);
-    zones.push(...buildVTimezone(zone, fromYear, toYear));
+    zones.push(...buildVTimezone(zone, fromYear, toYear, Math.max(toYear, zoneReach.get(zone) ?? toYear)));
   }
 
   const lines = [
