@@ -197,6 +197,13 @@
   stringhe `data:`). Negli schemi niente `const` né `required: []`: Gemini e i
   function schema OpenAI li rifiutano. Una lista troppo lunga si accorcia togliendo
   elementi (`has_more`/`next_offset`), mai tagliando il JSON.
+- Connettore remoto, registro (1.8.0): `studyos_agent_push` ha un solo overload, con
+  `p_tool text default ''`. Non ricreare la versione a tre argomenti: PostgREST non saprebbe quale
+  chiamare. Il registro (`studyos_agent_audit`) lo scrive solo il database; nessun client ha
+  insert, update o delete. Il ripristino confronta `after_stamp` con il timbro attuale della riga:
+  una scrittura che cambia il timbro senza voce nel registro (un tombstone riscritto con un altro
+  `deletedAt`) rende la voce non più ripristinabile, e va bene così. Pagine: intervalli sempre
+  inclusivi, divisioni solo con `studyos_split_pages` (`src/agent/pageSplit.ts`).
 - Supabase RLS e upsert: `INSERT … ON CONFLICT DO UPDATE` controlla la policy di INSERT sulla
   riga proposta e quella di SELECT sulla riga nuova. Per modificare righe di altri utenti usare
   `update` mirati; `onConflict` deve nominare la chiave vera (membri: `group_id,user_id`).

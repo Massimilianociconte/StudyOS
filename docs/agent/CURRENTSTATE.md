@@ -298,3 +298,16 @@ lettura, Realtime, notifiche, chiusura delle notifiche e ritiro degli inviti usa
 L'unico uso rimasto dell'email è togliere le copie locali di vecchi inviti per email mai legati a un
 account (`isLegacyEmailInvite`). `accept_group_invite` in `groups.sql` e `people.sql` è la stessa:
 account destinatario, membro senza email, una sola voce «è entrato nel gruppo».
+
+Registro e ripristino del connettore remoto, pagine esatte (12 novembre 2026, server 1.8.0):
+ogni scrittura del connettore remoto lascia una voce in `studyos_agent_audit` (prima e dopo,
+strumento, permesso), scritta dentro `studyos_agent_push`; 90 giorni, al massimo 2000 voci per
+account. `studyos_list_audit` sul remoto legge quel registro, `studyos_restore_change` (solo
+remoto) annulla una voce se l'elemento non è cambiato dopo; nell'app «Modifiche del connettore» in
+Impostazioni → Agenti fa lo stesso (`src/components/AgentChangesDrawer.tsx`, caricato al tocco).
+Nuovo `studyos_split_pages` (`src/agent/pageSplit.ts`) e regola delle pagine inclusive nelle
+istruzioni del server. Verificato: `tests/pageSplit.test.mjs`, `tests/remoteAudit.test.mjs`,
+`tests/agentChanges.test.mjs`; `agent.sql` applicato due volte su Postgres usa e getta, `agent-verify.sql`
+tutto `true`, `scripts/supabase/agent-audit-check.sql` 35 controlli. Per usarlo: rieseguire
+`agent.sql` e `agent-verify.sql`, deploy del Worker, pubblicazione del sito, poi ricreare il
+connettore. Non provato sul progetto reale né con PostgREST.

@@ -155,6 +155,26 @@ Il segreto del Vault e `STUDYOS_PUSH_SECRET` del Worker devono essere lo stesso 
 push non arriva: `select id, status_code, left(content, 120) from net._http_response order by id desc limit 5;`
 mostra le ultime risposte del Worker (401 = segreti diversi, 404 = URL sbagliato in Vault).
 
+**Revisione del 12/11/2026 (connettore 1.8.0): riesegui `agent.sql`, poi `agent-verify.sql`.**
+Ogni modifica del connettore remoto finisce in un registro sul server
+(`studyos_agent_audit`): cosa è cambiato, prima e dopo, con quale strumento. Lo scrive
+`studyos_agent_push` stessa, quindi l'hub non può saltarlo. Le voci restano 90 giorni, al
+massimo le ultime 2000 per account. Da **Impostazioni → Agenti → Modifiche del connettore**
+(o con `studyos_restore_change` dal connettore) una modifica si annulla, solo se l'elemento non è
+cambiato dopo. Ordine, una query alla volta:
+
+1. `agent.sql` (dopo `schema.sql`; toglie la vecchia `studyos_agent_push` a tre argomenti e crea
+   quella con `p_tool`: un hub di prima la chiama ancora uguale);
+2. `agent-verify.sql`: tutte le colonne `*_ready` `true`, comprese le nuove `audit_table_ready`,
+   `audit_rpc_ready` e `audit_internal_private_ready`; `audit_entries` conta le voci.
+
+Poi serve il deploy del Worker 1.8.0 (vedi [docs/agent-mcp.md](../docs/agent-mcp.md)). Senza la
+revisione SQL il Worker 1.8.0 scrive come prima e risponde che il registro non è ancora attivo;
+senza il deploy il registro si riempie lo stesso (con lo strumento vuoto) e l'app lo mostra.
+Prova su un Postgres usa e getta con lo stub di auth (mai sul progetto reale), dopo `schema.sql`
+e `agent.sql`: `psql "$URL" -v ON_ERROR_STOP=1 -f scripts/supabase/agent-audit-check.sql` (ogni
+riga deve finire con `|t`).
+
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.
 

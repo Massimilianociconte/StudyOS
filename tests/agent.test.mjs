@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { AGENT_TOOLS, HUB_TOOLS, findAgentTool } from "../src/agent/catalog.ts";
+import { AGENT_TOOLS, CLOUD_ONLY, HUB_TOOLS, findAgentTool } from "../src/agent/catalog.ts";
 import { handleMcpRpc } from "../src/agent/mcp.ts";
 import { ResultLedger } from "../src/agent/ledger.ts";
 import { OauthServer, sha256Base64Url } from "../src/agent/oauth.ts";
@@ -218,7 +218,9 @@ test("MCP: initialize, elenco senza app, argomenti invalidi e vault di conferma"
   assert.equal(echoed.result.protocolVersion, "2025-06-18");
   assert.equal(init.result.serverInfo.name, "studyos-mcp-server");
   const listed = await handleMcpRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, offline);
-  assert.equal(listed.result.tools.length, AGENT_TOOLS.length);
+  // Gli strumenti solo del connettore remoto (studyos_restore_change) non compaiono sul primo connettore.
+  assert.equal(listed.result.tools.length, AGENT_TOOLS.length - CLOUD_ONLY.size);
+  assert.equal(listed.result.tools.some((tool) => CLOUD_ONLY.has(tool.name)), false);
   const invalid = await handleMcpRpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "studyos_delete_task", arguments: { id: "task_1" } } }, deps);
   assert.equal(calls, 0);
   assert.equal(invalid.result.isError, true);
@@ -283,7 +285,7 @@ test("MCP: server/discover e tools/list nel formato che ChatGPT usa nel 2026", a
   assert.equal(listed.result.resultType, "complete");
   assert.equal(typeof listed.result.ttlMs, "number");
   assert.equal(listed.result.cacheScope, "public");
-  assert.equal(listed.result.tools.length, AGENT_TOOLS.length);
+  assert.equal(listed.result.tools.length, AGENT_TOOLS.length - CLOUD_ONLY.size);
   const prompts = await handleMcpRpc({ jsonrpc: "2.0", id: 4, method: "prompts/list", params: {} }, deps);
   assert.deepEqual(prompts.result.prompts, []);
   assert.equal(prompts.result.resultType, "complete");

@@ -123,6 +123,10 @@ const FULL_TEXT = {
 } as const satisfies JsonSchema;
 const BRIEF_NOTE =
   " Negli elenchi descrizioni e note lunghe sono accorciate (campo truncated): prima di modificarle o di contare ciò che scrivono (pagine, capitoli, esercizi) leggile intere con fullText=true o con il dettaglio. Un testo accorciato rimandato in un aggiornamento viene rifiutato.";
+/** Conteggio delle pagine (1.8.0): gli agenti sbagliavano gli intervalli inclusivi e le divisioni. */
+export const PAGE_RULE = "Conta le pagine includendo prima e ultima (10–20 = 11 pagine).";
+/** Istruzione del server, uguale sui due connettori. */
+export const PAGE_INSTRUCTION = `${PAGE_RULE} Per dividere un intervallo usa studyos_split_pages invece di calcolare.`;
 /** Aggiornamenti dei testi: sostituiscono il testo intero. */
 const REPLACES_TEXT = " description e notes sostituiscono il testo intero: partire da quello intero, mai dalla copia accorciata di un elenco.";
 
@@ -149,6 +153,8 @@ export interface AgentTool {
    * per gli strumenti che danno ad altre persone accesso ai dati.
    */
   alwaysAsk?: boolean;
+  /** Descrizione sul connettore remoto, quando lì lo strumento fa altro (registro del server). */
+  cloudDescription?: string;
   inputSchema: JsonSchema;
   summary: (args: Record<string, unknown>) => string;
 }
@@ -328,6 +334,26 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     idempotent: true,
     inputSchema: objectSchema({ id: ID, confirm: CONFIRM }, ["id", "confirm"]),
     summary: () => "Eliminare una task"
+  }),
+  // --- Pagine da studiare (1.8.0): conti esatti invece dell'aritmetica dell'agente. ---
+  tool({
+    name: "studyos_split_pages",
+    title: "Dividi le pagine",
+    description: `${PAGE_RULE} Divide un intervallo di pagine in parti contigue, senza buchi né sovrapposizioni, e restituisce per ogni parte from, to, pages (to - from + 1), date se servono e text pronto per titolo o descrizione (es. «pp. 120–134 (15 pagine)»). Una modalità: parts (quante parti: il resto va alle prime), perPart (pagine per parte: l'ultima prende il resto) oppure startDate + endDate (una parte per giorno utile, giorni compresi; skipWeekdays salta giorni della settimana, days usa solo quelli). Con startDate senza endDate, parts o perPart ricevono i giorni utili in ordine. labels dà un'etichetta a ogni parte, in ordine. Non legge né modifica dati: usalo prima di creare task o eventi di studio e copia i numeri così come sono.`,
+    risk: "read",
+    idempotent: true,
+    inputSchema: objectSchema({
+      from: { type: "integer", minimum: 1, maximum: 100000, description: "Prima pagina, compresa." },
+      to: { type: "integer", minimum: 1, maximum: 100000, description: "Ultima pagina, compresa (uguale o dopo from)." },
+      parts: { type: "integer", minimum: 1, maximum: 366, description: "In quante parti dividere. Non più delle pagine." },
+      perPart: { type: "integer", minimum: 1, maximum: 100000, description: "Quante pagine per parte; l'ultima prende il resto." },
+      startDate: { type: "string", format: "date", description: `Primo giorno. ${DAY}` },
+      endDate: { type: "string", format: "date", description: `Ultimo giorno, compreso. ${DAY} Con startDate: una parte per giorno utile (al massimo 366 giorni).` },
+      skipWeekdays: { type: "array", maxItems: 6, items: WEEKDAY, description: "Giorni della settimana da saltare, es. [\"SA\",\"SU\"]. Solo con startDate." },
+      days: { type: "array", minItems: 1, maxItems: 7, items: WEEKDAY, description: "Solo questi giorni della settimana, es. [\"MO\",\"WE\",\"FR\"]. Solo con startDate." },
+      labels: { type: "array", maxItems: 366, items: { type: "string", maxLength: 120 }, description: "Etichetta di ogni parte in ordine (es. capitoli); non più delle parti." }
+    }, ["from", "to"]),
+    summary: (args) => `Dividere le pagine ${typeof args.from === "number" ? args.from : "?"}–${typeof args.to === "number" ? args.to : "?"}`
   }),
   tool({
     name: "studyos_list_events",
@@ -1120,14 +1146,36 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     inputSchema: objectSchema({}),
     summary: () => "Vedere gli account collegati"
   }),
+  // --- Registro e ripristino (1.8.0). Sul connettore principale è il registro di questo browser; sul
+  // connettore remoto è il registro del server (supabase/agent.sql), scritto da studyos_agent_push. ---
   tool({
     name: "studyos_list_audit",
     title: "Registro azioni degli agenti",
-    description: "Legge il registro locale delle azioni già chieste dagli agenti su questo browser: strumento, esito, orario. Non include passphrase, file o codici di invito.",
+    description: "Legge il registro delle azioni già chieste dagli agenti su questo browser, la più recente prima: strumento, esito, orario. Filtri tool, since e until; itemId vale solo sul connettore remoto (qui gli id non si salvano). Paginato con limit e offset. Non include passphrase, file o codici di invito.",
+    cloudDescription: "Legge il registro del server con le modifiche fatte ai dati da questo connettore remoto, la più recente prima: quando (at), strumento (tool), elemento (collection, itemId, title), action create/update/delete, campi cambiati (changed) con i valori prima e dopo, se si può ancora ripristinare (canRestore). Filtri itemId, tool, since e until; paginato con limit e offset. Le modifiche più vecchie di 90 giorni, e oltre le ultime 2000, non ci sono più. Per annullare una modifica usa studyos_restore_change con il suo id. Non include file, email o codici di invito.",
     risk: "read",
     idempotent: true,
-    inputSchema: objectSchema({ limit: { ...LIMIT, default: 20 } }),
+    inputSchema: objectSchema({
+      limit: { ...LIMIT, default: 20 },
+      offset: OFFSET,
+      itemId: { ...ID, description: "Solo le modifiche di questo elemento (id StudyOS). Solo sul connettore remoto." },
+      tool: { type: "string", minLength: 1, maxLength: 80, pattern: "^studyos_[a-z0-9_]{1,72}$", description: "Solo le azioni di questo strumento, es. studyos_update_task." },
+      since: { type: "string", format: "date-time", description: `Solo da questo istante in poi. ${WHEN}` },
+      until: { type: "string", format: "date-time", description: `Solo prima di questo istante. ${WHEN}` }
+    }),
     summary: () => "Leggere il registro delle azioni degli agenti"
+  }),
+  tool({
+    name: "studyos_restore_change",
+    title: "Annulla una modifica del connettore",
+    description: "Annulla una modifica del registro del server (id da studyos_list_audit): un elemento creato viene eliminato, uno modificato torna com'era prima, uno eliminato torna tra i dati. Funziona solo se l'elemento non è cambiato dopo quella modifica: altrimenti risponde conflict con l'elemento attuale e non tocca niente. Il ripristino finisce a sua volta nel registro. Richiede confirm=true: usalo solo se la persona l'ha chiesto.",
+    risk: "destructive",
+    idempotent: false,
+    inputSchema: objectSchema({
+      id: { ...ID, description: "id della modifica (un uuid), restituito da studyos_list_audit." },
+      confirm: CONFIRM
+    }, ["id", "confirm"]),
+    summary: () => "Annullare una modifica del connettore remoto"
   })
 ];
 
@@ -1163,8 +1211,9 @@ const withAccountParam = (schema: JsonSchema): JsonSchema => ({
 
 /**
  * Strumenti che il connettore remoto (un account, dati cloud, app chiusa) non offre: condivisioni
- * e risorse dei gruppi vogliono la sessione della persona, cronometro e registro vivono nel
- * browser, conferme ed elenco account non hanno senso senza app collegata.
+ * e risorse dei gruppi vogliono la sessione della persona, il cronometro vive nel browser, conferme
+ * ed elenco account non hanno senso senza app collegata. studyos_list_audit c'è (dalla 1.8.0): lì
+ * legge il registro del server invece di quello del browser.
  */
 export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
   "studyos_list_shares",
@@ -1183,9 +1232,14 @@ export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
   "studyos_list_group_board",
   "studyos_timer_status",
   "studyos_timer_control",
-  "studyos_list_audit",
   ...HUB_TOOLS
 ]);
+
+/**
+ * Strumenti solo del connettore remoto: il ripristino usa il registro del server (prima e dopo di
+ * ogni modifica), che il connettore principale non ha. Fuori da tools/list di /mcp.
+ */
+export const CLOUD_ONLY: ReadonlySet<string> = new Set(["studyos_restore_change"]);
 
 /**
  * Definizione MCP. Sul connettore remoto non c'è `account` (l'account è nell'indirizzo) e le
@@ -1194,7 +1248,7 @@ export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
 export const mcpToolDefinition = (item: AgentTool, options: { cloud?: boolean } = {}) => ({
   name: item.name,
   title: item.title,
-  description: options.cloud ? item.description.replace(MINE, "") : item.description,
+  description: options.cloud ? (item.cloudDescription ?? item.description).replace(MINE, "") : item.description,
   inputSchema: HUB_TOOLS.has(item.name) || options.cloud ? item.inputSchema : withAccountParam(item.inputSchema),
   annotations: {
     // title anche qui: i client 2025-03-26 lo leggono solo dalle annotazioni.
