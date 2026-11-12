@@ -463,6 +463,8 @@ interface RowActions {
   onStatus: (id: string, status: Task["status"]) => void;
   onEdit: (id: string) => void;
   onDelete: (task: Task) => void;
+  /** «Ripristina» di un'archiviata (senza: torna «Da fare» e basta). */
+  onRestore?: (task: Task) => void;
 }
 
 function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; compact?: boolean }) {
@@ -475,7 +477,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
   const elapsedSeconds = taskElapsedSeconds(task, now);
 
   return (
-    <li className={`group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)] ${done || archivedRow ? "opacity-60" : ""}`}>
+    <li data-task-row={task.id} className={`group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)] ${done || archivedRow ? "opacity-60" : ""}`}>
       <button
         type="button"
         aria-label={done ? `Segna «${task.title}» come da fare` : `Segna «${task.title}» come fatta`}
@@ -489,7 +491,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
         {done ? <Icon name="Check" className="h-3.5 w-3.5" /> : null}
       </button>
 
-      <button type="button" onClick={() => actions.onEdit(task.id)} className="min-w-0 flex-1 text-left">
+      <button type="button" data-row-open onClick={() => actions.onEdit(task.id)} className="min-w-0 flex-1 text-left">
         <span className={`one-line-safe block text-sm font-extrabold ${done ? "line-through" : ""}`} title={task.title}>
           {task.title}
         </span>
@@ -534,7 +536,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
 
       {archivedRow ? (
         // Archiviata: il menu degli stati non la prevede; si rimette tra le attività da fare da qui.
-        <Button variant="soft" icon="RotateCcw" onClick={() => actions.onStatus(task.id, "todo")} title={TASKS_LIST_TEXT.restoreAria(task.title)} aria-label={TASKS_LIST_TEXT.restoreAria(task.title)} className="shrink-0 !px-3 !text-xs">
+        <Button variant="soft" icon="RotateCcw" onClick={() => (actions.onRestore ? actions.onRestore(task) : actions.onStatus(task.id, "todo"))} title={TASKS_LIST_TEXT.restoreAria(task.title)} aria-label={TASKS_LIST_TEXT.restoreAria(task.title)} className="shrink-0 !px-3 !text-xs">
           {TASKS_LIST_TEXT.restore}
         </Button>
       ) : !compact ? (
@@ -597,6 +599,34 @@ function GroupedList({
 }) {
   const [showDone, setShowDone] = useUiState("tasks.showDone", false);
   const [showArchived, setShowArchived] = useUiState("tasks.showArchived", false, { validate: (value) => typeof value === "boolean" });
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [notice, setNotice] = useState("");
+  const [restoredId, setRestoredId] = useState<string | null>(null);
+
+  // «Ripristina» toglie la riga dalle archiviate: il focus va alla riga tornata tra le da fare; se
+  // non si vede (filtro attivo), alle archiviate; se non ne restano, al campo dell'aggiunta rapida.
+  const archivedActions: RowActions = {
+    ...actions,
+    onRestore: (task) => {
+      actions.onStatus(task.id, "todo");
+      setNotice(TASKS_LIST_TEXT.restored);
+      setRestoredId(task.id);
+    }
+  };
+
+  useEffect(() => {
+    if (!restoredId) return;
+    const row = document.querySelector<HTMLElement>(`[data-task-row="${CSS.escape(restoredId)}"] [data-row-open]`);
+    const archivedToggle = bottomRef.current?.querySelector<HTMLElement>("[data-archived-toggle]");
+    (row ?? archivedToggle ?? document.getElementById("quick-task-title"))?.focus();
+    setRestoredId(null);
+  }, [restoredId, tasks]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const open = tasks.filter(isOpen);
   const done = tasks
     .filter((task) => task.status === "done")
@@ -646,7 +676,7 @@ function GroupedList({
         </div>
       )}
       {done.length || archived.length ? (
-        <div className="mt-4 border-t border-[var(--border)] pt-3">
+        <div ref={bottomRef} className="mt-4 border-t border-[var(--border)] pt-3">
           {done.length ? (
             <>
               <ShowMoreToggle open={showDone} onToggle={() => setShowDone((value) => !value)} count={done.length}>
@@ -657,22 +687,39 @@ function GroupedList({
           ) : null}
           {archived.length ? (
             <>
-              <ShowMoreToggle open={showArchived} onToggle={() => setShowArchived((value) => !value)} count={archived.length}>
+              <ShowMoreToggle open={showArchived} onToggle={() => setShowArchived((value) => !value)} count={archived.length} archivedToggle>
                 {showArchived ? TASKS_LIST_TEXT.hideArchived : TASKS_LIST_TEXT.showArchived}
               </ShowMoreToggle>
-              {showArchived ? <RowList tasks={archived} actions={actions} /> : null}
+              {showArchived ? <RowList tasks={archived} actions={archivedActions} /> : null}
             </>
           ) : null}
         </div>
       ) : null}
+      {/* Sempre presente: il lettore di schermo annuncia «Attività ripristinata» appena compare. */}
+      <div role="status" aria-live="polite">
+        {notice ? <p className="mt-2 px-2.5 text-xs font-bold text-[var(--muted)]">{notice}</p> : null}
+      </div>
     </Panel>
   );
 }
 
-function ShowMoreToggle({ open, onToggle, count, children }: { open: boolean; onToggle: () => void; count: number; children: ReactNode }) {
+function ShowMoreToggle({
+  open,
+  onToggle,
+  count,
+  archivedToggle,
+  children
+}: {
+  open: boolean;
+  onToggle: () => void;
+  count: number;
+  archivedToggle?: boolean;
+  children: ReactNode;
+}) {
   return (
     <button
       type="button"
+      data-archived-toggle={archivedToggle || undefined}
       onClick={onToggle}
       aria-expanded={open}
       className="flex min-h-11 w-full items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-left text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"

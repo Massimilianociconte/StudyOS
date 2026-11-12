@@ -90,6 +90,7 @@ export const TASKS_LIST_TEXT = {
   showArchived: "Mostra le archiviate",
   hideArchived: "Nascondi le archiviate",
   restore: "Ripristina",
+  restored: "Attività ripristinata",
   restoreAria: (title: string) => `Ripristina «${title}» tra le attività da fare`
 } as const;
 
