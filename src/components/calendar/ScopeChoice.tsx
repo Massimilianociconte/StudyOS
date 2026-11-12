@@ -1,4 +1,4 @@
-import { useId, useRef } from "react";
+import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, IconButton, useDialogLayer } from "../ui";
 import { Icon } from "../Icon";
@@ -10,7 +10,8 @@ const SCOPE_ICON: Record<OccurrenceScope, string> = { this: "CircleDot", followi
 
 /**
  * "Solo questo · Questo e i successivi · Tutti" per un evento che si ripete (modifica, spostamento,
- * eliminazione): ogni scelta dice le sue conseguenze. Finestra sopra il modulo: Esc o Annulla = niente.
+ * eliminazione): ogni scelta ha una riga breve (quali date) e «Dettagli» con tutte le conseguenze,
+ * che sono anche la descrizione accessibile della scelta. Finestra sopra il modulo: Esc o Annulla = niente.
  */
 export function ScopeChoice({
   heading,
@@ -27,6 +28,8 @@ export function ScopeChoice({
   onCancel: () => void;
 }) {
   const titleId = useId();
+  // «Dettagli» aperti: le scelte mostrano una riga breve, le conseguenze per intero si aprono qui.
+  const [open, setOpen] = useState<OccurrenceScope[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   useDialogLayer(true, { panelRef, areaRef: backdropRef, onEscape: onCancel });
@@ -53,28 +56,46 @@ export function ScopeChoice({
           <IconButton icon="X" label={SCOPE_TEXT.cancel} onClick={onCancel} />
         </div>
         <ul className="grid grid-cols-1 gap-2">
-          {options.map((option, index) => (
-            <li key={option.id}>
-              <button
-                type="button"
-                data-autofocus={index === 0 ? true : undefined}
-                onClick={() => onChoose(option.id)}
-                className={`flex w-full min-w-0 items-start gap-3 rounded-[18px] border p-3 text-left hover:bg-[var(--surface)] ${
-                  danger ? "border-[var(--danger-border)]" : "border-[var(--border)]"
-                } bg-[var(--surface-soft)]`}
-              >
-                <Icon name={SCOPE_ICON[option.id]} className={`mt-0.5 h-5 w-5 shrink-0 ${danger ? "text-[var(--danger-text)]" : "text-[var(--accent-ink)]"}`} />
-                <span className="min-w-0 flex-1">
-                  <span className={`block text-base font-black ${danger ? "text-[var(--danger-text)]" : ""}`}>{option.label}</span>
+          {options.map((option, index) => {
+            const detailsId = `${titleId}-${option.id}`;
+            const expanded = open.includes(option.id);
+            return (
+              <li key={option.id} className={`rounded-[18px] border bg-[var(--surface-soft)] ${danger ? "border-[var(--danger-border)]" : "border-[var(--border)]"}`}>
+                {/* Nome: la scelta e la riga breve; descrizione: tutte le conseguenze, anche a dettagli chiusi. */}
+                <button
+                  type="button"
+                  data-autofocus={index === 0 ? true : undefined}
+                  aria-describedby={detailsId}
+                  onClick={() => onChoose(option.id)}
+                  className="flex min-h-11 w-full min-w-0 items-start gap-3 rounded-[18px] p-3 pb-1.5 text-left hover:bg-[var(--surface)]"
+                >
+                  <Icon name={SCOPE_ICON[option.id]} className={`mt-0.5 h-5 w-5 shrink-0 ${danger ? "text-[var(--danger-text)]" : "text-[var(--accent-ink)]"}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className={`block text-base font-black ${danger ? "text-[var(--danger-text)]" : ""}`}>{option.label}</span>
+                    <span className="mt-0.5 block text-sm font-bold text-[var(--muted)]">{option.summary}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  aria-controls={detailsId}
+                  onClick={() => setOpen((list) => (list.includes(option.id) ? list.filter((id) => id !== option.id) : [...list, option.id]))}
+                  className="ml-9 inline-flex min-h-11 items-center gap-1 rounded-full px-2 text-xs font-black text-[var(--accent-ink)] hover:bg-[var(--surface)]"
+                >
+                  {SCOPE_TEXT.details}
+                  <Icon name="ChevronDown" className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                </button>
+                {/* Chiuso: display none (resta la descrizione accessibile della scelta). */}
+                <div id={detailsId} className={`${expanded ? "grid" : "hidden"} grid-cols-1 gap-1 px-3 pb-3 pl-11`}>
                   {option.details.map((line) => (
-                    <span key={line} className="mt-0.5 block text-sm font-bold text-[var(--muted)]">
+                    <p key={line} className="text-sm font-bold text-[var(--muted)]">
                       {line}
-                    </span>
+                    </p>
                   ))}
-                </span>
-              </button>
-            </li>
-          ))}
+                </div>
+              </li>
+            );
+          })}
         </ul>
         <div className="mt-3 flex justify-end">
           <Button variant="soft" onClick={onCancel}>

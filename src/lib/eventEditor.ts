@@ -447,7 +447,9 @@ export type ScopeAction = "edit" | "move" | "delete";
 export interface ScopeOption {
   id: OccurrenceScope;
   label: string;
-  /** Conseguenze, in frasi brevi. */
+  /** Una riga breve e vera (quali date): si vede sempre. */
+  summary: string;
+  /** Conseguenze, in frasi brevi: in «Dettagli» (e nella descrizione accessibile della scelta). */
   details: string[];
 }
 
@@ -596,13 +598,21 @@ export const scopeOptions = ({
     ...(span?.until ? { until: occurrenceDayText(span.until) } : {}),
     past: span?.past ?? false
   };
+  const family = action === "delete" && Boolean(span && span.parts > 1);
   const all: ScopeOption = {
     id: "all",
     label: SCOPE_TEXT.all,
+    summary: sharedOnly
+      ? SCOPE_TEXT.sharedAllShort
+      : action === "delete"
+        ? family
+          ? SCOPE_TEXT.allDeleteFamilyShort
+          : SCOPE_TEXT.allDeleteShort(range.past)
+        : SCOPE_TEXT.allShort(range),
     details: sharedOnly
       ? [SCOPE_TEXT.sharedAll, ...(shift ? [SCOPE_TEXT.allDaysShift(shift.from, shift.to)] : [])]
       : action === "delete"
-        ? [span && span.parts > 1 ? SCOPE_TEXT.allDeleteFamily : SCOPE_TEXT.allDelete(range.past)]
+        ? [family ? SCOPE_TEXT.allDeleteFamily : SCOPE_TEXT.allDelete(range.past)]
         : [
             action === "move" ? SCOPE_TEXT.allMove(range) : SCOPE_TEXT.allEdit(range),
             ...(shift ? [SCOPE_TEXT.allDaysShift(shift.from, shift.to)] : []),
@@ -616,7 +626,7 @@ export const scopeOptions = ({
   const options: ScopeOption[] = [];
   if (!(action === "edit" && ruleChanged)) {
     const text = action === "delete" ? SCOPE_TEXT.thisDelete(day) : action === "move" ? SCOPE_TEXT.thisMove(day) : SCOPE_TEXT.thisEdit(day);
-    options.push({ id: "this", label: SCOPE_TEXT.this, details: [text, ...(action === "edit" && subjectChanged ? [SCOPE_TEXT.thisSubject] : []), ...pin] });
+    options.push({ id: "this", label: SCOPE_TEXT.this, summary: SCOPE_TEXT.thisShort(day), details: [text, ...(action === "edit" && subjectChanged ? [SCOPE_TEXT.thisSubject] : []), ...pin] });
   }
   const following =
     action === "delete"
@@ -637,7 +647,7 @@ export const scopeOptions = ({
           ...pin
         ];
   const firstDay = span?.start === date && span.parts === 1;
-  if (!firstDay) options.push({ id: "following", label: SCOPE_TEXT.following, details: following });
+  if (!firstDay) options.push({ id: "following", label: SCOPE_TEXT.following, summary: SCOPE_TEXT.followingShort(day), details: following });
   options.push(all);
   return options;
 };

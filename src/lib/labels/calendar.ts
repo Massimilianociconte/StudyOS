@@ -16,6 +16,10 @@ export const CALENDAR_TEXT = {
   viewsLabel: "Vista calendario",
   dayFocus: "Solo 8–19, ore grandi",
   dayFocusTitle: "Mostra il giorno dalle 8 alle 19, con le ore più grandi",
+  /** Sul telefono "Solo 8–19" e "Festività" stanno in «Altre azioni»: la voce dice cosa fa. */
+  dayFocusOff: "Mostra tutte le ore",
+  holidaysShow: "Mostra le festività",
+  holidaysHide: "Nascondi le festività",
   filterLabel: "Mostra gli impegni di una materia",
   allSubjects: "Tutte",
   onlySubject: (name: string) => `Solo: ${name}`,
@@ -191,6 +195,15 @@ export const SCOPE_TEXT = {
   this: "Solo questo",
   following: "Questo e i successivi",
   all: "Tutti",
+  /** Una riga breve sotto ogni scelta; le conseguenze per intero sono in «Dettagli». */
+  thisShort: (day: string) => `Solo ${day}.`,
+  followingShort: (day: string) => `Da ${day} in poi.`,
+  allShort: ({ from, until, past }: { from?: string; until?: string; past: boolean }) =>
+    from && until ? `Da ${from} a ${until}.` : from ? `Da ${from} in poi.` : until ? `Fino a ${until}.` : past ? "Tutte le date, anche quelle passate." : "Tutte le date.",
+  allDeleteShort: (past: boolean) => (past ? "Tutta la serie, anche le date passate." : "Tutta la serie."),
+  allDeleteFamilyShort: "Tutta la serie, anche le parti cambiate prima.",
+  sharedAllShort: "Tutte le date insieme.",
+  details: "Dettagli",
   thisEdit: (day: string) => `Cambia solo l'evento di ${day}; gli altri restano come sono.`,
   thisMove: (day: string) => `Sposta solo l'evento di ${day}; gli altri restano dove sono.`,
   thisDelete: (day: string) => `Elimina solo l'evento di ${day}; gli altri restano.`,

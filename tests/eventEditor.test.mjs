@@ -310,6 +310,27 @@ test("scelta della portata: opzioni e conseguenze dette chiaramente", () => {
   assert.ok(pinned.find((option) => option.id === "this").details.some((line) => line.includes("Europe/Rome")));
 });
 
+test("scelta della portata: una riga breve per scelta, le conseguenze restano nei dettagli", () => {
+  const summaries = (options) => options.map((option) => option.summary);
+  assert.deepEqual(summaries(scopeOptions({ action: "edit", date: "2026-11-12" })), ["Solo giovedì 12 novembre.", "Da giovedì 12 novembre in poi.", "Tutte le date."]);
+  assert.deepEqual(summaries(scopeOptions({ action: "delete", date: "2026-11-12", span: { start: "2026-11-02", parts: 1, past: true } })), [
+    "Solo giovedì 12 novembre.",
+    "Da giovedì 12 novembre in poi.",
+    "Tutta la serie, anche le date passate."
+  ]);
+  assert.equal(scopeOptions({ action: "delete", date: "2026-11-30", span: { start: "2026-11-02", parts: 2, past: false } }).at(-1).summary, "Tutta la serie, anche le parti cambiate prima.");
+  // "Tutti" su una parte della serie: le date che cambiano davvero.
+  const part = { start: "2026-11-02", parts: 2, past: false, from: "2026-11-23", until: "2026-12-14" };
+  assert.equal(scopeOptions({ action: "move", date: "2026-11-30", span: part }).at(-1).summary, "Da lunedì 23 novembre a lunedì 14 dicembre.");
+  assert.equal(scopeOptions({ action: "edit", date: "2026-11-30", span: { ...part, until: undefined } }).at(-1).summary, "Da lunedì 23 novembre in poi.");
+  assert.equal(scopeOptions({ action: "edit", date: "2026-11-30", span: { ...part, from: undefined } }).at(-1).summary, "Fino a lunedì 14 dicembre.");
+  assert.equal(scopeOptions({ action: "edit", date: "2026-11-30", span: { start: "2026-11-02", parts: 1, past: true } }).at(-1).summary, "Tutte le date, anche quelle passate.");
+  assert.deepEqual(summaries(scopeOptions({ action: "move", date: "2026-11-12", sharedOnly: true })), ["Tutte le date insieme."]);
+  // Le frasi lunghe restano tutte, invariate, nei dettagli.
+  const following = scopeOptions({ action: "edit", date: "2026-11-12" }).find((option) => option.id === "following");
+  assert.equal(following.details.length, 2);
+});
+
 test("spostare inizio e fine di qualche giorno (per «Tutti» con tutto il giorno)", () => {
   const patch = { start: iso(2026, 11, 19), end: iso(2026, 11, 20), allDay: true, title: "x" };
   const shifted = shiftPatchDays(patch, -7);

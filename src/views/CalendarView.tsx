@@ -112,7 +112,7 @@ import { todayYmd } from "../lib/datePicker";
 import { DayList } from "../components/calendar/DayList";
 import { MonthGrid } from "../components/calendar/MonthGrid";
 import { TimeGrid } from "../components/calendar/TimeGrid";
-import { defaultStartFor } from "../components/calendar/shared";
+import { NARROW_QUERY, defaultStartFor, useMediaQuery } from "../components/calendar/shared";
 import type {
   CalendarOccurrence,
   CalendarPreviewState,
@@ -202,6 +202,9 @@ export function CalendarView() {
   const [storedMode, setMode] = useUiState<StoredCalendarMode>("calendar.mode", "week", { validate: oneOf(...STORED_CALENDAR_MODES) });
   const [storedDayFocus, setDayFocus] = useUiState<boolean>("calendar.dayFocus", false, { validate: (value) => typeof value === "boolean" });
   const { mode, dayFocus } = resolveCalendarMode(storedMode, storedDayFocus);
+  // Telefono (< 768 px): si crea solo dal + in basso (o da «Aggiungi»); "Solo 8–19" e "Festività"
+  // vanno in «Altre azioni». Stesse preferenze salvate; sul computer non cambia nulla.
+  const narrow = useMediaQuery(NARROW_QUERY);
   useEffect(() => {
     if (storedMode !== "focus") return;
     setDayFocus(true);
@@ -640,11 +643,25 @@ export function CalendarView() {
           // Una sola azione primaria; il resto, che si usa di rado, nel menu "Altre azioni".
           <PageActions
             primary={
-              <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
-                {CALENDAR_TEXT.newEvent}
-              </Button>
+              narrow ? undefined : (
+                <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
+                  {CALENDAR_TEXT.newEvent}
+                </Button>
+              )
             }
             more={[
+              ...(narrow && mode === "day" && !summary
+                ? [{ label: dayFocus ? CALENDAR_TEXT.dayFocusOff : CALENDAR_TEXT.dayFocus, icon: "Clock", onClick: () => setDayFocus((value) => !value) } satisfies PageAction]
+                : []),
+              ...(narrow && !summary
+                ? [
+                    {
+                      label: showHolidays ? CALENDAR_TEXT.holidaysHide : CALENDAR_TEXT.holidaysShow,
+                      icon: "PartyPopper",
+                      onClick: () => setShowHolidays((value) => !value)
+                    } satisfies PageAction
+                  ]
+                : []),
               { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
               { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
               { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
@@ -690,7 +707,7 @@ export function CalendarView() {
               <Segmented label={CALENDAR_TEXT.viewsLabel} value={mode as CalendarViewId} onChange={setMode} options={modes} className="min-w-0 max-sm:[&>button]:px-2.5" />
               <HelpTip {...CALENDAR_HELP.views} />
             </div>
-            {mode === "day" ? (
+            {mode === "day" && !narrow ? (
               <button
                 type="button"
                 aria-pressed={dayFocus}
@@ -722,7 +739,7 @@ export function CalendarView() {
             active={filterSubject}
             onChange={setStoredSubject}
             showHolidays={showHolidays}
-            onToggleHolidays={() => setShowHolidays((value) => !value)}
+            onToggleHolidays={narrow ? undefined : () => setShowHolidays((value) => !value)}
             undatedCount={undated.length}
             onOpenUndated={mode === "day" || mode === "agenda" ? () => setUndatedOpen(true) : undefined}
           />
