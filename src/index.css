@@ -84,7 +84,8 @@
 
 /* Nei temi scuri il blu, come testo, si schiarisce: resta leggibile anche sui pannelli. */
 [data-palette="milk"]:not([data-theme="light"]) {
-  --accent-ink: color-mix(in srgb, var(--accent) 70%, white);
+  /* 55%: almeno 4,5:1 anche sulle schede chiare dei pannelli (con 70% i link della guida restavano a 3,95:1). */
+  --accent-ink: color-mix(in srgb, var(--accent) 55%, white);
 }
 
 [data-palette="space"] {
