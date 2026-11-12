@@ -335,3 +335,19 @@ controlli con le stesse chiamate REST dell'app (caricamento e upsert, download, 
 25 MB rifiutati, cartelle altrui e sottocartelle rifiutate, chi riceve scarica ma non scrive né
 elimina, revoca immediata). Non provato nel browser né sul progetto reale. Per usarlo: `storage.sql`, poi `sharing.sql`/`agent.sql` se in uso, poi i verify (vedi
 supabase/README.md). Design: [../superpowers/specs/2026-11-12-attachments-storage-design.md](../superpowers/specs/2026-11-12-attachments-storage-design.md).
+
+
+Promemoria con l'app chiusa (12 novembre 2026): i promemoria degli eventi (esami e appelli
+compresi) arrivano come Web Push anche senza una scheda aperta, su ogni dispositivo con le
+notifiche attive, senza doppioni con la scheda aperta (stesso tag). Nuovo `supabase/push-reminders.sql`
+(tabella `studyos_push_reminders` per account, `studyos_push_due_reminders()` ogni minuto con
+`pg_cron`) e `push-reminders-verify.sql`; `schema.sql` (erase) toglie anche queste righe; il
+Worker accetta il tipo `reminder` e corpi fino a ≈ 617 kB. Interruttore per account in
+Impostazioni → Notifiche (`preferences.pushReminders`). Ogni uscita e cancellazione spegne prima
+le notifiche del dispositivo (`turnOffPushHere`), e la sessione che finisce da sola le segue
+(`startPushSessionGuard`). Dettagli e passi in [../push-reminders.md](../push-reminders.md).
+Verifiche: `npm test` (1323, anche con `TZ=UTC`), lint, build (bundle iniziale senza supabase-js);
+SQL su Postgres 17 temporaneo con stub di `pg_net`, Vault e `pg_cron` (script applicati tre volte,
+36 controlli verdi). Sul progetto reale, non ancora fatto: attivare `pg_cron`, eseguire
+`push-reminders.sql` e rieseguire `schema.sql`, `push-reminders-verify.sql` tutto verde, deploy del
+Worker. La consegna vera con l'app chiusa si prova su un browser vero dopo il deploy.

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { classifyPushSupport, base64UrlToBytes, sameServerKey, rowFromSubscription, parsePushState, shouldRefresh } = await import("../src/lib/push.ts");
+const { classifyPushSupport, base64UrlToBytes, sameServerKey, rowFromSubscription, parsePushState, shouldRefresh, storedAuthUserId, pushOwnerSignedOut } = await import("../src/lib/push.ts");
 const { parseOpenTarget, urlWithoutOpen } = await import("../src/lib/openLink.ts");
 
 const env = (patch = {}) => ({
@@ -83,10 +83,11 @@ test("riallineamento all'avvio: cadenza di 12 ore, endpoint o account cambiati",
   assert.equal(shouldRefresh(prev, "https://e", "u", prev.at - hour), true);
 });
 
-test("?apri=: solo le tre destinazioni note", () => {
+test("?apri=: solo le quattro destinazioni note", () => {
   assert.equal(parseOpenTarget("?apri=notifiche"), "notifiche");
   assert.equal(parseOpenTarget("?x=1&apri=condivisione"), "condivisione");
   assert.equal(parseOpenTarget("?apri=gruppi"), "gruppi");
+  assert.equal(parseOpenTarget("?apri=calendario"), "calendario");
   assert.equal(parseOpenTarget("?apri=impostazioni"), null);
   assert.equal(parseOpenTarget("?apri=NOTIFICHE"), null);
   assert.equal(parseOpenTarget("?apri="), null);
@@ -97,4 +98,22 @@ test("?apri=: l'URL ripulito tiene gli altri parametri e il frammento", () => {
   assert.equal(urlWithoutOpen("https://massimilianociconte.github.io/StudyOS/?apri=notifiche"), "/StudyOS/");
   assert.equal(urlWithoutOpen("https://x.github.io/StudyOS/?invito=ABC&apri=gruppi#a"), "/StudyOS/?invito=ABC#a");
   assert.equal(urlWithoutOpen("https://x.github.io/StudyOS/#invito=ABC"), "/StudyOS/#invito=ABC");
+});
+
+test("sessione finita da sola: si legge l'account della sessione salvata da supabase-js", () => {
+  assert.equal(storedAuthUserId(null), null);
+  assert.equal(storedAuthUserId(""), null);
+  assert.equal(storedAuthUserId(JSON.stringify({ access_token: "t", user: { id: "u1" } })), "u1");
+  assert.equal(storedAuthUserId(JSON.stringify({ currentSession: { user: { id: "u2" } } })), "u2");
+  assert.equal(storedAuthUserId("{rotto"), undefined, "valore illeggibile: non si tocca niente");
+  assert.equal(storedAuthUserId(JSON.stringify({ user: {} })), undefined);
+  assert.equal(storedAuthUserId("null"), undefined);
+});
+
+test("sessione finita da sola: le notifiche si spengono solo se l'account che le ha accese non c'è più", () => {
+  const saved = (id) => JSON.stringify({ access_token: "t", user: { id } });
+  assert.equal(pushOwnerSignedOut("u1", null), true, "sessione tolta (scaduta, revocata, uscita altrove)");
+  assert.equal(pushOwnerSignedOut("u1", saved("u2")), true, "entrato un altro account");
+  assert.equal(pushOwnerSignedOut("u1", saved("u1")), false, "stesso account, anche offline con la sessione non rinnovata");
+  assert.equal(pushOwnerSignedOut("u1", "?"), false, "storage illeggibile");
 });

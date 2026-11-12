@@ -60,14 +60,18 @@ del 12/11/2026 di `accept_group_invite` (una sola voce per ingresso).
 
 Ordine esatto nel SQL Editor, una query alla volta:
 
-1. `schema.sql` (la prima volta o dopo una sua revisione);
+1. `schema.sql` (la prima volta o dopo una sua revisione; la revisione del 12/11/2026 fa
+   togliere a «Cancella tutti i dati» anche i promemoria con l'app chiusa);
 2. `groups.sql`;
 3. `sharing.sql`;
 4. `people.sql`;
-5. `verify.sql`;
-6. `sharing-verify.sql`;
-7. `people-verify.sql` (le colonne `pg_net_ready` e `vault_ready` restano `false` finché non
-   fai i passi delle notifiche push più sotto: l'app funziona lo stesso, senza push).
+5. `push-reminders.sql` (promemoria con l'app chiusa, opzionale, vedi sotto);
+6. `verify.sql`;
+7. `sharing-verify.sql`;
+8. `people-verify.sql` (le colonne `pg_net_ready` e `vault_ready` restano `false` finché non
+   fai i passi delle notifiche push più sotto: l'app funziona lo stesso, senza push);
+9. `push-reminders-verify.sql` (`pg_net_ready`, `vault_ready` e `cron_ready` restano `false`
+   finché non fai i passi delle push e di `pg_cron` più sotto).
 
 Per il connettore remoto degli agenti, dopo `schema.sql`: `agent.sql` e poi `agent-verify.sql`
 (vedi sotto).
@@ -278,6 +282,28 @@ revoca vale subito); scrivere e cancellare file è solo del proprietario. Senza 
 l'app funziona: i file nuovi restano sul dispositivo dove sono stati aggiunti (l'app lo dice) e
 quelli incorporati di prima restano dove sono; dopo l'esecuzione si caricano da soli. Dettagli:
 [docs/superpowers/specs/2026-11-12-attachments-storage-design.md](../docs/superpowers/specs/2026-11-12-attachments-storage-design.md).
+
+**Promemoria con l'app chiusa (`push-reminders.sql`, opzionale, 12/11/2026).** I promemoria
+di eventi ed esami arrivano come notifica push anche senza una scheda di StudyOS aperta, su
+ogni dispositivo con le notifiche attive. L'app scrive i promemoria dei prossimi 7 giorni in
+`studyos_push_reminders` (solo l'account stesso, RLS); ogni minuto `pg_cron` esegue
+`studyos_push_due_reminders()`, che manda al Worker quelli scaduti (tipo `reminder`) con le
+iscrizioni di quell'account soltanto. Dettagli in
+[docs/push-reminders.md](../docs/push-reminders.md).
+
+1. Prima i passi delle notifiche push qui sopra (`pg_net`, Vault, Worker con il deploy che
+   accetta il tipo `reminder`).
+2. **pg_cron**: Dashboard → **Database → Extensions** → cerca `pg_cron` → **Enable**.
+3. Esegui `push-reminders.sql` dopo `people.sql`, come un unico script; si può rieseguire (il
+   job `studyos-push-reminders` resta uno solo). Senza `pg_cron` lo script va a buon fine e
+   avvisa: rieseguilo dopo averlo attivato.
+4. Riesegui `schema.sql` (la funzione di «Cancella tutti i dati» toglie anche queste righe).
+5. Incolla [push-reminders-verify.sql](push-reminders-verify.sql): tutte le colonne `*_ready`
+   devono essere `true`.
+
+Senza questo script l'app funziona come prima: i promemoria arrivano solo con StudyOS aperto.
+Per controllare: `select jobname, schedule from cron.job;` e
+`select count(*) filter (where sent_at is null) as in_attesa, count(*) filter (where skipped) as saltati from public.studyos_push_reminders;`.
 
 `university.sql` è opzionale e la PWA attuale non legge né scrive la sua
 tabella. Non serve eseguirlo per il deploy.

@@ -828,7 +828,11 @@ export const peopleLabels = {
 /** Notifiche push del dispositivo: interruttore in Impostazioni → Profilo e proposta dopo il primo invito. */
 export const pushLabels = {
   toggle: "Notifiche su questo dispositivo",
-  hint: "Ricevi un avviso anche con l'app chiusa: inviti, inviti accettati e permessi cambiati.",
+  hint: "Ricevi un avviso anche con l'app chiusa: promemoria, inviti, inviti accettati e permessi cambiati.",
+  remindersToggle: "Promemoria con l'app chiusa",
+  remindersHint:
+    "I promemoria di eventi ed esami arrivano anche con StudyOS chiuso, su ogni dispositivo con le notifiche attive. Vale per tutto l'account.",
+  remindersOff: "Spenti: i promemoria arrivano solo con StudyOS aperto.",
   checking: "Controllo…",
   on: "Attive su questo dispositivo. Puoi spegnerle quando vuoi.",
   off: "Spente su questo dispositivo.",
@@ -839,7 +843,7 @@ export const pushLabels = {
   failed: "Non sono riuscito ad attivare le notifiche. Riprova tra poco.",
   promptTitle: "Vuoi un avviso quando ricevi un invito?",
   promptBody:
-    "Ti mandiamo una notifica anche quando StudyOS è chiuso: inviti, inviti accettati e permessi cambiati. Puoi spegnerla in Impostazioni → Profilo.",
+    "Ti mandiamo una notifica anche quando StudyOS è chiuso: promemoria, inviti, inviti accettati e permessi cambiati. Puoi spegnerla in Impostazioni → Profilo.",
   promptAccept: "Attiva le notifiche",
   promptLater: "Non ora",
   promptFailed: "Non è stato possibile attivarle. Puoi riprovare da Impostazioni → Profilo.",

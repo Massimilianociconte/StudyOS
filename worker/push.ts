@@ -1,5 +1,5 @@
-// POST /push: il database (studyos_push_notify via pg_net) chiede di consegnare una notifica a
-// un elenco di iscrizioni. Il Worker cifra e firma ogni push, poi segnala a push_gone gli
+// POST /push: il database (via pg_net: studyos_push_notify e, per i promemoria,
+// studyos_push_due_reminders) chiede di consegnare una notifica a un elenco di iscrizioni. Il Worker cifra e firma ogni push, poi segnala a push_gone gli
 // endpoint scaduti (404/410). Nessuna chiave di servizio: solo la chiave publishable e il segreto
 // condiviso. Nei log solo conteggi, mai titoli, testi o endpoint.
 import { VAPID_PUBLIC_KEY } from "../src/lib/pushKeys";
@@ -13,7 +13,8 @@ export interface PushEnv {
 }
 
 export type PushNotification = {
-  kind: "invite" | "accepted" | "permission";
+  /** `reminder`: promemoria di un evento con l'app chiusa (supabase/push-reminders.sql). */
+  kind: "invite" | "accepted" | "permission" | "reminder";
   title: string;
   body: string;
   url: string;
@@ -22,17 +23,32 @@ export type PushNotification = {
 
 /** Contatto VAPID: l'URL del sito, nessun dato personale. */
 export const VAPID_SUBJECT = "https://massimilianociconte.github.io/StudyOS/";
-export const MAX_PUSH_BODY_BYTES = 64 * 1024;
 export const MAX_PUSH_SUBSCRIPTIONS = 49;
+/** Endpoint più lungo accettato (stesso limite del vincolo su studyos_push_subscriptions). */
+export const MAX_ENDPOINT_CHARS = 2048;
+/**
+ * Byte di una riga di iscrizione nel caso peggiore che il database può scrivere: 2048 caratteri di
+ * endpoint con l'escape JSON più lungo (`\u00XX`, 6 byte), chiavi al massimo del vincolo, nomi e spazi.
+ */
+export const MAX_SUBSCRIPTION_JSON_BYTES = MAX_ENDPOINT_CHARS * 6 + 256;
+/**
+ * Corpo massimo: ci sta sempre un lotto pieno (49) di righe nel caso peggiore più la notifica
+ * (≈ 616 kB). Il database mette nello stesso lotto le iscrizioni di più account: con 64 kB tre
+ * account con endpoint lunghissimi facevano respingere (413) le notifiche di tutti gli altri. Ora il
+ * lotto passa sempre e le iscrizioni strane si scartano una per una (parseSubscription).
+ */
+export const MAX_PUSH_BODY_BYTES = MAX_PUSH_SUBSCRIPTIONS * MAX_SUBSCRIPTION_JSON_BYTES + 16 * 1024;
 /** Workers apre al massimo 6 connessioni in uscita alla volta per richiesta: oltre farebbe solo coda. */
 export const PUSH_CONCURRENCY = 6;
 export const MAX_TITLE_CHARS = 120;
 export const MAX_BODY_CHARS = 400;
 
-const KINDS = new Set(["invite", "accepted", "permission"]);
+const KINDS = new Set(["invite", "accepted", "permission", "reminder"]);
 const OPEN_URL = /^\?apri=[a-z]{1,30}$/;
 const TAG = /^[\x21-\x7e]{1,200}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+/** Gli endpoint dei browser sono URL serializzati: solo ASCII stampabile, senza spazi. */
+const ENDPOINT = /^https:\/\/[\x21-\x7e]+$/;
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
@@ -102,7 +118,8 @@ export function parseNotification(value: unknown): PushNotification | null {
 export function parseSubscription(value: unknown): WebPushSubscription | null {
   if (!value || typeof value !== "object") return null;
   const { endpoint, p256dh, auth } = value as Record<string, unknown>;
-  if (!isText(endpoint, 1, 2048) || typeof p256dh !== "string" || typeof auth !== "string") return null;
+  if (!isText(endpoint, 1, MAX_ENDPOINT_CHARS) || typeof p256dh !== "string" || typeof auth !== "string") return null;
+  if (!ENDPOINT.test(endpoint)) return null;
   const key = p256dh.replace(/=+$/, "");
   const secret = auth.replace(/=+$/, "");
   // 65 byte -> 87 caratteri base64url; 16 byte -> 22 caratteri.
@@ -170,7 +187,7 @@ export async function handlePush(request: Request, env: PushEnv, publicKey: stri
   }
 
   const text = await readLimited(request, MAX_PUSH_BODY_BYTES);
-  if (text === null) return json(413, { error: "Corpo oltre 64 kB" });
+  if (text === null) return json(413, { error: `Corpo oltre ${Math.ceil(MAX_PUSH_BODY_BYTES / 1024)} kB` });
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

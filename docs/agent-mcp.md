@@ -465,7 +465,13 @@ Lo stesso Worker `studyos-agent` espone `POST /push`: non è uno strumento MCP e
 lo vedono. Lo chiama solo il database (`pg_net`) con l'intestazione `x-studyos-push-secret`; il
 Worker cifra e invia le notifiche push e non legge né scrive altro. Accetta al massimo 49
 iscrizioni per richiesta (49 push più una `push_gone` sono 50 sottorichieste sul piano Free);
-il database ne manda al massimo 40 per volta. Servono quattro secret, da
+il database ne manda al massimo 40 per volta. Tipi accettati: `invite`, `accepted`,
+`permission` (da `studyos_push_notify`, `people.sql`) e `reminder` (promemoria con l'app chiusa,
+da `studyos_push_due_reminders`, `push-reminders.sql`, una richiesta per promemoria e per
+account). Il corpo può arrivare a `MAX_PUSH_BODY_BYTES` (≈ 617 kB): ci sta sempre un lotto pieno
+di iscrizioni al limite del database anche con l'escape JSON più lungo, così le iscrizioni
+strane di un account non fanno respingere (413) le notifiche degli altri dello stesso lotto;
+gli endpoint non `https://` o non ASCII si scartano uno per uno. Servono quattro secret, da
 impostare una volta (ognuno dopo il via dell'utente; `wrangler` chiede il valore a terminale,
 mai nella riga di comando):
 

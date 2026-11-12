@@ -8,6 +8,7 @@ import { LockScreen } from "./components/LockScreen";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { lazyView } from "./lib/lazyView";
 import { cloudConfigured, subscribeCloudSync } from "./lib/cloudSyncState";
+import { startPushSessionGuard } from "./lib/pushDevice";
 import { useViewMemory } from "./lib/uiState";
 import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
 import { useShareInviteLinks } from "./hooks/useShareInviteLinks";
@@ -67,7 +68,7 @@ export default function App() {
   useGroupInviteLinks(!loading && !locked && !error);
   // Link/QR di condivisione: apre Condivisione sulla scheda dell'invito.
   useShareInviteLinks(!loading && !locked && !error);
-  // Notifica push toccata: ?apri=notifiche|condivisione|gruppi apre la pagina giusta.
+  // Notifica push toccata: ?apri=notifiche|condivisione|gruppi|calendario apre la pagina giusta.
   useOpenLink(!loading && !locked && !error);
 
   useEffect(() => {
@@ -83,17 +84,12 @@ export default function App() {
   }, [init]);
 
   // Notifiche push: se questo dispositivo le aveva già attivate, si riallinea l'iscrizione all'avvio
-  // e dopo ogni accesso. Il codice push si carica solo con il permesso già concesso.
+  // e dopo ogni accesso; se la sessione finisce da sola (scaduta, revocata, uscita altrove) le
+  // notifiche dell'account uscito smettono di arrivare qui. Il codice push si carica solo con il
+  // permesso già concesso.
   useEffect(() => {
     if (loading || !cloudConfigured) return;
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    let lastUserId: string | null = null;
-    return subscribeCloudSync((state) => {
-      const userId = state.session?.user.id ?? null;
-      if (!userId || userId === lastUserId) return;
-      lastUserId = userId;
-      void import("./lib/push").then((module) => module.syncPushSubscription()).catch(() => undefined);
-    });
+    return startPushSessionGuard(subscribeCloudSync);
   }, [loading]);
 
   useEffect(() => {

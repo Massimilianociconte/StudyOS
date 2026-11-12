@@ -442,6 +442,11 @@ export interface Preferences extends BaseEntity {
    * "exam", "birthday"). Arriva dalla sincronizzazione: leggerlo con `sanitizeTypeColorOverrides`.
    */
   eventTypeColors?: Partial<Record<string, string>>;
+  /**
+   * Promemoria con l'app chiusa (notifiche push, supabase/push-reminders.sql) sui dispositivi con le
+   * notifiche attive. Assente = acceso; false = solo ad app aperta.
+   */
+  pushReminders?: boolean;
 }
 
 /** Notifica dell'account: segue l'utente su ogni dispositivo (collezione sincronizzata). */

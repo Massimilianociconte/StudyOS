@@ -72,7 +72,7 @@ export const SETTINGS_TEXT = {
   },
   erase: {
     askTitle: "Cancellare tutti i dati?",
-    askText: "Materie, esami, attività, eventi, allegati e profilo spariscono da questo dispositivo (restano solo le scelte di aspetto) e la password dell'app viene tolta. Non si può annullare: se non hai una copia di sicurezza, premi Annulla e scaricala prima.",
+    askText: "Materie, esami, attività, eventi, allegati e profilo spariscono da questo dispositivo (restano solo le scelte di aspetto), la password dell'app viene tolta e le notifiche su questo dispositivo si spengono. Non si può annullare: se non hai una copia di sicurezza, premi Annulla e scaricala prima.",
     askSignedIn: "Sei collegato al tuo account: scegli se svuotare solo questo dispositivo o cancellare anche dall'account.",
     deviceOnly: "Svuota solo questo dispositivo",
     deviceOnlyHint: "Svuota solo questo dispositivo: i dati restano nell'account e vengono riscaricati.",
