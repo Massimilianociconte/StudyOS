@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addStep, cleanSteps, draftChanged, editorCloseRequest, priorityText, quickTaskChips, removeStep, renameStep, stepsDone, toggleStep } from "../src/lib/tasksUi.ts";
+import { addStep, chipFocusAfterRemove, cleanSteps, draftChanged, editorCloseRequest, priorityText, quickTaskChips, removeStep, renameStep, stepsDone, toggleStep } from "../src/lib/tasksUi.ts";
 
 const STEPS = [
   { id: "s1", text: "Leggere il capitolo", done: true },
@@ -70,6 +70,13 @@ test("aggiunta rapida: una materia che non c'è più resta visibile invece di ap
 
 test("aggiunta rapida: una data non valida non fa pillola", () => {
   assert.deepEqual(quickTaskChips({ ...BLANK, dueDate: "domani" }, "", SUBJECTS), []);
+});
+
+test("aggiunta rapida: tolta una pillola, il focus va alla successiva, all'ultima rimasta o al campo", () => {
+  assert.equal(chipFocusAfterRemove(0, 2), 0, "tolta la prima di tre: la nuova prima");
+  assert.equal(chipFocusAfterRemove(1, 2), 1, "tolta quella in mezzo: la successiva");
+  assert.equal(chipFocusAfterRemove(2, 2), 1, "tolta l'ultima: quella prima");
+  assert.equal(chipFocusAfterRemove(0, 0), null, "nessuna rimasta: il campo");
 });
 
 test("priorità a parole: «Urgente» da sola, le altre con «Priorità»", () => {

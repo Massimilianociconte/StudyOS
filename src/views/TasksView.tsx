@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Task } from "../types";
@@ -19,7 +19,7 @@ import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, sortByPriority, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
-import { priorityText, quickTaskChips, type QuickTaskChip } from "../lib/tasksUi";
+import { chipFocusAfterRemove, priorityText, quickTaskChips, type QuickTaskChip } from "../lib/tasksUi";
 
 type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
 type SortMode = "deadline" | "priority" | "recent";
@@ -362,11 +362,19 @@ function QuickTaskBar({
   };
 
   const selectClass = "min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)]";
+  const titleRef = useRef<HTMLInputElement>(null);
+  const chipsRef = useRef<HTMLDivElement>(null);
   const chips = detailsOpen ? [] : quickTaskChips({ subjectId, priority, dueDate }, defaultSubjectId, subjects);
-  const clearChip = (id: QuickTaskChip["id"]) => {
+  const clearChip = (id: QuickTaskChip["id"], index: number) => {
     if (id === "subject") setSubjectId(defaultSubjectId);
     if (id === "priority") setPriority("medium");
     if (id === "due") setDueDate("");
+    // Il pulsante tolto sparisce: il focus passa alla pillola accanto o al campo, non al fondo pagina.
+    const target = chipFocusAfterRemove(index, chips.length - 1);
+    requestAnimationFrame(() => {
+      const next = target === null ? null : chipsRef.current?.querySelectorAll<HTMLElement>("button")[target];
+      (next ?? titleRef.current)?.focus();
+    });
   };
 
   return (
@@ -376,6 +384,7 @@ function QuickTaskBar({
           <span className="sr-only">{TASKS_TEXT.quickAddField}</span>
           <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
           <input
+            ref={titleRef}
             id="quick-task-title"
             className={`${inputClass} pl-10`}
             value={title}
@@ -422,12 +431,12 @@ function QuickTaskBar({
         </div>
       ) : null}
       {chips.length ? (
-        <div role="group" aria-label={QUICK_TASK_TEXT.applied} className="mt-1.5 flex flex-wrap items-center gap-2 px-1 pb-0.5">
-          {chips.map((chip) => (
+        <div ref={chipsRef} role="group" aria-label={QUICK_TASK_TEXT.applied} className="mt-1.5 flex flex-wrap items-center gap-2 px-1 pb-0.5">
+          {chips.map((chip, index) => (
             <button
               key={chip.id}
               type="button"
-              onClick={() => clearChip(chip.id)}
+              onClick={() => clearChip(chip.id, index)}
               aria-label={QUICK_TASK_TEXT.clear(chip.label)}
               title={QUICK_TASK_TEXT.clear(chip.label)}
               // Pillola alta 32 px, area di tocco 44 px (after:).

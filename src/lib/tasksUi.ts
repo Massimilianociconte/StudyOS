@@ -64,6 +64,13 @@ export const cleanSteps = (steps: TaskStep[]): TaskStep[] =>
 
 export const stepsDone = (steps: TaskStep[]) => ({ done: steps.filter((step) => step.done).length, total: steps.length });
 
+/**
+ * Pillola tolta (anche con Invio): quale pillola prende il focus tra le `remaining` rimaste. La
+ * successiva prende il posto di quella tolta; tolta l'ultima, quella prima; nessuna = null (il campo).
+ */
+export const chipFocusAfterRemove = (removedIndex: number, remaining: number): number | null =>
+  remaining > 0 ? Math.min(removedIndex, remaining - 1) : null;
+
 /** Bozza dell'editor diversa da com'era all'apertura (stessa forma: basta confrontare il JSON). */
 export const draftChanged = <T>(initial: T, draft: T) => JSON.stringify(initial) !== JSON.stringify(draft);
 
