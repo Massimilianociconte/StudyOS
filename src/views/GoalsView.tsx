@@ -12,6 +12,7 @@ import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, useUiState } from "../lib/uiState";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
 
 const CATEGORY_ICON: Record<Goal["category"], string> = {
   study: "BookOpen",
@@ -38,7 +39,8 @@ const deadlineLabel = (deadline?: string) => {
 };
 
 export function GoalsView() {
-  const [openId, setOpenId] = useUiState<string | null>("goals.open", null, { scope: "tab", validate: isNullableString });
+  // Obiettivo aperto: scritto anche da altre schermate (ricerca, Home), pure con Obiettivi già aperta.
+  const [openId, setOpenId] = useLinkedUiState<string | null>("goals.open", null, { validate: isNullableString });
   const [showClosed, setShowClosed] = useUiState("goals.showClosed", false);
   const { goals, addGoal, updateGoal } = useStudyStore();
   const active = goals.filter((goal) => goal.status === "active" || goal.status === "paused");

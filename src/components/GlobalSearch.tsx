@@ -24,7 +24,8 @@ import {
 import { safeCssColor } from "../lib/sharing";
 import { allDayFirstDate, searchHits } from "../lib/repeat";
 import { nextSearchIndex, searchOptionId, searchPanelBox } from "../lib/searchUi";
-import type { SearchKind } from "../lib/openItem";
+import { openItemPlan, searchKindEntity, type SearchKind } from "../lib/openItem";
+import { writeUiState } from "../lib/uiState";
 import { NoteDrawer } from "./NoteDrawer";
 import { NOTES_TEXT } from "../lib/labels/notes";
 
@@ -337,6 +338,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
   // Nota aperta dalla ricerca: si legge sul posto, in un Drawer (non ha una sezione sua).
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
 
+  // Il risultato apre proprio l'elemento: chiavi della sezione d'arrivo (lib/openItem) e poi la sezione.
   const jump = (result: SearchResult) => {
     setQuery("");
     setOpen(false);
@@ -345,7 +347,9 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
       setOpenNoteId(result.id);
       return;
     }
-    onJump(result.view);
+    const plan = openItemPlan(searchKindEntity(result.kind), result.id, useStudyStore.getState());
+    for (const [key, value, scope] of plan?.writes ?? []) writeUiState(key, value, scope);
+    onJump(plan?.view ?? result.view);
     inputRef.current?.blur();
   };
 
