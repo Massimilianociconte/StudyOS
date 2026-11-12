@@ -8,4 +8,5 @@
 - Gruppi condivisi: tabelle Supabase opzionali e limiti → [../groups-sync.md](../groups-sync.md); perché non passano dal cloud personale → [decisions/2026-11-12-gruppi-fuori-dal-cloud-personale.md](decisions/2026-11-12-gruppi-fuori-dal-cloud-personale.md)
 - Condivisione granulare tra account (decisione e design) → [decisions/2026-11-10-condivisione-righe-originali.md](decisions/2026-11-10-condivisione-righe-originali.md), [../plans/2026-11-10-sharing-design.md](../plans/2026-11-10-sharing-design.md)
 - Agenti MCP (ChatGPT, Claude, client locali) → [../agent-mcp.md](../agent-mcp.md)
+- Prove end-to-end con due account sullo stack Supabase locale (`npm run e2e`) → [../../tests/e2e/README.md](../../tests/e2e/README.md)
 - Domande aperte → [OPENQUESTIONS.md](OPENQUESTIONS.md)
