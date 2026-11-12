@@ -52,7 +52,7 @@ import { CalendarExamsHint } from "../components/CalendarExamsHint";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
-import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
+import { Button, HelpTip, Panel, ProgressBar, SectionTitle, Tag } from "../components/ui";
 import { CourseIcon } from "../components/CourseIcon";
 import { safeCssColor } from "../lib/sharing";
 import { goToView } from "../hooks/useLinkedUiState";
@@ -783,46 +783,72 @@ function GettingStarted({
         {steps.map((step, index) => {
           const isDone = done[step.key];
           const isNext = step.key === nextKey;
-          // Il corso decide il primo passo (catalogo del corso o materia a mano): si sceglie qui, non al passo 4.
-          const askDegree = step.key === "subjects" && !isDone;
+          const label = `${isDone ? "Fatto: " : `Passo ${index + 1}: `}${step.title}. ${step.action}`;
+          const heading = (
+            <span className="flex items-center gap-2 text-sm font-black">
+              <span
+                className={`grid h-7 w-7 shrink-0 grid-cols-1 place-items-center rounded-full text-xs ${
+                  isNext ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-strong)] text-[var(--text)]"
+                }`}
+              >
+                {isDone ? <Icon name="Check" className="h-3.5 w-3.5" /> : index + 1}
+              </span>
+              {step.title}
+            </span>
+          );
+          const action = (
+            <>
+              <Icon name={step.icon} className="h-3.5 w-3.5 shrink-0" /> {step.action} →
+            </>
+          );
+          // Il corso decide il primo passo (catalogo del corso o materia a mano): si sceglie qui, prima
+          // dell'azione. Due corsi: un elenco, così il nome intero si legge anche a 375 px.
+          if (step.key === "subjects" && !isDone) {
+            return (
+              <li key={step.key} className="flex min-w-0 flex-col items-start gap-1 rounded-[20px] bg-[var(--surface-soft)] p-3">
+                {heading}
+                <span className="text-xs font-bold text-[var(--muted)]">{step.body}</span>
+                <fieldset className="mt-1 w-full min-w-0">
+                  <legend className="mb-1 text-xs font-bold text-[var(--muted)]">{HOME_GUIDE_TEXT.degreeLabel}</legend>
+                  <div className="grid grid-cols-1 gap-1">
+                    {DEGREE_PROGRAM_IDS.map((id) => (
+                      <label key={id} className="flex min-h-11 min-w-0 cursor-pointer items-center gap-2.5 rounded-[14px] bg-[var(--surface)] px-3 py-2 text-xs font-bold">
+                        <input
+                          type="radio"
+                          name="home-degree"
+                          value={id}
+                          checked={degree === id}
+                          onChange={() => onDegree(id)}
+                          className="h-4 w-4 shrink-0 accent-[var(--accent)]"
+                        />
+                        <span className="min-w-0">{degreeOptionLabel(id)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <button
+                  type="button"
+                  onClick={step.run}
+                  aria-label={label}
+                  className="mt-auto inline-flex min-h-11 items-center gap-1 rounded-full pr-2 text-left text-xs font-black text-[var(--accent-ink)] hover:underline"
+                >
+                  {action}
+                </button>
+              </li>
+            );
+          }
           return (
             <li key={step.key} className={`flex min-w-0 flex-col rounded-[20px] bg-[var(--surface-soft)] ${isDone ? "opacity-60" : ""}`}>
               <button
                 type="button"
                 onClick={step.run}
-                aria-label={`${isDone ? "Fatto: " : `Passo ${index + 1}: `}${step.title}. ${step.action}`}
+                aria-label={label}
                 className="flex w-full min-w-0 flex-1 flex-col items-start gap-1 rounded-[20px] p-3 text-left hover:bg-[var(--surface)]"
               >
-                <span className="flex items-center gap-2 text-sm font-black">
-                  <span
-                    className={`grid h-7 w-7 shrink-0 grid-cols-1 place-items-center rounded-full text-xs ${
-                      isNext ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-strong)] text-[var(--text)]"
-                    }`}
-                  >
-                    {isDone ? <Icon name="Check" className="h-3.5 w-3.5" /> : index + 1}
-                  </span>
-                  {step.title}
-                </span>
+                {heading}
                 <span className="text-xs font-bold text-[var(--muted)]">{isDone ? "Fatto." : step.body}</span>
-                {isDone ? null : (
-                  <span className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-black text-[var(--accent-ink)]">
-                    <Icon name={step.icon} className="h-3.5 w-3.5" /> {step.action} →
-                  </span>
-                )}
+                {isDone ? null : <span className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-black text-[var(--accent-ink)]">{action}</span>}
               </button>
-              {askDegree ? (
-                // pt-2: l'anello del focus del pulsante sopra (3 px + 3 px di distanza) non copre l'etichetta.
-                <label className="block min-w-0 px-3 pb-3 pt-2">
-                  <span className="mb-1 block text-xs font-bold text-[var(--muted)]">{HOME_GUIDE_TEXT.degreeLabel}</span>
-                  <select className={inputClass} value={degree} onChange={(event) => onDegree(event.target.value as DegreeProgramId)}>
-                    {DEGREE_PROGRAM_IDS.map((id) => (
-                      <option key={id} value={id}>
-                        {degreeOptionLabel(id)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
             </li>
           );
         })}
