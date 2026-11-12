@@ -16,6 +16,9 @@ import { LinkedNotes } from "../components/NoteDrawer";
 import { Icon } from "../components/Icon";
 import { CourseIcon } from "../components/CourseIcon";
 import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
+import { SubjectGroupExams } from "../components/groupExams/SubjectGroupExams";
+import { draftFromBarb, type SessionDraft } from "../lib/groupExamForm";
+import { useGroupExamStore } from "../store/useGroupExamStore";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
 import { subjectSemester, SEMESTER_LABEL, SEMESTER_TONE, SEMESTER_IDS, type SemesterId } from "../lib/semesters";
@@ -575,6 +578,9 @@ function SubjectDrawer({
   };
 
   const course = subject ? resolveBarbCourse(subject, BARB_DATASET.courses) : null;
+  // «Aggiungi al gruppo» da un appello ufficiale: la sezione degli appelli del gruppo apre il modulo.
+  const [groupDraft, setGroupDraft] = useState<SessionDraft | null>(null);
+  const hasExamGroups = useGroupExamStore((state) => state.groups.length > 0);
   const stats = subject ? subjectStats(subject, { tasks, sessions, exams, attachments }) : null;
 
   const save = async () => {
@@ -706,7 +712,8 @@ function SubjectDrawer({
             )}
           </div>
 
-          {course ? <BarbExamSessions course={course} /> : null}
+          {course ? <BarbExamSessions course={course} onAddToGroup={hasExamGroups ? (session) => setGroupDraft(draftFromBarb(session, course.name)) : undefined} /> : null}
+          <SubjectGroupExams subject={subject} draft={groupDraft} onDraftUsed={() => setGroupDraft(null)} />
 
           <Suspense fallback={null}>
             <SubjectStudyStats subject={subject} />

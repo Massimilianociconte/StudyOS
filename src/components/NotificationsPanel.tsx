@@ -7,6 +7,7 @@ import { notificationJump } from "../lib/notificationJump";
 import { NOTIFICATIONS_TEXT } from "../lib/labels/notifications";
 import { Button, Drawer, EmptyState } from "./ui";
 import { Icon } from "./Icon";
+import { StandaloneReminders } from "./StandaloneReminders";
 
 const KIND_ICON: Record<AppNotification["kind"], string> = {
   invite: "Mail",
@@ -56,6 +57,7 @@ export function NotificationsPanel({ onClose }: { onClose: () => void }) {
         ) : undefined
       }
     >
+      <StandaloneReminders />
       {visible.length === 0 ? (
         <EmptyState icon="Bell" title={NOTIFICATIONS_TEXT.emptyTitle} body={NOTIFICATIONS_TEXT.emptyBody} />
       ) : (
