@@ -379,6 +379,12 @@ export const allDayDays = (item: { start?: unknown; end?: unknown; timeZone?: st
   return span ? { first: span.date, last: civilAddDays(span.date, span.days - 1) } : null;
 };
 
+/** Primo giorno di un tutto il giorno come data locale da formattare (es. «8 dic» nella ricerca), nel fuso dell'evento. */
+export const allDayFirstDate = (item: { start: string; end?: unknown; timeZone?: string; occurrenceKey?: unknown }): Date => {
+  const days = allDayDays(item);
+  return days ? localMidnight(days.first) : parseISO(item.start);
+};
+
 /**
  * Inizio e fine da salvare per i giorni `first`–`last` (compresi) di un tutto il giorno: mezzanotti nel
  * fuso `zone` dell'evento (assente o non valido: il dispositivo, che lo fissa alla creazione), fine
@@ -394,7 +400,7 @@ export const allDayTimes = (first: string, last: string, zone: string | undefine
   return { start: midnight(first), end: midnight(isCivilDate(end) ? civilAddDays(end, 1) : end) };
 };
 
-const legacyOf =(event: CalendarEvent): Legacy => {
+const legacyOf = (event: CalendarEvent): Legacy => {
   const recurrence = (event.recurrence ?? "none") as unknown;
   const until = typeof event.recurrenceUntil === "string" && event.recurrenceUntil ? parseISO(event.recurrenceUntil).getTime() : Number.NaN;
   const limitMs = Number.isNaN(until) ? Number.POSITIVE_INFINITY : until + DAY_MS;

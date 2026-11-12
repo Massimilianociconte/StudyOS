@@ -202,3 +202,15 @@ test("B1. Una modifica scritta a mezzanotte del dispositivo (agente, app vecchia
     assert.deepEqual(normalizeRepeat(after.find((event) => event.id === "s")).byWeekday, ["MO"], zone);
   }
 });
+
+test("Ricerca: un tutto il giorno mostra la sua data (nel fuso dell'evento), non quella del dispositivo", async () => {
+  const { format } = await import("date-fns");
+  const { it } = await import("date-fns/locale");
+  const { allDayFirstDate } = await import("../src/lib/repeat.ts");
+  // 8 dicembre a Roma: a New York è ancora il 7 alle 18, ma la ricerca dice «8 dic».
+  assert.equal(format(allDayFirstDate(romeAllDay("2026-12-08", "2026-12-08")), "d MMM", { locale: it }), "8 dic");
+  assert.equal(format(allDayFirstDate(romeAllDay("2026-12-31", "2027-01-02")), "d MMM", { locale: it }), "31 dic");
+  // Un'occorrenza espansa (alla mezzanotte del dispositivo): il suo giorno.
+  const occurrence = expandEvents([romeSeries("2026-11-02", "2026-11-02", { freq: "weekly" })], localMidnight("2026-11-16"), localMidnight("2026-11-17"))[0];
+  assert.equal(format(allDayFirstDate(occurrence), "d MMM", { locale: it }), "16 nov");
+});

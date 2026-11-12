@@ -21,7 +21,7 @@ import {
   hostOf
 } from "../lib/labels";
 import { safeCssColor } from "../lib/sharing";
-import { searchHits } from "../lib/repeat";
+import { allDayFirstDate, searchHits } from "../lib/repeat";
 
 type ResultKind = "task" | "event" | "subject" | "exam" | "material" | "session" | "topic" | "goal" | "note";
 
@@ -149,7 +149,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
       const subject = subjectOf(subjects, event.subjectId);
       const when =
         event.allDay === true
-          ? `${format(parseISO(event.start), "d MMM", { locale: it })} · ${ALL_DAY_LABEL}`
+          ? `${format(allDayFirstDate(event), "d MMM", { locale: it })} · ${ALL_DAY_LABEL}`
           : format(parseISO(event.start), "d MMM HH:mm", { locale: it });
       out.push({
         id: event.id,
