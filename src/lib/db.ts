@@ -6,6 +6,7 @@ import type {
   DashboardWidget,
   Exam,
   Goal,
+  ExamPlan,
   GroupActivity,
   GroupInvite,
   GroupResource,
@@ -138,6 +139,7 @@ class StudyOSDatabase extends Dexie {
   attachmentFiles!: Table<AttachmentFileRow, string>;
   attachmentBytes!: Table<AttachmentBytesRow, string>;
   attachmentDeletes!: Table<AttachmentDeleteRow, string>;
+  examPlans!: Table<ExamPlan, string>;
 
   constructor() {
     super("studyos-local-db");
@@ -186,6 +188,11 @@ class StudyOSDatabase extends Dexie {
       attachmentFiles: "id, pending, usedAt",
       attachmentBytes: "id",
       attachmentDeletes: "id"
+    });
+    // v8: piano d'esame personale sopra gli appelli dei gruppi (collezione examPlans, sync personale).
+    // Tabella nuova e vuota: niente da convertire.
+    this.version(8).stores({
+      examPlans: "id, updatedAt, sessionId"
     });
   }
 }

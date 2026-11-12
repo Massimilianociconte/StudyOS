@@ -19,7 +19,8 @@ export const COLLECTIONS = [
   "studyGroups",
   "groupInvites",
   "groupResources",
-  "groupActivities"
+  "groupActivities",
+  "examPlans"
 ] as const;
 
 export type CollectionKey = (typeof COLLECTIONS)[number];
@@ -50,7 +51,8 @@ export const ENTITY_TYPES: Record<CollectionKey, string> = {
   studyGroups: "studyGroup",
   groupInvites: "groupInvite",
   groupResources: "groupResource",
-  groupActivities: "groupActivity"
+  groupActivities: "groupActivity",
+  examPlans: "examPlan"
 };
 
 export const COLLECTION_BY_ENTITY_TYPE: Record<string, CollectionKey> = Object.fromEntries(

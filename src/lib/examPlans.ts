@@ -106,3 +106,24 @@ export const normalizeExamPlan = (value: unknown): ExamPlan | null => {
     snapshot: raw.snapshot as ExamPlanSnapshot
   };
 };
+
+/**
+ * Toglie dai piani i collegamenti a materie, esami ed eventi che spariscono (eliminazioni nello store).
+ * La scelta resta; i piani non toccati restano gli stessi oggetti (il diff non li riscrive).
+ */
+export const unlinkPlans = (
+  plans: readonly ExamPlan[],
+  gone: { subjectIds?: ReadonlySet<string>; examIds?: ReadonlySet<string>; eventIds?: ReadonlySet<string> },
+  now: string
+): ExamPlan[] =>
+  plans.map((plan) => {
+    const dropSubject = Boolean(plan.subjectId && gone.subjectIds?.has(plan.subjectId));
+    const dropExam = Boolean(plan.examId && gone.examIds?.has(plan.examId));
+    const dropEvent = Boolean(plan.linkedEventId && gone.eventIds?.has(plan.linkedEventId));
+    if (!dropSubject && !dropExam && !dropEvent) return plan;
+    const next: ExamPlan = { ...plan, updatedAt: now };
+    if (dropSubject) delete next.subjectId;
+    if (dropExam) delete next.examId;
+    if (dropEvent) delete next.linkedEventId;
+    return next;
+  });

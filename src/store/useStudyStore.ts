@@ -21,6 +21,7 @@ import type {
   CalendarEvent,
   DashboardWidget,
   Exam,
+  ExamPlan,
   Goal,
   GroupActivity,
   GroupInvite,
@@ -106,6 +107,8 @@ import {
 import { matchTopic, relinkSession, reviewedSessionTimes, sessionEndsInFuture, sessionLinksOf, type SessionEdit, type SessionLinks } from "../lib/studySessions";
 import { resolveTimerDurations } from "../lib/timerPrefs";
 import type { TimerSettings } from "../types";
+import { applyPlanPatch, newExamPlan, normalizeExamPlan, unlinkPlans, type ExamPlanPatch } from "../lib/examPlans";
+import type { GroupExamSession } from "../lib/groupExams";
 import { useSharedStore } from "./useSharedStore";
 
 let sessionPassphrase: string | undefined;
@@ -154,6 +157,7 @@ interface StudyState {
   groupInvites: GroupInvite[];
   groupResources: GroupResource[];
   groupActivities: GroupActivity[];
+  examPlans: ExamPlan[];
   timer: TimerState;
   /** Riepilogo aperto di un Timer o Cronometro finito (Salva / Scarta); si riapre dal timer. */
   timerReview: boolean;
@@ -205,6 +209,12 @@ interface StudyState {
   addExam: (exam: Partial<Exam> & Pick<Exam, "subjectId" | "date">) => Promise<void>;
   updateExam: (id: string, patch: Partial<Exam>) => Promise<void>;
   deleteExam: (id: string) => Promise<void>;
+  /** Piano personale di un appello del gruppo: lo crea alla prima scelta (serve l'appello), poi lo aggiorna. */
+  planExam: (sessionId: string, patch: ExamPlanPatch, session?: GroupExamSession, groupName?: string) => Promise<ExamPlan | null>;
+  removeExamPlan: (id: string) => Promise<void>;
+  addReminder: (input: Pick<Reminder, "title" | "remindAt"> & Partial<Pick<Reminder, "linkedEntityType" | "linkedEntityId">>) => Promise<Reminder>;
+  updateReminder: (id: string, patch: Partial<Pick<Reminder, "title" | "remindAt" | "done">>) => Promise<void>;
+  deleteReminder: (id: string) => Promise<void>;
   /** Con `id` (modulo "Aggiungi studio fatto") una sessione già presente non si aggiunge di nuovo. */
   addSession: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
   updateSession: (id: string, patch: Partial<StudySession>) => Promise<void>;
@@ -428,7 +438,10 @@ const upgradeSettings = (saved: UserSettings): UserSettings => {
   return settings;
 };
 
-const applySnapshot = (snapshot: Partial<StudySnapshot>): CollectionsState => normalizeCollections(snapshot);
+const applySnapshot = (snapshot: Partial<StudySnapshot>): CollectionsState => {
+  const collections = normalizeCollections(snapshot);
+  return { ...collections, examPlans: collections.examPlans.map(normalizeExamPlan).filter((plan): plan is ExamPlan => plan !== null) };
+};
 
 const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => {
   const createdAt = nowIso();
@@ -1282,7 +1295,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
           events: applyEditPlan(state.events, { puts: [], deletes: [...ids] }).events,
           attachments: unlinkEvents(state.attachments, ids, now),
           notes: unlinkEvents(state.notes, ids, now),
-          reminders: unlinkEvents(state.reminders, ids, now)
+          reminders: unlinkEvents(state.reminders, ids, now),
+          examPlans: unlinkPlans(state.examPlans, { eventIds: ids }, now)
         };
       });
       await commit();
@@ -1367,6 +1381,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
         ...before.topics.filter((topic) => topic.subjectId === id).map((topic) => `studyTopic:${topic.id}`)
       ]);
       const now = nowIso();
+      const goneExams = new Set(before.exams.filter((exam) => exam.subjectId === id).map((exam) => exam.id));
       const unlink = <T extends { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string }>(item: T) =>
         item.linkedEntityType && gone.has(`${item.linkedEntityType}:${item.linkedEntityId}`)
           ? { ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: now }
@@ -1384,7 +1399,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
         widgets: state.widgets.map(free),
         attachments: state.attachments.map(unlink),
         notes: state.notes.map(unlink),
-        reminders: state.reminders.map(unlink)
+        reminders: state.reminders.map(unlink),
+        examPlans: unlinkPlans(state.examPlans, { subjectIds: new Set([id]), examIds: goneExams }, now)
       }));
       await commit();
     },
@@ -1422,12 +1438,62 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     deleteExam: async (id) => {
       const detach = detachLinked("exam", id);
+      const now = nowIso();
       set((state) => ({
         exams: state.exams.filter((exam) => exam.id !== id),
         attachments: state.attachments.map(detach),
         notes: state.notes.map(detach),
-        reminders: state.reminders.map(detach)
+        reminders: state.reminders.map(detach),
+        examPlans: unlinkPlans(state.examPlans, { examIds: new Set([id]) }, now)
       }));
+      await commit();
+    },
+
+    planExam: async (sessionId, patch, session, groupName) => {
+      const existing = get().examPlans.find((plan) => plan.sessionId === sessionId);
+      if (!existing && !session) return null;
+      const now = laterStamp(existing?.updatedAt);
+      const name = groupName ?? existing?.snapshot.groupName ?? "";
+      const base = existing ?? newExamPlan(session as GroupExamSession, name, now);
+      const next = applyPlanPatch(base, patch, session, name, now);
+      set((state) => ({ examPlans: [next, ...state.examPlans.filter((plan) => plan.id !== next.id)] }));
+      await commit();
+      return next;
+    },
+
+    removeExamPlan: async (id) => {
+      set((state) => ({ examPlans: state.examPlans.filter((plan) => plan.id !== id) }));
+      await commit();
+    },
+
+    addReminder: async (input) => {
+      const now = nowIso();
+      const created: Reminder = {
+        id: createId("reminder"),
+        createdAt: now,
+        updatedAt: now,
+        archived: false,
+        tags: [],
+        title: input.title.trim().slice(0, 200),
+        remindAt: input.remindAt,
+        linkedEntityType: input.linkedEntityType,
+        linkedEntityId: input.linkedEntityId,
+        done: false
+      };
+      set((state) => ({ reminders: [created, ...state.reminders] }));
+      await commit();
+      return created;
+    },
+
+    updateReminder: async (id, patch) => {
+      set((state) => ({
+        reminders: state.reminders.map((item) => (item.id === id ? { ...item, ...patch, updatedAt: laterStamp(item.updatedAt) } : item))
+      }));
+      await commit();
+    },
+
+    deleteReminder: async (id) => {
+      set((state) => ({ reminders: state.reminders.filter((item) => item.id !== id) }));
       await commit();
     },
 

@@ -288,7 +288,8 @@ export function SettingsView() {
       studyGroups: scope === "full" ? snapshot.studyGroups : [],
       groupInvites: scope === "full" ? snapshot.groupInvites : [],
       groupResources: scope === "full" ? snapshot.groupResources : [],
-      groupActivities: scope === "full" ? snapshot.groupActivities : []
+      groupActivities: scope === "full" ? snapshot.groupActivities : [],
+      examPlans: scope === "full" ? snapshot.examPlans : []
       });
       const save = async (attachments: StudySnapshot["attachments"]) => {
         const envelope = await createBackupEnvelope(scopedFor(attachments), settings, exportEncrypted ? backupPassphrase : undefined, scope);

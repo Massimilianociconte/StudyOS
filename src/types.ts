@@ -599,6 +599,7 @@ export interface StudySnapshot {
   groupInvites: GroupInvite[];
   groupResources: GroupResource[];
   groupActivities: GroupActivity[];
+  examPlans: ExamPlan[];
 }
 
 export interface BackupEnvelope {

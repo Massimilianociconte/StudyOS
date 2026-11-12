@@ -3,9 +3,11 @@
 // 48 ore e, quando scatta, aggiunge una notifica in app (che apre il calendario) e, se il permesso è
 // stato dato, una notifica di sistema. Le chiavi già avvisate restano sul dispositivo. I promemoria
 // persi ad app chiusa (ultime 24 ore, evento non ancora cominciato) arrivano solo nella campanella.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../../store/useStudyStore";
+import { useGroupExamStore } from "../../store/useGroupExamStore";
+import { reminderSourceEvents } from "../../lib/reminderSources";
 import { EVENT_REMINDER_TEXT } from "../../lib/labels/eventReminders";
 import {
   FIRED_STORAGE_KEY,
@@ -102,9 +104,18 @@ async function showReminderOnce(item: PlannedReminder, title: string, body: stri
 }
 
 export function EventReminderWatcher() {
-  const { events, ready, addNotification } = useStudyStore(
-    useShallow((state) => ({ events: state.events, ready: !state.loading && !state.locked, addNotification: state.addNotification }))
+  const { events, examPlans, reminders, ready, addNotification } = useStudyStore(
+    useShallow((state) => ({
+      events: state.events,
+      examPlans: state.examPlans,
+      reminders: state.reminders,
+      ready: !state.loading && !state.locked,
+      addNotification: state.addNotification
+    }))
   );
+  // Eventi personali + appelli scelti (e chiusura delle iscrizioni) + promemoria autonomi.
+  const groupSessions = useGroupExamStore((state) => state.sessions);
+  const sources = useMemo(() => reminderSourceEvents({ events, examPlans, reminders, groupSessions }), [events, examPlans, reminders, groupSessions]);
   // Promemoria con l'app chiusa: le righe sul server seguono eventi e preferenze (solo con un account).
   useEffect(() => {
     if (!cloudConfigured) return undefined;
@@ -163,11 +174,11 @@ export function EventReminderWatcher() {
     try {
       const now = new Date();
       const nowMs = now.getTime();
-      plan = planReminders(events, now);
+      plan = planReminders(sources, now);
       // Persi ad app chiusa: solo nella campanella (niente notifica di sistema), i più recenti non ancora
       // avvisati, una volta. Gli altri si ricordano come avvisati, anche dopo un riavvio.
       const fired = readFired();
-      const { show, skip } = splitMissed(missedReminders(events, now), (key) => firedHere.has(key) || Boolean(fired[key]));
+      const { show, skip } = splitMissed(missedReminders(sources, now), (key) => firedHere.has(key) || Boolean(fired[key]));
       if (skip.length) {
         for (const item of skip) firedHere.add(item.key);
         writeFired(pruneFired({ ...fired, ...Object.fromEntries(skip.map((item) => [item.key, nowMs])) }, nowMs));
@@ -190,7 +201,7 @@ export function EventReminderWatcher() {
     };
     const timers = plan.map((item) => window.setTimeout(() => fire(item), Math.max(0, item.at - Date.now())));
     return () => timers.forEach((id) => window.clearTimeout(id));
-  }, [events, ready, wake, addNotification]);
+  }, [sources, ready, wake, addNotification]);
 
   return null;
 }

@@ -106,7 +106,8 @@ const COLLECTION_LABEL: Record<(typeof COLLECTIONS)[number], string> = {
   studyGroups: "gruppi",
   groupInvites: "inviti",
   groupResources: "risorse condivise",
-  groupActivities: "voci di cronologia dei gruppi"
+  groupActivities: "voci di cronologia dei gruppi",
+  examPlans: "piani d'esame"
 };
 
 export const backupSummary = (snapshot: StudySnapshot) => {
