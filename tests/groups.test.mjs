@@ -401,3 +401,11 @@ test("cassetta degli inviti: letture, realtime e notifiche per account, mai per 
   const sheet = readFileSync(new URL("../src/components/GroupInvite.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(sheet, /recipientEmail/);
 });
+
+test("gruppi: il canale Realtime ricontrolla anche alla prima iscrizione", () => {
+  // Tra il pull fatto prima di aprire il canale e l'iscrizione vera un altro membro può scrivere:
+  // senza un controllo al primo SUBSCRIBED quella scrittura resta invisibile fino al prossimo evento.
+  const source = readFileSync(new URL("../src/lib/groupSync.ts", import.meta.url), "utf8");
+  assert.match(source, /signalGroups\(subscribedOnce \? 0 : undefined\)/);
+  assert.doesNotMatch(source, /if \(subscribedOnce\) signalGroups\(0\)/);
+});

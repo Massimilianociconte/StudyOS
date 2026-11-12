@@ -1037,9 +1037,11 @@ const watchGroups = (me: string, groupIds: string[]): Promise<void> => {
       )
       .subscribe((status) => {
         // Iscritto (o di nuovo, dopo una caduta della rete): ciò che è cambiato prima non è arrivato
-        // come evento, quindi si ricontrolla. La prima volta basta il pull appena fatto.
+        // come evento, quindi si ricontrolla. Anche la prima volta: tra il pull fatto prima di aprire il
+        // canale e l'iscrizione vera (secondi, su rete lenta) un altro membro può aver scritto, e
+        // senza questo controllo lo si vedrebbe solo al prossimo evento o al controllo periodico.
         if (status !== "SUBSCRIBED") return;
-        if (subscribedOnce) signalGroups(0);
+        signalGroups(subscribedOnce ? 0 : undefined);
         subscribedOnce = true;
       });
   });
