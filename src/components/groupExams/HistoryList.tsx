@@ -84,7 +84,7 @@ export function HistoryList({
             {entry.action === "create" ? null : confirming === entry.id ? (
               <InlineConfirm text={confirmText} confirmLabel={T.restore} icon="RotateCcw" busy={busy} onConfirm={() => void restore(entry)} onCancel={() => setConfirming(null)} />
             ) : (
-              <Button variant="soft" icon="RotateCcw" className="justify-self-start" onClick={() => setConfirming(entry.id)}>
+              <Button variant="soft" icon="RotateCcw" className="justify-self-start" aria-label={T.restoreAria([entry.actorName, formatNotificationTime(entry.changedAt)].filter(Boolean).join(", "))} onClick={() => setConfirming(entry.id)}>
                 {T.restore}
               </Button>
             )}

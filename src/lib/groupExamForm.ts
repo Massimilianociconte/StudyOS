@@ -3,6 +3,7 @@
 import type { CalendarEvent, GroupExamKind, Subject } from "../types";
 import type { BarbExamSession } from "./university/examTypes";
 import { GROUP_EXAM_KIND_LABEL } from "./labels";
+import { GROUP_EXAM_TEXT as T } from "./labels/groupExams";
 import {
   SESSION_EDIT_FIELDS,
   cleanSessionFields,
@@ -128,7 +129,8 @@ export const sessionDraftFromEvent = (
     ...emptyDraft(localDay(event.start) ?? ""),
     ...(subject ? courseFromSubject(subject) : { courseName: event.title.replace(/^Appello · /, "").slice(0, 160) }),
     time: event.allDay ? "" : localTime(event.start),
-    notes: (event.description ?? "").slice(0, 1000)
+    // Le note di un mio evento sono private: non si copiano nell'appello che vedono tutti.
+    notes: ""
   };
 };
 
@@ -158,7 +160,7 @@ export const changedSessionFields = (before: SessionFields, after: SessionFields
 
 /** Valore leggibile di un campo («12/01/2027», «Preappello», «—»). */
 export const fieldText = (fields: SessionFields, field: SessionEditField): string => {
-  if (field === "course") return fields.courseName;
+  if (field === "course") return fields.courseId ? `${fields.courseName} ${T.fromCatalogue}` : fields.courseName;
   if (field === "kind") return GROUP_EXAM_KIND_LABEL[fields.kind];
   if (field === "date" || field === "registrationOpens" || field === "registrationCloses") return formatDay(fields[field]);
   const value = fields[field];
@@ -253,9 +255,22 @@ export const resolveConflict = (
     if (field === "course") {
       resolved.courseId = source.courseId;
       resolved.courseName = source.courseName;
+      resolved.barbSessionId = source.barbSessionId;
+      resolved.source = source.source;
     } else {
       (resolved as unknown as Record<string, unknown>)[field] = source[field];
     }
   }
   return resolved;
+};
+
+/** Campi del modulo che hanno un proprio input. */
+export const SESSION_INPUT_FIELDS = ["course", "date", "kind", "time", "room", "label", "notes", "registrationOpens", "registrationCloses"] as const;
+
+/** Nome del campo dell'errore (client o server) → input del modulo, o undefined se riguarda tutto l'appello. */
+export const sessionInputField = (field: string | undefined): string | undefined => {
+  if (!field) return undefined;
+  if (field === "courseId" || field === "courseName") return "course";
+  if (field === "registrationOrder") return "registrationCloses";
+  return (SESSION_INPUT_FIELDS as readonly string[]).includes(field) ? field : undefined;
 };

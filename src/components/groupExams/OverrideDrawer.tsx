@@ -4,8 +4,9 @@ import { useState } from "react";
 import { Button, Drawer, Field, inputClass } from "../ui";
 import { InlineConfirm } from "../InlineConfirm";
 import { HistoryList } from "./HistoryList";
+import { FieldMessage, fieldAttrs, useFieldIssue } from "./FieldError";
 import { GROUP_EXAM_TEXT as T } from "../../lib/labels/groupExams";
-import { CATALOG_OVERRIDE_FIELDS, cleanOverrideFields, describeOverrideEntry, overridesOf } from "../../lib/catalogOverrides";
+import { CATALOG_OVERRIDE_FIELDS, cleanOverrideFields, describeOverrideEntry, overrideInputField, overridesOf } from "../../lib/catalogOverrides";
 import { newGroupRecordId, type CatalogTargetKind } from "../../lib/groupExams";
 import { useGroupExamStore } from "../../store/useGroupExamStore";
 
@@ -35,16 +36,33 @@ export function OverrideDrawer({
   const [message, setMessage] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
   const fields = CATALOG_OVERRIDE_FIELDS[kind];
+  const { scope, issue, fail, clear } = useFieldIssue(fields);
+  const showFailure = (text: string, field?: string) => {
+    const input = overrideInputField(kind, field);
+    if (input) {
+      setMessage("");
+      fail(text, input);
+    } else {
+      clear();
+      setMessage(text);
+    }
+  };
   const label = targetLabel || draft.label || T.addContact;
 
   const save = async () => {
+    clear();
+    // Un contatto nuovo si riconosce dal nome: senza, l'elenco mostrerebbe «Aggiungi un contatto».
+    if (kind === "contact" && !targetLabel && !(draft.label ?? "").trim()) {
+      showFailure(T.contactNameMissing, "label");
+      return;
+    }
     const clean = cleanOverrideFields(kind, draft);
     if (!clean.ok) {
-      setMessage(clean.message);
+      showFailure(clean.message, clean.field);
       return;
     }
     if (typeof navigator !== "undefined" && !navigator.onLine) {
-      setMessage(T.offline);
+      showFailure(T.offline);
       return;
     }
     setBusy(true);
@@ -56,7 +74,7 @@ export function OverrideDrawer({
         // Qualcuno l'ha cambiata nel frattempo: si riparte dalla sua versione.
         setDraft({ ...result.row.fields });
         setMessage(T.overrideConflict(result.row.updatedByName || T.someone));
-      } else setMessage(result.message ?? T.actionFailed);
+      } else showFailure(result.message ?? T.actionFailed, result.field);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : T.actionFailed);
     } finally {
@@ -105,16 +123,18 @@ export function OverrideDrawer({
           <div key={field} className="grid grid-cols-1 gap-1">
             <Field label={T.overrideField[field] ?? field}>
               {LONG.has(field) ? (
-                <textarea className={`${inputClass} min-h-20 py-2`} value={draft[field] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
+                <textarea className={`${inputClass} min-h-20 py-2`} {...fieldAttrs(scope, issue, field)} value={draft[field] ?? ""} onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))} />
               ) : (
                 <input
                   className={inputClass}
+                  {...fieldAttrs(scope, issue, field)}
                   type={field === "email" ? "email" : field === "website" || field === "url" ? "url" : "text"}
                   value={draft[field] ?? ""}
                   onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))}
                 />
               )}
             </Field>
+            <FieldMessage scope={scope} issue={issue} field={field} />
             {field === "email" ? <p className="text-xs font-bold text-[var(--muted)]">{T.emailRule}</p> : null}
             {field in official ? <p className="safe-text text-xs font-bold text-[var(--muted)]">{T.official(official[field])}</p> : null}
           </div>

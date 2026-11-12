@@ -3,6 +3,7 @@
 import type { ExamPlan, StudyGroup } from "../types";
 import { GROUP_EXAM_FIELD_LABEL, GROUP_EXAM_KIND_LABEL } from "./labels";
 import { formatDay, type GroupExamSession, type GroupHistoryEntry } from "./groupExams";
+import { GROUP_EXAM_TEXT as T } from "./labels/groupExams";
 
 /** Chi l'ha aggiunto, il proprietario o un amministratore del gruppo (come la regola del server). */
 export const canDeleteSession = (
@@ -37,9 +38,9 @@ export const planChanges = (
 
 /** «dal 01/12/2026 al 08/01/2027», «fino al …», «dal …» o "". */
 export const registrationText = (opens: string | null, closes: string | null) => {
-  if (opens && closes) return `dal ${formatDay(opens)} al ${formatDay(closes)}`;
-  if (closes) return `fino al ${formatDay(closes)}`;
-  if (opens) return `dal ${formatDay(opens)}`;
+  if (opens && closes) return T.registrationRange(formatDay(opens), formatDay(closes));
+  if (closes) return T.registrationUntil(formatDay(closes));
+  if (opens) return T.registrationFrom(formatDay(opens));
   return "";
 };
 

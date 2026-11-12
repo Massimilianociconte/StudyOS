@@ -39,7 +39,7 @@ function Row({ title, lines, corrected, onCorrect }: { title: string; lines: Arr
     <li className="quiet-panel grid grid-cols-1 gap-2 p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="safe-text min-w-0 font-black">{title}</p>
-        <Button variant="soft" icon="PenLine" onClick={onCorrect}>
+        <Button variant="soft" icon="PenLine" aria-label={T.correctAria(title)} onClick={onCorrect}>
           {T.correct}
         </Button>
       </div>

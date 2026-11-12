@@ -2,6 +2,7 @@
 // vengono da lib/groupExamForm; la scrittura passa da lib/groupExamSync, caricato solo al salvataggio.
 import { useMemo, useState } from "react";
 import { Button, Field, inputClass } from "../ui";
+import { FieldMessage, fieldAttrs, fieldDomId, useFieldIssue } from "./FieldError";
 import { DateField } from "../DatePicker";
 import { GROUP_EXAM_FIELD_LABEL, GROUP_EXAM_KIND_LABEL } from "../../lib/labels";
 import { GROUP_EXAM_TEXT as T } from "../../lib/labels/groupExams";
@@ -12,8 +13,10 @@ import {
   emptyDraft,
   fieldText,
   fieldsFromDraft,
+  SESSION_INPUT_FIELDS,
   resolveConflict,
   saveSession,
+  sessionInputField,
   type SaveOutcome,
   type SessionDraft
 } from "../../lib/groupExamForm";
@@ -44,12 +47,15 @@ export function GroupExamForm({
   const subjects = useStudyStore((state) => state.subjects);
   const groups = useGroupExamStore((state) => state.groups);
   const mySubjects = useMemo(() => subjects.filter((subject) => !subject.archived && subject.status !== "archived"), [subjects]);
+  // La riga con cui si è aperto il modulo: è la base del confronto. Mai quella viva dello store, che un
+  // aggiornamento in tempo reale cambia sotto i piedi: la versione di partenza deve restare quella.
+  const [base] = useState<GroupExamSession | null>(() => session ?? null);
   const [draft, setDraft] = useState<SessionDraft>(() => ({ ...(session ? draftFromSession(session, subjects) : emptyDraft()), ...initial }));
   const [groupId, setGroupId] = useState(fixedGroupId ?? session?.groupId ?? groups[0]?.id ?? "");
   // Un id per tutto il modulo: ripetere il salvataggio dopo un errore di rete non crea un secondo appello.
   const [newId] = useState(() => newGroupRecordId("gexam"));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { scope, issue, general: error, fail, clear } = useFieldIssue(SESSION_INPUT_FIELDS);
   const [outcome, setOutcome] = useState<SaveOutcome | null>(null);
   const [choices, setChoices] = useState<Partial<Record<SessionEditField, "mine" | "theirs">>>({});
   const set = <K extends keyof SessionDraft>(key: K, value: SessionDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
@@ -64,22 +70,22 @@ export function GroupExamForm({
       onSaved(result.session, message);
       return;
     }
-    if (result.kind === "error") setError(result.message);
+    if (result.kind === "error") fail(result.message, sessionInputField(result.field));
     else setOutcome(result);
   };
 
   const run = async (save: (writer: GroupExamWriter) => Promise<SaveOutcome>) => {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
-      setError(T.offline);
+      fail(T.offline);
       return;
     }
     setBusy(true);
-    setError("");
+    clear();
     try {
       const { groupExamWriter } = await import("../../lib/groupExamSync");
       finish(await save(groupExamWriter));
     } catch {
-      setError(T.offline);
+      fail(T.offline);
     } finally {
       setBusy(false);
     }
@@ -88,15 +94,15 @@ export function GroupExamForm({
   const submit = () => {
     const fields = fieldsFromDraft(draft);
     if (!fields.ok) {
-      setError(fields.message);
+      fail(fields.message, sessionInputField(fields.field));
       return;
     }
     if (!groupId) {
-      setError(T.noGroups);
+      fail(T.noGroups);
       return;
     }
     void run((writer) =>
-      saveSession(writer, { groupId, id: session?.id ?? newId, base: session ?? null, mine: fields.value, sessions: useGroupExamStore.getState().sessions })
+      saveSession(writer, { groupId, id: session?.id ?? newId, base, mine: fields.value, sessions: useGroupExamStore.getState().sessions })
     );
   };
 
@@ -204,8 +210,9 @@ export function GroupExamForm({
           </select>
         </Field>
       ) : null}
+      <div className="grid grid-cols-1 gap-1">
       <Field label={T.form.course}>
-        <select className={inputClass} value={courseValue} onChange={(event) => chooseCourse(event.target.value)}>
+        <select className={inputClass} {...fieldAttrs(scope, issue, courseValue === TYPED ? "course-select" : "course")} value={courseValue} onChange={(event) => chooseCourse(event.target.value)}>
           {mySubjects.map((subject) => (
             <option key={subject.id} value={subject.id}>
               {subject.name}
@@ -216,13 +223,19 @@ export function GroupExamForm({
       </Field>
       {courseValue === TYPED ? (
         <Field label={T.form.courseHint}>
-          <input className={inputClass} value={draft.courseName} maxLength={160} onChange={(event) => set("courseName", event.target.value)} />
+          <input className={inputClass} {...fieldAttrs(scope, issue, "course")} value={draft.courseName} maxLength={160} onChange={(event) => set("courseName", event.target.value)} />
         </Field>
       ) : null}
+      <FieldMessage scope={scope} issue={issue} field="course" />
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <DateField label={T.form.date} value={draft.date} onChange={(value) => set("date", value)} />
+        <div id={fieldDomId(scope, "date")} className="grid min-w-0 grid-cols-1 gap-1">
+          <DateField label={T.form.date} value={draft.date} onChange={(value) => set("date", value)} />
+          <FieldMessage scope={scope} issue={issue} field="date" />
+        </div>
+        <div className="grid min-w-0 grid-cols-1 gap-1">
         <Field label={T.form.kind}>
-          <select className={inputClass} value={draft.kind} onChange={(event) => set("kind", event.target.value as GroupExamKind)}>
+          <select className={inputClass} {...fieldAttrs(scope, issue, "kind")} value={draft.kind} onChange={(event) => set("kind", event.target.value as GroupExamKind)}>
             {GROUP_EXAM_KINDS.map((kind) => (
               <option key={kind} value={kind}>
                 {GROUP_EXAM_KIND_LABEL[kind]}
@@ -230,21 +243,41 @@ export function GroupExamForm({
             ))}
           </select>
         </Field>
-        <Field label={T.form.time}>
-          <input type="time" className={inputClass} value={draft.time} onChange={(event) => set("time", event.target.value)} />
-        </Field>
-        <Field label={T.form.room}>
-          <input className={inputClass} value={draft.room} maxLength={120} onChange={(event) => set("room", event.target.value)} />
-        </Field>
-        <DateField label={T.form.opens} optional value={draft.registrationOpens} onChange={(value) => set("registrationOpens", value)} />
-        <DateField label={T.form.closes} optional value={draft.registrationCloses} onChange={(value) => set("registrationCloses", value)} />
+          <FieldMessage scope={scope} issue={issue} field="kind" />
+        </div>
+        <div className="grid min-w-0 grid-cols-1 gap-1">
+          <Field label={T.form.time}>
+            <input type="time" className={inputClass} {...fieldAttrs(scope, issue, "time")} value={draft.time} onChange={(event) => set("time", event.target.value)} />
+          </Field>
+          <FieldMessage scope={scope} issue={issue} field="time" />
+        </div>
+        <div className="grid min-w-0 grid-cols-1 gap-1">
+          <Field label={T.form.room}>
+            <input className={inputClass} {...fieldAttrs(scope, issue, "room")} value={draft.room} maxLength={120} onChange={(event) => set("room", event.target.value)} />
+          </Field>
+          <FieldMessage scope={scope} issue={issue} field="room" />
+        </div>
+        <div id={fieldDomId(scope, "registrationOpens")} className="grid min-w-0 grid-cols-1 gap-1">
+          <DateField label={T.form.opens} optional value={draft.registrationOpens} onChange={(value) => set("registrationOpens", value)} />
+          <FieldMessage scope={scope} issue={issue} field="registrationOpens" />
+        </div>
+        <div id={fieldDomId(scope, "registrationCloses")} className="grid min-w-0 grid-cols-1 gap-1">
+          <DateField label={T.form.closes} optional value={draft.registrationCloses} onChange={(value) => set("registrationCloses", value)} />
+          <FieldMessage scope={scope} issue={issue} field="registrationCloses" />
+        </div>
       </div>
-      <Field label={T.form.label}>
-        <input className={inputClass} value={draft.label} maxLength={80} onChange={(event) => set("label", event.target.value)} />
-      </Field>
+      <div className="grid grid-cols-1 gap-1">
+        <Field label={T.form.label}>
+          <input className={inputClass} {...fieldAttrs(scope, issue, "label")} value={draft.label} maxLength={80} onChange={(event) => set("label", event.target.value)} />
+        </Field>
+        <FieldMessage scope={scope} issue={issue} field="label" />
+      </div>
+      <div className="grid grid-cols-1 gap-1">
       <Field label={T.form.notes}>
-        <textarea className={`${inputClass} min-h-24 py-2`} value={draft.notes} maxLength={1000} onChange={(event) => set("notes", event.target.value)} />
+        <textarea className={`${inputClass} min-h-24 py-2`} {...fieldAttrs(scope, issue, "notes")} value={draft.notes} maxLength={1000} onChange={(event) => set("notes", event.target.value)} />
       </Field>
+      <FieldMessage scope={scope} issue={issue} field="notes" />
+      </div>
       <p role="status" aria-live="polite" className="text-sm font-bold text-[var(--danger-text)]">
         {error}
       </p>

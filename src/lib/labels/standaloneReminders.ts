@@ -12,6 +12,8 @@ export const STANDALONE_REMINDERS_TEXT = {
   remove: "Elimina",
   removeAria: (title: string) => `Elimina il promemoria «${title}»`,
   doneAria: (title: string) => `Segna come fatto «${title}»`,
+  removeConfirm: "Eliminare questo promemoria? Non si può annullare.",
+  addFailed: "Non sono riuscito a salvare il promemoria. Riprova.",
   missingTitle: "Scrivi cosa ricordare.",
   badWhen: "Scegli un giorno e un'ora validi.",
   linked: (what: string) => `Collegato a: ${what}`,
