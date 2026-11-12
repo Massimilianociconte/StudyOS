@@ -44,6 +44,8 @@ import { chunkBySize } from "../lib/syncMerge";
 import { GROUP_COLLECTIONS } from "../lib/syncScope";
 import { useSharedStore } from "../store/useSharedStore";
 import { useStudyStore } from "../store/useStudyStore";
+import { overrideFromRow, sessionFromRow, type CatalogOverride, type GroupExamSession } from "../lib/groupExams";
+import { useGroupExamStore } from "../store/useGroupExamStore";
 
 /** Permesso di un connettore remoto: segreto di `studyos_create_agent_grant` e fuso del browser. */
 export interface CloudGrant {
@@ -129,6 +131,26 @@ class GrantError extends Error {}
 
 /** Funzione RPC assente (agent.sql di prima): PostgREST risponde PGRST202. */
 class MissingFunctionError extends Error {}
+
+/**
+ * Strumenti che leggono appelli o correzioni dei gruppi: prima si chiede lo snapshot al server
+ * (studyos_agent_group_snapshot, spec §9.5), che vale solo per quella chiamata.
+ */
+export const GROUP_SNAPSHOT_TOOLS: ReadonlySet<string> = new Set([
+  "studyos_list_group_exam_sessions",
+  "studyos_plan_exam",
+  "studyos_list_exam_plan",
+  "studyos_check_consistency",
+  "studyos_list_barb_teachers",
+  "studyos_get_barb_course",
+  "studyos_list_barb_contacts"
+]);
+
+/** Le righe dello snapshot non hanno id degli account: `mine` dice se l'ha aggiunta la persona ("remote"). */
+const withRemoteAuthor = (row: unknown) =>
+  row && typeof row === "object" ? { ...(row as Record<string, unknown>), created_by: (row as { mine?: unknown }).mine === true ? "remote" : "" } : row;
+
+const listOf = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
 const keyOf = (type: string, id: string) => `${type}:${id}`;
 
@@ -296,10 +318,36 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     return { accepted, refused };
   };
 
+  /** Appelli e correzioni dei gruppi dell'account nello store in memoria. Script non eseguito = non attivi. */
+  const loadGroupSnapshot = async (secret: string) => {
+    const store = useGroupExamStore.getState();
+    try {
+      const raw = await rpc<{ groups?: unknown; sessions?: unknown; overrides?: unknown } | null>("studyos_agent_group_snapshot", { p_secret: secret });
+      const groups = listOf(raw?.groups).flatMap((item) => {
+        const row = (item ?? {}) as { id?: unknown; name?: unknown };
+        return typeof row.id === "string" && typeof row.name === "string" ? [{ id: row.id, name: row.name }] : [];
+      });
+      const sessions = listOf(raw?.sessions)
+        .map((row) => sessionFromRow(withRemoteAuthor(row)))
+        .filter((row): row is GroupExamSession => row !== null);
+      const overrides = listOf(raw?.overrides)
+        .map((row) => overrideFromRow(withRemoteAuthor(row)))
+        .filter((row): row is CatalogOverride => row !== null);
+      store.setSnapshot({ viewerId: "remote", groups, sessions, overrides });
+    } catch (error) {
+      if (error instanceof GrantError) throw error;
+      if (error instanceof MissingFunctionError) store.setUnavailable();
+      // Rete: lo store resta «non letto» e gli strumenti dicono not_connected per i dati dei gruppi.
+    }
+  };
+
   const execute = async (grant: CloudGrant, name: string, args: Record<string, unknown>): Promise<AgentCallResult> => {
     const cache = cacheFor(grant.secret);
     await refresh(grant.secret, cache);
     const before = collectionsFrom(cache);
+
+    // Appelli dei gruppi solo per gli strumenti che li leggono, solo per questa chiamata.
+    if (GROUP_SNAPSHOT_TOOLS.has(name)) await loadGroupSnapshot(grant.secret);
 
     if (!sharedReset) {
       // Nessun dato di altre persone sul connettore remoto.
@@ -314,6 +362,7 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
       result = await withZonedDate(grant.timeZone, () => executeAgentTool(name, args));
     } finally {
       configureAgentRuntime({ remote: false });
+      useGroupExamStore.getState().reset();
     }
 
     const after = useStudyStore.getState() as unknown as CollectionsState;

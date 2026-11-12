@@ -108,6 +108,7 @@ import { matchTopic, relinkSession, reviewedSessionTimes, sessionEndsInFuture, s
 import { resolveTimerDurations } from "../lib/timerPrefs";
 import type { TimerSettings } from "../types";
 import { applyPlanPatch, newExamPlan, normalizeExamPlan, unlinkPlans, type ExamPlanPatch } from "../lib/examPlans";
+import { retag, type TaggableType } from "../lib/itemTags";
 import type { GroupExamSession } from "../lib/groupExams";
 import { useSharedStore } from "./useSharedStore";
 
@@ -215,6 +216,8 @@ interface StudyState {
   addReminder: (input: Pick<Reminder, "title" | "remindAt"> & Partial<Pick<Reminder, "linkedEntityType" | "linkedEntityId">>) => Promise<Reminder>;
   updateReminder: (id: string, patch: Partial<Pick<Reminder, "title" | "remindAt" | "done">>) => Promise<void>;
   deleteReminder: (id: string) => Promise<void>;
+  /** Aggiunge e toglie etichette su più elementi di un tipo; restituisce quanti sono cambiati. */
+  retagItems: (type: TaggableType, ids: string[], add: string[], remove: string[]) => Promise<number>;
   /** Con `id` (modulo "Aggiungi studio fatto") una sessione già presente non si aggiunge di nuovo. */
   addSession: (session: Partial<StudySession> & Pick<StudySession, "title">) => Promise<void>;
   updateSession: (id: string, patch: Partial<StudySession>) => Promise<void>;
@@ -1495,6 +1498,31 @@ export const useStudyStore = create<StudyState>((set, get) => {
     deleteReminder: async (id) => {
       set((state) => ({ reminders: state.reminders.filter((item) => item.id !== id) }));
       await commit();
+    },
+
+    retagItems: async (type, ids, add, remove) => {
+      const wanted = new Set(ids);
+      let changed = 0;
+      const update = <T extends { id: string; tags: string[]; updatedAt: string }>(items: T[]) =>
+        items.map((item) => {
+          if (!wanted.has(item.id)) return item;
+          const before = item.tags ?? [];
+          const tags = retag(before, add, remove);
+          if (tags.length === before.length && tags.every((tag, index) => tag === before[index])) return item;
+          changed += 1;
+          return { ...item, tags, updatedAt: laterStamp(item.updatedAt) };
+        });
+      set((state) =>
+        type === "task"
+          ? { tasks: update(state.tasks) }
+          : type === "material"
+            ? { attachments: update(state.attachments) }
+            : type === "note"
+              ? { notes: update(state.notes) }
+              : { events: update(state.events) }
+      );
+      if (changed) await commit();
+      return changed;
     },
 
     addSession: async (session) => {

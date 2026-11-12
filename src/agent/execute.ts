@@ -15,6 +15,8 @@ import {
 } from "./project";
 import { readAudit, readStoredPolicy } from "../lib/agentLocal";
 import { splitPages } from "./pageSplit";
+import { checkConsistencyTool, createReminderTool, deleteReminderTool, deleteSubjectTool, listReminders, listTags, tagItems, updateReminderTool } from "./personalExtraTools";
+import { linkedCounts } from "../lib/subjectLinks";
 import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats } from "../lib/grades";
 import { examDateOut } from "../lib/examOutcome";
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
@@ -172,7 +174,7 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
       case "studyos_list_subjects":
         return listSubjects(args);
       case "studyos_get_subject":
-        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => publicSubject(item, true));
+        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => ({ ...publicSubject(item, true), linkedCounts: linkedCounts(current, item.id) }));
       case "studyos_create_subject":
         return createSubject(args);
       case "studyos_update_subject":
@@ -289,6 +291,48 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
         return sharedCall((tools) => tools.updateOwnShare(args));
       case "studyos_revoke_share":
         return sharedCall((tools) => tools.revokeOwnShare(text(args.id)));
+      case "studyos_delete_subject":
+        return deleteSubjectTool(args);
+      case "studyos_list_tags":
+        return listTags(args);
+      case "studyos_tag_items":
+        return tagItems(args);
+      case "studyos_list_reminders":
+        return listReminders(args);
+      case "studyos_create_reminder":
+        return createReminderTool(args);
+      case "studyos_update_reminder":
+        return updateReminderTool(args);
+      case "studyos_delete_reminder":
+        return deleteReminderTool(args);
+      case "studyos_check_consistency":
+        return checkConsistencyTool(args);
+      case "studyos_list_group_exam_sessions":
+        return groupExamCall((tools) => tools.listGroupExamSessions(args));
+      case "studyos_create_group_exam_session":
+        return groupExamCall((tools) => tools.createGroupExamSession(args));
+      case "studyos_update_group_exam_session":
+        return groupExamCall((tools) => tools.updateGroupExamSession(args));
+      case "studyos_delete_group_exam_session":
+        return groupExamCall((tools) => tools.deleteGroupExamSession(args));
+      case "studyos_list_group_history":
+        return groupExamCall((tools) => tools.listGroupHistory(args));
+      case "studyos_restore_group_change":
+        return groupExamCall((tools) => tools.restoreGroupChange(args));
+      case "studyos_plan_exam":
+        return groupExamCall((tools) => tools.planExamTool(args));
+      case "studyos_list_exam_plan":
+        return groupExamCall((tools) => tools.listExamPlan(args));
+      case "studyos_list_barb_teachers":
+        return universityCall((tools) => tools.listBarbTeachers(args));
+      case "studyos_get_barb_course":
+        return universityCall((tools) => tools.getBarbCourse(args));
+      case "studyos_list_barb_contacts":
+        return universityCall((tools) => tools.listBarbContacts(args));
+      case "studyos_save_catalog_override":
+        return universityCall((tools) => tools.saveCatalogOverride(args));
+      case "studyos_delete_catalog_override":
+        return universityCall((tools) => tools.deleteCatalogOverride(args));
       case "studyos_list_barb_exams":
         return listBarb(args);
       case "studyos_import_barb_exams":
@@ -1489,6 +1533,30 @@ const remove = async (key: "tasks" | "events" | "exams" | "sessions" | "topics" 
   }
   await run();
   return ok({ id, deleted: true });
+};
+
+// --- Appelli dei gruppi e piano d'esame: groupExamTools.ts, caricato solo quando serve. ---
+
+type GroupExamTools = typeof import("./groupExamTools");
+
+/** Come sharedCall: un guasto imprevisto (anche il modulo che non si carica) non arriva all'agente come testo tecnico. */
+const groupExamCall = async (run: (tools: GroupExamTools) => AgentCallResult | Promise<AgentCallResult>): Promise<AgentCallResult> => {
+  try {
+    return await run(await import("./groupExamTools"));
+  } catch {
+    return fail("failed", "Operazione sugli appelli del gruppo non riuscita. Riprova tra poco.");
+  }
+};
+
+type UniversityTools = typeof import("./universityTools");
+
+/** Catalogo BARB con le correzioni dei gruppi: modulo e dati caricati solo quando servono. */
+const universityCall = async (run: (tools: UniversityTools) => AgentCallResult | Promise<AgentCallResult>): Promise<AgentCallResult> => {
+  try {
+    return await run(await import("./universityTools"));
+  } catch {
+    return fail("failed", "Lettura del catalogo BARB non riuscita. Riprova tra poco.");
+  }
 };
 
 // --- Dati di altre persone: gli strumenti stanno in sharedTools.ts, caricato solo quando serve. ---

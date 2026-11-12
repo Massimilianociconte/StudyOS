@@ -5,6 +5,9 @@ import { SHARE_SCOPE_LABEL } from "../lib/labels";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES } from "../lib/studyTimer";
 import { SESSION_SOURCE_VALUES } from "../lib/studySessions";
 import type { ShareScope } from "../lib/sharing";
+import { GROUP_EXAM_TOOLS } from "./catalogGroupExams";
+import { EXTRA_TOOLS } from "./catalogExtras";
+import { UNIVERSITY_TOOLS } from "./catalogUniversity";
 
 const ID = { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9_.:-]{1,120}$", description: "Id StudyOS restituito da una lettura precedente." } as const satisfies JsonSchema;
 const LIMIT = { type: "integer", minimum: 1, maximum: 100, default: 30, description: "Quanti elementi restituire (1–100, default 30)." } as const satisfies JsonSchema;
@@ -163,7 +166,7 @@ const text = (value: unknown, fallback: string) => (typeof value === "string" &&
 
 const tool = (definition: AgentTool): AgentTool => definition;
 
-export const AGENT_TOOLS: readonly AgentTool[] = [
+const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_status",
     title: "Stato di StudyOS",
@@ -1181,6 +1184,9 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   })
 ];
 
+/** Tutti gli strumenti: quelli di base e i cataloghi in file propri (appelli dei gruppi, strumenti personali in più, università). */
+export const AGENT_TOOLS: readonly AgentTool[] = [...CORE_TOOLS, ...GROUP_EXAM_TOOLS, ...EXTRA_TOOLS, ...UNIVERSITY_TOOLS];
+
 const BY_NAME = new Map(AGENT_TOOLS.map((item) => [item.name, item]));
 
 export const findAgentTool = (name: string) => BY_NAME.get(name);
@@ -1232,6 +1238,15 @@ export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
   // dal cloud personale si leggerebbe una copia vecchia.
   "studyos_list_groups",
   "studyos_list_group_board",
+  // Appelli dei gruppi: scrivere sul gruppo e leggerne la cronologia vuole la sessione della persona
+  // (spec §9.5, domanda 1). Elenco, piano e controllo ci sono: cloudRunner legge lo snapshot.
+  "studyos_create_group_exam_session",
+  "studyos_update_group_exam_session",
+  "studyos_delete_group_exam_session",
+  "studyos_list_group_history",
+  "studyos_restore_group_change",
+  "studyos_save_catalog_override",
+  "studyos_delete_catalog_override",
   "studyos_timer_status",
   "studyos_timer_control",
   ...HUB_TOOLS

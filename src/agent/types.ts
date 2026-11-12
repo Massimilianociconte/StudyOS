@@ -12,7 +12,8 @@ export type AgentCallResult = {
   summary?: string;
 } | {
   ok: false;
-  code: "invalid" | "not_found" | "denied" | "locked" | "not_connected" | "failed" | "pending";
+  /** conflict: qualcuno ha cambiato l'elemento del gruppo nel frattempo (data.current = versione attuale). */
+  code: "invalid" | "not_found" | "denied" | "locked" | "not_connected" | "failed" | "pending" | "conflict";
   error: string;
   data?: Record<string, unknown>;
   summary?: string;
