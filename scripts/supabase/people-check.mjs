@@ -312,7 +312,7 @@ const main = async () => {
     .eq("recipient_user_id", bob.id).eq("status", "pending");
   check("Bob vede l'invito filtrando su recipient_user_id",
     bobInbox?.length === 1 && bobInbox[0].id === groupInvite.data && bobInbox[0].group_name === "Fisica 2"
-      && bobInbox[0].from_display_name === "Alice" && bobInbox[0].recipient_email === null && bobInbox[0].code === code,
+      && bobInbox[0].from_display_name === "Alice" && bobInbox[0].recipient_email === null && bobInbox[0].code === "",
     JSON.stringify(bobInbox));
   const { data: malloryPeek } = await mallory.client.from("studyos_group_invites").select("id").eq("id", groupInvite.data);
   check("Mallory non vede l'invito di Bob", malloryPeek?.length === 0);
@@ -454,6 +454,9 @@ const main = async () => {
   const groupForErin = legacyGroup("erin", erinEmail);
   const shareForBob = legacyShare(bob.email, tokenBob);
   const shareForErin = legacyShare(erinEmail, tokenErin);
+  // Sullo stack locale ogni account è confermato adesso: Bob fa la parte di chi aveva confermato
+  // l'indirizzo prima dell'11/11/2026, quando la conferma era obbligatoria (solo così la migrazione lega).
+  sql(`update auth.users set email_confirmed_at = timestamptz '2026-10-01 10:00:00+02' where id = ${lit(bob.id)}`);
   sql("delete from public.studyos_migrations where name = 'people_email_invites'");
   runPeopleSql();
   const boundTo = (table, id) => sql(`select coalesce(recipient_user_id::text, '-') from public.${table} where id = ${lit(id)}`);
@@ -472,8 +475,11 @@ const main = async () => {
   check("Bob accetta l'invito migrato senza token", !migratedAccept.error, migratedAccept.error?.message);
 
   const erin = await account("erin", "198.51.100.6", erinEmail);
+  // Come la prima versione della migrazione (senza la data): legame verso chi si è registrato dopo.
+  sql(`update public.studyos_group_invites set recipient_user_id = ${lit(erin.id)} where id = ${lit(groupForErin)}`);
+  sql(`update public.studyos_share_invites set recipient_user_id = ${lit(erin.id)} where id = ${lit(shareForErin)}`);
   runPeopleSql();
-  check("Rieseguire people.sql non lega un account registrato dopo",
+  check("Rieseguire people.sql non lega un account registrato dopo e scioglie il legame vecchio",
     boundTo("studyos_group_invites", groupForErin) === "-" && boundTo("studyos_share_invites", shareForErin) === "-");
   await errorIs("Vecchio invito per email: non si accetta nemmeno con il token",
     erin.client.rpc("accept_share_invite", { p_invite_id: shareForErin, p_token: tokenErin, p_display_name: "Erin", p_reciprocal: [] }),
@@ -546,9 +552,10 @@ const main = async () => {
   await find(alice, bob.email);
   check("Le ricerche più vecchie di un'ora si cancellano", sql("select count(*) from public.studyos_person_lookups where at < now() - interval '1 hour'") === "0");
   // L'IP letto dalle intestazioni, provato direttamente in una sessione psql.
-  const forwarded = psql(["-At", "-c", `select set_config('request.headers', '{"x-forwarded-for": "203.0.113.9, 10.0.0.1"}', false)`, "-c", "select public.studyos_request_ip()"]).split("\n").pop();
+  // x-forwarded-for lo sceglie il client: non conta (un IP finto a ogni richiesta azzerava il limite).
+  const forwarded = psql(["-At", "-c", `select set_config('request.headers', '{"x-forwarded-for": "203.0.113.9, 10.0.0.1"}', false)`, "-c", "select coalesce(public.studyos_request_ip(), '-')"]).split("\n").pop();
   const cloudflare = psql(["-At", "-c", `select set_config('request.headers', '{"cf-connecting-ip": "198.51.100.9", "x-forwarded-for": "203.0.113.9"}', false)`, "-c", "select public.studyos_request_ip()"]).split("\n").pop();
-  check("IP: cf-connecting-ip, altrimenti il primo valore di x-forwarded-for", cloudflare === "198.51.100.9" && forwarded === "203.0.113.9",
+  check("IP: solo cf-connecting-ip, mai x-forwarded-for", cloudflare === "198.51.100.9" && forwarded === "-",
     `${cloudflare} / ${forwarded}`);
 
   // ─── Tetto di notifiche per chi agisce ────────────────────────────────────

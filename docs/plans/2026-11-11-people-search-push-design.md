@@ -77,8 +77,9 @@ Nuovo script, rieseguibile, da lanciare dopo `schema.sql`, `groups.sql` e `shari
   `@` iniziale cerca l'`@nome`, con un `@` interno cerca l'email in `auth.users`; scarta
   sé stessi e i non trovabili; restituisce al massimo una riga
   `(person_id uuid, display_name, handle)`. Registra la ricerca in
-  `studyos_person_lookups (user_id, ip, at)` (IP da `request.headers`: `cf-connecting-ip`,
-  altrimenti il primo valore di `x-forwarded-for`), applica i limiti del requisito 3 e
+  `studyos_person_lookups (user_id, ip, at)` (IP da `request.headers`: solo `cf-connecting-ip`;
+  rivisto il 12/11/2026: il primo valore di `x-forwarded-for` lo sceglie il client e azzerava il
+  limite), applica i limiti del requisito 3 e
   cancella le righe più vecchie di un'ora.
 - **Inviti di gruppo** (oggi il client li inserisce direttamente nella tabella):
   - colonna `recipient_user_id text` su `studyos_group_invites` (come `from_user_id`);
@@ -104,7 +105,9 @@ Nuovo script, rieseguibile, da lanciare dopo `schema.sql`, `groups.sql` e `shari
     `accept_share_invite` / `decline_share_invite` mantengono la firma.
 - **Migrazione una tantum** (rieseguibile senza effetti): gli inviti pendenti di gruppo e
   di condivisione con solo `recipient_email` ricevono `recipient_user_id` dell'account con
-  quell'email, se esiste.
+  quell'email, se esiste. Rivisto il 12/11/2026: solo se quell'account aveva confermato
+  l'indirizzo prima dell'11/11/2026 (quando la conferma era obbligatoria); gli altri legami ancora
+  in attesa si sciolgono a ogni esecuzione.
 - Le funzioni e le policy di `groups.sql` e `sharing.sql` toccate qui si aggiornano anche
   in quei due file, così rieseguire uno qualsiasi dei tre non riapre l'accettazione per
   email.
@@ -171,9 +174,10 @@ Nuovo script, rieseguibile, da lanciare dopo `schema.sql`, `groups.sql` e `shari
 ## Sicurezza e privacy
 
 - Email non verificate: la ricerca per email può trovare chi si è registrato con
-  l'indirizzo di un altro, e la migrazione lega un invito pendente a chi ha
-  quell'indirizzo oggi. La scheda mostra `@nome` e nome e l'interfaccia invita a
-  controllarli con la persona; l'invito resta comunque da accettare.
+  l'indirizzo di un altro. La scheda mostra `@nome` e nome e l'interfaccia invita a
+  controllarli con la persona; l'invito resta comunque da accettare. La migrazione lega un
+  invito pendente solo a chi aveva confermato l'indirizzo prima dell'11/11/2026 (rivisto il
+  12/11/2026: prima lo legava a chi aveva l'indirizzo il giorno dell'esecuzione).
 - Enumerazione: solo corrispondenze esatte, risposta identica per inesistente e non
   trovabile, limiti per account e per IP (gli account si creano senza conferma, quindi il
   limite per IP serve).

@@ -96,6 +96,29 @@ select
   coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_notify(uuid[],text,text,text,text,text)'))
     like '%exception when others%', false) as push_safe_ready,
   exists (select 1 from public.studyos_migrations where name = 'people_email_invites') as migration_ready,
+  -- Revisione del 12/11/2026 (sera). Nome di chi entra in un gruppo mai dall'email (groups.sql).
+  coalesce(pg_get_functiondef(to_regprocedure('public.studyos_member_name(text,text)')) not like '%split_part%', false)
+    as member_name_private_ready,
+  -- Limite per IP solo con cf-connecting-ip: x-forwarded-for lo sceglie il client.
+  coalesce(pg_get_functiondef(to_regprocedure('public.studyos_request_ip()')) not like '%x-forwarded-for%', false)
+    as request_ip_ready,
+  -- Nessun invito con un destinatario porta il codice del gruppo.
+  coalesce(pg_get_functiondef(to_regprocedure('public.invite_person_to_group(text,uuid,text)')) not like '%invite_code%', false)
+    and not exists (select 1 from public.studyos_group_invites i
+      where i.code <> '' and (i.recipient_user_id is not null or i.recipient_email is not null)) as invite_code_hidden_ready,
+  -- Un vecchio invito per email in attesa resta legato solo a chi aveva confermato quell'indirizzo
+  -- prima dell'11/11/2026, quando la conferma email era obbligatoria.
+  not exists (select 1 from public.studyos_group_invites i
+    where i.status = 'pending' and i.recipient_email is not null and i.recipient_user_id is not null
+      and not exists (select 1 from auth.users u
+        where u.id::text = i.recipient_user_id and lower(u.email) = lower(i.recipient_email)
+          and u.deleted_at is null and u.email_confirmed_at < timestamptz '2026-11-11 00:00:00+01'))
+  and not exists (select 1 from public.studyos_share_invites i
+    where i.status = 'pending' and i.recipient_email is not null and i.recipient_user_id is not null
+      and not exists (select 1 from auth.users u
+        where u.id = i.recipient_user_id and lower(u.email) = lower(i.recipient_email)
+          and u.deleted_at is null and u.email_confirmed_at < timestamptz '2026-11-11 00:00:00+01'))
+    as legacy_invites_safe_ready,
   exists (select 1 from pg_extension where extname = 'pg_net')
     and exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'net' and p.proname = 'http_post') as pg_net_ready,

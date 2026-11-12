@@ -55,6 +55,54 @@ test("SQL degli inviti: solo l'account destinatario accetta, una voce per ingres
   assert.match(insert, /recipient_user_id is null/);
 });
 
+test("SQL: il nome di chi entra in un gruppo non viene mai dall'email", () => {
+  const groups = sources["groups.sql"];
+  const helper = blockOf(groups, "create or replace function public.studyos_member_name(", "\n$$;\n");
+  assert.notEqual(helper, "");
+  // Il corpo non legge p_email: nome mandato dall'app, poi profilo online, poi «Studente».
+  const body = helper.slice(helper.indexOf("as $$"));
+  assert.doesNotMatch(body, /p_email|split_part|'@'/);
+  assert.match(body, /from public\.studyos_profiles p/);
+  assert.match(body, /coalesce\(v_name, 'Studente'\)/);
+  assert.match(groups, /revoke all on function public\.studyos_member_name\(text, text\) from public, anon, authenticated;/);
+  // Accettare un invito (groups.sql e people.sql) ed entrare con il codice passano null, non l'email.
+  const accept = blockOf(people, "create or replace function public.accept_group_invite(", "\n$$;\n");
+  const join = blockOf(groups, "create or replace function public.join_group_by_code(", "\n$$;\n");
+  for (const [name, block] of [["accept_group_invite", accept], ["join_group_by_code", join]]) {
+    assert.match(block, /v_name text := public\.studyos_member_name\(p_display_name, null\);/, name);
+  }
+  for (const text of [groups, people]) assert.doesNotMatch(text, /:= public\.studyos_member_name\([^)]*email/);
+});
+
+test("SQL: un invito a una persona non porta il codice del gruppo", () => {
+  const invite = blockOf(people, "create or replace function public.invite_person_to_group(", "\n$$;\n");
+  assert.match(invite, /null, p_person_id::text, '', 'pending'/);
+  assert.doesNotMatch(invite, /invite_code/);
+  // Gli inviti già scritti con il codice lo perdono; idempotente.
+  assert.match(people, /update public\.studyos_group_invites\nset code = ''\nwhere code <> '' and \(recipient_user_id is not null or recipient_email is not null\);/);
+});
+
+test("SQL: il limite per IP usa solo cf-connecting-ip, mai x-forwarded-for", () => {
+  const ip = blockOf(people, "create or replace function public.studyos_request_ip(", "\n$$;\n");
+  assert.match(ip, /request\.headers ->> 'cf-connecting-ip'/);
+  const code = ip.slice(ip.indexOf("as $$"));
+  assert.doesNotMatch(code, /x-forwarded-for|x-real-ip/);
+});
+
+test("SQL: la migrazione lega un vecchio invito per email solo a un indirizzo confermato prima dell'11/11", () => {
+  const migration = blockOf(people, "-- ─── Migrazione una tantum: inviti pendenti per sola email → account", "end $$;\n");
+  assert.notEqual(migration, "");
+  assert.match(migration, /v_cutoff constant timestamptz := timestamptz '2026-11-11 00:00:00\+01';/);
+  // Legame: entrambe le tabelle chiedono la conferma prima della data.
+  const bind = migration.slice(0, migration.indexOf("insert into public.studyos_migrations"));
+  assert.equal(bind.match(/email_confirmed_at < v_cutoff/g)?.length, 2);
+  // Controllo fuori dal segno (gira sempre): scioglie i legami verso account che non passano la regola.
+  const check = migration.slice(migration.indexOf("end if;"));
+  assert.equal(check.match(/set recipient_user_id = null/g)?.length, 2);
+  assert.equal(check.match(/u\.deleted_at is null and u\.email_confirmed_at < v_cutoff/g)?.length, 2);
+  assert.match(check, /where i\.status = 'pending' and i\.recipient_email is not null and i\.recipient_user_id is not null/);
+});
+
 test("SQL delle push: pg_net e Vault sono facoltativi, le notifiche non bloccano mai la scrittura", () => {
   // Senza pg_net lo script si applica lo stesso (provato su un Postgres senza estensioni).
   assert.match(people, /pg_net non disponibile, notifiche push spente/);

@@ -82,6 +82,15 @@ alcun errore.
   senza destinatario (codice) non si accetta da lì. Entrare in un gruppo dà accesso alle
   condivisioni fatte a quel gruppo. Chi accetta un invito per account entra senza email nella riga
   del membro. Le stesse funzioni e policy sono in `people.sql` (testo identico).
+- **Il nome di chi entra non viene mai dall'email** (revisione del 12/11/2026, sera). Chi entra
+  (invito o codice) si chiama con il nome mandato dall'app (quello di «Il tuo nome»), altrimenti con
+  il nome del profilo online, altrimenti «Studente» (`studyos_member_name`; nel client
+  `visibleMemberName` e `getActor`). Prima la riserva era la parte dell'email prima della @, che
+  vedevano gli altri membri, le notifiche e i loro agenti MCP: chi trova qualcuno con il `@nome` non
+  deve poterne dedurre l'indirizzo. Lo stesso vale per il nome di chi condivide (`shareSync`).
+- **Un invito a una persona non porta il codice del gruppo** (`code = ''`): chi lo riceve non può
+  entrare con il codice dopo aver rifiutato o dopo il ritiro dell'invito. Il client usa `code` solo
+  per gli inviti con codice.
 - Scritture delicate solo via RPC `SECURITY DEFINER`:
   `accept_group_invite(p_invite_id, p_display_name)`, `decline_group_invite`,
   `join_group_by_code(p_code, p_display_name)` (verifica destinatario/codice,
@@ -351,13 +360,19 @@ la colonna si ferma la sincronizzazione dei gruppi e anche il caricamento delle 
   `invite_person_to_share`) hanno `recipient_user_id` e solo `auth.uid()` può accettarli o
   rifiutarli. `create_share_invite` non crea più inviti per email; link, QR e codice restano.
   Gli inviti per email già pendenti si legano una volta sola all'account con quell'indirizzo
-  (migrazione di `people.sql`); gli altri non sono accettabili e il mittente li vede "Scaduto".
+  (migrazione di `people.sql`), ma solo se quell'account aveva confermato l'indirizzo prima
+  dell'11/11/2026 (00:00, ora italiana), quando la conferma era obbligatoria. A ogni esecuzione
+  `people.sql` scioglie i legami di un invito ancora in attesa verso un account che non passa la
+  regola. Gli altri inviti non sono accettabili e il mittente li vede "Scaduto".
 - **Profilo**: `studyos_profiles` (nome visibile, `@nome` facoltativo, unico, minuscolo,
   `^[a-z0-9_.]{3,24}$`, interruttore «Gli altri possono trovarmi», acceso di default). RLS: ognuno
   vede e modifica solo la propria riga. Una riga mancante vale «trovabile, senza nome né `@nome`».
 - **Ricerca**: `find_person` solo per email esatta o `@nome`, mai sé stessi, mai l'email nel
   risultato; un account non trovabile e uno inesistente danno la stessa risposta. Limiti: 30
   ricerche al minuto per account e 60 per indirizzo IP (`studyos_person_lookups`, senza policy).
+  L'IP è solo `cf-connecting-ip` (lo scrive Cloudflare), mai `x-forwarded-for`, il cui primo valore
+  lo sceglie chi chiama. Senza quell'intestazione vale solo il limite per account: come controllarlo
+  in [supabase/README.md](../supabase/README.md).
 - **Notifiche push**: iscrizioni in `studyos_push_subscriptions` (RLS sulle proprie righe).
   Trigger `AFTER` su inviti, accettazioni, ingressi nei gruppi e permessi chiamano
   `studyos_push_notify`, che raccoglie le iscrizioni dei destinatari (mai di chi ha compiuto

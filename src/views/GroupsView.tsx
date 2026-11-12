@@ -345,7 +345,8 @@ function InviteCard({ inviteId, actor, onDone }: { inviteId: string; actor: Acto
     if (!actor?.email || busy) return;
     setBusy(true);
     try {
-      const outcome = choice === "accept" ? await acceptInviteRemote(invite.id, actor.displayName) : await declineInviteRemote(invite.id);
+      // Senza nome: profileName() vuoto, il server usa il nome del profilo online o «Studente», mai l'email.
+      const outcome = choice === "accept" ? await acceptInviteRemote(invite.id) : await declineInviteRemote(invite.id);
       const store = useStudyStore.getState();
       if (outcome === "unavailable") {
         onDone(GROUP_SYNC_TEXT.offlineAnswer);

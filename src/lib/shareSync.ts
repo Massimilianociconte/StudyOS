@@ -144,10 +144,9 @@ const client = () => {
 
 const viewer = () => getCloudSyncState().session?.user.id ?? null;
 
-const myName = () => {
-  const name = selectPreferences(useStudyStore.getState()).displayName.trim();
-  return (name || getCloudSyncState().session?.user.email?.split("@")[0] || "").slice(0, 120);
-};
+// Nome del profilo e basta: vuoto = il server usa «Studente» e chi riceve mostra «Qualcuno». Mai la
+// parte locale dell'email, che chi ha trovato la persona con il @nome non deve vedere.
+const myName = () => selectPreferences(useStudyStore.getState()).displayName.trim().slice(0, 120);
 
 // ——— Generazione di chi guarda (shareViewer.ts) ———
 
