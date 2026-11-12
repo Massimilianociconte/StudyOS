@@ -323,6 +323,16 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
         return groupExamCall((tools) => tools.planExamTool(args));
       case "studyos_list_exam_plan":
         return groupExamCall((tools) => tools.listExamPlan(args));
+      case "studyos_list_barb_teachers":
+        return universityCall((tools) => tools.listBarbTeachers(args));
+      case "studyos_get_barb_course":
+        return universityCall((tools) => tools.getBarbCourse(args));
+      case "studyos_list_barb_contacts":
+        return universityCall((tools) => tools.listBarbContacts(args));
+      case "studyos_save_catalog_override":
+        return universityCall((tools) => tools.saveCatalogOverride(args));
+      case "studyos_delete_catalog_override":
+        return universityCall((tools) => tools.deleteCatalogOverride(args));
       case "studyos_list_barb_exams":
         return listBarb(args);
       case "studyos_import_barb_exams":
@@ -1535,6 +1545,17 @@ const groupExamCall = async (run: (tools: GroupExamTools) => AgentCallResult | P
     return await run(await import("./groupExamTools"));
   } catch {
     return fail("failed", "Operazione sugli appelli del gruppo non riuscita. Riprova tra poco.");
+  }
+};
+
+type UniversityTools = typeof import("./universityTools");
+
+/** Catalogo BARB con le correzioni dei gruppi: modulo e dati caricati solo quando servono. */
+const universityCall = async (run: (tools: UniversityTools) => AgentCallResult | Promise<AgentCallResult>): Promise<AgentCallResult> => {
+  try {
+    return await run(await import("./universityTools"));
+  } catch {
+    return fail("failed", "Lettura del catalogo BARB non riuscita. Riprova tra poco.");
   }
 };
 

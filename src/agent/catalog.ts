@@ -7,6 +7,7 @@ import { SESSION_SOURCE_VALUES } from "../lib/studySessions";
 import type { ShareScope } from "../lib/sharing";
 import { GROUP_EXAM_TOOLS } from "./catalogGroupExams";
 import { EXTRA_TOOLS } from "./catalogExtras";
+import { UNIVERSITY_TOOLS } from "./catalogUniversity";
 
 const ID = { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9_.:-]{1,120}$", description: "Id StudyOS restituito da una lettura precedente." } as const satisfies JsonSchema;
 const LIMIT = { type: "integer", minimum: 1, maximum: 100, default: 30, description: "Quanti elementi restituire (1–100, default 30)." } as const satisfies JsonSchema;
@@ -1183,8 +1184,8 @@ const CORE_TOOLS: readonly AgentTool[] = [
   })
 ];
 
-/** Tutti gli strumenti: quelli di base e i cataloghi in file propri (appelli dei gruppi, strumenti personali in più). */
-export const AGENT_TOOLS: readonly AgentTool[] = [...CORE_TOOLS, ...GROUP_EXAM_TOOLS, ...EXTRA_TOOLS];
+/** Tutti gli strumenti: quelli di base e i cataloghi in file propri (appelli dei gruppi, strumenti personali in più, università). */
+export const AGENT_TOOLS: readonly AgentTool[] = [...CORE_TOOLS, ...GROUP_EXAM_TOOLS, ...EXTRA_TOOLS, ...UNIVERSITY_TOOLS];
 
 const BY_NAME = new Map(AGENT_TOOLS.map((item) => [item.name, item]));
 
@@ -1244,6 +1245,8 @@ export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
   "studyos_delete_group_exam_session",
   "studyos_list_group_history",
   "studyos_restore_group_change",
+  "studyos_save_catalog_override",
+  "studyos_delete_catalog_override",
   "studyos_timer_status",
   "studyos_timer_control",
   ...HUB_TOOLS
