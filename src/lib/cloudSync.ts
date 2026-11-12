@@ -28,6 +28,8 @@ import {
 } from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, newerCopy, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import { PERSONAL_COLLECTIONS, accountSwitchStep, personalRemovals, type AccountSwitchChoice } from "./accountSwitch";
+import { countOutbox, discardable, parkedRow, stuckItems, type StuckItem } from "./stuckOutbox";
+import { ACCOUNT_TEXT } from "./labels/account";
 import {
   getSession,
   isCloudConfigured,
@@ -96,10 +98,12 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryAttempt = 0;
 const cleanups: Array<() => void> = [];
 
+// Le voci ferme (troppo grandi, stuckOutbox.ts) non sono «modifiche da inviare»: non partiranno mai
+// così come sono. Si contano a parte e il pannello Account le elenca (P12).
 const refreshPendingCount = async () => {
-  const count = await db.syncOutbox.count();
-  setState({ pendingCount: count, pendingChanges: count > 0 });
-  return count;
+  const { pending, stuck } = countOutbox(await db.syncOutbox.toArray());
+  setState({ pendingCount: pending, pendingChanges: pending > 0, stuckCount: stuck });
+  return pending;
 };
 
 const storeReady = () => {
@@ -413,12 +417,12 @@ const push = async (userId: string) => {
   let sent = 0;
   let tieBroken = false;
   const failed: string[] = [];
-  const oversizedKeys: string[] = [];
+  const oversized: Array<{ row: SyncOutboxRow; size: number }> = [];
   for (const batch of chunkBySize(prepared, (item) => item.size, PUSH_MAX_BYTES, PUSH_MAX_ROWS)) {
-    const oversized = batch.find((item) => item.size > PUSH_MAX_BYTES);
-    if (oversized) {
-      // Non blocca il resto della coda: resta in outbox e viene segnalato come avviso.
-      oversizedKeys.push(oversized.row.key);
+    const tooLarge = batch.find((item) => item.size > PUSH_MAX_BYTES);
+    if (tooLarge) {
+      // Non blocca il resto della coda: resta in outbox, segnata come ferma (sotto).
+      oversized.push({ row: tooLarge.row, size: tooLarge.size });
       continue;
     }
     assertStoreReady();
@@ -451,11 +455,17 @@ const push = async (userId: string) => {
       failed.push(errorMessage(error));
     }
   }
-  setState({
-    warning: oversizedKeys.length
-      ? `${oversizedKeys.length} elementi troppo grandi per il cloud (limite ${Math.round(PUSH_MAX_BYTES / 1024)} KB): restano solo su questo dispositivo. Sostituisci gli allegati grandi con un link.`
-      : undefined
-  });
+  if (oversized.length) {
+    // Voci che non partiranno mai così come sono: segnate come ferme, fuori dal conteggio delle
+    // modifiche da inviare e nell'elenco del pannello Account (scarica una copia / togli dalla coda).
+    // Una modifica locale le riaccoda senza segno e le rimette in gioco (P12).
+    await outboxTransaction(async () => {
+      for (const { row, size } of oversized) {
+        const next = parkedRow(await db.syncOutbox.get(row.key), row, size);
+        if (next) await db.syncOutbox.put(next);
+      }
+    });
+  }
   // Le copie con il timbro nuovo partono subito, in un'altra passata (vedi requestSync).
   if (tieBroken) rerun = true;
   if (failed.length) throw new Error(failed.join(" · "));
@@ -509,8 +519,14 @@ const firstSync = async (userId: string) => {
 const bindUser = async (userId: string) => {
   const bound = await getMeta<string>(metaKeys.boundUser);
   if (bound === userId) return true;
-  if (bound && bound !== userId && (await db.syncOutbox.count()) > 0) {
-    throw new Error("L'account precedente ha modifiche cloud in attesa. Ricollegalo e completa la sincronizzazione prima di cambiare account.");
+  if (bound && bound !== userId) {
+    const { pending, stuck } = countOutbox(await db.syncOutbox.toArray());
+    if (pending > 0) {
+      throw new Error("L'account precedente ha modifiche cloud in attesa. Ricollegalo e completa la sincronizzazione prima di cambiare account.");
+    }
+    // Elementi mai arrivati all'account di prima (troppo grandi): cambiando account si perderebbero.
+    // La persona li vede nel pannello Account e sceglie: copia o via dalla coda (P12).
+    if (stuck > 0) throw new Error(ACCOUNT_TEXT.switchStuck(stuck));
   }
   const store = useStudyStore.getState();
   const hasData = countEntities(pickCollections(store)) > 0;
@@ -771,6 +787,32 @@ export const forcePullNow = async () => {
 };
 
 export const isSignedIn = () => Boolean(currentSession());
+
+/** Limite di un elemento per l'account, in KB (testo dell'elenco degli elementi fermi). */
+export const CLOUD_ITEM_MAX_KB = Math.round(PUSH_MAX_BYTES / 1024);
+
+/** Elementi che non arrivano all'account (troppo grandi), con titolo e dimensione (stuckOutbox.ts). */
+export const listStuck = async (): Promise<StuckItem[]> =>
+  stuckItems(await db.syncOutbox.toArray(), pickCollections(useStudyStore.getState()));
+
+/**
+ * «Togli dalla coda»: gli elementi restano su questo dispositivo ma non si prova più a inviarli, e
+ * cambio account e «togli i dati da qui» non sono più fermi per loro. Solo le voci viste nell'elenco
+ * e ancora ferme: una modifica arrivata dopo le ha rimesse in gioco e restano.
+ */
+export const discardStuck = async (items: ReadonlyArray<Pick<StuckItem, "key" | "queuedAt">>) => {
+  await outboxTransaction(async () => {
+    for (const item of items) {
+      if (discardable(await db.syncOutbox.get(item.key), item)) await db.syncOutbox.delete(item.key);
+    }
+  });
+  await refreshPendingCount();
+  // Un cambio di account fermo per loro può ripartire.
+  if (currentSession()) {
+    retryAttempt = 0;
+    void requestSync();
+  }
+};
 
 /**
  * Risposta alla domanda del pannello Account (dati di un altro account su questo dispositivo):

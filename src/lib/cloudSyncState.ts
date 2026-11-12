@@ -12,6 +12,8 @@ export interface CloudSyncState {
   error?: string;
   pendingChanges: boolean;
   pendingCount: number;
+  /** Voci che non partiranno mai così come sono (troppo grandi, stuckOutbox.ts): non in pendingCount. */
+  stuckCount?: number;
   realtime: boolean;
   /** Problema non bloccante (es. elementi troppo grandi per il cloud). */
   warning?: string;

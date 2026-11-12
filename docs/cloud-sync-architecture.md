@@ -101,5 +101,15 @@ Correzioni di novembre 2026 (sync personale):
   toglie più la voce accodata da un'altra: le voci portano chi le ha scritte
   (`writer`) e, senza vault, per quelle di un'altra pagina si invia la copia
   più recente tra memoria e disco. Col vault su disco c'è solo lo snapshot
-  cifrato: il limite resta e la guardia a scheda unica è l'unica protezione (P15).
+  cifrato: il limite resta e la guardia a scheda unica è l'unica protezione (P15);
+- le voci che non partiranno mai così come sono (elemento oltre il limite di
+  un invio, 900 KB) vengono segnate come ferme (`parked: "too-large"`,
+  `src/lib/stuckOutbox.ts`): non contano tra le modifiche da inviare
+  (`stuckCount` a parte, badge «N elementi non sincronizzabili») e il pannello
+  Account le elenca con titolo e dimensione. Si può scaricarne una copia
+  (backup parziale `scope: "items"`, unito all'importazione) o toglierle dalla
+  coda dopo una conferma: restano solo su questo dispositivo. Finché ci sono,
+  il cambio di account e «Esci e togli i dati da qui» restano fermi con un
+  messaggio che le nomina, perché toglierle da qui le perderebbe. Una modifica
+  locale riaccoda la voce senza segno e la rimette in gioco (P12).
 

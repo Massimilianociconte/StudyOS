@@ -4,7 +4,10 @@ import { whenPersisted } from "../lib/persistence";
 import { signOutThisDevice } from "../lib/deviceSignOut";
 import { setCloudSyncState } from "../lib/cloudSyncState";
 import { ACCOUNT_TEXT } from "../lib/labels/account";
-import { ACCOUNT_CHOICE_TEXT } from "../lib/labels";
+import { ACCOUNT_CHOICE_TEXT, CLOUD_STUCK_TEXT } from "../lib/labels";
+import { pickCollections } from "../lib/collections";
+import { createBackupEnvelope, downloadJson } from "../lib/backup";
+import { stuckSnapshot, type StuckItem } from "../lib/stuckOutbox";
 import { SHARED_PENDING_TEXT } from "../lib/labels/sharing";
 import { clearPendingShare } from "../lib/shareInvite";
 import { useStudyStore } from "../store/useStudyStore";
@@ -17,10 +20,13 @@ import {
   signUp
 } from "../lib/supabase";
 import {
+  CLOUD_ITEM_MAX_KB,
   chooseAccountSwitch,
+  discardStuck,
   forcePullNow,
   forcePushNow,
   getCloudSyncState,
+  listStuck,
   requestSync,
   subscribeCloudSync,
   whenSyncIdle,
@@ -49,8 +55,112 @@ const statusLabel = (sync: CloudSyncState) => {
   if (sync.status === "syncing") return "Sincronizzazione…";
   if (sync.status === "error") return "Da controllare";
   if (sync.pendingChanges) return sync.pendingCount === 1 ? "1 modifica da inviare" : `${sync.pendingCount} modifiche da inviare`;
+  if (sync.stuckCount) return CLOUD_STUCK_TEXT.label(sync.stuckCount);
   return "Sincronizzato";
 };
+
+const formatSize = (bytes: number) =>
+  bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+/**
+ * Elementi troppo grandi per l'account (P12): restano solo qui e fermano cambio account e «togli i dati
+ * da qui». La persona li vede, ne scarica una copia (backup parziale, da unire) o li toglie dalla coda
+ * dopo una conferma sul posto.
+ */
+function StuckItems({ count, onInfo }: { count: number; onInfo: (info: { kind: "ok" | "err"; text: string }) => void }) {
+  const [items, setItems] = useState<StuckItem[]>([]);
+  const [asking, setAsking] = useState(false);
+  const [working, setWorking] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void listStuck()
+      .then((list) => {
+        if (alive) setItems(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [count]);
+
+  const download = async () => {
+    setWorking(true);
+    try {
+      await whenPersisted();
+      const list = await listStuck();
+      const state = useStudyStore.getState();
+      const envelope = await createBackupEnvelope(stuckSnapshot(list, pickCollections(state)), state.settings, undefined, "items");
+      downloadJson(`studyos-non-sincronizzati-${new Date().toISOString().slice(0, 10)}.json`, envelope);
+      onInfo({ kind: "ok", text: ACCOUNT_TEXT.stuckDownloaded });
+    } catch {
+      onInfo({ kind: "err", text: ACCOUNT_TEXT.stuckFailed });
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const discard = async () => {
+    setWorking(true);
+    try {
+      await discardStuck(items);
+      setAsking(false);
+      onInfo({ kind: "ok", text: ACCOUNT_TEXT.stuckDiscarded });
+    } catch {
+      onInfo({ kind: "err", text: ACCOUNT_TEXT.stuckFailed });
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div
+      role="group"
+      aria-labelledby="account-stuck-title"
+      className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-4"
+    >
+      <p id="account-stuck-title" className="text-sm font-black text-[var(--warning-text)]">
+        {ACCOUNT_TEXT.stuckTitle}
+      </p>
+      <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckText(count, CLOUD_ITEM_MAX_KB)}</p>
+      {items.length ? (
+        <ul className="grid grid-cols-1 gap-1 text-sm text-[var(--warning-text)]">
+          {items.map((item) => (
+            <li key={item.key} className="min-w-0 break-words">
+              «{item.title || ACCOUNT_TEXT.stuckUntitled}» · {formatSize(item.size)}
+              {item.here ? "" : ` · ${ACCOUNT_TEXT.stuckNotHere}`}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="text-sm text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckFix}</p>
+      <p className="text-sm text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckBlocks}</p>
+      {asking ? (
+        <div className="grid grid-cols-1 gap-2">
+          <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckDiscardWarning}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="soft" onClick={() => setAsking(false)} disabled={working} autoFocus>
+              {ACCOUNT_TEXT.stuckDiscardCancel}
+            </Button>
+            <Button icon="Trash2" variant="danger" onClick={() => void discard()} disabled={working || !items.length}>
+              {ACCOUNT_TEXT.stuckDiscardConfirm}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button icon="Download" variant="soft" onClick={() => void download()} disabled={working}>
+            {ACCOUNT_TEXT.stuckDownload}
+          </Button>
+          <Button icon="Trash2" variant="danger" onClick={() => setAsking(true)} disabled={working || !items.length}>
+            {ACCOUNT_TEXT.stuckDiscard}
+          </Button>
+        </div>
+      )}
+      <p className="text-xs text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckCopyPlain}</p>
+    </div>
+  );
+}
 
 type Mode = "signin" | "signup";
 
@@ -231,7 +341,7 @@ export function CloudPanel() {
   // Come «Ho dimenticato la password» (LockScreen): prima l'uscita solo da qui, poi i dati del
   // dispositivo si cancellano (nome, foto, materie…). Nell'account resta tutto.
   const leaveRemovingData = async () => {
-    if (sync.pendingCount > 0) return;
+    if (sync.pendingCount > 0 || sync.stuckCount) return;
     setBusy(true);
     setInfo(null);
     try {
@@ -382,6 +492,8 @@ export function CloudPanel() {
             </p>
           ) : null}
 
+          {sync.stuckCount ? <StuckItems count={sync.stuckCount} onInfo={setInfo} /> : null}
+
           {sync.error ? (
             <p className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
               {sync.error}
@@ -397,18 +509,22 @@ export function CloudPanel() {
               <p className="text-sm font-bold text-[var(--muted)]">{ACCOUNT_TEXT.leaveText}</p>
               <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveKeepHint}</p>
               <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveRemoveHint}</p>
-              {sync.pendingCount > 0 || sharedPending > 0 ? (
+              {sync.pendingCount > 0 || sharedPending > 0 || sync.stuckCount ? (
                 <div className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3">
                   {sync.pendingCount > 0 ? (
                     <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.leavePending(sync.pendingCount)}</p>
                   ) : null}
                   {sharedPending > 0 ? <p className="text-sm font-bold text-[var(--warning-text)]">{SHARED_PENDING_TEXT.leave(sharedPending)}</p> : null}
                   {sync.warning && sync.pendingCount > 0 ? <p className="text-sm font-bold text-[var(--warning-text)]">{sync.warning}</p> : null}
-                  <div className="flex flex-wrap gap-2">
-                    <Button icon="Sparkles" variant="soft" onClick={handleSyncNow} disabled={busy || sync.status === "syncing"}>
-                      {ACCOUNT_TEXT.leaveSyncNow}
-                    </Button>
-                  </div>
+                  {/* Elementi troppo grandi: l'elenco con copia e «togli dalla coda» è nel riquadro qui sopra. */}
+                  {sync.stuckCount ? <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckBlocks}</p> : null}
+                  {sync.pendingCount > 0 || sharedPending > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button icon="Sparkles" variant="soft" onClick={handleSyncNow} disabled={busy || sync.status === "syncing"}>
+                        {ACCOUNT_TEXT.leaveSyncNow}
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <div className="mt-1 flex flex-wrap justify-end gap-2">
@@ -418,7 +534,7 @@ export function CloudPanel() {
                 <Button icon="LogOut" variant="soft" onClick={() => void leaveKeepingData()} disabled={busy}>
                   {ACCOUNT_TEXT.leaveKeep}
                 </Button>
-                <Button icon="Trash2" variant="danger" onClick={() => void leaveRemovingData()} disabled={busy || sync.pendingCount > 0}>
+                <Button icon="Trash2" variant="danger" onClick={() => void leaveRemovingData()} disabled={busy || sync.pendingCount > 0 || Boolean(sync.stuckCount)}>
                   {ACCOUNT_TEXT.leaveRemove}
                 </Button>
               </div>

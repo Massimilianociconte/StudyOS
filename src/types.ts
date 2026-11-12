@@ -546,8 +546,11 @@ export interface StudySnapshot {
 export interface BackupEnvelope {
   format: "studyos.backup";
   version: 1;
-  /** Assente nei backup precedenti: vedi inferBackupScope. */
-  scope?: "full" | "tasks" | "calendar" | "subjects";
+  /**
+   * Assente nei backup precedenti: vedi inferBackupScope. "items": elementi scelti (es. quelli troppo
+   * grandi per l'account, pannello Account), uniti ai dati all'importazione come gli altri parziali.
+   */
+  scope?: "full" | "tasks" | "calendar" | "subjects" | "items";
   exportedAt: string;
   encrypted: boolean;
   data?: StudySnapshot;

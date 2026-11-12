@@ -90,6 +90,12 @@ export const ACCOUNT_CHOICE_TEXT = {
   hint: "Su questo dispositivo ci sono i dati di un altro account"
 } as const;
 
+/** Elementi troppo grandi per l'account (stuckOutbox.ts): badge nella shell e pannello Account. */
+export const CLOUD_STUCK_TEXT = {
+  label: (count: number) => (count === 1 ? "1 elemento non sincronizzabile" : `${count} elementi non sincronizzabili`),
+  hint: "Troppo grandi per l'account: apri Account"
+} as const;
+
 /** Riquadro mostrato quando una sezione non si carica (ViewErrorBoundary, nel bundle iniziale). */
 export const VIEW_ERROR_TEXT = {
   title: "Questa sezione non si è caricata",

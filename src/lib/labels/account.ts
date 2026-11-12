@@ -25,5 +25,30 @@ export const ACCOUNT_TEXT = {
   switchSeparate: "Mostra solo i dati di questo account",
   switchSeparateHint: "Consigliato. I dati di prima restano nel loro account: li ritrovi accedendo di nuovo con quello.",
   switchMerge: "Aggiungi i dati di prima a questo account",
-  switchMergeHint: "Materie, eventi, attività e note di prima vanno anche in questo account. Nome, foto e preferenze restano quelli di questo account."
+  switchMergeHint: "Materie, eventi, attività e note di prima vanno anche in questo account. Nome, foto e preferenze restano quelli di questo account.",
+  /** Cambio account fermo: elementi mai arrivati all'account precedente perché troppo grandi (P12). */
+  switchStuck: (count: number) =>
+    count === 1
+      ? "Prima di cambiare account: 1 elemento di questo dispositivo è troppo grande e non è mai arrivato all'account di prima. Qui sotto puoi scaricarne una copia o toglierlo dalla coda."
+      : `Prima di cambiare account: ${count} elementi di questo dispositivo sono troppo grandi e non sono mai arrivati all'account di prima. Qui sotto puoi scaricarne una copia o toglierli dalla coda.`,
+  /** Elementi oltre il limite di un invio al cloud: restano solo qui (stuckOutbox.ts). */
+  stuckTitle: "Elementi che non arrivano all'account",
+  stuckText: (count: number, limitKb: number) =>
+    count === 1
+      ? `1 elemento è troppo grande per l'account (limite ${limitKb} KB) e resta solo su questo dispositivo.`
+      : `${count} elementi sono troppo grandi per l'account (limite ${limitKb} KB) e restano solo su questo dispositivo.`,
+  stuckFix: "Per farli arrivare all'account, sostituisci gli allegati più grandi con un link.",
+  stuckBlocks: "Finché sono in coda non puoi cambiare account né togliere i dati da qui: prima scaricane una copia o toglili dalla coda.",
+  stuckUntitled: "Senza titolo",
+  stuckNotHere: "non più su questo dispositivo",
+  stuckDownload: "Scarica una copia",
+  stuckDownloaded: "Copia scaricata. Per riaverli, ripristinala da Impostazioni › Copia di sicurezza.",
+  stuckCopyPlain: "La copia non è protetta da password: conservala in un posto sicuro.",
+  stuckDiscard: "Togli dalla coda",
+  stuckDiscardWarning:
+    "Restano solo su questo dispositivo e non arriveranno all'account. Se poi togli i dati da qui o cambi account, si perdono: scarica prima una copia.",
+  stuckDiscardConfirm: "Sì, togli dalla coda",
+  stuckDiscardCancel: "Annulla",
+  stuckDiscarded: "Tolti dalla coda: restano solo su questo dispositivo.",
+  stuckFailed: "Operazione non riuscita. Riprova."
 } as const;

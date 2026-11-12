@@ -293,7 +293,8 @@ export function SettingsView() {
         return;
       }
       const result = await mergeData(snapshot);
-      const scopeLabel = scope === "tasks" ? "attività" : scope === "calendar" ? "calendario" : scope === "subjects" ? "materie" : scope;
+      const scopeLabel =
+        scope === "tasks" ? "attività" : scope === "calendar" ? "calendario" : scope === "subjects" ? "materie" : scope === "items" ? "elementi scelti" : scope;
       if (current()) setMessage(`Copia parziale (${scopeLabel}) aggiunta ai tuoi dati: ${result.added} elementi nuovi, ${result.updated} aggiornati.`);
     } catch (error) {
       if (current()) setMessage(plainError(error, "Ripristino non riuscito. Controlla di aver scelto il file giusto e riprova."));
