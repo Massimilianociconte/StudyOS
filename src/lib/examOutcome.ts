@@ -2,6 +2,7 @@
 // non superato o ritirato. Un esame non superato resta aperto e non entra mai nel libretto.
 // Nessuno stato nuovo nei dati: la «data da decidere» è un'etichetta dell'esame legata alla data
 // passata, così smette di valere da sola appena la data cambia (anche da un'altra versione dell'app).
+import { format, isValid, parseISO } from "date-fns";
 import type { Exam } from "../types";
 
 export type ExamOutcome = "grade" | "passFail" | "failed";
@@ -45,6 +46,20 @@ export const failedExamPatch = (exam: Pick<Exam, "status" | "date" | "tags">, ne
     date: newDate ?? exam.date,
     tags: newDate ? tags : [...tags, `${DATE_TO_DECIDE}${exam.date}`]
   };
+};
+
+/**
+ * Giorno proposto in «Registra il voto» (yyyy-MM-dd, ora locale): quello dell'esame che verrà riusato
+ * se è già passato (l'esame del 5 si registra col 5), altrimenti oggi. Un esame non superato con la
+ * data da decidere non conta: quel giorno non è andato. Il giorno resta modificabile.
+ */
+export const recordDateFor = (reused: Pick<Exam, "status" | "date" | "tags"> | undefined, now = new Date()): string => {
+  const today = format(now, "yyyy-MM-dd");
+  if (!reused || isDateToDecide(reused)) return today;
+  const date = parseISO(reused.date);
+  if (!isValid(date)) return today;
+  const day = format(date, "yyyy-MM-dd");
+  return day < today ? day : today;
 };
 
 /** Esito da cui parte il modulo: idoneità se l'esame è registrato così, altrimenti con voto. */

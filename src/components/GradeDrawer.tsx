@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { Exam, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { MAX_GRADE, MIN_GRADE, examToRecord, isValidGrade } from "../lib/grades";
-import { failedExamPatch, outcomeOf, withoutDateToDecide, type ExamOutcome } from "../lib/examOutcome";
+import { failedExamPatch, outcomeOf, recordDateFor, withoutDateToDecide, type ExamOutcome } from "../lib/examOutcome";
 import { DateField, DateTimeField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
 import { CAREER_HELP, GRADE_TEXT } from "../lib/labels/career";
@@ -51,12 +51,15 @@ export function GradeDrawer({
     exams.filter((item) => item.status === "done" && (item.passFail || isValidGrade(item.grade)) && item.id !== exam?.id).map((item) => item.subjectId)
   );
   const available = subjects.filter((subject) => !subject.archived && subject.status !== "archived" && !passedSubjects.has(subject.id));
+  // Giorno proposto per la materia scelta: quello dell'esame che verrà riusato, se è già passato.
+  const suggestedDate = (subjectId: string) => recordDateFor(subjectId && subjectId !== "__new" ? examToRecord(exams, subjectId) : undefined);
   // Senza materie selezionabili si parte direttamente dal nuovo insegnamento.
   const initial = () => ({
     subjectId: exam?.subjectId ?? fixedSubjectId ?? (available.length ? "" : "__new"),
     newName: "",
     newCfu: "6",
-    date: toDateInput(exam?.date),
+    // Voto già registrato: la sua data. Esame da registrare: la sua, se è passata. Materia: quella dell'esame che si riusa.
+    date: exam && isGraded(exam) ? toDateInput(exam.date) : exam ? recordDateFor(exam) : suggestedDate(fixedSubjectId ?? ""),
     grade: exam?.grade ? String(exam.grade) : "",
     honors: Boolean(exam?.honors),
     outcome: outcomeOf(exam),
@@ -195,7 +198,14 @@ export function GradeDrawer({
       <div className="grid grid-cols-1 gap-3">
         {subjectFixed ? null : (
           <Field label="Materia">
-            <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
+            <select
+              className={inputClass}
+              value={draft.subjectId}
+              onChange={(event) => {
+                const subjectId = event.target.value;
+                setDraft((value) => ({ ...value, subjectId, date: suggestedDate(subjectId) }));
+              }}
+            >
               <option value="">Scegli la materia</option>
               {available.map((subject) => (
                 <option key={subject.id} value={subject.id}>

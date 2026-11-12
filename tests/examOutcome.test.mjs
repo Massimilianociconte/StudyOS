@@ -8,7 +8,7 @@ const PAST = "2026-10-10T07:00:00.000Z";
 const exam = (o = {}) => ({
   id: "x",
   subjectId: "fisio",
-  date: PAST,
+  date: o.date ?? PAST,
   updatedAt: PAST,
   archived: false,
   status: o.status ?? "reviewing",
@@ -63,6 +63,24 @@ test("Le etichette dell'utente restano; quella della data da decidere si toglie"
   const marked = { ...exam({ tags: ["orale"] }), ...O.failedExamPatch(exam({ tags: ["orale"] })) };
   assert.deepEqual(O.withoutDateToDecide(marked.tags), ["orale"]);
   assert.deepEqual(O.withoutDateToDecide(undefined), []);
+});
+
+test("Registra il voto: il giorno proposto è quello dell'esame riusato, se è già passato", () => {
+  // Ore locali: il giorno si legge come lo vede chi studia, in qualsiasi fuso.
+  const now = new Date(2026, 10, 12, 10, 0);
+  const at = (day, hour = 9) => new Date(2026, 10, day, hour, 0).toISOString();
+  // «Superata» su una materia con l'esame del 5 novembre: si propone il 5, non oggi.
+  assert.equal(O.recordDateFor(exam({ status: "ready", date: at(5) }), now), "2026-11-05");
+  // Esame di oggi (anche più tardi): oggi.
+  assert.equal(O.recordDateFor(exam({ status: "ready", date: at(12, 15) }), now), "2026-11-12");
+  // Esame ancora da fare o nessun esame da riusare: oggi.
+  assert.equal(O.recordDateFor(exam({ status: "planning", date: at(20) }), now), "2026-11-12");
+  assert.equal(O.recordDateFor(undefined, now), "2026-11-12");
+  // Non superato con la data da decidere: quel giorno non l'ha superato, si propone oggi.
+  const failed = { ...exam({ status: "ready", date: at(5) }), ...O.failedExamPatch(exam({ status: "ready", date: at(5) })) };
+  assert.equal(O.recordDateFor(failed, now), "2026-11-12");
+  // Data illeggibile: oggi.
+  assert.equal(O.recordDateFor(exam({ date: "non una data" }), now), "2026-11-12");
 });
 
 test("Esito: con voto, idoneità e non superato", () => {
