@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { AnimatePresence, m } from "framer-motion";
@@ -17,11 +17,13 @@ import {
   SESSION_STATUS_LABEL,
   TASK_STATUS_LABEL,
   attachmentKind,
+  SEARCH_TEXT,
   formatMinutes,
   hostOf
 } from "../lib/labels";
 import { safeCssColor } from "../lib/sharing";
 import { searchHits } from "../lib/repeat";
+import { nextSearchIndex, searchOptionId, searchPanelBox } from "../lib/searchUi";
 
 type ResultKind = "task" | "event" | "subject" | "exam" | "material" | "session" | "topic" | "goal" | "note";
 
@@ -108,6 +110,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listId = useId();
 
   const results = useMemo<SearchResult[]>(() => {
     const needle = query.trim().toLowerCase();
@@ -343,20 +346,40 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
       return;
     }
     if (!results.length) return;
-    if (event.key === "ArrowDown") {
+    const next = nextSearchIndex(activeIndex, event.key, results.length);
+    if (next !== null) {
       event.preventDefault();
-      setActiveIndex((index) => (index + 1) % results.length);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((index) => (index - 1 + results.length) % results.length);
+      setOpen(true);
+      setActiveIndex(next);
     } else if (event.key === "Enter") {
       event.preventDefault();
-      jump(results[activeIndex]);
+      const target = results[Math.min(activeIndex, results.length - 1)];
+      if (target) jump(target);
     }
   };
 
   const showDropdown = open && query.trim().length > 0;
   const trimmed = query.trim();
+  const listOpen = showDropdown && results.length > 0;
+
+  // Sui telefoni il campo è stretto: il pannello si allarga a tutto lo schermo (16 px di margine).
+  const [box, setBox] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!showDropdown) return undefined;
+    const measure = () => {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      setBox(rect ? searchPanelBox({ left: rect.left }, document.documentElement.clientWidth) : null);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [showDropdown]);
+
+  // Il risultato evidenziato resta visibile scorrendo con le frecce (il focus non lascia il campo).
+  useEffect(() => {
+    if (!listOpen) return;
+    document.getElementById(searchOptionId(listId, activeIndex))?.scrollIntoView({ block: "nearest" });
+  }, [listOpen, activeIndex, listId]);
 
   return (
     <div ref={wrapperRef} className="relative">
@@ -367,12 +390,20 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
       <input
         ref={inputRef}
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
         onFocus={() => setOpen(true)}
         onKeyDown={handleKey}
         className={`${inputClass} pl-10 pr-10`}
-        placeholder="Cerca in StudyOS: attività, eventi, materie, file…"
-        aria-label="Cerca in tutta l'app"
+        placeholder={SEARCH_TEXT.placeholderWide}
+        role="combobox"
+        aria-label={SEARCH_TEXT.aria}
+        aria-autocomplete="list"
+        aria-expanded={listOpen}
+        aria-controls={listOpen ? listId : undefined}
+        aria-activedescendant={listOpen ? searchOptionId(listId, activeIndex) : undefined}
         autoComplete="off"
         spellCheck={false}
       />
@@ -383,13 +414,17 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
             setQuery("");
             inputRef.current?.focus();
           }}
-          aria-label="Pulisci ricerca"
-          title="Cancella ricerca"
-          className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface)]"
+          aria-label={SEARCH_TEXT.clear}
+          title={SEARCH_TEXT.clear}
+          className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-[var(--muted)] after:absolute after:-inset-1.5 after:rounded-full after:content-[''] hover:bg-[var(--surface)]"
         >
           <Icon name="X" className="h-4 w-4" />
         </button>
       ) : null}
+      {/* Numero di risultati detto a voce mentre si scrive (il pannello compare e sparisce). */}
+      <span role="status" className="sr-only">
+        {showDropdown ? (results.length ? SEARCH_TEXT.count(results.length) : SEARCH_TEXT.empty(trimmed)) : ""}
+      </span>
 
       <AnimatePresence>
         {showDropdown ? (
@@ -398,65 +433,71 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.16 }}
+            style={box ? { left: box.left, right: "auto", width: box.width } : undefined}
             className="scrollbar-soft absolute left-0 right-0 top-[calc(100%+8px)] z-50 max-h-[min(70dvh,520px)] overflow-y-auto rounded-[24px] border border-[var(--border)] bg-[var(--bg-2)] p-2 shadow-soft"
           >
-            <div className="flex items-center justify-between px-3 pb-2 pt-1 text-[10px] font-black uppercase tracking-wider text-[var(--faint)]">
-              <span>{results.length} {results.length === 1 ? "risultato" : "risultati"}</span>
-              <span>↑ ↓ per scegliere · Invio per aprire</span>
+            <div aria-hidden="true" className="flex items-center justify-between gap-3 px-3 pb-2 pt-1 text-[10px] font-black uppercase tracking-wider text-[var(--faint)]">
+              <span className="shrink-0">{SEARCH_TEXT.count(results.length)}</span>
+              {/* Le frecce servono con la tastiera: sui telefoni l'intestazione resta su una riga. */}
+              {results.length ? <span className="one-line-safe hidden sm:block">{SEARCH_TEXT.keys}</span> : null}
             </div>
 
             {results.length === 0 ? (
               <div className="grid grid-cols-1 place-items-center gap-2 px-4 py-6 text-center">
                 <Icon name="Search" className="h-6 w-6 text-[var(--faint)]" />
-                <p className="text-sm font-extrabold">Nessun risultato per "{trimmed}"</p>
-                <p className="text-xs font-bold text-[var(--muted)]">Prova con una parola più corta o controlla come è scritta.</p>
+                <p className="safe-text text-sm font-extrabold">{SEARCH_TEXT.empty(trimmed)}</p>
+                <p className="text-xs font-bold text-[var(--muted)]">{SEARCH_TEXT.emptyHint}</p>
               </div>
             ) : (
-              <ul role="listbox" className="grid grid-cols-1 gap-1">
+              <ul role="listbox" id={listId} aria-label={SEARCH_TEXT.results} className="grid grid-cols-1 gap-1">
                 {results.map((result, index) => {
                   const active = index === activeIndex;
                   return (
-                    <li key={`${result.kind}-${result.id}`}>
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        onMouseEnter={() => setActiveIndex(index)}
-                        onClick={() => jump(result)}
-                        className={`flex w-full min-h-[58px] items-center gap-3 rounded-[18px] border px-3 py-2 text-left transition ${
-                          active ? "border-[var(--accent)] bg-[var(--surface)]" : "border-transparent hover:bg-[var(--surface-soft)]"
-                        }`}
+                    <li
+                      key={`${result.kind}-${result.id}`}
+                      id={searchOptionId(listId, index)}
+                      role="option"
+                      aria-selected={active}
+                      // Il focus resta nel campo (combobox): il tocco o il clic apre il risultato.
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      onClick={() => jump(result)}
+                      className={`flex w-full min-h-[58px] cursor-pointer items-center gap-3 rounded-[18px] border px-3 py-2 text-left transition ${
+                        active ? "border-[var(--accent)] bg-[var(--surface)]" : "border-transparent hover:bg-[var(--surface-soft)]"
+                      }`}
+                    >
+                      <span
+                        className="grid grid-cols-1 h-10 w-10 shrink-0 place-items-center rounded-full"
+                        style={{
+                          background: result.accent ?? "var(--surface-strong)",
+                          color: result.accent ? "#10131d" : "var(--text)"
+                        }}
                       >
-                        <span
-                          className="grid grid-cols-1 h-10 w-10 shrink-0 place-items-center rounded-full"
-                          style={{
-                            background: result.accent ?? "var(--surface-strong)",
-                            color: result.accent ? "#10131d" : "var(--text)"
-                          }}
-                        >
-                          <Icon name={result.icon} className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-2">
-                            <span className="one-line-safe block text-sm font-extrabold">
-                              <Highlight text={result.title} query={trimmed} />
-                            </span>
-                            {result.badge ? (
-                              <span className="shrink-0 rounded-full bg-[var(--warning)]/30 px-2 py-0.5 text-[10px] font-black uppercase text-[var(--warning)]">
-                                {result.badge}
-                              </span>
-                            ) : null}
+                        <Icon name={result.icon} className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-start gap-2">
+                          <span className="two-line-safe text-sm font-extrabold leading-snug">
+                            <Highlight text={result.title} query={trimmed} />
                           </span>
-                          {result.subtitle ? (
-                            <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
-                              {result.subtitle}
+                          {result.badge ? (
+                            <span className="mt-0.5 shrink-0 rounded-full bg-[var(--warning)]/30 px-2 py-0.5 text-[10px] font-black uppercase text-[var(--warning)]">
+                              {result.badge}
                             </span>
                           ) : null}
                         </span>
-                        <span className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-black uppercase text-[var(--muted)]">
-                          {labels[result.kind]}
+                        <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
+                          {/* Sui telefoni il tipo sta qui, così il titolo ha tutta la riga. */}
+                          <span className="sm:hidden">
+                            {labels[result.kind]}
+                            {result.subtitle ? " · " : ""}
+                          </span>
+                          {result.subtitle}
                         </span>
-                      </button>
+                      </span>
+                      <span className="hidden shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-black uppercase text-[var(--muted)] sm:block">
+                        {labels[result.kind]}
+                      </span>
                     </li>
                   );
                 })}

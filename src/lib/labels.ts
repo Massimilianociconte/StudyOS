@@ -46,6 +46,18 @@ export const UI_TEXT = {
   dueOptional: "Entro quando? (facoltativa)"
 } as const;
 
+/** Ricerca globale nella barra in alto. */
+export const SEARCH_TEXT = {
+  placeholderWide: "Cerca in StudyOS: attività, eventi, materie, file…",
+  aria: "Cerca in StudyOS: attività, eventi, materie, file",
+  clear: "Cancella la ricerca",
+  results: "Risultati della ricerca",
+  count: (count: number) => `${count} ${count === 1 ? "risultato" : "risultati"}`,
+  keys: "↑ ↓ per scegliere · Invio per aprire",
+  empty: (query: string) => `Nessun risultato per "${query}"`,
+  emptyHint: "Prova con una parola più corta o controlla come è scritta."
+} as const;
+
 export const EXAM_STATUS_LABEL: Record<Exam["status"], string> = {
   planning: "Da pianificare",
   studying: "In preparazione",
