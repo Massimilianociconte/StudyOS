@@ -482,12 +482,11 @@ const GONE_SHOWN = 6;
 /** Che cosa fa "Questo e i successivi" alle parti cambiate prima (assorbite con una regola nuova, o lasciate). */
 const splitLines = (impact: ScopeImpact | undefined) => {
   if (!impact) return [];
-  if (impact.absorbed) {
-    const gone = impact.gone ?? [];
-    const more = gone.length > GONE_SHOWN || impact.goneMore === true;
-    return [SCOPE_TEXT.followingSplits, ...(gone.length ? [SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), more)] : [])];
-  }
-  if (!impact.laterParts) return [];
+  const gone = impact.gone ?? [];
+  const goneLine = gone.length ? [SCOPE_TEXT.followingGone(shortDatesText(gone.slice(0, GONE_SHOWN)), gone.length > GONE_SHOWN || impact.goneMore === true)] : [];
+  if (impact.absorbed) return [SCOPE_TEXT.followingSplits, ...goneLine];
+  // Senza parti dopo può sparire il giorno aperto (una regola nuova che non lo ha).
+  if (!impact.laterParts) return goneLine;
   // Spostando il giorno si spostano le parti con gli stessi giorni e orario; le altre restano (e lo si dice se ce ne sono di tutti e due i tipi).
   const moved = impact.laterMoved ?? 0;
   return [
@@ -610,6 +609,7 @@ export const scopeOptions = ({
       ? [SCOPE_TEXT.followingDelete(day)]
       : [
           action === "move" ? SCOPE_TEXT.followingMove(day) : SCOPE_TEXT.followingEdit(day),
+          ...(impacts.following?.startsOn ? [SCOPE_TEXT.followingStartsOn(occurrenceDayText(impacts.following.startsOn))] : []),
           ...(shift ? [SCOPE_TEXT.followingDaysShift(shift.from, shift.to)] : []),
           ...(rowContent ? [SCOPE_TEXT.followingTakesDay] : []),
           ...rowLines(impacts.following),

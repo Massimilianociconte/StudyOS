@@ -1732,7 +1732,7 @@ export const planSplit = (
 };
 
 /** Serie collegate da divisioni: la radice e tutte le figlie (stesso proprietario). */
-const familyOf = (events: readonly CalendarEvent[], id: string) => {
+export const familyOf = (events: readonly CalendarEvent[], id: string) => {
   const byId = new Map(events.filter((item) => !isOccurrenceRow(item)).map((item) => [item.id, item]));
   let root = id;
   const seen = new Set<string>();

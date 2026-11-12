@@ -117,6 +117,15 @@ test("agente, tutto il giorno: «Questo e i successivi» al martedì: la parte n
   assert.equal(grid(), "11-02 Lezione | 11-09 Lezione | 11-17 agent | 11-24 agent");
 });
 
+test("agente, tutto il giorno: «Questo e i successivi» con una regola nuova senza il lunedì: riprende martedì 17 e il 16 sparisce (e si dice)", async () => {
+  const result = await update({ id: "s", occurrenceDate: "2026-11-16", scope: "following", repeat: { freq: "weekly", byWeekday: ["TU", "TH"] } });
+  const part = masters().find((item) => item.splitFrom === "s");
+  assert.deepEqual(allDayDays(part), { first: "2026-11-17", last: "2026-11-17" });
+  assert.equal(result.data.seriesStart, part.start);
+  assert.deepEqual(result.data.removedDates, ["2026-11-16"]);
+  assert.equal(grid(), "11-02 Lezione | 11-09 Lezione | 11-17 Lezione | 11-19 Lezione | 11-24 Lezione | 11-26 Lezione");
+});
+
 test("agente, tutto il giorno: un evento singolo (e una vacanza di tre giorni) spostato tiene i suoi giorni a Roma", async () => {
   reset([romeAllDay("2026-12-08", "2026-12-08", { id: "e" }), romeAllDay("2026-12-08", "2026-12-10", { id: "v", title: "Mare", category: "vacation" })]);
   await update({ id: "e", start: "2026-12-09" });

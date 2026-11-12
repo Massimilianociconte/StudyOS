@@ -244,7 +244,13 @@
 - «Tutti» con una regola nuova che non comprende il giorno aperto (da lunedì 16 «mar e gio»): la
   serie parte dal primo giorno della regola nuova dal suo primo giorno di prima in poi (martedì 3,
   `alignedSeriesStart`), mai un giorno in più che la regola non ha; la scelta dice quel giorno
-  (`newStart`). Vale anche aprendo dal primo giorno.
+  (`newStart`). Vale anche aprendo dal primo giorno. «Questo e i successivi» uguale, dal giorno
+  aperto: la parte nuova parte dal primo giorno della regola da lì in poi (martedì 17, stessa ora,
+  `occurrenceEditCalls` → `timesMoved`), il giorno aperto sparisce e la parte prima finisce lunedì 9;
+  la scelta dice da dove riprende (`ScopeImpact.startsOn`) e il giorno aperto è tra quelli che
+  spariscono (`gone`, anche per l'agente in `removedDates`). Uno spostamento senza regola nuova no.
+- «fino a» (`seriesSpan.until`) e «La serie ora finisce» (`ScopeImpact.endsOn`) dicono l'ultima data
+  che c'è davvero (`lastShownDate`): non un giorno annullato, un giorno spostato dove sta ora.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`
