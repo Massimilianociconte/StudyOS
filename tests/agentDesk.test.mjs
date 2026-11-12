@@ -74,6 +74,23 @@ test("revoca: la richiesta porta il segreto del browser, mai il nome; senza segr
   }
 });
 
+test("hub di prima della 1.6.0 o versione ignota: mai una revoca limitata, solo «Scollega tutti» confermato", () => {
+  const base = { token: "tok", secret: "s".repeat(43), scope: "browser" };
+  // Un hub vecchio tratta qualunque /oauth/revoke come «scollega tutti»: il bottone apre la conferma.
+  for (const hubVersion of ["1.5.0", "1.4.2", "", "sconosciuta", undefined]) {
+    assert.deepEqual(revokePlan({ ...base, hubVersion }), { kind: "confirmAll" }, String(hubVersion));
+    assert.deepEqual(revokePlan({ ...base, hubVersion, secret: "" }), { kind: "confirmAll" }, String(hubVersion));
+  }
+  assert.equal(revokePlan({ ...base, hubVersion: "1.6.0" }).kind, "send");
+  assert.equal(revokePlan({ ...base, hubVersion: "2.0.1" }).kind, "send");
+  // «Scollega tutti» dopo la conferma resta possibile anche lì.
+  assert.deepEqual(revokePlan({ ...base, hubVersion: "1.5.0", scope: "all" }), { kind: "send", body: { token: "tok", scope: "all" } });
+  // La conferma dice in una riga perché, senza parole tecniche.
+  assert.match(AGENT_DESK_TEXT.oldHubAllOnly, /tutti/);
+  assert.match(AGENT_DESK_TEXT.oldHubAllOnly, /aggiornat/);
+  assert.doesNotMatch(AGENT_DESK_TEXT.oldHubAllOnly, /hub|1\.6|versione/i);
+});
+
 test("parole giuste: «chiave» sul sito pubblicato, «codice» con npm run agent", () => {
   assert.match(pairFirstError(false), /chiave/);
   assert.doesNotMatch(pairFirstError(false), /terminale|codice/);

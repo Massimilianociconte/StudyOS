@@ -5,7 +5,7 @@ import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRis
 import type { AgentCallResult, AuditEntry } from "../agent/types";
 import { appendAudit, readAgentToken, readAudit, readBrowserId, readBrowserSecret, readSavedHub, readStoredPolicy, writeAgentToken, writeBrowserSecret, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
-import { pairFirstError, parseRevokeOutcome, revokeNotice, revokePlan, type RevokeScope } from "./agentDesk";
+import { hubRevokesPerBrowser, pairFirstError, parseRevokeOutcome, revokeNotice, revokePlan, type RevokeScope } from "./agentDesk";
 import { agentCloudLabels } from "./labels";
 import { AGENT_DESK_TEXT } from "./labels/agents";
 import { loadOnce } from "./loadOnce";
@@ -135,7 +135,7 @@ const pageOrigin = () => {
 const candidateList = () => hubCandidates(pageOrigin(), readSavedHub(), configuredHub());
 
 let activeHub = "";
-/** Versione dell'hub letta da /health: dice se sa revocare per account. */
+/** Versione dell'hub letta da /health: dice se sa revocare per browser. "" = non ancora letta. */
 let hubVersion = "";
 
 const localProgram = () => isLocalPage(pageOrigin());
@@ -599,8 +599,12 @@ export const revokeAgentAccess = async (scope: Exclude<RevokeScope, "cloud"> = "
   try {
     const plan = revokePlan({ scope, hubVersion, token, secret: scope === "all" ? "" : await ensureBrowserSecret() });
     if (plan.kind !== "send") {
-      refresh({ error: AGENT_DESK_TEXT.noSecret, notice: "" });
-      return AGENT_DESK_TEXT.noSecret;
+      // confirmAll: l'app chiede prima checkScopedRevoke, quindi qui arriva solo con l'hub giù o cambiato.
+      const error = plan.kind === "confirmAll"
+        ? (snapshot.hub === "down" ? offlineCopy() : AGENT_DESK_TEXT.oldHubAllOnly)
+        : AGENT_DESK_TEXT.noSecret;
+      refresh({ error, notice: "" });
+      return error;
     }
     const data = await postJson("/oauth/revoke", plan.body);
     const count = await revokeCloudGrants();
@@ -611,6 +615,16 @@ export const revokeAgentAccess = async (scope: Exclude<RevokeScope, "cloud"> = "
     refresh({ error: message, notice: "" });
     return message;
   }
+};
+
+/**
+ * Prima di «Revoca gli accessi di questo browser»: rilegge /health. "allOnly" = hub di prima della
+ * 1.6.0 o senza versione, che a ogni /oauth/revoke scollega tutti: l'app apre la conferma per tutti.
+ */
+export const checkScopedRevoke = async (): Promise<"scoped" | "allOnly" | "down"> => {
+  await checkHealth();
+  if (snapshot.hub !== "up") return "down";
+  return hubRevokesPerBrowser(hubVersion) ? "scoped" : "allOnly";
 };
 
 /**

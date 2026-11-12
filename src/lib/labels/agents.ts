@@ -52,6 +52,8 @@ export const AGENT_DESK_TEXT = {
   revokeAllConfirm:
     "Scollega gli assistenti di tutte le persone che usano questo connettore, non solo i tuoi. Ognuno dovrà togliere il connettore StudyOS in ChatGPT o Claude e aggiungerlo di nuovo.",
   revokeAllConfirmLabel: "Scollega tutti",
+  /** Hub di prima della 1.6.0 (o non raggiungibile): la revoca di questo browser apre la conferma per tutti. */
+  oldHubAllOnly: "Questo collegamento non è ancora aggiornato: finché non lo è, sa solo scollegare gli assistenti di tutti.",
   /** Il browser non ha ancora il suo segreto (hub irraggiungibile quando l'ha chiesto). */
   noSecret: "Questo browser non ha ancora il suo segreto per le revoche: ricarica la pagina e riprova.",
 

@@ -45,15 +45,18 @@ export type RevokePlan =
   /** Hub di prima con il connettore remoto: basta il permesso tolto nel cloud. */
   | { kind: "skip" }
   /** Questo browser non ha ancora il suo segreto: la revoca limitata non si può chiedere. */
-  | { kind: "noSecret" };
+  | { kind: "noSecret" }
+  /** Hub di prima della 1.6.0 o versione ignota: sa solo scollegare tutti, quindi si chiede conferma. */
+  | { kind: "confirmAll" };
 
 /**
  * Corpo di /oauth/revoke. Una revoca limitata porta il segreto di questo browser, mai il nome del
  * profilo: l'hub toglie solo ciò che quel segreto ha approvato.
  */
-export const revokePlan = ({ scope, hubVersion, token, secret }: { scope: RevokeScope; hubVersion: string; token: string; secret: string }): RevokePlan => {
+export const revokePlan = ({ scope, hubVersion, token, secret }: { scope: RevokeScope; hubVersion: unknown; token: string; secret: string }): RevokePlan => {
   if (scope === "all") return { kind: "send", body: { token, scope: "all" } };
-  if (scope === "cloud" && !hubRevokesPerBrowser(hubVersion)) return { kind: "skip" };
+  // Un hub di prima tratta qualunque /oauth/revoke come «scollega tutti»: mai una revoca limitata lì.
+  if (!hubRevokesPerBrowser(hubVersion)) return scope === "cloud" ? { kind: "skip" } : { kind: "confirmAll" };
   if (!secret) return { kind: "noSecret" };
   return { kind: "send", body: scope === "cloud" ? { token, secret, scope: "cloud" } : { token, secret } };
 };

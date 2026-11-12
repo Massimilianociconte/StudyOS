@@ -153,9 +153,12 @@ del sito ne riceve uno nuovo (gli accessi approvati con il vecchio si tolgono so
 «Scollega gli assistenti di tutti»). Chi ha la chiave può comunque scollegare tutti con `scope:
 "all"`, come prima.
 
-L'app manda «Scollega il connettore remoto» all'hub solo se `/health` dice 1.6.0 o più: un hub di
-prima scollegherebbe tutti. Il permesso nel cloud si toglie comunque, e basta a fermare il
-connettore.
+Un hub di prima della 1.6.0 tratta qualunque `/oauth/revoke` come «scollega tutti». Per questo
+l'app rilegge `/health` prima di «Revoca gli accessi di questo browser»: se la versione è sotto la
+1.6.0 o manca, non manda una revoca limitata, ma apre la stessa conferma di «Scollega gli
+assistenti di tutti», con una riga che dice che questo collegamento, finché non è aggiornato, sa
+solo scollegare tutti. Allo stesso modo manda «Scollega il connettore remoto» all'hub solo dalla
+1.6.0: prima toglie solo il permesso nel cloud, che basta a fermare il connettore.
 
 ## Più account sullo stesso connettore
 

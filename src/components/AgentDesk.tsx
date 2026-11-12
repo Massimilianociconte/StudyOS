@@ -5,6 +5,7 @@ import type { AgentRisk, PolicyChoice } from "../agent/policy";
 import {
   allowWritesFor15Minutes,
   approvePendingCall,
+  checkScopedRevoke,
   clearTrustedWrites,
   decideAgentConsent,
   denyPendingCall,
@@ -237,6 +238,8 @@ export function AgentSettings() {
   const [hubAddress, setHubAddress] = useState(() => readSavedHub());
   const [busy, setBusy] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
+  /** Hub di prima: «Revoca gli accessi di questo browser» sa solo scollegare tutti, quindi chiede conferma. */
+  const [confirmOldHub, setConfirmOldHub] = useState(false);
   const accountName = useStudyStore((state) => selectPreferences(state).displayName.trim());
   const trusted = trustedWritesActive(link.policy);
   const localPage = isLocalPage(window.location.origin);
@@ -246,6 +249,21 @@ export function AgentSettings() {
   const pairReady = localPage
     ? code.replace(/[^A-Za-z0-9]/g, "").length === 8
     : code.trim().length >= 20 && !/\s/.test(code.trim());
+
+  const revokeMine = async () => {
+    if (!link.paired) {
+      await revokeAgentAccess("browser");
+      return;
+    }
+    setBusy(true);
+    try {
+      // Mai una revoca limitata a un hub di prima o di versione ignota: la scollegherebbe a tutti.
+      if ((await checkScopedRevoke()) === "allOnly") setConfirmOldHub(true);
+      else await revokeAgentAccess("browser");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submitCode = async () => {
     setBusy(true);
@@ -338,11 +356,25 @@ export function AgentSettings() {
 
       {link.paired || (cloudConfigured && signedIn) ? (
         <div className="grid grid-cols-1 gap-2">
-          <div className="flex flex-wrap gap-2">
-            <Button variant="danger" icon="Shield" onClick={() => void revokeAgentAccess("browser")}>
-              {AGENT_DESK_TEXT.revokeButton}
-            </Button>
-          </div>
+          {confirmOldHub ? (
+            <ConfirmWithError
+              text={`${AGENT_DESK_TEXT.oldHubAllOnly} ${AGENT_DESK_TEXT.revokeAllConfirm}`}
+              confirmLabel={AGENT_DESK_TEXT.revokeAllConfirmLabel}
+              icon="Shield"
+              onCancel={() => setConfirmOldHub(false)}
+              onConfirm={async () => {
+                const failure = await revokeAgentAccess("all");
+                if (!failure) setConfirmOldHub(false);
+                return failure;
+              }}
+            />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="danger" icon="Shield" disabled={busy} onClick={() => void revokeMine()}>
+                {AGENT_DESK_TEXT.revokeButton}
+              </Button>
+            </div>
+          )}
           <p className={MUTED}>{agentAccountLabels.revokeHint}</p>
           {link.paired ? (
             confirmAll ? (
