@@ -166,6 +166,12 @@ dove `<nome>` è il nome del profilo con i trattini al posto degli spazi, per es
 `/u/camilla-rossi/mcp`. Il nome segue le regole della sezione precedente (maiuscole,
 accenti e ordine delle parole non contano).
 
+In **Impostazioni → Agenti** del sito pubblicato il riquadro «Connettore remoto (app chiusa)»
+dice cosa fa, avvisa che non chiede conferme nell'app, mostra questo indirizzo con il nome
+del profilo, pronto da copiare, e ha «Scollega il connettore remoto». Senza nome nel profilo
+chiede di scriverlo; se `/health` dice `cloud: false` spiega che chi gestisce StudyOS deve
+attivarlo; nella finestra di sviluppo rimanda al sito pubblicato.
+
 Una volta sola, prima del primo collegamento:
 
 1. Esegui `supabase/agent.sql` nel SQL Editor del progetto (vedi `supabase/README.md`).

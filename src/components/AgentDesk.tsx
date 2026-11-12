@@ -11,10 +11,12 @@ import {
   disconnectAgent,
   pairAgent,
   revokeAgentAccess,
+  revokeRemoteConnector,
   saveAgentHubAddress,
   setAgentPolicyChoice,
   useAgentLink
 } from "../lib/agentLink";
+import { remoteConnectorView } from "../lib/agentDesk";
 import { readSavedHub } from "../lib/agentLocal";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
 import { agentAccountLabels, agentCloudLabels } from "../lib/labels";
@@ -142,6 +144,80 @@ export function AgentDock() {
   );
 }
 
+/** Indirizzo da incollare in ChatGPT o Claude, con il pulsante per copiarlo. */
+function CopyAddress({ value }: { value: string }) {
+  const [status, setStatus] = useState("");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setStatus(AGENT_DESK_TEXT.copied);
+    } catch {
+      setStatus(AGENT_DESK_TEXT.copyFailed);
+    }
+  };
+  return (
+    <div className="grid grid-cols-1 gap-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-[14px] bg-[var(--surface-soft)] p-2 pl-3">
+        <code className="min-w-0 flex-1 break-all text-xs font-black text-[var(--text)]">{value}</code>
+        <Button variant="soft" icon="Copy" onClick={() => void copy()} aria-label={`${AGENT_DESK_TEXT.copy} ${value}`}>
+          {AGENT_DESK_TEXT.copy}
+        </Button>
+      </div>
+      {status ? <p role="status" className="text-xs font-bold text-[var(--muted)]">{status}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Connettore remoto (`/u/<nome>/mcp`): lavora sui dati cloud con l'app chiusa e senza conferme.
+ * Mostra cosa fa, l'indirizzo di questo account (o come averlo) e la sua revoca.
+ */
+function RemoteConnector({ hub, accountName, paired }: { hub: string | null; accountName: string; paired: boolean }) {
+  const link = useAgentLink();
+  const signedIn = useSignedIn();
+  const [busy, setBusy] = useState(false);
+  const text = AGENT_DESK_TEXT.remote;
+  const view = remoteConnectorView({ cloud: cloudConfigured, hub, remote: link.remote, displayName: accountName });
+  const revoke = async () => {
+    setBusy(true);
+    try {
+      await revokeRemoteConnector();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section aria-labelledby="agent-remote-title" className="grid grid-cols-1 gap-2 rounded-[20px] border border-[var(--border)] p-3">
+      <h4 id="agent-remote-title" className="text-sm font-black">{text.title}</h4>
+      <p className="text-sm font-bold text-[var(--muted)]">{text.what}</p>
+      <p className="flex items-start gap-2 text-sm font-black">
+        <Icon name="AlertTriangle" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--danger-text)]" />
+        <span>{text.noConfirm}</span>
+      </p>
+      {view.kind === "address" ? (
+        <>
+          <p className="text-sm font-bold text-[var(--muted)]">{text.howTo}</p>
+          <CopyAddress value={view.address} />
+          {!paired ? <p className="text-sm font-bold text-[var(--muted)]">{text.pairFirst}</p> : null}
+          {paired && !signedIn ? <p className="text-sm font-bold text-[var(--muted)]">{agentCloudLabels.signInHint}</p> : null}
+        </>
+      ) : view.kind === "noName" ? (
+        <p className="text-sm font-bold text-[var(--muted)]">
+          {text.noName}{" "}
+          <a href="#settings-profilo" className="font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+        </p>
+      ) : (
+        <p className="text-sm font-bold text-[var(--muted)]">{view.kind === "noCloud" ? agentCloudLabels.noCloud : view.kind === "off" ? text.off : text.noHub}</p>
+      )}
+      {cloudConfigured && (paired || signedIn) ? (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="soft" icon="LogOut" disabled={busy} onClick={() => void revoke()}>{text.revoke}</Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function AgentSettings() {
   const link = useAgentLink();
   const [code, setCode] = useState("");
@@ -233,11 +309,11 @@ export function AgentSettings() {
         <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.help(localPage)}</p>
       </div>
 
+      <RemoteConnector hub={hostedHub} accountName={accountName} paired={link.paired} />
+
       <div>
-        <h4 className="text-sm font-black">Cosa può fare un assistente</h4>
-        <p className="mt-1 text-sm font-bold text-[var(--muted)]">
-          All'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero. Condividere i tuoi dati con altre persone, o cambiare una condivisione, chiede sempre la tua conferma.
-        </p>
+        <h4 className="text-sm font-black">{AGENT_DESK_TEXT.rulesTitle}</h4>
+        <p className="mt-1 text-sm font-bold text-[var(--muted)]">{AGENT_DESK_TEXT.rulesBody}</p>
       </div>
       <div className="grid grid-cols-1 gap-3">
         {(Object.keys(RISK_LABEL) as AgentRisk[]).map((risk) => (

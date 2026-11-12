@@ -77,7 +77,7 @@ export const AGENT_DESK_TEXT = {
   advancedHint: "Regole di conferma, modifiche senza conferma per 15 minuti, più persone, ultime azioni.",
   rulesTitle: "Cosa può fare un assistente",
   rulesBody:
-    "Con il collegamento qui sopra l'assistente all'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero. Condividere i tuoi dati con altre persone, o cambiare una condivisione, chiede sempre la tua conferma. Il connettore remoto non segue queste regole: non chiede conferme.",
+    "Con «Collega ChatGPT o Claude» l'assistente all'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero. Condividere i tuoi dati con altre persone, o cambiare una condivisione, chiede sempre la tua conferma. Il connettore remoto non segue queste regole: non chiede conferme.",
   trustWrites: "Consenti le modifiche per 15 minuti",
   trustBack: "Torna a chiedere conferma",
   trustedUntil: (time: string) =>
