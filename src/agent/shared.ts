@@ -126,7 +126,7 @@ const SHARED_FIELDS: Record<string, readonly string[]> = {
 const COMMON_FIELDS = ["subjectId", "tags", "archived", "createdAt", "updatedAt"];
 
 /** Chiavi mai inviate a nessuna profondità: file incorporati, copertine, cronometro, UID e impronte di import. */
-const NEVER_KEYS = /^(?:cover|dataUrl|sourceUid|sourceStamp|timer[A-Z]\w*|__proto__)$|DataUrl$/;
+const NEVER_KEYS = /^(?:cover|dataUrl|storedFile|sourceUid|sourceStamp|timer[A-Z]\w*|__proto__)$|DataUrl$/;
 
 /**
  * Testi che un client aprirebbe come script o file (data:, javascript:, vbscript:, file://, blob:).

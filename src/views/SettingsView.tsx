@@ -245,6 +245,14 @@ export function SettingsView() {
       await whenPersisted();
       const state = useStudyStore.getState();
       const snapshot = snapshotFromState(state);
+      // Copia completa con i file dei materiali (copia locale o scaricati ora), incorporati solo nel file.
+      let missingFiles = 0;
+      if (scope === "full" && snapshot.attachments.some((item) => item.storedFile)) {
+        const { withFilesForExport } = await import("../lib/attachmentSync");
+        const result = await withFilesForExport(snapshot.attachments);
+        snapshot.attachments = result.attachments;
+        missingFiles = result.missing;
+      }
       const scoped = {
       ...snapshot,
       subjects: scope === "full" || scope === "subjects" ? snapshot.subjects : [],
@@ -268,7 +276,7 @@ export function SettingsView() {
       };
       const envelope = await createBackupEnvelope(scoped, settings, exportEncrypted ? backupPassphrase : undefined, scope);
       downloadJson(`studyos-${scope}-${new Date().toISOString().slice(0, 10)}${exportEncrypted ? "-encrypted" : ""}.json`, envelope);
-      report("Copia scaricata: la trovi nella cartella dei download. Conservala in un posto sicuro.");
+      report(`Copia scaricata: la trovi nella cartella dei download. Conservala in un posto sicuro.${missingFiles ? SETTINGS_TEXT.backup.filesMissing(missingFiles) : ""}`);
     } catch (error) {
       report(plainError(error, "Download della copia non riuscito. Riprova."));
     }
@@ -336,21 +344,26 @@ export function SettingsView() {
         // Prima della sync: il server elimina anche ciò che questo dispositivo non ha mai ricevuto, e il
         // pull che segue non riporta qui i dati arrivati da altri dispositivi.
         const erased = alsoCloud ? await eraseAccountData() : null;
+        // Anche i file dei materiali nello spazio file dell'account: se ora non riesce, si riprova da solo.
+        const filesErased = alsoCloud
+          ? await import("../lib/attachmentSync").then((module) => module.eraseAccountFiles()).catch(() => false)
+          : true;
         if (alsoCloud) await requestSync();
         else await resetCloudDeviceState();
         const sync = getCloudSyncState();
         report(alsoCloud
-          ? erased === "failed"
+          ? (erased === "failed"
             ? SETTINGS_TEXT.erase.accountUnreachable
             : sync.pendingChanges || sync.status === "error" || sync.status === "offline"
             ? "Dati cancellati da questo dispositivo. Verranno cancellati anche dall'account appena la sincronizzazione riprende."
-            : "Dati cancellati da questo dispositivo e dall'account."
+            : "Dati cancellati da questo dispositivo e dall'account.") + (filesErased ? "" : SETTINGS_TEXT.erase.filesPending)
           : sync.status === "error" || sync.status === "offline"
             ? "Dispositivo svuotato. I dati dell'account verranno riscaricati appena la sincronizzazione riprende."
             : "Dispositivo svuotato e dati riscaricati dall'account.");
         return;
       }
-      await resetAllData({ propagate: false });
+      // Senza account i file aggiunti qui esistono solo qui: si cancellano anche quelli.
+      await resetAllData({ propagate: false, wipeFiles: true });
       report("Tutti i dati di questo dispositivo sono stati cancellati.");
     } catch (error) {
       report(plainError(error, "Cancellazione non riuscita. Riprova."));

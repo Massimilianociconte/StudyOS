@@ -948,7 +948,7 @@ test("ripristino: i tipi con copertine, file o UID sono proprio quelli che in sr
     assert.ok(start >= 0, name);
     const next = source.indexOf("\nexport ", start + 1);
     const body = source.slice(start, next < 0 ? undefined : next);
-    const hasProtected = /^\s*(?:cover|dataUrl|sourceUid|[A-Za-z]*DataUrl)\??:/m.test(body);
+    const hasProtected = /^\s*(?:cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl)\??:/m.test(body);
     assert.equal(PROTECTED_ENTITY_TYPES.has(type), hasProtected, type);
   }
 });

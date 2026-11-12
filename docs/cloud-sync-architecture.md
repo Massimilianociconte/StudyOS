@@ -18,8 +18,11 @@ realtime segnala che è utile fare un pull, con un controllo periodico di
 riserva. Un errore di invio lascia la voce in coda e viene ritentato.
 Il server respinge una versione più vecchia rispetto a quella già salvata;
 il client rilegge la riga in conflitto. Un batch troppo grande viene isolato,
-così le altre modifiche continuano a partire. I nuovi file incorporati hanno
-un limite di 600 KiB; per file più grandi usa un link esterno.
+così le altre modifiche continuano a partire. I file dei materiali non passano
+dalle righe: vanno nel bucket privato `studyos-files` di Supabase Storage (fino a 25 MB,
+`supabase/storage.sql`) tramite `src/lib/attachmentSync.ts`, con una copia locale finché
+non sono caricati; la riga porta solo `storedFile`. Vedi
+[superpowers/specs/2026-11-12-attachments-storage-design.md](superpowers/specs/2026-11-12-attachments-storage-design.md).
 
 Al primo collegamento e quando cambia account viene eseguito un pull completo.
 Il cambio account chiede se unire o sostituire i dati locali. Il vault bloccato

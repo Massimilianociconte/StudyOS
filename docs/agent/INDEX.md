@@ -8,4 +8,5 @@
 - Gruppi condivisi: tabelle Supabase opzionali e limiti → [../groups-sync.md](../groups-sync.md); perché non passano dal cloud personale → [decisions/2026-11-12-gruppi-fuori-dal-cloud-personale.md](decisions/2026-11-12-gruppi-fuori-dal-cloud-personale.md)
 - Condivisione granulare tra account (decisione e design) → [decisions/2026-11-10-condivisione-righe-originali.md](decisions/2026-11-10-condivisione-righe-originali.md), [../plans/2026-11-10-sharing-design.md](../plans/2026-11-10-sharing-design.md)
 - Agenti MCP (ChatGPT, Claude, client locali) → [../agent-mcp.md](../agent-mcp.md)
+- File dei materiali (Supabase Storage, copia locale, migrazione dei file incorporati) → [../superpowers/specs/2026-11-12-attachments-storage-design.md](../superpowers/specs/2026-11-12-attachments-storage-design.md)
 - Domande aperte → [OPENQUESTIONS.md](OPENQUESTIONS.md)

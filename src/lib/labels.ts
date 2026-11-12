@@ -714,3 +714,36 @@ export const agentCloudLabels = {
   revoked: (count: number) =>
     count === 1 ? "Anche il connettore remoto di questo account è scollegato." : count > 1 ? `Anche i ${count} connettori remoti di questo account sono scollegati.` : ""
 } as const;
+
+/**
+ * File dei materiali (spazio file privato dell'account): aggiunta da Materiali, Materie e aggiunta
+ * rapida, apertura, stato sulla scheda e file condivisi. Vedi src/lib/attachments.ts.
+ */
+export const FILE_TEXT = {
+  limitHint: "Fino a 25 MB: PDF, immagini, documenti, audio e video.",
+  tooBig: "File troppo grande: il massimo è 25 MB. Per file più grandi salva un link (es. Google Drive o OneDrive).",
+  empty: "Il file è vuoto: scegline un altro.",
+  typeNotAllowed:
+    "Questo tipo di file non si può caricare. Vanno bene PDF, immagini, documenti (Word, Excel, PowerPoint, testo), audio e video. Per gli altri salva un link.",
+  saveFailed: "Non sono riuscito a salvare il file su questo dispositivo. Libera un po' di spazio e riprova.",
+  locked: "Sblocca StudyOS per aprire il file.",
+  offlineNotHere: "Questo file non è ancora su questo dispositivo. Si scarica quando torni online.",
+  signInToOpen: "Per scaricare questo file accedi al tuo account (Impostazioni → Account e sincronizzazione).",
+  elsewhere: "Il file è ancora solo sul dispositivo dove l'hai aggiunto. Si apre qui quando quel dispositivo l'avrà caricato nel tuo account.",
+  notFound: "File non trovato nel tuo account. Se l'hai aggiunto con un altro account, aprilo dal dispositivo dove l'hai caricato.",
+  noFile: "Questo materiale non ha un file da aprire.",
+  downloadFailed: "Download non riuscito. Riprova tra poco.",
+  storageMissing: "Lo spazio file dell'account non è ancora attivo: il file resta su questo dispositivo finché non viene attivato.",
+  uploadFailed: "Caricamento non riuscito: riprovo da solo tra poco.",
+  // Stato sulla scheda del materiale.
+  statusUploading: "Caricamento nel tuo account…",
+  statusQueued: "Da caricare nel tuo account",
+  statusGuest: "Solo su questo dispositivo: accedi per salvarlo nel tuo account",
+  statusElsewhere: "Ancora sull'altro dispositivo: non caricato",
+  opening: "Apro il file…",
+  // File di un materiale che qualcuno condivide con te.
+  sharedDownload: "Scarica il file",
+  sharedNotUploaded: "Il file non è ancora stato caricato da chi lo condivide.",
+  sharedOffline: "Sei offline: per scaricare un file condiviso serve la connessione.",
+  sharedGone: "Il file non è più disponibile: forse la condivisione è stata tolta."
+} as const;

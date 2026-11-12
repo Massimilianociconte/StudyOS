@@ -106,6 +106,8 @@ export default function App() {
       // Motore di sync + supabase-js caricati in differita: fuori dal bundle iniziale.
       if (cloudConfigured) void import("./lib/cloudSync").then((module) => module.initCloudSync());
       if (cloudConfigured) void import("./lib/shareSync").then((module) => module.initShareSync());
+      // Caricamenti e download dei file dei materiali (spazio file dell'account), anche questi in differita.
+      if (cloudConfigured) void import("./lib/attachmentSync").then((module) => module.initAttachmentSync());
     });
   }, [init]);
 

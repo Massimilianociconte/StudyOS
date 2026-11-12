@@ -23,7 +23,7 @@ export const rebuiltFromClip = (stored: string | undefined, incoming: unknown, m
   typeof incoming === "string" && typeof stored === "string" && stored.length > max && incoming.includes(clipped(stored, max));
 
 /** Campi mai inviati: copertine e file incorporati, stato interno del timer, UID e impronte degli import. */
-const HIDDEN_FIELDS = new Set(["cover", "dataUrl", "avatarDataUrl", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt", "sourceUid", "sourceStamp"]);
+const HIDDEN_FIELDS = new Set(["cover", "dataUrl", "storedFile", "avatarDataUrl", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt", "sourceUid", "sourceStamp"]);
 
 /**
  * Copia di un'entità senza i campi nascosti e senza stringhe data: (foto, file).

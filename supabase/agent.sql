@@ -112,7 +112,8 @@ $$;
 revoke all on function public.studyos_agent_user(text) from public, anon, authenticated;
 
 -- Righe dell'account dopo `p_since` (updated_at del server), in ordine come il pull dell'app.
--- Senza i file incorporati: gli strumenti degli agenti non li leggono.
+-- Senza i file incorporati: gli strumenti degli agenti non li leggono. Senza `storedFile` (file
+-- nello spazio file, storage.sql): una copia vecchia dell'agente non lo riporta indietro.
 create or replace function public.studyos_agent_pull(
   p_secret text,
   p_since timestamptz,
@@ -134,7 +135,7 @@ begin
   return query
     select i.entity_type, i.entity_id,
       case when jsonb_typeof(i.payload) = 'object'
-        then i.payload - 'dataUrl' - 'cover' - 'avatarDataUrl'
+        then i.payload - 'dataUrl' - 'cover' - 'avatarDataUrl' - 'storedFile'
         else i.payload
       end,
       i.deleted, i.updated_at
@@ -152,7 +153,7 @@ revoke all on function public.studyos_agent_pull(text, timestamptz, integer, int
 grant execute on function public.studyos_agent_pull(text, timestamptz, integer, integer) to anon, authenticated;
 
 -- Stessa scrittura condizionale di push_studyos_rows, per l'account del segreto. I file
--- incorporati tolti dal pull tornano dalla riga attuale se il payload non li porta.
+-- incorporati e `storedFile` tolti dal pull tornano dalla riga attuale se il payload non li porta.
 create or replace function public.studyos_agent_push(
   p_secret text,
   p_client_id text,
@@ -197,7 +198,7 @@ begin
       select i.payload into v_current from public.studyos_items as i
       where i.user_id = v_user and i.entity_type = v_type and i.entity_id = v_id;
       if jsonb_typeof(v_current) = 'object' then
-        foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl'] loop
+        foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl', 'storedFile'] loop
           if not (v_payload ? v_key) and (v_current ? v_key) then
             v_payload := v_payload || jsonb_build_object(v_key, v_current->v_key);
           end if;

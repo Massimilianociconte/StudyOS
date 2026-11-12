@@ -46,10 +46,11 @@ import { createId, nowIso } from "../lib/id";
 import { isReminderNotificationId } from "../lib/reminderIds";
 import { makeGroupInviteCode } from "../lib/groups";
 import { ShareUserError, isRestorableEntity, restoredPayload, restoredUpdatedAt, type RestoreVersion } from "../lib/sharing";
-import { RESTORE_TEXT } from "../lib/labels";
+import { FILE_TEXT, RESTORE_TEXT } from "../lib/labels";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
-import { fileToDataUrl } from "../lib/files";
+import { checkNewFile, withStoredFile } from "../lib/attachments";
+import { clearLocalFiles, forgetMaterialFile, ingestEmbeddedFiles, saveLocalFile, sealLocalFiles, unsealLocalFiles } from "../lib/attachmentFiles";
 import { normalizeTaskPatch, taskStatusTransitionPatch } from "../lib/taskTimer";
 import {
   COLLECTIONS,
@@ -72,7 +73,8 @@ import {
   resetBaseline,
   runExclusive,
   setPersistenceSuspended,
-  setVaultSession
+  setVaultSession,
+  vaultSession
 } from "../lib/persistence";
 import {
   advanceTimerState,
@@ -260,6 +262,12 @@ interface StudyState {
   ) => Promise<void>;
   updateAttachment: (id: string, patch: Partial<Attachment>) => Promise<void>;
   deleteAttachment: (id: string) => Promise<void>;
+  /**
+   * File caricati nello spazio file dell'account (src/lib/attachmentSync.ts): la riga perde il `dataUrl` e
+   * diventa `storedFile: "cloud"`. Con `dataUrl` solo se è ancora quello caricato. `missing`: materiali
+   * non più presenti (eliminati durante il caricamento: l'oggetto va tolto).
+   */
+  markAttachmentsStored: (items: readonly { id: string; dataUrl?: string }[]) => Promise<{ stored: string[]; missing: string[] }>;
   addGoal: (goal: Partial<Goal> & Pick<Goal, "title">) => Promise<void>;
   updateGoal: (id: string, patch: Partial<Goal>) => Promise<void>;
   /** Elimina un obiettivo («Annulla»: restoreEntities con la copia di prima). */
@@ -276,8 +284,10 @@ interface StudyState {
   /**
    * Reset del workspace. `propagate=false` svuota solo questo dispositivo (outbox inclusa);
    * `propagate=true` elimina le entità anche dal cloud tramite tombstone.
+   * File dei materiali: con `propagate` o `wipeFiles` via tutte le copie locali; altrimenti restano
+   * quelle ancora da caricare (unica copia, tornano col loro materiale).
    */
-  resetAllData: (options?: { propagate?: boolean }) => Promise<void>;
+  resetAllData: (options?: { propagate?: boolean; wipeFiles?: boolean }) => Promise<void>;
   retryPersist: () => Promise<void>;
   /** Avvia un blocco Pomodoro (`mode`: durata di partenza; `subjectId` null = nessuna materia). */
   startStudyTimer: (mode: TimerMode, options?: { subjectId?: string | null }) => void;
@@ -652,6 +662,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
       resetBaseline(snapshot, settings);
       setPersistenceSuspended(false);
       set({ locked: false, ...snapshot, activeView: startView(settings), error: undefined });
+      // File dei materiali rimasti in chiaro (attivazione interrotta): si cifrano ora.
+      void sealLocalFiles(key).catch(() => undefined);
       const migrated = migrateLegacyProfile(snapshot, settings);
       if (migrated) {
         set(migrated);
@@ -699,6 +711,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
       setVaultSession(true, key);
       resetBaseline(collections, settings);
       set({ settings, locked: false });
+      // Anche i file dei materiali su questo dispositivo: se si interrompe, lo sblocco finisce il lavoro.
+      await sealLocalFiles(key).catch(() => undefined);
     },
 
     disableVault: async (passphrase) => {
@@ -707,16 +721,22 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
       await commit();
       let collections = pickCollections(get());
-      if (get().locked) {
+      let fileKey = vaultSession().key;
+      if (get().locked || !fileKey) {
         const vault = await db.vault.get("main");
         if (!vault) throw new Error("Vault locale non trovato.");
         const key = await deriveVaultKey(currentPassphrase, vault.salt, vault.iterations);
         try {
-          collections = applySnapshot(JSON.parse(await decryptWithKey(vault, key)) as StudySnapshot);
+          const unlocked = applySnapshot(JSON.parse(await decryptWithKey(vault, key)) as StudySnapshot);
+          if (get().locked) collections = unlocked;
         } catch {
           throw new Error("Passphrase non valida.");
         }
+        fileKey = key;
       }
+      // Prima di togliere il vault: i file dei materiali tornano in chiaro con la sua chiave. Dopo,
+      // senza il record del vault (il suo salt), non si potrebbero più decifrare.
+      await unsealLocalFiles(fileKey);
 
       const settings: UserSettings = {
         ...get().settings,
@@ -1505,21 +1525,36 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     addAttachment: async (file, link) => {
-      const dataUrl = await fileToDataUrl(file);
+      // I byte non entrano mai nella riga sincronizzata: prima la copia locale (scrittura confermata),
+      // poi il materiale con `storedFile: "local"`; attachmentSync.ts lo carica con l'account.
+      const checked = checkNewFile(file);
+      if (!checked.ok) throw new Error(checked.error);
+      const id = createId("attachment");
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await file.arrayBuffer();
+      } catch {
+        throw new Error(FILE_TEXT.saveFailed);
+      }
+      try {
+        await saveLocalFile(id, bytes, { type: checked.mime, pending: true });
+      } catch (error) {
+        throw new Error(error instanceof Error && error.message === FILE_TEXT.locked ? FILE_TEXT.locked : FILE_TEXT.saveFailed);
+      }
       const attachment: Attachment = {
-        id: createId("attachment"),
+        id,
         createdAt: nowIso(),
         updatedAt: nowIso(),
         archived: false,
         tags: [],
-        name: file.name,
-        mimeType: file.type || "application/octet-stream",
-        size: file.size,
+        name: checked.name,
+        mimeType: checked.mime,
+        size: bytes.byteLength,
         addedAt: nowIso(),
         linkedEntityType: link?.type,
         linkedEntityId: link?.id,
         description: "",
-        dataUrl
+        storedFile: "local"
       };
       set((state) => ({ attachments: [attachment, ...state.attachments] }));
       await commit();
@@ -1565,6 +1600,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     deleteAttachment: async (id) => {
       const removeId = (ids: string[]) => ids.filter((attachmentId) => attachmentId !== id);
+      const removed = get().attachments.find((attachment) => attachment.id === id);
+      // Copia locale via e oggetto del bucket in coda (no-op fuori dal browser, mai un errore).
+      if (removed) void forgetMaterialFile(removed);
       set((state) => ({
         attachments: state.attachments.filter((attachment) => attachment.id !== id),
         tasks: state.tasks.map((task) =>
@@ -1583,6 +1621,27 @@ export const useStudyStore = create<StudyState>((set, get) => {
         )
       }));
       await commit();
+    },
+
+    markAttachmentsStored: async (items) => {
+      const stored: string[] = [];
+      const missing: string[] = [];
+      const wanted = new Map(items.map((item) => [item.id, item]));
+      const present = new Set(get().attachments.map((attachment) => attachment.id));
+      for (const item of items) if (!present.has(item.id)) missing.push(item.id);
+      if (missing.length === items.length) return { stored, missing };
+      set((state) => ({
+        attachments: state.attachments.map((attachment) => {
+          const item = wanted.get(attachment.id);
+          if (!item) return attachment;
+          const next = withStoredFile(attachment, item.dataUrl);
+          if (!next) return attachment;
+          stored.push(attachment.id);
+          return next;
+        })
+      }));
+      if (stored.length) await commit();
+      return { stored, missing };
     },
 
     addGoal: async (goal) => {
@@ -1634,7 +1693,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     replaceAllData: async (snapshot) => {
       const previous = pickCollections(get());
-      const incoming = restoredCollections(applySnapshot(snapshot), previous);
+      const restored = applySnapshot(snapshot);
+      // File incorporati nel backup: in copia locale da caricare, mai nella riga sincronizzata.
+      const incoming = restoredCollections({ ...restored, attachments: await ingestEmbeddedFiles(restored.attachments) }, previous);
       set(incoming);
       try {
         await requestPersist();
@@ -1645,7 +1706,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     mergeData: async (snapshot) => {
-      const incoming = applySnapshot(snapshot);
+      const parsed = applySnapshot(snapshot);
+      const incoming = { ...parsed, attachments: await ingestEmbeddedFiles(parsed.attachments) };
       let added = 0;
       let updated = 0;
       const next: Partial<CollectionsState> = {};
@@ -1724,6 +1786,14 @@ export const useStudyStore = create<StudyState>((set, get) => {
         dateFormat: current.dateFormat
       };
       const empty = applySnapshot(createEmptySnapshot());
+
+      // File dei materiali: i file da caricare sono l'unica copia e restano (svuotando solo il dispositivo
+      // tornano col loro materiale), in chiaro perché il vault sparisce. Vault bloccato (password
+      // dimenticata): illeggibili comunque, via tutto. Cancellando tutto, via tutto.
+      const vaultNow = vaultSession();
+      const wipeFiles = Boolean(options?.propagate || options?.wipeFiles || (vaultNow.mode && !vaultNow.key));
+      if (!wipeFiles && vaultNow.key) await unsealLocalFiles(vaultNow.key).catch(() => undefined);
+      await clearLocalFiles({ keepPending: !wipeFiles }).catch(() => undefined);
 
       if (options?.propagate) {
         // Le eliminazioni passano dal diff -> tombstone nell'outbox -> cloud.
