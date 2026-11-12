@@ -638,11 +638,12 @@ export const agentAccountLabels = {
   unnamed:
     "Questo StudyOS non ha ancora un nome. Scrivilo in Profilo e obiettivi: serve per sceglierlo in chat quando più persone usano lo stesso connettore.",
   toProfile: "Vai al profilo",
-  help:
-    "Più persone possono usare lo stesso connettore in ChatGPT. Ognuna apre StudyOS nel suo browser, scrive il proprio nome nel profilo e collega il browser qui con la stessa chiave. In chat basta dire di chi è l'account, per esempio «nell'account di Camilla Rossi»: la modifica va in quello StudyOS, e la richiesta di conferma compare lì.",
-  /** Sotto «Revoca l'accesso agli assistenti»: la revoca toglie anche i client registrati. */
+  /** `local` = pagina di sviluppo con npm run agent: lì ogni browser usa un codice nuovo, non la chiave. */
+  help: (local: boolean) =>
+    `Più persone possono usare lo stesso connettore in ChatGPT o Claude. Ognuna apre StudyOS nel suo browser, scrive il proprio nome nel profilo e collega il browser qui ${local ? "con un codice nuovo del terminale" : "con la stessa chiave"}. In chat basta dire di chi è l'account, per esempio «nell'account di Camilla Rossi»: la modifica va in quello StudyOS, e la richiesta di conferma compare lì.`,
+  /** Sotto «Revoca gli accessi che hai dato»: toglie solo le concessioni di questo account. */
   revokeHint:
-    "Gli assistenti autorizzati perdono subito l'accesso. Per ridarlo a un assistente (ChatGPT, Claude…), togli il connettore StudyOS nelle sue impostazioni e aggiungilo di nuovo. Questo browser resta collegato, perché serve solo a portarti le loro richieste."
+    "Toglie l'accesso agli assistenti che hai autorizzato tu, anche al connettore remoto di questo account. Gli assistenti delle altre persone sullo stesso connettore restano collegati. Per ridare l'accesso a un assistente, togli il connettore StudyOS nelle sue impostazioni e aggiungilo di nuovo. Questo browser resta collegato, perché serve solo a portarti le richieste."
 } as const;
 
 /** Connettore remoto di un account (`/u/<nome>/mcp`): ChatGPT lavora sui dati cloud con l'app chiusa. */

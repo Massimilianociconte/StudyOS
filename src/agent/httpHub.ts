@@ -510,7 +510,7 @@ export class HttpHub {
       });
     }
     if (request.method === "POST" && (url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat" || url.pathname === "/bridge/forget" || url.pathname === "/bridge/result" || url.pathname === "/oauth/decide" || url.pathname === "/oauth/revoke")) {
-      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[]; browser?: unknown; cloud?: unknown };
+      const body = JSON.parse(await this.readBody(request) || "{}") as { token?: string; id?: string; result?: AgentCallResult; requestId?: string; approve?: boolean; scopes?: string[]; browser?: unknown; cloud?: unknown; scope?: unknown };
       const site = siteFromOrigin(origin);
       const asksWork = url.pathname === "/bridge/poll" || url.pathname === "/bridge/heartbeat";
       const allowed = await this.exclusive(async () => {
@@ -554,7 +554,8 @@ export class HttpHub {
             }
             cloud = { secret: raw.secret, timeZone: raw.timeZone };
           }
-          const decided = this.oauth.decide(body.requestId ?? "", body.approve === true, body.scopes ?? [], undefined, cloud);
+          // Chi decide: la sua revoca toglierà questa concessione. Un'app di prima non lo dice.
+          const decided = this.oauth.decide(body.requestId ?? "", body.approve === true, body.scopes ?? [], undefined, cloud, this.browserAccount(body.browser));
           if (!decided.ok) return this.json(400, { error: decided.error });
           await this.markDirty();
           return this.json(200, { ok: true });
@@ -562,10 +563,30 @@ export class HttpHub {
       }
       if (url.pathname === "/oauth/revoke") {
         return this.exclusive(async () => {
-          this.oauth.revokeAll();
+          // "all" scollega gli assistenti di tutti; senza scope solo quelli dati da questo account,
+          // "cloud" solo i suoi connettori remoti. Un'app di prima non dice chi è: non si tocca niente.
+          if (body.scope === "all") {
+            this.oauth.revokeAll();
+            this.dropStaleConsents();
+            await this.markDirty();
+            return this.json(200, { ok: true, scope: "all" });
+          }
+          if (!parseBrowserInfo(body.browser)) {
+            return this.json(400, { error: "Ricarica la pagina e riprova: questa versione di StudyOS non dice di quale account sono gli accessi da revocare." });
+          }
+          const account = this.browserAccount(body.browser);
+          if (account === undefined) {
+            return this.json(409, { error: "L'hub non conosce ancora questo browser: sblocca StudyOS, aspetta qualche secondo e riprova." });
+          }
+          const cloudOnly = body.scope === "cloud";
+          const owns = (resource: string) => {
+            const target = this.cloudAccount(resource);
+            return target.ok && target.key === account;
+          };
+          const result = this.oauth.revokeAccount(account, owns, cloudOnly);
           this.dropStaleConsents();
           await this.markDirty();
-          return this.json(200, { ok: true });
+          return this.json(200, { ok: true, scope: cloudOnly ? "cloud" : "account", ...result });
         });
       }
       const job = await this.poll(site, allowed.account);
@@ -842,6 +863,17 @@ export class HttpHub {
 
   private bridgeAuthorized(token: string) {
     return Boolean(token) && timingSafeEqual(token, this.bridgeToken);
+  }
+
+  /**
+   * Account del browser che chiede (consenso, revoca): il nome che manda o, a vault chiuso, quello
+   * che l'hub conosce già. undefined = non si sa (app di prima, browser mai visto).
+   */
+  private browserAccount(value: unknown): string | undefined {
+    const info = parseBrowserInfo(value);
+    if (!info) return undefined;
+    if (info.name !== undefined) return accountKeyOf(info.name);
+    return this.browsers.get(info.id)?.key;
   }
 
   /** Account dell'indirizzo di un connettore remoto, con la stessa regola dei nomi in chat. */

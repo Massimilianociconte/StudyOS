@@ -5,7 +5,9 @@ import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRis
 import type { AgentCallResult, AuditEntry } from "../agent/types";
 import { appendAudit, readAgentToken, readAudit, readBrowserId, readSavedHub, readStoredPolicy, writeAgentToken, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
+import { hubRevokesByAccount, pairFirstError, parseRevokeOutcome, revokeNotice } from "./agentDesk";
 import { agentCloudLabels } from "./labels";
+import { AGENT_DESK_TEXT } from "./labels/agents";
 import { loadOnce } from "./loadOnce";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 
@@ -32,6 +34,10 @@ export interface PendingAgentConsent {
 
 export interface AgentLinkSnapshot {
   hub: "unknown" | "up" | "down";
+  /** Connettore remoto attivo sull'hub (`cloud` di /health); "unknown" prima della risposta. */
+  remote: "unknown" | "on" | "off";
+  /** La persona ha provato a collegare il browser in questa sessione: solo dopo l'hub giù è un errore. */
+  attempted: boolean;
   paired: boolean;
   error: string;
   notice: string;
@@ -72,6 +78,8 @@ const storedSlice = () => ({
 
 let snapshot: AgentLinkSnapshot = {
   hub: "unknown",
+  remote: "unknown",
+  attempted: false,
   error: "",
   notice: "",
   pendingCall: null,
@@ -83,6 +91,8 @@ let snapshot: AgentLinkSnapshot = {
 const refresh = (patch: Partial<AgentLinkSnapshot> = {}) => {
   const next = { ...snapshot, ...patch, ...storedSlice() };
   const same = next.hub === snapshot.hub
+    && next.remote === snapshot.remote
+    && next.attempted === snapshot.attempted
     && next.paired === snapshot.paired
     && next.error === snapshot.error
     && next.notice === snapshot.notice
@@ -125,6 +135,8 @@ const pageOrigin = () => {
 const candidateList = () => hubCandidates(pageOrigin(), readSavedHub(), configuredHub());
 
 let activeHub = "";
+/** Versione dell'hub letta da /health: dice se sa revocare per account. */
+let hubVersion = "";
 
 const localProgram = () => isLocalPage(pageOrigin());
 
@@ -334,11 +346,13 @@ const handleConsent = async (job: PendingAgentConsent) => {
   }
   const approve = choice.approve && !cloudError;
   try {
+    // `browser`: l'hub lega la concessione a questo account, così la sua revoca toglie solo le sue.
     await postJson("/oauth/decide", {
       token: readAgentToken(),
       requestId: job.requestId,
       approve,
       scopes: approve ? choice.scopes : [],
+      browser: browserInfo(),
       ...(cloud ? { cloud } : {})
     });
     if (cloudError) refresh({ error: cloudError });
@@ -368,7 +382,8 @@ const heartbeat = async () => {
 const checkHealth = async () => {
   const origins = endpoints();
   if (!origins.length) {
-    refresh({ hub: "down", error: offlineCopy() });
+    // Senza browser collegato non è un errore: lo diventa quando la persona prova a collegarsi.
+    refresh({ hub: "down", ...(readAgentToken() ? { error: offlineCopy() } : {}) });
     return;
   }
   for (const origin of origins) {
@@ -378,7 +393,9 @@ const checkHealth = async () => {
       const raw = await response.json().catch(() => ({}));
       if (isRecord(raw)) rememberPublicOrigin(raw);
       activeHub = origin;
-      refresh({ hub: "up" });
+      hubVersion = isRecord(raw) && typeof raw.version === "string" ? raw.version : "";
+      const cloud = isRecord(raw) ? raw.cloud : undefined;
+      refresh({ hub: "up", remote: cloud === true ? "on" : cloud === false ? "off" : "unknown" });
       return;
     } catch {
       // prova il candidato successivo: sul sito pubblicato il tunnel è il ripiego
@@ -461,6 +478,7 @@ export const saveAgentHubAddress = (value: string) => {
 
 export const pairAgent = async (code: string) => {
   const local = localProgram();
+  refresh({ attempted: true });
   const normalized = local ? code.toUpperCase().replace(/[^A-Z0-9]/g, "") : code.trim();
   if (local && normalized.length !== 8) {
     refresh({ error: "Il codice ha 8 caratteri, nel formato ABCD-EFGH." });
@@ -538,19 +556,55 @@ const revokeCloudGrants = async () => {
   }
 };
 
-export const revokeAgentAccess = async () => {
+/**
+ * «Revoca gli accessi che hai dato» ("account"): l'hub toglie solo le concessioni date da questo
+ * account, che riconosce da `browser`. "all" = «Scollega gli assistenti di tutti», dopo una conferma.
+ * In entrambi i casi si revocano anche i permessi remoti di questo account nel cloud.
+ * Restituisce l'errore da mostrare, null se riuscita.
+ */
+export const revokeAgentAccess = async (scope: "account" | "all" = "account"): Promise<string | null> => {
   const token = readAgentToken();
   if (!token) {
     const count = await revokeCloudGrants();
-    if (count) refresh({ error: "", notice: agentCloudLabels.revoked(count) });
-    else refresh({ error: "Collega prima questo browser con il codice del terminale." });
-    return;
+    if (count) {
+      refresh({ error: "", notice: AGENT_DESK_TEXT.remote.revoked });
+      return null;
+    }
+    const error = pairFirstError(localProgram());
+    refresh({ error, notice: "" });
+    return error;
   }
   try {
-    await postJson("/oauth/revoke", { token });
+    const data = await postJson("/oauth/revoke", { token, browser: browserInfo(), ...(scope === "all" ? { scope: "all" } : {}) });
     const count = await revokeCloudGrants();
-    refresh({ error: "", notice: ["Accessi di ChatGPT e degli altri agenti revocati. Questo browser resta collegato.", agentCloudLabels.revoked(count)].filter(Boolean).join(" ") });
+    refresh({ error: "", notice: revokeNotice(parseRevokeOutcome(data, scope), count) });
+    return null;
   } catch (error) {
-    refresh({ error: error instanceof Error ? error.message : "Revoca non riuscita." });
+    const message = error instanceof Error ? error.message : "Revoca non riuscita.";
+    refresh({ error: message, notice: "" });
+    return message;
   }
+};
+
+/**
+ * «Scollega il connettore remoto»: i permessi remoti di questo account nel cloud e, con il browser
+ * collegato, i token remoti dell'hub (dove vive il segreto). Il connettore principale resta.
+ */
+export const revokeRemoteConnector = async () => {
+  const token = readAgentToken();
+  let hubRevoked = 0;
+  let error = "";
+  // Un hub di prima della 1.6.0 scollegherebbe tutti: lì basta il permesso tolto nel cloud.
+  if (token && hubRevokesByAccount(hubVersion)) {
+    try {
+      const data = await postJson("/oauth/revoke", { token, browser: browserInfo(), scope: "cloud" });
+      hubRevoked = parseRevokeOutcome(data, "cloud").revoked;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : "Revoca non riuscita.";
+    }
+  }
+  const count = await revokeCloudGrants();
+  if (hubRevoked > 0 || count > 0) refresh({ error: "", notice: revokeNotice({ scope: "cloud", revoked: hubRevoked, legacy: 0 }, count) });
+  else if (error) refresh({ error, notice: "" });
+  else refresh({ error: "", notice: AGENT_DESK_TEXT.remote.none });
 };

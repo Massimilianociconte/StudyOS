@@ -316,8 +316,18 @@
   non sono quelli del Worker: misura `cpuTime` con `wrangler tail` sull'account vero prima di
   concludere che serve il piano a pagamento.
 - Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
-  legato al token OAuth); il database ne tiene l'hash. «Revoca l'accesso agli assistenti» revoca
-  tutti i permessi dell'account (`studyos_revoke_agent_grants`), anche a browser scollegato.
+  legato al token OAuth); il database ne tiene l'hash. «Revoca gli accessi che hai dato» e
+  «Scollega il connettore remoto» revocano tutti i permessi dell'account
+  (`studyos_revoke_agent_grants`), anche a browser scollegato.
+- Revoca per account (hub 1.6.0): ogni token porta `account`, l'accountKey del browser che ha
+  deciso il consenso (`browser` in `/oauth/decide`). `/oauth/revoke` senza `scope` toglie solo le
+  concessioni di quell'account (`revokeAccount`), `scope: "cloud"` solo i suoi connettori remoti,
+  `scope: "all"` tutti (`revokeAll`, solo dopo la conferma nell'app). Una richiesta senza
+  `browser` non tocca niente (400): un'app di prima non deve più scollegare tutti per sbaglio. I
+  token di prima senza `account` restano e si contano in `legacy`, salvo quelli remoti, che
+  l'indirizzo `/u/<nome>/mcp` attribuisce. Un client si toglie solo se aveva qualcosa di
+  quell'account e resta senza niente: mai i client di altri, anche se fermi. L'app non manda
+  `scope: "cloud"` a un hub sotto la 1.6.0 (`hubRevokesByAccount`), che scollegherebbe tutti.
 - OAuth dell'hub: `/register` e `/authorize` sono aperti a chiunque. `oauth.ts` tiene al massimo
   50 client (al limite toglie quelli senza token, consensi o codici, dal più vecchio, ma non nei
   2 minuti dopo la registrazione; una registrazione mai usata scade dopo 24 ore) e 5 consensi

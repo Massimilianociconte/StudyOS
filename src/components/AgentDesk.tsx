@@ -18,7 +18,9 @@ import {
 import { readSavedHub } from "../lib/agentLocal";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
 import { agentAccountLabels, agentCloudLabels } from "../lib/labels";
+import { AGENT_DESK_TEXT } from "../lib/labels/agents";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
+import { ConfirmWithError } from "./ConfirmWithError";
 import { Icon } from "./Icon";
 import { Button, Field, inputClass } from "./ui";
 
@@ -145,6 +147,7 @@ export function AgentSettings() {
   const [code, setCode] = useState("");
   const [hubAddress, setHubAddress] = useState(() => readSavedHub());
   const [busy, setBusy] = useState(false);
+  const [confirmAll, setConfirmAll] = useState(false);
   const accountName = useStudyStore((state) => selectPreferences(state).displayName.trim());
   const trusted = trustedWritesActive(link.policy);
   const localPage = isLocalPage(window.location.origin);
@@ -227,7 +230,7 @@ export function AgentSettings() {
             </>
           )}
         </p>
-        <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.help}</p>
+        <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.help(localPage)}</p>
       </div>
 
       <div>
@@ -270,11 +273,30 @@ export function AgentSettings() {
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button variant="danger" icon="Shield" onClick={() => void revokeAgentAccess()}>
-          Revoca l'accesso agli assistenti
+        <Button variant="danger" icon="Shield" onClick={() => void revokeAgentAccess("account")}>
+          {AGENT_DESK_TEXT.revokeButton}
         </Button>
       </div>
       <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.revokeHint}</p>
+      {link.paired ? (
+        confirmAll ? (
+          <ConfirmWithError
+            text={AGENT_DESK_TEXT.revokeAllConfirm}
+            confirmLabel={AGENT_DESK_TEXT.revokeAllConfirmLabel}
+            icon="Shield"
+            onCancel={() => setConfirmAll(false)}
+            onConfirm={async () => {
+              const failure = await revokeAgentAccess("all");
+              if (!failure) setConfirmAll(false);
+              return failure;
+            }}
+          />
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" onClick={() => setConfirmAll(true)}>{AGENT_DESK_TEXT.revokeAllButton}…</Button>
+          </div>
+        )
+      ) : null}
 
       <div>
         <h4 className="text-sm font-black">Ultime azioni</h4>
