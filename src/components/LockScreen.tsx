@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStudyStore } from "../store/useStudyStore";
-import { cloudConfigured } from "../lib/cloudSyncState";
+import { cloudConfigured, setCloudSyncState } from "../lib/cloudSyncState";
+import { signOutThisDevice } from "../lib/deviceSignOut";
 import { useCloudSession } from "../hooks/useCloudSession";
 import { LOCK_TEXT, lockAccountOf } from "../lib/labels/lock";
 import { Button, Field, inputClass } from "./ui";
@@ -55,13 +56,23 @@ export function LockScreen() {
     setEraseError("");
   };
 
-  // Solo questo dispositivo (mai l'account): con la sessione ancora attiva la sincronizzazione riparte da zero e riscarica tutto.
+  // Solo questo dispositivo, mai i dati dell'account. Prima si esce dall'account (solo qui), poi si
+  // cancella: allo sblocco la sincronizzazione non trova una sessione e non riscarica nulla.
   const erase = async () => {
     if (erasing) return;
     setErasing(true);
     setEraseError("");
     try {
+      const signedOut = await signOutThisDevice({
+        configured: cloudConfigured,
+        signOut: () => import("../lib/supabase").then((module) => module.signOut("local")),
+        removeItem: (key) => window.localStorage.removeItem(key),
+        dropSession: () => setCloudSyncState({ session: null, lastSync: null, status: cloudConfigured ? "idle" : "off", error: undefined }),
+        schedule: (fn, ms) => void window.setTimeout(fn, ms)
+      });
       await resetAllData({ propagate: false });
+      // Sessione tolta solo dallo storage: supabase-js può averne una copia in memoria, si riparte puliti.
+      if (signedOut === "removed-here") window.location.reload();
     } catch {
       setEraseError(LOCK_TEXT.failed);
       setErasing(false);

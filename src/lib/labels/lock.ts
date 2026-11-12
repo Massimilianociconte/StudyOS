@@ -11,8 +11,8 @@ export const lockAccountOf = (cloudConfigured: boolean, signedIn: boolean): Lock
 const BACKUP_LINE = "Se hai scaricato una copia di sicurezza, ripristinala da Impostazioni → Copia di sicurezza.";
 
 /**
- * «Ho dimenticato la password»: la cancellazione resta su questo dispositivo (mai nell'account).
- * Con l'account collegato la sessione resta: la sincronizzazione riparte da zero e riscarica tutto.
+ * «Ho dimenticato la password»: la cancellazione resta su questo dispositivo (mai nell'account) e il
+ * dispositivo esce dall'account (solo qui): i dati tornano solo dopo un nuovo accesso.
  * Le modifiche ancora in coda per l'account vengono cancellate con il resto.
  */
 export const LOCK_TEXT = {
@@ -24,7 +24,8 @@ export const LOCK_TEXT = {
   recovery: (account: LockAccount): string[] => {
     if (account === "signed-in")
       return [
-        "Sei collegato a un account StudyOS: i dati nell'account restano come sono e tornano da soli su questo dispositivo appena c'è connessione. Le modifiche fatte qui e non ancora arrivate nell'account vanno perse.",
+        "Questo dispositivo esce anche dal tuo account StudyOS; gli altri dispositivi restano collegati e i dati nell'account restano come sono. Le modifiche fatte qui e non ancora arrivate nell'account vanno perse.",
+        "Accedi di nuovo da Impostazioni → Account e i dati tornano dal tuo account. Poi puoi scegliere una nuova password in Impostazioni.",
         BACKUP_LINE
       ];
     if (account === "signed-out")

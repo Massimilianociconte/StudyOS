@@ -10,12 +10,15 @@ test("lockAccountOf: senza cloud nessun account, poi collegato o no", () => {
   assert.equal(lockAccountOf(true, false), "signed-out");
 });
 
-test("recovery: collegato all'account, i dati tornano da soli e l'account non si tocca", () => {
+test("recovery: collegato all'account, esce solo da qui e i dati tornano dopo un nuovo accesso", () => {
   const lines = LOCK_TEXT.recovery("signed-in");
-  assert.ok(lines.some((line) => /tornano da soli/.test(line)));
+  assert.ok(lines.some((line) => /esce anche dal tuo account/.test(line)), "dice che il dispositivo esce dall'account");
+  assert.ok(lines.some((line) => /altri dispositivi restano collegati/.test(line)), "solo questo dispositivo");
   assert.ok(lines.some((line) => /restano come sono/.test(line)), "l'account non viene cancellato");
   assert.ok(lines.some((line) => /non ancora arrivate nell'account/.test(line)), "dice cosa si perde");
-  assert.ok(!lines.some((line) => /accedi/i.test(line)), "la sessione resta: non serve accedere di nuovo");
+  assert.ok(lines.some((line) => /Accedi di nuovo da Impostazioni → Account/.test(line)), "i dati non tornano da soli");
+  assert.ok(!lines.some((line) => /da soli|automaticamente/.test(line)), "niente promessa di ritorno senza accesso");
+  assert.ok(lines.some((line) => /nuova password in Impostazioni/.test(line)));
   assert.ok(lines.some((line) => /Copia di sicurezza/.test(line)));
 });
 
