@@ -110,7 +110,10 @@ Correzioni di novembre 2026 (sync personale):
   `src/lib/stuckOutbox.ts`): non contano tra le modifiche da inviare
   (`stuckCount` a parte, badge «N elementi non sincronizzabili») e il pannello
   Account le elenca con titolo e dimensione. Si può scaricarne una copia
-  (backup parziale `scope: "items"`, unito all'importazione) o toglierle dalla
+  (backup parziale `scope: "items"`, unito all'importazione; protetta da
+  password con la stessa cifratura della copia di sicurezza, opzione già
+  attiva se c'è la password dell'app, altrimenti il pannello dice che è in
+  chiaro) o toglierle dalla
   coda dopo una conferma: restano solo su questo dispositivo. Finché ci sono,
   il cambio di account e «Esci e togli i dati da qui» restano fermi con un
   messaggio che le nomina, perché toglierle da qui le perderebbe. Una modifica

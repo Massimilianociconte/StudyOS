@@ -42,13 +42,20 @@ export const ACCOUNT_TEXT = {
     count === 1
       ? `1 elemento è troppo grande per l'account (limite ${limitKb} KB) e resta solo su questo dispositivo.`
       : `${count} elementi sono troppo grandi per l'account (limite ${limitKb} KB) e restano solo su questo dispositivo.`,
+  stuckWhich: (limitKb: number) =>
+    `Capita solo agli elementi oltre ${limitKb} KB, di solito note o materiali con immagini o file salvati al loro interno. Tutto il resto si sincronizza normalmente.`,
   stuckFix: "Per farli arrivare all'account, sostituisci gli allegati più grandi con un link.",
-  stuckBlocks: "Finché sono in coda non puoi cambiare account né togliere i dati da qui: prima scaricane una copia o toglili dalla coda.",
+  stuckBlocks: "Finché sono in coda non puoi cambiare account né togliere i dati da qui: prima scaricane una copia, poi toglili dalla coda.",
   stuckUntitled: "Senza titolo",
   stuckNotHere: "non più su questo dispositivo",
   stuckDownload: "Scarica una copia",
   stuckDownloaded: "Copia scaricata. Per riaverli, ripristinala da Impostazioni › Copia di sicurezza.",
   stuckCopyPlain: "La copia non è protetta da password: conservala in un posto sicuro.",
+  stuckCopyPlainVault:
+    "La copia non è protetta da password, anche se StudyOS su questo dispositivo lo è: chi apre il file vede questi elementi.",
+  stuckProtect: "Proteggi la copia con una password",
+  stuckPassword: "Password della copia (almeno 8 caratteri, ti servirà per ripristinarla)",
+  stuckPasswordShort: "Per proteggere la copia scegli una password di almeno 8 caratteri.",
   stuckDiscard: "Togli dalla coda",
   stuckDiscardWarning:
     "Restano solo su questo dispositivo e non arriveranno all'account. Se poi togli i dati da qui o cambi account, si perdono: scarica prima una copia.",

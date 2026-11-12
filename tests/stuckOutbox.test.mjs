@@ -76,3 +76,24 @@ test("P12: push segna le voci troppo grandi, i conteggi le tengono a parte, camb
   const labels = readFileSync(new URL("../src/lib/labels/account.ts", import.meta.url), "utf8");
   assert.match(labels, /stuckDiscardWarning/);
 });
+
+test("P12 (revisione): testo chiaro, quali elementi si fermano, copia protetta come la copia di sicurezza", async () => {
+  const { ACCOUNT_TEXT } = await import("../src/lib/labels/account.ts");
+  // «scaricane una copia o toglili» faceva credere che scaricare bastasse: sblocca solo «Togli dalla coda».
+  assert.doesNotMatch(ACCOUNT_TEXT.stuckBlocks, / o toglil/);
+  assert.match(ACCOUNT_TEXT.stuckBlocks, /scaricane una copia, poi toglili dalla coda/);
+  // Quali elementi finiscono qui.
+  assert.match(ACCOUNT_TEXT.stuckWhich(900), /oltre 900 KB/);
+  // Con la password dell'app la copia in chiaro va detta chiaramente; si può proteggere.
+  assert.match(ACCOUNT_TEXT.stuckCopyPlainVault, /non è protetta/);
+  assert.match(ACCOUNT_TEXT.stuckProtect, /password/);
+
+  const panel = readFileSync(new URL("../src/components/CloudPanel.tsx", import.meta.url), "utf8");
+  const stuck = panel.slice(panel.indexOf("function StuckItems"), panel.indexOf("type Mode ="));
+  // Stessa cifratura della copia di sicurezza; proposta già attiva con la password dell'app.
+  assert.match(stuck, /createBackupEnvelope\([^)]*protect \? passphrase : undefined, "items"\)/);
+  assert.match(stuck, /useState\(\s*\(\) => vaultOn \|\| useStudyStore\.getState\(\)\.settings\.security\.backupEncryptionDefault/);
+  assert.match(stuck, /passphrase\.length < 8/);
+  assert.match(stuck, /ACCOUNT_TEXT\.stuckWhich\(CLOUD_ITEM_MAX_KB\)/);
+  assert.match(stuck, /vaultOn \? ACCOUNT_TEXT\.stuckCopyPlainVault : ACCOUNT_TEXT\.stuckCopyPlain/);
+});

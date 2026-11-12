@@ -72,6 +72,12 @@ function StuckItems({ count, onInfo }: { count: number; onInfo: (info: { kind: "
   const [items, setItems] = useState<StuckItem[]>([]);
   const [asking, setAsking] = useState(false);
   const [working, setWorking] = useState(false);
+  const vaultOn = useStudyStore((state) => state.settings.security.mode === "vault");
+  // Come la copia di sicurezza: stessa cifratura, proposta già attiva con la password dell'app.
+  const [protect, setProtect] = useState(
+    () => vaultOn || useStudyStore.getState().settings.security.backupEncryptionDefault
+  );
+  const [passphrase, setPassphrase] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -86,13 +92,20 @@ function StuckItems({ count, onInfo }: { count: number; onInfo: (info: { kind: "
   }, [count]);
 
   const download = async () => {
+    if (protect && passphrase.length < 8) {
+      onInfo({ kind: "err", text: ACCOUNT_TEXT.stuckPasswordShort });
+      return;
+    }
     setWorking(true);
     try {
       await whenPersisted();
       const list = await listStuck();
       const state = useStudyStore.getState();
-      const envelope = await createBackupEnvelope(stuckSnapshot(list, pickCollections(state)), state.settings, undefined, "items");
-      downloadJson(`studyos-non-sincronizzati-${new Date().toISOString().slice(0, 10)}.json`, envelope);
+      const snapshot = stuckSnapshot(list, pickCollections(state));
+      const envelope = await createBackupEnvelope(snapshot, state.settings, protect ? passphrase : undefined, "items");
+      const day = new Date().toISOString().slice(0, 10);
+      downloadJson(`studyos-non-sincronizzati-${day}${protect ? "-encrypted" : ""}.json`, envelope);
+      setPassphrase("");
       onInfo({ kind: "ok", text: ACCOUNT_TEXT.stuckDownloaded });
     } catch {
       onInfo({ kind: "err", text: ACCOUNT_TEXT.stuckFailed });
@@ -124,6 +137,7 @@ function StuckItems({ count, onInfo }: { count: number; onInfo: (info: { kind: "
         {ACCOUNT_TEXT.stuckTitle}
       </p>
       <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckText(count, CLOUD_ITEM_MAX_KB)}</p>
+      <p className="text-sm text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckWhich(CLOUD_ITEM_MAX_KB)}</p>
       {items.length ? (
         <ul className="grid grid-cols-1 gap-1 text-sm text-[var(--warning-text)]">
           {items.map((item) => (
@@ -149,16 +163,35 @@ function StuckItems({ count, onInfo }: { count: number; onInfo: (info: { kind: "
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          <Button icon="Download" variant="soft" onClick={() => void download()} disabled={working}>
-            {ACCOUNT_TEXT.stuckDownload}
-          </Button>
-          <Button icon="Trash2" variant="danger" onClick={() => setAsking(true)} disabled={working || !items.length}>
-            {ACCOUNT_TEXT.stuckDiscard}
-          </Button>
+        <div className="grid grid-cols-1 gap-2">
+          <label className="flex min-h-11 items-center gap-3 text-sm font-black text-[var(--warning-text)]">
+            <input
+              type="checkbox"
+              checked={protect}
+              onChange={(event) => setProtect(event.target.checked)}
+              className="h-5 w-5 accent-[var(--accent)]"
+            />
+            {ACCOUNT_TEXT.stuckProtect}
+          </label>
+          {protect ? (
+            <Field label={ACCOUNT_TEXT.stuckPassword}>
+              <PasswordInput autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
+            </Field>
+          ) : (
+            <p className="text-xs font-bold text-[var(--warning-text)]">
+              {vaultOn ? ACCOUNT_TEXT.stuckCopyPlainVault : ACCOUNT_TEXT.stuckCopyPlain}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button icon="Download" variant="soft" onClick={() => void download()} disabled={working}>
+              {ACCOUNT_TEXT.stuckDownload}
+            </Button>
+            <Button icon="Trash2" variant="danger" onClick={() => setAsking(true)} disabled={working || !items.length}>
+              {ACCOUNT_TEXT.stuckDiscard}
+            </Button>
+          </div>
         </div>
       )}
-      <p className="text-xs text-[var(--warning-text)]">{ACCOUNT_TEXT.stuckCopyPlain}</p>
     </div>
   );
 }
