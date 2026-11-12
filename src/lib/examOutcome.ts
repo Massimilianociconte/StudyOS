@@ -62,5 +62,28 @@ export const recordDateFor = (reused: Pick<Exam, "status" | "date" | "tags"> | u
   return day < today ? day : today;
 };
 
+/**
+ * Istante salvato in «Registra il voto» per il giorno scelto (yyyy-MM-dd, ora locale): se è il giorno
+ * dell'esame registrato (o riusato) resta la sua ora, così l'esame delle 9 non diventa delle 12 (anche
+ * nel file .ics); un altro giorno, o un esame senza data leggibile, va alle 12. Giorno non valido: null.
+ */
+export const recordInstantFor = (day: string, reused?: Pick<Exam, "date"> | null): string | null => {
+  const noon = new Date(`${day}T12:00`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(noon.getTime()) || format(noon, "yyyy-MM-dd") !== day) return null;
+  const original = reused ? parseISO(reused.date) : null;
+  if (original && isValid(original) && format(original, "yyyy-MM-dd") === day) return original.toISOString();
+  return noon.toISOString();
+};
+
+/**
+ * Modulo dell'esame o del voto diverso da com'era all'apertura: chiudere (✕, Esc, tocco fuori,
+ * Indietro) chiede prima «Scartare le modifiche?». Un campo assente vale come vuoto (undefined).
+ */
+export const examDraftChanged = <T extends object>(draft: T, saved: T): boolean => {
+  const before = saved as Record<string, unknown>;
+  const after = draft as Record<string, unknown>;
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].some((key) => after[key] !== before[key]);
+};
+
 /** Esito da cui parte il modulo: idoneità se l'esame è registrato così, altrimenti con voto. */
 export const outcomeOf = (exam: Pick<Exam, "passFail"> | null | undefined): ExamOutcome => (exam?.passFail ? "passFail" : "grade");

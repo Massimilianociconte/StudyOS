@@ -99,3 +99,45 @@ test("Esito: con voto, idoneità e non superato", () => {
   assert.deepEqual(O.outcomeOf(exam({ status: "done" })), "grade");
   assert.deepEqual(O.outcomeOf(null), "grade");
 });
+
+test("Registra il voto: lo stesso giorno dell'esame tiene la sua ora, un altro giorno va alle 12", () => {
+  // Ore locali: vale in qualsiasi fuso di chi esegue i test.
+  const nine = new Date(2026, 10, 5, 9, 0).toISOString();
+  // Esame delle 9 del 5 novembre registrato col 5: resta alle 9 (anche nel file .ics).
+  assert.equal(O.recordInstantFor("2026-11-05", { date: nine }), nine);
+  // Giorno diverso: le 12 di quel giorno, come prima.
+  assert.equal(O.recordInstantFor("2026-11-06", { date: nine }), new Date(2026, 10, 6, 12, 0).toISOString());
+  // Nessun esame da riusare (materia nuova): le 12.
+  assert.equal(O.recordInstantFor("2026-11-05"), new Date(2026, 10, 5, 12, 0).toISOString());
+  assert.equal(O.recordInstantFor("2026-11-05", null), new Date(2026, 10, 5, 12, 0).toISOString());
+  // Esame alle 23:30: il giorno è quello locale, non quello in UTC.
+  const late = new Date(2026, 10, 5, 23, 30).toISOString();
+  assert.equal(O.recordInstantFor("2026-11-05", { date: late }), late);
+  // Data dell'esame illeggibile: le 12.
+  assert.equal(O.recordInstantFor("2026-11-05", { date: "non una data" }), new Date(2026, 10, 5, 12, 0).toISOString());
+  // Giorno scelto non valido (o vuoto): niente data, il modulo chiede di sceglierla.
+  assert.equal(O.recordInstantFor("", { date: nine }), null);
+  assert.equal(O.recordInstantFor("2026-13-40"), null);
+});
+
+test("Chiudere il modulo chiede prima solo se qualcosa è cambiato dall'apertura", () => {
+  // Modulo del voto (GradeDrawer).
+  const grade = { subjectId: "fisio", newName: "", newCfu: "6", date: "2026-11-05", grade: "", honors: false, outcome: "grade", newDate: "" };
+  assert.equal(O.examDraftChanged({ ...grade }, grade), false);
+  assert.equal(O.examDraftChanged({ ...grade, grade: "28" }, grade), true);
+  assert.equal(O.examDraftChanged({ ...grade, honors: true }, grade), true);
+  assert.equal(O.examDraftChanged({ ...grade, outcome: "failed" }, grade), true);
+  assert.equal(O.examDraftChanged({ ...grade, newDate: "2026-12-01T09:00" }, grade), true);
+  // Tornato com'era: niente da chiedere.
+  const changed = { ...grade, grade: "28" };
+  assert.equal(O.examDraftChanged({ ...changed, grade: "" }, grade), false);
+  // Modulo dell'esame (Esami): anche numeri, copertina e campo assente.
+  const examDraft = { subjectId: "fisio", date: "2026-11-05T09:00", preparation: 40, targetGrade: 28, status: "planning", program: "", frequentQuestions: "", cover: undefined, grade: "", honors: false, passFail: false };
+  assert.equal(O.examDraftChanged({ ...examDraft }, examDraft), false);
+  assert.equal(O.examDraftChanged({ ...examDraft, preparation: 45 }, examDraft), true);
+  assert.equal(O.examDraftChanged({ ...examDraft, program: "Glicolisi" }, examDraft), true);
+  assert.equal(O.examDraftChanged({ ...examDraft, cover: "data:image/png;base64,AAAA" }, examDraft), true);
+  assert.equal(O.examDraftChanged({ ...examDraft, date: "2026-11-05T10:00" }, examDraft), true);
+  const { cover: _cover, ...withoutCover } = examDraft;
+  assert.equal(O.examDraftChanged(withoutCover, examDraft), false);
+});
