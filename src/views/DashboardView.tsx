@@ -171,16 +171,16 @@ function StudyAction({ onGo }: { onGo: () => void }) {
       onClick={onGo}
       aria-label={HOME_TIMER_TEXT.aria(summary.text)}
       title={HOME_TIMER_TEXT.title}
-      className="motion-safe inline-flex min-h-11 max-w-full items-center gap-2 sm:max-w-xs rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] pl-3 pr-2.5 text-sm font-extrabold text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)]"
+      className="motion-safe inline-flex min-h-11 max-w-full items-center gap-2 rounded-[22px] border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] py-1.5 pl-3 pr-2.5 text-left text-sm font-extrabold text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)] sm:max-w-md"
     >
       <span className="relative grid h-2.5 w-2.5 shrink-0 grid-cols-1 place-items-center" aria-hidden="true">
         {summary.state === "running" ? <span className="absolute inset-0 rounded-full bg-[var(--accent)] opacity-60 motion-safe:animate-ping" /> : null}
         <span className={`h-2.5 w-2.5 rounded-full ${summary.state === "running" ? "bg-[var(--accent)]" : "bg-[var(--faint)]"}`} />
       </span>
       <Icon name={summary.icon} className="h-4 w-4 shrink-0" />
-      <span className="flex min-w-0 items-center gap-1">
-        <span className="min-w-0 truncate">{summary.lead}</span>
-        <span className="shrink-0 tabular-nums">· {summary.tail}</span>
+      {/* La materia va a capo invece di troncarsi; il tempo segue sulla stessa riga e resta intero. */}
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        {summary.lead} <span className="whitespace-nowrap tabular-nums">· {summary.tail}</span>
       </span>
       <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
     </button>
