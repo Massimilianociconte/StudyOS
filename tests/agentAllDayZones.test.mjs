@@ -126,6 +126,16 @@ test("agente, tutto il giorno: «Questo e i successivi» con una regola nuova se
   assert.equal(grid(), "11-02 Lezione | 11-09 Lezione | 11-17 Lezione | 11-19 Lezione | 11-24 Lezione | 11-26 Lezione");
 });
 
+test("agente, tutto il giorno: «Questo e i successivi» da un giorno spostato da solo, solo il titolo: resta spostato, il lunedì non torna", async () => {
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "this", start: "2026-11-18" });
+  assert.equal(grid(), "11-02 Lezione | 11-09 Lezione | 11-18 Lezione | 11-23 Lezione | 11-30 Lezione");
+  // Anche con lo stesso giorno scritto di nuovo (start = quello aperto): non è uno spostamento.
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "following", title: "X", start: "2026-11-18" });
+  assert.equal(grid(), "11-02 Lezione | 11-09 Lezione | 11-18 X | 11-23 X | 11-30 X");
+  const part = masters().find((item) => item.splitFrom === "s");
+  assert.deepEqual(normalizeRepeat(part).byWeekday, ["MO"]);
+});
+
 test("agente, tutto il giorno: un evento singolo (e una vacanza di tre giorni) spostato tiene i suoi giorni a Roma", async () => {
   reset([romeAllDay("2026-12-08", "2026-12-08", { id: "e" }), romeAllDay("2026-12-08", "2026-12-10", { id: "v", title: "Mare", category: "vacation" })]);
   await update({ id: "e", start: "2026-12-09" });

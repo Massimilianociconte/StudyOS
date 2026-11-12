@@ -249,6 +249,10 @@
   `occurrenceEditCalls` → `timesMoved`), il giorno aperto sparisce e la parte prima finisce lunedì 9;
   la scelta dice da dove riprende (`ScopeImpact.startsOn`) e il giorno aperto è tra quelli che
   spariscono (`gone`, anche per l'agente in `removedDates`). Uno spostamento senza regola nuova no.
+- «Questo e i successivi» da un giorno spostato da solo si misura da ciò che si è aperto (mercoledì 18),
+  non dalla sua data (lunedì 16): senza cambiarne giorno né orario la serie tiene il suo programma e il
+  giorno resta spostato nella parte nuova (`staysPut`, `movedAway` in planSplit); cambiandoli, la parte
+  nuova parte dal giorno scelto; le date che spariscono sono quelle che si vedono (`shownDayOf`).
 - «fino a» (`seriesSpan.until`) e «La serie ora finisce» (`ScopeImpact.endsOn`) dicono l'ultima data
   che c'è davvero (`lastShownDate`): non un giorno annullato, un giorno spostato dove sta ora.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),

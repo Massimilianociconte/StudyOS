@@ -1150,6 +1150,10 @@ const SERIES_LOCKED = new Set(["id", "createdAt", "seriesId", "originalDate", "c
 const pickPatch = (patch: Partial<CalendarEvent>, locked: Set<string>) =>
   Object.fromEntries(Object.entries(patch).filter(([key]) => !locked.has(key))) as Partial<CalendarEvent>;
 
+const TIME_KEYS = ["start", "end", "allDay"] as const;
+/** Campi di una modifica che un giorno cambiato da solo non prende dalla serie: orari, regola, fuso. */
+const ROW_KEPT = new Set([...SERIES_LOCKED, ...TIME_KEYS, "repeat", "repeatLegacy", "recurrence", "recurrenceUntil", "timeZone"]);
+
 const EMPTY_PLAN: EditPlan = { puts: [], deletes: [] };
 
 const nowOf = (options: PlanOptions) => options.now ?? new Date().toISOString();
@@ -1161,6 +1165,16 @@ const instanceFields = (series: Series, date: string) => {
   if (series.civil) return { start: floatingDate(date), end: floatingDate(civilAddDays(date, series.spanDays)) };
   const startMs = instanceStartMs(series, date);
   return { start: new Date(startMs).toISOString(), end: new Date(instanceEndMs(series, date, startMs)).toISOString() };
+};
+
+/** Il giorno `row` della data `date` sta altrove: inizio o fine diversi da quelli della sua data nella serie. */
+const movedAway = (row: CalendarEvent, series: Series, date: string) => {
+  if (series.civil) {
+    const span = allDaySpan(row.start, row.end, series.zone);
+    return !span || span.date !== date || span.days !== series.spanDays;
+  }
+  const slot = instanceFields(series, date);
+  return Date.parse(row.start) !== Date.parse(slot.start) || Date.parse(row.end) !== Date.parse(slot.end);
 };
 
 /** Riga nuova per l'occorrenza `date`: copia della serie, senza regola né chiavi d'importazione. */
@@ -1726,7 +1740,15 @@ export const planSplit = (
     const date = row.originalDate as string;
     if (date < originalDate) continue;
     deletes.push(row.id);
-    if (date === originalDate || !childSeries || !hasInstance(childSeries, date, childCut)) continue;
+    if (!childSeries || !hasInstance(childSeries, date, childCut)) continue;
+    if (date === originalDate) {
+      // Il giorno aperto, spostato da solo e cambiato senza toccarne giorno né orario: resta dov'è,
+      // nella parte nuova, con la modifica (il suo posto nella serie non torna).
+      if (!row.cancelled && keepsTime && !TIME_KEYS.some((key) => key in patch) && movedAway(row, series, date)) {
+        puts.push({ ...row, ...pickPatch(patch, ROW_KEPT), id: occurrenceId(childId, date), seriesId: childId, subjectId: child.subjectId, updatedAt: now });
+      }
+      continue;
+    }
     if (!row.cancelled && !keepsTime) continue;
     puts.push({ ...row, id: occurrenceId(childId, date), seriesId: childId, subjectId: child.subjectId, updatedAt: now });
   }
