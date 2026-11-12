@@ -83,6 +83,16 @@ test("Registra il voto: il giorno proposto è quello dell'esame riusato, se è g
   assert.equal(O.recordDateFor(exam({ date: "non una data" }), now), "2026-11-12");
 });
 
+test("Registra il voto: l'idoneità è femminile e il pulsante dice cosa registra", async () => {
+  const { GRADE_TEXT } = await import("../src/lib/labels/career.ts");
+  assert.equal(GRADE_TEXT.saved("Biochimica", "idoneità", true, false), "Biochimica: idoneità registrata nel libretto.");
+  assert.equal(GRADE_TEXT.saved("Biochimica", "idoneità", true, true), "Biochimica: idoneità aggiornata nel libretto.");
+  assert.equal(GRADE_TEXT.saved("Biochimica", "28", false, false), "Biochimica: 28 registrato nel libretto.");
+  assert.equal(GRADE_TEXT.saved("Biochimica", "30 e lode", false, true), "Biochimica: 30 e lode aggiornato nel libretto.");
+  assert.equal(GRADE_TEXT.recordButton("passFail"), "Registra idoneità");
+  assert.equal(GRADE_TEXT.recordButton("grade"), "Registra voto");
+});
+
 test("Esito: con voto, idoneità e non superato", () => {
   assert.deepEqual(O.outcomeOf(exam({ status: "done", grade: 28 })), "grade");
   assert.deepEqual(O.outcomeOf(exam({ status: "done", passFail: true })), "passFail");

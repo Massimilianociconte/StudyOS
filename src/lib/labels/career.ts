@@ -26,6 +26,11 @@ export const GRADE_TEXT = {
   newDateInvalid: "Nuova data non valida: sceglila di nuovo.",
   recordTitle: "Registra il voto",
   saveOutcome: "Salva esito",
+  /** Pulsante del modulo per un nuovo esito: dice cosa registra. */
+  recordButton: (outcome: "grade" | "passFail" | "failed") => (outcome === "passFail" ? "Registra idoneità" : "Registra voto"),
+  /** «Biochimica: 28 registrato», «Biochimica: idoneità registrata» (nel libretto). */
+  saved: (name: string, outcome: string, passFail: boolean, updated: boolean) =>
+    `${name}: ${outcome} ${updated ? (passFail ? "aggiornata" : "aggiornato") : passFail ? "registrata" : "registrato"} nel libretto.`,
   failedSaved: (name: string, date: string | null) =>
     date
       ? `${name}: non superato. L'esame resta da preparare, con la nuova data del ${date}.`

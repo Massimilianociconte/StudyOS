@@ -139,7 +139,7 @@ export function GradeDrawer({
     if (exam) {
       await updateExam(exam.id, { ...result, tags: withoutDateToDecide(exam.tags) });
       if (recording) await markPassed(exam.subjectId);
-      onSaved(`${subjectName || "Esame"}: ${outcome} ${editing ? "aggiornato" : "registrato"} nel libretto.`, draft.outcome);
+      onSaved(GRADE_TEXT.saved(subjectName || "Esame", outcome, passFail, editing), draft.outcome);
       return;
     }
 
@@ -158,7 +158,7 @@ export function GradeDrawer({
     if (pendingExam) await updateExam(pendingExam.id, { ...result, tags: withoutDateToDecide(pendingExam.tags) });
     else await addExam({ subjectId, targetGrade: Math.min(MAX_GRADE, grade || 28), ...result });
     await markPassed(subjectId);
-    onSaved(`${name}: ${outcome} registrato nel libretto.`, draft.outcome);
+    onSaved(GRADE_TEXT.saved(name, outcome, passFail, false), draft.outcome);
   };
 
   const remove = async () => {
@@ -190,7 +190,7 @@ export function GradeDrawer({
             Annulla
           </Button>
           <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
-            {editing ? "Salva voto" : recording ? GRADE_TEXT.saveOutcome : "Registra voto"}
+            {editing ? "Salva voto" : recording ? GRADE_TEXT.saveOutcome : GRADE_TEXT.recordButton(draft.outcome)}
           </Button>
         </div>
       }
