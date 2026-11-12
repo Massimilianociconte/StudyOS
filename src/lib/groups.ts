@@ -182,6 +182,17 @@ export const isReceivedInvite = (invite: Pick<GroupInvite, "fromUserId" | "recip
 export const isLegacyEmailInvite = (invite: Pick<GroupInvite, "fromUserId" | "recipientUserId" | "recipientEmail">, me: string) =>
   invite.fromUserId !== me && !invite.recipientUserId && Boolean(invite.recipientEmail);
 
+/** Nome di riserva di chi non ha un nome nel profilo: lo stesso del server (studyos_member_name). */
+export const NEUTRAL_MEMBER_NAME = "Studente";
+
+/**
+ * Nome che altre persone vedono (membri, cronologia, notifiche, i loro agenti): quello del profilo,
+ * altrimenti «Studente». Non riceve l'email apposta: chi trova qualcuno con il @nome non deve poterne
+ * dedurre l'indirizzo. Al massimo 80 caratteri, come sul server.
+ */
+export const visibleMemberName = (profileName: string | null | undefined) =>
+  (profileName?.trim() || NEUTRAL_MEMBER_NAME).slice(0, 80);
+
 /** Invito che il client può pubblicare da sé: solo con codice, senza destinatario (la policy rifiuta gli altri). */
 export const isCodeOnlyInvite = (invite: Pick<GroupInvite, "recipientUserId" | "recipientEmail">) => !invite.recipientUserId && !invite.recipientEmail;
 

@@ -279,7 +279,7 @@ un tocco e toccare la notifica apre la pagina giusta (`?apri=`). Agenti MCP inva
 strumento nuovo). Sul progetto reale: rieseguire `groups.sql`, `sharing.sql` e `people.sql`
 (prima del push su `main`, che pubblica il client: legge `recipient_user_id` e senza la colonna
 si fermano gruppi e condivisioni), poi `people-verify.sql` tutto verde;
-abilitare `pg_net`; `node scripts/push-keys.mjs`; segreti in Vault; quattro `wrangler secret put`
+abilitare `pg_net`; chiavi (due strade in `supabase/README.md`, «Notifiche push»); segreti in Vault; quattro `wrangler secret put`
 e `wrangler deploy`; push su `main`.
 Verifiche della ricerca persone e delle push (11 novembre 2026): 291 test, lint, build, `barb:validate`;
 stack locale: `groups.sql`, `sharing.sql` e `people.sql` due volte e `people-verify.sql`, `people-check.mjs`
@@ -298,6 +298,16 @@ lettura, Realtime, notifiche, chiusura delle notifiche e ritiro degli inviti usa
 L'unico uso rimasto dell'email è togliere le copie locali di vecchi inviti per email mai legati a un
 account (`isLegacyEmailInvite`). `accept_group_invite` in `groups.sql` e `people.sql` è la stessa:
 account destinatario, membro senza email, una sola voce «è entrato nel gruppo».
+Revisione dopo la review (12 novembre 2026, sera): il nome di chi entra in un gruppo o condivide
+non viene più dalla parte locale dell'email (client e `studyos_member_name`: profilo, poi profilo
+online, poi «Studente»); un invito a una persona non porta il codice del gruppo; il limite per IP
+usa solo `cf-connecting-ip`; la migrazione degli inviti per email lega solo account confermati
+prima dell'11/11/2026 e scioglie i legami fatti prima verso account più recenti; i passi delle
+push in `supabase/README.md` hanno le due strade per le chiavi (privata dell'11/11 o `--rigenera`).
+Da rieseguire sul progetto: `groups.sql`, `people.sql`, `people-verify.sql` (quattro colonne
+nuove). Verificato su Postgres usa e getta (porta 55501): script applicati due volte, 33 controlli
+di `people-tests` veri (nomi, codici, IP, migrazione, idempotenza); `people-check.mjs` aggiornato
+ma non eseguito (serve lo stack locale).
 
 Registro e ripristino del connettore remoto, pagine esatte (12 novembre 2026, server 1.8.0):
 ogni scrittura del connettore remoto lascia una voce in `studyos_agent_audit` (prima e dopo,

@@ -12,6 +12,7 @@ import {
   realtimeGroupIds,
   serverStampOf,
   settleInviteNotifications,
+  visibleMemberName,
   withServerStamp,
   type GroupRpcOutcome,
   type SharedSnapshot
@@ -55,14 +56,12 @@ export const getLocalOwnerId = async (): Promise<string> => {
 
 /** Identità da firmare su membri/attività: account cloud se collegato, altrimenti stabile per dispositivo. */
 export const getActor = async (): Promise<Actor> => {
-  const profile = selectPreferences(useStudyStore.getState()).displayName.trim();
-  const displayName = profile || "Studente";
+  // Mai dall'email: il nome finisce nei gruppi, nelle notifiche e negli agenti degli altri membri.
+  const displayName = visibleMemberName(selectPreferences(useStudyStore.getState()).displayName);
   try {
     const session = await getSession();
     if (session?.user) {
-      // Senza nome nel profilo: la parte locale dell'email, come fa il server per chi entra.
-      const fallback = session.user.email?.split("@")[0]?.trim();
-      return { userId: session.user.id, displayName: profile || fallback || "Studente", email: session.user.email ?? undefined };
+      return { userId: session.user.id, displayName, email: session.user.email ?? undefined };
     }
   } catch {
     // senza rete si resta locali
@@ -754,7 +753,10 @@ export const logSharedActivity = async (groupId: string, actorDisplayName: strin
   await pushSharedActivity(entry);
 };
 
-/** Nome da mandare al server: quello del profilo; vuoto = il server usa la parte locale dell'email. */
+/**
+ * Nome da mandare al server: quello del profilo. Vuoto = il server usa il nome del profilo online,
+ * altrimenti «Studente»; mai l'email (studyos_member_name in supabase/groups.sql).
+ */
 const profileName = () => selectPreferences(useStudyStore.getState()).displayName.trim();
 
 export interface InvitePreview {

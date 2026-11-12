@@ -354,14 +354,30 @@ create trigger studyos_group_member_left_activity
 
 -- ─── RPC (SECURITY DEFINER: verifiche atomiche lato server) ─────────────────
 
--- Nome visibile di chi entra: quello scelto nel profilo, altrimenti la parte locale dell'email.
+-- Nome visibile di chi entra: quello mandato dall'app, altrimenti il nome del profilo online
+-- (studyos_profiles, se people.sql è installato), altrimenti «Studente». Mai dall'email: chi trova
+-- qualcuno con il @nome non deve poterne dedurre l'indirizzo dal nome nel gruppo, nelle notifiche o
+-- negli agenti degli altri membri. p_email resta nella firma solo per non rompere le versioni già
+-- installate e non si usa.
 create or replace function public.studyos_member_name(p_display_name text, p_email text)
 returns text
-language sql
-immutable
+language plpgsql
+stable
+set search_path = public
 as $$
-  select left(coalesce(nullif(btrim(p_display_name), ''), nullif(split_part(p_email, '@', 1), ''), 'Studente'), 80)
+declare
+  v_name text := nullif(btrim(p_display_name), '');
+begin
+  if v_name is null and to_regclass('public.studyos_profiles') is not null then
+    select nullif(btrim(p.display_name), '') into v_name
+    from public.studyos_profiles p
+    where p.user_id = auth.uid();
+  end if;
+  return left(coalesce(v_name, 'Studente'), 80);
+end;
 $$;
+
+revoke all on function public.studyos_member_name(text, text) from public, anon, authenticated;
 
 -- La versione precedente (senza nome) dava al nuovo membro il nome di chi aveva invitato.
 drop function if exists public.accept_group_invite(text);
@@ -378,7 +394,7 @@ set search_path = public
 as $$
 declare
   v_invite public.studyos_group_invites%rowtype;
-  v_name text := public.studyos_member_name(p_display_name, lower(auth.jwt() ->> 'email'));
+  v_name text := public.studyos_member_name(p_display_name, null);
   v_added integer;
 begin
   if auth.uid() is null then
@@ -457,7 +473,7 @@ as $$
 declare
   v_group public.studyos_groups%rowtype;
   v_email text := lower(auth.jwt() ->> 'email');
-  v_name text := public.studyos_member_name(p_display_name, lower(auth.jwt() ->> 'email'));
+  v_name text := public.studyos_member_name(p_display_name, null);
   v_added integer;
 begin
   if auth.uid() is null then

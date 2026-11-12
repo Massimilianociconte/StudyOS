@@ -467,7 +467,19 @@
   ha registrato l'indirizzo di un altro: la scheda mostra nome e `@nome` da controllare.
 - `find_person`: solo corrispondenza esatta, mai l'email nel risultato, stessa risposta per
   inesistente e non trovabile, 30 ricerche al minuto per account e 60 per IP. Gli account si
-  creano senza conferma, per questo il limite per IP serve.
+  creano senza conferma, per questo il limite per IP serve. L'IP è solo `cf-connecting-ip`
+  (`studyos_request_ip`): mai `x-forwarded-for`, il cui primo valore lo sceglie chi chiama.
+- Mai un nome visibile ricavato dall'email, né nel client né nel server: niente parte locale
+  dell'email come riserva (`visibleMemberName`, `studyos_member_name`, `myName` di `shareSync`).
+  Riserva: nome del profilo online, poi «Studente». I nomi arrivano agli altri membri, alle
+  notifiche e ai loro agenti MCP; `tests/groups.test.mjs` cerca `split("@")` in tutto `src/`.
+- Un invito a una persona ha `code = ''`: il codice del gruppo non va mai a chi è invitato per
+  account (potrebbe entrare dopo aver rifiutato o dopo il ritiro). Mai leggere `invite.code` per un
+  invito con destinatario.
+- Vecchi inviti per email: si legano solo a un account con `email_confirmed_at` prima
+  dell'11/11/2026 00:00 (ora italiana), quando la conferma era obbligatoria; `people.sql` scioglie a
+  ogni esecuzione gli altri legami ancora in attesa. Non togliere la data: dopo quel giorno
+  `email_confirmed_at` non prova niente.
 - Push: DB → `pg_net` → Worker `POST /push` → servizio push. Nessuna `service_role`: il database
   passa nel corpo le iscrizioni dei destinatari, il Worker si fida solo di
   `x-studyos-push-secret` (stesso valore di `studyos_push_secret` in Vault) e chiama

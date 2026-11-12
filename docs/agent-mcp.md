@@ -478,8 +478,11 @@ npx wrangler deploy -c worker/wrangler.jsonc
 ```
 
 - `STUDYOS_PUSH_SECRET`: lo stesso valore del segreto `studyos_push_secret` in Vault.
-- `STUDYOS_VAPID_PRIVATE_KEY`: la chiave privata stampata da `node scripts/push-keys.mjs`
-  (la pubblica sta in `src/lib/pushKeys.ts`).
+- `STUDYOS_VAPID_PRIVATE_KEY`: la chiave privata in coppia con la pubblica di
+  `src/lib/pushKeys.ts`. Quella pubblica c'è già (generata l'11/11/2026) e `node scripts/push-keys.mjs`
+  senza opzioni non la cambia: usa la privata stampata allora, oppure rigenera tutto con
+  `--rigenera` (poi commit di `pushKeys.ts`, sito pubblicato, entrambi i secret e deploy). I passi,
+  in ordine, sono in [supabase/README.md](../supabase/README.md) («Notifiche push»).
 - `STUDYOS_SUPABASE_URL` e `STUDYOS_SUPABASE_KEY`: URL del progetto e chiave publishable
   (`sb_publishable_…`): gli stessi secret del connettore remoto (`/u/<nome>/mcp`); se ci sono già,
   non vanno rimessi. La route `/push` li usa solo per chiamare `push_gone`. Mai `service_role`. Se

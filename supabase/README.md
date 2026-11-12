@@ -82,6 +82,32 @@ fallisce l'intero caricamento). Gli inviti per email ancora in attesa li lega ag
 sola volta la migrazione di `people.sql` (`studyos_migrations`, `people_email_invites`); quelli
 che non trova un account restano scaduti.
 
+**Revisione del 12/11/2026 (sera): riesegui `groups.sql`, `people.sql`, poi `people-verify.sql`.**
+Anche se avevi già eseguito `people.sql`. Le nuove colonne di `people-verify.sql` devono essere
+`true`:
+
+- `member_name_private_ready`: chi entra in un gruppo senza nome nel profilo si chiama come il suo
+  profilo online, altrimenti «Studente». Prima prendeva la parte dell'email prima della @, che
+  vedevano tutti i membri, le notifiche e i loro agenti.
+- `invite_code_hidden_ready`: un invito a una persona non porta più il codice del gruppo. Prima chi
+  lo riceveva poteva leggerlo ed entrare con il codice anche dopo aver rifiutato o dopo il ritiro
+  dell'invito. `people.sql` toglie il codice anche dagli inviti già scritti.
+- `legacy_invites_safe_ready`: un vecchio invito per email si lega a un account solo se quell'account
+  aveva confermato l'indirizzo prima dell'11/11/2026, quando la conferma email era obbligatoria.
+  Dopo, chiunque può registrarsi con l'indirizzo di un altro. Se `people.sql` era già stato eseguito,
+  i legami verso account più recenti si sciolgono (solo inviti ancora in attesa): chi li aveva mandati
+  invita di nuovo con la ricerca. Un invito già accettato non si tocca: controlla i membri del gruppo.
+- `request_ip_ready`: il limite di 60 ricerche al minuto per indirizzo IP usa solo
+  `cf-connecting-ip`, che scrive Cloudflare. Prima, senza quell'intestazione, usava il primo valore di
+  `x-forwarded-for`, che sceglie chi chiama: un valore finto a ogni richiesta azzerava il limite.
+
+Il limite per IP funziona solo se Supabase passa `cf-connecting-ip` al database. Per controllarlo,
+fai una ricerca di una persona dall'app, poi nel SQL Editor:
+`select count(*) filter (where ip is not null) as con_ip, count(*) as ricerche from public.studyos_person_lookups where at > now() - interval '10 minutes';`.
+Se `con_ip` è 0, il limite per IP è spento e resta solo quello per account (30 ricerche al
+minuto). La ricerca resta esatta (email intera o @nome): chi prova indirizzi a caso deve
+indovinarli interi, uno per ricerca.
+
 `sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
 dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha
 una transazione che lo avvolge) e premi Run; si può rieseguire. Poi incolla
@@ -128,32 +154,87 @@ Per ogni persona che agisce il database manda al massimo 30 notifiche all'ora (t
 `studyos_push_sends`): oltre, salta la push senza errori e senza bloccare la scrittura; gli
 avvisi nella campanella arrivano comunque.
 
+Servono due valori segreti, che non stanno mai in un file del repository: la **chiave privata
+VAPID** (`STUDYOS_VAPID_PRIVATE_KEY`, coppia della chiave pubblica in `src/lib/pushKeys.ts`) e il
+**segreto condiviso** (`STUDYOS_PUSH_SECRET`, uguale nel Vault e nel Worker). La chiave pubblica
+in `src/lib/pushKeys.ts` è già stata generata l'11/11/2026, quindi `node scripts/push-keys.mjs`
+senza opzioni si ferma e non la sostituisce. Al passo 2 scegli una delle due strade.
+
 1. **pg_net**: Dashboard → **Database → Extensions** → cerca `pg_net` → **Enable**.
-2. **Chiavi**: nella cartella del progetto lancia `node scripts/push-keys.mjs`. Genera la coppia
-   VAPID e il segreto condiviso; la chiave pubblica sta in `src/lib/pushKeys.ts` (è pubblica,
-   si committa), la privata e il segreto non vanno mai in un file del repository.
-3. **Vault** (SQL Editor, una volta; se un segreto esiste già, vedi sotto):
+2. **Chiavi.**
+   - **Strada A: hai ancora i due valori stampati l'11/11/2026** (chiave privata e segreto).
+     Non rigenerare niente: li usi ai passi 3 e 4.
+   - **Strada B: te ne manca anche solo uno.** Nella cartella del progetto lancia
+     `node scripts/push-keys.mjs --rigenera`. Lo script riscrive `src/lib/pushKeys.ts` con una
+     chiave pubblica nuova e stampa nel terminale la chiave privata, il segreto, i comandi
+     `wrangler` e il blocco SQL per il Vault. Poi:
+     1. committa `src/lib/pushKeys.ts` e pubblica il sito (push su `main`). I dispositivi che
+        avevano già le notifiche attive si iscrivono di nuovo da soli alla prima apertura dopo
+        l'aggiornamento.
+     2. Al passo 4 rimetti **tutti e due** i secret e **ripubblica il Worker**: il Worker contiene la
+        chiave pubblica e la usa con la privata. Chiave privata nuova con un Worker vecchio, o il
+        contrario, vuol dire che ogni push viene rifiutata dal servizio push.
+3. **Vault** (SQL Editor). Strada B: incolla il blocco stampato da `push-keys.mjs`. Strada A: usa
+   questo blocco, mettendo il tuo segreto al posto di `<SEGRETO>` (due volte). Si può rieseguire:
+   crea i due segreti o ne aggiorna il valore.
 
 ```sql
-select vault.create_secret('<SEGRETO stampato da push-keys.mjs>', 'studyos_push_secret');
-select vault.create_secret('https://studyos-agent.nexify-api.workers.dev/push', 'studyos_push_url');
+do $$
+declare
+  v_id uuid;
+begin
+  select id into v_id from vault.secrets where name = 'studyos_push_secret';
+  if v_id is null then
+    perform vault.create_secret('<SEGRETO>', 'studyos_push_secret', 'StudyOS: segreto condiviso con il Worker /push');
+  else
+    perform vault.update_secret(v_id, '<SEGRETO>');
+  end if;
+  select id into v_id from vault.secrets where name = 'studyos_push_url';
+  if v_id is null then
+    perform vault.create_secret('https://studyos-agent.nexify-api.workers.dev/push', 'studyos_push_url', 'StudyOS: indirizzo del Worker /push');
+  else
+    perform vault.update_secret(v_id, 'https://studyos-agent.nexify-api.workers.dev/push');
+  end if;
+end
+$$;
 ```
 
-   Per cambiare un valore esistente:
+4. **Worker** (terminale, nella cartella del progetto). `wrangler` chiede ogni valore a terminale:
+   incollalo lì, mai nella riga di comando.
 
-```sql
-select vault.update_secret((select id from vault.secrets where name = 'studyos_push_secret'), '<nuovo segreto>');
+```bash
+npx wrangler secret put STUDYOS_PUSH_SECRET -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_VAPID_PRIVATE_KEY -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_SUPABASE_URL -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_SUPABASE_KEY -c worker/wrangler.jsonc
+npx wrangler deploy -c worker/wrangler.jsonc
 ```
 
-4. **Worker**: quattro secret e un deploy (vedi [docs/agent-mcp.md](../docs/agent-mcp.md#notifiche-push-route-push-del-worker)).
-   `STUDYOS_SUPABASE_URL` e `STUDYOS_SUPABASE_KEY` sono gli stessi del connettore remoto: se
-   li hai già messi per `agent.sql`, mancano solo `STUDYOS_PUSH_SECRET` e
-   `STUDYOS_VAPID_PRIVATE_KEY`.
-5. Ripeti `people-verify.sql`: ora anche le colonne su `pg_net` e sui segreti devono essere `true`.
+   - `STUDYOS_PUSH_SECRET`: lo stesso valore messo nel Vault al passo 3.
+   - `STUDYOS_VAPID_PRIVATE_KEY`: la chiave privata (strada A: quella dell'11/11; strada B: quella
+     appena stampata).
+   - `STUDYOS_SUPABASE_URL` (lo stesso valore di `VITE_SUPABASE_URL`) e `STUDYOS_SUPABASE_KEY` (la
+     chiave `sb_publishable_…`, mai la `service_role`): sono gli stessi del connettore remoto. Se li
+     hai già messi per `agent.sql`, salta quei due comandi.
+   - `wrangler deploy` serve sempre: la route `/push` c'è solo nel Worker nuovo.
+5. **Controllo.** Riesegui `people-verify.sql`: ora anche `pg_net_ready` e `vault_ready` devono
+   essere `true`. Poi prova: su un dispositivo accendi **Impostazioni → Profilo → Notifiche su
+   questo dispositivo**; da un altro account invita quella persona in un gruppo. La notifica arriva
+   in pochi secondi.
 
-Il segreto del Vault e `STUDYOS_PUSH_SECRET` del Worker devono essere lo stesso valore. Se una
-push non arriva: `select id, status_code, left(content, 120) from net._http_response order by id desc limit 5;`
-mostra le ultime risposte del Worker (401 = segreti diversi, 404 = URL sbagliato in Vault).
+Se la notifica non arriva, nel SQL Editor:
+`select id, status_code, left(content, 120) from net._http_response order by id desc limit 5;`
+mostra le ultime risposte del Worker.
+
+- **401**: il segreto nel Vault e `STUDYOS_PUSH_SECRET` sono diversi. Rifai i passi 3 e 4 con lo
+  stesso valore.
+- **404**: l'URL nel Vault è sbagliato, oppure il Worker non è stato ripubblicato (passo 4).
+- **200 con `"sent":0`**: il Worker ha risposto ma il servizio push ha rifiutato. Quasi sempre la
+  chiave privata del Worker non è la coppia di quella in `src/lib/pushKeys.ts`: rifai la strada B
+  per intero (commit, sito, secret, deploy).
+- **Nessuna riga nuova**: `pg_net` è spento o il Vault non ha i due segreti (`people-verify.sql`
+  lo dice), chi riceve non ha acceso le notifiche su nessun dispositivo, oppure chi ha invitato ha
+  già mandato 30 notifiche nell'ultima ora.
 
 **Revisione del 12/11/2026 (connettore 1.8.0): riesegui `agent.sql`, poi `agent-verify.sql`.**
 Ogni modifica del connettore remoto finisce in un registro sul server

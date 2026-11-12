@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   classifyGroupRpcError,
   groupInviteLink,
@@ -17,6 +17,8 @@ import {
   realtimeGroupIds,
   serverStampOf,
   settleInviteNotifications,
+  NEUTRAL_MEMBER_NAME,
+  visibleMemberName,
   withServerStamp
 } from "../src/lib/groups.ts";
 import { durationToMinutes, minutesToDuration } from "../src/lib/duration.ts";
@@ -408,4 +410,35 @@ test("gruppi: il canale Realtime ricontrolla anche alla prima iscrizione", () =>
   const source = readFileSync(new URL("../src/lib/groupSync.ts", import.meta.url), "utf8");
   assert.match(source, /signalGroups\(subscribedOnce \? 0 : undefined\)/);
   assert.doesNotMatch(source, /if \(subscribedOnce\) signalGroups\(0\)/);
+});
+
+test("nome visibile agli altri: quello del profilo, altrimenti «Studente», mai dall'email", () => {
+  assert.equal(NEUTRAL_MEMBER_NAME, "Studente");
+  assert.equal(visibleMemberName("  Anna Rossi "), "Anna Rossi");
+  assert.equal(visibleMemberName(""), "Studente");
+  assert.equal(visibleMemberName("   "), "Studente");
+  assert.equal(visibleMemberName(undefined), "Studente");
+  assert.equal(visibleMemberName(null), "Studente");
+  assert.equal(visibleMemberName("x".repeat(100)).length, 80);
+  // Il fallback è lo stesso del server (studyos_member_name in supabase/groups.sql).
+  const sql = readFileSync(new URL("../supabase/groups.sql", import.meta.url), "utf8");
+  assert.match(sql, new RegExp(`coalesce\\(v_name, '${NEUTRAL_MEMBER_NAME}'\\)`));
+});
+
+test("nessun nome ricavato dall'email nel client: gruppi, inviti e condivisioni", () => {
+  // Chi trova qualcuno con il @nome non deve poterne dedurre l'indirizzo dal nome che vede.
+  const root = new URL("../src/", import.meta.url);
+  const files = readdirSync(root, { recursive: true }).filter((name) => /\.(ts|tsx)$/.test(String(name)));
+  assert.ok(files.length > 50);
+  for (const name of files) {
+    const source = readFileSync(new URL(String(name), root), "utf8");
+    assert.doesNotMatch(source, /split\(\s*["']@["']\s*\)/, String(name));
+    assert.doesNotMatch(source, /\.indexOf\(\s*["']@["']\s*\)/, String(name));
+  }
+  const sync = readFileSync(new URL("../src/lib/groupSync.ts", import.meta.url), "utf8");
+  assert.match(sync, /const displayName = visibleMemberName\(selectPreferences\(useStudyStore\.getState\(\)\)\.displayName\);/);
+  // Accettare un invito manda il nome del profilo (anche vuoto): il server sceglie la riserva, senza email.
+  const view = readFileSync(new URL("../src/views/GroupsView.tsx", import.meta.url), "utf8");
+  assert.match(view, /await acceptInviteRemote\(invite\.id\)/);
+  assert.doesNotMatch(view, /acceptInviteRemote\(invite\.id, actor\.displayName\)/);
 });

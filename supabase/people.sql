@@ -240,18 +240,18 @@ as $$
   end
 $$;
 
--- IP di chi chiama, dalle intestazioni che PostgREST espone in request.headers:
--- cf-connecting-ip, altrimenti il primo valore di x-forwarded-for. Null fuori da una richiesta API.
+-- IP di chi chiama: solo cf-connecting-ip, che Cloudflare (davanti a Supabase) scrive sempre e
+-- sovrascrive se lo manda il client. x-forwarded-for non conta: il primo valore lo sceglie il client
+-- (un IP finto a ogni richiesta azzerava il limite per IP), l'ultimo è un proxy, uguale per tanti.
+-- Senza cf-connecting-ip (fuori da una richiesta API, o se Supabase non lo inoltra) è null: vale
+-- solo il limite per account. Come controllarlo sul progetto: supabase/README.md.
 create or replace function public.studyos_request_ip()
 returns text
 language sql
 stable
 set search_path = pg_catalog
 as $$
-  select left(nullif(btrim(coalesce(
-    nullif(btrim(request.headers ->> 'cf-connecting-ip'), ''),
-    split_part(coalesce(request.headers ->> 'x-forwarded-for', ''), ',', 1)
-  )), ''), 64)
+  select left(nullif(btrim(request.headers ->> 'cf-connecting-ip'), ''), 64)
   from (
     select case
       when coalesce(current_setting('request.headers', true), '') like '{%'
@@ -439,7 +439,7 @@ set search_path = public
 as $$
 declare
   v_invite public.studyos_group_invites%rowtype;
-  v_name text := public.studyos_member_name(p_display_name, lower(auth.jwt() ->> 'email'));
+  v_name text := public.studyos_member_name(p_display_name, null);
   v_added integer;
 begin
   if auth.uid() is null then
@@ -503,7 +503,9 @@ end;
 $$;
 
 -- Invita una persona trovata con find_person: proprietario o amministratore, persona trovabile, non
--- già nel gruppo, un solo invito in attesa. Codice = codice del gruppo, come gli inviti del client.
+-- già nel gruppo, un solo invito in attesa. Nessun codice (''): l'invito vale solo per quell'account
+-- e il destinatario non deve ricevere il codice del gruppo, con cui potrebbe entrare anche dopo aver
+-- rifiutato o dopo che l'invito è stato ritirato.
 create or replace function public.invite_person_to_group(
   p_group_id text,
   p_person_id uuid,
@@ -551,7 +553,7 @@ begin
        recipient_email, recipient_user_id, code, status)
     values (
       v_id, p_group_id, v_group.name, nullif(v_group.description, ''), auth.uid()::text, v_from,
-      null, p_person_id::text, upper(v_group.invite_code), 'pending'
+      null, p_person_id::text, '', 'pending'
     );
   exception when unique_violation then
     raise exception 'Ha già un invito';
@@ -763,42 +765,76 @@ end;
 $$;
 
 -- ─── Migrazione una tantum: inviti pendenti per sola email → account ────────
--- Gira una volta sola (segno in studyos_migrations): un account registrato dopo con quell'indirizzo
--- non riceve inviti vecchi. Gli inviti legati qui restano da accettare; gli altri non sono più
--- accettabili. Nessuna notifica push: si aggiornano righe esistenti, i trigger guardano gli insert.
+-- Un vecchio invito per email passa all'account con quell'indirizzo solo se l'indirizzo è stato
+-- confermato prima dell'11/11/2026 (00:00, ora italiana), quando la conferma email era ancora
+-- obbligatoria: solo così l'account ha provato di avere quella casella. Da allora chiunque può
+-- registrarsi con l'indirizzo di un altro, e senza questa regola si prenderebbe i suoi inviti.
+-- - Legame: una volta sola (segno people_email_invites in studyos_migrations); un account
+--   registrato dopo non riceve inviti vecchi.
+-- - Controllo: a ogni esecuzione, idempotente. Scioglie i legami di un invito ancora in attesa verso
+--   un account che non passa la regola (li faceva la prima versione di questo script, senza la data).
+-- Gli inviti non legati non si accettano più: chi li aveva mandati invita di nuovo con la ricerca.
+-- Nessuna notifica push: si aggiornano righe esistenti, i trigger guardano gli insert.
 do $$
+declare
+  v_cutoff constant timestamptz := timestamptz '2026-11-11 00:00:00+01';
 begin
-  if exists (select 1 from public.studyos_migrations where name = 'people_email_invites') then
-    return;
+  if not exists (select 1 from public.studyos_migrations where name = 'people_email_invites') then
+    update public.studyos_group_invites i
+    set recipient_user_id = pick.user_id, updated_at = now()
+    from (
+      select distinct on (gi.group_id, u.id) gi.id, u.id::text as user_id
+      from public.studyos_group_invites gi
+      join auth.users u on lower(u.email) = lower(gi.recipient_email) and u.deleted_at is null
+        and u.email_confirmed_at < v_cutoff
+      where gi.status = 'pending' and gi.recipient_user_id is null and gi.recipient_email is not null
+        and not exists (
+          select 1 from public.studyos_group_invites other
+          where other.group_id = gi.group_id and other.recipient_user_id = u.id::text and other.status = 'pending'
+        )
+        and not exists (
+          select 1 from public.studyos_group_members m
+          where m.group_id = gi.group_id and m.user_id = u.id::text
+        )
+      order by gi.group_id, u.id, gi.created_at desc
+    ) as pick
+    where i.id = pick.id;
+
+    update public.studyos_share_invites i
+    set recipient_user_id = u.id
+    from auth.users u
+    where i.status = 'pending' and i.recipient_user_id is null and i.recipient_email is not null
+      and lower(u.email) = lower(i.recipient_email) and u.deleted_at is null and u.id <> i.owner_id
+      and u.email_confirmed_at < v_cutoff;
+
+    insert into public.studyos_migrations (name) values ('people_email_invites');
   end if;
 
   update public.studyos_group_invites i
-  set recipient_user_id = pick.user_id, updated_at = now()
-  from (
-    select distinct on (gi.group_id, u.id) gi.id, u.id::text as user_id
-    from public.studyos_group_invites gi
-    join auth.users u on lower(u.email) = lower(gi.recipient_email) and u.deleted_at is null
-    where gi.status = 'pending' and gi.recipient_user_id is null and gi.recipient_email is not null
-      and not exists (
-        select 1 from public.studyos_group_invites other
-        where other.group_id = gi.group_id and other.recipient_user_id = u.id::text and other.status = 'pending'
-      )
-      and not exists (
-        select 1 from public.studyos_group_members m
-        where m.group_id = gi.group_id and m.user_id = u.id::text
-      )
-    order by gi.group_id, u.id, gi.created_at desc
-  ) as pick
-  where i.id = pick.id;
+  set recipient_user_id = null
+  where i.status = 'pending' and i.recipient_email is not null and i.recipient_user_id is not null
+    and not exists (
+      select 1 from auth.users u
+      where u.id::text = i.recipient_user_id and lower(u.email) = lower(i.recipient_email)
+        and u.deleted_at is null and u.email_confirmed_at < v_cutoff
+    );
 
   update public.studyos_share_invites i
-  set recipient_user_id = u.id
-  from auth.users u
-  where i.status = 'pending' and i.recipient_user_id is null and i.recipient_email is not null
-    and lower(u.email) = lower(i.recipient_email) and u.deleted_at is null and u.id <> i.owner_id;
-
-  insert into public.studyos_migrations (name) values ('people_email_invites');
+  set recipient_user_id = null
+  where i.status = 'pending' and i.recipient_email is not null and i.recipient_user_id is not null
+    and not exists (
+      select 1 from auth.users u
+      where u.id = i.recipient_user_id and lower(u.email) = lower(i.recipient_email)
+        and u.deleted_at is null and u.email_confirmed_at < v_cutoff
+    );
 end $$;
+
+-- Un invito con un destinatario (account o vecchia email) non porta il codice del gruppo (vedi
+-- invite_person_to_group): toglie quello scritto dalle versioni precedenti. Idempotente: alla
+-- seconda esecuzione non trova righe.
+update public.studyos_group_invites
+set code = ''
+where code <> '' and (recipient_user_id is not null or recipient_email is not null);
 
 -- ─── Notifiche push ─────────────────────────────────────────────────────────
 
