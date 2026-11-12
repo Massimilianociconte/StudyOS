@@ -61,6 +61,7 @@ import {
   type SharedPushResult
 } from "./sharing";
 import { clearPendingShare } from "./shareInvite";
+import { requestPersist } from "./persistence";
 import { supabase } from "./supabase";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -936,9 +937,10 @@ const revisionsSince = async (since: string) => {
 const STATE_PAGE_SIZE = 100;
 
 /**
- * Dove sta oggi ogni elemento: la copia su questo dispositivo e la riga sul server. `updated_at` della
- * riga è dell'orologio del server, come `changed_at` delle revisioni: una scrittura del proprietario
- * (che non lascia revisioni) si riconosce perché è più recente dell'ultima revisione.
+ * Dove sta oggi ogni elemento: la copia su questo dispositivo, la riga sul server e la coda d'invio.
+ * `updated_at` della riga è dell'orologio del server, come `changed_at` delle revisioni: una scrittura
+ * del proprietario (che non lascia revisioni) si riconosce perché è più recente dell'ultima revisione,
+ * o perché è ancora in coda. Il timbro della copia qui (orologio del dispositivo) non si confronta.
  */
 const itemStates = async (entities: readonly { entityType: string; entityId: string }[]) => {
   const me = viewer();
@@ -956,9 +958,18 @@ const itemStates = async (entities: readonly { entityType: string; entityId: str
       server.set(`${row.entity_type}:${row.entity_id}`, { updatedAt: String(row.updated_at), deleted: row.deleted === true });
     }
   }
+  // Modifiche del proprietario fatte qui e non ancora inviate (coda d'invio personale, chiave
+  // `${tipo}:${id}`): contano come «cambiato dopo». Prima il salvataggio, così c'è anche l'ultima.
+  await requestPersist().catch(() => undefined);
+  const keys = entities.map((entity) => `${entity.entityType}:${entity.entityId}`);
+  const queued = new Set((await db.syncOutbox.bulkGet(keys)).flatMap((row) => (row ? [row.key] : [])));
   return (entityType: string, entityId: string): ItemState => {
     const local = localEntity(entityType, entityId);
-    return { local: local ? { updatedAt: local.updatedAt } : null, server: server.get(`${entityType}:${entityId}`) ?? null };
+    return {
+      local: local ? { updatedAt: local.updatedAt } : null,
+      server: server.get(`${entityType}:${entityId}`) ?? null,
+      pending: queued.has(`${entityType}:${entityId}`)
+    };
   };
 };
 

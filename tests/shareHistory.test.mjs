@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   entriesToRun,
   laterDeletion,
@@ -88,7 +89,7 @@ test("annulla le modifiche: le modifiche e le eliminazioni successive del propri
     rev(7, "o7", "update", "bob", at(4)) // copia e riga ferme all'ora della modifica di Bob
   ];
   const plan = planRevert(revisions, "bob", since, statesOf({
-    o1: { local: { updatedAt: at(8) }, server: { updatedAt: at(4), deleted: false } },
+    o1: { local: { updatedAt: at(8) }, server: { updatedAt: at(4), deleted: false }, pending: true },
     o2: { local: { updatedAt: at(4) }, server: { updatedAt: at(9), deleted: false } },
     o3: deletedOnServer(at(9)),
     o4: deletedOnServer(at(4)),
@@ -109,6 +110,33 @@ test("annulla le modifiche: le modifiche e le eliminazioni successive del propri
   const summary = revertSummary(plan, false);
   assert.deepEqual([summary.ownerAfter, summary.ownerDeleted, summary.changedAfter], [2, 2, 4]);
   assert.deepEqual(entriesToRun(plan, true).map((entry) => entry.revision.entityId), ["o4", "o6", "o7"]);
+});
+
+test("S11: «cambiato dopo dal proprietario» si decide con l'ora del server e la coda d'invio, mai con l'orologio del dispositivo", () => {
+  // Bob cambia l'evento alle 10:00 (ora del server). Il proprietario lo modifica alle 10:01 su un
+  // dispositivo indietro di 3 minuti (timbro 09:58) e la modifica non è ancora partita.
+  const revisions = [rev(1, "x", "update", "bob", "2026-11-04T10:00:00.000Z")];
+  const behind = { local: { updatedAt: "2026-11-04T09:58:00.000Z" }, server: { updatedAt: "2026-11-04T10:00:00.000Z", deleted: false }, pending: true };
+  const plan = planRevert(revisions, "bob", since, () => behind);
+  assert.deepEqual(flags(plan), { x: [false, true, false] }, "la modifica in coda conta come fatta dopo");
+  assert.deepEqual(entriesToRun(plan, true), [], "«lascia ciò che è cambiato dopo» non la sovrascrive");
+  // Orologio avanti senza nulla in coda né sul server: il timbro del dispositivo da solo non dice nulla.
+  const ahead = { local: { updatedAt: "2026-11-04T10:05:00.000Z" }, server: { updatedAt: "2026-11-04T10:00:00.000Z", deleted: false } };
+  assert.deepEqual(flags(planRevert(revisions, "bob", since, () => ahead)), { x: [false, false, false] });
+  // Eliminato qui e non ancora inviato: conta come eliminato dal proprietario (un obiettivo: senza file).
+  const goal = [rev(2, "g", "update", "bob", "2026-11-04T10:00:00.000Z", { entityType: "goal" })];
+  const deletedHere = { local: null, server: { updatedAt: "2026-11-04T10:00:00.000Z", deleted: false }, pending: true };
+  assert.deepEqual(flags(planRevert(goal, "bob", since, () => deletedHere)), { g: [false, false, true] });
+  assert.deepEqual(entriesToRun(planRevert(goal, "bob", since, () => deletedHere), true), []);
+});
+
+test("S11: shareSync legge la coda d'invio personale (dopo il salvataggio) per lo stato degli elementi", () => {
+  const sync = readFileSync(new URL("../src/lib/shareSync.ts", import.meta.url), "utf8");
+  const states = sync.slice(sync.indexOf("const itemStates"), sync.indexOf("const buildRevertPlan"));
+  assert.match(states, /requestPersist\(\)/);
+  assert.match(states, /db\.syncOutbox/);
+  assert.match(states, /pending:/);
+  assert.ok(states.indexOf("requestPersist()") < states.indexOf("db.syncOutbox"), "prima il salvataggio, poi la coda");
 });
 
 test("annulla le modifiche: la conferma vale solo per il controllo letto", () => {

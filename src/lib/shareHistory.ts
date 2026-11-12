@@ -40,9 +40,15 @@ export const restoreBlocked = (revision: ItemRevision, revisions: readonly ItemR
 
 /** Dove sta un elemento oggi: la copia del proprietario su questo dispositivo e la riga sul server. */
 export interface ItemState {
+  /**
+   * C'è su questo dispositivo. Il suo `updatedAt` è dell'orologio del dispositivo: non si confronta
+   * con le ore del server (con l'orologio indietro una modifica fatta dopo sembrava fatta prima).
+   */
   local: { updatedAt?: string } | null;
   /** `updatedAt`: orologio del server, come `changedAt` delle revisioni. */
   server: { updatedAt: string; deleted: boolean } | null;
+  /** Il proprietario l'ha cambiato (o eliminato) qui e la modifica non è ancora partita (coda d'invio personale). */
+  pending?: boolean;
 }
 
 export interface RevertEntry {
@@ -109,7 +115,7 @@ export const planRevert = (
     if (index < 0) continue;
     const first = list[index];
     const later = list.slice(index + 1);
-    const { local, server } = stateOf(first.entityType, first.entityId);
+    const { local, server, pending } = stateOf(first.entityType, first.entityId);
     // Creato dalla persona (anche rimettendo un elemento eliminato): prima non c'era nulla. Si conta
     // solo se c'è ancora.
     if (first.change === "create" || first.deleted) {
@@ -118,7 +124,10 @@ export const planRevert = (
     }
     if (!canRestoreRevision(first)) continue;
     const lastAt = timestampOf(list[list.length - 1].changedAt);
-    const ownerWrote = (local ? timestampOf(local.updatedAt) > lastAt : false) || (server ? timestampOf(server.updatedAt) > lastAt : false);
+    // Solo ore del server (come `changedAt`) più la coda d'invio: il timbro della copia qui è
+    // dell'orologio del dispositivo, e con l'orologio indietro una modifica non ancora inviata, fatta
+    // dopo, sembrava più vecchia e veniva sovrascritta anche con «lascia ciò che è cambiato dopo».
+    const ownerWrote = pending === true || (server ? timestampOf(server.updatedAt) > lastAt : false);
     // Versione di una modifica senza la copia del proprietario: copertine e file solo da un'eliminazione dopo.
     const needsSource = first.change === "update" && !local && PROTECTED_ENTITY_TYPES.has(first.entityType);
     const deletedAfter = needsSource ? (later.filter((revision) => revision.change === "delete").at(-1) ?? null) : null;
@@ -127,7 +136,8 @@ export const planRevert = (
       else plan.gone += 1;
       continue;
     }
-    const ownerDeleted = !local && server?.deleted === true && ownerWrote;
+    // Eliminato dal proprietario: sul server, o qui con l'eliminazione ancora in coda.
+    const ownerDeleted = !local && ownerWrote && (server?.deleted === true || pending === true);
     plan.restore.push({
       revision: first,
       deletedAfter,
