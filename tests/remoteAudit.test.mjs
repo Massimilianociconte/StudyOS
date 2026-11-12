@@ -265,7 +265,7 @@ test("connettore remoto: studyos_restore_change dice cosa è successo, anche in 
 });
 
 test("catalogo 1.8.0: registro e ripristino sul remoto, dividi pagine ovunque", () => {
-  assert.equal(AGENT_SERVER_VERSION, "1.8.0");
+  assert.equal(AGENT_SERVER_VERSION, "1.9.0");
   assert.equal(CLOUD_UNAVAILABLE.has("studyos_list_audit"), false);
   assert.deepEqual([...CLOUD_ONLY], ["studyos_restore_change"]);
   const restore = findAgentTool("studyos_restore_change");
@@ -316,7 +316,7 @@ test("MCP: il ripristino non è sul connettore principale; sul remoto sì, con i
   assert.equal(denied.result.isError, true);
   assert.equal(ran.length, 1, "un connettore di sola lettura non ripristina");
   const init = await rpc("initialize", { protocolVersion: "2025-06-18" }, remote);
-  assert.equal(init.result.serverInfo.version, "1.8.0");
+  assert.equal(init.result.serverInfo.version, "1.9.0");
 });
 
 test("app: studyos_split_pages e il registro di questo browser", async () => {
