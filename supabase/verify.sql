@@ -3,10 +3,11 @@
 -- files_bucket_ready, file_read_ready and file_policies = 4 only after storage.sql.
 --
 -- Protezione dei dati (revisione B4 del 12/11/2026, vedi docs/security-data.md). Da eseguire dopo
--- tutti gli altri script, e di nuovo dopo ogni script nuovo: i controlli valgono per ogni tabella
--- public.studyos_* e ogni funzione SECURITY DEFINER di public, anche quelle aggiunte in futuro.
+-- tutti gli altri script, e di nuovo dopo ogni script nuovo: i controlli valgono per ogni tabella di
+-- public (tranne quelle di un'estensione) e ogni funzione SECURITY DEFINER di public, anche quelle
+-- aggiunte in futuro.
 -- - tables_rls_ready: ogni tabella ha la RLS attiva, nessun ruolo dei client (anon, authenticated) ne
---   è proprietario e nessuno dei due ha TRUNCATE (che ignora la RLS); una vista è leggibile dai client
+--   è proprietario, ha BYPASSRLS o ha TRUNCATE (che ignora la RLS); una vista è leggibile dai client
 --   solo con security_invoker, una vista materializzata mai.
 -- - anon_closed_ready: anon (la chiave publishable senza accesso) non ha privilegi su quelle tabelle
 --   e nessuna policy (nemmeno sui file di studyos-files) vale per anon o per public.
@@ -15,8 +16,8 @@
 --   (studyos_keepalive).
 -- - security_issues: vuota (null) quando le tre colonne sopra sono true; altrimenti dice quali oggetti
 --   sistemare (solo nomi, mai dati).
--- - emails_hidden_ready (dopo groups.sql e sharing.sql): nessuna email visibile agli altri nelle righe
---   dei membri e delle condivisioni.
+-- - emails_hidden_ready (dopo groups.sql, sharing.sql e people.sql): nessuna email visibile agli altri
+--   nelle righe dei membri, degli inviti di gruppo e delle condivisioni.
 -- - erase_all_ready: «Cancella anche dall'account» toglie anche cronologia, condivisioni mandate,
 --   registro e permessi del connettore remoto, il profilo online e i resoconti BARB.
 with
@@ -27,7 +28,11 @@ rel as (
   join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public'
     and c.relkind in ('r', 'p', 'v', 'm', 'f')
-    and (c.relname like 'studyos\_%' or c.relname = 'university_sync_reports')
+    -- Ogni tabella di public, non solo studyos_* (fix 1 della revisione B4): tranne quelle di un'estensione.
+    and not exists (
+      select 1 from pg_depend d
+      where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e'
+    )
 ),
 definer as (
   select p.oid as fn_oid, p.oid::regprocedure::text as fn_name,
@@ -65,6 +70,10 @@ issue (area, what) as (
   union all
   select 'rls', relname || ': proprietario ' || pg_get_userbyid(relowner) from rel
   where pg_get_userbyid(relowner) in ('anon', 'authenticated')
+  union all
+  -- Ruolo dei client che salta la RLS: le policy non varrebbero per lui.
+  select 'rls', r.rolname || ': BYPASSRLS' from pg_roles r
+  where r.rolname in (select name from client_role) and r.rolbypassrls
   union all
   select 'rls', rel.relname || ': TRUNCATE per ' || client_role.name from rel, client_role
   where rel.relkind in ('r', 'p') and has_table_privilege(client_role.name, rel.rel_oid, 'TRUNCATE')
@@ -148,6 +157,10 @@ select
       )
       and coalesce((xpath('/row/n/text()', query_to_xml(
         'select count(*) as n from public.studyos_group_members where email is not null',
+        false, true, '')))[1]::text = '0', false)
+      -- Vecchi inviti per email: ogni membro del gruppo li legge (people.sql toglie l'indirizzo).
+      and coalesce((xpath('/row/n/text()', query_to_xml(
+        'select count(*) as n from public.studyos_group_invites where recipient_email is not null',
         false, true, '')))[1]::text = '0', false)
   end
   and case when to_regclass('public.studyos_shares') is null then true

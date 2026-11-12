@@ -13,8 +13,11 @@
   Ogni funzione definer: `set search_path` e `revoke … from public, anon`. Niente FORCE RLS (le
   definer sono il passaggio controllato). Le colonne generiche di `verify.sql`
   (`tables_rls_ready`, `anon_closed_ready`, `definer_functions_ready`, `security_issues`)
-  scoprono le dimenticanze in ogni tabella `studyos_*`. Mai salvare email dove altri le leggono:
-  membri e condivisioni hanno `email`/`grantee_email` sempre null. Vedi
+  scoprono le dimenticanze in ogni tabella di `public`; una definer eseguibile da `authenticated`
+  va letta a mano (deve limitarsi a `auth.uid()`, alle condivisioni o a un segreto). Mai salvare
+  email dove altri le leggono: membri, inviti di gruppo e condivisioni hanno
+  `email`/`recipient_email`/`grantee_email` null. Le pulizie una tantum (es. `names_from_email`)
+  girano solo senza il loro segno in `studyos_migrations`. Vedi
   [../security-data.md](../security-data.md).
 - Il lock del vault e l'applicazione di dati remoti richiedono una scrittura
   IndexedDB confermata. Gli errori di push non eliminano voci dall'outbox.
@@ -495,7 +498,8 @@
   `recipient_user_id = me`, il canale Realtime filtra `recipient_user_id=eq.<id>`, e notifiche,
   chiusura delle notifiche (`settleInviteNotifications`) e ritiro (`mergeSharedSnapshot` con
   `receivedComplete`) usano `isReceivedInvite` di `src/lib/groups.ts`. Mai filtrare per
-  `recipient_email`: l'email resta solo sui vecchi inviti, e le copie locali di quelli mai legati a
+  `recipient_email`: dopo la migrazione `people.sql` toglie i vecchi inviti per email non legati e
+  svuota l'indirizzo degli altri (ogni membro lo leggeva); le copie locali di quelli mai legati a
   un account si tolgono (`isLegacyEmailInvite`). Il client pubblica solo inviti con codice
   (`isCodeOnlyInvite`); quelli a una persona li crea `invite_person_to_group`.
 - Conferma email spenta sul progetto reale dall'11/11/2026 (Authentication → Sign In /

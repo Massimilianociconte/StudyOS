@@ -26,7 +26,7 @@ La «Password dell'app» cifra solo la copia sul dispositivo (vedi sotto).
 | Condivisioni | `studyos_shares`, `studyos_share_invites`, `studyos_item_revisions` | Chi riceve cosa e con quale permesso; dei link solo l'impronta (hash). Le versioni precedenti delle modifiche fatte da altri ai tuoi dati restano 90 giorni |
 | Profilo online | `studyos_profiles` | Nome, @nome e «Gli altri possono trovarmi» |
 | Notifiche | `studyos_push_subscriptions`, `studyos_push_reminders` | Indirizzo del servizio di notifiche del browser e le sue chiavi; titolo e testo dei promemoria finché non partono (poi un giorno) |
-| Registri dei limiti | `studyos_person_lookups`, `studyos_push_sends`, `studyos_push_reminder_sends` | Account e ora (per le ricerche anche l'indirizzo IP), cancellati dopo un'ora. Nessun contenuto |
+| Registri dei limiti | `studyos_person_lookups`, `studyos_push_sends`, `studyos_push_reminder_sends` | Account e ora (per le ricerche anche l'indirizzo IP). Le righe più vecchie di un'ora si cancellano alla ricerca o all'invio successivo: restano circa un'ora, di più se non ne arrivano altri. Nessun contenuto |
 | Connettore remoto degli assistenti | `studyos_agent_grants`, `studyos_agent_audit` | Del segreto solo l'impronta (hash). Il registro tiene le versioni prima e dopo di ogni modifica dell'assistente per 90 giorni, per poterla annullare |
 | Account | Supabase Auth (`auth.users`, `auth.sessions`) | Email, impronta della password, sessioni aperte |
 | Copia di sicurezza scaricata | File sul tuo dispositivo | Cifrata solo se scegli una password quando la scarichi |
@@ -38,8 +38,8 @@ La «Password dell'app» cifra solo la copia sul dispositivo (vedi sotto).
   finché non la togli. Vede il nome con cui condividi.
 - **I membri di un gruppo**: il gruppo, i nomi scelti e i ruoli dei membri, risorse, attività
   e inviti del gruppo. Non vedono le email dei membri né di chi accetta un link di
-  condivisione. Eccezione: un vecchio invito per email, di prima dell'11/11/2026, mostra ai membri
-  l'indirizzo a cui era stato mandato finché l'invito resta.
+  condivisione. `people.sql` toglie l'indirizzo anche dai vecchi inviti per email, di prima
+  dell'11/11/2026: quelli non legati a un account spariscono.
 - **Chi ti cerca**: con l'email intera esatta o con il tuo @nome trova nome e @nome, solo se
   «Gli altri possono trovarmi» è attivo. Non vede mai la tua email.
 - **Gli assistenti AI che colleghi**:
@@ -91,7 +91,7 @@ In Impostazioni → Spazio e dati. Non si può annullare.
 | Gruppi: tuo nome di membro, risorse e attività che hai scritto | **Restano**: sono anche degli altri membri. Il nome resta quello che avevi scelto (mai l'email). Per andartene usa «Esci dal gruppo» |
 | Condivisioni e inviti che altri ti hanno mandato | **Restano**: sono di chi li ha mandati |
 | Dispositivi con le notifiche | Questo dispositivo smette di riceverle; gli altri restano finché non esci da lì o non li togli con «Rimuovi» |
-| Registri dei limiti (un'ora, senza contenuti) | Restano e si cancellano da soli: toglierli permetterebbe di aggirare i limiti |
+| Registri dei limiti (circa un'ora, senza contenuti) | Restano e si cancellano alla ricerca o all'invio successivo: toglierli permetterebbe di aggirare i limiti |
 | L'account stesso (email e password) | Resta: puoi ancora accedere. Per eliminarlo chiedi all'amministratore del progetto |
 
 «Svuota solo questo dispositivo» non tocca l'account: i dati si riscaricano.
@@ -105,8 +105,9 @@ Da un altro dispositivo connesso al tuo account:
 2. **Assistenti.** In Impostazioni → Agenti AI:
    - «Scollega il connettore remoto» toglie il connettore remoto del tuo account;
    - se dal dispositivo perso avevi approvato degli assistenti, usa «Scollega gli assistenti di
-     tutti» in «Avanzate». «Revoca gli accessi di questo browser» toglie solo quelli approvati
-     dal browser dove la premi.
+     tutti» in «Avanzate». Attenzione: scollega anche gli assistenti delle altre persone che usano
+     lo stesso connettore, e ognuno dovrà ricollegare il suo. «Revoca gli accessi di questo
+     browser» toglie solo quelli approvati dal browser dove la premi.
 3. **Sessioni.** L'app esce solo dal dispositivo su cui premi «Esci», quindi la sessione del
    dispositivo perso va chiusa dal Dashboard Supabase. Apri Authentication → Users e copia lo
    User UID del tuo account. Poi, nel SQL Editor:
@@ -127,13 +128,13 @@ Da un altro dispositivo connesso al tuo account:
 
 ## Controlli sul database
 
-`supabase/verify.sql` controlla in modo generico ogni tabella `public.studyos_*` e ogni
-funzione `SECURITY DEFINER` di `public`, anche quelle che verranno aggiunte. Va rieseguito dopo
-ogni script nuovo.
+`supabase/verify.sql` controlla in modo generico ogni tabella di `public` (con o senza il
+prefisso `studyos_`, tranne quelle di un'estensione) e ogni funzione `SECURITY DEFINER` di
+`public`, anche quelle che verranno aggiunte. Va rieseguito dopo ogni script nuovo.
 
 - **`tables_rls_ready`**: ogni tabella ha la RLS attiva e non appartiene ad `anon` o
-  `authenticated`. Nessuno dei due ruoli ha `TRUNCATE`, che svuota una tabella ignorando la RLS.
-  Una vista si legge solo con `security_invoker`.
+  `authenticated`. Nessuno dei due ruoli ha `TRUNCATE`, che svuota una tabella ignorando la RLS,
+  né `BYPASSRLS`, che la salta del tutto. Una vista si legge solo con `security_invoker`.
 - **`anon_closed_ready`**: `anon` (chi usa la chiave pubblica senza accesso) non ha privilegi
   su quelle tabelle e nessuna policy vale per `anon` o `public`, nemmeno sui file.
 - **`definer_functions_ready`**: ogni funzione definer fissa il `search_path`, e `anon` non la
@@ -142,22 +143,47 @@ ogni script nuovo.
   - `studyos_keepalive`, che non tocca dati.
 - **`security_issues`**: vuota se va tutto bene, altrimenti l'elenco degli oggetti da sistemare
   (solo nomi).
-- **`emails_hidden_ready`** ed **`erase_all_ready`**: email nascoste ai membri e cancellazione
-  completa.
+- **`emails_hidden_ready`** ed **`erase_all_ready`**: email nascoste ai membri (anche negli
+  inviti di gruppo) e cancellazione completa.
 
-`people-verify.sql` controlla con **`email_names_ready`** che nessun nome salvato sia la
-parte dell'email prima della @.
+`people-verify.sql` controlla con **`email_names_ready`** che la pulizia una tantum dei nomi
+presi dall'email sia stata fatta. Dopo, rieseguire `people.sql` non tocca più nessun nome: chi
+sceglie apposta un nome uguale alla parte prima della @ lo tiene.
 
-**Niente FORCE ROW LEVEL SECURITY.** Le tabelle appartengono a `postgres`, che non viene mai
-usato dai client: lo usano solo il SQL Editor e le funzioni `SECURITY DEFINER`. Queste ultime
-sono il passaggio voluto oltre la RLS, e ognuna controlla chi chiama:
+**Niente FORCE ROW LEVEL SECURITY.** La RLS vale per ogni ruolo che non è proprietario della
+tabella e non ha `BYPASSRLS`. Su questo si regge la protezione: `anon` e `authenticated`, i soli
+ruoli dei client, non possiedono nessuna tabella e non hanno `BYPASSRLS` (lo controlla
+`tables_rls_ready`). FORCE cambierebbe le regole solo per il proprietario delle tabelle, cioè il
+ruolo con cui girano il SQL Editor e le funzioni `SECURITY DEFINER`. Queste funzioni sono il
+passaggio voluto oltre la RLS, e ognuna controlla chi chiama:
 
 - l'account (`auth.uid()`);
 - oppure, per il connettore remoto e il Worker, il segreto.
 
-Forzare la RLS romperebbe proprio queste funzioni. Il connettore remoto non ha un `auth.uid()`,
-e le funzioni dei gruppi richiamerebbero le policy che le usano. Al posto di FORCE, `verify.sql`
-controlla che nessun ruolo dei client sia proprietario di una tabella.
+Quanto FORCE cambierebbe dipende dal tuo progetto. Per vederlo, nel SQL Editor (sola lettura):
+
+```sql
+select rolname, rolbypassrls from pg_roles where rolname in ('postgres', 'anon', 'authenticated');
+```
+
+- `anon` e `authenticated` devono essere `false`;
+- se `postgres` è `true`, FORCE per lui non cambia nulla;
+- se è `false`, FORCE metterebbe sotto la RLS anche le funzioni definer, e il connettore remoto,
+  che non ha un `auth.uid()`, smetterebbe di funzionare.
+
+In nessuno dei due casi FORCE aggiunge protezione verso i client.
+
+**Da controllare a mano: funzioni definer chiamabili da `authenticated`.** `verify.sql` non può
+capire da solo se una funzione controlla chi chiama. Per ogni funzione `SECURITY DEFINER` nuova
+che `authenticated` può eseguire, leggi il corpo. Deve limitare ogni lettura e scrittura
+all'account (`auth.uid()`), a ciò che gli è stato condiviso o a un segreto. Non deve mai
+restituire dati di un account scelto da un parametro, come l'email di un id qualunque.
+L'elenco delle funzioni da leggere:
+
+```sql
+select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.prosecdef and has_function_privilege('authenticated', p.oid, 'EXECUTE');
+```
 
 **Per ogni tabella o funzione nuova.** I privilegi predefiniti di Supabase danno tutto ad `anon`
 e `authenticated` su ogni oggetto nuovo di `public`. Ogni script deve quindi:
@@ -173,7 +199,5 @@ Poi riesegui `verify.sql`.
 
 - Nell'app non ci sono «Esci da tutti i dispositivi» né il cambio password: per ora passano dal
   Dashboard Supabase (vedi «Se perdi un dispositivo»).
-- I vecchi inviti di gruppo per email mostrano ai membri l'indirizzo del destinatario finché
-  restano.
 - Le voci di attività «ha tolto … dal gruppo» scritte prima della revisione possono contenere un
   nome preso dall'email: il testo della voce non dice di chi è, quindi la pulizia non lo cambia.

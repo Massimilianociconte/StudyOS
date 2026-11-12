@@ -899,14 +899,23 @@ update public.studyos_group_invites
 set code = ''
 where code <> '' and (recipient_user_id is not null or recipient_email is not null);
 
+-- Vecchi inviti per email (revisione B4): l'indirizzo lo leggeva ogni membro del gruppo. Dopo la
+-- migrazione e il controllo qui sopra (che usano ancora l'indirizzo), quelli non legati a un account
+-- non si possono più accettare e quelli già risposti non servono: via. In quelli legati basta
+-- l'account. Idempotente: alla seconda esecuzione non trova righe. Solo qui, non in groups.sql: groups.sql
+-- gira prima e toglierebbe gli indirizzi prima che la migrazione li leghi.
+delete from public.studyos_group_invites where recipient_email is not null and recipient_user_id is null;
+update public.studyos_group_invites set recipient_email = null where recipient_email is not null;
+
 -- ─── Pulizia: nomi presi dalla parte dell'email prima della @ (revisione B4) ─
 -- Fino alla revisione del 12/11/2026 (sera) chi non aveva un nome nel profilo entrava nei gruppi, e
 -- condivideva, con la parte dell'email prima della @ (server e app). Quei nomi restano nelle righe già
 -- scritte: membri, proprietario del gruppo, chi ha mandato un invito, autore di risorse e attività,
 -- proprietario e destinatario di condivisioni e inviti. Si sostituiscono con il nome del profilo online
--- (se non è anch'esso quella parte), altrimenti «Studente». Gira a ogni esecuzione ed è idempotente:
--- sistema anche le righe scritte dopo da un'app non ancora aggiornata. Il segno names_from_email in
--- studyos_migrations dice quando è girata la prima volta. Nessuna email esce: si confrontano soltanto.
+-- (se non è anch'esso quella parte), altrimenti «Studente». Una volta sola: con il segno
+-- names_from_email in studyos_migrations le esecuzioni successive non toccano nessun nome, così chi
+-- sceglie apposta un nome uguale alla parte prima della @ lo tiene. Nessuna email esce: si
+-- confrontano soltanto.
 -- Restano i nomi dentro il testo delle voci «ha tolto … dal gruppo» (la voce non dice di chi è il nome).
 
 -- p_name, oppure il nome da usare al suo posto se è la parte prima della @ dell'email di p_user.
@@ -940,6 +949,11 @@ revoke all on function public.studyos_name_without_email(uuid, text) from public
 
 do $$
 begin
+  -- Già fatta: non si tocca più nessun nome (vedi sopra).
+  if exists (select 1 from public.studyos_migrations where name = 'names_from_email') then
+    return;
+  end if;
+
   update public.studyos_group_members m
   set display_name = public.studyos_name_without_email(public.studyos_uuid(m.user_id), m.display_name)
   where public.studyos_name_without_email(public.studyos_uuid(m.user_id), m.display_name) is distinct from m.display_name;
