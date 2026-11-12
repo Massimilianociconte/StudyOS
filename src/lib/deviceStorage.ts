@@ -13,14 +13,16 @@ export const PROFILE_STORAGE_KEYS = [
   "studyos-agent-policy",
   "studyos-agent-audit",
   "studyos-agent-hub",
+  // Segreto di questo browser per le revoche (va con la chiave: un dispositivo svuotato riparte da capo).
+  "studyos-agent-secret",
   GETTING_STARTED_HIDDEN_KEY,
   // Promemoria degli eventi già mostrati.
-  "studyos-event-reminders-fired",
-  // Email in attesa di conferma; inviti a un gruppo o a una condivisione aperti prima di accedere.
-  "studyos-pending-confirmation-email",
-  "studyos-pending-invite",
-  "studyos-pending-share"
+  "studyos-event-reminders-fired"
 ] as const;
+
+// Restano l'email in attesa di conferma e gli inviti (gruppo, condivisione) aperti prima di accedere:
+// sono passi in corso dell'accesso, non dati del profilo. Cambiando account con «sostituisci»
+// (cloudSync bindUser → resetAllData) un invito appena aperto non deve sparire prima di essere usato.
 
 type KeyStorage = Pick<Storage, "removeItem">;
 

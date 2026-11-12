@@ -35,10 +35,8 @@ test("ogni chiave è quella usata davvero nel codice (niente nomi che si perdono
     "studyos-agent-policy": "src/lib/agentLocal.ts",
     "studyos-agent-audit": "src/lib/agentLocal.ts",
     "studyos-agent-hub": "src/lib/agentLocal.ts",
-    "studyos-event-reminders-fired": "src/lib/eventReminders.ts",
-    "studyos-pending-confirmation-email": "src/components/CloudPanel.tsx",
-    "studyos-pending-invite": "src/lib/groupInvite.ts",
-    "studyos-pending-share": "src/lib/shareInvite.ts"
+    "studyos-agent-secret": "src/lib/agentLocal.ts",
+    "studyos-event-reminders-fired": "src/lib/eventReminders.ts"
   };
   for (const key of PROFILE_STORAGE_KEYS) {
     if (key === GETTING_STARTED_HIDDEN_KEY) continue;
@@ -48,10 +46,26 @@ test("ogni chiave è quella usata davvero nel codice (niente nomi che si perdono
   assert.match(source("src/views/DashboardView.tsx"), /GETTING_STARTED_HIDDEN_KEY/);
 });
 
+test("un invito aperto prima di accedere sopravvive a un cambio di account con «sostituisci»", () => {
+  for (const key of ["studyos-pending-invite", "studyos-pending-share", "studyos-pending-confirmation-email"]) {
+    assert.ok(!PROFILE_STORAGE_KEYS.includes(key), `${key} non va cancellata da resetAllData`);
+  }
+});
+
 test("le chiavi studyos-* del localStorage sono tutte cancellate o lasciate apposta", () => {
   // Chiavi che restano: sessione (la toglie l'uscita dall'account), id casuale del browser,
-  // timer (lo azzera lo store), studyos-ui (clearUiState), studyos-local-db (database, svuotato a parte).
-  const kept = new Set(["studyos-auth", "studyos-agent-browser", "studyos-study-timer", "studyos-ui", "studyos-local-db"]);
+  // timer (lo azzera lo store), studyos-ui (clearUiState), studyos-local-db (database, svuotato a parte),
+  // e i passi in corso dell'accesso (email da confermare, inviti aperti prima di accedere).
+  const kept = new Set([
+    "studyos-auth",
+    "studyos-agent-browser",
+    "studyos-study-timer",
+    "studyos-ui",
+    "studyos-local-db",
+    "studyos-pending-confirmation-email",
+    "studyos-pending-invite",
+    "studyos-pending-share"
+  ]);
   const files = [
     "src/lib/agentLocal.ts",
     "src/lib/eventReminders.ts",
