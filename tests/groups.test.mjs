@@ -159,6 +159,37 @@ test("merge condiviso: senza novità restituisce gli stessi oggetti (niente risc
   assert.equal(merged.resources[0], res);
 });
 
+test("merge condiviso: ciò che cambia senza un timbro nuovo dal server avanza di 1 ms", () => {
+  // Il cloud personale accetta lo stesso timbro solo con lo stesso contenuto: membri nuovi o la
+  // marcatura `sharedAt` con il timbro di prima venivano rifiutati per sempre («Conflitto cloud
+  // irrisolto per studyGroup:…»).
+  const shared = { ...group([member("alice", "owner")]), sharedAt: "2026-10-06T10:00:00.000Z" };
+  const joined = mergeSharedSnapshot({ ...empty, groups: [shared] }, { ...empty, groups: [group([member("alice", "owner"), member("chicca")])] }, "chicca", ["g1"]);
+  assert.equal(joined.groups[0].updatedAt, "2026-10-06T10:00:00.001Z");
+  // Gruppo appena arrivato e marcato: stesso risultato su ogni dispositivo.
+  const fresh = mergeSharedSnapshot(empty, { ...empty, groups: [group([member("alice", "owner")])] }, "chicca", ["g1"]);
+  assert.equal(fresh.groups[0].updatedAt, "2026-10-06T10:00:00.001Z");
+  assert.equal(fresh.groups[0].sharedAt, "2026-10-06T10:00:00.000Z");
+  // Risorsa vista sul server per la prima volta.
+  const marked = mergeSharedSnapshot(
+    { ...empty, groups: [shared], resources: [resource("r1", "alice")] },
+    { ...empty, groups: [group([member("alice", "owner")])], resources: [resource("r1", "alice")] },
+    "alice",
+    ["g1"]
+  );
+  assert.equal(marked.resources[0].updatedAt, "2026-10-06T10:00:00.001Z");
+});
+
+test("merge condiviso: i membri hanno sempre lo stesso ordine (niente riscritture a ogni pull)", () => {
+  const members = [member("alice", "owner"), { ...member("bob"), joinedAt: "2026-10-07T10:00:00.000Z" }];
+  const shared = { ...group(members), sharedAt: "2026-10-06T10:00:00.000Z" };
+  // Il server restituisce i membri in un ordine qualsiasi.
+  const merged = mergeSharedSnapshot({ ...empty, groups: [shared] }, { ...empty, groups: [group([...members].reverse())] }, "alice", ["g1"]);
+  assert.equal(merged.groups[0], shared);
+  const fromScratch = mergeSharedSnapshot(empty, { ...empty, groups: [group([...members].reverse())] }, "alice", ["g1"]);
+  assert.deepEqual(fromScratch.groups[0].members.map((m) => m.userId), ["alice", "bob"]);
+});
+
 test("realtimeGroupIds: id sicuri per il filtro Realtime, senza doppioni, ordinati e al massimo 100", () => {
   assert.deepEqual(realtimeGroupIds(["group_b", "group_a", "group_b"]), ["group_a", "group_b"]);
   // Virgole, parentesi, punti o spazi cambierebbero il filtro `in.(…)`: quell'id resta fuori.

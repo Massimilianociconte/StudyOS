@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planMerge, legacySnapshotToRows, chunkBySize, planOrphanPuts } from "../src/lib/syncMerge.ts";
+import { planMerge, legacySnapshotToRows, chunkBySize, planOrphanPuts, tieBreakStamp } from "../src/lib/syncMerge.ts";
 import { normalizeCollections } from "../src/lib/collections.ts";
 
 const task = (id, updatedAt, extra = {}) => ({ id, updatedAt, title: id, ...extra });
@@ -161,4 +161,20 @@ test("senza accountWins le preferenze restano last-writer-wins (sync normale)", 
   );
   assert.equal(plan.changes.length, 0);
   assert.deepEqual(plan.requeue, [{ collection: "preferences", id: "main" }]);
+});
+
+test("pareggio di timbro con contenuto diverso: la copia di qui riparte 1 ms dopo", () => {
+  // Il cloud rifiuta per sempre lo stesso timbro con un contenuto diverso («Conflitto cloud
+  // irrisolto») e il merge non sceglie: senza un timbro nuovo la voce restava in coda per sempre.
+  const remote = row("a", "2026-11-12T10:00:01Z", task("a", "2026-11-12T10:00:00.000Z", { title: "cloud" }));
+  assert.equal(tieBreakStamp(task("a", "2026-11-12T10:00:00.000Z", { title: "qui" }), remote), "2026-11-12T10:00:00.001Z");
+  // Microsecondi di Postgres: stesso millisecondo per il client, il server li distingue.
+  const micro = row("a", "2026-11-12T10:00:01Z", task("a", "2026-11-12T10:00:00.800456+00:00"));
+  assert.equal(tieBreakStamp(task("a", "2026-11-12T10:00:00.800123+00:00"), micro), "2026-11-12T10:00:00.801Z");
+  // Niente pareggio: decide il merge come sempre.
+  assert.equal(tieBreakStamp(task("a", "2026-11-12T09:00:00.000Z"), remote), null);
+  assert.equal(tieBreakStamp(task("a", "2026-11-12T11:00:00.000Z"), remote), null);
+  assert.equal(tieBreakStamp(undefined, remote), null);
+  assert.equal(tieBreakStamp(task("a", "2026-11-12T10:00:00.000Z"), row("a", "2026-11-12T10:00:01Z", { id: "a", deletedAt: "2026-11-12T10:00:00.000Z" }, true)), null);
+  assert.equal(tieBreakStamp(task("a", "non è una data"), row("a", "2026-11-12T10:00:01Z", task("a", "non è una data"))), null);
 });

@@ -69,6 +69,20 @@ const remoteStamp = (row: RemoteRow) => {
   return timestampOf(own) || timestampOf(row.updated_at);
 };
 
+/**
+ * Il cloud ha rifiutato la copia di qui e la sua ha lo stesso timbro (al millisecondo): accetta
+ * lo stesso timbro solo con lo stesso contenuto, e il merge a parità non sceglie, quindi la voce
+ * restava in coda per sempre («Conflitto cloud irrisolto»). Vince la copia di qui con il timbro
+ * 1 ms dopo, non «adesso»: una modifica vera arrivata dopo deve continuare a vincere.
+ * null se non è un pareggio (o la riga del cloud è un'eliminazione): decide il merge come sempre.
+ */
+export const tieBreakStamp = (local: Pick<SyncableEntity, "updatedAt"> | undefined, remote: RemoteRow): string | null => {
+  if (!local || remote.deleted) return null;
+  const stamp = timestampOf(local.updatedAt);
+  if (!stamp || stamp !== remoteStamp(remote)) return null;
+  return new Date(stamp + 1).toISOString();
+};
+
 export const indexCollections = (state: CollectionsState) =>
   Object.fromEntries(
     COLLECTIONS.map((key) => [key, new Map((state[key] as unknown as SyncableEntity[]).map((item) => [item.id, item]))])

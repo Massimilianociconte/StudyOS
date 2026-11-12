@@ -15,7 +15,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey } from "./collections";
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
-import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, type PendingOutbox, type RemoteRow } from "./syncMerge";
+import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, tieBreakStamp, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import { PERSONAL_COLLECTIONS, personalRemovals } from "./accountSwitch";
 import { ACCOUNT_TEXT } from "./labels/account";
 import {
@@ -256,6 +256,25 @@ const readStoredRows = async (rows: SyncOutboxRow[]) => {
   return new Map<string, unknown>(entries);
 };
 
+/**
+ * Rifiutata dal cloud con lo stesso timbro e un contenuto diverso (vedi `tieBreakStamp`): la copia
+ * di qui riparte 1 ms dopo, come una modifica locale, e va alla passata successiva. Sblocca anche i
+ * dispositivi già fermi su «Conflitto cloud irrisolto». false se non è un pareggio da sciogliere.
+ */
+const breakTie = async (row: SyncOutboxRow, remote: RemoteRow) => {
+  if (row.deleted) return false;
+  const list = pickCollections(useStudyStore.getState())[row.collection] as unknown as Array<{ id: string; updatedAt: string }>;
+  const local = list.find((item) => item.id === row.entityId);
+  const stamp = tieBreakStamp(local, remote);
+  if (!local || !stamp) return false;
+  assertStoreReady();
+  useStudyStore.setState({
+    [row.collection]: list.map((item) => (item === local ? { ...item, updatedAt: stamp } : item))
+  } as unknown as Partial<ReturnType<typeof useStudyStore.getState>>);
+  await useStudyStore.getState().retryPersist();
+  return true;
+};
+
 const push = async (userId: string) => {
   assertStoreReady();
   const queued = await db.syncOutbox.orderBy("queuedAt").toArray();
@@ -303,6 +322,7 @@ const push = async (userId: string) => {
   }
 
   let sent = 0;
+  let tieBroken = false;
   const failed: string[] = [];
   const oversizedKeys: string[] = [];
   for (const batch of chunkBySize(prepared, (item) => item.size, PUSH_MAX_BYTES, PUSH_MAX_ROWS)) {
@@ -330,7 +350,12 @@ const push = async (userId: string) => {
         const remote = await pullEntityRow(userId, item.row.entityType, item.row.entityId);
         if (remote) await mergeRows(userId, [remote], false);
         const pending = await db.syncOutbox.get(item.row.key);
-        if (pending?.queuedAt === item.row.queuedAt) failed.push(`Conflitto cloud irrisolto per ${item.row.key}`);
+        if (pending?.queuedAt !== item.row.queuedAt) continue;
+        if (remote && (await breakTie(item.row, remote))) {
+          tieBroken = true;
+          continue;
+        }
+        failed.push(`Conflitto cloud irrisolto per ${item.row.key}`);
       }
     } catch (error) {
       if (error instanceof SyncSuspendedError || error instanceof SessionChangedError) throw error;
@@ -342,6 +367,8 @@ const push = async (userId: string) => {
       ? `${oversizedKeys.length} elementi troppo grandi per il cloud (limite ${Math.round(PUSH_MAX_BYTES / 1024)} KB): restano solo su questo dispositivo. Sostituisci gli allegati grandi con un link.`
       : undefined
   });
+  // Le copie con il timbro nuovo partono subito, in un'altra passata (vedi requestSync).
+  if (tieBroken) rerun = true;
   if (failed.length) throw new Error(failed.join(" · "));
   return sent;
 };

@@ -61,6 +61,18 @@ const instant = (value: string) => {
   return Number.isNaN(time) ? 0 : time;
 };
 
+/**
+ * Timbro per ciò che il merge cambia senza un timbro nuovo dal server (membri, `sharedAt`): 1 ms
+ * dopo quello attuale. Il cloud personale accetta lo stesso timbro solo con lo stesso contenuto e
+ * rifiutava per sempre la copia cambiata («Conflitto cloud irrisolto»). Solo 1 ms e non «adesso»:
+ * una modifica vera sul server, anche di poco dopo, deve continuare a vincere.
+ */
+const nudged = (stamp: string) => new Date(instant(stamp) + 1).toISOString();
+
+/** Ordine fisso dei membri: il server li restituisce in un ordine qualsiasi. */
+const byJoin = (members: StudyGroup["members"]) =>
+  [...members].sort((a, b) => instant(a.joinedAt) - instant(b.joinedAt) || a.userId.localeCompare(b.userId));
+
 const newerWins = <T extends Dated>(current: T[], incoming: T[]) => {
   const map = new Map(current.map((item) => [item.id, item]));
   const fresh: T[] = [];
@@ -99,10 +111,10 @@ export const mergeSharedSnapshot = (current: SharedSnapshot, incoming: SharedSna
     .map((group) => {
       const remote = serverGroups.get(group.id);
       if (!remote) return group;
-      const members = remote.members.length ? remote.members : group.members;
+      const members = remote.members.length ? byJoin(remote.members) : group.members;
       // Stesso oggetto se nulla cambia: lo store salva (e accoda alla sync) per riferimento.
       if (group.sharedAt && JSON.stringify(members) === JSON.stringify(group.members)) return group;
-      return { ...group, members, sharedAt: group.sharedAt ?? remote.updatedAt };
+      return { ...group, members, sharedAt: group.sharedAt ?? remote.updatedAt, updatedAt: nudged(group.updatedAt) };
     });
 
   const invites = newerWins(current.invites, incoming.invites);
@@ -119,7 +131,7 @@ export const mergeSharedSnapshot = (current: SharedSnapshot, incoming: SharedSna
     )
     .map((resource) => {
       const remote = serverResources.get(resource.id);
-      return remote && !resource.sharedAt ? { ...resource, sharedAt: remote.updatedAt } : resource;
+      return remote && !resource.sharedAt ? { ...resource, sharedAt: remote.updatedAt, updatedAt: nudged(resource.updatedAt) } : resource;
     });
 
   const activities = newerWins(current.activities, incoming.activities);

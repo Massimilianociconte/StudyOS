@@ -88,6 +88,12 @@
   sempre su quella locale (`planMerge` `accountWins`): quella locale resta solo se l'account non
   ne ha. `updatePreferences` timbra con `laterStamp`: una copia con l'orario avanti non deve far
   rifiutare la correzione di nome e foto.
+- Il cloud personale (`push_studyos_rows`) accetta lo stesso timbro solo con lo stesso contenuto.
+  Ogni cambio a un'entità sincronizzata deve spostare `updatedAt`, anche quando lo fa un merge
+  (membri e `sharedAt` dei gruppi: `mergeSharedSnapshot` avanza di 1 ms). Senza, il push veniva
+  rifiutato per sempre: «Conflitto cloud irrisolto per studyGroup:…» e, alla prima sync
+  dell'account, `firstSync` ripartiva a ogni passata. Rete di sicurezza: un rifiuto a parità
+  di timbro (al millisecondo) fa ripartire la copia di qui 1 ms dopo (`tieBreakStamp`, `breakTie`).
 - «Esci dall'account» esce solo da questo dispositivo (`signOut("local")`): con `global` si
   chiudevano anche gli altri dispositivi dell'account. «Togli i dati da qui» riusa il flusso di
   «Ho dimenticato la password» (`signOutThisDevice` poi `resetAllData({ propagate: false })`).
