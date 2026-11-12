@@ -47,6 +47,16 @@ const MAX_EVENTS = 2000;
 /** Giorni esclusi o modificati letti per una serie, e in tutto il file: oltre, il file è sospetto. */
 const MAX_ROWS_PER_SERIES = 1000;
 const MAX_ROWS = 20_000;
+/**
+ * Date escluse lette dal file per un evento e in tutto il file (le più vicine a oggi): il doppio delle righe
+ * che l'unione tiene, così l'unione sceglie ancora; il resto non si legge nemmeno (un file ostile da 5 MB
+ * può averne 300.000, e ognuna costa una conversione di fuso).
+ */
+const MAX_DATES_PER_EVENT = 2 * MAX_ROWS_PER_SERIES;
+const MAX_DATES = 2 * MAX_ROWS;
+/** Fusi diversi cercati per file; quanti di questi confrontati con le regole del loro VTIMEZONE (costa di più). */
+const MAX_ZONE_LOOKUPS = 100;
+const MAX_ZONE_MATCHES = 20;
 /** Durata massima di un evento letto da un file (giorni): oltre è quasi certamente un errore. */
 const MAX_SPAN_DAYS = 366;
 /** X-STUDYOS-FROM vale entro questi giorni dal primo giorno della figlia (uno spostamento, non di più). */
@@ -77,7 +87,40 @@ const deviceZone = () => validZone(deviceTimeZone()) ?? "UTC";
 // Testo
 // ---------------------------------------------------------------------------------------
 
-export const escapeText = (value: string) => value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+/** Caratteri di controllo che non possono stare in una riga del file (il tab sì). */
+const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f]/g;
+
+/** Testo per il file: a capo di ogni tipo (anche un CR da solo) → \n, gli altri caratteri di controllo tolti. */
+export const escapeText = (value: string) =>
+  value
+    .replace(/\r\n|\r|\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+
+/**
+ * Testo di un file .ics da byte: le righe piegate (a capo seguito da spazio o tab, RFC 5545 §3.1) si uniscono
+ * prima di leggere l'UTF-8, così una piega in mezzo a un carattere di più byte non lo rompe.
+ */
+export const decodeIcsBytes = (bytes: Uint8Array) => {
+  const out = new Uint8Array(bytes.length);
+  let size = 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index];
+    if (byte === 13 || byte === 10) {
+      const next = byte === 13 && bytes[index + 1] === 10 ? index + 2 : index + 1;
+      if (bytes[next] === 32 || bytes[next] === 9) {
+        index = next;
+        continue;
+      }
+    }
+    out[size] = byte;
+    size += 1;
+  }
+  return new TextDecoder("utf-8").decode(out.subarray(0, size)).replace(/^﻿/, "");
+};
 
 export const unescapeText = (value: string) => value.replace(/\\([\\;,nN])/g, (_match, char: string) => (char === "n" || char === "N" ? "\n" : char));
 
@@ -755,14 +798,18 @@ interface Transition {
   to: number;
 }
 
-/** Cambi d'ora del fuso tra l'inizio di `fromYear` e la fine di `toYear`, al secondo (da Intl). */
+/**
+ * Cambi d'ora del fuso tra l'inizio di `fromYear` e la fine di `toYear`, al secondo (da Intl). Passi di 3
+ * giorni: i due cambi più vicini dei dati IANA distano 7 giorni (Gaza nel 2040, Ramadan; Brasile nel 2000),
+ * e con passi di una settimana sparivano entrambi.
+ */
 const transitionsOf = (zone: string, fromYear: number, toYear: number): Transition[] => {
   const out: Transition[] = [];
   const end = utcMs(toYear + 1, 1, 1);
   let t = utcMs(fromYear, 1, 1);
   let previous = timeZoneOffset(t, zone);
   while (t < end && out.length < 1000) {
-    const next = Math.min(t + 7 * DAY_MS, end);
+    const next = Math.min(t + 3 * DAY_MS, end);
     const offset = timeZoneOffset(next, zone);
     if (offset === previous) {
       t = next;
@@ -783,37 +830,88 @@ const transitionsOf = (zone: string, fromYear: number, toYear: number): Transiti
   return out;
 };
 
+/** Il cambio d'ora come lo scrive un VTIMEZONE: tipo, ora locale prima del cambio, n-esimo giorno della settimana. */
+const describeTransition = (transition: Transition) => {
+  const local = new Date(transition.ms + transition.from);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + 1;
+  const day = local.getUTCDate();
+  const nth = day + 7 > daysInMonth(year, month) ? -1 : Math.ceil(day / 7);
+  const time = `${pad(local.getUTCHours())}${pad(local.getUTCMinutes())}${pad(local.getUTCSeconds())}`;
+  const kind = transition.to > transition.from ? "DAYLIGHT" : "STANDARD";
+  return {
+    ...transition,
+    kind,
+    year,
+    month,
+    byDay: `${nth}${WEEKDAY_BY_NUMBER[local.getUTCDay()]}`,
+    local: `${pad(year, 4)}${pad(month)}${pad(day)}T${time}`,
+    key: `${kind}|${month}|${nth}${local.getUTCDay()}|${time}|${transition.from}|${transition.to}`
+  };
+};
+
 /**
  * VTIMEZONE del fuso IANA per gli anni dati, dalle regole di Intl: gli anni con lo stesso cambio
  * (mese, n-esimo giorno della settimana, ora) diventano una regola annuale; quando le regole
  * cambiano, la regola vecchia ha UNTIL; un fuso senza cambi ha un solo STANDARD.
+ *
+ * `checkYear` (≥ toYear): ultimo anno in cui il file usa il fuso (una serie senza fine va avanti). Le
+ * regole annuali si controllano con i cambi veri di Intl fino a lì: se in un anno sbagliano (Gerusalemme,
+ * «il venerdì prima dell'ultima domenica», a volte è il penultimo venerdì; Santiago, Il Cairo, Nuuk, Gaza,
+ * Casablanca), il fuso esce con ogni cambio scritto come data (DTSTART e RDATE), fino a `checkYear`.
  */
-export const buildVTimezone = (zone: string, fromYear: number, toYear: number): string[] => {
+export const buildVTimezone = (zone: string, fromYear: number, toYear: number, checkYear = toYear): string[] => {
+  const lastYear = Math.max(toYear, checkYear);
+  const all = transitionsOf(zone, fromYear, lastYear);
+  const ruled = ruleVTimezone(zone, fromYear, toYear, all.filter((transition) => transition.ms < utcMs(toYear + 1, 1, 1)));
+  if (matchesIntl(ruled, zone, all, fromYear, lastYear)) return ruled;
+  return datedVTimezone(zone, all);
+};
+
+/** Il VTIMEZONE scritto, riletto, dà gli stessi cambi di Intl (`transitions`) e nessun altro tra fromYear e toYear. */
+const matchesIntl = (lines: readonly string[], zone: string, transitions: readonly Transition[], fromYear: number, toYear: number) => {
+  const component = parseComponents(lines.join("\r\n")).find((item) => item.name === "VTIMEZONE");
+  if (!component) return false;
+  const rules = zoneRules(component);
+  const start = utcMs(fromYear, 1, 1);
+  const end = utcMs(toYear + 1, 1, 1);
+  if (rules.offsetAt(start) !== timeZoneOffset(start, zone)) return false;
+  for (const transition of transitions) {
+    if (rules.offsetAt(transition.ms) !== transition.to || rules.offsetAt(transition.ms - 1000) !== transition.from) return false;
+  }
+  const real = new Set(transitions.map((transition) => transition.ms));
+  for (let year = fromYear; year <= toYear; year += 1) {
+    for (const ms of rules.onsets(year)) if (ms >= start && ms < end && !real.has(ms)) return false;
+  }
+  return true;
+};
+
+/** Ogni cambio come data: per tipo e scarti, il primo in DTSTART e gli altri in RDATE (uno per anno). */
+const datedVTimezone = (zone: string, transitions: readonly Transition[]): string[] => {
+  const groups = new Map<string, ReturnType<typeof describeTransition>[]>();
+  for (const item of transitions.map(describeTransition)) {
+    const key = `${item.kind}|${item.from}|${item.to}`;
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
   const lines = ["BEGIN:VTIMEZONE", `TZID:${zone}`, `X-LIC-LOCATION:${zone}`];
-  const transitions = transitionsOf(zone, fromYear, toYear);
+  for (const [head, ...rest] of groups.values()) {
+    lines.push(`BEGIN:${head.kind}`, `TZOFFSETFROM:${offsetText(head.from)}`, `TZOFFSETTO:${offsetText(head.to)}`, `DTSTART:${head.local}`);
+    for (const item of rest) lines.push(`RDATE:${item.local}`);
+    lines.push(`END:${head.kind}`);
+  }
+  lines.push("END:VTIMEZONE");
+  return lines;
+};
+
+/** VTIMEZONE con le regole annuali (vedi `buildVTimezone`), dai cambi tra fromYear e toYear. */
+const ruleVTimezone = (zone: string, fromYear: number, toYear: number, transitions: readonly Transition[]): string[] => {
+  const lines = ["BEGIN:VTIMEZONE", `TZID:${zone}`, `X-LIC-LOCATION:${zone}`];
   if (!transitions.length) {
     const offset = offsetText(timeZoneOffset(utcMs(fromYear, 1, 1), zone));
     lines.push("BEGIN:STANDARD", `TZOFFSETFROM:${offset}`, `TZOFFSETTO:${offset}`, "DTSTART:19700101T000000", "END:STANDARD", "END:VTIMEZONE");
     return lines;
   }
-  const described = transitions.map((transition) => {
-    const local = new Date(transition.ms + transition.from);
-    const year = local.getUTCFullYear();
-    const month = local.getUTCMonth() + 1;
-    const day = local.getUTCDate();
-    const nth = day + 7 > daysInMonth(year, month) ? -1 : Math.ceil(day / 7);
-    const time = `${pad(local.getUTCHours())}${pad(local.getUTCMinutes())}${pad(local.getUTCSeconds())}`;
-    const kind = transition.to > transition.from ? "DAYLIGHT" : "STANDARD";
-    return {
-      ...transition,
-      kind,
-      year,
-      month,
-      byDay: `${nth}${WEEKDAY_BY_NUMBER[local.getUTCDay()]}`,
-      local: `${pad(year, 4)}${pad(month)}${pad(day)}T${time}`,
-      key: `${kind}|${month}|${nth}${local.getUTCDay()}|${time}|${transition.from}|${transition.to}`
-    };
-  });
+  const described = transitions.map(describeTransition);
   type Item = (typeof described)[number];
   // Gruppi di anni consecutivi con lo stesso cambio, per tipo.
   const runs: Item[][] = [];
@@ -1067,6 +1165,18 @@ const formatDuration = (sign: number, days: number, minutes: number) => {
 
 const signedMinutes = (minutes: number) => formatDuration(minutes < 0 ? -1 : 1, 0, Math.abs(minutes));
 
+/** Anni dopo oggi in cui il VTIMEZONE di una serie senza fine deve essere giusto (oltre, le sue regole). */
+const RULE_HORIZON_YEARS = 20;
+const PERIOD_DAYS: Record<RepeatRule["freq"], number> = { daily: 1, weekly: 7, monthly: 31, yearly: 366 };
+
+/** Ultimo anno (al più `horizon`) in cui la serie può avere un'occorrenza; con un conteggio, una stima per eccesso. */
+const reachYear = (rule: RepeatRule, startDate: string, horizon: number) => {
+  const startYear = Number(startDate.slice(0, 4));
+  if (rule.end?.type === "until") return Math.min(Number(rule.end.date.slice(0, 4)), horizon);
+  if (rule.end?.type === "count") return Math.min(startYear + Math.ceil((PERIOD_DAYS[rule.freq] * (rule.interval ?? 1) * rule.end.count) / 365), horizon);
+  return horizon;
+};
+
 /** TRIGGER relativo all'inizio per un promemoria. */
 const triggerOf = (reminder: EventReminder, timing: Timing) => {
   const days = reminder.daysBefore ?? 0;
@@ -1083,6 +1193,9 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
   const label = categoryLabel ?? ((category: EventCategory) => EVENT_CATEGORY_LABEL[category] ?? category);
   const subjectName = (id?: string) => subjects.find((subject) => subject.id === id)?.name;
   const zoneYears = new Map<string, { min: number; max: number }>();
+  /** Fin dove arrivano le serie di ogni fuso (anno): il suo VTIMEZONE deve essere giusto fino a lì. */
+  const zoneReach = new Map<string, number>();
+  const horizon = now.getUTCFullYear() + RULE_HORIZON_YEARS;
   const body: string[] = [];
 
   const useZone = (zone: string, ms: number) => {
@@ -1120,7 +1233,8 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     if (color) lines.push(cssColorName(color) ? `COLOR:${cssColorName(color)}` : `X-STUDYOS-COLOR:${color}`);
     const categories = [event.category ? label(event.category) : "", subjectName(event.subjectId) ?? ""].filter(Boolean);
     if (categories.length) lines.push(`CATEGORIES:${categories.map((value) => escapeText(String(value))).join(",")}`);
-    if (event.status === "skipped") lines.push("STATUS:CANCELLED");
+    // Saltato non è annullato: l'evento resta (anche nelle altre app), StudyOS rilegge lo stato.
+    if (event.status === "skipped") lines.push("X-STUDYOS-STATUS:skipped");
     // Compleanni e anniversari: tipo, anno e persona solo per StudyOS (le altre app ignorano le X-).
     const occasion = sanitizeOccasion(event.occasion);
     if (occasion) {
@@ -1184,6 +1298,7 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     if (cut !== undefined && cut <= timing.startDate) continue;
     let rule = normalizeRepeat(event);
     if (rule && cut !== undefined) rule = truncatedRule(rule, timing.startDate, cut);
+    if (rule && !timing.allDay) zoneReach.set(timing.zone, Math.max(zoneReach.get(timing.zone) ?? 0, reachYear(rule, timing.startDate, horizon)));
     const rows = rowsBySeries.get(event.id);
     if (!rule) {
       // Evento singolo: una riga sul suo giorno lo cancella o lo sostituisce.
@@ -1265,7 +1380,7 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
   for (const [zone, years] of [...zoneYears].sort((a, b) => compareText(a[0], b[0]))) {
     const toYear = Math.max(years.max, nowYear) + 1;
     const fromYear = Math.max(years.min - 1, toYear - 60);
-    zones.push(...buildVTimezone(zone, fromYear, toYear));
+    zones.push(...buildVTimezone(zone, fromYear, toYear, Math.max(toYear, zoneReach.get(zone) ?? toYear)));
   }
 
   const lines = [
@@ -1280,7 +1395,8 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     ...body,
     "END:VCALENDAR"
   ];
-  return `${lines.map(foldLine).join("\r\n")}\r\n`;
+  // Ultima rete: anche i valori scritti così come sono (UID, regole importate) non vanno a capo nel file.
+  return `${lines.map((line) => foldLine(line.replace(CONTROL_CHARS, ""))).join("\r\n")}\r\n`;
 };
 
 // ---------------------------------------------------------------------------------------
@@ -1316,6 +1432,11 @@ export interface IcsImportedEvent {
   reminders?: EventReminder[];
   /** Occorrenza annullata (RECURRENCE-ID con STATUS:CANCELLED). */
   cancelled?: true;
+  /**
+   * Saltato (X-STUDYOS-STATUS:skipped, o STATUS:CANCELLED nei vecchi file di StudyOS): true. false = un file
+   * di StudyOS dice che non lo è; assente = il file non lo sa (le altre app): lo stato resta quello di qui.
+   */
+  skipped?: boolean;
   /** Compleanno o anniversario esportato da StudyOS (X-STUDYOS-OCCASION). */
   occasion?: EventOccasion;
   /** RELATED-TO;RELTYPE=PARENT: UID della serie madre (figlia di una divisione fatta in StudyOS). */
@@ -1326,6 +1447,12 @@ export interface IcsImportedEvent {
   edited?: true;
   /** X-STUDYOS-EDITED sulla serie: date escluse a mano in StudyOS (tra quelle di `exdates`). */
   editedExdates?: string[];
+  /**
+   * Inizio, fine e regola come sono scritti nel file, con il fuso a cui porta ogni TZID: per l'impronta
+   * (`sourceStamp`), uguale su ogni dispositivo anche per le ore senza fuso, che qui diventano istanti nel
+   * fuso del dispositivo.
+   */
+  fileTiming?: string;
 }
 
 export interface IcsParseResult {
@@ -1337,7 +1464,50 @@ export interface IcsParseResult {
 export interface IcsParseOptions {
   /** Fuso da usare per le ore senza fuso e per i fusi sconosciuti (predefinito: dispositivo). */
   timeZone?: string;
+  /** Oggi, per scegliere cosa leggere di un file troppo grande (predefinito: adesso). */
+  now?: string | number | Date;
 }
+
+/** Giorno (numero di giorni dal 1970) dalle prime cifre di una data del file, senza fuso; NaN se non è una data. */
+const rawDay = (value: string) => {
+  const match = /^\s*(\d{4})(\d{2})(\d{2})/.exec(value);
+  return match ? Math.floor(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / DAY_MS) : Number.NaN;
+};
+
+/**
+ * I `max` elementi con la chiave più bassa, nell'ordine di partenza (a pari chiave, i primi). Chiave non
+ * numerica = ultimi. Lineare più un ordinamento di numeri: regge le 300.000 date di un file ostile.
+ */
+const lowestKeys = <T>(items: readonly T[], keyOf: (item: T) => number, max: number): T[] => {
+  if (items.length <= max) return [...items];
+  if (max <= 0) return [];
+  const keys = new Float64Array(items.length);
+  items.forEach((item, index) => {
+    const key = keyOf(item);
+    keys[index] = Number.isNaN(key) ? Number.POSITIVE_INFINITY : key;
+  });
+  const threshold = Float64Array.from(keys).sort()[max - 1];
+  let below = 0;
+  for (const key of keys) if (key < threshold) below += 1;
+  let ties = max - below;
+  return items.filter((_, index) => keys[index] < threshold || (keys[index] === threshold && ties-- > 0));
+};
+
+/** Ultimo giorno (come `rawDay`) raggiunto da una RRULE che parte il giorno `start`; Infinity = senza fine. */
+const RULE_STEP_DAYS: Record<string, number> = { DAILY: 1, WEEKLY: 7, MONTHLY: 31, YEARLY: 366 };
+const ruleReachDay = (rule: string, start: number) => {
+  const text = rule.toUpperCase();
+  const until = /(?:^|;)\s*UNTIL=([^;]*)/.exec(text);
+  if (until) {
+    const day = rawDay(until[1]);
+    return Number.isNaN(day) ? start : Math.max(start, day);
+  }
+  const count = /(?:^|;)\s*COUNT=(\d+)/.exec(text);
+  if (!count) return Number.POSITIVE_INFINITY;
+  const interval = Number(/(?:^|;)\s*INTERVAL=(\d+)/.exec(text)?.[1] ?? 1) || 1;
+  const step = RULE_STEP_DAYS[/(?:^|;)\s*FREQ=([A-Z]+)/.exec(text)?.[1] ?? ""] ?? 1;
+  return start + Math.min(Number(count[1]), 1e6) * interval * step;
+};
 
 type DateValue = { type: "date"; date: string } | { type: "time"; ms: number; zone: string; floating: boolean; utc: boolean };
 
@@ -1383,8 +1553,41 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
   let todos = 0;
   let tooMany = false;
   const tooLong: string[] = [];
+  const nowMs = new Date(options.now ?? Date.now()).getTime();
+  const today = Math.floor((Number.isFinite(nowMs) ? nowMs : Date.now()) / DAY_MS);
+  let zoneLookups = 0;
+  let zoneMatches = 0;
+  let dateBudget = MAX_DATES;
+  /** Serie a cui il tetto del file ha tolto date escluse: quante ne sono state lette \u2192 titoli. */
+  const starved = new Map<number, string[]>();
 
-  for (const calendar of parseComponents(text.replace(/^\uFEFF/, "")).filter((component) => component.name === "VCALENDAR")) {
+  const calendars = parseComponents(text.replace(/^\uFEFF/, "")).filter((component) => component.name === "VCALENDAR");
+  const studyOsFile = (calendar: Component) => /StudyOS/i.test(propOf(calendar, "PRODID")?.value ?? "");
+  // Pi\u00F9 di MAX_EVENTS eventi: si leggono i pi\u00F9 vicini a oggi. Prima quelli in corso o in arrivo (dal pi\u00F9
+  // vicino), poi i passati (dal pi\u00F9 recente); gli eventi senza data e quelli annullati per ultimi.
+  const allEvents = calendars.flatMap((calendar) => {
+    const fromStudyOs = studyOsFile(calendar);
+    return calendar.children.filter((child) => child.name === "VEVENT").map((vevent) => ({ vevent, fromStudyOs }));
+  });
+  let chosen: Set<Component> | null = null;
+  if (allEvents.length > MAX_EVENTS) {
+    const PAST = 1e8;
+    const rank = ({ vevent, fromStudyOs }: { vevent: Component; fromStudyOs: boolean }) => {
+      const start = rawDay(propOf(vevent, "DTSTART")?.value ?? "");
+      if (Number.isNaN(start)) return Number.NaN;
+      const rid = propOf(vevent, "RECURRENCE-ID");
+      if (!rid && !fromStudyOs && propOf(vevent, "STATUS")?.value.trim().toUpperCase() === "CANCELLED") return Number.NaN;
+      const rule = rid ? undefined : propOf(vevent, "RRULE")?.value;
+      const endDay = rawDay(propOf(vevent, "DTEND")?.value ?? "");
+      const end = rule ? ruleReachDay(rule, start) : Number.isNaN(endDay) ? start : Math.max(start, endDay);
+      return end >= today ? Math.max(0, start - today) : PAST + (today - end);
+    };
+    const kept = lowestKeys(allEvents, rank, MAX_EVENTS);
+    chosen = new Set(kept.map((entry) => entry.vevent));
+    tooMany = true;
+  }
+
+  for (const calendar of calendars) {
     // TZID come testo (RFC 5545): le virgole di Exchange arrivano protette ("Amsterdam\, Berlino").
     const tzidOf = (value: string | undefined) => unescapeText((value ?? "").trim().replace(/^"(.*)"$/, "$1")).trim();
     const vtimezones = new Map(calendar.children.filter((child) => child.name === "VTIMEZONE").map((child) => [tzidOf(propOf(child, "TZID")?.value), child]));
@@ -1394,6 +1597,22 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       return validZone(clean) ?? validZone(WINDOWS_ZONES[clean]);
     };
     const calendarZone = plainZone(propOf(calendar, "X-WR-TIMEZONE")?.value);
+    // Per l'impronta: date e fuso come sono scritti, non come diventano su questo dispositivo.
+    const rawWrittenZone = propOf(calendar, "X-WR-TIMEZONE")?.value.trim() ?? "";
+    /**
+     * Per l'impronta, il fuso a cui porta ogni TZID letto: il nome IANA se si riconosce dal nome, se no
+     * le regole del suo VTIMEZONE (il fuso trovato con quelle dipende dal dispositivo). Vuoto se non si sa.
+     */
+    const zoneKeys = new Map<string, string>();
+    const writtenAs = (property: Property | undefined) => {
+      if (!property) return "";
+      const tzid = property.params.TZID;
+      const zone = tzid === undefined ? "" : zoneKeys.get(tzidOf(tzid)) || tzid;
+      return `${zone};${(property.params.VALUE ?? "").toUpperCase()}:${property.value.trim()}`;
+    };
+    // File scritto da StudyOS: dice per ogni evento se è saltato (prima con STATUS:CANCELLED, che StudyOS
+    // non ha mai usato per un annullamento vero: quelli sono EXDATE o eventi tolti dal file).
+    const fromStudyOs = studyOsFile(calendar);
     const defaultZone = calendarZone ?? fallbackZone;
     const resolved = new Map<string, string>();
 
@@ -1401,6 +1620,13 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     const resolveZone = (tzid: string, year: number) => {
       const known = resolved.get(tzid);
       if (known) return known;
+      // Un file con migliaia di fusi diversi è ostile: oltre i primi non si cercano più (ora di qui).
+      if (zoneLookups >= MAX_ZONE_LOOKUPS) {
+        unknownZones.add(tzid);
+        resolved.set(tzid, defaultZone);
+        return defaultZone;
+      }
+      zoneLookups += 1;
       let zone = plainZone(tzid);
       if (!zone) {
         const path = /([A-Za-z_]+\/[A-Za-z_+\-0-9]+(?:\/[A-Za-z_+\-0-9]+)?)$/.exec(tzid);
@@ -1409,7 +1635,9 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       }
       const definition = vtimezones.get(tzid);
       if (!zone && definition) zone = plainZone(propOf(definition, "X-LIC-LOCATION")?.value);
-      if (!zone && definition) {
+      zoneKeys.set(tzid, zone ?? (definition ? `vtz:${zoneDefinitionKey(definition)}` : ""));
+      if (!zone && definition && zoneMatches < MAX_ZONE_MATCHES) {
+        zoneMatches += 1;
         // Nome inventato (es. "Ora dell'Europa centrale"): il primo fuso con gli stessi scarti.
         const rules = zoneRules(definition);
         if (!rules.empty) {
@@ -1451,6 +1679,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     const vevents = calendar.children.filter((child) => child.name === "VEVENT");
     todos += calendar.children.filter((child) => child.name === "VTODO").length;
     for (const vevent of vevents) {
+      if (chosen && !chosen.has(vevent)) continue;
       if (events.length >= MAX_EVENTS) {
         tooMany = true;
         break;
@@ -1462,7 +1691,10 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         continue;
       }
       const ridProp = propOf(vevent, "RECURRENCE-ID");
-      const cancelled = propOf(vevent, "STATUS")?.value.trim().toUpperCase() === "CANCELLED";
+      const statusCancelled = propOf(vevent, "STATUS")?.value.trim().toUpperCase() === "CANCELLED";
+      const cancelled = statusCancelled && !fromStudyOs;
+      const skippedStatus =
+        propOf(vevent, "X-STUDYOS-STATUS")?.value.trim().toLowerCase() === "skipped" || (statusCancelled && fromStudyOs) ? true : fromStudyOs ? false : undefined;
       if (cancelled && !ridProp) continue;
       const rrules = ridProp ? [] : propsOf(vevent, "RRULE");
       const recurring = rrules.length > 0;
@@ -1560,8 +1792,17 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         allDay,
         ...(allDay ? {} : { timeZone: zone }),
         ...(occasion ? { occasion } : {}),
+        ...(skippedStatus !== undefined ? { skipped: skippedStatus } : {}),
         ...(parentUid && !ridProp ? { parentUid } : {}),
         ...(parentFrom ? { parentFrom } : {}),
+        fileTiming: [
+          rawWrittenZone,
+          writtenAs(startProp),
+          writtenAs(endProp),
+          propOf(vevent, "DURATION")?.value.trim() ?? "",
+          propOf(vevent, "X-MICROSOFT-CDO-ALLDAYEVENT")?.value.trim().toUpperCase() ?? "",
+          rrules[0]?.value.trim() ?? ""
+        ].join("|"),
         recurrence: "none"
       };
 
@@ -1595,23 +1836,27 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
           if (!group.titles.includes(title)) group.titles.push(title);
           groups.set(key, group);
         }
-        const exdates = propsOf(vevent, "EXDATE").flatMap((property) =>
-          property.value
-            .split(",")
-            .map((value) => readDate(property, value.trim(), zone))
-            .filter((value): value is DateValue => value !== null)
-            .map(canonical)
-        );
+        // Date escluse: si leggono solo le più vicine a oggi, per evento e in tutto il file. Quelle tolte da
+        // un evento con troppe date le dice l'unione (che ne tiene ancora meno); quelle tolte dal tetto del
+        // file si dicono qui.
+        const nearest = (name: string, max: number) => {
+          const values = propsOf(vevent, name).flatMap((property) => property.value.split(",").map((value) => ({ property, value: value.trim() })));
+          const kept = lowestKeys(values, (entry) => Math.abs(rawDay(entry.value) - today), max);
+          return { kept, total: values.length };
+        };
+        const room = Math.min(MAX_DATES_PER_EVENT, dateBudget);
+        const listed = nearest("EXDATE", room);
+        dateBudget -= listed.kept.length;
+        if (listed.total > room && room < MAX_DATES_PER_EVENT) starved.set(room, [...(starved.get(room) ?? []), title]);
+        const exdates = listed.kept.map(({ property, value }) => readDate(property, value, zone)).filter((value): value is DateValue => value !== null).map(canonical);
         if (exdates.length) event.exdates = [...new Set(exdates)].sort();
         const excluded = new Set(exdates);
-        const edited = propsOf(vevent, "X-STUDYOS-EDITED").flatMap((property) =>
-          property.value
-            .split(",")
-            .map((value) => readDate(property, value.trim(), zone))
-            .filter((value): value is DateValue => value !== null)
-            .map(canonical)
-            .filter((value) => excluded.has(value))
-        );
+        // X-STUDYOS-EDITED segna alcune di quelle date: non ne servono più di quante se ne sono lette.
+        const edited = nearest("X-STUDYOS-EDITED", listed.kept.length)
+          .kept.map(({ property, value }) => readDate(property, value, zone))
+          .filter((value): value is DateValue => value !== null)
+          .map(canonical)
+          .filter((value) => excluded.has(value));
         if (edited.length) event.editedExdates = [...new Set(edited)].sort();
         if (propOf(vevent, "RDATE") || propOf(vevent, "EXRULE")) extraDates = true;
       }
@@ -1652,7 +1897,9 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     }
   }
 
-  if (unknownZones.size) for (const zone of unknownZones) warnings.push(ICS_TEXT.unknownZone(zone));
+  if (unknownZones.size === 1) warnings.push(ICS_TEXT.unknownZone([...unknownZones][0]));
+  else if (unknownZones.size) warnings.push(ICS_TEXT.unknownZones([...unknownZones]));
+  for (const [read, titles] of starved) warnings.push(ICS_TEXT.tooManyRows([...new Set(titles)], read));
   for (const group of simplified.values()) warnings.push(ICS_TEXT.simplified(group.titles, group.parts));
   for (const group of firstOnly.values()) warnings.push(ICS_TEXT.firstOnly(group.titles, group.parts));
   if (multiple.length) warnings.push(ICS_TEXT.multipleRules([...new Set(multiple)]));
@@ -1700,6 +1947,8 @@ export interface IcsImportItem {
   exdates?: string[];
   reminders?: EventReminder[];
   cancelled?: true;
+  /** Saltato secondo il file (vedi `IcsImportedEvent.skipped`): assente = lo stato resta quello di qui. */
+  skipped?: boolean;
   category?: EventCategory;
   subjectId?: string;
   color?: string;
@@ -1711,6 +1960,8 @@ export interface IcsImportItem {
   parentFrom?: string;
   edited?: true;
   editedExdates?: string[];
+  /** Vedi `IcsImportedEvent.fileTiming`. */
+  fileTiming?: string;
 }
 
 export interface IcsItemOptions {
@@ -1754,11 +2005,13 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.exdates?.length ? { exdates: event.exdates } : {}),
       ...(event.reminders ? { reminders: event.reminders } : {}),
       ...(event.cancelled ? { cancelled: true as const } : {}),
+      ...(event.skipped !== undefined ? { skipped: event.skipped } : {}),
       ...(event.occasion ? { occasion: event.occasion } : {}),
       ...(event.parentUid ? { parentUid: event.parentUid } : {}),
       ...(event.parentUid && event.parentFrom ? { parentFrom: event.parentFrom } : {}),
       ...(event.edited ? { edited: true as const } : {}),
       ...(event.editedExdates?.length ? { editedExdates: event.editedExdates } : {}),
+      ...(event.fileTiming !== undefined ? { fileTiming: event.fileTiming } : {}),
       category: categoryFromList(categories) ?? guessCategory(event.title, options.defaultCategory),
       ...(subject ? { subjectId: subject.id, color: subject.color } : {}),
       ...(event.color ? { color: event.color, colorCustom: true as const } : {})
@@ -1788,6 +2041,8 @@ export interface IcsMergePlan {
   relinked: Map<string, string>;
   /** Cose da dire prima di scrivere (righe oltre il limite, vecchi import lasciati com'erano). */
   warnings: string[];
+  /** Eventi modificati qui dopo l'ultimo import, cambiati nel file: le modifiche fatte qui si perdono. */
+  editsReplaced: number;
 }
 
 type Linked = { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string };
@@ -1828,7 +2083,49 @@ const joinNotes = (a: unknown, b: unknown) => {
 /** Campi di una sola scelta: nell'unione dei vecchi import passano se la serie tenuta non li ha, se diversi non si unisce. */
 const FILLED_FIELDS = ["subjectId", "goalId", "cover"] as const;
 
-const ROW_DROPPED = ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "sourceEdited", "splitFrom", "cancelled"] as const;
+const ROW_DROPPED = ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "sourceEdited", "sourceStamp", "splitFrom", "cancelled"] as const;
+
+/** Impronta corta di un testo (cyrb53: 53 bit in base 36), uguale per lo stesso testo su ogni dispositivo. */
+const hashText = (text: string) => {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
+
+/** Impronta delle regole di un VTIMEZONE (inizio, scarti e ripetizioni di ogni osservanza), in qualunque ordine. */
+const zoneDefinitionKey = (definition: Component) =>
+  hashText(
+    definition.children
+      .filter((observance) => observance.name === "STANDARD" || observance.name === "DAYLIGHT")
+      .map((observance) =>
+        [
+          observance.name,
+          ...["DTSTART", "TZOFFSETFROM", "TZOFFSETTO"].map((name) => propOf(observance, name)?.value.trim().toUpperCase() ?? ""),
+          ...observance.props
+            .filter((property) => property.name === "RRULE" || property.name === "RDATE")
+            .map((property) => `${property.name}:${property.value.trim().toUpperCase()}`)
+            .sort()
+        ].join("|")
+      )
+      .sort()
+      .join("\n")
+  );
+
+/** Le due metà di `sourceStamp`: com'era l'evento nel file e come l'import l'ha scritto. */
+const stampParts = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const [file, event] = value.split(".");
+  return file && event ? { file, event } : null;
+};
 
 const withoutKeys = <T extends object>(value: T, keys: readonly string[]): T => {
   const copy = { ...value } as Record<string, unknown>;
@@ -1856,6 +2153,16 @@ const withLocation = <T extends CalendarEvent>(event: T, location: string | unde
   const copy = { ...event };
   delete copy.location;
   return copy;
+};
+
+/**
+ * Stato dopo il file: saltato se il file lo dice; un file di StudyOS che dice «non saltato» toglie solo
+ * «saltato» (fatto, in corso restano); un file che non lo sa lascia lo stato di qui.
+ */
+const statusFrom = (skipped: boolean | undefined, current: CalendarEvent["status"] | undefined): CalendarEvent["status"] => {
+  if (skipped === true) return "skipped";
+  if (skipped === false && current === "skipped") return "planned";
+  return current ?? "planned";
 };
 
 /** Colore scelto a mano nel file: vale sopra quello della tipologia o della materia. */
@@ -1939,6 +2246,50 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   const today = civilDateOf(Number.isNaN(nowMs) ? Date.now() : nowMs, fallbackZone);
   const put = (event: CalendarEvent) => puts.set(event.id, event);
 
+  // Impronte (sourceStamp): l'evento com'è nel file, e come l'import lo scrive. Al prossimo import un file
+  // uguale lascia le modifiche fatte qui; un file cambiato le sostituisce, e lo si dice (`editsReplaced`).
+  /** Eventi modificati qui che il file cambiato sostituisce: id -> titolo di adesso. */
+  const replacedEdits = new Map<string, string>();
+  /** Elementi non letti da un file (senza `fileTiming`): gli orari come li ha l'elemento. */
+  const fileStamp = (item: IcsImportItem) =>
+    hashText(
+      JSON.stringify([
+        item.title.trim(),
+        item.description.trim(),
+        item.location ?? "",
+        customColor(item).toLowerCase(),
+        ...(item.fileTiming !== undefined ? [item.fileTiming] : [item.start, item.end, item.allDay, item.timeZone ?? "", item.repeat ?? null]),
+        item.reminders ?? null,
+        item.skipped ?? null
+      ])
+    );
+  /** Eventi diversi dal file senza impronta (importati prima che ci fosse): non si sa chi li ha cambiati. */
+  const unknownEdits = new Map<string, string>();
+  /**
+   * I campi che l'import scrive, come si vedono: titolo, descrizione, luogo, colore scelto, orari, regola
+   * (senza la fine: una divisione fatta qui la sposta, e l'import la rispetta), promemoria, e «saltato» se
+   * il file lo dice.
+   */
+  const eventStamp = (event: CalendarEvent, withStatus: boolean) => {
+    const timing = timingOf(event, fallbackZone);
+    const rule = normalizeRepeat(event);
+    return hashText(
+      JSON.stringify([
+        String(event.title ?? "").trim(),
+        String(event.description ?? "").trim(),
+        locationOf(event),
+        event.colorCustom === true ? String(event.color ?? "").toLowerCase() : "",
+        timing ? (timing.allDay ? [timing.startDate, timing.endDate] : [timing.startMs, timing.endMs]) : null,
+        validZone(event.timeZone) ?? "",
+        ruleKey(rule ? { ...rule, end: undefined } : null, timing?.startDate ?? ""),
+        reminderKey(event, event.reminders),
+        withStatus ? event.status === "skipped" : null
+      ])
+    );
+  };
+  const stamped = (event: CalendarEvent, item: IcsImportItem): CalendarEvent =>
+    item.sourceUid ? { ...event, sourceStamp: `${fileStamp(item)}.${eventStamp(event, item.skipped !== undefined)}` } : event;
+
   const localMaster = (uid: string) => {
     const id = ownId(uid);
     const mine = id ? byId.get(id) : undefined;
@@ -1971,7 +2322,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       allDay: item.allDay,
       ...(item.timeZone ? { timeZone: item.timeZone } : {}),
       recurrence: "none",
-      status: "planned",
+      status: statusFrom(item.skipped, "planned"),
       checklist: [],
       attachmentIds: [],
       notes: "",
@@ -1981,14 +2332,24 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       ...(item.occasion ? { occasion: item.occasion } : {}),
       ...extra
     };
-    const event = item.repeat ? applyRepeatFields({ ...base, repeat: item.repeat }, { repeatChanged: true, timeZone: fallbackZone }) : base;
+    const event = stamped(item.repeat ? applyRepeatFields({ ...base, repeat: item.repeat }, { repeatChanged: true, timeZone: fallbackZone }) : base, item);
     put(event);
     created.add(event.id);
     return event;
   };
 
-  /** Evento aggiornato con i dati del file, o null se il file dice le stesse cose. */
-  const updated = (existing: CalendarEvent, item: IcsImportItem, options: { rule: boolean; adopt?: string }) => {
+  /**
+   * Evento aggiornato con i dati del file, o null se il file dice le stesse cose. Se il file non è cambiato
+   * dall'ultimo import (stessa impronta), null anche se qui l'evento è stato modificato: le modifiche restano.
+   * `quiet`: si scrive solo l'impronta, e non conta come aggiornato. Senza impronta (import di una
+   * versione precedente) e uguale al file, intera. Con l'impronta, solo la metà del file, se il file dice
+   * com'è l'evento adesso (anche con le modifiche fatte qui, come il proprio export) o le stesse cose
+   * scritte in altro modo (l'import scriverebbe lo stesso evento dell'ultima volta): le modifiche restano.
+   */
+  const updated = (existing: CalendarEvent, item: IcsImportItem, options: { rule: boolean; adopt?: string }): { event: CalendarEvent; quiet: boolean } | null => {
+    const previous = stampParts(existing.sourceStamp);
+    if (!options.adopt && previous?.file === fileStamp(item)) return null;
+    const reworded = (): CalendarEvent | null => (previous && !options.adopt && item.sourceUid ? { ...existing, sourceStamp: `${fileStamp(item)}.${previous.event}` } : null);
     const timing = timingOf(existing, fallbackZone);
     const incoming = timingOf({ start: item.start, end: item.end, allDay: item.allDay, timeZone: item.timeZone ?? existing.timeZone }, fallbackZone);
     if (!incoming) return null;
@@ -1999,9 +2360,11 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     let current = options.rule ? normalizeRepeat(existing) : null;
     if (current && timing && cut !== undefined && cut > timing.startDate) current = truncatedRule(current, timing.startDate, cut);
     const zoneChanged = Boolean(rule && item.timeZone && validZone(existing.timeZone) && item.timeZone !== existing.timeZone);
+    const status = statusFrom(item.skipped, existing.status);
     const same =
       !options.adopt &&
       !existing.archived &&
+      status === existing.status &&
       String(existing.title ?? "").trim() === item.title.trim() &&
       sameDescription(existing, item.description) &&
       locationOf(existing) === (item.location ?? "") &&
@@ -2010,7 +2373,19 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       !zoneChanged &&
       (!options.rule || ruleKey(current, timing?.startDate ?? "") === ruleKey(rule, incoming.startDate)) &&
       (item.reminders === undefined || reminderKey(existing, existing.reminders) === reminderKey(existing, item.reminders));
-    if (same) return null;
+    if (same) {
+      // Solo gli eventi importati (i propri, ritrovati dal loro UID @studyos, restano come sono). Con
+      // l'impronta, cambia solo la metà del file: il file è scritto in altro modo, è un altro file con lo
+      // stesso evento (il proprio export e quello di Google), o dice com'è l'evento dopo le modifiche
+      // fatte qui (il proprio export): la metà dell'evento resta com'era l'import, così le modifiche
+      // restano tali anche col prossimo file che non le ha. Senza impronta (import di prima), intera.
+      if (!existing.sourceUid) return null;
+      if (previous) {
+        const refreshed = reworded();
+        return refreshed ? { event: refreshed, quiet: true } : null;
+      }
+      return { event: stamped(existing, item), quiet: true };
+    }
     const next: CalendarEvent = withLocation(
       {
         ...existing,
@@ -2023,13 +2398,27 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         ...(item.reminders !== undefined ? { reminders: item.reminders } : {}),
         ...(customColor(item) ? { color: customColor(item), colorCustom: true } : {}),
         ...(options.adopt ? { sourceUid: options.adopt } : {}),
+        status,
         archived: false,
         updatedAt: now
       },
       item.location
     );
-    if (!options.rule) return next;
-    return applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone });
+    const written = options.rule ? applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone }) : next;
+    // Il file è scritto in altro modo ma l'import scriverebbe lo stesso evento dell'ultima volta: l'evento
+    // non è cambiato nel file, quindi le differenze sono modifiche fatte qui, e restano. Se il file ora
+    // non dice se è saltato, conta anche un'impronta scritta con «saltato» (lo stato resta quello di qui).
+    // La fine della regola non è nell'impronta dell'evento: deve restare quella di qui (divisioni comprese).
+    const refreshed = reworded();
+    const sameEnd = !options.rule || (rule ? endKey(rule) : null) === (current ? endKey(current) : null);
+    if (refreshed && sameEnd && (previous?.event === eventStamp(written, true) || (item.skipped === undefined && previous?.event === eventStamp(written, false)))) {
+      return { event: refreshed, quiet: true };
+    }
+    // Modificato qui dopo l'ultimo import (non è più come l'import l'aveva scritto): lo si dice prima.
+    if (previous && previous.event !== eventStamp(existing, item.skipped !== undefined)) replacedEdits.set(existing.id, String(existing.title ?? ""));
+    // Senza impronta non si sa se è cambiato qui o nel file: vince il file, e l'anteprima lo dice.
+    else if (!previous && !options.adopt) unknownEdits.set(existing.id, String(existing.title ?? ""));
+    return { event: stamped(written, item), quiet: false };
   };
 
   /** Occorrenza della serie: stessa riga che crea il motore (copia della serie, senza regola). */
@@ -2055,9 +2444,12 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       sourceRecurrenceId: rid
     };
     if (!change) return { ...row, cancelled: true as const, archived: true };
+    // Stato del giorno: quello del file se lo sa (StudyOS), altrimenti quello che aveva già qui.
+    const kept = previous && !previous.cancelled ? previous.status : row.status;
     return withLocation(
       {
         ...row,
+        status: change.skipped === undefined ? kept ?? "planned" : statusFrom(change.skipped, row.status),
         title: change.title,
         description: change.description,
         start: change.start,
@@ -2081,6 +2473,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     if (desired.cancelled) return Boolean(current.archived);
     return (
       !current.archived &&
+      current.status === desired.status &&
       String(current.title ?? "").trim() === String(desired.title ?? "").trim() &&
       sameDescription(current, String(desired.description ?? "")) &&
       locationOf(current) === locationOf(desired) &&
@@ -2280,8 +2673,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     if (existing) {
       const next = updated(existing, item, { rule: false });
       if (next) {
-        put(next);
-        touched.add(existing.id);
+        put(next.event);
+        if (!next.quiet) touched.add(existing.id);
       }
       return;
     }
@@ -2323,7 +2716,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         const keeper =
           dated.find((entry) => entry.timing && civilWeekday(entry.timing.startDate) === weekday)?.event ??
           [...dated].sort((a, b) => (a.timing?.startMs ?? 0) - (b.timing?.startMs ?? 0))[0].event;
-        const next = updated(keeper, item, { rule: true, adopt: uid });
+        const next = updated(keeper, item, { rule: true, adopt: uid })?.event;
         const siblings = group.filter((event) => event.id !== keeper.id);
         const adopted = next ? adoptSiblings(keeper, next, siblings, item) : null;
         if (!adopted) {
@@ -2346,10 +2739,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     if (existing) {
       const next = updated(existing, item, { rule: true });
       if (next) {
-        put(next);
-        touched.add(existing.id);
+        put(next.event);
+        if (!next.quiet) touched.add(existing.id);
       }
-      master = next ?? existing;
+      master = next?.event ?? existing;
     } else master = create(item);
     masterOf.set(uid, master.id);
     if (item.parentUid && uid.endsWith("@studyos")) {
@@ -2437,5 +2830,18 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   for (const [read, titles] of byRead) warnings.push(ICS_TEXT.tooManyRows([...new Set(titles)], read));
   for (const [title, date] of splitExisting) warnings.push(ICS_TEXT.splitsExisting(title, date));
   for (const title of new Set(keptApart)) warnings.push(ICS_TEXT.partKeptApart(title));
-  return { puts: [...puts.values()], deletes: [...deletes].filter((id) => !puts.has(id)), added: created.size, updated: touched.size, relinked, warnings };
+  // Solo gli eventi che questo import scrive davvero (un vecchio import che resta com'era no).
+  const replaced = [...replacedEdits].filter(([id]) => puts.has(id));
+  if (replaced.length) warnings.push(ICS_TEXT.editsReplaced(replaced.map(([, title]) => title)));
+  const unknown = [...unknownEdits].filter(([id]) => puts.has(id));
+  if (unknown.length) warnings.push(ICS_TEXT.unknownEdits(unknown.map(([, title]) => title)));
+  return {
+    puts: [...puts.values()],
+    deletes: [...deletes].filter((id) => !puts.has(id)),
+    added: created.size,
+    updated: touched.size,
+    relinked,
+    warnings,
+    editsReplaced: replaced.length
+  };
 };

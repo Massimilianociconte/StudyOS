@@ -2,7 +2,12 @@
 // RECURRENCE-ID, VALARM; unione con il calendario senza doppioni (recurrence.md §7.2 caso 12).
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { buildIcs, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
+import { readFileSync } from "node:fs";
+import { buildIcs, decodeIcsBytes, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
+import { importButton, previewWarnings } from "../src/lib/calendarGuide.ts";
+import { publicEntity } from "../src/agent/project.ts";
+import { prepareSharedWrite, sharedPushBatches, withoutProtectedKeys } from "../src/lib/sharing.ts";
+import { CALENDAR_GUIDE_TEXT } from "../src/lib/labels/calendarGuide.ts";
 import { applyEditPlan, applyRepeatFields, expandEvents, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 
@@ -547,6 +552,19 @@ const splitCalendar = () => {
 };
 const NOTHING = { added: 0, updated: 0, puts: 0, deletes: 0 };
 const counts = (plan) => ({ added: plan.added, updated: plan.updated, puts: plan.puts.length, deletes: plan.deletes.length });
+/**
+ * Niente di nuovo, al più l'impronta: un altro file con gli stessi eventi scritti in altro modo (il
+ * proprio export e quello di Google) aggiorna solo la metà del file, senza toccare altro.
+ */
+const QUIET = { added: 0, updated: 0, deletes: 0, changed: 0, warnings: 0 };
+const quietCounts = (plan, events) => {
+  const sameButStamp = (put) => {
+    const { sourceStamp: after, ...rest } = put;
+    const { sourceStamp: before, ...old } = events.find((event) => event.id === put.id) ?? {};
+    return typeof after === "string" && typeof before === "string" && after.split(".")[1] === before.split(".")[1] && JSON.stringify(rest) === JSON.stringify(old);
+  };
+  return { added: plan.added, updated: plan.updated, deletes: plan.deletes.length, changed: plan.puts.filter((put) => !sameButStamp(put)).length, warnings: plan.warnings.length };
+};
 
 test("serie divisa in StudyOS ('questa e le successive'): le modifiche del file dopo la divisione vanno alla figlia", () => {
   const { events, master, child } = splitCalendar();
@@ -585,9 +603,12 @@ test("serie divisa: il proprio file reimportato non cambia nulla, anche più vol
     assert.ok(!expected.some((line) => line.startsWith("2026-12-14")), device);
     assert.ok(expected.includes("2026-12-21T08:00:00.000Z Fisica (ripasso mio)"), device);
     const own = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
-    for (const [index, file] of [own, own, SPLIT_CHANGED, own, SPLIT_CHANGED].entries()) {
+    const files = [own, own, SPLIT_CHANGED, own, SPLIT_CHANGED];
+    for (const [index, file] of files.entries()) {
       const plan = merge(events, parseIcs(file, { timeZone: device }), { timeZone: device });
-      assert.deepEqual(counts(plan), NOTHING, `${device} import ${index + 1}`);
+      assert.deepEqual(quietCounts(plan, events), QUIET, `${device} import ${index + 1}`);
+      // Lo stesso file due volte di seguito: proprio nulla.
+      if (file === files[index - 1]) assert.deepEqual(counts(plan), NOTHING, `${device} import ${index + 1}`);
       events = apply(events, plan);
     }
     assert.deepEqual(window(events), expected, device);
@@ -627,14 +648,15 @@ test("serie divisa copiata in un altro calendario: resta una famiglia, e il file
     assert.equal(copyRow("2026-12-07").sourceEdited, undefined, device);
     // Il file originale di Google nella copia: niente giorni doppi, niente cambia.
     const plan = merge(copy, parseIcs(google, { timeZone: device }), { timeZone: device });
-    assert.deepEqual(counts(plan), NOTHING, device);
+    assert.deepEqual(quietCounts(plan, copy), QUIET, device);
     copy = apply(copy, plan);
     assert.deepEqual(window(copy), window(events), device);
+    assert.deepEqual(counts(merge(copy, parseIcs(google, { timeZone: device }), { timeZone: device })), NOTHING, device);
     // E la copia esportata e reimportata in sé stessa non cambia, anche alternata con il file di Google.
     const again = buildIcs({ events: copy, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
     for (const [index, file] of [again, google, own, again, google].entries()) {
       const next = merge(copy, parseIcs(file, { timeZone: device }), { timeZone: device });
-      assert.deepEqual(counts(next), NOTHING, `${device} import ${index + 1}`);
+      assert.deepEqual(quietCounts(next, copy), QUIET, `${device} import ${index + 1}`);
       copy = apply(copy, next);
     }
     assert.deepEqual(window(copy), window(events), device);
@@ -1104,7 +1126,9 @@ test("file ostile: 18.000 date escluse si leggono e si uniscono in tempo lineare
   const run = (file) => () => merge([], parseIcs(file, { timeZone: "Europe/Rome" }), { timeZone: "Europe/Rome" });
   const ratio = growth(run(ics(flood(datesOf(2250)))), run(ics(flood(dates))), 12);
   assert.ok(ratio < 12, `crescita ×${ratio.toFixed(1)} con un input 8 volte più grande`);
-  assert.equal(parsed.events.find((event) => event.uid === "flood").editedExdates.length, 18000);
+  // Si leggono le 2000 più vicine a oggi (il doppio delle righe che l'unione tiene per una serie).
+  assert.equal(parsed.events.find((event) => event.uid === "flood").exdates.length, 2000);
+  assert.equal(parsed.events.find((event) => event.uid === "flood").editedExdates.length, 2000);
   assert.equal(plan.added, 2);
   assert.ok(plan.puts.length <= 2 + 2 * 1000, `${plan.puts.length} righe`);
   assert.ok(plan.puts.filter((event) => event.seriesId).length >= 1000);
@@ -1310,6 +1334,412 @@ test("una RECURRENCE-ID senza la sua serie diventa un evento singolo, deduplicat
 });
 
 // ------------------------------------------------------------------------------------------
+// Reimportare un file non cambiato tiene le modifiche fatte qui (ricontrollo di rilascio, punto 2)
+// ------------------------------------------------------------------------------------------
+
+const COURSE_FILE = (...rows) => ics("X-WR-TIMEZONE:Europe/Rome", ...rows);
+const lesson = (uid, title, day, extra = []) => [
+  "BEGIN:VEVENT",
+  `UID:${uid}`,
+  `DTSTART;TZID=Europe/Rome:202611${day}T090000`,
+  `DTEND;TZID=Europe/Rome:202611${day}T100000`,
+  `SUMMARY:${title}`,
+  ...extra,
+  "END:VEVENT"
+];
+const TWO_LESSONS = COURSE_FILE(lesson("a@g", "Anatomia", "02"), lesson("b@g", "Chimica", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+const reimport = (events, text) => merge(events, parseIcs(text, { timeZone: "Europe/Rome" }), { timeZone: "Europe/Rome" });
+const editedLocally = (events) =>
+  events.map((event) =>
+    event.sourceUid === "a@g" ? { ...event, title: "Anatomia (aula cambiata da me)", location: "Aula 5" } : event.sourceUid === "b@g" && !event.seriesId ? { ...event, title: "Chimica (mia)" } : event
+  );
+
+test("ogni evento importato ricorda com'era nel file (un testo), le righe dei giorni no", () => {
+  const first = apply([], reimport([], COURSE_FILE(lesson("b@g", "Chimica", "03", ["RRULE:FREQ=WEEKLY;COUNT=4", "EXDATE;TZID=Europe/Rome:20261110T090000"]))));
+  const master = first.find((event) => !event.seriesId);
+  assert.equal(typeof master.sourceStamp, "string");
+  assert.ok(master.sourceStamp.length > 4);
+  const row = first.find((event) => event.seriesId);
+  assert.ok(row && !("sourceStamp" in row));
+});
+
+test("le modifiche fatte qui restano se il file non è cambiato dall'ultimo import: nessuna novità", () => {
+  const mine = editedLocally(apply([], reimport([], TWO_LESSONS)));
+  const plan = reimport(mine, TWO_LESSONS);
+  assert.deepEqual(counts(plan), NOTHING);
+  assert.equal(plan.editsReplaced, 0);
+  assert.deepEqual(plan.warnings, []);
+  // Anche più volte di seguito.
+  assert.deepEqual(counts(reimport(mine, TWO_LESSONS)), NOTHING);
+});
+
+test("se il file è cambiato si aggiorna, e l'anteprima dice quanti eventi modificati qui vengono sostituiti", () => {
+  const mine = editedLocally(apply([], reimport([], TWO_LESSONS)));
+  const changed = COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02"), lesson("b@g", "Chimica (laboratorio)", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+  const plan = reimport(mine, changed);
+  assert.equal(plan.updated, 2);
+  assert.equal(plan.editsReplaced, 2);
+  assert.equal(plan.warnings.length, 1);
+  assert.match(plan.warnings[0], /^2 eventi che avevi modificato qui sono cambiati nel file/);
+  assert.match(plan.warnings[0], /«Anatomia \(aula cambiata da me\)» e «Chimica \(mia\)»/);
+  assert.match(plan.warnings[0], /vengono sostituite da quelle del file/);
+  const after = apply(mine, plan);
+  const anatomy = after.find((event) => event.sourceUid === "a@g");
+  assert.equal(anatomy.title, "Anatomia (aula G21)");
+  assert.equal(anatomy.location, undefined);
+  // Dopo l'aggiornamento, nuove modifiche qui restano con lo stesso file.
+  const again = after.map((event) => (event.id === anatomy.id ? { ...event, title: "Anatomia (di nuovo mia)" } : event));
+  assert.deepEqual(counts(reimport(again, changed)), NOTHING);
+});
+
+test("file cambiato ed evento mai toccato qui: si aggiorna senza avviso; un solo evento lo dice al singolare", () => {
+  const first = apply([], reimport([], TWO_LESSONS));
+  const changed = COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02"), lesson("b@g", "Chimica", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+  const clean = reimport(first, changed);
+  assert.deepEqual([clean.updated, clean.editsReplaced, clean.warnings.length], [1, 0, 0]);
+  // Chimica è cambiata solo qui (il file no): resta com'è; Anatomia è cambiata in entrambi.
+  const one = reimport(editedLocally(first), changed);
+  assert.deepEqual([one.updated, one.editsReplaced], [1, 1]);
+  assert.match(one.warnings[0], /^«Anatomia \(aula cambiata da me\)» è cambiato nel file/);
+  assert.equal(apply(editedLocally(first), one).find((event) => event.sourceUid === "b@g" && !event.seriesId).title, "Chimica (mia)");
+});
+
+test("una divisione fatta qui («questa e le successive») non conta come modifica sostituita", () => {
+  const first = apply([], reimport([], TWO_LESSONS));
+  const chem = first.find((event) => event.sourceUid === "b@g" && !event.seriesId);
+  const split = apply(first, planEdit(chem, first, "2026-11-17", "following", { title: "Chimica (aula nuova)" }, { now: NOW }));
+  const changed = COURSE_FILE(lesson("a@g", "Anatomia", "02"), lesson("b@g", "Chimica (orario nuovo)", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+  const plan = reimport(split, changed);
+  assert.deepEqual([plan.updated, plan.editsReplaced], [1, 0]);
+  const shown = window(apply(split, plan)).filter((line) => line.includes("Chimica"));
+  assert.deepEqual(shown, [
+    "2026-11-03T08:00:00.000Z Chimica (orario nuovo)",
+    "2026-11-10T08:00:00.000Z Chimica (orario nuovo)",
+    "2026-11-17T08:00:00.000Z Chimica (aula nuova)",
+    "2026-11-24T08:00:00.000Z Chimica (aula nuova)"
+  ]);
+});
+
+/** Calendario importato prima di questa versione: nessuna impronta. */
+const withoutStamps = (events) =>
+  events.map((event) => {
+    const copy = { ...event };
+    delete copy.sourceStamp;
+    return copy;
+  });
+
+test("vecchi import senza impronta, uguali al file: l'impronta si scrive senza contarli come aggiornati", () => {
+  const old = withoutStamps(apply([], reimport([], TWO_LESSONS)));
+  const plan = reimport(old, TWO_LESSONS);
+  assert.deepEqual([plan.added, plan.updated, plan.deletes.length, plan.editsReplaced, plan.warnings.length], [0, 0, 0, 0, 0]);
+  // Solo le due serie, uguali a prima tranne l'impronta (nemmeno updatedAt cambia).
+  assert.equal(plan.puts.length, 2);
+  for (const put of plan.puts) {
+    assert.equal(typeof put.sourceStamp, "string");
+    const { sourceStamp, ...rest } = put;
+    assert.deepEqual(rest, old.find((event) => event.id === put.id));
+  }
+  assert.equal(importButton(plan), "remember");
+  // Da qui in poi le modifiche fatte qui restano con lo stesso file.
+  const stamped = apply(old, plan);
+  assert.deepEqual(counts(reimport(stamped, TWO_LESSONS)), NOTHING);
+  const mine = editedLocally(stamped);
+  const again = reimport(mine, TWO_LESSONS);
+  assert.deepEqual(counts(again), NOTHING);
+  assert.equal(importButton(again), "nothing");
+});
+
+test("vecchi import senza impronta e diversi dal file: vince il file, e l'anteprima dice chiaro che non si sa chi li ha cambiati", () => {
+  const old = withoutStamps(apply([], reimport([], TWO_LESSONS)));
+  const plan = reimport(editedLocally(old), TWO_LESSONS);
+  assert.deepEqual([plan.updated, plan.editsReplaced], [2, 0]);
+  assert.equal(importButton(plan), "import");
+  assert.equal(plan.warnings.length, 1);
+  assert.match(plan.warnings[0], /^2 eventi qui sono diversi dal file e StudyOS non sa se li hai cambiati tu \(«Anatomia \(aula cambiata da me\)» e «Chimica \(mia\)»\): se importi, tornano come nel file\./);
+  assert.match(plan.warnings[0], /Da questa importazione in poi, le modifiche che fai qui restano finché l'evento non cambia nel file\.$/);
+  // Il testo fisso dell'anteprima non promette di tenerle: rimanda agli avvisi.
+  assert.match(CALENDAR_GUIDE_TEXT.previewNoDuplicates, /tranne dove un avviso/);
+  const after = apply(editedLocally(old), plan);
+  assert.equal(after.find((event) => event.sourceUid === "a@g").title, "Anatomia");
+  assert.ok(after.filter((event) => !event.seriesId).every((event) => typeof event.sourceStamp === "string"));
+  assert.deepEqual(counts(reimport(editedLocally(after), TWO_LESSONS)), NOTHING);
+  // Un evento solo: al singolare.
+  const one = reimport(old.map((event) => (event.sourceUid === "a@g" ? { ...event, title: "Anatomia (mia)" } : event)), TWO_LESSONS);
+  assert.match(one.warnings[0], /^«Anatomia \(mia\)» qui è diverso dal file e StudyOS non sa se l'hai cambiato tu: se importi, torna com'è nel file\./);
+});
+
+test("impronta uguale su ogni dispositivo: ore senza fuso e ore in UTC non dipendono dal fuso del telefono", () => {
+  const files = {
+    floating: ics(["BEGIN:VEVENT", "UID:f@x", "DTSTART:20261105T090000", "DTEND:20261105T100000", "SUMMARY:Senza fuso", "RRULE:FREQ=WEEKLY;UNTIL=20261203T090000", "END:VEVENT"]),
+    utc: ics(["BEGIN:VEVENT", "UID:u@x", "DTSTART:20261105T090000Z", "DTEND:20261105T100000Z", "SUMMARY:In UTC", "END:VEVENT"]),
+    allDay: ics(["BEGIN:VEVENT", "UID:d@x", "DTSTART;VALUE=DATE:20261207", "DTEND;VALUE=DATE:20261211", "SUMMARY:Gita", "END:VEVENT"])
+  };
+  for (const [label, text] of Object.entries(files)) {
+    const inRome = apply([], merge([], parseIcs(text, { timeZone: "Europe/Rome" }), { timeZone: "Europe/Rome" }));
+    const mine = inRome.map((event) => (event.seriesId ? event : { ...event, title: `${event.title} (mia)` }));
+    for (const zone of ["America/New_York", "Pacific/Kiritimati", "Asia/Tokyo"]) {
+      const plan = merge(mine, parseIcs(text, { timeZone: zone }), { timeZone: zone });
+      assert.deepEqual(counts(plan), NOTHING, `${label} ${zone}`);
+      assert.equal(plan.editsReplaced, 0, `${label} ${zone}`);
+    }
+  }
+});
+
+test("le modifiche sostituite comprendono «saltato»: l'avviso lo dice", () => {
+  const plan = reimport(editedLocally(apply([], reimport([], TWO_LESSONS))), COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02")));
+  assert.match(plan.warnings.find((warning) => warning.includes("sostituite")), /promemoria e lo stato «saltato»\)/);
+});
+
+test("l'impronta resta privata e non passa alle parti divise né ai giorni modificati", () => {
+  const first = apply([], reimport([], TWO_LESSONS));
+  const chem = first.find((event) => event.sourceUid === "b@g" && !event.seriesId);
+  assert.equal(typeof chem.sourceStamp, "string");
+  // Mai agli agenti. Con una condivisione viaggia come gli altri campi: il server conserva solo le sue chiavi
+  // protette, e toglierla farebbe perdere l'impronta al proprietario quando chi riceve modifica l'evento.
+  assert.equal("sourceStamp" in publicEntity(chem), false);
+  assert.equal(withoutProtectedKeys(chem).sourceStamp, chem.sourceStamp);
+  // «Solo questa»: la riga non la eredita; «questa e le successive»: la figlia nemmeno.
+  const row = planEdit(chem, first, "2026-11-10", "this", { title: "Chimica (spostata)" }, { now: NOW }).puts.find((event) => event.seriesId);
+  assert.ok(row && !("sourceStamp" in row));
+  const split = planEdit(chem, first, "2026-11-17", "following", { title: "Chimica II" }, { now: NOW }).puts;
+  const child = split.find((event) => event.splitFrom);
+  assert.ok(child && !("sourceStamp" in child));
+  assert.equal(split.find((event) => event.id === chem.id).sourceStamp, chem.sourceStamp);
+  // Una modifica a mano non la cambia (la scrive solo l'importazione).
+  const all = planEdit(chem, first, "2026-11-03", "all", { title: "Chimica generale", sourceStamp: "x.y" }, { now: NOW }).puts.find((event) => event.id === chem.id);
+  assert.equal(all.sourceStamp, chem.sourceStamp);
+});
+
+test("condivisione: la modifica di chi riceve tiene l'impronta del proprietario, e il suo prossimo import non la annulla", () => {
+  const owner = apply([], reimport([], TWO_LESSONS));
+  const anatomy = owner.find((event) => event.sourceUid === "a@g");
+  // Chi riceve cambia la descrizione: scrittura preparata e inviata come fa l'app.
+  const edited = prepareSharedWrite(anatomy, { ...anatomy, description: "Portare il camice" }, NOW);
+  const item = { key: `owner:calendarEvent:${anatomy.id}`, ownerId: "owner", entityType: "calendarEvent", entityId: anatomy.id, entity: edited, serverUpdatedAt: NOW };
+  const entry = { key: item.key, ownerId: "owner", entityType: "calendarEvent", entityId: anatomy.id, deleted: false, queuedAt: NOW };
+  const sent = sharedPushBatches([entry], [item]).batches[0].rows[0].payload;
+  assert.equal(sent.sourceStamp, anatomy.sourceStamp);
+  // Il server (studyos_recipient_payload) tiene le chiavi nuove non protette e quelle protette salvate.
+  const serverProtected = new RegExp(/v_protected constant text := '([^']+)'/.exec(readFileSync(new URL("../supabase/sharing.sql", import.meta.url), "utf8"))[1]);
+  const stored = {
+    ...Object.fromEntries(Object.entries(sent).filter(([key]) => !serverProtected.test(key))),
+    ...Object.fromEntries(Object.entries(anatomy).filter(([key]) => serverProtected.test(key)))
+  };
+  assert.equal(stored.sourceStamp, anatomy.sourceStamp);
+  // Il proprietario reimporta lo stesso file: la modifica di chi riceve resta.
+  const synced = owner.map((event) => (event.id === anatomy.id ? stored : event));
+  const plan = reimport(synced, TWO_LESSONS);
+  assert.deepEqual([counts(plan), plan.warnings], [NOTHING, []]);
+  assert.equal(apply(synced, plan).find((event) => event.id === anatomy.id).description, "Portare il camice");
+});
+
+test("fuso con nome inventato (Outlook «Customized Time Zone»): se le sue regole cambiano, l'evento si aggiorna", () => {
+  const zone = (standardAt, daylightAt, standard, daylight) => [
+    "BEGIN:VTIMEZONE",
+    "TZID:Customized Time Zone",
+    "BEGIN:STANDARD",
+    `DTSTART:19701025T${standardAt}`,
+    `TZOFFSETFROM:${daylight}`,
+    `TZOFFSETTO:${standard}`,
+    "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
+    "END:STANDARD",
+    "BEGIN:DAYLIGHT",
+    `DTSTART:19700329T${daylightAt}`,
+    `TZOFFSETFROM:${standard}`,
+    `TZOFFSETTO:${daylight}`,
+    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+    "END:DAYLIGHT",
+    "END:VTIMEZONE"
+  ];
+  const outlook = (rules) =>
+    ics(
+      "PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN",
+      rules,
+      "BEGIN:VEVENT",
+      "UID:o1@outlook",
+      "SUMMARY:Riunione",
+      'DTSTART;TZID="Customized Time Zone":20261120T090000',
+      'DTEND;TZID="Customized Time Zone":20261120T100000',
+      "END:VEVENT"
+    );
+  const rome = outlook(zone("030000", "020000", "+0100", "+0200"));
+  const london = outlook(zone("020000", "010000", "+0000", "+0100"));
+  const first = apply([], reimport([], rome));
+  assert.equal(first[0].start, "2026-11-20T08:00:00.000Z");
+  // Su un altro dispositivo lo stesso file non cambia nulla (l'impronta non dipende dal fuso del telefono).
+  for (const device of ["America/New_York", "Asia/Tokyo"]) assert.deepEqual(counts(merge(first, parseIcs(rome, { timeZone: device }), { timeZone: device })), NOTHING, device);
+  const plan = reimport(first, london);
+  assert.equal(plan.updated, 1);
+  const after = apply(first, plan);
+  assert.equal(after[0].start, "2026-11-20T09:00:00.000Z");
+  assert.deepEqual(counts(reimport(after, london)), NOTHING);
+});
+
+test("stesso evento scritto in altro modo (regola in altro ordine, X-WR-TIMEZONE nuovo): le modifiche fatte qui restano", () => {
+  const physics = (zone, rule) =>
+    ics(`X-WR-TIMEZONE:${zone}`, "BEGIN:VEVENT", "UID:h@x", "DTSTART;TZID=Europe/Rome:20261104T090000", "DTEND;TZID=Europe/Rome:20261104T100000", `RRULE:${rule}`, "SUMMARY:Fisica", "END:VEVENT");
+  const original = physics("Europe/Rome", "FREQ=WEEKLY;COUNT=6");
+  const series = (events) => events.find((event) => event.sourceUid === "h@x" && !event.seriesId);
+  const mine = (events) => events.map((event) => (event === series(events) ? { ...event, title: "Fisica (mia)" } : event));
+  const halves = (event) => event.sourceStamp.split(".");
+  for (const [label, reworded] of [
+    ["regola in altro ordine", physics("Europe/Rome", "COUNT=6;FREQ=WEEKLY")],
+    ["X-WR-TIMEZONE nuovo", physics("Europe/Berlin", "FREQ=WEEKLY;COUNT=6")]
+  ]) {
+    const first = apply([], reimport([], original));
+    // Senza modifiche qui: si aggiorna solo la metà del file dell'impronta, e non conta come aggiornato.
+    const plan = reimport(first, reworded);
+    assert.deepEqual([plan.added, plan.updated, plan.deletes.length, plan.editsReplaced, plan.warnings.length, plan.puts.length], [0, 0, 0, 0, 0, 1], label);
+    const { sourceStamp, ...rest } = plan.puts[0];
+    const { sourceStamp: before, ...unchanged } = series(first);
+    assert.deepEqual(rest, unchanged, label);
+    assert.notEqual(sourceStamp.split(".")[0], before.split(".")[0], label);
+    assert.equal(sourceStamp.split(".")[1], before.split(".")[1], label);
+    const refreshed = apply(first, plan);
+    assert.deepEqual(counts(reimport(refreshed, reworded)), NOTHING, label);
+    assert.deepEqual(counts(reimport(mine(refreshed), reworded)), NOTHING, label);
+    // Modificato qui prima del file riscritto: la modifica resta, nessun avviso, solo l'impronta cambia.
+    const edited = mine(first);
+    const quiet = reimport(edited, reworded);
+    assert.deepEqual([quiet.added, quiet.updated, quiet.deletes.length, quiet.editsReplaced, quiet.warnings.length], [0, 0, 0, 0, 0], label);
+    assert.equal(importButton(quiet), "remember", label);
+    const kept = apply(edited, quiet);
+    assert.equal(series(kept).title, "Fisica (mia)", label);
+    assert.deepEqual(halves(series(kept)), [halves(plan.puts[0])[0], halves(series(first))[1]], label);
+    assert.deepEqual(counts(reimport(kept, reworded)), NOTHING, label);
+    // Il file cambia davvero (altra regola): vince il file, e lo si dice.
+    const changed = reimport(kept, physics("Europe/Rome", "FREQ=WEEKLY;COUNT=8"));
+    assert.deepEqual([changed.updated, changed.editsReplaced], [1, 1], label);
+    assert.equal(series(apply(kept, changed)).title, "Fisica", label);
+  }
+});
+
+test("il proprio export con le modifiche fatte qui, poi il file di Google invariato: le modifiche restano, senza avvisi", () => {
+  const mine = editedLocally(apply([], reimport([], TWO_LESSONS)));
+  const own = buildIcs({ events: mine, exams: [], tasks: [], subjects: [], timeZone: "Europe/Rome", now: new Date(NOW) });
+  // Il file dice com'è l'evento adesso: cambia solo la metà del file dell'impronta.
+  const back = reimport(mine, own);
+  assert.deepEqual(quietCounts(back, mine), QUIET);
+  let events = apply(mine, back);
+  const google = reimport(events, TWO_LESSONS);
+  assert.deepEqual([quietCounts(google, events), google.editsReplaced], [QUIET, 0]);
+  events = apply(events, google);
+  const anatomy = events.find((event) => event.sourceUid === "a@g");
+  assert.deepEqual([anatomy.title, anatomy.location], ["Anatomia (aula cambiata da me)", "Aula 5"]);
+  assert.equal(events.find((event) => event.sourceUid === "b@g" && !event.seriesId).title, "Chimica (mia)");
+  // Google cambia davvero: vince il file, e l'avviso dice che le modifiche fatte qui vengono sostituite.
+  const changed = reimport(events, COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02"), lesson("b@g", "Chimica (laboratorio)", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"])));
+  assert.deepEqual([changed.updated, changed.editsReplaced], [2, 2]);
+});
+
+// ------------------------------------------------------------------------------------------
+// File ostili da 5 MB e file troppo grandi (ricontrollo di rilascio, punti 5 e 10)
+// ------------------------------------------------------------------------------------------
+
+const FIVE_MB = 5 * 1024 * 1024;
+const wrapped = (body) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${body}END:VCALENDAR\r\n`;
+/** Lettura e unione come nell'anteprima, con il tempo impiegato. */
+const timed = (text) => {
+  const started = performance.now();
+  const parsed = parseIcs(text, { timeZone: "Europe/Rome", now: NOW });
+  const plan = merge([], parsed, { timeZone: "Europe/Rome" });
+  return { parsed, plan, elapsed: performance.now() - started, warnings: [...parsed.warnings, ...plan.warnings] };
+};
+// Tetto largo per una macchina carica (test in parallelo): da soli stanno sotto il mezzo secondo, prima
+// di questa correzione 12 s (fusi inventati), 5 s (fusi sconosciuti) e 4,6 s (300.000 date escluse).
+const CEILING_MS = 4000;
+
+test("file ostile: migliaia di fusi inventati, ognuno con il suo VTIMEZONE, su date escluse: veloce, pochi avvisi", () => {
+  let zones = "";
+  let exdates = "";
+  for (let index = 0; zones.length + exdates.length < FIVE_MB - 2000; index += 1) {
+    const minutes = String(index % 60).padStart(2, "0");
+    zones += `BEGIN:VTIMEZONE\r\nTZID:Z${index}\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+01${minutes}\r\nTZOFFSETTO:+01${minutes}\r\nDTSTART:19700101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n`;
+    exdates += `EXDATE;TZID=Z${index}:20261103T090000\r\n`;
+  }
+  const { parsed, elapsed, warnings } = timed(wrapped(`${zones}BEGIN:VEVENT\r\nUID:c\r\nDTSTART;TZID=Europe/Rome:20261102T090000\r\nRRULE:FREQ=DAILY\r\n${exdates}SUMMARY:c\r\nEND:VEVENT\r\n`));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.equal(parsed.events.length, 1);
+  assert.ok(warnings.length <= 3, warnings.join("\n"));
+  assert.match(warnings.find((warning) => warning.includes("fusi orari")), /^I fusi orari «Z\d+», «Z\d+», «Z\d+» e altri [\d.]+ non sono stati riconosciuti/);
+});
+
+test("file ostile: date escluse ognuna con un fuso sconosciuto diverso: veloce, un avviso solo", () => {
+  let exdates = "";
+  for (let index = 0; exdates.length < FIVE_MB - 2000; index += 1) exdates += `EXDATE;TZID=Nowhere/Zone${index}:20261103T090000\r\n`;
+  const { elapsed, warnings } = timed(wrapped(`BEGIN:VEVENT\r\nUID:c2\r\nDTSTART;TZID=Europe/Rome:20261102T090000\r\nRRULE:FREQ=DAILY\r\n${exdates}SUMMARY:c\r\nEND:VEVENT\r\n`));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.equal(warnings.filter((warning) => warning.includes("fus")).length, 1, warnings.join("\n"));
+});
+
+test("file ostile: una riga EXDATE con 300.000 date: si leggono le più vicine a oggi, veloce", () => {
+  const values = [];
+  for (let day = Date.UTC(2026, 10, 3); values.length * 16 < FIVE_MB - 400; day += 86_400_000) values.push(`${new Date(day).toISOString().slice(0, 10).replace(/-/g, "")}T090000`);
+  const { parsed, plan, elapsed, warnings } = timed(wrapped(`BEGIN:VEVENT\r\nUID:e\r\nDTSTART;TZID=Europe/Rome:20261102T090000\r\nRRULE:FREQ=DAILY\r\nEXDATE;TZID=Europe/Rome:${values.join(",")}\r\nSUMMARY:Tante\r\nEND:VEVENT\r\n`));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.ok(values.length > 300_000);
+  assert.equal(parsed.events[0].exdates.length, 2000);
+  const rows = plan.puts.filter((event) => event.seriesId).map((event) => event.originalDate).sort();
+  assert.deepEqual([rows.length, rows[0], rows.at(-1)], [1000, "2026-11-03", "2029-07-29"]);
+  assert.deepEqual(warnings, ["«Tante» ha troppi giorni esclusi o modificati: sono stati letti solo i 1000 più vicini a oggi."]);
+});
+
+test("file ostile: tante serie con migliaia di date escluse: c'è un tetto per tutto il file, e l'avviso lo dice", () => {
+  const stamp = (ms) => `${new Date(ms).toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`;
+  const series = Array.from({ length: 30 }, (_, index) => [
+    "BEGIN:VEVENT",
+    `UID:t${index}`,
+    "DTSTART:20200101T090000Z",
+    "RRULE:FREQ=DAILY",
+    `EXDATE:${Array.from({ length: 2000 }, (_, offset) => stamp(Date.UTC(2020, 0, 1, 9) + offset * 86_400_000)).join(",")}`,
+    `SUMMARY:Serie ${index + 1}`,
+    "END:VEVENT"
+  ]);
+  const { parsed, elapsed, warnings } = timed(ics(...series));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.equal(parsed.events.reduce((sum, event) => sum + (event.exdates?.length ?? 0), 0), 40_000);
+  assert.ok(warnings.some((warning) => /^«Serie 21», «Serie 22», «Serie 23» e altri 7 eventi: il file ha troppi giorni esclusi/.test(warning)), warnings.join("\n"));
+});
+
+test("anteprima: avvisi senza doppioni, al più 20, poi «e altri N avvisi»", () => {
+  const many = Array.from({ length: 45 }, (_, index) => `Avviso ${index % 30}`);
+  assert.deepEqual(previewWarnings(many), { shown: Array.from({ length: 20 }, (_, index) => `Avviso ${index}`), more: 10 });
+  assert.deepEqual(previewWarnings(["a", "a", "b"]), { shown: ["a", "b"], more: 0 });
+  assert.match(CALENDAR_GUIDE_TEXT.moreWarnings(10), /^…e altri 10 avvisi\.?$/);
+  assert.match(CALENDAR_GUIDE_TEXT.moreWarnings(1), /^…e un altro avviso\.?$/);
+});
+
+/** Un VEVENT al giorno `day` (YYYYMMDD) delle 9, titolo `title`; `extra` righe in più. */
+const dayEvent = (uid, day, title, extra = []) => ["BEGIN:VEVENT", `UID:${uid}`, `DTSTART:${day}T090000Z`, `DTEND:${day}T100000Z`, `SUMMARY:${title}`, ...extra, "END:VEVENT"];
+const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, "");
+
+test("file con più di 2000 eventi: si leggono i 2000 più vicini a oggi, prima i prossimi e poi i più recenti", () => {
+  const today = Date.parse(NOW);
+  // 1500 passati (dal più vecchio), poi 900 futuri: nel file prima i vecchi.
+  const past = Array.from({ length: 1500 }, (_, index) => dayEvent(`p${index}`, dayOf(today - (1500 - index) * 86_400_000), `Passato ${1500 - index}`));
+  const future = Array.from({ length: 900 }, (_, index) => dayEvent(`f${index}`, dayOf(today + (index + 1) * 86_400_000), `Futuro ${index + 1}`));
+  // Una serie iniziata nel 2010 e ancora in corso conta come «prossima».
+  const ongoing = dayEvent("serie", "20100104", "Serie in corso", ["RRULE:FREQ=WEEKLY"]);
+  const parsed = parseIcs(ics(...past, ongoing, ...future), { timeZone: "UTC", now: NOW });
+  assert.equal(parsed.events.length, 2000);
+  const titles = new Set(parsed.events.map((event) => event.title));
+  assert.ok(titles.has("Serie in corso"));
+  assert.ok(titles.has("Futuro 900") && titles.has("Futuro 1"));
+  assert.ok(titles.has("Passato 1") && titles.has("Passato 1099"));
+  assert.ok(!titles.has("Passato 1100") && !titles.has("Passato 1500"));
+  // Nell'ordine del file.
+  assert.equal(parsed.events[0].title, "Passato 1099");
+  assert.deepEqual(parsed.warnings, [
+    "Il file ha più di 2000 eventi: sono stati letti i 2000 più vicini a oggi (prima i prossimi, poi i più recenti). Se ti servono anche gli altri, importa un calendario alla volta."
+  ]);
+  // Solo futuri, più di 2000: i 2000 più vicini, nessun passato.
+  const far = Array.from({ length: 2100 }, (_, index) => dayEvent(`x${index}`, dayOf(today + (2100 - index) * 86_400_000), `Tra ${2100 - index}`));
+  const onlyFuture = parseIcs(ics(dayEvent("old", "20200101", "Vecchio"), ...far), { timeZone: "UTC", now: NOW });
+  const kept = new Set(onlyFuture.events.map((event) => event.title));
+  assert.ok(kept.has("Tra 1") && kept.has("Tra 2000") && !kept.has("Tra 2001") && !kept.has("Vecchio"));
+});
+
+// ------------------------------------------------------------------------------------------
 // Store
 // ------------------------------------------------------------------------------------------
 
@@ -1348,4 +1778,25 @@ test("store importEvents: adottando i vecchi import, allegati, note e promemoria
   assert.equal(state.attachments[1].linkedEntityId, "altro");
   assert.equal(state.notes[0].linkedEntityId, "old-1");
   assert.equal(state.reminders[0].linkedEntityId, "old-1");
+});
+
+// ------------------------------------------------------------------------------------------
+// Righe piegate dentro un carattere (ricontrollo di rilascio, punto 7): si uniscono prima di leggere l'UTF-8
+// ------------------------------------------------------------------------------------------
+
+test("riga piegata in mezzo a un carattere di più byte (è, emoji): si uniscono i byte, poi si legge il testo", () => {
+  const encoder = new TextEncoder();
+  const head = encoder.encode("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:fold\r\nDTSTART:20261102T090000Z\r\nSUMMARY:Caff");
+  const e = encoder.encode("è"); // 2 byte: la piega cade tra i due
+  const smile = encoder.encode("😀"); // 4 byte: piega dopo il primo, con un a capo solo (LF) e un tab
+  const tail = encoder.encode(" ok\r\nDESCRIPTION:a\nb\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+  const bytes = new Uint8Array([...encoder.encode("﻿"), ...head, e[0], 13, 10, 32, e[1], 32, smile[0], 10, 9, ...smile.slice(1), ...tail]);
+  const text = decodeIcsBytes(bytes);
+  assert.ok(!text.includes("�") && !text.startsWith("﻿"), text);
+  const [event] = parseIcs(text, { timeZone: "Europe/Rome" }).events;
+  assert.equal(event.title, "Caffè 😀 ok");
+  // Un a capo senza spazio dopo non è una piega: resta una riga a sé (qui "b", che non è una proprietà).
+  assert.equal(event.description, "a");
+  // Leggere il testo prima e unire dopo dava caratteri rotti: è il caso che questa funzione evita.
+  assert.ok(new TextDecoder().decode(bytes).includes("�"));
 });

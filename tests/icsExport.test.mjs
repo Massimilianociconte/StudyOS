@@ -273,3 +273,111 @@ test("R1-S1 ter. X-STUDYOS-FROM sbagliato o assente: vale il primo giorno della 
     assert.equal(later(copy).splitFrom !== undefined, true, label);
   }
 });
+
+// ------------------------------------------------------------------------------------------
+// «Saltato» non è «annullato» (ricontrollo di rilascio, punto 1)
+// ------------------------------------------------------------------------------------------
+
+const copyOf = (text, events = [], zone = "Europe/Rome") => {
+  let next = 0;
+  const items = icsImportItems(parseIcs(text, { timeZone: zone }).events, { defaultCategory: "lesson" });
+  return mergeIcsImport({ events, exams: [], tasks: [], items, now: T0, newId: () => `copia${++next}`, timeZone: zone });
+};
+const shownIn = (list) =>
+  expandEvents(list, new Date("2026-11-01T00:00:00Z"), new Date("2026-12-31T00:00:00Z")).map((item) => `${item.occurrenceDate} ${item.title} (${item.status})`);
+
+const skippedCalendar = () => {
+  const single = base({ id: "one", title: "Lezione saltata", status: "skipped", timeZone: "Europe/Rome", start: "2026-11-20T08:00:00.000Z", end: "2026-11-20T09:00:00.000Z" });
+  let weekly = [series({ freq: "weekly", end: { type: "count", count: 4 } }, { id: "w", title: "Settimanale", end: "2026-11-02T09:00:00.000Z" })];
+  weekly = applyEditPlan(weekly, planEdit(weekly[0], weekly, "2026-11-09", "this", { status: "skipped" }, { now: T0 })).events;
+  return [single, ...weekly];
+};
+const OTHER_APP = "PRODID:-//Google Inc//Google Calendar 70.9054//EN";
+
+test("un evento o un giorno saltato esce come evento normale con X-STUDYOS-STATUS (niente STATUS:CANCELLED né EXDATE)", () => {
+  const text = exportOf(skippedCalendar());
+  assert.doesNotMatch(text, /STATUS:CANCELLED/);
+  assert.doesNotMatch(text, /EXDATE/);
+  const blocks = vevents(text);
+  assert.equal(blocks.length, 3);
+  assert.match(blocks.find((block) => block.includes("SUMMARY:Lezione saltata")), /\r\nX-STUDYOS-STATUS:skipped\r\n/);
+  assert.match(blocks.find((block) => block.includes("RECURRENCE-ID")), /\r\nX-STUDYOS-STATUS:skipped\r\n/);
+  assert.doesNotMatch(blocks.find((block) => block.includes("RRULE:")), /X-STUDYOS-STATUS/);
+});
+
+test("la copia ha gli stessi giorni saltati; reimportare il file non cambia nulla, né nella copia né nell'originale", () => {
+  const events = skippedCalendar();
+  const text = exportOf(events);
+  const copy = applyEditPlan([], copyOf(text)).events;
+  assert.deepEqual(shownIn(copy), shownIn(events));
+  assert.ok(shownIn(copy).includes("2026-11-09 Settimanale (skipped)"));
+  assert.ok(shownIn(copy).includes("2026-11-20 Lezione saltata (skipped)"));
+  for (const calendar of [copy, events]) {
+    const again = copyOf(text, calendar);
+    assert.deepEqual([again.added, again.updated, again.puts.length, again.deletes.length], [0, 0, 0, 0]);
+  }
+});
+
+test("un giorno non saltato di una serie saltata torna «previsto» nella copia", () => {
+  let events = [series({ freq: "weekly", end: { type: "count", count: 3 } }, { id: "s", title: "Corso", status: "skipped" })];
+  events = applyEditPlan(events, planEdit(events[0], events, "2026-11-09", "this", { status: "planned", title: "Corso (recupero)" }, { now: T0 })).events;
+  const copy = applyEditPlan([], copyOf(exportOf(events))).events;
+  assert.deepEqual(shownIn(copy), shownIn(events));
+  assert.ok(shownIn(copy).includes("2026-11-09 Corso (recupero) (planned)"));
+});
+
+test("un nuovo export dell'originale con l'evento non più saltato lo rimette «previsto» nella copia", () => {
+  const events = skippedCalendar();
+  const copy = applyEditPlan([], copyOf(exportOf(events))).events;
+  const later = events.map((event) => (event.id === "one" ? { ...event, status: "planned", updatedAt: "2026-11-05T10:00:00.000Z" } : event));
+  const plan = copyOf(exportOf(later), copy);
+  assert.equal(plan.updated, 1);
+  assert.ok(shownIn(applyEditPlan(copy, plan).events).includes("2026-11-20 Lezione saltata (planned)"));
+});
+
+test("vecchi file di StudyOS (STATUS:CANCELLED voleva dire saltato) e file di altre app (annullato vero)", () => {
+  const old = exportOf(skippedCalendar()).replace(/X-STUDYOS-STATUS:skipped/g, "STATUS:CANCELLED");
+  const copy = applyEditPlan([], copyOf(old)).events;
+  assert.ok(shownIn(copy).includes("2026-11-20 Lezione saltata (skipped)"));
+  assert.ok(shownIn(copy).includes("2026-11-09 Settimanale (skipped)"));
+  // In un file di un'altra app STATUS:CANCELLED è un annullamento vero: l'evento e il giorno non ci sono.
+  const fromOther = shownIn(applyEditPlan([], copyOf(old.replace("PRODID:-//StudyOS//Calendario//IT", OTHER_APP))).events);
+  assert.ok(!fromOther.some((line) => line.includes("Lezione saltata")));
+  assert.ok(!fromOther.some((line) => line.startsWith("2026-11-09")));
+});
+
+test("un file di un'altra app non toglie «saltato» a un evento importato", () => {
+  const other = exportOf(skippedCalendar()).replace("PRODID:-//StudyOS//Calendario//IT", OTHER_APP).replace(/X-STUDYOS-STATUS:skipped\r\n/g, "");
+  const first = applyEditPlan([], copyOf(other)).events;
+  const target = first.find((event) => event.title === "Lezione saltata");
+  assert.equal(target.status, "planned");
+  const skipped = first.map((event) => (event.id === target.id ? { ...event, status: "skipped" } : event));
+  const plan = copyOf(other, skipped);
+  assert.deepEqual([plan.added, plan.updated, plan.puts.length], [0, 0, 0]);
+});
+
+// ------------------------------------------------------------------------------------------
+// Testo pulito (ricontrollo di rilascio, punto 6): un a capo o un carattere di controllo non rompe la riga
+// ------------------------------------------------------------------------------------------
+
+test("a capo di ogni tipo (CR da solo, CRLF, LF) diventano \\n; gli altri caratteri di controllo spariscono", () => {
+  const text = exportOf([
+    base({ title: "Ana\u0000tomia\u0007", description: "riga 1\rriga 2\r\nriga 3\nriga 4\u001b[31m\ttab", location: "Aula\u000b 3", timeZone: "Europe/Rome" })
+  ]);
+  for (const line of lines(text)) assert.doesNotMatch(line, /[\u0000-\u0008\u000a-\u001f\u007f]/, JSON.stringify(line));
+  const event = vevents(text)[0].replace(/\r\n /g, "");
+  assert.match(event, /\r\nSUMMARY:Anatomia\r\n/);
+  assert.match(event, /\r\nDESCRIPTION:riga 1\\nriga 2\\nriga 3\\nriga 4\[31m\ttab\r\n/);
+  assert.match(event, /\r\nLOCATION:Aula 3\r\n/);
+  const [copy] = parseIcs(text, { timeZone: "Europe/Rome" }).events;
+  assert.deepEqual([copy.title, copy.description, copy.location], ["Anatomia", "riga 1\nriga 2\nriga 3\nriga 4[31m\ttab", "Aula 3"]);
+});
+
+test("anche i valori scritti così come sono (UID, regola importata) non portano a capo nel file", () => {
+  const imported = series({ freq: "weekly" }, { id: "x\r\ny", sourceRRule: "FREQ=WEEKLY\r\nX-EVIL:1" });
+  const text = exportOf([imported]);
+  assert.ok(!lines(text).some((line) => line.startsWith("X-EVIL")), text);
+  // Ogni riga è una proprietà o la continuazione di una piegata: nessun pezzo di valore finito a capo.
+  for (const line of lines(text).filter(Boolean)) assert.match(line, /^( |[A-Z][A-Z0-9-]*[;:])/, JSON.stringify(line));
+  for (const line of lines(text)) assert.doesNotMatch(line, /[\u0000-\u0008\u000a-\u001f\u007f]/);
+});

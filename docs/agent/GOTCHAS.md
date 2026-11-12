@@ -61,6 +61,26 @@
   ponderata usa i CFU della materia; base di laurea = media × 110 / 30.
 - Import .ics: `sourceUid` sull'evento evita i duplicati a ogni nuovo import; una regola
   settimanale su più giorni (BYDAY=MO,WE) diventa una serie per giorno.
+- `sourceStamp` (evento importato, solo la serie, mai le righe dei giorni): sempre una stringa
+  `"<file>.<evento>"`, due impronte cyrb53 in base 36. `<file>` = l'evento com'era nel file
+  (testi, colore, inizio/fine/RRULE come sono scritti, il fuso a cui porta ogni TZID — nome IANA,
+  o un'impronta del VTIMEZONE se il nome è inventato —, promemoria, «saltato»: uguale su ogni
+  dispositivo, anche per le ore senza fuso); `<evento>` = come l'import l'ha scritto qui.
+  Stesso `<file>` al prossimo import → le modifiche fatte qui restano; `<file>` diverso ma
+  l'import scriverebbe lo stesso `<evento>` (stesso evento scritto in altro modo), o il file è
+  uguale all'evento com'è adesso (il proprio export con le modifiche) → le modifiche restano e
+  si aggiorna solo `<file>`, senza contarlo né avvisare; entrambi diversi → vince il
+  file e l'anteprima lo dice (`editsReplaced`); senza impronta (import di prima) e uguale al
+  file → si scrive solo l'impronta (non conta come aggiornato); diverso → vince il file, con
+  avviso. Lo scrive solo `mergeIcsImport`: tolto da righe, figlie di una divisione e modifiche
+  a mano (`repeat.ts`), mai agli agenti (`HIDDEN_FIELDS`, `NEVER_KEYS`). Con le condivisioni
+  viaggia come un campo normale: non è in `PROTECTED_KEY` né in `v_protected` di
+  `supabase/sharing.sql`, e se il client la togliesse una modifica di chi riceve la farebbe
+  perdere al proprietario (il server non la conserva).
+- «Saltato» nel .ics: `X-STUDYOS-STATUS:skipped` su un evento normale (niente STATUS:CANCELLED né
+  EXDATE, così le altre app lo mostrano ancora). In import `STATUS:CANCELLED` vale «saltato»
+  solo dentro un VCALENDAR con PRODID di StudyOS (i file vecchi); per ogni altra app è un
+  annullamento vero.
 - Proiezione del voto di laurea (`src/lib/graduation.ts`): solo Scienze biologiche (L-13) e
   BARB (LM-6) di UNIMI, con le regole delle fonti ufficiali elencate in `DEGREE_PROGRAMS`.
   Base = media ponderata × 110 / 30 per entrambi. Scienze biologiche: prova finale 18-19 → 2

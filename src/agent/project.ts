@@ -2,8 +2,8 @@
 
 const clip = (value: string | undefined, max: number) => (value && value.length > max ? `${value.slice(0, max)}…` : value ?? "");
 
-/** Campi mai inviati: copertine e file incorporati, stato interno del timer, UID degli import. */
-const HIDDEN_FIELDS = new Set(["cover", "dataUrl", "avatarDataUrl", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt", "sourceUid"]);
+/** Campi mai inviati: copertine e file incorporati, stato interno del timer, UID e impronte degli import. */
+const HIDDEN_FIELDS = new Set(["cover", "dataUrl", "avatarDataUrl", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt", "sourceUid", "sourceStamp"]);
 
 /**
  * Copia di un'entità senza i campi nascosti e senza stringhe data: (foto, file).

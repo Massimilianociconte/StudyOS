@@ -1139,13 +1139,14 @@ const OCCURRENCE_LOCKED = new Set([
   "recurrence",
   "recurrenceUntil",
   "sourceUid",
+  "sourceStamp",
   "sourceRecurrenceId",
   "cancelled",
   "archived",
   "subjectId"
 ]);
 /** Campi che una serie non prende dalla modifica (l'identità resta quella). */
-const SERIES_LOCKED = new Set(["id", "createdAt", "seriesId", "originalDate", "cancelled", "sourceUid", "sourceRecurrenceId", "splitFrom"]);
+const SERIES_LOCKED = new Set(["id", "createdAt", "seriesId", "originalDate", "cancelled", "sourceUid", "sourceStamp", "sourceRecurrenceId", "splitFrom"]);
 
 const pickPatch = (patch: Partial<CalendarEvent>, locked: Set<string>) =>
   Object.fromEntries(Object.entries(patch).filter(([key]) => !locked.has(key))) as Partial<CalendarEvent>;
@@ -1180,7 +1181,7 @@ const movedAway = (row: CalendarEvent, series: Series, date: string) => {
 /** Riga nuova per l'occorrenza `date`: copia della serie, senza regola né chiavi d'importazione. */
 const occurrenceSnapshot = (event: CalendarEvent, series: Series, date: string, options: PlanOptions): CalendarEvent => {
   const now = nowOf(options);
-  const base = withoutKeys(event, ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "splitFrom", "cancelled"]);
+  const base = withoutKeys(event, ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceStamp", "sourceRecurrenceId", "splitFrom", "cancelled"]);
   return {
     ...base,
     ...instanceFields(series, date),
@@ -1684,7 +1685,7 @@ export const planSplit = (
   const count = countOf(rule);
   const remaining = count !== undefined ? { ...rule, end: { type: "count" as const, count: Math.max(1, count - countBefore(rule, series.startDate, originalDate)) } } : rule;
   const childId = options.childId ?? `${event.id}~${originalDate}`;
-  const base = withoutKeys(target, ["sourceUid", "sourceRecurrenceId", "seriesId", "cancelled", "repeatLegacy"]);
+  const base = withoutKeys(target, ["sourceUid", "sourceStamp", "sourceRecurrenceId", "seriesId", "cancelled", "repeatLegacy"]);
   // Regola della figlia: quella scelta con la modifica (se cambia solo i campi vecchi, la loro); senza
   // una regola nuova le volte rimaste, con i giorni che seguono uno spostamento e "fino al" spostato con loro.
   const change = followingChange(event, series, originalDate, patch);
