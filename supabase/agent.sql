@@ -374,6 +374,10 @@ begin
       foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl', 'storedFile'] loop
         if not (v_payload ? v_key) and (v_current ? v_key) then
           v_payload := v_payload || jsonb_build_object(v_key, v_current->v_key);
+        -- File già nell'account: «cloud» non torna «local» (come in push_studyos_rows, schema.sql).
+        elsif v_key = 'storedFile' and v_payload->>v_key = 'local' and v_current->>v_key = 'cloud'
+              and not coalesce(v_current_deleted, false) then
+          v_payload := v_payload || jsonb_build_object(v_key, 'cloud');
         end if;
       end loop;
     end if;

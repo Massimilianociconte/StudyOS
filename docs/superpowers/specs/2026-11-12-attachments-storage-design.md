@@ -67,10 +67,11 @@ Dexie (scrittura confermata), poi crea il materiale con `storedFile: "local"` e 
 I byte non arrivano mai nella coda della sync: nessuna modifica a `cloudSync.ts`.
 
 **Caricamento** (`attachmentSync.ts`, solo con account collegato *e* dati locali legati a
-quell'account, `cloud:boundUser`, online, vault sbloccato, scheda attiva): carica con `upsert` in
-`<uid>/<id>`; a caricamento confermato la riga locale diventa cache (`uploadedFor = uid`) e il
-materiale passa a `"cloud"` (`markAttachmentsStored`). Se il materiale è stato eliminato durante il
-caricamento, l'oggetto si elimina subito. Errore → nuovo tentativo con attesa crescente (30 s →
+quell'account, `cloud:boundUser`, primo pull della sessione finito, online, vault sbloccato, scheda
+attiva): carica con `upsert` in `<uid>/<id>`; a caricamento confermato la riga locale diventa cache
+(`uploadedFor = uid`) e il materiale passa a `"cloud"` (`markAttachmentsStored`, timbro della riga
++1 ms). Se il materiale intanto non c'è più (eliminato, dispositivo svuotato) non si toglie nulla:
+né l'oggetto né la copia (fix 1, H1). Errore → nuovo tentativo con attesa crescente (30 s →
 30 min); il motivo si vede sulla scheda.
 
 **Migrazione dei file incorporati (lazy).** Stesse condizioni. Per ogni materiale con `dataUrl`
@@ -89,9 +90,11 @@ l'oggetto c'è, il file si apre e la riga torna `"cloud"`, altrimenti «Il file 
 dispositivo dove l'hai aggiunto…». Ogni file si **scarica** (`<a download>` con URL `blob:`), mai
 aperto nella pagina: un HTML o SVG aperto da `blob:` girerebbe con l'origine dell'app.
 
-**Eliminazione.** `deleteAttachment` (UI, agenti locali) toglie la copia locale e mette in coda
-l'eliminazione dell'oggetto (proprietario = account legato ai dati). Un'eliminazione arrivata da un
-altro dispositivo toglie solo la cache: l'oggetto lo elimina chi ha eliminato.
+**Eliminazione.** `deleteAttachment` (UI, agenti locali) toglie la copia locale. L'oggetto nel
+bucket resta per 90 giorni, come la cronologia: un ripristino ritrova il file. Lo toglie la pulizia
+quotidiana del proprietario (fix 1, L1/L2) solo quando la riga nel cloud è eliminata da almeno 90
+giorni, chiunque l'abbia eliminata (anche chi riceve o il connettore remoto). Un'eliminazione
+arrivata da un altro dispositivo toglie solo la cache.
 
 **Cancellazioni di tutto.**
 - «Cancella anche dall'account»: oltre a `erase_studyos_account_items`, `eraseAccountFiles` elenca e
@@ -102,8 +105,11 @@ altro dispositivo toglie solo la cache: l'oggetto lo elimina chi ha eliminato.
 - «Cancella tutti i dati» senza account: tolto tutto.
 
 **Backup.** Il backup completo **include i file**: per ogni materiale con file si prende la copia
-locale o si scarica, e si mette come `dataUrl` solo nel file esportato. Se un file non si può avere
-(offline, mai scaricato) il backup parte comunque e il messaggio dice quanti mancano. All'import i
+locale o si scarica (senza metterla in cache), e si mette come `dataUrl` solo nel file esportato.
+Al massimo 100 MB di file (`BACKUP_FILES_LIMIT_BYTES`): tutto finisce in una sola stringa JSON in
+Base64. Se un file non si può avere (offline, mai scaricato) o non ci sta, il backup parte comunque e
+il messaggio dice quanti mancano; se la copia con i file non si riesce a creare, si scarica quella
+senza file. All'import i
 file incorporati diventano copie locali `pending` (caricate con l'account), mai righe sincronizzate
 con i byte.
 
@@ -132,7 +138,11 @@ Perché: stessa visibilità di prima senza byte nelle righe; la revoca vale subi
 migrazione l'utente vede solo le proprie righe, già coperte dalla cartella). Un URL firmato chiesto
 dal proprietario non funziona offline e scade; «il file resta al proprietario» toglieva a chi riceve
 una cosa che oggi ha. Chi riceve scarica solo online e non tiene copie (i dati altrui con il vault
-restano solo in memoria); un file `"local"` del proprietario mostra «non ancora caricato».
+restano solo in memoria). Anche un file `"local"` del proprietario si prova a scaricare (il segno può
+essere rimasto indietro); se non c'è, «non ancora caricato». Il nome scaricato ha un'estensione
+sicura (`sharedDownloadName`: `.bin` se il tipo non è ammesso). Limite noto: chi riceve può
+chiedere a Storage un URL firmato, che resta valido fino alla scadenza anche dopo la revoca della
+condivisione (comportamento di Supabase Storage).
 
 ## Limiti
 
@@ -157,4 +167,49 @@ restano solo in memoria); un file `"local"` del proprietario mostra «non ancora
 | Modifica offline su un altro proprio dispositivo con la riga ancora `"local"` (LWW la fa vincere dopo il caricamento) | Il dispositivo che ha caricato lo rimarca `"cloud"` finché ha la cache (`uploadedFor`); altrove, aprire il file lo trova comunque nel bucket e corregge la riga. |
 | Versione vecchia dell'app su un altro dispositivo | Non mostra il download (manca `dataUrl`) ma conserva i campi; dopo l'aggiornamento funziona. |
 | Unione di due account | I file `"cloud"` del primo account restano nella sua cartella: il dispositivo che ne ha la copia li ricarica nel nuovo account (`uploadedFor` diverso); gli altri vedono «non trovato». |
-| Oggetti orfani | Materiali eliminati da chi riceve o dal connettore remoto (`cloudRunner`, senza Storage): l'oggetto resta (serve anche al ripristino dalla cronologia) fino alla cancellazione dell'account. Nessuna pulizia automatica per ora. |
+| Oggetti orfani | Materiali eliminati da chi riceve, dal connettore remoto (`cloudRunner`, senza Storage) o caricamenti battuti da un'eliminazione: l'oggetto resta 90 giorni (ripristino dalla cronologia), poi lo toglie la pulizia quotidiana del proprietario. Riga viva o assente: resta. |
+
+## Revisione, fix 1 (12/11/2026)
+
+Dalla revisione indipendente (H1, M1–M4, L1–L5). Decisioni:
+
+1. **Nessuna rimozione per un materiale che manca in memoria (H1).** Prima, un caricamento finito
+   dopo «Svuota questo dispositivo» toglieva oggetto e copia locale (unica copia persa). Ora la
+   passata prende `localResetGuard()` e lo controlla prima di ogni scrittura (anche dentro la
+   transazione di `markUploaded` e `deleteLocalFiles`); `markStored` non tocca mai nulla per i
+   `missing`. Un oggetto si toglie solo con la pulizia (punto 5) o con «Cancella anche
+   dall'account».
+2. **Riscritture in sottofondo con timbro della riga +1 ms e solo dopo il primo pull (M1).**
+   `backgroundStamp` (come `tieBreakStamp`): una modifica o un'eliminazione vera fatta altrove dopo
+   quel timbro vince. Caricamenti, migrazioni e correzioni del segno (anche all'apertura) partono
+   solo dopo una passata della sync finita per quell'account in questa pagina (`pullTransition`:
+   `lastSync` nuovo rispetto all'inizio della passata) e senza svuotamenti del dispositivo da allora.
+   Un segno perso così torna con la passata dopo o con la regola 3.
+3. **«cloud» non torna «local» (M2).** `push_studyos_rows` (`schema.sql`) e `studyos_agent_push`
+   (`agent.sql`, dentro il ciclo che rimette le chiavi) tengono `"cloud"` su una riga viva se arriva
+   `"local"`; il resto della modifica vale. Un id non riceve mai un altro file, quindi il passo
+   indietro è sempre una copia vecchia. Il dispositivo che ha inviato «local» lo vede fino al pull
+   seguente o finché non riapre il file. Pronto: `stored_file_guard_ready` in `verify.sql`.
+4. **Vault cambiato durante una scrittura (M3), senza toccare lo store.** Le chiavi usate in questa
+   pagina restano in memoria finché servono (mai con il vault bloccato: al blocco si dimenticano).
+   Dopo ogni scrittura `saveLocalFile` ricontrolla il vault e riscrive com'è adesso; ogni passata
+   esegue `reconcileLocalSealing` (riscrive, cifra o toglie). Una cache illeggibile si toglie e si
+   riscarica dall'account; una copia da caricare illeggibile resta, con «Questo file non si può più
+   leggere…» sulla scheda (`FileUnreadableError`).
+5. **Pulizia degli oggetti (L1/L2).** Al più una volta al giorno (`files:cleanup:<uid>`) la passata
+   elenca la cartella dell'account; per i nomi senza materiale chiede al cloud solo
+   `deleted`/`updated_at`/`deletedAt` (100 per richiesta) e toglie quelli eliminati da almeno 90
+   giorni (`objectFate`). Una copia da caricare il cui materiale è stato eliminato da poco si carica
+   prima di toglierla (`orphanCopyFate`). La coda `attachmentDeletes` dell'account non serve più.
+   Limite: la cronologia toglie le revisioni oltre i 90 giorni solo alla scrittura seguente; un
+   ripristino di una revisione più vecchia può non trovare il file. Un'eliminazione propria prima del
+   caricamento (file mai arrivato nell'account) non si può ripristinare con il file.
+6. **«Cancella anche dall'account» offline (L3).** La richiesta (`files:erase:<uid>`) si scrive in
+   `SettingsView` prima di caricare il modulo dei file; un errore dello svuotamento non ferma più
+   caricamenti e migrazioni.
+7. **Uscita con la password dell'app (L5).** «Togli i dati da qui» con il vault attivo e file non
+   ancora caricati: lo svuotamento li decifra (unica copia) e poi toglie il vault, quindi
+   resterebbero in chiaro. `CloudPanel` chiede prima: OK li elimina da qui (non si può annullare),
+   Annulla resta collegato e aspetta il caricamento. «Svuota questo dispositivo» (account ancora
+   collegato) li tiene: tutti i dati tornano in chiaro con il vault tolto, e si caricano appena torna
+   il loro materiale.
