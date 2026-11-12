@@ -1,4 +1,8 @@
-/** Proiezioni verso gli agenti: niente file, foto, email, codici di invito o segreti del vault. */
+/**
+ * Proiezioni verso gli agenti: niente file, foto, codici di invito o segreti del vault. Email: solo gli
+ * indirizzi esattamente @unimi.it di docenti e contatti dell'università (AGENT_INSTITUTIONAL_EMAILS).
+ */
+import { institutionalEmail, redactEmails } from "../lib/institutionalEmail";
 
 /** Lunghezza dei testi lunghi (descrizioni, note) negli elenchi. */
 export const BRIEF_MAX = 300;
@@ -144,3 +148,18 @@ export const publicPreferences = (item: {
   barbThesisPoints: item.barbThesisPoints,
   abroad: item.abroad ?? false
 });
+
+/**
+ * Decisione della persona (12/11): agli agenti arrivano gli indirizzi esattamente @unimi.it di docenti e
+ * contatti dell'università. Mai quelli di studenti, membri, invitati o account. false = nessun indirizzo.
+ */
+export const AGENT_INSTITUTIONAL_EMAILS = true;
+
+/** Email di un docente o di un contatto: in minuscolo se è esattamente @unimi.it, altrimenti null. */
+export const agentTeacherEmail = (value: unknown, allow = AGENT_INSTITUTIONAL_EMAILS) => (allow ? institutionalEmail(value) : null);
+
+/** Testo del catalogo (recapito di un contatto): restano solo gli indirizzi @unimi.it (nessuno con allow=false). */
+export const agentCatalogText = (text: string | null | undefined, allow = AGENT_INSTITUTIONAL_EMAILS) => redactEmails(text ?? "", allow);
+
+/** Testo scritto dai membri (note, aule, nomi, cronologia): tutti gli indirizzi oscurati, sempre. */
+export const agentMemberText = (text: string | null | undefined) => redactEmails(text ?? "", false);
