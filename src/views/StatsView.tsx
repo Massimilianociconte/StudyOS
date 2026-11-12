@@ -27,6 +27,8 @@ import {
 import { oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { Button, EmptyState, HelpTip, IconButton, Panel, ProgressBar, SectionTitle, Segmented, StatTile } from "../components/ui";
 import { Icon } from "../components/Icon";
+import { CalendarExamsHint } from "../components/CalendarExamsHint";
+import { calendarExamEvents } from "../lib/calendarExams";
 
 const tooltipStyle = { background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, color: "var(--text)" };
 
@@ -57,9 +59,10 @@ const goTo = (setActiveView: (view: "study" | "tasks" | "subjects" | "exams") =>
 };
 
 export function StatsView() {
-  const { sessions, subjects, tasks, exams, topics, preferences, setActiveView } = useStudyStore(
+  const { sessions, subjects, tasks, exams, events, topics, preferences, setActiveView } = useStudyStore(
     useShallow((state) => ({
       sessions: state.sessions,
+      events: state.events,
       subjects: state.subjects,
       tasks: state.tasks,
       exams: state.exams,
@@ -101,6 +104,9 @@ export function StatsView() {
         })),
     [exams, subjects]
   );
+  // Esami segnati solo nel calendario: si propongono quando l'elenco degli esami è vuoto.
+  const hasExamData = examData.length > 0;
+  const calendarExams = useMemo(() => (hasExamData ? [] : calendarExamEvents(events, new Date())), [events, hasExamData]);
 
   const visibleTasks = tasks.filter((task) => task.status !== "archived");
   // Attività e ripassi seguono il periodo scelto, come le ore; i giorni di fila contano fino a oggi.
@@ -345,6 +351,8 @@ export function StatsView() {
                 </li>
               ))}
             </ul>
+          ) : calendarExams.length ? (
+            <CalendarExamsHint items={calendarExams} subjects={subjects} />
           ) : (
             <p className="text-sm text-[var(--muted)]">{STATS_TEXT.examsEmpty}</p>
           )}

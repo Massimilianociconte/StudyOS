@@ -59,6 +59,17 @@ export const SEARCH_TEXT = {
   emptyHint: "Prova con una parola più corta o controlla come è scritta."
 } as const;
 
+/** Home e Statistiche: esami segnati solo nel calendario (eventi di tipo «Esame») quando l'elenco degli esami è vuoto. */
+export const CALENDAR_EXAMS_TEXT = {
+  line: (count: number) =>
+    count === 1
+      ? "Hai 1 esame in calendario: aggiungilo agli esami per seguire voti e preparazione."
+      : `Hai ${count} esami in calendario: aggiungili agli esami per seguire voti e preparazione.`,
+  tile: (count: number) => (count === 1 ? "1 esame in calendario" : `${count} esami in calendario`),
+  add: (title: string, day: string) => `Aggiungi «${title}» del ${day}`,
+  addAria: (title: string, day: string) => `Aggiungi agli esami «${title}» del ${day}: si apre il modulo già compilato`
+} as const;
+
 export const EXAM_STATUS_LABEL: Record<Exam["status"], string> = {
   planning: "Da pianificare",
   studying: "In preparazione",

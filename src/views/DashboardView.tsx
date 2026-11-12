@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { format, isSameDay, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { AppView, Subject } from "../types";
@@ -27,6 +27,7 @@ import {
 import {
   ALL_DAY_LABEL,
   ATTACHMENT_KIND_ICON,
+  CALENDAR_EXAMS_TEXT,
   ENERGY_LABEL,
   EVENT_CATEGORY_LABEL,
   PRIORITY_LABEL,
@@ -40,7 +41,9 @@ import {
 } from "../lib/labels";
 import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
 import { homeTimerSummary } from "../lib/homeTimer";
+import { calendarExamEvents } from "../lib/calendarExams";
 import { useNow } from "../hooks/useNow";
+import { CalendarExamsHint } from "../components/CalendarExamsHint";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
@@ -210,6 +213,9 @@ export function DashboardView() {
   // Come nel calendario: colori per tipologia scelti dall'utente e colore messo a mano.
   const typeOverrides = sanitizeTypeColorOverrides((preferences as { eventTypeColors?: unknown }).eventTypeColors);
 
+  // Esami segnati solo nel calendario: si propongono quando l'elenco degli esami è vuoto.
+  const hasNextExams = nextExams.length > 0;
+  const calendarExams = useMemo(() => (hasNextExams ? [] : calendarExamEvents(events, new Date())), [events, hasNextExams]);
   const nextExamDays = nextExams[0] ? studyDaysUntil(nextExams[0].date) : 0;
   const stats = [
     {
@@ -241,7 +247,11 @@ export function DashboardView() {
     {
       label: "Prossimo esame",
       value: nextExams[0] ? (nextExamDays === 0 ? "Oggi" : `tra ${nextExamDays} ${nextExamDays === 1 ? "giorno" : "giorni"}`) : "—",
-      detail: nextExams[0] ? subjectName(subjects, nextExams[0].subjectId) : "Nessun esame in programma",
+      detail: nextExams[0]
+        ? subjectName(subjects, nextExams[0].subjectId)
+        : calendarExams.length
+          ? CALENDAR_EXAMS_TEXT.tile(calendarExams.length)
+          : "Nessun esame in programma",
       icon: "GraduationCap",
       tone: "var(--warning)",
       view: "exams" as const
@@ -474,6 +484,8 @@ export function DashboardView() {
                   );
                 })}
               </ul>
+            ) : calendarExams.length ? (
+              <CalendarExamsHint items={calendarExams} subjects={subjects} />
             ) : (
               <EmptyLine text={HOME_TEXT.emptyExams} action={HOME_TEXT.addExam} onAction={() => setActiveView("exams")} />
             )}

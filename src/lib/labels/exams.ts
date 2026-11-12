@@ -12,6 +12,8 @@ export const EXAMS_TEXT = {
   tabPersonal: "I miei esami",
   tabOfficial: "Date ufficiali",
   addExam: "Aggiungi esame",
+  /** Modulo aperto da Home o Statistiche con un esame del calendario (chiave `exams.new`). */
+  fromCalendar: (title: string) => `Dal calendario: «${title}». Controlla materia e ora, poi salva.`,
   recordGrade: "Registra un voto",
   shareProgress: "Condividi i progressi",
   study: "Studia",

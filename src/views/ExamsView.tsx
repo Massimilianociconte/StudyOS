@@ -12,6 +12,7 @@ import { readImageFile } from "../lib/files";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
+import { EXAMS_NEW_KEY, isNullableExamPrefill, type ExamPrefill } from "../lib/calendarExams";
 import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useDialogLayer } from "../components/ui";
 import { DateTimeField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
@@ -98,13 +99,15 @@ export function ExamsView() {
   // Esame aperto nel modulo: scritto anche da altre schermate (writeUiState + setActiveView).
   const [editingId, setEditingId] = useUiState<string | null>(EXAMS_EDITING_KEY, null, { scope: "tab", validate: isNullableString });
   const editing = resolveExamEditing(editingId, exams);
-  const activeTab = editing.exam ? "personal" : tab;
+  // Esame del calendario da aggiungere (Home, Statistiche): apre «Aggiungi esame» già compilato, poi si cancella.
+  const [prefill, setPrefill] = useUiState<ExamPrefill | null>(EXAMS_NEW_KEY, null, { scope: "tab", validate: isNullableExamPrefill });
+  const activeTab = editing.exam || prefill ? "personal" : tab;
 
   useEffect(() => {
     // Id di un esame che non c'è più: si ignora e si cancella. Altrimenti si passa a "I miei esami".
     if (editing.clear) setEditingId(null);
-    else if (editing.exam && tab !== "personal") setTab("personal");
-  }, [editing.clear, editing.exam, tab, setEditingId, setTab]);
+    else if ((editing.exam || prefill) && tab !== "personal") setTab("personal");
+  }, [editing.clear, editing.exam, prefill, tab, setEditingId, setTab]);
 
   const header: ExamsHeader = (actions) => (
     <>
@@ -124,7 +127,11 @@ export function ExamsView() {
 
   return (
     <div className="min-w-0">
-      {activeTab === "barb" ? <BarbExamCalendar header={header} /> : <PersonalExamsView header={header} editingExam={editing.exam} onEditingChange={setEditingId} />}
+      {activeTab === "barb" ? (
+        <BarbExamCalendar header={header} />
+      ) : (
+        <PersonalExamsView header={header} editingExam={editing.exam} onEditingChange={setEditingId} prefill={prefill} onPrefillUsed={() => setPrefill(null)} />
+      )}
     </div>
   );
 }
@@ -132,11 +139,15 @@ export function ExamsView() {
 function PersonalExamsView({
   header,
   editingExam,
-  onEditingChange
+  onEditingChange,
+  prefill = null,
+  onPrefillUsed
 }: {
   header: ExamsHeader;
   editingExam: Exam | null;
   onEditingChange: (id: string | null) => void;
+  prefill?: ExamPrefill | null;
+  onPrefillUsed?: () => void;
 }) {
   const { exams, subjects, tasks, sessions, topics, addExam, updateExam, deleteExam, addTopics, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
@@ -161,6 +172,22 @@ function PersonalExamsView({
     setDraftFor(null);
   }
   const formOpen = creating || editingExam !== null;
+  // Esame del calendario (chiave `exams.new`): «Aggiungi esame» già compilato con materia e giorno.
+  const [fromCalendar, setFromCalendar] = useState("");
+  if (!formOpen && fromCalendar) setFromCalendar("");
+  useEffect(() => {
+    if (!prefill) return;
+    const subjectId = subjects.some((subject) => subject.id === prefill.subjectId) ? prefill.subjectId : "";
+    setMessage("");
+    onEditingChange(null);
+    setDraft({ ...emptyDraft(subjectId), date: toDatetimeLocal(prefill.date) });
+    setMoreOpen(false);
+    setCreating(true);
+    setFromCalendar(prefill.title);
+    onPrefillUsed?.();
+    // Solo quando arriva un esame dal calendario: le altre dipendenze non devono riaprire il modulo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
   const dialogRef = useRef<HTMLElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
 
@@ -449,6 +476,7 @@ function PersonalExamsView({
               <div className="min-w-0">
                 <h3 className="safe-text text-2xl font-black">{editingExam ? "Modifica esame" : "Aggiungi esame"}</h3>
                 <p className="two-line-safe text-sm text-[var(--muted)]">Bastano materia e data: l'esame comparirà anche nel tuo Calendario.</p>
+                {creating && fromCalendar ? <p className="safe-text mt-1 text-sm font-bold text-[var(--accent-ink)]">{EXAMS_TEXT.fromCalendar(fromCalendar)}</p> : null}
               </div>
               <IconButton icon="X" label="Chiudi" className="h-10 w-10" onClick={() => closeForm()} />
             </div>
