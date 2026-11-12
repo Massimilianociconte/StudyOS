@@ -75,8 +75,11 @@ export function TaskEditorModal({
   const completedLate = isTaskCompletedLate(task);
 
   // La domanda prende il focus sulla scelta sicura (Invio o Esc tornano a modificare).
+  // Al frame dopo: aperta dal tocco fuori, il focus del mousedown arriva dopo l'effetto e lo toglierebbe.
   useEffect(() => {
-    if (asking) footerRef.current?.querySelector<HTMLElement>("[data-keep]")?.focus();
+    if (!asking) return;
+    const frame = requestAnimationFrame(() => footerRef.current?.querySelector<HTMLElement>("[data-keep]")?.focus());
+    return () => cancelAnimationFrame(frame);
   }, [asking]);
 
   const keepEditing = () => {
