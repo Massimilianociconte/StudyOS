@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GroupMember, GroupResource, StudyGroup } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Drawer, Field, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
@@ -31,13 +31,15 @@ import { isNullableString, oneOf } from "../lib/uiState";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { GroupExamsTab } from "../components/groupExams/GroupExamsTab";
 import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
+// «Docenti e aule» porta i dati BARB: si carica solo quando si apre la scheda.
+const GroupCatalogTab = lazy(() => import("../components/groupExams/GroupCatalogTab"));
 import { GROUP_FORM_TEXT, GROUP_SYNC_TEXT } from "../lib/labels/groups";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
 import { peopleLabels } from "../lib/labels";
 import { groupInviteRecipient, isExpiredEmailInvite } from "../lib/people";
 import { isReceivedInvite } from "../lib/groups";
 
-type DetailTab = "bacheca" | "membri" | "attivita" | "appelli";
+type DetailTab = "bacheca" | "membri" | "attivita" | "appelli" | "catalogo";
 
 const RESOURCE_ICON: Record<GroupResource["kind"], string> = {
   link: "Globe",
@@ -500,7 +502,7 @@ function CreateGroupModal({ actor, needsAccount, onLogin, onClose, onCreated }: 
 function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: StudyGroup; actor: Actor | null; onClose: () => void; onNotice: (text: string) => void; onLogin: () => void }) {
   const { groupResources, groupActivities, groupInvites } = useStudyStore();
   // Collegata: «Apri» di una notifica degli appelli scrive "appelli" anche con il gruppo già aperto.
-  const [tab, setTab] = useLinkedUiState<DetailTab>("groups.detailTab", "bacheca", { scope: "tab", validate: oneOf("bacheca", "membri", "attivita", "appelli") });
+  const [tab, setTab] = useLinkedUiState<DetailTab>("groups.detailTab", "bacheca", { scope: "tab", validate: oneOf("bacheca", "membri", "attivita", "appelli", "catalogo") });
   const [resourceOpen, setResourceOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const resources = useMemo(
@@ -547,7 +549,7 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
       ) : null}
       {/* L'id "attivita" resta per lo stato salvato; l'etichetta è "Cronologia" per non confonderla con le attività da fare. */}
       <Segmented label="Sezioni del gruppo" size="sm" className="justify-self-start" value={tab} onChange={setTab}
-        options={[{ id: "bacheca", label: "Bacheca" }, { id: "membri", label: "Membri" }, { id: "attivita", label: "Cronologia" }, { id: "appelli", label: GROUP_EXAM_TEXT.tabExams }]} />
+        options={[{ id: "bacheca", label: "Bacheca" }, { id: "membri", label: "Membri" }, { id: "attivita", label: "Cronologia" }, { id: "appelli", label: GROUP_EXAM_TEXT.tabExams }, { id: "catalogo", label: GROUP_EXAM_TEXT.tabCatalog }]} />
 
       {tab === "bacheca" ? (
         <div className="mt-4">
@@ -633,6 +635,13 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
       {tab === "appelli" ? (
         <div className="mt-4">
           <GroupExamsTab groupId={group.id} />
+        </div>
+      ) : null}
+      {tab === "catalogo" ? (
+        <div className="mt-4">
+          <Suspense fallback={<p className="text-sm font-bold text-[var(--muted)]">{GROUP_EXAM_TEXT.loading}</p>}>
+            <GroupCatalogTab groupId={group.id} />
+          </Suspense>
         </div>
       ) : null}
 

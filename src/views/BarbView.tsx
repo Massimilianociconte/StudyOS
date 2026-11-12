@@ -9,6 +9,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { BARB_META, useBarbStore } from "../store/useBarbStore";
+import { GroupCorrections } from "../components/groupExams/GroupCorrections";
+import { contactTargetId } from "../lib/catalogOverrides";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { useStudyStore } from "../store/useStudyStore";
 import { useSharedStore } from "../store/useSharedStore";
@@ -956,6 +958,7 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
                     <Tag key={id}>{courseName.get(id) ?? id}</Tag>
                   ))}
                 </div>
+                <GroupCorrections kind="teacher" targetId={teacher.id} />
                 {teacher.unimiProfileUrl || teacher.website ? (
                   <p className="mt-auto flex flex-wrap gap-x-3 pt-2.5 text-xs font-bold">
                     {teacher.unimiProfileUrl ? <ExternalLink href={teacher.unimiProfileUrl}>Pagina UNIMI</ExternalLink> : null}
@@ -980,6 +983,7 @@ function TeachersTab({ teachers, courses }: { teachers: BarbTeacher[]; courses: 
                     Apri il sito <Icon name="ExternalLink" className="h-3 w-3" />
                   </a>
                 ) : null}
+                <GroupCorrections kind="contact" targetId={contactTargetId(contact.label)} />
               </li>
             ))}
           </ul>

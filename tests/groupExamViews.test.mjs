@@ -49,3 +49,15 @@ test("pagina della materia: appelli del gruppo sotto quelli ufficiali, «Aggiung
   assert.match(view, /<SubjectGroupExams subject=\{subject\} draft=\{groupDraft\}/);
   assert.match(source("src/components/BarbExamSessions.tsx"), /onAddToGroup=\{onAddToGroup\}/);
 });
+
+test("«Docenti e aule»: scheda caricata solo quando si apre, link sempre filtrati", () => {
+  const groups = source("src/views/GroupsView.tsx");
+  assert.match(groups, /lazy\(\(\) => import\("\.\.\/components\/groupExams\/GroupCatalogTab"\)\)/);
+  assert.match(groups, /oneOf\("bacheca", "membri", "attivita", "appelli", "catalogo"\)/);
+  const corrections = source("src/components/groupExams/GroupCorrections.tsx");
+  assert.match(corrections, /safeHref\(/);
+  assert.doesNotMatch(corrections, /href=\{value\}/);
+  const barb = source("src/views/BarbView.tsx");
+  assert.match(barb, /<GroupCorrections kind="teacher" targetId=\{teacher\.id\} \/>/);
+  assert.match(barb, /<GroupCorrections kind="contact" targetId=\{contactTargetId\(contact\.label\)\} \/>/);
+});
