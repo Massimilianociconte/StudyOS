@@ -2,10 +2,11 @@
 // RECURRENCE-ID, VALARM; unione con il calendario senza doppioni (recurrence.md §7.2 caso 12).
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { buildIcs, decodeIcsBytes, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
 import { importButton, previewWarnings } from "../src/lib/calendarGuide.ts";
 import { publicEntity } from "../src/agent/project.ts";
-import { withoutProtectedKeys } from "../src/lib/sharing.ts";
+import { prepareSharedWrite, sharedPushBatches, withoutProtectedKeys } from "../src/lib/sharing.ts";
 import { CALENDAR_GUIDE_TEXT } from "../src/lib/labels/calendarGuide.ts";
 import { applyEditPlan, applyRepeatFields, expandEvents, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
@@ -551,6 +552,19 @@ const splitCalendar = () => {
 };
 const NOTHING = { added: 0, updated: 0, puts: 0, deletes: 0 };
 const counts = (plan) => ({ added: plan.added, updated: plan.updated, puts: plan.puts.length, deletes: plan.deletes.length });
+/**
+ * Niente di nuovo, al più l'impronta: un altro file con gli stessi eventi scritti in altro modo (il
+ * proprio export e quello di Google) aggiorna solo la metà del file, senza toccare altro.
+ */
+const QUIET = { added: 0, updated: 0, deletes: 0, changed: 0, warnings: 0 };
+const quietCounts = (plan, events) => {
+  const sameButStamp = (put) => {
+    const { sourceStamp: after, ...rest } = put;
+    const { sourceStamp: before, ...old } = events.find((event) => event.id === put.id) ?? {};
+    return typeof after === "string" && typeof before === "string" && after.split(".")[1] === before.split(".")[1] && JSON.stringify(rest) === JSON.stringify(old);
+  };
+  return { added: plan.added, updated: plan.updated, deletes: plan.deletes.length, changed: plan.puts.filter((put) => !sameButStamp(put)).length, warnings: plan.warnings.length };
+};
 
 test("serie divisa in StudyOS ('questa e le successive'): le modifiche del file dopo la divisione vanno alla figlia", () => {
   const { events, master, child } = splitCalendar();
@@ -589,9 +603,12 @@ test("serie divisa: il proprio file reimportato non cambia nulla, anche più vol
     assert.ok(!expected.some((line) => line.startsWith("2026-12-14")), device);
     assert.ok(expected.includes("2026-12-21T08:00:00.000Z Fisica (ripasso mio)"), device);
     const own = buildIcs({ events, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
-    for (const [index, file] of [own, own, SPLIT_CHANGED, own, SPLIT_CHANGED].entries()) {
+    const files = [own, own, SPLIT_CHANGED, own, SPLIT_CHANGED];
+    for (const [index, file] of files.entries()) {
       const plan = merge(events, parseIcs(file, { timeZone: device }), { timeZone: device });
-      assert.deepEqual(counts(plan), NOTHING, `${device} import ${index + 1}`);
+      assert.deepEqual(quietCounts(plan, events), QUIET, `${device} import ${index + 1}`);
+      // Lo stesso file due volte di seguito: proprio nulla.
+      if (file === files[index - 1]) assert.deepEqual(counts(plan), NOTHING, `${device} import ${index + 1}`);
       events = apply(events, plan);
     }
     assert.deepEqual(window(events), expected, device);
@@ -631,14 +648,15 @@ test("serie divisa copiata in un altro calendario: resta una famiglia, e il file
     assert.equal(copyRow("2026-12-07").sourceEdited, undefined, device);
     // Il file originale di Google nella copia: niente giorni doppi, niente cambia.
     const plan = merge(copy, parseIcs(google, { timeZone: device }), { timeZone: device });
-    assert.deepEqual(counts(plan), NOTHING, device);
+    assert.deepEqual(quietCounts(plan, copy), QUIET, device);
     copy = apply(copy, plan);
     assert.deepEqual(window(copy), window(events), device);
+    assert.deepEqual(counts(merge(copy, parseIcs(google, { timeZone: device }), { timeZone: device })), NOTHING, device);
     // E la copia esportata e reimportata in sé stessa non cambia, anche alternata con il file di Google.
     const again = buildIcs({ events: copy, exams: [], tasks: [], subjects: [], timeZone: device, now: new Date(NOW) });
     for (const [index, file] of [again, google, own, again, google].entries()) {
       const next = merge(copy, parseIcs(file, { timeZone: device }), { timeZone: device });
-      assert.deepEqual(counts(next), NOTHING, `${device} import ${index + 1}`);
+      assert.deepEqual(quietCounts(next, copy), QUIET, `${device} import ${index + 1}`);
       copy = apply(copy, next);
     }
     assert.deepEqual(window(copy), window(events), device);
@@ -1436,9 +1454,10 @@ test("l'impronta resta privata e non passa alle parti divise né ai giorni modif
   const first = apply([], reimport([], TWO_LESSONS));
   const chem = first.find((event) => event.sourceUid === "b@g" && !event.seriesId);
   assert.equal(typeof chem.sourceStamp, "string");
-  // Mai agli agenti, mai a chi riceve una condivisione.
+  // Mai agli agenti. Con una condivisione viaggia come gli altri campi: il server conserva solo le sue chiavi
+  // protette, e toglierla farebbe perdere l'impronta al proprietario quando chi riceve modifica l'evento.
   assert.equal("sourceStamp" in publicEntity(chem), false);
-  assert.equal("sourceStamp" in withoutProtectedKeys(chem), false);
+  assert.equal(withoutProtectedKeys(chem).sourceStamp, chem.sourceStamp);
   // «Solo questa»: la riga non la eredita; «questa e le successive»: la figlia nemmeno.
   const row = planEdit(chem, first, "2026-11-10", "this", { title: "Chimica (spostata)" }, { now: NOW }).puts.find((event) => event.seriesId);
   assert.ok(row && !("sourceStamp" in row));
@@ -1449,6 +1468,110 @@ test("l'impronta resta privata e non passa alle parti divise né ai giorni modif
   // Una modifica a mano non la cambia (la scrive solo l'importazione).
   const all = planEdit(chem, first, "2026-11-03", "all", { title: "Chimica generale", sourceStamp: "x.y" }, { now: NOW }).puts.find((event) => event.id === chem.id);
   assert.equal(all.sourceStamp, chem.sourceStamp);
+});
+
+test("condivisione: la modifica di chi riceve tiene l'impronta del proprietario, e il suo prossimo import non la annulla", () => {
+  const owner = apply([], reimport([], TWO_LESSONS));
+  const anatomy = owner.find((event) => event.sourceUid === "a@g");
+  // Chi riceve cambia la descrizione: scrittura preparata e inviata come fa l'app.
+  const edited = prepareSharedWrite(anatomy, { ...anatomy, description: "Portare il camice" }, NOW);
+  const item = { key: `owner:calendarEvent:${anatomy.id}`, ownerId: "owner", entityType: "calendarEvent", entityId: anatomy.id, entity: edited, serverUpdatedAt: NOW };
+  const entry = { key: item.key, ownerId: "owner", entityType: "calendarEvent", entityId: anatomy.id, deleted: false, queuedAt: NOW };
+  const sent = sharedPushBatches([entry], [item]).batches[0].rows[0].payload;
+  assert.equal(sent.sourceStamp, anatomy.sourceStamp);
+  // Il server (studyos_recipient_payload) tiene le chiavi nuove non protette e quelle protette salvate.
+  const serverProtected = new RegExp(/v_protected constant text := '([^']+)'/.exec(readFileSync(new URL("../supabase/sharing.sql", import.meta.url), "utf8"))[1]);
+  const stored = {
+    ...Object.fromEntries(Object.entries(sent).filter(([key]) => !serverProtected.test(key))),
+    ...Object.fromEntries(Object.entries(anatomy).filter(([key]) => serverProtected.test(key)))
+  };
+  assert.equal(stored.sourceStamp, anatomy.sourceStamp);
+  // Il proprietario reimporta lo stesso file: la modifica di chi riceve resta.
+  const synced = owner.map((event) => (event.id === anatomy.id ? stored : event));
+  const plan = reimport(synced, TWO_LESSONS);
+  assert.deepEqual([counts(plan), plan.warnings], [NOTHING, []]);
+  assert.equal(apply(synced, plan).find((event) => event.id === anatomy.id).description, "Portare il camice");
+});
+
+test("fuso con nome inventato (Outlook «Customized Time Zone»): se le sue regole cambiano, l'evento si aggiorna", () => {
+  const zone = (standardAt, daylightAt, standard, daylight) => [
+    "BEGIN:VTIMEZONE",
+    "TZID:Customized Time Zone",
+    "BEGIN:STANDARD",
+    `DTSTART:19701025T${standardAt}`,
+    `TZOFFSETFROM:${daylight}`,
+    `TZOFFSETTO:${standard}`,
+    "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
+    "END:STANDARD",
+    "BEGIN:DAYLIGHT",
+    `DTSTART:19700329T${daylightAt}`,
+    `TZOFFSETFROM:${standard}`,
+    `TZOFFSETTO:${daylight}`,
+    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+    "END:DAYLIGHT",
+    "END:VTIMEZONE"
+  ];
+  const outlook = (rules) =>
+    ics(
+      "PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN",
+      rules,
+      "BEGIN:VEVENT",
+      "UID:o1@outlook",
+      "SUMMARY:Riunione",
+      'DTSTART;TZID="Customized Time Zone":20261120T090000',
+      'DTEND;TZID="Customized Time Zone":20261120T100000',
+      "END:VEVENT"
+    );
+  const rome = outlook(zone("030000", "020000", "+0100", "+0200"));
+  const london = outlook(zone("020000", "010000", "+0000", "+0100"));
+  const first = apply([], reimport([], rome));
+  assert.equal(first[0].start, "2026-11-20T08:00:00.000Z");
+  // Su un altro dispositivo lo stesso file non cambia nulla (l'impronta non dipende dal fuso del telefono).
+  for (const device of ["America/New_York", "Asia/Tokyo"]) assert.deepEqual(counts(merge(first, parseIcs(rome, { timeZone: device }), { timeZone: device })), NOTHING, device);
+  const plan = reimport(first, london);
+  assert.equal(plan.updated, 1);
+  const after = apply(first, plan);
+  assert.equal(after[0].start, "2026-11-20T09:00:00.000Z");
+  assert.deepEqual(counts(reimport(after, london)), NOTHING);
+});
+
+test("stesso evento scritto in altro modo (regola in altro ordine, X-WR-TIMEZONE nuovo): le modifiche fatte qui restano", () => {
+  const physics = (zone, rule) =>
+    ics(`X-WR-TIMEZONE:${zone}`, "BEGIN:VEVENT", "UID:h@x", "DTSTART;TZID=Europe/Rome:20261104T090000", "DTEND;TZID=Europe/Rome:20261104T100000", `RRULE:${rule}`, "SUMMARY:Fisica", "END:VEVENT");
+  const original = physics("Europe/Rome", "FREQ=WEEKLY;COUNT=6");
+  const series = (events) => events.find((event) => event.sourceUid === "h@x" && !event.seriesId);
+  const mine = (events) => events.map((event) => (event === series(events) ? { ...event, title: "Fisica (mia)" } : event));
+  const halves = (event) => event.sourceStamp.split(".");
+  for (const [label, reworded] of [
+    ["regola in altro ordine", physics("Europe/Rome", "COUNT=6;FREQ=WEEKLY")],
+    ["X-WR-TIMEZONE nuovo", physics("Europe/Berlin", "FREQ=WEEKLY;COUNT=6")]
+  ]) {
+    const first = apply([], reimport([], original));
+    // Senza modifiche qui: si aggiorna solo la metà del file dell'impronta, e non conta come aggiornato.
+    const plan = reimport(first, reworded);
+    assert.deepEqual([plan.added, plan.updated, plan.deletes.length, plan.editsReplaced, plan.warnings.length, plan.puts.length], [0, 0, 0, 0, 0, 1], label);
+    const { sourceStamp, ...rest } = plan.puts[0];
+    const { sourceStamp: before, ...unchanged } = series(first);
+    assert.deepEqual(rest, unchanged, label);
+    assert.notEqual(sourceStamp.split(".")[0], before.split(".")[0], label);
+    assert.equal(sourceStamp.split(".")[1], before.split(".")[1], label);
+    const refreshed = apply(first, plan);
+    assert.deepEqual(counts(reimport(refreshed, reworded)), NOTHING, label);
+    assert.deepEqual(counts(reimport(mine(refreshed), reworded)), NOTHING, label);
+    // Modificato qui prima del file riscritto: la modifica resta, nessun avviso, solo l'impronta cambia.
+    const edited = mine(first);
+    const quiet = reimport(edited, reworded);
+    assert.deepEqual([quiet.added, quiet.updated, quiet.deletes.length, quiet.editsReplaced, quiet.warnings.length], [0, 0, 0, 0, 0], label);
+    assert.equal(importButton(quiet), "remember", label);
+    const kept = apply(edited, quiet);
+    assert.equal(series(kept).title, "Fisica (mia)", label);
+    assert.deepEqual(halves(series(kept)), [halves(plan.puts[0])[0], halves(series(first))[1]], label);
+    assert.deepEqual(counts(reimport(kept, reworded)), NOTHING, label);
+    // Il file cambia davvero (altra regola): vince il file, e lo si dice.
+    const changed = reimport(kept, physics("Europe/Rome", "FREQ=WEEKLY;COUNT=8"));
+    assert.deepEqual([changed.updated, changed.editsReplaced], [1, 1], label);
+    assert.equal(series(apply(kept, changed)).title, "Fisica", label);
+  }
 });
 
 // ------------------------------------------------------------------------------------------

@@ -1448,8 +1448,9 @@ export interface IcsImportedEvent {
   /** X-STUDYOS-EDITED sulla serie: date escluse a mano in StudyOS (tra quelle di `exdates`). */
   editedExdates?: string[];
   /**
-   * Inizio, fine e regola come sono scritti nel file: per l'impronta (`sourceStamp`), uguale su ogni
-   * dispositivo anche per le ore senza fuso, che qui diventano istanti nel fuso del dispositivo.
+   * Inizio, fine e regola come sono scritti nel file, con il fuso a cui porta ogni TZID: per l'impronta
+   * (`sourceStamp`), uguale su ogni dispositivo anche per le ore senza fuso, che qui diventano istanti nel
+   * fuso del dispositivo.
    */
   fileTiming?: string;
 }
@@ -1598,8 +1599,17 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     const calendarZone = plainZone(propOf(calendar, "X-WR-TIMEZONE")?.value);
     // Per l'impronta: date e fuso come sono scritti, non come diventano su questo dispositivo.
     const rawWrittenZone = propOf(calendar, "X-WR-TIMEZONE")?.value.trim() ?? "";
-    const writtenAs = (property: Property | undefined) =>
-      property ? `${property.params.TZID ?? ""};${(property.params.VALUE ?? "").toUpperCase()}:${property.value.trim()}` : "";
+    /**
+     * Per l'impronta, il fuso a cui porta ogni TZID letto: il nome IANA se si riconosce dal nome, se no
+     * le regole del suo VTIMEZONE (il fuso trovato con quelle dipende dal dispositivo). Vuoto se non si sa.
+     */
+    const zoneKeys = new Map<string, string>();
+    const writtenAs = (property: Property | undefined) => {
+      if (!property) return "";
+      const tzid = property.params.TZID;
+      const zone = tzid === undefined ? "" : zoneKeys.get(tzidOf(tzid)) || tzid;
+      return `${zone};${(property.params.VALUE ?? "").toUpperCase()}:${property.value.trim()}`;
+    };
     // File scritto da StudyOS: dice per ogni evento se è saltato (prima con STATUS:CANCELLED, che StudyOS
     // non ha mai usato per un annullamento vero: quelli sono EXDATE o eventi tolti dal file).
     const fromStudyOs = studyOsFile(calendar);
@@ -1625,6 +1635,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       }
       const definition = vtimezones.get(tzid);
       if (!zone && definition) zone = plainZone(propOf(definition, "X-LIC-LOCATION")?.value);
+      zoneKeys.set(tzid, zone ?? (definition ? `vtz:${zoneDefinitionKey(definition)}` : ""));
       if (!zone && definition && zoneMatches < MAX_ZONE_MATCHES) {
         zoneMatches += 1;
         // Nome inventato (es. "Ora dell'Europa centrale"): il primo fuso con gli stessi scarti.
@@ -2090,6 +2101,25 @@ const hashText = (text: string) => {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 };
 
+/** Impronta delle regole di un VTIMEZONE (inizio, scarti e ripetizioni di ogni osservanza), in qualunque ordine. */
+const zoneDefinitionKey = (definition: Component) =>
+  hashText(
+    definition.children
+      .filter((observance) => observance.name === "STANDARD" || observance.name === "DAYLIGHT")
+      .map((observance) =>
+        [
+          observance.name,
+          ...["DTSTART", "TZOFFSETFROM", "TZOFFSETTO"].map((name) => propOf(observance, name)?.value.trim().toUpperCase() ?? ""),
+          ...observance.props
+            .filter((property) => property.name === "RRULE" || property.name === "RDATE")
+            .map((property) => `${property.name}:${property.value.trim().toUpperCase()}`)
+            .sort()
+        ].join("|")
+      )
+      .sort()
+      .join("\n")
+  );
+
 /** Le due metà di `sourceStamp`: com'era l'evento nel file e come l'import l'ha scritto. */
 const stampParts = (value: unknown) => {
   if (typeof value !== "string") return null;
@@ -2311,12 +2341,15 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   /**
    * Evento aggiornato con i dati del file, o null se il file dice le stesse cose. Se il file non è cambiato
    * dall'ultimo import (stessa impronta), null anche se qui l'evento è stato modificato: le modifiche restano.
-   * `quiet`: uguale al file ma senza l'impronta giusta (import di una versione precedente, o file cambiato
-   * proprio come l'evento qui): si scrive solo l'impronta, e non conta come aggiornato.
+   * `quiet`: si scrive solo l'impronta, e non conta come aggiornato. Succede se l'evento è uguale al file
+   * ma senza l'impronta giusta (import di una versione precedente, o file cambiato proprio come l'evento
+   * qui), o se il file dice le stesse cose scritte in altro modo (l'import scriverebbe lo stesso evento
+   * dell'ultima volta): le modifiche fatte qui restano, e cambia solo la metà del file dell'impronta.
    */
   const updated = (existing: CalendarEvent, item: IcsImportItem, options: { rule: boolean; adopt?: string }): { event: CalendarEvent; quiet: boolean } | null => {
     const previous = stampParts(existing.sourceStamp);
     if (!options.adopt && previous?.file === fileStamp(item)) return null;
+    const reworded = (): CalendarEvent | null => (previous && !options.adopt && item.sourceUid ? { ...existing, sourceStamp: `${fileStamp(item)}.${previous.event}` } : null);
     const timing = timingOf(existing, fallbackZone);
     const incoming = timingOf({ start: item.start, end: item.end, allDay: item.allDay, timeZone: item.timeZone ?? existing.timeZone }, fallbackZone);
     if (!incoming) return null;
@@ -2341,11 +2374,16 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       (!options.rule || ruleKey(current, timing?.startDate ?? "") === ruleKey(rule, incoming.startDate)) &&
       (item.reminders === undefined || reminderKey(existing, existing.reminders) === reminderKey(existing, item.reminders));
     if (same) {
-      // Solo gli eventi importati (i propri, ritrovati dal loro UID @studyos, restano come sono), e solo se
-      // l'impronta manca o non dice più com'è l'evento: due file diversi con lo stesso evento (il proprio e
-      // quello di Google) non la riscrivono a ogni giro.
+      // Solo gli eventi importati (i propri, ritrovati dal loro UID @studyos, restano come sono). Se
+      // l'impronta manca o non dice più com'è l'evento, si riscrive intera.
       // (L'impronta dell'evento può essere stata scritta con o senza «saltato», a seconda del file di allora.)
-      if (!existing.sourceUid || (previous && (previous.event === eventStamp(existing, false) || previous.event === eventStamp(existing, true)))) return null;
+      if (!existing.sourceUid) return null;
+      if (previous && (previous.event === eventStamp(existing, false) || previous.event === eventStamp(existing, true))) {
+        // L'evento è come l'import l'aveva scritto, ma il file è scritto in altro modo (o è un altro file con
+        // lo stesso evento, come il proprio export e quello di Google): solo la metà del file.
+        const refreshed = reworded();
+        return refreshed ? { event: refreshed, quiet: true } : null;
+      }
       return { event: stamped(existing, item), quiet: true };
     }
     const next: CalendarEvent = withLocation(
@@ -2366,12 +2404,21 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       },
       item.location
     );
+    const written = options.rule ? applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone }) : next;
+    // Il file è scritto in altro modo ma l'import scriverebbe lo stesso evento dell'ultima volta: l'evento
+    // non è cambiato nel file, quindi le differenze sono modifiche fatte qui, e restano. Se il file ora
+    // non dice se è saltato, conta anche un'impronta scritta con «saltato» (lo stato resta quello di qui).
+    // La fine della regola non è nell'impronta dell'evento: deve restare quella di qui (divisioni comprese).
+    const refreshed = reworded();
+    const sameEnd = !options.rule || (rule ? endKey(rule) : null) === (current ? endKey(current) : null);
+    if (refreshed && sameEnd && (previous?.event === eventStamp(written, true) || (item.skipped === undefined && previous?.event === eventStamp(written, false)))) {
+      return { event: refreshed, quiet: true };
+    }
     // Modificato qui dopo l'ultimo import (non è più come l'import l'aveva scritto): lo si dice prima.
     if (previous && previous.event !== eventStamp(existing, item.skipped !== undefined)) replacedEdits.set(existing.id, String(existing.title ?? ""));
     // Senza impronta non si sa se è cambiato qui o nel file: vince il file, e l'anteprima lo dice.
     else if (!previous && !options.adopt) unknownEdits.set(existing.id, String(existing.title ?? ""));
-    if (!options.rule) return { event: stamped(next, item), quiet: false };
-    return { event: stamped(applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone }), item), quiet: false };
+    return { event: stamped(written, item), quiet: false };
   };
 
   /** Occorrenza della serie: stessa riga che crea il motore (copia della serie, senza regola). */
