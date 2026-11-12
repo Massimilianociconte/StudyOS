@@ -14,6 +14,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { CourseIcon } from "./CourseIcon";
 import { Icon } from "./Icon";
 import { Button, Drawer, EmptyState, HelpTip, Tag } from "./ui";
+import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
 
 export const barbToday = (now: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 export const barbSessionDate = (date: string) => format(parseISO(date), "d MMMM yyyy", { locale: it });
@@ -68,7 +69,20 @@ function AddSessionToCalendar({ session, course }: { session: BarbExamSession; c
   </div>;
 }
 
-export function BarbExamSessionDetail({ session, course, onClose, inline = false }: { session: BarbExamSession; course: BarbCourse; onClose: () => void; inline?: boolean }) {
+export function BarbExamSessionDetail({
+  session,
+  course,
+  onClose,
+  inline = false,
+  onAddToGroup
+}: {
+  session: BarbExamSession;
+  course: BarbCourse;
+  onClose: () => void;
+  inline?: boolean;
+  /** «Aggiungi al gruppo»: apre il modulo dell'appello del gruppo già compilato. */
+  onAddToGroup?: (session: BarbExamSession) => void;
+}) {
   const fields = [
     ["Data", barbSessionDate(session.date)],
     ["Tipo di prova", barbSessionType(session.type)],
@@ -89,6 +103,11 @@ export function BarbExamSessionDetail({ session, course, onClose, inline = false
       <div className="flex flex-wrap items-center gap-1.5"><Tag color={courseColor(course)}>{legacy ? EXAMS_TEXT.legacy : `${course.cfu} CFU`}</Tag>{legacy && <HelpTip title={EXAMS_HELP.legacy.title} text={EXAMS_HELP.legacy.text} />}</div>
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label} className="quiet-panel p-3"><dt className="text-xs font-bold text-[var(--muted)]">{label}</dt><dd className="safe-text mt-1 text-sm font-extrabold">{value}</dd></div>)}</dl>
       <AddSessionToCalendar key={session.id} session={session} course={course} />
+      {onAddToGroup ? (
+        <Button variant="soft" icon="Users" onClick={() => onAddToGroup(session)}>
+          {GROUP_EXAM_TEXT.addToGroup}
+        </Button>
+      ) : null}
       <div><h3 className="text-sm font-black">Note ufficiali</h3><p className="safe-text mt-1 whitespace-pre-line text-sm text-[var(--muted)]">{session.notes ?? "Nessuna nota pubblicata."}</p></div>
       {session.sourceReferences && session.sourceReferences.length > 1 && <div><h3 className="mb-2 text-sm font-black">Iscrizioni per ordinamento</h3><ul className="grid grid-cols-1 gap-2">{session.sourceReferences.map((reference, index) => <li key={`${reference.sourceUrl}-${reference.officialId ?? index}`} className="quiet-panel p-3"><a href={safeHref(reference.sourceUrl)} target="_blank" rel="noreferrer" className={linkClass}>{EXAMS_TEXT.referenceSource(reference.degreeCode ?? index + 1, isTechnicalFeedUrl(reference.sourceUrl))}</a><p className="safe-text mt-1 text-xs text-[var(--muted)]">{reference.sourceCourseName}</p><p className="mt-1 text-xs">Apertura: {reference.registrationOpens ? barbSessionDate(reference.registrationOpens) : "Non pubblicata"}<br />Chiusura: {reference.registrationCloses ? barbSessionDate(reference.registrationCloses) : "Non pubblicata"}</p></li>)}</ul></div>}
       <div className="quiet-panel p-4">
@@ -103,7 +122,7 @@ export function BarbExamSessionDetail({ session, course, onClose, inline = false
   return <Drawer open onClose={onClose} title={course.name} eyebrow={EXAMS_TEXT.officialEyebrow} headerExtra={<CourseIcon course={course} className="h-7 w-7" />}>{content}</Drawer>;
 }
 
-export function BarbExamSessions({ course }: { course: BarbCourse }) {
+export function BarbExamSessions({ course, onAddToGroup }: { course: BarbCourse; onAddToGroup?: (session: BarbExamSession) => void }) {
   const today = barbToday(useNow(60_000));
   const [selected, setSelected] = useState<BarbExamSession | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -189,7 +208,7 @@ export function BarbExamSessions({ course }: { course: BarbCourse }) {
               </button>;
             })}
           </div>}
-          {here ? <div ref={detailRef} tabIndex={-1} className="scroll-mt-2 rounded-[18px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"><BarbExamSessionDetail inline session={here} course={course} onClose={closeDetail} /></div> : null}
+          {here ? <div ref={detailRef} tabIndex={-1} className="scroll-mt-2 rounded-[18px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"><BarbExamSessionDetail inline session={here} course={course} onClose={closeDetail} onAddToGroup={onAddToGroup} /></div> : null}
         </li>;
       })}
     </ul> : <EmptyState icon="CalendarDays" title="Nessun appello ufficiale trovato" body="Le fonti ufficiali non riportano date per questo insegnamento: non vuol dire che non ci siano esami." />}

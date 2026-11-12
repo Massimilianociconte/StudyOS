@@ -4,6 +4,7 @@
 import type { AppNotification, AppView } from "../types";
 import type { UiScope } from "./uiState";
 import { isReminderNotificationId } from "./reminderIds";
+import { GROUP_EXAM_NOTIFICATION_PREFIX } from "./groupExamNotify";
 
 const SHARE_INVITE_PREFIX = "notif-share-invite-";
 
@@ -30,6 +31,8 @@ export const reminderEventDay = (id: string): string | null => {
 export const notificationJump = (item: Pick<AppNotification, "id" | "linkView" | "linkGroupId" | "createdAt">): NotificationJump => {
   const writes: NotificationJump["writes"] = [];
   if (item.linkGroupId) writes.push(["groups.open", item.linkGroupId, "tab"]);
+  // Appello del gruppo nuovo, cambiato o eliminato → scheda «Appelli» del gruppo.
+  if (item.id.startsWith(GROUP_EXAM_NOTIFICATION_PREFIX)) writes.push(["groups.detailTab", "appelli", "tab"]);
   // Invito a condividere → «Inviti»; «… condivide con te» → «Condivisi con me» (non l'ultima scheda usata).
   if (item.linkView === "sharing") writes.push(["sharing.tab", item.id.startsWith(SHARE_INVITE_PREFIX) ? "invites" : "received", "tab"]);
   // Promemoria: il Calendario si apre sul giorno dell'evento (un avviso «7 giorni prima» scatta in

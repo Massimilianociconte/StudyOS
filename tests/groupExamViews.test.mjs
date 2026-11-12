@@ -24,3 +24,28 @@ test("«Condividi con il gruppo» solo per un mio evento d'esame singolo e non a
   assert.match(editor, /\{onShareToGroup && !readOnly \? \(/);
   assert.match(editor, /discardThen === "shareToGroup" && onShareToGroup \? onShareToGroup : onClose/);
 });
+import { notificationJump } from "../src/lib/notificationJump.ts";
+
+test("«Apri» di una notifica degli appelli porta alla scheda «Appelli» del gruppo", () => {
+  const jump = notificationJump({ id: "notif-gexam-new-gexam_a", linkView: "groups", linkGroupId: "g1", createdAt: "2026-11-12T10:00:00Z" });
+  assert.equal(jump.view, "groups");
+  assert.deepEqual(jump.writes, [
+    ["groups.open", "g1", "tab"],
+    ["groups.detailTab", "appelli", "tab"]
+  ]);
+  const other = notificationJump({ id: "notif-group-x", linkView: "groups", linkGroupId: "g1", createdAt: "2026-11-12T10:00:00Z" });
+  assert.deepEqual(other.writes, [["groups.open", "g1", "tab"]]);
+});
+
+test("schede del gruppo: «Appelli» con la stessa chiave, ora collegata", () => {
+  const view = source("src/views/GroupsView.tsx");
+  assert.match(view, /useLinkedUiState<DetailTab>\("groups\.detailTab", "bacheca", \{ scope: "tab", validate: oneOf\("bacheca", "membri", "attivita", "appelli"/);
+  assert.match(view, /<GroupExamsTab groupId=\{group\.id\} \/>/);
+});
+
+test("pagina della materia: appelli del gruppo sotto quelli ufficiali, «Aggiungi al gruppo» da BARB", () => {
+  const view = source("src/views/SubjectsView.tsx");
+  assert.match(view, /<BarbExamSessions course=\{course\} onAddToGroup=\{hasExamGroups \?/);
+  assert.match(view, /<SubjectGroupExams subject=\{subject\} draft=\{groupDraft\}/);
+  assert.match(source("src/components/BarbExamSessions.tsx"), /onAddToGroup=\{onAddToGroup\}/);
+});
