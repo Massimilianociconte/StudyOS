@@ -111,6 +111,18 @@ export class PersistenceHaltedError extends Error {
   }
 }
 
+/**
+ * Il salvataggio chiesto non è avvenuto: il vault si è bloccato con modifiche ancora in memoria (lo
+ * stato è stato svuotato senza scriverle). Chi aspettava il salvataggio per andare avanti (il pull,
+ * prima di avanzare il cursore) deve fermarsi: le ritroverà al prossimo pull dopo lo sblocco (P9).
+ */
+export class PersistenceDiscardedError extends Error {
+  constructor() {
+    super("Workspace bloccato prima del salvataggio: modifiche non salvate.");
+    this.name = "PersistenceDiscardedError";
+  }
+}
+
 export const isPersistenceHalted = () => halted;
 
 /** Blocco preso da un'altra scheda: smette subito di scrivere, senza salvare nulla. */
@@ -141,8 +153,13 @@ export const setVaultSession = (mode: boolean, key: VaultKey | null) => {
 
 export const hasVaultKey = () => vaultKey !== null;
 
+// Quante volte la sospensione ha lasciato in memoria modifiche mai scritte (vedi requestPersist).
+let discarded = 0;
+
 /** Durante il lock del vault lo stato in memoria è vuoto: non va mai persistito né diffato. */
 export const setPersistenceSuspended = (value: boolean) => {
+  // Il chiamante svuota lo stato subito dopo: ciò che non è ancora su disco qui si perde (P9).
+  if (value && !suspended && pendingWrites()?.any) discarded += 1;
   suspended = value;
 };
 
@@ -348,7 +365,7 @@ const flush = async () => {
 // vengono raccolte in un'unica scrittura.
 const VAULT_COALESCE_MS = 250;
 
-export const requestPersist = (): Promise<void> => {
+const scheduleFlush = (): Promise<void> => {
   if (pending) return pending;
   const run = chain.then(async () => {
     if (vaultMode) await new Promise((resolve) => setTimeout(resolve, VAULT_COALESCE_MS));
@@ -358,6 +375,18 @@ export const requestPersist = (): Promise<void> => {
   pending = run;
   chain = run.catch(() => undefined);
   return run;
+};
+
+/**
+ * Rifiutata con PersistenceDiscardedError se, tra la richiesta e la fine del salvataggio, il vault si
+ * è bloccato con modifiche ancora in memoria: il salvataggio sospeso non scrive nulla e prima
+ * «riusciva», così il pull avanzava il cursore oltre righe mai salvate (P9).
+ */
+export const requestPersist = (): Promise<void> => {
+  const since = discarded;
+  return scheduleFlush().then(() => {
+    if (discarded !== since) throw new PersistenceDiscardedError();
+  });
 };
 
 /** Esegue un'operazione esclusiva (es. riscrittura completa) in coda ai flush. */

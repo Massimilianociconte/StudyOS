@@ -145,7 +145,8 @@ const assertStoreReady = () => {
  */
 const outboxTransaction = <T,>(work: () => Promise<T>) =>
   db.transaction("rw", db.syncOutbox, async () => {
-    if (isPersistenceHalted()) throw new SyncSuspendedError();
+    // Anche vault bloccato: la voce da togliere o rimettere è stata decisa sullo stato di prima (P9).
+    if (!storeReady()) throw new SyncSuspendedError();
     return work();
   });
 
@@ -244,6 +245,8 @@ const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean, acco
   await requestPersist();
   assertStoreReady();
   const outbox = await db.syncOutbox.toArray();
+  // Vault bloccato durante la lettura: lo stato è vuoto e il merge scarterebbe le voci in coda (P9).
+  assertStoreReady();
   // Uscita dall'account (o cambio) mentre la richiesta era in volo, es. «Togli i dati da qui»:
   // le righe arrivate tardi non devono riempire di nuovo il dispositivo appena svuotato.
   assertSameSession(userId);
@@ -254,6 +257,7 @@ const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean, acco
     await useStudyStore
       .getState()
       .applyRemoteChanges(plan.changes.map((change) => ({ ...change, force: force || change.force === true })));
+    assertStoreReady();
   }
   if (plan.dropOutbox.length) {
     await outboxTransaction(async () => {
@@ -285,6 +289,8 @@ const pull = async (userId: string, force = false) => {
     const last = rows[rows.length - 1];
     after = { updated_at: last.updated_at, id: last.id };
   }
+  // Il cursore va avanti solo con le righe salvate: mai con il workspace bloccato a metà (P9).
+  assertStoreReady();
   assertSameSession(userId);
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
   return applied;
@@ -453,6 +459,7 @@ const firstSync = async (userId: string) => {
   } else {
     await mergeRows(userId, rows, false, accountWins);
   }
+  assertStoreReady();
   assertSameSession(userId);
   await setMeta(metaKeys.merged(userId), new Date().toISOString());
   const maxSeen = rows.reduce<string | null>((max, row) => (!max || row.updated_at > max ? row.updated_at : max), null);

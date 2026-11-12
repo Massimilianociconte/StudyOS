@@ -84,5 +84,11 @@ Correzioni di novembre 2026 (sync personale):
   esclusiva che cambia modalità. Le modifiche arrivate nel frattempo (pull dal
   cloud, sessione del Pomodoro) restano in memoria e le salva il passo dopo,
   già nella nuova modalità; prima venivano sovrascritte da una copia presa
-  prima dell'attesa e il cursore cloud le saltava (P8).
+  prima dell'attesa e il cursore cloud le saltava (P8);
+- bloccare il vault a metà pull non fa più avanzare il cursore: se il blocco
+  svuota la memoria con modifiche non ancora scritte, `requestPersist()`
+  rifiuta con `PersistenceDiscardedError` invece di «riuscire» senza scrivere.
+  Il merge ricontrolla il workspace dopo la lettura della coda e dopo aver
+  applicato le righe, e prima di scrivere cursore e `merged`; anche le
+  scritture dell'outbox si annullano con il vault bloccato (P9).
 
