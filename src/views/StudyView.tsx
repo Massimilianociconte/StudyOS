@@ -277,7 +277,7 @@ export function StudyView() {
  * Timer di studio: Pomodoro (blocchi e pause, ogni blocco finito si salva da solo), Timer (conto
  * alla rovescia con la durata scelta) o Cronometro. Lo stato vero è nello store (persistito e
  * condiviso tra schede); qui si ridisegna ogni secondo solo questo pannello. Su telefono anello e
- * tempo stanno affiancati e "Avvia" subito sotto: materia e "Cosa studi?" vengono dopo.
+ * tempo stanno affiancati; sotto prima materia e "Cosa studi?" (come dice il suggerimento), poi "Avvia".
  */
 function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: string) => void }) {
   const {
@@ -508,6 +508,8 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
   const customFocus = !FOCUS_QUICK_PICKS.some((minutes) => minutes === durations.focusMinutes);
   const customTimer = !TIMER_QUICK_PICKS.some((minutes) => minutes === durations.timerMinutes);
   const canDiscard = !idle && studying;
+  // «Termina e salva» (Pomodoro) o «Termina» (Timer, Cronometro) visibile ma spento: meno di un minuto di studio.
+  const finishWaiting = !idle && !ended && studying && unsaved < 60;
 
   return (
     <Panel>
@@ -535,83 +537,6 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           {targetLine ? <p className="safe-text mt-0.5 text-xs font-black text-[var(--accent-ink)]">{targetLine}</p> : null}
         </div>
       </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {ended ? (
-          <>
-            <Button variant="primary" icon="Check" onClick={() => setTimerReviewOpen(true)} className="min-w-[120px]">
-              {TIMER_TEXT.saveEnded}
-            </Button>
-            {!over ? (
-              <Button variant="soft" icon="Zap" onClick={onPrimary}>
-                {TIMER_TEXT.resume}
-              </Button>
-            ) : null}
-          </>
-        ) : (
-          <Button variant={timer.running ? "soft" : "primary"} icon={timer.running ? "Pause" : "Zap"} onClick={onPrimary} className="min-w-[120px]">
-            {timer.running ? TIMER_TEXT.pause : idle ? TIMER_TEXT.start : TIMER_TEXT.resume}
-          </Button>
-        )}
-        {/* Pomodoro: salva subito (come i blocchi). Timer e Cronometro: prima il riepilogo. */}
-        {!idle && !ended && studying && timer.kind === "pomodoro" ? (
-          <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
-            {TIMER_TEXT.finish}
-          </Button>
-        ) : null}
-        {!idle && !ended && timer.kind !== "pomodoro" ? (
-          <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
-            {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
-          </Button>
-        ) : null}
-        {!studying ? (
-          <Button variant="soft" icon="SkipForward" onClick={onSkip}>
-            {TIMER_TEXT.skipBreak}
-          </Button>
-        ) : null}
-        {!studying ? (
-          <Button variant="ghost" onClick={onFinish}>
-            {TIMER_TEXT.endCycle}
-          </Button>
-        ) : null}
-        {canDiscard ? (
-          <Button variant="ghost" onClick={() => setConfirmDiscard(true)} title={TIMER_TEXT.discardHint} aria-expanded={confirmDiscard}>
-            {TIMER_TEXT.discard}
-          </Button>
-        ) : null}
-      </div>
-
-      {confirmDiscard && canDiscard ? (
-        <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3">
-          <p className="safe-text min-w-[12rem] flex-1 text-sm font-bold">{unsaved >= 60 ? TIMER_TEXT.discardConfirm(studied) : TIMER_TEXT.discardConfirmShort}</p>
-          <Button variant="ghost" onClick={() => setConfirmDiscard(false)}>
-            {TIMER_TEXT.discardNo}
-          </Button>
-          <Button variant="danger" icon="Trash2" onClick={discard}>
-            {TIMER_TEXT.discardYes}
-          </Button>
-        </div>
-      ) : null}
-      {undo ? (
-        <div role="status" className="mt-2 flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--muted)]">
-          <span>{TIMER_TEXT.discarded(undo.studied)}</span>
-          <button
-            type="button"
-            className={`${linkClass} inline-flex min-h-11 items-center px-1`}
-            onClick={() => {
-              // Non si torna indietro se nel frattempo è partita un'altra sessione.
-              if (!restoreStudyTimer(undo.previous)) setNotice(TIMER_TEXT.switchBlocked);
-              setUndo(null);
-            }}
-          >
-            {TIMER_TEXT.undo}
-          </button>
-        </div>
-      ) : notice ? (
-        <p role="status" className="mt-2 text-sm font-bold text-[var(--muted)]">
-          {notice}
-        </p>
-      ) : null}
 
       <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
         <div className="min-w-0">
@@ -666,8 +591,91 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         </div>
       </div>
 
+      <div className="mt-4 flex flex-wrap gap-2">
+        {ended ? (
+          <>
+            <Button variant="primary" icon="Check" onClick={() => setTimerReviewOpen(true)} className="min-w-[120px]">
+              {TIMER_TEXT.saveEnded}
+            </Button>
+            {!over ? (
+              <Button variant="soft" icon="Zap" onClick={onPrimary}>
+                {TIMER_TEXT.resume}
+              </Button>
+            ) : null}
+          </>
+        ) : (
+          <Button variant={timer.running ? "soft" : "primary"} icon={timer.running ? "Pause" : "Zap"} onClick={onPrimary} className="min-w-[120px]">
+            {timer.running ? TIMER_TEXT.pause : idle ? TIMER_TEXT.start : TIMER_TEXT.resume}
+          </Button>
+        )}
+        {/* Pomodoro: salva subito (come i blocchi). Timer e Cronometro: prima il riepilogo. */}
+        {!idle && !ended && studying && timer.kind === "pomodoro" ? (
+          <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
+            {TIMER_TEXT.finish}
+          </Button>
+        ) : null}
+        {!idle && !ended && timer.kind !== "pomodoro" ? (
+          <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
+            {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
+          </Button>
+        ) : null}
+        {!studying ? (
+          <Button variant="soft" icon="SkipForward" onClick={onSkip}>
+            {TIMER_TEXT.skipBreak}
+          </Button>
+        ) : null}
+        {!studying ? (
+          <Button variant="ghost" onClick={onFinish}>
+            {TIMER_TEXT.endCycle}
+          </Button>
+        ) : null}
+        {canDiscard ? (
+          <Button variant="ghost" onClick={() => setConfirmDiscard(true)} title={TIMER_TEXT.discardHint} aria-expanded={confirmDiscard}>
+            {TIMER_TEXT.discard}
+          </Button>
+        ) : null}
+      </div>
+
+      {finishWaiting ? (
+        <p id="study-finish-hint" className="mt-1.5 text-xs font-bold text-[var(--muted)]">
+          {TIMER_TEXT.finishHint}
+        </p>
+      ) : null}
+
+      {confirmDiscard && canDiscard ? (
+        <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3">
+          <p className="safe-text min-w-[12rem] flex-1 text-sm font-bold">{unsaved >= 60 ? TIMER_TEXT.discardConfirm(studied) : TIMER_TEXT.discardConfirmShort}</p>
+          <Button variant="ghost" onClick={() => setConfirmDiscard(false)}>
+            {TIMER_TEXT.discardNo}
+          </Button>
+          <Button variant="danger" icon="Trash2" onClick={discard}>
+            {TIMER_TEXT.discardYes}
+          </Button>
+        </div>
+      ) : null}
+      {undo ? (
+        <div role="status" className="mt-2 flex flex-wrap items-center gap-2 text-sm font-bold text-[var(--muted)]">
+          <span>{TIMER_TEXT.discarded(undo.studied)}</span>
+          <button
+            type="button"
+            className={`${linkClass} inline-flex min-h-11 items-center px-1`}
+            onClick={() => {
+              // Non si torna indietro se nel frattempo è partita un'altra sessione.
+              if (!restoreStudyTimer(undo.previous)) setNotice(TIMER_TEXT.switchBlocked);
+              setUndo(null);
+            }}
+          >
+            {TIMER_TEXT.undo}
+          </button>
+        </div>
+      ) : notice ? (
+        <p role="status" className="mt-2 text-sm font-bold text-[var(--muted)]">
+          {notice}
+        </p>
+      ) : null}
+
       {stopwatch ? (
-        <p className={`mt-3 ${linkRow}`}>
+        <p className={`mt-2 ${linkRow}`}>
           <span className="safe-text min-w-0">{durations.stopwatchTargetMinutes ? TIMER_TEXT.target(formatMinutes(durations.stopwatchTargetMinutes)) : TIMER_TEXT.noTarget} ·</span>
           <button type="button" className={linkBox} onClick={() => setSettingsOpen(true)}>
             {TIMER_TEXT.change}

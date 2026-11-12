@@ -250,7 +250,8 @@ export const SESSION_FORM_TEXT = {
   noSubject: "Nessuna materia",
   topic: "Argomento",
   noTopic: "Nessun argomento",
-  title: "Descrizione (facoltativa)",
+  /** Stesso nome del campo del timer («Cosa studi?»): è lo stesso dato, il titolo della sessione. */
+  title: "Cosa studi? (facoltativo)",
   titlePlaceholder: "Es. Capitolo 4, esercizi 3–5",
   notes: "Note (facoltative)",
   notesPlaceholder: "Cosa rivedere, dubbi da chiedere…",
