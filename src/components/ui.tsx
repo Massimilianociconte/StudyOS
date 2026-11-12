@@ -959,7 +959,7 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
                     close(true);
                     item.onClick();
                   }}
-                  className={`motion-safe flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-[14px] px-3 text-left text-sm font-extrabold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${
+                  className={`motion-safe flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-[14px] px-3 text-left text-sm font-extrabold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] ${
                     item.danger
                       ? "text-[var(--danger-text)] hover:bg-[var(--danger-bg)] focus:bg-[var(--danger-bg)]"
                       : "text-[var(--text)] hover:bg-[var(--surface)] focus:bg-[var(--surface)]"
