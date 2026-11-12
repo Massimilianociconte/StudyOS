@@ -1,7 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { EXAMS_NEW_KEY, calendarExamEvents, examPrefillFromEvent, isNullableExamPrefill } = await import("../src/lib/calendarExams.ts");
+const {
+  EXAMS_NEW_KEY,
+  calendarExamEvents,
+  calendarExamRef,
+  calendarExamRemoval,
+  examPrefillFromEvent,
+  findCalendarExam,
+  isNullableCalendarExamRef,
+  removalUndo,
+  removeCalendarExam
+} = await import("../src/lib/calendarExams.ts");
+const { expandEvents } = await import("../src/lib/recurrence.ts");
+const { useStudyStore } = await import("../src/store/useStudyStore.ts");
 
 // Date locali del dispositivo: i test valgono in ogni fuso (Roma, New York, UTC, Tokyo).
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
@@ -79,12 +91,123 @@ test("examPrefillFromEvent: materia dell'evento, altrimenti dal titolo; giorno e
   assert.equal(allDay.date, "2026-11-25T09:00");
 });
 
-test("exams.new: nome della chiave e validatore", () => {
+test("exams.new: solo { eventId, occurrenceStart }, niente contenuti", () => {
   assert.equal(EXAMS_NEW_KEY, "exams.new");
-  assert.equal(isNullableExamPrefill(null), true);
-  assert.equal(isNullableExamPrefill({ subjectId: "", date: "2026-11-25T09:00", title: "Appello" }), true);
-  assert.equal(isNullableExamPrefill({ subjectId: "", date: "domani", title: "Appello" }), false);
-  assert.equal(isNullableExamPrefill({ subjectId: 3, date: "2026-11-25T09:00", title: "" }), false);
-  assert.equal(isNullableExamPrefill("exam-1"), false);
-  assert.equal(isNullableExamPrefill(undefined), false);
+  const start = iso(2026, 11, 20, 9);
+  assert.equal(isNullableCalendarExamRef(null), true);
+  assert.equal(isNullableCalendarExamRef({ eventId: "e1", occurrenceStart: start }), true);
+  assert.equal(isNullableCalendarExamRef({ eventId: "s@2026-11-25", occurrenceStart: "2026-11-25T00:00:00" }), true);
+  assert.deepEqual(calendarExamRef(event({ id: "e1", start, end: start })), { eventId: "e1", occurrenceStart: start });
+  // Un titolo o una materia in più: stato UI con contenuti, si rifiuta.
+  assert.equal(isNullableCalendarExamRef({ eventId: "e1", occurrenceStart: start, title: "Esame Chimica" }), false);
+  // La forma vecchia (titolo, data, materia) non passa più.
+  assert.equal(isNullableCalendarExamRef({ subjectId: "", date: start, title: "Appello" }), false);
+  assert.equal(isNullableCalendarExamRef({ eventId: "", occurrenceStart: start }), false);
+  assert.equal(isNullableCalendarExamRef({ eventId: "e1", occurrenceStart: "domani" }), false);
+  assert.equal(isNullableCalendarExamRef({ eventId: 3, occurrenceStart: start }), false);
+  assert.equal(isNullableCalendarExamRef({ eventId: "e1" }), false);
+  assert.equal(isNullableCalendarExamRef(["e1", start]), false);
+  assert.equal(isNullableCalendarExamRef("e1"), false);
+  assert.equal(isNullableCalendarExamRef(undefined), false);
+});
+
+/* ------------------------------------------------------------------ */
+/* L'esame prende il posto dell'evento                                 */
+/* ------------------------------------------------------------------ */
+
+const OLD = "2026-11-01T10:00:00.000Z";
+const SINGLE = event({ id: "x1", title: "Esame Chimica", subjectId: "chim", start: iso(2026, 11, 20, 10, 30), end: iso(2026, 11, 20, 12, 30), recurrence: "none", createdAt: OLD, updatedAt: OLD });
+// Esame che si ripete ogni lunedì alle 10 a Roma (per esempio una prova in itinere settimanale).
+const SERIES = event({
+  id: "s",
+  title: "Prova in itinere",
+  start: "2026-11-02T09:00:00.000Z",
+  end: "2026-11-02T10:00:00.000Z",
+  recurrence: "weekly",
+  repeat: { freq: "weekly" },
+  repeatLegacy: "weekly|",
+  timeZone: "Europe/Rome",
+  createdAt: OLD,
+  updatedAt: OLD
+});
+const occurrencesOf = (events, id) =>
+  expandEvents(events, local(2026, 11, 1), local(2026, 12, 15))
+    .filter((item) => item.id === id || item.seriesId === id)
+    .map((item) => item.occurrenceDate);
+
+test("findCalendarExam: stesso id e stesso inizio, altrimenti niente", () => {
+  const ref = calendarExamRef(SINGLE);
+  assert.equal(findCalendarExam([SINGLE, SERIES], ref)?.id, "x1");
+  // Evento eliminato o spostato: il modulo si apre vuoto.
+  assert.equal(findCalendarExam([SERIES], ref), null);
+  assert.equal(findCalendarExam([{ ...SINGLE, start: iso(2026, 11, 21, 10, 30) }], ref), null);
+  assert.equal(findCalendarExam([{ ...SINGLE, archived: true }], ref), null);
+  // Un giorno della serie.
+  const day = expandEvents([SERIES], local(2026, 11, 15), local(2026, 11, 18))[0];
+  assert.equal(findCalendarExam([SERIES], calendarExamRef(day))?.occurrenceDate, "2026-11-16");
+});
+
+test("calendarExamRemoval: evento singolo con deleteEvent, giorno di una serie con deleteOccurrence", () => {
+  const [single] = expandEvents([SINGLE], local(2026, 11, 19), local(2026, 11, 22));
+  assert.deepEqual(calendarExamRemoval(single), { kind: "event", id: "x1" });
+  const day = expandEvents([SERIES], local(2026, 11, 15), local(2026, 11, 18))[0];
+  assert.deepEqual(calendarExamRemoval(day), { kind: "occurrence", seriesId: "s", date: "2026-11-16" });
+  // Giorno già modificato (riga `serie@giorno`): si toglie lo stesso giorno della serie.
+  const row = { id: "s@2026-11-16", seriesId: "s", originalDate: "2026-11-16", occurrenceDate: "2026-11-17", recurring: true };
+  assert.deepEqual(calendarExamRemoval(row), { kind: "occurrence", seriesId: "s", date: "2026-11-16" });
+});
+
+test("removalUndo: rimette ciò che è sparito o cambiato, toglie ciò che è nato", () => {
+  const attachment = { id: "a1", name: "Slide", linkedEntityType: "calendarEvent", linkedEntityId: "x1", updatedAt: OLD };
+  const other = { id: "a2", name: "Altro", updatedAt: OLD };
+  const before = { events: [SINGLE, SERIES], attachments: [attachment, other], notes: [] };
+  const row = { ...SERIES, id: "s@2026-11-16", seriesId: "s", originalDate: "2026-11-16", cancelled: true, archived: true };
+  const after = { events: [row, SERIES], attachments: [{ ...attachment, linkedEntityType: undefined, linkedEntityId: undefined }, other], notes: [] };
+  const undo = removalUndo(before, after);
+  assert.deepEqual(
+    undo.restore.map((version) => [version.entityType, version.entityId, version.complete]),
+    [
+      ["calendarEvent", "x1", true],
+      ["attachment", "a1", true]
+    ]
+  );
+  assert.equal(undo.restore[1].payload.linkedEntityId, "x1");
+  assert.deepEqual(undo.remove, ["s@2026-11-16"]);
+  assert.deepEqual(removalUndo(before, before), { restore: [], remove: [] });
+});
+
+test("removeCalendarExam: toglie quell'occorrenza dal negozio e Annulla la rimette", async () => {
+  const store = useStudyStore;
+  store.setState({
+    loading: true,
+    events: [SINGLE, SERIES],
+    attachments: [{ id: "a1", name: "Slide", linkedEntityType: "calendarEvent", linkedEntityId: "x1", updatedAt: OLD }],
+    notes: [],
+    reminders: []
+  });
+  const seriesBefore = occurrencesOf(store.getState().events, "s");
+
+  // Evento singolo: deleteEvent, l'allegato si stacca; Annulla rimette evento e collegamento.
+  const undoSingle = await removeCalendarExam(store, calendarExamRef(SINGLE));
+  assert.equal(typeof undoSingle, "function");
+  assert.equal(store.getState().events.some((item) => item.id === "x1"), false);
+  assert.equal(store.getState().attachments[0].linkedEntityId, undefined);
+  await undoSingle();
+  const back = store.getState().events.find((item) => item.id === "x1");
+  assert.equal(back?.title, "Esame Chimica");
+  assert.equal(back?.start, SINGLE.start);
+  assert.equal(store.getState().attachments[0].linkedEntityId, "x1");
+
+  // Un giorno della serie: solo quel giorno sparisce, la serie resta; Annulla lo rimette.
+  const day = expandEvents(store.getState().events, local(2026, 11, 15), local(2026, 11, 18)).find((item) => item.id === "s");
+  const undoDay = await removeCalendarExam(store, calendarExamRef(day));
+  const without = occurrencesOf(store.getState().events, "s");
+  assert.deepEqual(without, seriesBefore.filter((date) => date !== "2026-11-16"));
+  await undoDay();
+  assert.deepEqual(occurrencesOf(store.getState().events, "s"), seriesBefore);
+  assert.equal(store.getState().events.some((item) => item.id === "s@2026-11-16"), false);
+
+  // Già tolto: niente da fare, niente Annulla.
+  store.setState({ events: [SERIES] });
+  assert.equal(await removeCalendarExam(store, calendarExamRef(SINGLE)), null);
 });
