@@ -26,6 +26,11 @@ export const ACCOUNT_TEXT = {
   switchSeparateHint: "Consigliato. I dati di prima restano nel loro account: li ritrovi accedendo di nuovo con quello.",
   switchMerge: "Aggiungi i dati di prima a questo account",
   switchMergeHint: "Materie, eventi, attività e note di prima vanno anche in questo account. Nome, foto e preferenze restano quelli di questo account.",
+  /** «Mostra solo» con modifiche fatte mentre la domanda era aperta: si perderebbero (P6). */
+  switchEditedWhileAsked: (count: number) =>
+    count === 1
+      ? "Mentre sceglievi hai cambiato 1 elemento: non è nell'account di prima e togliendo i dati da qui andrebbe perso. Per tenerlo scegli «Aggiungi i dati di prima a questo account», oppure esci, accedi con l'account di prima e aspetta che si sincronizzi."
+      : `Mentre sceglievi hai cambiato ${count} elementi: non sono nell'account di prima e togliendo i dati da qui andrebbero persi. Per tenerli scegli «Aggiungi i dati di prima a questo account», oppure esci, accedi con l'account di prima e aspetta che si sincronizzi.`,
   /** Cambio account fermo: elementi mai arrivati all'account precedente perché troppo grandi (P12). */
   switchStuck: (count: number) =>
     count === 1

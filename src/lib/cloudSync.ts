@@ -27,7 +27,7 @@ import {
   subscribeLocalChanges
 } from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, newerCopy, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
-import { PERSONAL_COLLECTIONS, accountSwitchStep, personalRemovals, type AccountSwitchChoice } from "./accountSwitch";
+import { PERSONAL_COLLECTIONS, accountSwitchBlock, accountSwitchStep, personalRemovals, type AccountSwitchChoice } from "./accountSwitch";
 import { countOutbox, discardable, parkedRow, stuckItems, type StuckItem } from "./stuckOutbox";
 import { ACCOUNT_TEXT } from "./labels/account";
 import {
@@ -69,6 +69,8 @@ const metaKeys = {
   merged: (userId: string) => `cloud:merged:${userId}`,
   schema: (userId: string) => `cloud:schema:${userId}`,
   boundUser: "cloud:boundUser",
+  /** Domanda sul cambio di account aperta per la coppia «prima>adesso» (P6, vedi accountSwitchBlock). */
+  switchAsked: "cloud:switchAsked",
   lastSync: (userId: string) => `cloud:lastSync:${userId}`
 };
 
@@ -518,22 +520,35 @@ const firstSync = async (userId: string) => {
  */
 const bindUser = async (userId: string) => {
   const bound = await getMeta<string>(metaKeys.boundUser);
-  if (bound === userId) return true;
+  if (bound === userId) {
+    // Tornati all'account di prima: una domanda rimasta aperta non vale più per le modifiche fatte ora.
+    if (await getMeta<string>(metaKeys.switchAsked)) await deleteMeta(metaKeys.switchAsked);
+    return true;
+  }
+  const choice = switchChoice?.userId === userId ? switchChoice.choice : null;
+  const askedPair = `${bound ?? ""}>${userId}`;
   if (bound && bound !== userId) {
     const { pending, stuck } = countOutbox(await db.syncOutbox.toArray());
-    if (pending > 0) {
+    const block = accountSwitchBlock({ pending, stuck, asked: (await getMeta<string>(metaKeys.switchAsked)) === askedPair, choice });
+    if (block === "pending") {
       throw new Error("L'account precedente ha modifiche cloud in attesa. Ricollegalo e completa la sincronizzazione prima di cambiare account.");
     }
     // Elementi mai arrivati all'account di prima (troppo grandi): cambiando account si perderebbero.
     // La persona li vede nel pannello Account e sceglie: copia o via dalla coda (P12).
-    if (stuck > 0) throw new Error(ACCOUNT_TEXT.switchStuck(stuck));
+    if (block === "stuck") throw new Error(ACCOUNT_TEXT.switchStuck(stuck));
+    // Modifiche fatte mentre la domanda era aperta: «mostra solo» le perderebbe, «aggiungi» no (P6).
+    // La domanda resta aperta con i due pulsanti.
+    if (block === "editedWhileAsked") throw new Error(ACCOUNT_TEXT.switchEditedWhileAsked(pending));
   }
   const store = useStudyStore.getState();
   const hasData = countEntities(pickCollections(store)) > 0;
-  const step = accountSwitchStep({ bound, userId, hasData, choice: switchChoice?.userId === userId ? switchChoice.choice : null });
+  const step = accountSwitchStep({ bound, userId, hasData, choice });
   if (step === "ask") {
-    // Nessuna risposta = nessuna unione: si resta fermi finché la persona non sceglie.
+    // Nessuna risposta = nessuna unione: si resta fermi finché la persona non sceglie. Ricordata su
+    // disco per questa coppia di account: una modifica fatta intanto non blocca la scelta, anche dopo
+    // un ricaricamento.
     setState({ accountChoice: true });
+    await setMeta(metaKeys.switchAsked, askedPair);
     throw new AccountChoiceNeededError();
   }
   switchChoice = null;
@@ -554,6 +569,7 @@ const bindUser = async (userId: string) => {
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));
   await deleteMeta(metaKeys.merged(userId));
+  await deleteMeta(metaKeys.switchAsked);
   await setMeta(metaKeys.boundUser, userId);
   return true;
 };

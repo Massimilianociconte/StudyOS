@@ -114,5 +114,16 @@ Correzioni di novembre 2026 (sync personale):
   coda dopo una conferma: restano solo su questo dispositivo. Finché ci sono,
   il cambio di account e «Esci e togli i dati da qui» restano fermi con un
   messaggio che le nomina, perché toglierle da qui le perderebbe. Una modifica
-  locale riaccoda la voce senza segno e la rimette in gioco (P12).
+  locale riaccoda la voce senza segno e la rimette in gioco (P12);
+- la domanda sul cambio di account (dati di un altro account su questo
+  dispositivo) si ricorda su disco per la coppia di account
+  (`cloud:switchAsked`, anche dopo un ricaricamento). Le modifiche in coda per
+  l'account di prima bloccano il cambio solo se c'erano prima della domanda;
+  quelle fatte mentre la persona sceglie (o salvate dal Pomodoro) non bloccano
+  più entrambi i pulsanti: «Aggiungi» le porta nel nuovo account con la prima
+  unione, «Mostra solo» si ferma con un messaggio che dice quale pulsante le
+  tiene (`accountSwitchBlock`, P6). Togliere o mettere la password, e
+  bloccare, vanno uno alla volta: durante un cambio «Blocca» è disattivato e
+  rifiutato, e la riscrittura rifiuta prima di scrivere se il workspace è
+  bloccato e non ha la chiave (revisione di P8).
 
