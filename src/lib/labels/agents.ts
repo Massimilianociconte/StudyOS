@@ -25,15 +25,13 @@ export const AGENT_DESK_TEXT = {
   addressIntro: "ChatGPT o Claude: aggiungi un connettore con questo indirizzo. La richiesta di accesso compare qui, da confermare.",
   pairedHint: "Tieni StudyOS aperto, anche dal telefono, mentre l'assistente lavora: i dati restano in questo browser.",
   disconnectBrowser: "Scollega questo browser",
-  /** Profilo senza nome: una riga sola. */
-  noNameHint: "Scrivi il tuo nome nel profilo: serve per sceglierti in chat se più persone usano lo stesso connettore.",
   copy: "Copia",
   copied: "Indirizzo copiato.",
   copyFailed: "Copia non riuscita: tieni premuto sull'indirizzo e copialo a mano.",
 
   remote: {
     title: "Connettore remoto (app chiusa)",
-    what: "Con questo indirizzo ChatGPT o Claude lavorano sui dati del tuo account salvati nel cloud, anche quando StudyOS è chiuso.",
+    what: "Fa lavorare ChatGPT o Claude sui dati del tuo account salvati nel cloud, anche quando StudyOS è chiuso.",
     noConfirm:
       "Non ti chiede conferma nell'app: modifiche ed eliminazioni partono subito, con i permessi che scegli la prima volta con «Consenti».",
     howTo:
@@ -82,7 +80,6 @@ export const AGENT_DESK_TEXT = {
   trustBack: "Torna a chiedere conferma",
   trustedUntil: (time: string) =>
     `Modifiche senza conferma fino alle ${time}. Le eliminazioni e le condivisioni chiedono ancora conferma.`,
-  peopleTitle: "Più persone sullo stesso connettore",
   activityTitle: "Ultime azioni",
   activityEmpty: "Ancora nessuna azione. Qui vedrai cosa fanno gli assistenti; l'elenco resta solo in questo browser."
 } as const;

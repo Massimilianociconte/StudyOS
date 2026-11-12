@@ -633,10 +633,10 @@ export const RESTORE_TEXT = {
 
 /** Impostazioni → Agenti: più persone sullo stesso connettore, ognuna scelta per nome in chat. */
 export const agentAccountLabels = {
-  title: "Account in chat",
+  title: "Più persone sullo stesso connettore",
   named: (name: string) => `Gli assistenti trovano questo StudyOS con il nome «${name}», quello del tuo profilo.`,
-  unnamed:
-    "Questo StudyOS non ha ancora un nome. Scrivilo in Profilo e obiettivi: serve per sceglierlo in chat quando più persone usano lo stesso connettore.",
+  /** Profilo senza nome: una riga sola sotto «Collega ChatGPT o Claude». */
+  unnamed: "Scrivi il tuo nome nel profilo: serve per sceglierti in chat se più persone usano lo stesso connettore.",
   toProfile: "Vai al profilo",
   /** `local` = pagina di sviluppo con npm run agent: lì ogni browser usa un codice nuovo, non la chiave. */
   help: (local: boolean) =>

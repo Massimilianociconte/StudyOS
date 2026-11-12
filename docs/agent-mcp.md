@@ -36,7 +36,15 @@ della materia accanto all'id, e `studyos_status` e `studyos_overview` danno data
 ora e fuso orario della persona. Le letture, di base, passano. Modifiche ed eliminazioni chiedono
 conferma nell'app. Si può consentire le sole modifiche per 15 minuti. Le
 eliminazioni chiedono comunque conferma, e un agente non può cambiare queste
-regole.
+regole. Valgono per il connettore `/mcp`, non per il connettore remoto (vedi sotto), che non
+chiede conferme.
+
+In **Impostazioni → Agenti** c'è prima l'essenziale: «Collega ChatGPT o Claude» con un solo
+stato («Non ancora collegato» finché non provi a collegarti, poi «Collegato» o «Collegamento
+non raggiungibile»), la chiave (o il codice di `npm run agent`) e l'indirizzo `/mcp` da
+copiare, poi il connettore remoto e le revoche. Regole di conferma, i 15 minuti, più persone
+sullo stesso connettore e ultime azioni sono in «Avanzate»; i dettagli per lo sviluppo in
+«Istruzioni tecniche».
 
 Con un account e `supabase/sharing.sql` attivo, l'agente vede anche i dati che altre
 persone condividono con te (`studyos_list_shares`, `studyos_list_shared_items`) e, solo
@@ -83,7 +91,9 @@ del sito pubblicato: `https://studyos-agent.<account>.workers.dev/mcp`. È l'hub
 Cloudflare sempre acceso. Non serve `npm run dev`, `npm run agent` né un tunnel.
 Apri il sito pubblicato (`https://massimilianociconte.github.io/StudyOS/`),
 anche dal telefono, incolla la chiave di collegamento una volta e tieni la
-pagina aperta mentre l'agente lavora: i dati restano nel suo IndexedDB.
+pagina aperta mentre l'agente lavora: i dati restano nel suo IndexedDB. La chiave è il
+secret `STUDYOS_PAIR_KEY` del Worker: la dà chi gestisce StudyOS, ed è la stessa per tutte le
+persone che usano lo stesso connettore.
 
 L'accesso è OAuth 2.1 con PKCE e registrazione dinamica del client. Al primo
 collegamento la conferma compare in Impostazioni → Agenti del browser
