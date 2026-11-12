@@ -426,6 +426,9 @@ const copyField = (target: SessionFields, source: SessionFields, field: SessionE
   if (field === "course") {
     target.courseId = source.courseId;
     target.courseName = source.courseName;
+    // Il collegamento al catalogo e l'origine seguono il corso: il server li controlla insieme.
+    target.barbSessionId = source.barbSessionId;
+    target.source = source.source;
     return;
   }
   (target as unknown as Record<string, unknown>)[field] = source[field];

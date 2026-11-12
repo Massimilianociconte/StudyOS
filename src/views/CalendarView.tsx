@@ -488,12 +488,12 @@ export function CalendarView() {
     }));
     // Appelli dei gruppi: eventi di sola lettura (si aprono nel loro riquadro, non si trascinano).
     const groupExams = expandEvents(
-      groupExamEvents({ sessions: groupSessions, plans: examPlans, groupNames: groupNamesOf(examGroups), subjects, events, mode: groupExamMode }),
+      groupExamEvents({ sessions: groupSessions, plans: examPlans, groupNames: groupNamesOf(examGroups), subjects, events, exams, mode: groupExamMode }),
       range.from,
       range.to
     ).map((item) => (item.groupExam.deleted ? { ...item, title: `${GROUP_EXAM_TEXT.deletedInGroup} · ${item.title}` } : item));
     return [...own, ...shared, ...groupExams].sort((a, b) => a.start.localeCompare(b.start));
-  }, [events, sharedEvents, range, groupSessions, examPlans, examGroups, subjects, groupExamMode]);
+  }, [events, sharedEvents, range, groupSessions, examPlans, examGroups, subjects, exams, groupExamMode]);
 
   // Ciò che le quattro viste mostrano, filtrato per materia (senza filtro: gli stessi elenchi).
   const visible = useMemo(

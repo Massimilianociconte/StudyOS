@@ -1,10 +1,11 @@
 // «Promemoria» in cima al pannello Notifiche: i prossimi promemoria autonomi, «Fatto», «Elimina» e
 // «Aggiungi promemoria». Scattano come quelli degli eventi (lib/reminderSources).
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { Button, Field, inputClass } from "./ui";
 import { DateField } from "./DatePicker";
+import { InlineConfirm } from "./InlineConfirm";
 import { STANDALONE_REMINDERS_TEXT as T } from "../lib/labels/standaloneReminders";
 import { listedReminders, reminderInstant } from "../lib/standaloneReminders";
 import { todayYmd } from "../lib/datePicker";
@@ -20,6 +21,15 @@ export function StandaloneReminders() {
   const [day, setDay] = useState(() => todayYmd());
   const [time, setTime] = useState("09:00");
   const [error, setError] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const wasAdding = useRef(false);
+  // Il modulo si apre sul primo campo e, chiudendosi, rida il focus a «Aggiungi promemoria».
+  useEffect(() => {
+    if (adding) titleRef.current?.focus();
+    else if (wasAdding.current) document.getElementById("standalone-reminder-add")?.focus();
+    wasAdding.current = adding;
+  }, [adding]);
   const list = listedReminders(reminders);
 
   const save = async () => {
@@ -33,7 +43,12 @@ export function StandaloneReminders() {
       setError(T.badWhen);
       return;
     }
-    await addReminder({ title: text.slice(0, 200), remindAt });
+    try {
+      await addReminder({ title: text.slice(0, 200), remindAt });
+    } catch {
+      setError(T.addFailed);
+      return;
+    }
     setTitle("");
     setError("");
     setAdding(false);
@@ -46,7 +61,7 @@ export function StandaloneReminders() {
           {T.title}
         </h3>
         {adding ? null : (
-          <Button variant="soft" icon="AlarmClock" onClick={() => setAdding(true)}>
+          <Button id="standalone-reminder-add" variant="soft" icon="AlarmClock" onClick={() => setAdding(true)}>
             {T.add}
           </Button>
         )}
@@ -60,7 +75,7 @@ export function StandaloneReminders() {
           }}
         >
           <Field label={T.name}>
-            <input className={inputClass} value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} />
+            <input ref={titleRef} className={inputClass} value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} />
           </Field>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <DateField label={T.day} value={day} onChange={setDay} />
@@ -95,9 +110,24 @@ export function StandaloneReminders() {
               <Button variant="soft" icon="Check" aria-label={T.doneAria(item.title)} onClick={() => void updateReminder(item.id, { done: true })}>
                 {T.done}
               </Button>
-              <Button variant="ghost" icon="Trash2" aria-label={T.removeAria(item.title)} onClick={() => void deleteReminder(item.id)}>
-                {T.remove}
-              </Button>
+              {confirmRemove === item.id ? (
+                <div className="basis-full">
+                  <InlineConfirm
+                    text={T.removeConfirm}
+                    confirmLabel={T.remove}
+                    icon="Trash2"
+                    onConfirm={() => {
+                      setConfirmRemove(null);
+                      void deleteReminder(item.id);
+                    }}
+                    onCancel={() => setConfirmRemove(null)}
+                  />
+                </div>
+              ) : (
+                <Button variant="ghost" icon="Trash2" aria-label={T.removeAria(item.title)} onClick={() => setConfirmRemove(item.id)}>
+                  {T.remove}
+                </Button>
+              )}
             </li>
           ))}
         </ul>

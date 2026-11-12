@@ -1,6 +1,6 @@
 // «Il mio piano» nel riquadro dell'appello: scelta, stato, note, promemoria, materia ed esito. È un dato
 // personale (examPlans, sync personale): il gruppo non lo vede.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Field, inputClass } from "../ui";
 import { GradeDrawer } from "../GradeDrawer";
 import { ReminderList } from "../calendar/ReminderList";
@@ -11,6 +11,8 @@ import { planChanges } from "../../lib/groupExamUi";
 import { sessionMatchesSubject, type GroupExamSession } from "../../lib/groupExams";
 import { useStudyStore } from "../../store/useStudyStore";
 import type { ExamPlanStatus } from "../../types";
+
+const NOTES_SAVE_DELAY_MS = 800;
 
 export function MyPlanSection({
   sessionId,
@@ -34,6 +36,22 @@ export function MyPlanSection({
   const sameCourse = session ? mySubjects.find((subject) => sessionMatchesSubject(session, subject)) : undefined;
 
   const patch = (change: ExamPlanPatch) => void planExam(sessionId, change, session, groupName);
+  // Le note si salvano mentre si scrive (dopo una pausa) e alla chiusura del riquadro: Esc o un tocco fuori
+  // non le perdono.
+  const latest = useRef({ notes, saved: plan?.notes ?? "", save: (_text: string) => {} });
+  latest.current = { notes, saved: plan?.notes ?? "", save: (text) => patch({ notes: text }) };
+  useEffect(() => {
+    if (notes === latest.current.saved) return;
+    const timer = window.setTimeout(() => latest.current.save(latest.current.notes), NOTES_SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [notes]);
+  useEffect(
+    () => () => {
+      const { notes: typed, saved, save } = latest.current;
+      if (typed !== saved) save(typed);
+    },
+    []
+  );
   if (!plan && !session) return null;
   const changes = plan ? planChanges(plan, session) : [];
   const linkedExam = plan?.examId ? exams.find((exam) => exam.id === plan.examId) : undefined;

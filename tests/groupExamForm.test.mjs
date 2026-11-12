@@ -80,7 +80,7 @@ test("una bozza da un mio evento d'esame: giorno, ora e materia", () => {
   assert.equal(allDay.time, "");
   assert.equal(allDay.subjectId, "s1");
   assert.equal(allDay.courseId, "farm-spec");
-  assert.equal(allDay.notes, "Porta il libretto");
+  assert.equal(allDay.notes, "", "le note private del mio evento non passano all'appello del gruppo");
   const timed = sessionDraftFromEvent({ id: "e2", title: "Appello · Chimica", start: "2027-02-03T10:15:00", allDay: false, description: "" }, subjects);
   assert.equal(timed.courseName, "Chimica");
   assert.equal(timed.time, "10:15");

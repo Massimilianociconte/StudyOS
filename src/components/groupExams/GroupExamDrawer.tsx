@@ -1,6 +1,6 @@
 // Riquadro di un appello del gruppo: dettagli, modifica, eliminazione, «Il mio piano», collegamento ai
 // miei eventi ed esami già presenti, cronologia. Caricato con lazy() da calendario, materie e gruppi.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Drawer } from "../ui";
 import { Icon } from "../Icon";
 import { InlineConfirm } from "../InlineConfirm";
@@ -44,6 +44,9 @@ export default function GroupExamDrawer({ sessionId, create, onClose }: GroupExa
   const [busy, setBusy] = useState(false);
   const [offerRemove, setOfferRemove] = useState<string | null>(null);
   const [undo, setUndo] = useState<CalendarEvent | null>(null);
+  // Dopo Salva o Annulla il modulo sparisce: il focus passa al contenuto, non va perso sul documento.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const firstMode = useRef(true);
 
   const ready = useGroupExamStore((state) => state.ready);
   const available = useGroupExamStore((state) => state.available);
@@ -59,6 +62,14 @@ export default function GroupExamDrawer({ sessionId, create, onClose }: GroupExa
   const deleteEvent = useStudyStore((state) => state.deleteEvent);
   const restoreEntities = useStudyStore((state) => state.restoreEntities);
 
+  useEffect(() => {
+    if (firstMode.current) {
+      firstMode.current = false;
+      return;
+    }
+    if (mode === "view") bodyRef.current?.focus();
+  }, [mode]);
+
   const shownGroup = groupName || plan?.snapshot.groupName || "";
   const title =
     mode === "create"
@@ -70,7 +81,9 @@ export default function GroupExamDrawer({ sessionId, create, onClose }: GroupExa
           : T.sectionTitle;
 
   const linkFromEvent = async (saved: GroupExamSession, eventId: string) => {
-    await planExam(saved.id, { selected: true, linkedEventId: eventId }, saved, groupName);
+    // Il nome del gruppo si legge adesso: `groupName` è calcolato quando l'appello non esisteva ancora.
+    const name = useGroupExamStore.getState().groups.find((item) => item.id === saved.groupId)?.name ?? "";
+    await planExam(saved.id, { selected: true, linkedEventId: eventId }, saved, name);
     setOfferRemove(eventId);
   };
 
@@ -144,7 +157,8 @@ export default function GroupExamDrawer({ sessionId, create, onClose }: GroupExa
         />
       );
     }
-    if (!session && !ready) return <p className="text-sm font-bold text-[var(--muted)]">{T.loading}</p>;
+    // Con la copia del piano si mostra quella (offline, gruppo non leggibile): mai un caricamento senza fine.
+    if (!session && !plan && !ready) return <p className="text-sm font-bold text-[var(--muted)]">{T.loading}</p>;
     if (!session && !plan) return <p className="text-sm font-bold text-[var(--muted)]">{T.notFound}</p>;
 
     const date = session?.date ?? plan!.snapshot.date;
@@ -267,7 +281,9 @@ export default function GroupExamDrawer({ sessionId, create, onClose }: GroupExa
           </div>
         ) : null}
       </div>
-      {body()}
+      <div ref={bodyRef} tabIndex={-1} className="outline-none">
+        {body()}
+      </div>
     </Drawer>
   );
 }

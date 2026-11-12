@@ -45,7 +45,6 @@ export function GroupExamList({
             <Button
               variant={chosen ? "primary" : "soft"}
               icon={chosen ? "Check" : "Plus"}
-              aria-pressed={chosen}
               aria-label={`${chosen ? T.chosen : T.choose}: ${title}, ${formatDay(session.date)}`}
               onClick={() =>
                 void planExam(session.id, { selected: !chosen, ...(!chosen && !plan?.subjectId && subject ? { subjectId: subject.id } : {}) }, session, groupName)

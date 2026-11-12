@@ -94,3 +94,10 @@ export const describeOverrideEntry = (entry: GroupHistoryEntry): string[] => {
   if (wasDeleted !== isDeleted) lines.push(isDeleted ? GROUP_EXAM_TEXT.correctionRemoved : GROUP_EXAM_TEXT.restored);
   return lines;
 };
+
+/** Campo di un errore (client o server) → input di «Correggi»; il nome di un contatto è «targetLabel» per il server. */
+export const overrideInputField = (kind: CatalogTargetKind, field: string | undefined): string | undefined => {
+  if (!field) return undefined;
+  if (field === "targetLabel") return kind === "contact" ? "label" : undefined;
+  return CATALOG_OVERRIDE_FIELDS[kind]?.includes(field) ? field : undefined;
+};

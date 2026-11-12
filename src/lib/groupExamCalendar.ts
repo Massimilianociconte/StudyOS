@@ -70,7 +70,9 @@ interface CalendarInput {
   plans: readonly ExamPlan[];
   groupNames: ReadonlyMap<string, string>;
   subjects: readonly Subject[];
-  events: readonly Pick<CalendarEvent, "id">[];
+  events: readonly (Pick<CalendarEvent, "id"> & Partial<CalendarEvent>)[];
+  /** Miei esami: un appello già presente come mio esame (collegato o dello stesso giorno) non si ripete. */
+  exams?: readonly Exam[];
   mode: GroupExamCalendarMode;
 }
 
@@ -79,16 +81,23 @@ interface CalendarInput {
  * - scelti da me: sempre (anche con mode "off"), dalla riga viva o dalla copia del piano;
  * - "subjects": gli appelli vivi delle mie materie; "all": tutti gli appelli vivi dei miei gruppi;
  * - un eliminato si vede solo se l'avevo scelto (segnato `deleted`);
- * - un appello collegato a un mio evento non si ripete: lo mostra già l'evento personale.
+ * - un appello collegato a un mio evento o esame, o che coincide con un mio evento d'esame o un mio
+ *   esame (stesso corso e giorno, non scartato con «Tienili separati»), non si ripete: lo mostra già
+ *   il dato personale (il riquadro dell'appello propone il collegamento).
  */
-export const groupExamEvents = ({ sessions, plans, groupNames, subjects, events, mode }: CalendarInput): GroupExamEvent[] => {
+export const groupExamEvents = ({ sessions, plans, groupNames, subjects, events, exams = [], mode }: CalendarInput): GroupExamEvent[] => {
   const planOf = new Map(plans.map((plan) => [plan.sessionId, plan]));
   const eventIds = new Set(events.map((event) => event.id));
+  const examIds = new Set(exams.filter((exam) => !exam.archived).map((exam) => exam.id));
   const liveIds = new Set(sessions.map((session) => session.id));
   const out: GroupExamEvent[] = [];
 
   const push = (session: Pick<GroupExamSession, "id" | "groupId" | "courseId" | "courseName" | "date" | "kind" | "label" | "time" | "room" | "createdAt" | "updatedAt">, plan: ExamPlan | undefined, deleted: boolean, stale: boolean) => {
     if (plan?.linkedEventId && eventIds.has(plan.linkedEventId)) return;
+    if (!deleted) {
+      if (plan?.examId && examIds.has(plan.examId)) return;
+      if (personalMatches(session, { events: events as readonly CalendarEvent[], exams, subjects }, plan).length) return;
+    }
     const subject = (plan?.subjectId ? subjects.find((item) => item.id === plan.subjectId) : undefined) ?? subjects.find((item) => sessionMatchesSubject(session, item));
     const groupName = groupNames.get(session.groupId) ?? plan?.snapshot.groupName ?? "";
     const selected = plan?.selected === true;
