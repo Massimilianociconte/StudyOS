@@ -2,8 +2,7 @@ import { useId, useState } from "react";
 import { Icon } from "../Icon";
 import type { RepeatRule } from "../../types";
 import { REPEAT_PICKER_TEXT } from "../../lib/labels";
-import { describeRule } from "../../lib/repeat";
-import { customFromRule, presetIdOf, repeatPresets, ruleFromCustom } from "../../lib/repeatPicker";
+import { customFromRule, presetIdOf, repeatPresets, ruleFromCustom, ruleSentence } from "../../lib/repeatPicker";
 import { RepeatCustom } from "./RepeatCustom";
 
 /**
@@ -15,7 +14,8 @@ export function RepeatPicker({
   start,
   onChange,
   disabled = false,
-  note
+  note,
+  startCounts = true
 }: {
   value: RepeatRule | null;
   /** Giorno d'inizio (YYYY-MM-DD). */
@@ -24,6 +24,8 @@ export function RepeatPicker({
   disabled?: boolean;
   /** Avviso sotto la riga (es. la ripetizione si cambia solo per "successivi" o "tutti"). */
   note?: string;
+  /** L'inizio conta come una volta anche fuori dai giorni scelti: false quando si modifica da un giorno della serie. */
+  startCounts?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -32,7 +34,7 @@ export function RepeatPicker({
   const summaryId = useId();
   const presets = repeatPresets(start);
   const current = presetIdOf(value, start);
-  const summary = describeRule(value, start);
+  const summary = ruleSentence(value, start);
 
   return (
     <div className="min-w-0">
@@ -100,7 +102,7 @@ export function RepeatPicker({
           </button>
         </div>
       ) : null}
-      {customOpen && !open ? <RepeatCustom key={start} value={value} start={start} onChange={onChange} disabled={disabled} /> : null}
+      {customOpen && !open ? <RepeatCustom key={start} value={value} start={start} onChange={onChange} disabled={disabled} startCounts={startCounts} /> : null}
     </div>
   );
 }

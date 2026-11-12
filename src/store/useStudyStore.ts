@@ -97,7 +97,7 @@ import {
   type TimerMode,
   type TimerState
 } from "../lib/studyTimer";
-import { relinkSession, reviewedSessionTimes, sessionEndsInFuture, sessionLinksOf, type SessionEdit, type SessionLinks } from "../lib/studySessions";
+import { matchTopic, relinkSession, reviewedSessionTimes, sessionEndsInFuture, sessionLinksOf, type SessionEdit, type SessionLinks } from "../lib/studySessions";
 import { resolveTimerDurations } from "../lib/timerPrefs";
 import type { TimerSettings } from "../types";
 import { useSharedStore } from "./useSharedStore";
@@ -475,6 +475,22 @@ const knownSubjectId = (state: Pick<StoreState, "subjects">, subjectId?: string 
 /** Argomento valido per il timer: esiste ed è della materia scelta (senza materia nessun argomento). */
 const topicFor = (state: Pick<StoreState, "topics">, subjectId?: string, topicId?: string) =>
   subjectId && topicId && state.topics.some((topic) => topic.id === topicId && topic.subjectId === subjectId) ? topicId : undefined;
+
+/**
+ * Timer su un'altra materia. L'argomento è della materia: il testo scritto a mano resta (si può
+ * scrivere prima e scegliere la materia dopo) e diventa l'argomento della nuova materia se ne ha uno
+ * con quel nome; il nome di un argomento scelto se ne va con il suo argomento.
+ */
+const timerForSubject = (state: Pick<StoreState, "topics">, timer: TimerState, subjectId: string | undefined): TimerState => {
+  const next: TimerState = { ...timer, subjectId };
+  delete next.topicId;
+  const title = timer.title ?? "";
+  const match = title.trim() ? matchTopic(title, state.topics, subjectId) : undefined;
+  const picked = timer.topicId ? state.topics.find((topic) => topic.id === timer.topicId) : undefined;
+  if (match) next.topicId = match.id;
+  else if (picked && matchTopic(title, [picked], picked.subjectId)) next.title = "";
+  return next;
+};
 
 /**
  * La persona sceglie materia o durate: un blocco non ancora avviato torna sulle sue durate anche
@@ -1239,7 +1255,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
         examDate: subject.examDate,
         notes: subject.notes ?? ""
       };
-      set((state) => ({ subjects: [created, ...state.subjects] }));
+      // In fondo: è l'ordine che dà la ricarica (id crescenti, nati dall'ora di creazione).
+      set((state) => ({ subjects: [...state.subjects, created] }));
       await commit();
       return created.id;
     },
@@ -1793,12 +1810,12 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const durations = timerDurationsFor(state, subjectId);
       setTimerState(
         set,
+        // «Cosa studi?» riparte vuoto (Annulla riporta il timer com'era, testo compreso).
         defaultTimer(mode ?? current.mode, {
           kind: mode ? "pomodoro" : current.kind,
           durations,
           subjectId,
-          topicId: topicFor(state, subjectId, current.topicId),
-          title: current.title,
+          title: "",
           template: current.template,
           targetMinutes: durations.stopwatchTargetMinutes
         })
@@ -1852,13 +1869,13 @@ export const useStudyStore = create<StudyState>((set, get) => {
       if (state.loading || state.locked || isTimerIdle(timer, now)) return { status: "idle" };
       const subjectId = knownSubjectId(state, timer.subjectId);
       const durations = timerDurationsFor(state, subjectId);
+      // Sessione chiusa: «Cosa studi?» riparte vuoto per la prossima (la materia resta).
       const ready = () =>
         defaultTimer(timer.mode, {
           kind: timer.kind,
           durations,
           subjectId,
-          topicId: topicFor(state, subjectId, timer.topicId),
-          title: timer.title,
+          title: "",
           template: timer.template,
           targetMinutes: durations.stopwatchTargetMinutes
         });
@@ -1921,12 +1938,12 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const durations = timerDurationsFor(state, nextSubjectId);
       setTimerState(
         set,
+        // Riepilogo salvato: «Cosa studi?» riparte vuoto per la prossima sessione.
         defaultTimer(timer.mode, {
           kind: timer.kind,
           durations,
           subjectId: nextSubjectId,
-          topicId: topicFor(state, nextSubjectId, timer.topicId),
-          title: timer.title,
+          title: "",
           template: timer.template,
           targetMinutes: durations.stopwatchTargetMinutes
         })
@@ -1964,10 +1981,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const state = get();
       const id = knownSubjectId(state, subjectId);
       if (state.timer.subjectId === id) return;
-      // L'argomento è della materia: cambiandola si stacca (il testo scritto resta).
-      const next: TimerState = { ...state.timer, subjectId: id, topicId: topicFor(state, id, state.timer.topicId) };
-      if (next.topicId === undefined) delete next.topicId;
-      setTimerState(set, syncTimerDurations(chosenByUser(next), timerDurationsFor(state, id)));
+      setTimerState(set, syncTimerDurations(chosenByUser(timerForSubject(state, state.timer, id)), timerDurationsFor(state, id)));
     },
     setTimerDetails: (details) => {
       const state = get();

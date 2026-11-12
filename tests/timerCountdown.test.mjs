@@ -282,7 +282,11 @@ test("store: argomento scelto e cambio di materia (l'argomento di un'altra mater
   assert.equal(store.getState().timer.topicId, "t1");
   store.getState().setTimerSubject("s2");
   assert.equal(store.getState().timer.topicId, undefined);
-  assert.equal(store.getState().timer.title, "Limiti", "il testo resta");
+  // Il nome dell'argomento scelto se ne va con l'argomento (il testo scritto a mano invece resta).
+  assert.equal(store.getState().timer.title, "", "«Limiti» non passa a un'altra materia");
+  store.getState().setTimerDetails({ title: "Limiti notevoli" });
+  store.getState().setTimerSubject("s1");
+  assert.equal(store.getState().timer.title, "Limiti notevoli", "il testo scritto resta");
   store.getState().setTimerDetails({ topicId: "inventato" });
   assert.equal(store.getState().timer.topicId, undefined, "argomento sconosciuto o di un'altra materia ignorato");
 });

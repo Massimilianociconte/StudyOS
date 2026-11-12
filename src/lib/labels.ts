@@ -171,6 +171,8 @@ export const TIMER_TEXT = {
   targetReached: (target: string) => `Obiettivo di ${target} raggiunto: il cronometro continua.`,
   start: "Avvia",
   pause: "Pausa",
+  /** Durante la pausa del Pomodoro «Pausa» sembrerebbe la pausa stessa: il pulsante ferma il conto. */
+  stopBreak: "Ferma",
   resume: "Riprendi",
   finish: "Termina e salva",
   endEarly: "Termina prima",

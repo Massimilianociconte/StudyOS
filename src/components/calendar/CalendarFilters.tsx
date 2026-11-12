@@ -1,5 +1,5 @@
-// Riga dei filtri sopra il calendario: una materia sola ("Solo: Analisi ✕") o tutte, le festività
-// accese o spente e, in Giorno e Agenda, le Attività senza data.
+// Riga dei filtri sopra il calendario: una materia sola (la sua pillola accesa, con ✕) o tutte, le
+// festività accese o spente e, in Giorno e Agenda, le Attività senza data.
 import { useEffect, useRef } from "react";
 import { Icon } from "../Icon";
 import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT, HOLIDAYS_TOGGLE_LABEL } from "../../lib/labels/calendar";
@@ -16,10 +16,10 @@ const pill = (pressed: boolean) =>
   }`;
 
 /**
- * Riga "Tutte · Analisi · Fisica…": scorre in orizzontale dentro la riga (mai la pagina). Con un
- * filtro attivo, a sinistra e sempre visibile, il chip "Solo: Analisi ✕" che lo toglie. Dopo (sul
- * telefono vanno a capo): "Festività" (solo con `onToggleHolidays`: sul telefono è in «Altre azioni»)
- * e "Senza data · N".
+ * Riga "Tutte · Analisi · Fisica…": scorre in orizzontale dentro la riga (mai la pagina). Un solo
+ * segno del filtro attivo: la pillola della materia accesa, con ✕, che lo toglie (e resta in vista
+ * quando la riga scorre). Dopo (sul telefono vanno a capo): "Festività" (solo con `onToggleHolidays`:
+ * sul telefono è in «Altre azioni») e "Senza data · N".
  */
 export function CalendarFilterRow({
   subjects,
@@ -53,19 +53,6 @@ export function CalendarFilterRow({
   }, [active?.id]);
   return (
     <div className="mb-4 flex min-w-0 flex-wrap items-center gap-2">
-      {active ? (
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          aria-label={CALENDAR_TEXT.clearFilter(active.name)}
-          title={CALENDAR_TEXT.showAll}
-          className="motion-safe inline-flex min-h-11 max-w-[50%] shrink-0 items-center gap-1.5 rounded-full border border-[var(--accent-ink)] bg-[var(--surface-strong)] px-3 text-xs font-black text-[var(--text)] hover:bg-[var(--surface)]"
-        >
-          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: safeCssColor(active.color) || "var(--accent)" }} />
-          <span className="min-w-0 truncate">{CALENDAR_TEXT.onlySubject(active.name)}</span>
-          <Icon name="X" className="h-3.5 w-3.5 shrink-0" />
-        </button>
-      ) : null}
       {options.length ? (
         <div
           ref={rowRef}
@@ -79,9 +66,18 @@ export function CalendarFilterRow({
           {options.map((subject) => {
             const pressed = active?.id === subject.id;
             return (
-              <button key={subject.id} type="button" aria-pressed={pressed} onClick={() => onChange(pressed ? null : subject.id)} className={pill(pressed)}>
+              <button
+                key={subject.id}
+                type="button"
+                aria-pressed={pressed}
+                aria-label={pressed ? CALENDAR_TEXT.clearFilter(subject.name) : undefined}
+                title={pressed ? CALENDAR_TEXT.showAll : undefined}
+                onClick={() => onChange(pressed ? null : subject.id)}
+                className={pill(pressed)}
+              >
                 <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: safeCssColor(subject.color) || "var(--accent)" }} />
                 {subject.name}
+                {pressed ? <Icon name="X" className="h-3.5 w-3.5 shrink-0" /> : null}
               </button>
             );
           })}

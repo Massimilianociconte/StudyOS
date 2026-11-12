@@ -1,9 +1,9 @@
 // Scelte della riga "Ripetizione" del modulo evento: scelte pronte calcolate dalla data d'inizio,
 // sezione "Personalizza" (modulo ↔ regola) e adattamento quando l'inizio cambia. Tutto puro.
-import type { RepeatRule, Weekday } from "../types";
+import type { CalendarEvent, RepeatRule, Weekday } from "../types";
 import { MONTH_NAME, REPEAT_PICKER_TEXT, REPEAT_TEXT, WEEKDAY_NAME } from "./labels";
 import { EVENT_EDITOR_TEXT } from "./labels/calendar";
-import { describeRule, MAX_COUNT, MAX_INTERVAL, validateRepeat, WEEKDAYS } from "./repeat";
+import { describeRule, lastDateBefore, MAX_COUNT, MAX_INTERVAL, validateRepeat, WEEKDAYS } from "./repeat";
 import { repeatPresets, weekdayOf, weekdayPosition, type RepeatPresetId } from "./repeatPresets";
 import { civilAddMonths, daysInMonth, isCivilDate, parseCivil } from "./tz";
 
@@ -122,13 +122,40 @@ export const startOutsideRule = (rule: RepeatRule | null | undefined, start: str
   return weekdayOf(start) !== rule.monthly.weekday || (rule.monthly.nth === -1 ? !position.last : position.nth !== rule.monthly.nth);
 };
 
-/** Frase della regola; se l'inizio è una volta in più, lo dice ("Anche giovedì 12 novembre, …"). */
-export const repeatSummary = (rule: RepeatRule, start: string) => {
-  const text = describeRule(rule, start);
-  const parts = parseCivil(start);
-  if (!parts || !startOutsideRule(rule, start)) return text;
-  const day = `${WEEKDAY_NAME[weekdayOf(start)]} ${parts.day} ${MONTH_NAME[parts.month - 1]}`;
-  return `${text}. ${EVENT_EDITOR_TEXT.repeatStartExtra(day)}`;
+/** "giovedì 19 novembre" */
+const dayName = (date: string) => {
+  const parts = parseCivil(date);
+  return parts ? `${WEEKDAY_NAME[weekdayOf(date)]} ${parts.day} ${MONTH_NAME[parts.month - 1]}` : date;
+};
+
+/**
+ * Ultima volta vera di una regola "fino al" un giorno che non è una delle volte (fino a domenica 22,
+ * ogni giovedì → giovedì 19). Assente se la regola non finisce in un giorno o se quel giorno è una volta.
+ */
+export const lastRealDate = (rule: RepeatRule | null | undefined, start: string): string | undefined => {
+  if (rule?.end?.type !== "until" || !isCivilDate(start)) return undefined;
+  // Serie di prova a mezzogiorno UTC: conta solo il calendario della regola, non l'ora né il fuso.
+  const probe = { id: "", title: "", start: `${start}T12:00`, end: `${start}T13:00`, timeZone: "UTC", repeat: rule } as CalendarEvent;
+  const last = lastDateBefore(probe);
+  return typeof last === "string" && last !== rule.end.date ? last : undefined;
+};
+
+/** Frase della regola; se finisce "fino al" un giorno che non è una volta, dice anche l'ultima volta vera. */
+export const ruleSentence = (rule: RepeatRule | null | undefined, start: string) => {
+  const text = describeRule(rule ?? null, start);
+  const last = lastRealDate(rule, start);
+  return last ? `${text} ${EVENT_EDITOR_TEXT.repeatLastTime(dayName(last))}` : text;
+};
+
+/**
+ * Frase della regola (vedi `ruleSentence`); se l'inizio è una volta in più, lo dice ("Anche giovedì 12
+ * novembre, …"). `startCounts: false` quando si modifica da un giorno della serie: lì l'inizio segue la
+ * regola e non diventa una volta in più (vedi `alignedSeriesStart`), quindi la frase non lo dice.
+ */
+export const repeatSummary = (rule: RepeatRule, start: string, { startCounts = true }: { startCounts?: boolean } = {}) => {
+  const text = ruleSentence(rule, start);
+  if (!startCounts || !parseCivil(start) || !startOutsideRule(rule, start)) return text;
+  return `${text}. ${EVENT_EDITOR_TEXT.repeatStartExtra(dayName(start))}`;
 };
 
 const isIntIn = (value: number, min: number, max: number) => Number.isInteger(value) && value >= min && value <= max;

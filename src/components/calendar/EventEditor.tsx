@@ -24,7 +24,8 @@ import {
   type EventDraft
 } from "../../lib/eventEditor";
 import { eventTypeIcon, eventTypeKey, eventTypeLabel, type TypeColorOverrides } from "../../lib/eventColors";
-import { describeRule, isOccurrenceRow } from "../../lib/repeat";
+import { isOccurrenceRow } from "../../lib/repeat";
+import { ruleSentence } from "../../lib/repeatPicker";
 import { normalizeExternalUrl, safeHref } from "../../lib/safeUrl";
 import { safeCssColor, type SharedOrigin } from "../../lib/sharing";
 import { selectableSubjects } from "../../lib/selectors";
@@ -243,8 +244,10 @@ export function EventEditor({
   // suonerebbero sui suoi dispositivi, quindi qui non ci sono. Un suo giorno cambiato da solo non prende una regola.
   const othersEvent = Boolean(sharedFrom) || inOtherCalendar;
   const sharedRow = Boolean(sharedFrom && event && isOccurrenceRow(event));
-  const moreHint = draft.repeat
-    ? describeRule(draft.repeat, ruleDay)
+  // Una lezione di solito si ripete: la scelta sta in vista, non sotto «Altre opzioni».
+  const repeatUpFront = draft.category === "lesson";
+  const moreHint = draft.repeat && !repeatUpFront
+    ? ruleSentence(draft.repeat, ruleDay)
     : othersEvent
       ? imported || inOtherCalendar
         ? EVENT_EDITOR_TEXT.sectionMoreHintOtherNoLinks
@@ -252,6 +255,17 @@ export function EventEditor({
       : imported
         ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks
         : EVENT_EDITOR_TEXT.sectionMoreHint;
+
+  const repeatPicker = (
+    <RepeatPicker
+      value={draft.repeat}
+      start={ruleDay}
+      onChange={(rule) => update((value) => ({ ...value, repeat: rule }))}
+      disabled={readOnly || sharedRow}
+      note={sharedRow ? EVENT_EDITOR_TEXT.repeatSharedRow : repeatNote}
+      startCounts={!occurrenceDate}
+    />
+  );
 
   const footer = (
     <div className="grid grid-cols-1 gap-2">
@@ -544,6 +558,7 @@ export function EventEditor({
                   </p>
                 ) : null}
                 {typeExtra?.(draft)}
+                {repeatUpFront ? repeatPicker : null}
                 <ColorPalette
                   label={EVENT_EDITOR_TEXT.color}
                   value={draft.color}
@@ -565,13 +580,7 @@ export function EventEditor({
                   <Icon name="ChevronDown" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
                 </summary>
                 <div className="mt-3 grid grid-cols-1 gap-4">
-                  <RepeatPicker
-                    value={draft.repeat}
-                    start={ruleDay}
-                    onChange={(rule) => update((value) => ({ ...value, repeat: rule }))}
-                    disabled={readOnly || sharedRow}
-                    note={sharedRow ? EVENT_EDITOR_TEXT.repeatSharedRow : repeatNote}
-                  />
+                  {repeatUpFront ? null : repeatPicker}
                   {othersEvent ? (
                     <p className="text-xs font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.remindersPersonal}</p>
                   ) : (

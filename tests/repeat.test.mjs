@@ -1390,3 +1390,31 @@ test("N3 (revisione finale). Ricerca: ogni serie una volta, un giorno cambiato s
   assert.deepEqual(find("fisica"), ["Q"]);
   assert.deepEqual(find("esercitazione"), ["Q@2026-11-16"]);
 });
+
+test("ricerca: le parti di una serie divisa sono un risultato solo, sulla prossima volta (o sull'ultima)", () => {
+  // Anatomia ogni lunedì alle 10 a Roma; dal 30/11 un'ora dopo (questa e le successive), fino al 14/12.
+  const base = weeklySeries({ id: "P", title: "Anatomia", repeat: { freq: "weekly", end: { type: "until", date: "2026-12-14" } } });
+  let events = applyEditPlan([base], planEdit(base, [base], "2026-11-30", "following", { start: "2026-11-30T10:00:00.000Z", end: "2026-11-30T11:00:00.000Z" }, { now: NOW })).events;
+  const child = events.find((item) => item.splitFrom === "P");
+  assert.ok(child, "la divisione crea la seconda parte");
+  const hits = (word, now) => searchHits(events, (item) => String(item.title).toLowerCase().includes(word), new Date(now));
+  const one = (now) => {
+    const found = hits("anatomia", now);
+    assert.equal(found.length, 1, now);
+    return [found[0].id, found[0].occurrenceDate, found[0].start];
+  };
+  // Prima della divisione: la prima parte, alla sua prossima volta (lunedì 23/11 alle 10 di Roma).
+  assert.deepEqual(one("2026-11-18T12:00:00.000Z"), ["P", "2026-11-23", "2026-11-23T09:00:00.000Z"]);
+  // Dopo: la seconda parte, alla sua prossima volta (lunedì 7/12 alle 11 di Roma).
+  assert.deepEqual(one("2026-12-02T12:00:00.000Z"), [child.id, "2026-12-07", "2026-12-07T10:00:00.000Z"]);
+  // Tutto passato: l'ultima volta dell'ultima parte.
+  assert.deepEqual(one("2027-02-01T12:00:00.000Z"), [child.id, "2026-12-14", "2026-12-14T10:00:00.000Z"]);
+  // La seconda parte rinominata: «anatomia» trova solo la prima, all'ultima volta prima della divisione.
+  events = events.map((item) => (item.id === child.id ? { ...item, title: "Fisiologia" } : item));
+  assert.deepEqual(one("2026-12-02T12:00:00.000Z"), ["P", "2026-11-23", "2026-11-23T09:00:00.000Z"]);
+  assert.deepEqual(hits("fisiologia", "2026-12-02T12:00:00.000Z").map((item) => [item.id, item.occurrenceDate]), [[child.id, "2026-12-07"]]);
+  // Un evento che non si ripete resta com'è.
+  const single = { ...base, id: "S", title: "Anatomia: esame", repeat: undefined, recurrence: "none" };
+  const plain = searchHits([single], () => true, new Date("2026-11-18T12:00:00.000Z"));
+  assert.equal(plain[0], single);
+});

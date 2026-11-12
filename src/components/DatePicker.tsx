@@ -25,6 +25,7 @@ import {
   clampYmd,
   daysInclusive,
   finishRange,
+  focusMovesTo,
   formatDateField,
   formatDateLong,
   formatDateTimeField,
@@ -40,6 +41,7 @@ import {
   parseYmd,
   pickRange,
   previewRange,
+  slotInView,
   splitDateTime,
   timeSlots,
   todayYmd,
@@ -275,6 +277,8 @@ function MonthCalendar({
   const rootRef = useRef<HTMLDivElement>(null);
   // Il focus segue il giorno solo dopo un tasto o un cambio di vista, mai all'apertura (lo dà il pannello).
   const moveFocus = useRef(false);
+  // Focus arrivato da un tocco o da un clic: il mese non cambia finché il clic non sceglie il giorno.
+  const pointerFocus = useRef(false);
   const grid = useMemo(() => monthGrid(year, month, { today, selected, min, max, range }), [year, month, today, selected, min, max, range]);
   const title = formatMonthTitle(year, month);
 
@@ -438,13 +442,19 @@ function MonthCalendar({
                     disabled={day.disabled}
                     aria-label={day.isToday ? `${formatDateLong(day.ymd)}, ${TEXT.todaySuffix}` : formatDateLong(day.ymd)}
                     aria-current={day.isToday ? "date" : undefined}
+                    onPointerDown={() => {
+                      pointerFocus.current = true;
+                    }}
                     onClick={() => {
+                      pointerFocus.current = false;
                       moveFocus.current = false;
                       onFocusDay(day.ymd);
                       onPick(day.ymd);
                     }}
                     onFocus={() => {
-                      if (day.ymd !== focusDay) onFocusDay(day.ymd);
+                      const next = focusMovesTo(day.ymd, focusDay, pointerFocus.current);
+                      pointerFocus.current = false;
+                      if (next) onFocusDay(next);
                       onHover?.(day.ymd);
                     }}
                     onMouseEnter={() => onHover?.(day.ymd)}
@@ -511,12 +521,13 @@ function TimeChooser({
     if (value) setCursor(nearestSlot(value, SLOT_STEP));
   }, [value]);
 
-  // L'orario scelto (o il più vicino) al centro della lista, senza muovere il resto della pagina.
+  // L'orario scritto (o scelto, o il più vicino) al centro della lista, senza muovere il resto della pagina.
+  const inView = slotInView(typed, value, SLOT_STEP);
   useLayoutEffect(() => {
     const list = listRef.current;
-    const slot = list?.querySelector<HTMLElement>(`[data-slot="${nearestSlot(value || "09:00", SLOT_STEP)}"]`);
+    const slot = list?.querySelector<HTMLElement>(`[data-slot="${inView}"]`);
     if (list && slot) list.scrollTop = slot.offsetTop - list.clientHeight / 2 + slot.offsetHeight / 2;
-  }, [value]);
+  }, [inView]);
 
   useEffect(() => {
     // Solo alla richiesta (data appena scelta), non a ogni spostamento del cursore.

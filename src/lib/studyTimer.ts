@@ -185,6 +185,18 @@ export const timerUnsavedSeconds = (timer: TimerState, now: number = Date.now())
 export const isTimerIdle = (timer: TimerState, now: number = Date.now()) =>
   !timer.running && timer.phase === "focus" && timer.startedAt === undefined && timerElapsedSeconds(timer, now) === 0;
 
+/**
+ * Avviso con un'azione del timer («Salta la pausa», «Avvia il prossimo blocco») che non vale più: il
+ * timer ha cambiato modalità o fase da quando è comparso (Pomodoro terminato, Cronometro avviato,
+ * pausa finita) o il prossimo blocco è già partito. Il pulsante non farebbe niente: l'avviso si chiude.
+ */
+export const timerAlertStale = (
+  action: "skip-break" | "start-next",
+  at: { kind: TimerKind; phase: TimerPhase },
+  timer: TimerState,
+  now: number = Date.now()
+) => timer.kind !== at.kind || timer.phase !== at.phase || (action === "start-next" && !isTimerIdle(timer, now));
+
 /** Avvia un blocco di studio Pomodoro (`mode` sceglie la durata se non è "pomodoro"). */
 export const startTimerState = (mode: TimerMode, now: number = Date.now(), options: TimerOptions = {}): TimerState => {
   const base = defaultTimer(mode, options);

@@ -14,6 +14,7 @@ import {
   followingPatch,
   initialColorCustom,
   newEventDraft,
+  proposedStart,
   recipientEventUpdate,
   reminderChoices,
   removeReminder,
@@ -66,6 +67,17 @@ test("nuovo evento: un'ora dall'inizio scelto, colore della tipologia", () => {
   assert.equal(draft.repeat, null);
   // Con una materia, Studio prende il colore della materia.
   assert.equal(newEventDraft({ start: at(2026, 11, 12, 10), subjectId: "s1", subjectColor: "#123456" }).color, "#123456");
+});
+
+test("nuovo evento: oggi parte alla prossima mezz'ora, un altro giorno alle 9, l'ora toccata resta", () => {
+  const now = new Date(2026, 10, 12, 4, 46, 31);
+  const today = new Date(2026, 10, 12);
+  const hhmm = (date) => `${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
+  assert.equal(hhmm(proposedStart(today, now)), "12 5:00", "non le 4:46 di adesso");
+  assert.equal(hhmm(proposedStart(today, new Date(2026, 10, 12, 4, 10))), "12 4:30");
+  assert.equal(hhmm(proposedStart(new Date(2026, 11, 14), now)), "14 9:00", "primo giorno mostrato (un'altra settimana)");
+  assert.equal(hhmm(proposedStart(new Date(2026, 11, 14, 15, 30), now)), "14 15:30", "ora toccata nella griglia");
+  assert.equal(proposedStart(today, now).getSeconds(), 0);
 });
 
 test("colore scelto a mano: esplicito, oppure dedotto per gli eventi di prima", () => {
@@ -388,6 +400,10 @@ test("scelta della portata: ciò che si perde, sparisce, raddoppia, si sposta o 
   const kept = scopeOptions({ action: "edit", date: "2026-11-24", impacts: { following: impact({ kept: 2, laterParts: 1, laterOwnTime: 1 }) } }).find((o) => o.id === "following");
   assert.deepEqual(kept.warnings, []);
   assert.ok(kept.details.includes(SCOPE_TEXT.rowsKept) && kept.details.includes(SCOPE_TEXT.followingKeepsEnd) && kept.details.includes(SCOPE_TEXT.followingKeepsSplits));
+  // Una serie che non finisce: «finisce quando finiva prima» non si dice.
+  const endless = scopeOptions({ action: "edit", date: "2026-11-24", endless: true }).find((o) => o.id === "following");
+  assert.ok(!endless.details.includes(SCOPE_TEXT.followingKeepsEnd));
+  assert.ok(!endless.warnings.includes(SCOPE_TEXT.followingKeepsEnd));
   // Un solo elenco, senza doppioni: ogni riga è avviso o dettaglio.
   assert.equal(new Set([...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]).size, SCOPE_WARNING_KEYS.length + SCOPE_DETAIL_KEYS.length);
   for (const key of [...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]) assert.ok(key in SCOPE_TEXT, key);

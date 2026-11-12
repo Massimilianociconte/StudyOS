@@ -222,3 +222,54 @@ test("anteprima: il periodo del file va dal primo inizio all'ultima fine, non al
   assert.deepEqual(previewSpan([{ allDay: false, start: "2026-12-06T22:00:00.000Z", end: "2026-12-06T23:00:00.000Z" }], "Europe/Rome"), { from: "6 dic 2026" });
   assert.deepEqual(previewSpan([], "Europe/Rome"), { from: "" });
 });
+
+const SERIES_FILE = (rrule) =>
+  [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:serie@test",
+    "DTSTART;TZID=Europe/Rome:20261110T100000",
+    "DTEND;TZID=Europe/Rome:20261110T120000",
+    rrule,
+    "SUMMARY:Fisiologia",
+    "END:VEVENT",
+    "END:VCALENDAR"
+  ].join("\r\n");
+
+test("anteprima: una serie mostra il periodo fino all'ultima volta, o «in poi» se non finisce", () => {
+  // 8 settimane dal martedì 10 novembre: l'ultima volta è martedì 29 dicembre.
+  const eight = parseIcs(SERIES_FILE("RRULE:FREQ=WEEKLY;COUNT=8"), { timeZone: "Europe/Rome" }).events;
+  assert.deepEqual(previewSpan(eight, "Europe/Rome"), { from: "10 nov 2026", to: "29 dic 2026" });
+  // Fino a una domenica: l'ultima volta vera (martedì 22 dicembre), non la data scritta.
+  const until = parseIcs(SERIES_FILE("RRULE:FREQ=WEEKLY;UNTIL=20261227T225959Z"), { timeZone: "Europe/Rome" }).events;
+  assert.deepEqual(previewSpan(until, "Europe/Rome"), { from: "10 nov 2026", to: "22 dic 2026" });
+  const endless = parseIcs(SERIES_FILE("RRULE:FREQ=WEEKLY"), { timeZone: "Europe/Rome" }).events;
+  assert.deepEqual(previewSpan(endless, "Europe/Rome"), { from: "10 nov 2026", open: true });
+  assert.equal(CALENDAR_GUIDE_TEXT.previewRange("10 nov 2026", undefined, true), "Dal 10 nov 2026 in poi.");
+});
+
+test("anteprima e risultato: «L'8», «dall'11», singolare e plurale", () => {
+  const range = CALENDAR_GUIDE_TEXT.previewRange;
+  assert.equal(range("11 nov 2026"), "L'11 nov 2026.");
+  assert.equal(range("8 nov 2026"), "L'8 nov 2026.");
+  assert.equal(range("10 nov 2026"), "Il 10 nov 2026.");
+  assert.equal(range("18 nov 2026"), "Il 18 nov 2026.", "18 non vuole l'apostrofo");
+  assert.equal(range("8 nov 2026", "11 dic 2026"), "Dall'8 nov 2026 all'11 dic 2026.");
+  assert.equal(range("1 nov 2026", "8 dic 2026"), "Dal 1 nov 2026 all'8 dic 2026.");
+  assert.equal(range("11 nov 2026", undefined, true), "Dall'11 nov 2026 in poi.");
+  const result = CALENDAR_GUIDE_TEXT.result;
+  assert.equal(result(1, 0), "Fatto: 1 evento aggiunto nel calendario. Puoi modificarlo o eliminarlo come gli altri.");
+  assert.equal(result(0, 1), "Fatto: 1 evento aggiornato nel calendario. Puoi modificarlo o eliminarlo come gli altri.");
+  assert.equal(result(2, 1), "Fatto: 2 eventi aggiunti, 1 evento aggiornato nel calendario. Puoi modificarli o eliminarli come gli altri.");
+});
+
+test("guida: prima si apre l'app o il sito, poi si crea il calendario «StudyOS», poi si importa", () => {
+  const texts = (device, app) => guideFor("export", device, app).steps.map((step) => step.text);
+  const order = (list, ...keys) => keys.map((key) => list.indexOf(CALENDAR_GUIDE_STEPS[key]));
+  const ascending = (indexes) => indexes.every((value, index) => value >= 0 && (index === 0 || value > indexes[index - 1]));
+  assert.ok(ascending(order(texts("windows", "google"), "download", "googleSettings", "googleOwnCalendar", "googleImport")));
+  assert.ok(ascending(order(texts("android", "google"), "googleOnComputer", "googleOwnCalendar", "googleImport")));
+  assert.ok(ascending(order(texts("macos", "apple"), "download", "macNewCalendar", "macOpen", "macPick")));
+  assert.ok(ascending(order(texts("ios", "apple"), "iosNewCalendar", "downloadIos", "iosAddAll")));
+});

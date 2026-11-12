@@ -41,7 +41,6 @@ import {
   type PageAction
 } from "../components/ui";
 import { Icon } from "../components/Icon";
-import { BarbExamImport } from "../components/BarbExamImport";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
 import { CalendarTransfer, transferMenuItem, type CalendarTransferHandle } from "../components/CalendarTransfer";
 import { TaskEditorModal } from "../components/TaskEditorModal";
@@ -66,7 +65,7 @@ import {
   vacationFields
 } from "../lib/occasionForms";
 import { findOccurrence, occurrenceTarget, shownDayOf } from "../lib/occurrenceLookup";
-import { applyRepeatFields, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
+import { applyRepeatFields, familyLastDate, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
 import { civilDateOf, deviceTimeZone, isCivilDate, isValidTimeZone, parseCivil } from "../lib/tz";
 import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents } from "../lib/recurrence";
@@ -82,9 +81,9 @@ import {
   TYPE_COLORS_TEXT,
   VACATION_FORM_TEXT
 } from "../lib/labels/calendar";
-import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { CourseIcon } from "../components/CourseIcon";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
@@ -217,8 +216,9 @@ export function CalendarView() {
     if (!isCalendarSummary(mode)) returnMode.current = mode;
     setMode(summary);
   };
-  // Data visualizzata e dettaglio aperto restano dopo un refresh della scheda.
-  const [cursorIso, setCursorIso] = useUiState("calendar.cursor", () => new Date().toISOString(), {
+  // Data visualizzata e dettaglio aperto restano dopo un refresh della scheda. Altre schermate (la
+  // ricerca) li scrivono e portano qui: con il Calendario già aperto si applicano senza rimontarlo.
+  const [cursorIso, setCursorIso] = useLinkedUiState("calendar.cursor", () => new Date().toISOString(), {
     scope: "tab",
     validate: (value) => typeof value === "string" && !Number.isNaN(Date.parse(value))
   });
@@ -227,9 +227,9 @@ export function CalendarView() {
     (next: Date | ((current: Date) => Date)) => setCursorIso((iso) => (typeof next === "function" ? next(new Date(iso)) : next).toISOString()),
     [setCursorIso]
   );
-  const [editingEventId, setEditingEventId] = useUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
+  const [editingEventId, setEditingEventId] = useLinkedUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
   // Giorno dell'occorrenza aperta di una serie (YYYY-MM-DD): con l'id la ritrova anche dopo un refresh.
-  const [editingDate, setEditingDate] = useUiState<string | null>("calendar.editingDate", null, {
+  const [editingDate, setEditingDate] = useLinkedUiState<string | null>("calendar.editingDate", null, {
     scope: "tab",
     validate: (value): value is string | null => value === null || isCivilDate(value)
   });
@@ -246,7 +246,7 @@ export function CalendarView() {
     scopeRequest?.resolve(scope);
     setScopeRequest(null);
   };
-  const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
+  const [editingTaskId, setEditingTaskId] = useLinkedUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
   // `draft` / `occasion`: dal modulo semplice ("Modulo completo"), con ciò che si era già scritto.
   const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string; draft?: EventDraft; occasion?: EventOccasion } | null>(null);
   // Percorsi semplici nuovi: ricorrenza (compleanno, anniversario…) o vacanza.
@@ -255,7 +255,6 @@ export function CalendarView() {
   const [fullForm, setFullForm] = useState<{ id: string; draft: EventDraft } | null>(null);
   const [typeColorsOpen, setTypeColorsOpen] = useState(false);
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
-  const [barbImportOpen, setBarbImportOpen] = useState(false);
   const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
   const transfer = useRef<CalendarTransferHandle>(null);
   const {
@@ -282,7 +281,7 @@ export function CalendarView() {
   const typeOverrides = useMemo(() => sanitizeTypeColorOverrides(selectPreferences({ preferences }).eventTypeColors), [preferences]);
   // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
   // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
-  const [storedSubject, setStoredSubject] = useUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
+  const [storedSubject, setStoredSubject] = useLinkedUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
   const subjectFilter = resolveSubjectFilter(storedSubject, subjects);
   const filterSubject = subjectFilter ? subjects.find((subject) => subject.id === subjectFilter) ?? null : null;
   useEffect(() => {
@@ -541,7 +540,8 @@ export function CalendarView() {
       span: seriesSpan(current, target.seriesId, target.date, civilDateOf(new Date())),
       newStart,
       rowContent: Boolean(own && target.row && rowHasOwnContent(item, own.series)),
-      daysShift
+      daysShift,
+      endless: familyLastDate(current, target.seriesId) === undefined
     });
   };
 
@@ -653,7 +653,8 @@ export function CalendarView() {
           <PageActions
             primary={
               phone ? undefined : (
-                <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
+                // Oggi se si vede, altrimenti il primo giorno mostrato; l'ora è la prossima mezz'ora (o le 9).
+                <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)))}>
                   {CALENDAR_TEXT.newEvent}
                 </Button>
               )
@@ -673,9 +674,9 @@ export function CalendarView() {
                 : []),
               { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
               { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
-              { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setBarbImportOpen(true) },
               transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
+              // Date ufficiali e «Aggiungi appelli ufficiali» nello stesso posto: la scheda degli appelli ufficiali.
               {
                 label: CALENDAR_TEXT.officialDates,
                 icon: "Landmark",
@@ -692,7 +693,6 @@ export function CalendarView() {
         }
       />
       <CalendarTransfer ref={transfer} />
-      {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
       {typeColorsOpen ? (
         <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
       ) : null}

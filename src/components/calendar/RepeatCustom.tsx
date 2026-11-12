@@ -32,12 +32,15 @@ export function RepeatCustom({
   value,
   start,
   onChange,
-  disabled = false
+  disabled = false,
+  startCounts = true
 }: {
   value: RepeatRule | null;
   start: string;
   onChange: (rule: RepeatRule) => void;
   disabled?: boolean;
+  /** L'inizio conta come una volta anche fuori dai giorni scelti (nuovo evento, serie intera). */
+  startCounts?: boolean;
 }) {
   const [custom, setCustom] = useState<CustomRepeat>(() => customFromRule(value, start));
   const radioName = useId();
@@ -177,7 +180,7 @@ export function RepeatCustom({
         <p className="rounded-[14px] bg-[var(--surface-soft)] p-2.5 text-sm font-bold" aria-live="polite">
           <span className="text-[var(--muted)]">{REPEAT_PICKER_TEXT.summary}: </span>
           {/* Se l'inizio non è uno dei giorni scelti, lo dice: il motore lo conta come la prima volta. */}
-          {repeatSummary(ruleFromCustom(custom, start), start)}
+          {repeatSummary(ruleFromCustom(custom, start), start, { startCounts })}
         </p>
       )}
     </fieldset>
