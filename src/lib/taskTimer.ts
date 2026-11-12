@@ -108,6 +108,27 @@ export const taskStatusTransitionPatch = (
   return patch;
 };
 
+/** Valore iniziale del campo «Tempo impiegato»: con il timer che corre, i minuti misurati finora. */
+export const taskMinutesFieldValue = (task: Task, now: Date = new Date()) => {
+  if (isTaskTimerRunning(task)) return String(secondsToTaskMinutes(taskElapsedSeconds(task, now)));
+  return task.actualMinutes === undefined ? "" : String(task.actualMinutes);
+};
+
+const fieldMinutes = (value: string) => (value.trim() === "" ? undefined : Number(value.trim().replace(",", ".")));
+
+/**
+ * Minuti da mandare con la modifica: niente se il campo non è cambiato, così salvare un'attività in
+ * corso non tocca il timer. Una correzione porta anche `timerAccumulatedSeconds`: è il segno che i
+ * minuti sono stati scritti a mano (vedi normalizeTaskPatch). Il numero va già controllato.
+ */
+export const editedMinutesPatch = (initial: string, draft: string): Partial<Task> => {
+  const before = fieldMinutes(initial);
+  const after = fieldMinutes(draft);
+  if (before === after) return {};
+  if (after === undefined) return { actualMinutes: undefined };
+  return { actualMinutes: after, timerAccumulatedSeconds: Math.max(0, Math.round(after * 60)) };
+};
+
 export const normalizeTaskPatch = (
   task: Task,
   patch: Partial<Task>,
@@ -115,20 +136,26 @@ export const normalizeTaskPatch = (
 ): Partial<Task> => {
   const nowIso = now.toISOString();
   const nextStatus = patch.status ?? task.status;
+  const running = isTaskTimerRunning(task);
   let normalized: Partial<Task> = { ...patch };
 
   if (patch.status && patch.status !== task.status) {
     normalized = { ...normalized, ...taskStatusTransitionPatch(task, patch.status, now) };
   }
 
-  if ("actualMinutes" in patch) {
+  // Con il timer che corre, i minuti salvati rimandati tali e quali (senza `timerAccumulatedSeconds`,
+  // vedi editedMinutesPatch) non sono una correzione: azzeravano il timer a ogni salvataggio.
+  const echo = running && patch.actualMinutes === task.actualMinutes && !("timerAccumulatedSeconds" in patch);
+
+  if ("actualMinutes" in patch && !echo) {
     if (typeof patch.actualMinutes === "number" && Number.isFinite(patch.actualMinutes)) {
       const seconds = Math.max(0, Math.round(patch.actualMinutes * 60));
       normalized.actualMinutes = patch.actualMinutes;
       normalized.timerAccumulatedSeconds = seconds;
       if (nextStatus === "doing") {
+        // Il timer continua dai minuti scritti; i promemoria tengono il loro ritmo se correva già.
         normalized.timerStartedAt = nowIso;
-        normalized.timerLastReminderAt = nowIso;
+        if (!running) normalized.timerLastReminderAt = nowIso;
       }
     } else if (nextStatus !== "doing") {
       normalized.timerAccumulatedSeconds = undefined;

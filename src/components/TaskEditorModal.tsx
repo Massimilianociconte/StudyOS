@@ -10,7 +10,7 @@ import { durationToMinutes, minutesToDuration } from "../lib/duration";
 import { ENERGY_LABEL, PRIORITY_LABEL, TASK_STATUS_LABEL, formatMinutes } from "../lib/labels";
 import { TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
 import { useNow } from "../hooks/useNow";
-import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { editedMinutesPatch, formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds, taskMinutesFieldValue } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
 
 const toDatetimeLocal = (date?: string) => {
@@ -40,6 +40,8 @@ export function TaskEditorModal({
   onDelete: (task: Task) => Promise<void>;
 }) {
   const initialDuration = minutesToDuration(task.estimatedMinutes ?? 45);
+  // Con il timer che corre il campo parte dai minuti misurati finora: se non lo tocchi non si manda.
+  const [initialMinutes] = useState(() => taskMinutesFieldValue(task));
   const [draft, setDraft] = useState({
     title: task.title,
     description: task.description,
@@ -47,7 +49,7 @@ export function TaskEditorModal({
     dueDate: toDatetimeLocal(task.dueDate),
     durationValue: initialDuration.value,
     durationUnit: initialDuration.unit,
-    actualMinutes: task.actualMinutes === undefined ? "" : String(task.actualMinutes),
+    actualMinutes: initialMinutes,
     energy: task.energy,
     priority: task.priority,
     subjectId: task.subjectId ?? "",
@@ -87,7 +89,7 @@ export function TaskEditorModal({
     const estimatedMinutes = draft.durationValue.trim() === "" || !Number.isFinite(parsedDuration) || parsedDuration < 0
       ? NaN
       : durationToMinutes(parsedDuration, draft.durationUnit);
-    const actualMinutes = draft.actualMinutes.trim() ? Number(draft.actualMinutes) : undefined;
+    const actualMinutes = draft.actualMinutes.trim() ? Number(draft.actualMinutes.trim().replace(",", ".")) : undefined;
     const difficulty = Number(draft.difficulty);
     const importance = Number(draft.importance);
     const dueDate = draft.dueDate ? new Date(draft.dueDate) : undefined;
@@ -115,7 +117,7 @@ export function TaskEditorModal({
         status: draft.status,
         dueDate: dueDate?.toISOString(),
         estimatedMinutes,
-        actualMinutes,
+        ...editedMinutesPatch(initialMinutes, draft.actualMinutes),
         energy: draft.energy,
         priority: draft.priority,
         subjectId: draft.subjectId || undefined,
