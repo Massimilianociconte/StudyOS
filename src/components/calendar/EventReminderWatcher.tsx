@@ -17,7 +17,7 @@ import {
   parseFired,
   planReminders,
   pruneFired,
-  reminderWhenText,
+  plannedReminderWhenText,
   splitMissed,
   type PlannedReminder
 } from "../../lib/eventReminders";
@@ -169,7 +169,7 @@ export function EventReminderWatcher() {
       const fired = readFired();
       if (fired[item.key]) return;
       const title = (item.title ?? "").trim() || EVENT_REMINDER_TEXT.untitled;
-      const body = reminderWhenText(item.startMs, item.allDay, new Date(nowMs));
+      const body = plannedReminderWhenText(item, new Date(nowMs));
       firedHere.add(item.key);
       writeFired(pruneFired({ ...fired, [item.key]: nowMs }, nowMs));
       // Datata all'ora del promemoria, non di adesso: con la sync, una lettura o un'eliminazione fatta

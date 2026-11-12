@@ -6,6 +6,7 @@ export const EVENT_REMINDER_TEXT = {
   now: "Adesso",
   inMinutes: (count: number) => `Tra ${count} ${count === 1 ? "minuto" : "minuti"}`,
   started: (time: string) => `Iniziato alle ${time}`,
+  due: (time: string) => `Scaduto alle ${time}`,
   todayAt: (time: string) => `Oggi alle ${time}`,
   tomorrowAt: (time: string) => `Domani alle ${time}`,
   dayAt: (day: string, time: string) => `${day} alle ${time}`,

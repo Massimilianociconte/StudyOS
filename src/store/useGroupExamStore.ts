@@ -22,6 +22,8 @@ interface GroupExamState {
   overrides: CatalogOverride[];
   error: string;
   setSnapshot: (snapshot: { viewerId: string; groups: GroupExamGroup[]; sessions: GroupExamSession[]; overrides: CatalogOverride[] }) => void;
+  /** Inizio di un pull: le righe scritte o arrivate in tempo reale da adesso non si perdono se il pull non le contiene. */
+  beginPull: () => void;
   setGroups: (groups: GroupExamGroup[]) => void;
   applySession: (row: GroupExamSession) => void;
   applyOverride: (row: CatalogOverride) => void;
@@ -31,6 +33,9 @@ interface GroupExamState {
   setError: (text: string) => void;
   reset: () => void;
 }
+
+/** Id toccati (scrittura locale o realtime) dall'inizio dell'ultimo pull. */
+let touched = new Set<string>();
 
 const EMPTY = { viewerId: null, ready: false, available: true, groups: [], sessions: [], overrides: [], error: "" };
 
@@ -60,11 +65,17 @@ export const useGroupExamStore = create<GroupExamState>()((set, get) => ({
     const newest = <T extends { id: string; groupId: string; version: number }>(pulled: readonly T[], memory: readonly T[]) => {
       if (!keep) return latest(pulled, ids);
       const held = new Map(memory.map((row) => [row.id, row]));
+      const inPull = new Set(pulled.map((row) => row.id));
+      // Righe nate (o cambiate) dopo l'inizio del pull e assenti da lui: restano, tranne le cancellate.
+      const late = memory.filter((row) => touched.has(row.id) && !inPull.has(row.id) && !(row as { deletedAt?: string | null }).deletedAt);
       return latest(
-        pulled.map((row) => {
-          const mine = held.get(row.id);
-          return mine && mine.version > row.version ? mine : row;
-        }),
+        [
+          ...pulled.map((row) => {
+            const mine = held.get(row.id);
+            return mine && mine.version > row.version ? mine : row;
+          }),
+          ...late
+        ],
         ids
       );
     };
@@ -78,6 +89,9 @@ export const useGroupExamStore = create<GroupExamState>()((set, get) => ({
       overrides: newest(overrides, state.overrides)
     }));
   },
+  beginPull: () => {
+    touched = new Set();
+  },
   setGroups: (groups) => {
     const ids = new Set(groups.map((group) => group.id));
     set((state) => ({
@@ -88,15 +102,20 @@ export const useGroupExamStore = create<GroupExamState>()((set, get) => ({
   },
   applySession: (row) => {
     if (!get().groups.some((group) => group.id === row.groupId)) return;
+    touched.add(row.id);
     set((state) => ({ sessions: mergeSessionRow(state.sessions, row) }));
   },
   applyOverride: (row) => {
     if (!get().groups.some((group) => group.id === row.groupId)) return;
+    touched.add(row.id);
     set((state) => ({ overrides: mergeOverrideRow(state.overrides, row) }));
   },
   dropSession: (id) => set((state) => ({ sessions: state.sessions.filter((item) => item.id !== id) })),
   dropOverride: (id) => set((state) => ({ overrides: state.overrides.filter((item) => item.id !== id) })),
   setUnavailable: () => set({ available: false, ready: true, sessions: [], overrides: [] }),
   setError: (text) => set({ error: text }),
-  reset: () => set({ ...EMPTY })
+  reset: () => {
+    touched = new Set();
+    set({ ...EMPTY });
+  }
 }));
