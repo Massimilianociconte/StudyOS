@@ -141,6 +141,14 @@ export function moveByKey(ymd: string, key: string, { shiftKey = false, min, max
   return clampYmd(next, min, max);
 }
 
+/**
+ * Giorno che diventa "a fuoco" quando un pulsante della griglia riceve il focus. Da tastiera il mese
+ * segue il giorno (anche uno grigio del mese prima o dopo); con un tocco o un clic no: cambiare mese
+ * mentre il dito è giù sposterebbe la griglia e il clic finirebbe altrove. Il clic sceglie il giorno
+ * e solo dopo mostra il suo mese. null = nulla da spostare.
+ */
+export const focusMovesTo = (ymd: string, focusDay: string, byPointer: boolean) => (byPointer || ymd === focusDay ? null : ymd);
+
 /** Lo stesso giorno in un altro mese e anno (l'ultimo del mese se non esiste), dentro i limiti. */
 export function jumpTo(ymd: string, year: number, month: number, { min, max }: { min?: string; max?: string } = {}) {
   const { day } = partsOf(ymd);
@@ -198,6 +206,9 @@ export function parseTime(text: string): string | null {
   if (hours > 23 || minutes > 59) return null;
   return `${pad(hours)}:${pad(minutes)}`;
 }
+
+/** Orario della lista da mostrare al centro: quello scritto nel campo se è un'ora, se no quello scelto (o le 9). */
+export const slotInView = (typed: string, value: string, step = 15) => nearestSlot(parseTime(typed) ?? (value || "09:00"), step);
 
 export type TypedTimeCheck = { status: "empty" | "invalid" | "early" } | { status: "ok"; time: string };
 

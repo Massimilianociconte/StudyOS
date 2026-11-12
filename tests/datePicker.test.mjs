@@ -9,6 +9,7 @@ const {
   checkTypedTime,
   clampYmd,
   finishRange,
+  focusMovesTo,
   daysInclusive,
   formatDateField,
   formatDateLong,
@@ -25,6 +26,7 @@ const {
   parseTime,
   pickRange,
   previewRange,
+  slotInView,
   splitDateTime,
   joinDateTime,
   timeSlots,
@@ -148,6 +150,20 @@ test("orari ogni 15 minuti e orario più vicino", () => {
   assert.equal(nearestSlot("09:37"), "09:30");
   assert.equal(nearestSlot("23:55"), "23:45", "non torna a mezzanotte del giorno dopo");
   assert.equal(nearestSlot("nonsense"), "09:00");
+});
+
+test("focusMovesTo: un giorno grigio si sceglie col clic; solo la tastiera sposta il mese al focus", () => {
+  // Griglia di novembre: il 30 ottobre è grigio. Il dito giù non cambia mese (il clic poi sceglie).
+  assert.equal(focusMovesTo("2026-10-30", "2026-11-12", true), null);
+  assert.equal(focusMovesTo("2026-10-30", "2026-11-12", false), "2026-10-30");
+  assert.equal(focusMovesTo("2026-11-12", "2026-11-12", false), null, "già a fuoco: nulla da fare");
+});
+
+test("slotInView: la lista va all'ora scritta, se no a quella scelta o alle 9", () => {
+  assert.equal(slotInView("14.20", "09:00"), "14:15");
+  assert.equal(slotInView("1830", ""), "18:30");
+  assert.equal(slotInView("", "16:40"), "16:45");
+  assert.equal(slotInView("boh", ""), "09:00");
 });
 
 test("parseTime: 9.30, 930, 09:30 e altre scritture comuni", () => {
