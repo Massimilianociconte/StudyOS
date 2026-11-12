@@ -24,7 +24,7 @@ import {
 import { safeCssColor } from "../lib/sharing";
 import { allDayFirstDate, searchHits } from "../lib/repeat";
 import { nextSearchIndex, searchOptionId, searchPanelBox } from "../lib/searchUi";
-import { openItemPlan, searchKindEntity, type SearchKind } from "../lib/openItem";
+import { openItemPlan, searchKindEntity, type OccurrenceAt, type SearchKind } from "../lib/openItem";
 import { writeUiState } from "../lib/uiState";
 import { NoteDrawer } from "./NoteDrawer";
 import { NOTES_TEXT } from "../lib/labels/notes";
@@ -41,6 +41,8 @@ interface SearchResult {
   score: number;
   accent?: string;
   badge?: string;
+  /** Evento ripetuto: la volta mostrata nel risultato, da aprire (searchHits). */
+  at?: OccurrenceAt;
 }
 
 const labels: Record<ResultKind, string> = {
@@ -66,6 +68,10 @@ const kindIcon: Record<ResultKind, string> = {
   goal: "Target",
   note: "PenLine"
 };
+
+/** La volta che searchHits ha scelto per una serie (inizio, fine e giorno di quella occorrenza). */
+const occurrenceAt = (event: CalendarEvent & { occurrenceDate?: unknown }): OccurrenceAt | undefined =>
+  typeof event.occurrenceDate === "string" ? { start: event.start, end: event.end, date: event.occurrenceDate } : undefined;
 
 const subjectOf = (subjects: Subject[], id?: string) =>
   subjects.find((subject) => subject.id === id);
@@ -167,7 +173,9 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
         icon: kindIcon.event,
         score: eventScore(event),
         // Il colore di un evento può averlo scritto chi riceve il calendario con modifica: solo esadecimale.
-        accent: safeCssColor(event.color) || subject?.color
+        accent: safeCssColor(event.color) || subject?.color,
+        // Una serie porta la volta mostrata (searchHits): il risultato apre quella, non il primo giorno.
+        at: occurrenceAt(event)
       });
     }
 
@@ -347,7 +355,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
       setOpenNoteId(result.id);
       return;
     }
-    const plan = openItemPlan(searchKindEntity(result.kind), result.id, useStudyStore.getState());
+    const plan = openItemPlan(searchKindEntity(result.kind), result.id, useStudyStore.getState(), result.at);
     for (const [key, value, scope] of plan?.writes ?? []) writeUiState(key, value, scope);
     onJump(plan?.view ?? result.view);
     inputRef.current?.blur();

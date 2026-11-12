@@ -14,6 +14,13 @@ export interface OpenPlan {
 
 type EventFields = Pick<CalendarEvent, "id" | "title" | "start" | "end" | "allDay" | "timeZone" | "seriesId" | "originalDate" | "occasion" | "category">;
 
+/** La volta di una serie che un risultato mostra: inizio, fine e giorno (YYYY-MM-DD) dell'occorrenza. */
+export interface OccurrenceAt {
+  start: string;
+  end: string;
+  date: string;
+}
+
 export interface OpenItemData {
   tasks: readonly Pick<Task, "id" | "title">[];
   events: readonly EventFields[];
@@ -54,10 +61,14 @@ const isCivilDay = (value: unknown): value is string => typeof value === "string
  * tocco sul calendario. Un giorno di una serie cambiato da solo si apre come quel giorno; ricorrenze
  * e vacanze per tutta la serie, nel loro modulo.
  */
-const eventPlan = (event: EventFields, events: readonly EventFields[]): OpenPlan => {
-  const day = event.allDay === true ? allDayFirstDate(event).toISOString() : event.start;
+const eventPlan = (event: EventFields, events: readonly EventFields[], at?: OccurrenceAt): OpenPlan => {
+  // Una serie trovata dalla ricerca (searchHits) porta la volta mostrata: si apre lì, come un tocco
+  // su quel giorno del calendario. Ricorrenze e vacanze restano nel loro modulo per tutta la serie.
+  const shown = at && !isOccurrenceRow(event) && isCivilDay(at.date) && !Number.isNaN(Date.parse(at.start)) ? at : undefined;
+  const timing = shown ? { ...event, start: shown.start, end: shown.end } : event;
+  const day = timing.allDay === true ? allDayFirstDate(timing).toISOString() : timing.start;
   let openId = event.id;
-  let date: string | null = null;
+  let date: string | null = shown && !simpleForm(event) ? shown.date : null;
   if (isOccurrenceRow(event)) {
     const series = byId(events, event.seriesId as string);
     if (series && simpleForm(series)) openId = series.id;
@@ -73,14 +84,14 @@ const eventPlan = (event: EventFields, events: readonly EventFields[]): OpenPlan
  * Dove porta un elemento: null se non c'è (più), se l'id è di un altro tipo o se il tipo non ha una
  * sezione (le note si aprono sul posto). Chiavi e valori sono quelli che le sezioni leggono.
  */
-export function openItemPlan(type: string | undefined, id: string | undefined, data: OpenItemData): OpenPlan | null {
+export function openItemPlan(type: string | undefined, id: string | undefined, data: OpenItemData, at?: OccurrenceAt): OpenPlan | null {
   if (!type || !id) return null;
   switch (type) {
     case "task":
       return byId(data.tasks, id) ? { view: "tasks", writes: [["tasks.editing", id, "tab"]] } : null;
     case "calendarEvent": {
       const event = byId(data.events, id);
-      return event ? eventPlan(event, data.events) : null;
+      return event ? eventPlan(event, data.events, at) : null;
     }
     case "subject":
       return byId(data.subjects, id) ? { view: "subjects", writes: [["subjects.open", id, "tab"]] } : null;

@@ -131,3 +131,25 @@ test("nota collegata: tipo e nome dell'elemento, o null se non c'è più", () =>
   assert.equal(linkedItem("toString", "t1", data), null);
   assert.equal(linkedItem(undefined, undefined, data), null);
 });
+
+test("apri elemento: una serie trovata dalla ricerca si apre alla volta che il risultato mostra", () => {
+  const at = { start: "2026-11-16T08:00:00.000Z", end: "2026-11-16T10:00:00.000Z", date: "2026-11-16" };
+  assert.deepEqual(openItemPlan("calendarEvent", "e2", data, at).writes, [
+    ["calendar.cursor", "2026-11-16T08:00:00.000Z", "tab"],
+    ["calendar.editingEvent", "e2", "tab"],
+    ["calendar.editingDate", "2026-11-16", "tab"]
+  ]);
+  // Ricorrenze e vacanze: il giorno mostrato, ma il loro modulo per tutta la serie.
+  const shown = { start: "2027-03-02T00:00:00.000Z", end: "2027-03-03T00:00:00.000Z", date: "2027-03-02" };
+  const birthday = openItemPlan("calendarEvent", "e3", data, shown);
+  assert.deepEqual(birthday.writes.slice(1), [
+    ["calendar.editingEvent", "e3", "tab"],
+    ["calendar.editingDate", null, "tab"]
+  ]);
+  assert.equal(birthday.writes[0][1], allDayFirstDate({ ...data.events[3], start: shown.start, end: shown.end }).toISOString());
+  // Un giorno non valido non apre una data inventata.
+  assert.deepEqual(openItemPlan("calendarEvent", "e2", data, { start: "x", end: "y", date: "boh" }).writes.slice(1), [
+    ["calendar.editingEvent", "e2", "tab"],
+    ["calendar.editingDate", null, "tab"]
+  ]);
+});
