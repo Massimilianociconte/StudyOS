@@ -480,8 +480,12 @@ export interface GroupInvite extends BaseEntity {
   groupDescription?: string;
   fromUserId: string;
   fromDisplayName: string;
-  /** Email del destinatario, quando l'invito è nominale. */
+  /** Email del destinatario degli inviti nominali di prima: quelli nuovi vanno a un account (recipientUserId). */
   recipientEmail?: string;
+  /** Account destinatario (supabase/people.sql): solo lui può accettare. */
+  recipientUserId?: string;
+  /** Nome della persona invitata, solo per l'elenco di chi invita (il server non lo conserva). */
+  recipientName?: string;
   /** Codice usato per l'unione (uguale a StudyGroup.inviteCode o singolo). */
   code: string;
   status: "pending" | "accepted" | "declined";

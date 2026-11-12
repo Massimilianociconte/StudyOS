@@ -14,18 +14,19 @@ proprietario non risultava membro, quindi niente elenco membri né inviti
 nominali lato server). Aggiorna policy, trigger, indice e le RPC (compresa
 l'anteprima degli inviti); le righe esistenti restano.
 
-**Rieseguilo anche dopo la revisione del 10/11/2026**: accettare o rifiutare un invito
-nominale ora richiede che l'account abbia un'email, uguale a quella dell'invito e
-confermata. Ordine: `groups.sql`, poi `sharing.sql` (se usi la condivisione dei dati), poi
-`sharing-verify.sql`. Rieseguire `groups.sql` due volte di fila non cambia nulla (provato
-sullo stack locale).
+**Rieseguilo dopo la revisione dell'11/11/2026** (sostituisce quella del 10/11, che chiedeva
+un'email uguale e confermata): un invito nominale vale solo per l'account destinatario
+(`recipient_user_id`), mai per email. Ordine completo in
+[supabase/README.md](../supabase/README.md): `groups.sql`, `sharing.sql`, `people.sql`, poi le
+verifiche. Rieseguire `groups.sql` due volte di fila non cambia nulla (provato sullo stack locale).
 
 ## Inviti con link, QR e codice
 
 - Pannello **Invita** (pulsante su ogni gruppo e in cima al dettaglio): link
   da condividere (Condividi di sistema, WhatsApp, Telegram, email, copia), QR
   code (scaricabile o condivisibile come immagine), codice del gruppo e invito
-  nominale per email (proprietario/amministratori). Il proprietario può
+  a una persona trovata con la ricerca (email esatta o `@nome`, solo proprietario e
+  amministratori: vedi `people.sql` più sotto). Il proprietario può
   generare un nuovo codice: link e QR già inviati smettono di funzionare.
 - Link: `…/StudyOS/#invito=GRP-XXXX-XXXX`. Il codice sta nel frammento, che il
   browser non invia ai server (log di GitHub Pages, referrer); i vecchi link
@@ -54,7 +55,8 @@ alcun errore.
 
 - `studyos_groups` (testo come id: stesso spazio degli id locali, nessuna rimappatura)
 - `studyos_group_members` (per gruppo: proprietario, amministratori, membri)
-- `studyos_group_invites` (nominali per email + codice)
+- `studyos_group_invites` (a un account, `recipient_user_id`, o con codice; `recipient_email` solo
+  sui vecchi inviti)
 - `studyos_group_resources` (bacheca: link, note, file di riferimento, attività)
 - `studyos_group_activity` (append-only)
 
@@ -62,7 +64,7 @@ alcun errore.
 
 - RLS attiva ovunque; privilegi tabella solo ad `authenticated` (come `schema.sql`).
 - Letture limitate a membri del gruppo e destinatari degli inviti
-  (`recipient_email` contro `auth.jwt() -> email`); la propria riga membro è
+  (`recipient_user_id = auth.uid()`, mai l'email); la propria riga membro è
   sempre leggibile (serve all'upsert del proprietario alla creazione).
 - Nessuno scrive a nome di altri: risorse con `added_by_user_id = auth.uid()`,
   inviti con `from_user_id = auth.uid()` e stato `pending`, attività con
@@ -75,11 +77,11 @@ alcun errore.
   perde la proprietà da qui; un membro può uscire, il proprietario no (elimina
   il gruppo). Codici di invito univoci (`upper(invite_code)`), generati con
   `crypto.getRandomValues`.
-- Gli inviti per email valgono quanto la verifica dell'email del progetto:
-  tieni attiva la conferma email in Supabase Auth. `accept_group_invite` e
-  `decline_group_invite` rifiutano anche da sole un account senza email nel token, con
-  un'email diversa o non ancora confermata (`auth.users.email_confirmed_at`): entrare in un
-  gruppo dà accesso alle condivisioni fatte a quel gruppo.
+- Con la conferma email spenta l'email non prova chi la usa: `accept_group_invite` e
+  `decline_group_invite` accettano solo l'account destinatario (`recipient_user_id`), e un invito
+  senza destinatario (codice) non si accetta da lì. Entrare in un gruppo dà accesso alle
+  condivisioni fatte a quel gruppo. Chi accetta un invito per account entra senza email nella riga
+  del membro. Le stesse funzioni e policy sono in `people.sql` (testo identico).
 - Scritture delicate solo via RPC `SECURITY DEFINER`:
   `accept_group_invite(p_invite_id, p_display_name)`, `decline_group_invite`,
   `join_group_by_code(p_code, p_display_name)` (verifica destinatario/codice,
@@ -128,7 +130,14 @@ alcun errore.
   il server non ha più (ritirato, gruppo eliminato) sparisce. La notifica di un invito ha id
   `notif-group-invite-<id>` (una sola su tutti i dispositivi) e diventa letta quando per quel
   gruppo non resta nessun invito ricevuto in attesa. L'elenco «Inviti ricevuti» mostra solo gli
-  inviti alla propria email, e solo con l'account collegato.
+  inviti al proprio account, e solo con l'account collegato.
+- **Un solo percorso per gli inviti ricevuti, per account**: lettura (`recipient_user_id = me`),
+  canale Realtime (`recipient_user_id=eq.<id>`), notifiche, chiusura delle notifiche e ritiro
+  usano `isReceivedInvite` (`src/lib/groups.ts`), mai l'email. L'unico uso rimasto dell'email
+  lato client è togliere la copia locale di un vecchio invito per email che la migrazione di
+  `people.sql` non ha legato a nessun account (`isLegacyEmailInvite`): il server non lo
+  restituisce più e non si può accettare. Se la migrazione lo ha legato, il legame arriva dal
+  server e resta anche se la copia locale sembra più recente (`bindInviteRecipients`).
 - **Il server decide**: accetta/rifiuta usano solo l'RPC. Rete assente = l'invito resta in
   attesa con un messaggio («Invito già gestito», «Invito non trovato», «altro account» hanno
   ciascuno il loro esito, `classifyGroupRpcError`). Uscire, eliminare il gruppo, togliere un
@@ -136,13 +145,14 @@ alcun errore.
   se non riesce la copia locale non cambia e l'app lo dice. Le cancellazioni e gli `update`
   controllano le righe toccate: con la RLS una riga non permessa dà zero righe senza errore. Il
   ruolo si scrive prima del gruppo, così il segnale Realtime non porta un pull col ruolo vecchio.
-- **Pubblicazioni da riprovare**: gruppo (con la riga del proprietario), risorsa o invito per
-  email creati quando il server non rispondeva entrano in una coda (`groupSync:publishQueue:v1`
+- **Pubblicazioni da riprovare**: gruppo (con la riga del proprietario), risorsa o invito con
+  codice creati quando il server non rispondeva entrano in una coda (`groupSync:publishQueue:v1`
   in Dexie `meta`, per account) e si riprovano dopo ogni pull riuscito. Solo il dispositivo che
   li ha creati li riprova: un elemento eliminato sul server non torna da un'altra copia. Dopo il
   pull si ripubblica anche la riga del proprietario se il server non l'ha (creazione interrotta
   tra le due scritture). «Disattiva i vecchi inviti» che non riesce a pubblicare il codice nuovo
-  rimette quello vecchio.
+  rimette quello vecchio. Un invito con un destinatario (account o vecchia email) non si pubblica
+  dal client (`isCodeOnlyInvite`): quelli rimasti in coda da prima si tolgono.
 - **Ingresso dopo l'accesso**: «Entra» scelto prima di accedere vale 2 ore
   (`CONFIRM_MAX_AGE_MS`): dopo, la scheda dell'invito chiede di nuovo, così chi accede giorni
   dopo sullo stesso computer non entra nel gruppo di un altro. Se il server non risponde
@@ -153,6 +163,13 @@ alcun errore.
   passata non riempie il profilo svuotato con i gruppi dell'account di prima.
 
 ## Verifiche eseguite
+
+11/11/2026, ricerca persone e push: 291 test, lint, build, `barb:validate`; stack locale: `groups.sql`,
+`sharing.sql` e `people.sql` due volte e `people-verify.sql`, `people-check.mjs` 109 controlli e
+`sharing-check.mjs` 121 controlli, 0 falliti; prova nel browser con tre account (ricerca per email e `@nome`,
+profilo non trovabile, invito di gruppo e di dati con accettazione immediata, permesso cambiato, interruttore e
+proposta una tantum, `?apri=`, uscita dall'account). Permesso delle notifiche, iscrizione e tocco
+sulla notifica si ripetono su un browser vero: il browser integrato li blocca.
 
 10/11/2026, stack Supabase locale: `schema.sql`, `groups.sql`, `sharing.sql`
 eseguito due volte e `sharing-verify.sql` tutto `true` (`shared_item_policies` 3,
@@ -279,9 +296,9 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   `…/StudyOS/#condividi=` seguito dal token, valido 14 giorni; l'invito aperto resta in sospeso in
   `localStorage` (`studyos-pending-share`, 14 giorni) finché non si accede; l'uscita o il cambio
   di account lo cancellano (un link aperto da disconnessi sopravvive invece ad accesso,
-  registrazione e conferma email). Un invito con
-  email vale solo per quell'account. Chi accetta può condividere qualcosa in cambio, se
-  l'invito lo chiede.
+  registrazione e conferma email). Un invito a una persona (`invite_person_to_share`, nessun
+  link) vale solo per il suo account; i vecchi inviti per email mai legati a un account risultano
+  scaduti. Chi accetta può condividere qualcosa in cambio, se l'invito lo chiede.
 - **Senza invito** si può condividere solo con chi si conosce già: un gruppo in comune o
   una condivisione attiva in uno dei due sensi (`studyos_knows_user`).
 - **Aggiornamenti**: Realtime su `studyos_shares`, `studyos_share_invites` e sulle righe dei
@@ -301,12 +318,80 @@ Prova automatica sullo stack locale (porte 5542x, mai lo stack di altri progetti
 `scripts/supabase/local-stack.md` e `scripts/supabase/sharing-check.mjs`, che si rifiuta di
 girare fuori da localhost.
 
+## Persone, inviti all'account e notifiche push (`people.sql`)
+
+Serve `supabase/people.sql`, eseguito dopo `schema.sql`, `groups.sql` e `sharing.sql`. Decisione
+sulle push: [ADR](agent/decisions/2026-11-11-push-pg-net-worker.md); design:
+[spec](plans/2026-11-11-people-search-push-design.md).
+
+**Ordine di pubblicazione:** sul progetto reale esegui `groups.sql`, `sharing.sql` e `people.sql`
+(in quest'ordine) e controlla che `people-verify.sql` sia tutto verde **prima** del push su
+`main`: il push pubblica il client. Da questa versione il client legge `recipient_user_id`: senza
+la colonna si ferma la sincronizzazione dei gruppi e anche il caricamento delle condivisioni
+(`shareSync` seleziona la colonna e, se la richiesta fallisce, fallisce l'intero caricamento).
+
+- **Conferma email spenta.** Dall'11/11/2026 gli account nuovi sono attivi alla registrazione:
+  l'email non è una prova di identità (chiunque può registrarsi con l'indirizzo di un altro; il
+  vero proprietario può solo riprenderlo con il recupero password). Perciò **nessun invito si
+  accetta in base all'email**: gli inviti in app (`invite_person_to_group`,
+  `invite_person_to_share`) hanno `recipient_user_id` e solo `auth.uid()` può accettarli o
+  rifiutarli. `create_share_invite` non crea più inviti per email; link, QR e codice restano.
+  Gli inviti per email già pendenti si legano una volta sola all'account con quell'indirizzo
+  (migrazione di `people.sql`); gli altri non sono accettabili e il mittente li vede "Scaduto".
+- **Profilo**: `studyos_profiles` (nome visibile, `@nome` facoltativo, unico, minuscolo,
+  `^[a-z0-9_.]{3,24}$`, interruttore «Gli altri possono trovarmi», acceso di default). RLS: ognuno
+  vede e modifica solo la propria riga. Una riga mancante vale «trovabile, senza nome né `@nome`».
+- **Ricerca**: `find_person` solo per email esatta o `@nome`, mai sé stessi, mai l'email nel
+  risultato; un account non trovabile e uno inesistente danno la stessa risposta. Limiti: 30
+  ricerche al minuto per account e 60 per indirizzo IP (`studyos_person_lookups`, senza policy).
+- **Notifiche push**: iscrizioni in `studyos_push_subscriptions` (RLS sulle proprie righe).
+  Trigger `AFTER` su inviti, accettazioni, ingressi nei gruppi e permessi chiamano
+  `studyos_push_notify`, che raccoglie le iscrizioni dei destinatari (mai di chi ha compiuto
+  l'azione) e con `pg_net` fa `POST` al Worker `/push` con l'intestazione
+  `x-studyos-push-secret`, in lotti di al massimo 40 iscrizioni (il Worker ne accetta al massimo
+  49 per richiesta: 49 push più una `push_gone` sono 50 sottorichieste sul piano Free). Segreto e
+  URL stanno in Vault (`studyos_push_secret`, `studyos_push_url`). Senza `pg_net` o senza segreti
+  non succede nulla e la scrittura che ha fatto scattare il trigger riesce lo stesso. Per chi
+  compie l'azione `studyos_push_notify` manda al massimo 30 notifiche all'ora (tabella
+  `studyos_push_sends`, le righe più vecchie di un'ora si cancellano): oltre salta la push in
+  silenzio e non blocca mai la scrittura, e gli avvisi in app arrivano comunque; serve a non
+  inondare qualcuno di push con inviti e annullamenti, o cambi di permessi, ripetuti. Il Worker
+  invia la notifica cifrata (RFC 8291, VAPID RFC 8292) e segnala con `push_gone` gli endpoint
+  spenti, che il database cancella.
+- **Client**: iscrizione e permesso solo dopo un tocco («Notifiche su questo dispositivo» in
+  Impostazioni → Profilo, o la proposta dopo il primo invito ricevuto); `src/lib/push.ts` si
+  carica con `import()`. Toccare la notifica apre `?apri=notifiche`, `?apri=condivisione` o
+  `?apri=gruppi`. Su iPhone e iPad le push funzionano solo con StudyOS aggiunto alla schermata Home.
+  Su un dispositivo condiviso, quando l'app si avvia con una sessione `syncPushSubscription` toglie
+  dal browser l'iscrizione push se appartiene a un altro account, così le notifiche di un altro account non continuano ad arrivare.
+- **Agenti MCP**: nessuno strumento nuovo; non ricevono email, `@nome` cercati né iscrizioni push.
+
+Prova automatica sullo stack locale: `scripts/supabase/local-stack.md` e
+`scripts/supabase/people-check.mjs` (ricerca esatta, non trovabile = inesistente, limiti, inviti
+solo al destinatario, email rifiutate, migrazione, trigger push verso un Worker finto).
+
 ## Limiti noti
 
 - I file condivisi sono riferimenti (nome come testo): nessun bucket Storage.
 - La proprietà non si trasferisce: il proprietario può solo eliminare il gruppo.
-- Le notifiche push/email non esistono: gli inviti arrivano nel pannello
-  Notifiche all'apertura dell'app (realtime se aperta) e via link/email manuale.
+- Le notifiche email non esistono. Le push funzionano solo con `people.sql`, `pg_net`, i
+  segreti in Vault e il Worker distribuito (vedi sopra); senza, gli inviti arrivano comunque
+  nel pannello Notifiche all'apertura dell'app (realtime se aperta) e via link, QR o codice.
+- Push: il servizio push può non consegnare (dispositivo spento da giorni, TTL di 24 ore):
+  l'avviso resta nella campanella. Un cambio della chiave VAPID invalida tutte le iscrizioni:
+  chi le aveva attivate si reiscrive al primo avvio, gli altri riattivano l'interruttore.
+- Il Worker invia a qualunque endpoint https salvato come iscrizione (nessun elenco dei servizi
+  push ammessi): lo limita il tetto di notifiche per chi agisce.
+- Se un `@nome` è già preso si può sapere anche salvando direttamente il profilo (vincolo di
+  unicità), non solo con `is_handle_available`.
+- Il tempo di CPU di un lotto grande di push sul piano Free dei Worker (10 ms) non è stato
+  misurato: controllalo con `wrangler tail` dopo il deploy.
+- I membri di un gruppo leggono l'email di chi è entrato con codice o link in
+  `studyos_group_members` (scelta: entrare è un'azione propria, e la conferma lo dice). Chi accetta
+  un invito per `@nome` non scrive la propria email: né nella riga del membro né in quella della
+  condivisione (resta vuota).
+- L'avviso una tantum (`peopleNoticeSeen`) si ricorda per dispositivo, quindi può comparire una
+  volta su ciascun dispositivo.
 - Enforce MFA/SSO: invariato rispetto a `schema.sql`.
 - Uscite e rimozioni in cronologia («ha lasciato il gruppo», «ha tolto … dal gruppo») le scrive
   il trigger `studyos_group_member_left_activity` di `groups.sql` (revisione del 12/11/2026),

@@ -264,3 +264,37 @@ Verificato:
 Per usarlo: `agent.sql` e `agent-verify.sql` nel SQL Editor, secret `STUDYOS_SUPABASE_URL` e
 `STUDYOS_SUPABASE_KEY` sul Worker, deploy del Worker e pubblicazione del
 sito. Non provato sul progetto reale.
+
+Ricerca di persone, inviti all'account e notifiche push (11 novembre 2026): la conferma email è
+spenta sul progetto reale (account attivi alla registrazione), quindi nessun invito si accetta
+più per email. Chi ha un account si trova con l'email esatta o con `@nome` (profilo trovabile di
+default, si spegne in Impostazioni → Profilo) e si invita in un gruppo o a vedere i propri dati;
+l'invito è legato all'account del destinatario, che lo vede in Notifiche e lo accetta con un
+tocco. Link, QR e codice restano per chi non ha un account; gli inviti per email già pendenti
+vengono legati una volta sola o risultano "Scaduto". Notifiche push (browser, Android, iPhone e
+iPad con l'app nella schermata Home) per invito ricevuto, invito accettato e permesso cambiato:
+trigger SQL → `pg_net` → Worker `studyos-agent` `/push` (cifratura RFC 8291, VAPID, nessuna
+`service_role`) → servizio push → service worker; il permesso del browser si chiede solo dopo
+un tocco e toccare la notifica apre la pagina giusta (`?apri=`). Agenti MCP invariati (nessuno
+strumento nuovo). Sul progetto reale: rieseguire `groups.sql`, `sharing.sql` e `people.sql`
+(prima del push su `main`, che pubblica il client: legge `recipient_user_id` e senza la colonna
+si fermano gruppi e condivisioni), poi `people-verify.sql` tutto verde;
+abilitare `pg_net`; `node scripts/push-keys.mjs`; segreti in Vault; quattro `wrangler secret put`
+e `wrangler deploy`; push su `main`.
+Verifiche della ricerca persone e delle push (11 novembre 2026): 291 test, lint, build, `barb:validate`;
+stack locale: `groups.sql`, `sharing.sql` e `people.sql` due volte e `people-verify.sql`, `people-check.mjs`
+109 controlli e `sharing-check.mjs` 121 controlli, 0 falliti; prova nel browser con tre account (ricerca per
+email e `@nome`, profilo non trovabile, invito di gruppo e di dati con accettazione immediata, permesso cambiato,
+interruttore e proposta una tantum, `?apri=`, uscita dall'account, inviti dal vivo anche dopo un accesso senza ricaricare). La consegna push vera si prova sul
+progetto reale dopo il deploy del Worker. Il browser integrato nega il permesso delle notifiche e non registra il
+service worker: permesso concesso, iscrizione, tocco sulla notifica e iscrizione tolta all'uscita si ripetono su
+un browser vero.
+
+Ricerca persone e push su `main` (12 novembre 2026): il ramo `claude/people-push-6582b6` è unito
+sopra la revisione del 12/11 (senza i suoi tre commit finali su gruppi e connettore, che `main`
+aveva già risolto a modo suo). Gli inviti di gruppo ricevuti hanno un solo percorso, per account:
+lettura, Realtime, notifiche, chiusura delle notifiche e ritiro degli inviti usano
+`recipient_user_id` (`isReceivedInvite`, `invitesToNotify` in `src/lib/groups.ts`), mai l'email.
+L'unico uso rimasto dell'email è togliere le copie locali di vecchi inviti per email mai legati a un
+account (`isLegacyEmailInvite`). `accept_group_invite` in `groups.sql` e `people.sql` è la stessa:
+account destinatario, membro senza email, una sola voce «è entrato nel gruppo».

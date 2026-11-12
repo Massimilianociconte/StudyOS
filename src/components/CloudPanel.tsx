@@ -27,6 +27,19 @@ import {
 
 const PENDING_EMAIL_KEY = "studyos-pending-confirmation-email";
 
+/** Massima attesa per spegnere le notifiche push prima dell'uscita: la rete lenta non blocca l'uscita. */
+const PUSH_OFF_TIMEOUT_MS = 5000;
+
+/**
+ * Prima dell'uscita serve ancora la sessione: toglie l'iscrizione push di questo dispositivo, così le
+ * notifiche di questo account non continuano ad arrivare a chi usa il dispositivo dopo. Non lancia mai.
+ */
+const turnOffPushHere = () =>
+  Promise.race([
+    import("../lib/push").then((module) => module.disablePush()),
+    new Promise<void>((resolve) => window.setTimeout(resolve, PUSH_OFF_TIMEOUT_MS))
+  ]).catch(() => undefined);
+
 const formatRelative = (iso: string | null) => {
   if (!iso) return "mai";
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -206,6 +219,7 @@ export function CloudPanel() {
     setBusy(true);
     setInfo(null);
     try {
+      await turnOffPushHere();
       const result = await signOut("local");
       setLeaving(false);
       // Un invito aperto da link resta di chi l'ha aperto: il prossimo account su questo dispositivo non lo vede.
@@ -232,6 +246,7 @@ export function CloudPanel() {
     setBusy(true);
     setInfo(null);
     try {
+      await turnOffPushHere();
       const signedOut = await signOutThisDevice({
         configured: true,
         signOut: () => signOut("local"),

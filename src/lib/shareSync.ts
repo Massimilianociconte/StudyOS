@@ -14,7 +14,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { db, getMeta, setMeta } from "./db";
 import { COLLECTION_BY_ENTITY_TYPE } from "./collections";
-import { RESTORE_TEXT, SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, scopesSummary } from "./labels";
+import { RESTORE_TEXT, SHARE_NOTICE_TEXT, SHARE_SCOPE_LABEL, peopleLabels, scopesSummary } from "./labels";
 import { REVERT_TEXT } from "./labels/sharing";
 import {
   SHARING_UNAVAILABLE_TEXT,
@@ -29,6 +29,7 @@ import {
   sharedPushDenied,
   sharedPushGone,
   sharedPushOutcome,
+  isMissingSharingObject,
   missingVisibleKeys,
   offerToRow,
   ownerEntityTypes,
@@ -95,8 +96,8 @@ const cursorMeta = (viewer: string, owner: string) => `share:cursor:${viewer}:${
 
 const SHARE_COLUMNS =
   "id, owner_id, owner_name, scope, subject_ids, permission, grantee_user_id, grantee_group_id, grantee_name, grantee_email, created_at, updated_at";
-// token_hash non è leggibile (grant per colonna): mai chiederlo.
-const INVITE_COLUMNS = "id, owner_id, owner_name, offers, requests, recipient_email, status, accepted_by, expires_at, created_at";
+// token_hash non è leggibile (grant per colonna): mai chiederlo. recipient_user_id arriva con people.sql.
+const INVITE_COLUMNS = "id, owner_id, owner_name, offers, requests, recipient_email, recipient_user_id, status, accepted_by, expires_at, created_at";
 const ROW_COLUMNS = "entity_type, entity_id, payload, deleted, updated_at";
 /** Il pull pagina per (updated_at, id): serve anche l'id della riga. */
 const PULL_COLUMNS = `id, ${ROW_COLUMNS}`;
@@ -655,17 +656,37 @@ export const initShareSync = () => {
 
 // ——— Azioni (UI e agente) ———
 
-export const createShareInvite = async (input: { offers: ShareOffer[]; requests: ShareRequest[]; recipientEmail?: string }) => {
+/** Invito con link (token). Gli inviti per email non esistono più: a chi ha un account si manda createPersonShareInvite. */
+export const createShareInvite = async (input: { offers: ShareOffer[]; requests: ShareRequest[] }) => {
   await requireSharing();
   const { data, error } = await client().rpc("create_share_invite", {
     p_owner_name: myName(),
     p_offers: input.offers.map(offerToRow),
     p_requests: input.requests.map((request) => ({ scope: request.scope, permission: request.permission })),
-    p_recipient_email: input.recipientEmail?.trim() || null
+    p_recipient_email: null
   });
   fail(error);
   schedule();
   return data as { id: string; token: string };
+};
+
+/**
+ * Invito nell'app a una persona trovata con la ricerca (supabase/people.sql): niente link né token,
+ * solo il suo account può accettarlo. Ritorna l'id dell'invito.
+ */
+export const createPersonShareInvite = async (personId: string, offers: ShareOffer[], requests: ShareRequest[]) => {
+  await requireSharing();
+  const { data, error } = await client().rpc("invite_person_to_share", {
+    p_person_id: personId,
+    p_owner_name: myName(),
+    p_offers: offers.map(offerToRow),
+    p_requests: requests.map((request) => ({ scope: request.scope, permission: request.permission }))
+  });
+  // Condivisione attiva ma people.sql non ancora eseguito: lo si dice con il nome giusto dello script.
+  if (error && isMissingSharingObject(error)) throw new ShareUserError(peopleLabels.errors.unavailable);
+  fail(error);
+  schedule();
+  return String((data as { id?: string } | null)?.id ?? "");
 };
 
 export const previewShareInvite = async (token: string): Promise<ShareInvitePreview | null> => {
