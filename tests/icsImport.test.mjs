@@ -3,7 +3,9 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { buildIcs, decodeIcsBytes, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
-import { previewWarnings } from "../src/lib/calendarGuide.ts";
+import { importButton, previewWarnings } from "../src/lib/calendarGuide.ts";
+import { publicEntity } from "../src/agent/project.ts";
+import { withoutProtectedKeys } from "../src/lib/sharing.ts";
 import { CALENDAR_GUIDE_TEXT } from "../src/lib/labels/calendarGuide.ts";
 import { applyEditPlan, applyRepeatFields, expandEvents, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
@@ -1360,18 +1362,93 @@ test("una divisione fatta qui («questa e le successive») non conta come modifi
   ]);
 });
 
-test("vecchi import senza impronta: come prima (lo stesso file rimette la sua versione), poi l'impronta c'è", () => {
-  const old = apply([], reimport([], TWO_LESSONS)).map((event) => {
+/** Calendario importato prima di questa versione: nessuna impronta. */
+const withoutStamps = (events) =>
+  events.map((event) => {
     const copy = { ...event };
     delete copy.sourceStamp;
     return copy;
   });
+
+test("vecchi import senza impronta, uguali al file: l'impronta si scrive senza contarli come aggiornati", () => {
+  const old = withoutStamps(apply([], reimport([], TWO_LESSONS)));
+  const plan = reimport(old, TWO_LESSONS);
+  assert.deepEqual([plan.added, plan.updated, plan.deletes.length, plan.editsReplaced, plan.warnings.length], [0, 0, 0, 0, 0]);
+  // Solo le due serie, uguali a prima tranne l'impronta (nemmeno updatedAt cambia).
+  assert.equal(plan.puts.length, 2);
+  for (const put of plan.puts) {
+    assert.equal(typeof put.sourceStamp, "string");
+    const { sourceStamp, ...rest } = put;
+    assert.deepEqual(rest, old.find((event) => event.id === put.id));
+  }
+  assert.equal(importButton(plan), "remember");
+  // Da qui in poi le modifiche fatte qui restano con lo stesso file.
+  const stamped = apply(old, plan);
+  assert.deepEqual(counts(reimport(stamped, TWO_LESSONS)), NOTHING);
+  const mine = editedLocally(stamped);
+  const again = reimport(mine, TWO_LESSONS);
+  assert.deepEqual(counts(again), NOTHING);
+  assert.equal(importButton(again), "nothing");
+});
+
+test("vecchi import senza impronta e diversi dal file: vince il file, e l'anteprima dice chiaro che non si sa chi li ha cambiati", () => {
+  const old = withoutStamps(apply([], reimport([], TWO_LESSONS)));
   const plan = reimport(editedLocally(old), TWO_LESSONS);
-  assert.deepEqual([plan.updated, plan.editsReplaced, plan.warnings.length], [2, 0, 0]);
+  assert.deepEqual([plan.updated, plan.editsReplaced], [2, 0]);
+  assert.equal(importButton(plan), "import");
+  assert.equal(plan.warnings.length, 1);
+  assert.match(plan.warnings[0], /^2 eventi qui sono diversi dal file e StudyOS non sa se li hai cambiati tu \(«Anatomia \(aula cambiata da me\)» e «Chimica \(mia\)»\): se importi, tornano come nel file\./);
+  assert.match(plan.warnings[0], /Da questa importazione in poi, le modifiche che fai qui restano finché l'evento non cambia nel file\.$/);
+  // Il testo fisso dell'anteprima non promette di tenerle: rimanda agli avvisi.
+  assert.match(CALENDAR_GUIDE_TEXT.previewNoDuplicates, /tranne dove un avviso/);
   const after = apply(editedLocally(old), plan);
   assert.equal(after.find((event) => event.sourceUid === "a@g").title, "Anatomia");
   assert.ok(after.filter((event) => !event.seriesId).every((event) => typeof event.sourceStamp === "string"));
   assert.deepEqual(counts(reimport(editedLocally(after), TWO_LESSONS)), NOTHING);
+  // Un evento solo: al singolare.
+  const one = reimport(old.map((event) => (event.sourceUid === "a@g" ? { ...event, title: "Anatomia (mia)" } : event)), TWO_LESSONS);
+  assert.match(one.warnings[0], /^«Anatomia \(mia\)» qui è diverso dal file e StudyOS non sa se l'hai cambiato tu: se importi, torna com'è nel file\./);
+});
+
+test("impronta uguale su ogni dispositivo: ore senza fuso e ore in UTC non dipendono dal fuso del telefono", () => {
+  const files = {
+    floating: ics(["BEGIN:VEVENT", "UID:f@x", "DTSTART:20261105T090000", "DTEND:20261105T100000", "SUMMARY:Senza fuso", "RRULE:FREQ=WEEKLY;UNTIL=20261203T090000", "END:VEVENT"]),
+    utc: ics(["BEGIN:VEVENT", "UID:u@x", "DTSTART:20261105T090000Z", "DTEND:20261105T100000Z", "SUMMARY:In UTC", "END:VEVENT"]),
+    allDay: ics(["BEGIN:VEVENT", "UID:d@x", "DTSTART;VALUE=DATE:20261207", "DTEND;VALUE=DATE:20261211", "SUMMARY:Gita", "END:VEVENT"])
+  };
+  for (const [label, text] of Object.entries(files)) {
+    const inRome = apply([], merge([], parseIcs(text, { timeZone: "Europe/Rome" }), { timeZone: "Europe/Rome" }));
+    const mine = inRome.map((event) => (event.seriesId ? event : { ...event, title: `${event.title} (mia)` }));
+    for (const zone of ["America/New_York", "Pacific/Kiritimati", "Asia/Tokyo"]) {
+      const plan = merge(mine, parseIcs(text, { timeZone: zone }), { timeZone: zone });
+      assert.deepEqual(counts(plan), NOTHING, `${label} ${zone}`);
+      assert.equal(plan.editsReplaced, 0, `${label} ${zone}`);
+    }
+  }
+});
+
+test("le modifiche sostituite comprendono «saltato»: l'avviso lo dice", () => {
+  const plan = reimport(editedLocally(apply([], reimport([], TWO_LESSONS))), COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02")));
+  assert.match(plan.warnings.find((warning) => warning.includes("sostituite")), /promemoria e lo stato «saltato»\)/);
+});
+
+test("l'impronta resta privata e non passa alle parti divise né ai giorni modificati", () => {
+  const first = apply([], reimport([], TWO_LESSONS));
+  const chem = first.find((event) => event.sourceUid === "b@g" && !event.seriesId);
+  assert.equal(typeof chem.sourceStamp, "string");
+  // Mai agli agenti, mai a chi riceve una condivisione.
+  assert.equal("sourceStamp" in publicEntity(chem), false);
+  assert.equal("sourceStamp" in withoutProtectedKeys(chem), false);
+  // «Solo questa»: la riga non la eredita; «questa e le successive»: la figlia nemmeno.
+  const row = planEdit(chem, first, "2026-11-10", "this", { title: "Chimica (spostata)" }, { now: NOW }).puts.find((event) => event.seriesId);
+  assert.ok(row && !("sourceStamp" in row));
+  const split = planEdit(chem, first, "2026-11-17", "following", { title: "Chimica II" }, { now: NOW }).puts;
+  const child = split.find((event) => event.splitFrom);
+  assert.ok(child && !("sourceStamp" in child));
+  assert.equal(split.find((event) => event.id === chem.id).sourceStamp, chem.sourceStamp);
+  // Una modifica a mano non la cambia (la scrive solo l'importazione).
+  const all = planEdit(chem, first, "2026-11-03", "all", { title: "Chimica generale", sourceStamp: "x.y" }, { now: NOW }).puts.find((event) => event.id === chem.id);
+  assert.equal(all.sourceStamp, chem.sourceStamp);
 });
 
 // ------------------------------------------------------------------------------------------

@@ -2,7 +2,8 @@
 // passi per ogni combinazione (o un rimando esplicito alla strada che funziona).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GUIDE_APPS, GUIDE_DEVICES, appsFor, detectDevice, guideFor } from "../src/lib/calendarGuide.ts";
+import { GUIDE_APPS, GUIDE_DEVICES, appsFor, detectDevice, guideFor, previewSpan, previewWhen } from "../src/lib/calendarGuide.ts";
+import { parseIcs } from "../src/lib/ics.ts";
 import { CALENDAR_GUIDE_STEPS, CALENDAR_GUIDE_TEXT } from "../src/lib/labels/calendarGuide.ts";
 
 const UA = {
@@ -149,4 +150,75 @@ test("menu verificati: Google «Importazione ed esportazione»; Samsung solo str
   // Niente voci «Importa» o «Esporta» nelle impostazioni del Calendario Samsung: non si sono potute verificare.
   assert.doesNotMatch(samsung, /impostazioni/);
   assert.doesNotMatch(texts("import", "samsung", "samsung"), /«Esporta»/);
+});
+
+test("il consiglio dell'account (aprire StudyOS dal computer) solo se i dati si sincronizzano davvero", () => {
+  const texts = (direction, synced) => {
+    const guide = guideFor(direction, "android", "google", synced === undefined ? undefined : { synced });
+    return guide.steps.map((step) => step.text).join("\n");
+  };
+  for (const synced of [undefined, false]) {
+    assert.doesNotMatch(texts("export", synced), /account|apri(re)? StudyOS dal computer/i);
+    assert.doesNotMatch(texts("import", synced), /account|apri(re)? StudyOS dal computer/i);
+  }
+  assert.match(texts("export", true), /stesso account/);
+  assert.match(texts("import", true), /apri StudyOS dal computer/);
+  // Senza account il passo resta completo: scaricare e mandare il file al computer.
+  assert.match(texts("export", false), /mandalo al computer/);
+});
+
+// Il file di prova del ricontrollo: una serie, un giorno spostato, una gita di più giorni, un evento di New York.
+const SAMPLE = [
+  "BEGIN:VCALENDAR",
+  "VERSION:2.0",
+  "PRODID:-//Test//UI check//IT",
+  "BEGIN:VEVENT",
+  "UID:ui-check-weekly@test",
+  "DTSTART;TZID=Europe/Rome:20261116T140000",
+  "DTEND;TZID=Europe/Rome:20261116T160000",
+  "RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=8",
+  "SUMMARY:Seminario importato",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:ui-check-weekly@test",
+  "RECURRENCE-ID;TZID=Europe/Rome:20261123T140000",
+  "DTSTART;TZID=Europe/Rome:20261123T150000",
+  "DTEND;TZID=Europe/Rome:20261123T170000",
+  "SUMMARY:Seminario importato (spostato)",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:ui-check-trip@test",
+  "DTSTART;VALUE=DATE:20261207",
+  "DTEND;VALUE=DATE:20261211",
+  "SUMMARY:Gita a Torino",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:ui-check-ny@test",
+  "DTSTART;TZID=America/New_York:20261125T090000",
+  "DTEND;TZID=America/New_York:20261125T100000",
+  "SUMMARY:Call da New York",
+  "END:VEVENT",
+  "END:VCALENDAR"
+].join("\r\n");
+
+test("anteprima: un tutto il giorno di più giorni mostra i suoi giorni (la fine del file è esclusa)", () => {
+  const events = parseIcs(SAMPLE, { timeZone: "Europe/Rome" }).events;
+  const trip = events.find((event) => event.title === "Gita a Torino");
+  assert.equal(previewWhen(trip, "Europe/Rome"), "7–10 dic");
+  assert.equal(previewWhen({ allDay: true, start: "2026-12-07T00:00:00", end: "2026-12-08T00:00:00" }, "Europe/Rome"), "7 dic");
+  assert.equal(previewWhen({ allDay: true, start: "2026-12-28T00:00:00", end: "2027-01-03T00:00:00" }, "Europe/Rome"), "28 dic – 2 gen");
+  assert.equal(previewWhen({ allDay: true, start: "2026-11-30T00:00:00", end: "2026-12-02T00:00:00" }, "Europe/Rome"), "30 nov – 1 dic");
+  // Con l'ora: nel fuso di chi guarda.
+  assert.equal(previewWhen(events.find((event) => event.title === "Call da New York"), "Europe/Rome"), "25 nov 15:00");
+  assert.equal(previewWhen(events.find((event) => event.title === "Call da New York"), "America/New_York"), "25 nov 09:00");
+});
+
+test("anteprima: il periodo del file va dal primo inizio all'ultima fine, non all'ultimo inizio", () => {
+  const masters = parseIcs(SAMPLE, { timeZone: "Europe/Rome" }).events.filter((event) => !event.recurrenceId);
+  assert.deepEqual(previewSpan(masters, "Europe/Rome"), { from: "16 nov 2026", to: "10 dic 2026" });
+  // Un evento solo, di un giorno: niente «al».
+  assert.deepEqual(previewSpan([{ allDay: true, start: "2026-12-07T00:00:00", end: "2026-12-08T00:00:00" }], "Europe/Rome"), { from: "7 dic 2026" });
+  // Un evento con orario che finisce a mezzanotte non conta il giorno dopo.
+  assert.deepEqual(previewSpan([{ allDay: false, start: "2026-12-06T22:00:00.000Z", end: "2026-12-06T23:00:00.000Z" }], "Europe/Rome"), { from: "6 dic 2026" });
+  assert.deepEqual(previewSpan([], "Europe/Rome"), { from: "" });
 });

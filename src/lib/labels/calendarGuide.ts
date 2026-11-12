@@ -52,7 +52,7 @@ export const CALENDAR_GUIDE_TEXT = {
     }.`,
   previewRange: (from: string, to?: string) => (to ? `Dal ${from} al ${to}.` : `Il ${from}.`),
   previewNoDuplicates:
-    "Se importi di nuovo lo stesso calendario, gli eventi già presenti vengono aggiornati, non duplicati, e le modifiche che hai fatto qui restano finché quell'evento non cambia nel file.",
+    "Se importi di nuovo lo stesso calendario, gli eventi già presenti vengono aggiornati, non duplicati. Le modifiche che hai fatto qui restano, tranne dove un avviso qui sotto dice che vengono sostituite.",
   /** Prima reimportazione di un calendario importato con una versione precedente (il luogo era nella descrizione). */
   previewPlaceMoved:
     "Questa volta risultano aggiornati anche gli eventi con un luogo importati con una versione precedente: il luogo passa dalla descrizione al campo Luogo. Succede una volta sola.",
@@ -92,8 +92,10 @@ export const CALENDAR_GUIDE_STEPS = {
   download: "Scarica il file con il pulsante qui sotto: contiene i tuoi eventi, gli esami e le scadenze.",
   downloadPhone: "Scarica il file con il pulsante qui sotto: il telefono lo salva nella cartella Download.",
   downloadIos: "Scarica il file con il pulsante qui sotto: a seconda della versione, il Calendario lo apre subito oppure finisce nell'app File, nella cartella Download.",
-  downloadToComputer:
-    "Scarica il file con il pulsante qui sotto e mandalo al computer, per esempio per email a te stesso. Se hai fatto l'accesso con il tuo account, i dati si sincronizzano: allora puoi anche aprire StudyOS dal computer, entrare con lo stesso account e scaricarlo da lì.",
+  downloadToComputer: "Scarica il file con il pulsante qui sotto e mandalo al computer, per esempio per email a te stesso.",
+  /** Solo con l'accesso fatto e la sincronizzazione attiva (altrimenti StudyOS sul computer ha altri dati). */
+  downloadToComputerSynced:
+    "Scarica il file con il pulsante qui sotto e mandalo al computer, per esempio per email a te stesso. Oppure, visto che i tuoi dati si sincronizzano con il tuo account, apri StudyOS dal computer, entra con lo stesso account e scaricalo da lì.",
   googleOwnCalendar: "Consiglio: su calendar.google.com crea prima un calendario «StudyOS» (accanto ad «Altri calendari», +) e importa lì il file.",
   /** Lo stesso consiglio per ogni app in cui si può tenere StudyOS in un calendario a parte. */
   startClean:
@@ -127,7 +129,10 @@ export const CALENDAR_GUIDE_STEPS = {
   outlookNoFile: "Il nuovo Outlook e outlook.com non salvano il calendario in un file: se lo stesso calendario è anche su Google, esportalo da calendar.google.com.",
   chooseFile: "Torna qui e premi «Scegli il file»: prima di aggiungere qualcosa vedrai un'anteprima.",
   chooseFileFromComputer:
-    "Porta il file .ics su questo dispositivo (per esempio per email a te stesso) e tocca «Scegli il file», oppure apri StudyOS dal computer. Prima di aggiungere vedrai un'anteprima."
+    "Porta il file .ics su questo dispositivo (per esempio per email a te stesso) e tocca «Scegli il file». Prima di aggiungere vedrai un'anteprima.",
+  /** Solo con la sincronizzazione attiva: importato dal computer, arriva anche qui. */
+  chooseFileFromComputerSynced:
+    "Porta il file .ics su questo dispositivo (per esempio per email a te stesso) e tocca «Scegli il file», oppure apri StudyOS dal computer con lo stesso account e importalo lì: i dati si sincronizzano. Prima di aggiungere vedrai un'anteprima."
 };
 
 /** Perché una combinazione non si fa da quel dispositivo, e dove si fa. */

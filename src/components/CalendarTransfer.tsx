@@ -1,6 +1,5 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { format, parseISO } from "date-fns";
-import { it } from "date-fns/locale";
 import type { EventCategory } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import type { IcsImportedEvent, IcsMergePlan, IcsParseResult } from "../lib/ics";
@@ -9,14 +8,18 @@ import { EVENT_CATEGORY_LABEL } from "../lib/labels";
 import { CALENDAR_GUIDE_TEXT as T } from "../lib/labels/calendarGuide";
 import { describeRule } from "../lib/repeat";
 import { civilDateOf, isValidTimeZone } from "../lib/tz";
+import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
 import { selectableSubjects } from "../lib/selectors";
 import {
   GUIDE_DEVICES,
   appsFor,
   detectDevice,
   guideFor,
+  importButton,
   isPhone,
+  previewSpan,
   previewWarnings,
+  previewWhen,
   type GuideApp,
   type GuideDevice,
   type GuideDirection,
@@ -63,6 +66,14 @@ const civilStart = (event: IcsImportedEvent) =>
   event.allDay ? event.start.slice(0, 10) : civilDateOf(new Date(event.start), isValidTimeZone(event.timeZone) ? event.timeZone : undefined);
 const startDate = (event: IcsImportedEvent) => (event.allDay ? parseISO(event.start) : new Date(event.start));
 
+/** Accesso fatto e sincronizzazione attiva: solo allora la guida propone di usare StudyOS dal computer. */
+const syncedNow = () => cloudConfigured && Boolean(getCloudSyncState().session);
+const useSynced = () => {
+  const [synced, setSynced] = useState(syncedNow);
+  useEffect(() => subscribeCloudSync(() => setSynced(syncedNow())), []);
+  return synced;
+};
+
 /**
  * Guida per portare il calendario da StudyOS a un'altra app e viceversa (file .ics): direzione,
  * dispositivo (riconosciuto, si può cambiare), app, passi numerati con il pulsante dentro il passo
@@ -87,6 +98,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
+  const synced = useSynced();
   const shareable = useMemo(() => (open ? canShareFiles() : false), [open]);
 
   const reset = () => {
@@ -219,7 +231,10 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
     return () => window.clearTimeout(timer);
   }, [parsed, ics, items, events, exams, tasks]);
   const plan = planned && planned.file === parsed ? planned.plan : null;
-  const nothingNew = plan !== null && !plan.puts.length && !plan.deletes.length;
+  // `remember`: niente di nuovo, ma importando si scrive l'impronta degli eventi importati con una versione
+  // precedente (così le modifiche fatte qui restano dalla prossima volta): il pulsante resta, come «Fatto».
+  const button = importButton(plan);
+  const nothingNew = button === "nothing" || button === "remember";
   // Prima reimportazione di un calendario importato con una versione precedente: il luogo passa dalla
   // descrizione al campo Luogo, e quegli eventi risultano aggiornati una volta (lo si dice).
   const placeMoved = useMemo(() => {
@@ -236,15 +251,15 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
     if (!parsed || !ics) return null;
     const masters = parsed.events.filter((event) => !event.recurrenceId);
     const sorted = [...masters].sort((a, b) => startDate(a).getTime() - startDate(b).getTime());
-    const first = sorted[0];
-    const last = sorted.at(-1);
+    // Dal primo inizio all'ultima fine (una gita di più giorni conta fino al suo ultimo giorno).
+    const span = previewSpan(masters);
     return {
       count: masters.length,
       changed: parsed.events.length - masters.length,
       recurring: masters.filter((event) => event.repeat).length,
       matched: masters.filter((event) => ics.matchSubject(event.title, candidates)).length,
-      from: first ? format(startDate(first), "d MMM yyyy", { locale: it }) : "",
-      to: last && last !== first ? format(startDate(last), "d MMM yyyy", { locale: it }) : undefined,
+      from: span.from,
+      to: span.to,
       sample: sorted.slice(0, 6)
     };
   }, [parsed, ics, candidates]);
@@ -267,7 +282,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
     }
   };
 
-  const guide = guideFor(direction, device, app);
+  const guide = guideFor(direction, device, app, { synced });
   const previous = PREVIOUS[stage];
 
   const stepAction = (item: GuideStep) => {
@@ -491,7 +506,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
             <li key={`${event.uid ?? event.title}-${index}`} className="grid min-w-0 grid-cols-1 gap-0.5 px-1.5 py-1 text-sm">
               <span className="flex min-w-0 items-center gap-2">
                 <span className="shrink-0 text-xs font-black tabular-nums text-[var(--muted)]">
-                  {format(startDate(event), event.allDay ? "d MMM" : "d MMM HH:mm", { locale: it })}
+                  {previewWhen(event)}
                 </span>
                 <span className="one-line-safe min-w-0 flex-1 font-bold">{event.title}</span>
               </span>
@@ -550,8 +565,8 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
           <span />
         )}
         {stage === "preview" && preview ? (
-          <Button variant="primary" icon="Check" onClick={() => void confirmImport()} disabled={busy || !plan || nothingNew}>
-            {nothingNew ? T.nothingNew : plan ? T.apply(plan.added, plan.updated) : T.loading}
+          <Button variant="primary" icon="Check" onClick={() => void confirmImport()} disabled={busy || button === "loading" || button === "nothing"}>
+            {button === "nothing" ? T.nothingNew : button === "remember" ? T.done : plan ? T.apply(plan.added, plan.updated) : T.loading}
           </Button>
         ) : stage === "steps" || stage === "result" ? (
           <Button variant={stage === "result" ? "primary" : "soft"} icon="Check" onClick={close}>

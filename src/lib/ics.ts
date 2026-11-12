@@ -1447,6 +1447,11 @@ export interface IcsImportedEvent {
   edited?: true;
   /** X-STUDYOS-EDITED sulla serie: date escluse a mano in StudyOS (tra quelle di `exdates`). */
   editedExdates?: string[];
+  /**
+   * Inizio, fine e regola come sono scritti nel file: per l'impronta (`sourceStamp`), uguale su ogni
+   * dispositivo anche per le ore senza fuso, che qui diventano istanti nel fuso del dispositivo.
+   */
+  fileTiming?: string;
 }
 
 export interface IcsParseResult {
@@ -1591,6 +1596,10 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       return validZone(clean) ?? validZone(WINDOWS_ZONES[clean]);
     };
     const calendarZone = plainZone(propOf(calendar, "X-WR-TIMEZONE")?.value);
+    // Per l'impronta: date e fuso come sono scritti, non come diventano su questo dispositivo.
+    const rawWrittenZone = propOf(calendar, "X-WR-TIMEZONE")?.value.trim() ?? "";
+    const writtenAs = (property: Property | undefined) =>
+      property ? `${property.params.TZID ?? ""};${(property.params.VALUE ?? "").toUpperCase()}:${property.value.trim()}` : "";
     // File scritto da StudyOS: dice per ogni evento se è saltato (prima con STATUS:CANCELLED, che StudyOS
     // non ha mai usato per un annullamento vero: quelli sono EXDATE o eventi tolti dal file).
     const fromStudyOs = studyOsFile(calendar);
@@ -1775,6 +1784,14 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         ...(skippedStatus !== undefined ? { skipped: skippedStatus } : {}),
         ...(parentUid && !ridProp ? { parentUid } : {}),
         ...(parentFrom ? { parentFrom } : {}),
+        fileTiming: [
+          rawWrittenZone,
+          writtenAs(startProp),
+          writtenAs(endProp),
+          propOf(vevent, "DURATION")?.value.trim() ?? "",
+          propOf(vevent, "X-MICROSOFT-CDO-ALLDAYEVENT")?.value.trim().toUpperCase() ?? "",
+          rrules[0]?.value.trim() ?? ""
+        ].join("|"),
         recurrence: "none"
       };
 
@@ -1932,6 +1949,8 @@ export interface IcsImportItem {
   parentFrom?: string;
   edited?: true;
   editedExdates?: string[];
+  /** Vedi `IcsImportedEvent.fileTiming`. */
+  fileTiming?: string;
 }
 
 export interface IcsItemOptions {
@@ -1981,6 +2000,7 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.parentUid && event.parentFrom ? { parentFrom: event.parentFrom } : {}),
       ...(event.edited ? { edited: true as const } : {}),
       ...(event.editedExdates?.length ? { editedExdates: event.editedExdates } : {}),
+      ...(event.fileTiming !== undefined ? { fileTiming: event.fileTiming } : {}),
       category: categoryFromList(categories) ?? guessCategory(event.title, options.defaultCategory),
       ...(subject ? { subjectId: subject.id, color: subject.color } : {}),
       ...(event.color ? { color: event.color, colorCustom: true as const } : {})
@@ -2200,6 +2220,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   // uguale lascia le modifiche fatte qui; un file cambiato le sostituisce, e lo si dice (`editsReplaced`).
   /** Eventi modificati qui che il file cambiato sostituisce: id -> titolo di adesso. */
   const replacedEdits = new Map<string, string>();
+  /** Elementi non letti da un file (senza `fileTiming`): gli orari come li ha l'elemento. */
   const fileStamp = (item: IcsImportItem) =>
     hashText(
       JSON.stringify([
@@ -2207,15 +2228,13 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         item.description.trim(),
         item.location ?? "",
         customColor(item).toLowerCase(),
-        item.start,
-        item.end,
-        item.allDay,
-        item.timeZone ?? "",
-        item.repeat ?? null,
+        ...(item.fileTiming !== undefined ? [item.fileTiming] : [item.start, item.end, item.allDay, item.timeZone ?? "", item.repeat ?? null]),
         item.reminders ?? null,
         item.skipped ?? null
       ])
     );
+  /** Eventi diversi dal file senza impronta (importati prima che ci fosse): non si sa chi li ha cambiati. */
+  const unknownEdits = new Map<string, string>();
   /**
    * I campi che l'import scrive, come si vedono: titolo, descrizione, luogo, colore scelto, orari, regola
    * (senza la fine: una divisione fatta qui la sposta, e l'import la rispetta), promemoria, e «saltato» se
@@ -2292,8 +2311,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   /**
    * Evento aggiornato con i dati del file, o null se il file dice le stesse cose. Se il file non è cambiato
    * dall'ultimo import (stessa impronta), null anche se qui l'evento è stato modificato: le modifiche restano.
+   * `quiet`: uguale al file ma senza l'impronta giusta (import di una versione precedente, o file cambiato
+   * proprio come l'evento qui): si scrive solo l'impronta, e non conta come aggiornato.
    */
-  const updated = (existing: CalendarEvent, item: IcsImportItem, options: { rule: boolean; adopt?: string }) => {
+  const updated = (existing: CalendarEvent, item: IcsImportItem, options: { rule: boolean; adopt?: string }): { event: CalendarEvent; quiet: boolean } | null => {
     const previous = stampParts(existing.sourceStamp);
     if (!options.adopt && previous?.file === fileStamp(item)) return null;
     const timing = timingOf(existing, fallbackZone);
@@ -2319,7 +2340,14 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       !zoneChanged &&
       (!options.rule || ruleKey(current, timing?.startDate ?? "") === ruleKey(rule, incoming.startDate)) &&
       (item.reminders === undefined || reminderKey(existing, existing.reminders) === reminderKey(existing, item.reminders));
-    if (same) return null;
+    if (same) {
+      // Solo gli eventi importati (i propri, ritrovati dal loro UID @studyos, restano come sono), e solo se
+      // l'impronta manca o non dice più com'è l'evento: due file diversi con lo stesso evento (il proprio e
+      // quello di Google) non la riscrivono a ogni giro.
+      // (L'impronta dell'evento può essere stata scritta con o senza «saltato», a seconda del file di allora.)
+      if (!existing.sourceUid || (previous && (previous.event === eventStamp(existing, false) || previous.event === eventStamp(existing, true)))) return null;
+      return { event: stamped(existing, item), quiet: true };
+    }
     const next: CalendarEvent = withLocation(
       {
         ...existing,
@@ -2340,8 +2368,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     );
     // Modificato qui dopo l'ultimo import (non è più come l'import l'aveva scritto): lo si dice prima.
     if (previous && previous.event !== eventStamp(existing, item.skipped !== undefined)) replacedEdits.set(existing.id, String(existing.title ?? ""));
-    if (!options.rule) return stamped(next, item);
-    return stamped(applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone }), item);
+    // Senza impronta non si sa se è cambiato qui o nel file: vince il file, e l'anteprima lo dice.
+    else if (!previous && !options.adopt) unknownEdits.set(existing.id, String(existing.title ?? ""));
+    if (!options.rule) return { event: stamped(next, item), quiet: false };
+    return { event: stamped(applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone }), item), quiet: false };
   };
 
   /** Occorrenza della serie: stessa riga che crea il motore (copia della serie, senza regola). */
@@ -2596,8 +2626,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     if (existing) {
       const next = updated(existing, item, { rule: false });
       if (next) {
-        put(next);
-        touched.add(existing.id);
+        put(next.event);
+        if (!next.quiet) touched.add(existing.id);
       }
       return;
     }
@@ -2639,7 +2669,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         const keeper =
           dated.find((entry) => entry.timing && civilWeekday(entry.timing.startDate) === weekday)?.event ??
           [...dated].sort((a, b) => (a.timing?.startMs ?? 0) - (b.timing?.startMs ?? 0))[0].event;
-        const next = updated(keeper, item, { rule: true, adopt: uid });
+        const next = updated(keeper, item, { rule: true, adopt: uid })?.event;
         const siblings = group.filter((event) => event.id !== keeper.id);
         const adopted = next ? adoptSiblings(keeper, next, siblings, item) : null;
         if (!adopted) {
@@ -2662,10 +2692,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     if (existing) {
       const next = updated(existing, item, { rule: true });
       if (next) {
-        put(next);
-        touched.add(existing.id);
+        put(next.event);
+        if (!next.quiet) touched.add(existing.id);
       }
-      master = next ?? existing;
+      master = next?.event ?? existing;
     } else master = create(item);
     masterOf.set(uid, master.id);
     if (item.parentUid && uid.endsWith("@studyos")) {
@@ -2756,6 +2786,8 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   // Solo gli eventi che questo import scrive davvero (un vecchio import che resta com'era no).
   const replaced = [...replacedEdits].filter(([id]) => puts.has(id));
   if (replaced.length) warnings.push(ICS_TEXT.editsReplaced(replaced.map(([, title]) => title)));
+  const unknown = [...unknownEdits].filter(([id]) => puts.has(id));
+  if (unknown.length) warnings.push(ICS_TEXT.unknownEdits(unknown.map(([, title]) => title)));
   return {
     puts: [...puts.values()],
     deletes: [...deletes].filter((id) => !puts.has(id)),

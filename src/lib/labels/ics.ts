@@ -88,8 +88,15 @@ export const ICS_TEXT = {
   /** Eventi modificati qui dopo l'ultimo import e cambiati anche nel file: importando, vince il file. */
   editsReplaced: (titles: readonly string[]) =>
     titles.length === 1
-      ? `${quotedTitles(titles)} è cambiato nel file dopo l'ultima importazione, e tu l'avevi modificato qui: se importi, le tue modifiche (titolo, orari, ripetizione, luogo, descrizione, promemoria) vengono sostituite da quelle del file.`
-      : `${titles.length} eventi che avevi modificato qui sono cambiati nel file dopo l'ultima importazione (${quotedTitles(titles)}): se importi, le tue modifiche (titolo, orari, ripetizione, luogo, descrizione, promemoria) vengono sostituite da quelle del file.`,
+      ? `${quotedTitles(titles)} è cambiato nel file dopo l'ultima importazione, e tu l'avevi modificato qui: se importi, le tue modifiche (titolo, orari, ripetizione, luogo, descrizione, promemoria e lo stato «saltato») vengono sostituite da quelle del file.`
+      : `${titles.length} eventi che avevi modificato qui sono cambiati nel file dopo l'ultima importazione (${quotedTitles(titles)}): se importi, le tue modifiche (titolo, orari, ripetizione, luogo, descrizione, promemoria e lo stato «saltato») vengono sostituite da quelle del file.`,
+  /** Eventi diversi dal file e importati prima che StudyOS ne ricordasse la versione: vince il file. */
+  unknownEdits: (titles: readonly string[]) =>
+    `${
+      titles.length === 1
+        ? `${quotedTitles(titles)} qui è diverso dal file e StudyOS non sa se l'hai cambiato tu: se importi, torna com'è nel file.`
+        : `${titles.length} eventi qui sono diversi dal file e StudyOS non sa se li hai cambiati tu (${quotedTitles(titles)}): se importi, tornano come nel file.`
+    } Da questa importazione in poi, le modifiche che fai qui restano finché l'evento non cambia nel file.`,
   /** Il file ha una parte (RELATED-TO) di una serie che c'era già, ma non si collega: resta un evento a sé. */
   partKeptApart: (title: string) =>
     `${quotedTitles([title])}: questo file ha una parte di una serie che hai già, ma non combacia con la tua: è stata aggiunta a parte. Se vedi giorni doppi, elimina quella che non ti serve.`
