@@ -319,12 +319,12 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
 
 /**
  * Registro delle azioni di questo browser (studyos_list_audit sul connettore principale): il più recente
- * prima, filtri per strumento e per data. Gli id degli elementi non si salvano qui: itemId vale solo sul
- * connettore remoto, dove il registro è sul server.
+ * prima, filtri per strumento e per data. Gli id degli elementi non si salvano qui: itemId e callId valgono
+ * solo sul connettore remoto, dove il registro è sul server.
  */
 const listLocalAudit = (args: Args): AgentCallResult => {
-  if (optional(args.itemId)) {
-    return fail("invalid", "Il registro di questo browser non salva gli id degli elementi: filtra per tool o per data (since, until).");
+  if (optional(args.itemId) || optional(args.callId)) {
+    return fail("invalid", "Il registro di questo browser non salva gli id degli elementi né delle chiamate: filtra per tool o per data (since, until).");
   }
   const since = optional(args.since) ? instant(args.since) : null;
   const until = optional(args.until) ? instant(args.until) : null;
@@ -340,8 +340,11 @@ const listLocalAudit = (args: Args): AgentCallResult => {
   return ok({ source: "browser", ...page(entries, args) });
 };
 
-/** studyos_split_pages: conti esatti e inclusivi, nessun dato letto o scritto (vedi pageSplit.ts). */
-const splitPagesResult = (args: Args): AgentCallResult => {
+/**
+ * studyos_split_pages: conti esatti e inclusivi, nessun dato letto o scritto (vedi pageSplit.ts). Il
+ * connettore remoto lo chiama direttamente, senza leggere il cloud.
+ */
+export const splitPagesResult = (args: Args): AgentCallResult => {
   const strings = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined);
   const result = splitPages({
     from: Number(args.from),

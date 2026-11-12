@@ -198,12 +198,20 @@
   function schema OpenAI li rifiutano. Una lista troppo lunga si accorcia togliendo
   elementi (`has_more`/`next_offset`), mai tagliando il JSON.
 - Connettore remoto, registro (1.8.0): `studyos_agent_push` ha un solo overload, con
-  `p_tool text default ''`. Non ricreare la versione a tre argomenti: PostgREST non saprebbe quale
-  chiamare. Il registro (`studyos_agent_audit`) lo scrive solo il database; nessun client ha
-  insert, update o delete. Il ripristino confronta `after_stamp` con il timbro attuale della riga:
-  una scrittura che cambia il timbro senza voce nel registro (un tombstone riscritto con un altro
-  `deletedAt`) rende la voce non più ripristinabile, e va bene così. Pagine: intervalli sempre
-  inclusivi, divisioni solo con `studyos_split_pages` (`src/agent/pageSplit.ts`).
+  `p_tool text default ''` e `p_call uuid default null`. Non ricreare versioni con meno argomenti:
+  PostgREST non saprebbe quale chiamare (agent.sql le toglie con `drop function if exists`). Il
+  registro (`studyos_agent_audit`) lo scrive solo il database; nessun client ha insert, update o
+  delete. Una chiamata di uno strumento = un `call_id` su tutte le sue voci, anche su più push
+  (`newCallId` per `execute` in cloudRunner): elenco, `canRestore` e ripristino lavorano per
+  chiamata; `coalesce(call_id, id)` è la chiave (voci senza chiamata = chiamata da sola). Il
+  ripristino di una chiamata controlla, per ogni elemento, l'ultima voce non annullata e rimette
+  l'immagine prima della prima: una voce più vecchia dello stesso elemento da sola è sempre in
+  conflitto. Il ripristino confronta `after_stamp` con il timbro attuale della riga: una scrittura
+  che cambia il timbro senza voce nel registro (un tombstone riscritto con un altro `deletedAt`)
+  rende la voce non più ripristinabile, e va bene così. Le immagini non tengono mai file
+  (`studyos_agent_audit_image` anche sui tombstone): solo `before_files`. Pagine: intervalli
+  sempre inclusivi, divisioni solo con `studyos_split_pages` (`src/agent/pageSplit.ts`), che sul
+  remoto non passa da pull ed `exclusive`.
 - Supabase RLS e upsert: `INSERT … ON CONFLICT DO UPDATE` controlla la policy di INSERT sulla
   riga proposta e quella di SELECT sulla riga nuova. Per modificare righe di altri utenti usare
   `update` mirati; `onConflict` deve nominare la chiave vera (membri: `group_id,user_id`).

@@ -25,16 +25,80 @@ export interface ServerAuditRow {
   after: unknown;
   restore_of: string | null;
   restored_at: string | null;
+  /** Questa voce da sola si può annullare. */
   can_restore: boolean;
+  /**
+   * Chiamata dello strumento a cui appartiene la voce (agent.sql con call_id). Assente con l'agent.sql
+   * della prima revisione: ogni voce è una chiamata da sola.
+   */
+  call_id?: string | null;
+  call_at?: string | null;
+  /** Voci della chiamata (anche quelle non arrivate in questa pagina). */
+  call_size?: number | null;
+  /** L'intera chiamata si può annullare. */
+  call_can_restore?: boolean | null;
+  /** Tutta la chiamata è già stata annullata (l'ultimo annullamento). */
+  call_restored_at?: string | null;
+  /** Chiamate (o voci, con l'agent.sql di prima) che rispettano i filtri. */
   total: number | string;
 }
 
-/** Esito di studyos_agent_restore / studyos_agent_restore_own. */
+/** Un elemento rimesso da un ripristino. */
+export interface RestoredChange {
+  auditId: string;
+  entityType: string;
+  entityId: string;
+  action: AuditAction;
+  item: unknown;
+}
+
+/** Un elemento cambiato dopo la modifica da annullare: niente è stato scritto. */
+export interface RestoreConflict {
+  auditId?: string;
+  entityType: string;
+  entityId: string;
+  current: unknown;
+  currentDeleted: boolean;
+}
+
+/**
+ * Esito di studyos_agent_restore(_own) e studyos_agent_restore_call(_own). In cima i campi del primo
+ * elemento (come la risposta di una voce sola); `changes` e `conflicts` li hanno tutti.
+ */
 export type RestoreOutcome =
-  | { status: "restored"; auditId: string; entityType: string; entityId: string; action: AuditAction; item: unknown }
-  | { status: "conflict"; entityType: string; entityId: string; current: unknown; currentDeleted: boolean }
+  | ({ status: "restored"; callId?: string; items?: number; changes?: RestoredChange[] } & Partial<RestoredChange>)
+  | ({ status: "conflict"; items?: number; conflicts?: RestoreConflict[] } & RestoreConflict)
   | { status: "already_restored"; entityType: string; entityId: string; restoredAt: string }
   | { status: "not_found" };
+
+/** Elementi rimessi (anche da una risposta di una voce sola, senza changes). */
+export const restoredChanges = (outcome: Extract<RestoreOutcome, { status: "restored" }>): RestoredChange[] => {
+  if (Array.isArray(outcome.changes)) return outcome.changes;
+  return outcome.entityType && outcome.entityId && outcome.action
+    ? [{ auditId: outcome.auditId ?? "", entityType: outcome.entityType, entityId: outcome.entityId, action: outcome.action, item: outcome.item }]
+    : [];
+};
+
+/** Elementi in conflitto (anche da una risposta di una voce sola, senza conflicts). */
+export const restoreConflicts = (outcome: Extract<RestoreOutcome, { status: "conflict" }>): RestoreConflict[] =>
+  Array.isArray(outcome.conflicts) && outcome.conflicts.length
+    ? outcome.conflicts
+    : [{ entityType: outcome.entityType, entityId: outcome.entityId, current: outcome.current, currentDeleted: outcome.currentDeleted === true }];
+
+/** Chiave della chiamata di una voce: call_id, o la voce stessa (hub o agent.sql di prima). */
+export const callKeyOf = (row: Pick<ServerAuditRow, "id" | "call_id">) => row.call_id || row.id;
+
+/** Voci di una pagina raggruppate per chiamata, nell'ordine in cui arrivano (la più recente prima). */
+export const groupByCall = <T extends Pick<ServerAuditRow, "id" | "call_id">>(rows: readonly T[]): T[][] => {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = callKeyOf(row);
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
+  }
+  return [...groups.values()];
+};
 
 export const AUDIT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -172,10 +236,41 @@ export const auditEntryOut = (row: ServerAuditRow) => {
   };
 };
 
-/** Pagina come quella degli altri elenchi (`page` di toolkit), con il totale calcolato dal server. */
+/**
+ * Una chiamata dello strumento per un agente: chi, quando, con quale strumento, e le sue modifiche
+ * (al massimo 5 nell'elenco; tutte con il filtro callId). canRestore: studyos_restore_change con
+ * callId (o l'id di una voce) annulla l'intera chiamata, tutto o niente.
+ */
+export const auditCallOut = (rows: readonly ServerAuditRow[]) => {
+  const first = rows[0];
+  const size = Math.max(Number(first.call_size) || rows.length, rows.length);
+  const changes = rows.map((row) => {
+    const { at: _at, tool: _tool, by: _by, connector: _connector, ...entry } = auditEntryOut(row);
+    return entry;
+  });
+  const canRestore = first.call_can_restore ?? (rows.length === 1 && first.can_restore === true);
+  return {
+    callId: callKeyOf(first),
+    at: first.call_at ?? first.created_at,
+    tool: first.tool || undefined,
+    by: first.from_app ? "app" : "connector",
+    connector: first.from_app ? undefined : first.grant_label || undefined,
+    size,
+    ...(size > changes.length ? { moreChanges: size - changes.length } : {}),
+    canRestore: canRestore === true,
+    ...(first.call_restored_at ? { restoredAt: first.call_restored_at } : {}),
+    ...(first.restore_of ? { isRestore: true } : {}),
+    changes
+  };
+};
+
+/**
+ * Pagina come quella degli altri elenchi (`page` di toolkit), con il totale calcolato dal server:
+ * limit, offset e total contano le chiamate.
+ */
 export const auditPage = (rows: readonly ServerAuditRow[], offset: number, limit: number) => {
   const total = rows.length ? Number(rows[0].total) || rows.length + offset : offset;
-  const items = rows.map(auditEntryOut);
+  const items = groupByCall(rows).map(auditCallOut);
   const hasMore = offset + items.length < total;
   return { total, count: items.length, offset, limit, has_more: hasMore, ...(hasMore ? { next_offset: offset + items.length } : {}), items };
 };

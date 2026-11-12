@@ -311,3 +311,10 @@ istruzioni del server. Verificato: `tests/pageSplit.test.mjs`, `tests/remoteAudi
 tutto `true`, `scripts/supabase/agent-audit-check.sql` 35 controlli. Per usarlo: rieseguire
 `agent.sql` e `agent-verify.sql`, deploy del Worker, pubblicazione del sito, poi ricreare il
 connettore. Non provato sul progetto reale né con PostgREST.
+Dopo la revisione: le voci hanno `call_id` (una chiamata dello strumento, anche su più push) e si
+elencano e si annullano per chiamata, tutto o niente, con l'elemento in conflitto nella risposta
+(`studyos_agent_restore_call(_own)`; `onlyThisChange` per una voce sola); frasi «Hai…» per i
+ripristini fatti dall'app; nessun file nelle immagini dei tombstone; potatura delle 2000 voci solo
+oltre 2100; il Worker riprova la push nuova ogni 10 minuti dopo un PGRST202; `studyos_split_pages`
+sul remoto non legge il cloud. `agent-audit-check.sql` 59 controlli, anche sopra l'`agent.sql`
+della prima revisione.

@@ -133,8 +133,11 @@ test("catalogo: nomi unici, schemi chiusi, eliminazioni con confirm", () => {
     assert.equal(extra.ok, false, tool.name);
     if (tool.risk === "destructive") {
       // Un'eliminazione indica solo cosa eliminare: niente campi che ne cambino l'effetto (di un
-      // evento ripetuto si possono indicare anche i giorni: occurrenceDate e scope).
-      const what = tool.name === "studyos_delete_event" ? ["confirm", "id", "occurrenceDate", "scope"] : ["confirm", "id"];
+      // evento ripetuto si possono indicare anche i giorni: occurrenceDate e scope; di un ripristino
+      // si può restringere l'effetto a una sola modifica: onlyThisChange).
+      const what = tool.name === "studyos_delete_event"
+        ? ["confirm", "id", "occurrenceDate", "scope"]
+        : tool.name === "studyos_restore_change" ? ["confirm", "id", "onlyThisChange"] : ["confirm", "id"];
       assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), what, tool.name);
       assert.equal(tool.inputSchema.required.includes("confirm"), true, tool.name);
       assert.deepEqual(tool.inputSchema.properties.confirm.enum, [true], tool.name);

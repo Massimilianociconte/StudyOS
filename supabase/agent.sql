@@ -7,7 +7,8 @@
 -- righe di studyos_items di quell'account, con la stessa regola LWW di push_studyos_rows.
 -- Il segreto non apre nient'altro: né sessioni, né altre tabelle, né altri account.
 -- Dalla 1.8.0 ogni scrittura del connettore finisce nel registro studyos_agent_audit (prima e
--- dopo), leggibile e ripristinabile dall'app e dal connettore: rieseguire questo file.
+-- dopo, raggruppata per chiamata dello strumento), leggibile e ripristinabile dall'app e dal
+-- connettore: rieseguire questo file.
 
 create table if not exists public.studyos_agent_grants (
   id uuid primary key default gen_random_uuid(),
@@ -157,8 +158,10 @@ grant execute on function public.studyos_agent_pull(text, timestamptz, integer, 
 -- lascia una voce con l'immagine prima e dopo: la scrive la funzione stessa, quindi l'hub non può
 -- saltarla. Le immagini sono senza file incorporati (copertine, file, foto); solo un'eliminazione
 -- tiene a parte i file della riga eliminata (before_files), per poterla ripristinare intera.
+-- Le voci di una stessa chiamata di uno strumento hanno lo stesso call_id (es. eliminare una
+-- sessione la toglie anche da obiettivi, note e materiali): si mostrano e si annullano insieme.
 -- La persona legge le proprie voci dall'app (RLS); nessun client le scrive o le cancella.
--- Conservazione: 90 giorni e al massimo 2000 voci per account, potate dentro le funzioni che scrivono.
+-- Conservazione: 90 giorni e circa 2000 voci per account, potate dentro le funzioni che scrivono.
 create table if not exists public.studyos_agent_audit (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
@@ -166,6 +169,9 @@ create table if not exists public.studyos_agent_audit (
   grant_id uuid references public.studyos_agent_grants (id) on delete set null,
   grant_label text not null default '',
   tool text not null default '',
+  -- Chiamata dello strumento (una per richiesta dell'agente, anche su più push). Null = hub di prima:
+  -- la voce è una chiamata da sola.
+  call_id uuid,
   entity_type text not null,
   entity_id text not null,
   action text not null check (action in ('create', 'update', 'delete')),
@@ -182,8 +188,14 @@ create table if not exists public.studyos_agent_audit (
   created_at timestamptz not null default clock_timestamp()
 );
 
+-- Prima revisione della 1.8.0: la tabella c'era già senza call_id.
+alter table public.studyos_agent_audit add column if not exists call_id uuid;
+
 create index if not exists studyos_agent_audit_user_idx
   on public.studyos_agent_audit (user_id, created_at desc, id desc);
+-- Voci di una chiamata (call_id, o la voce stessa per gli hub di prima).
+create index if not exists studyos_agent_audit_call_idx
+  on public.studyos_agent_audit (user_id, (coalesce(call_id, id)));
 
 alter table public.studyos_agent_audit enable row level security;
 
@@ -193,6 +205,14 @@ create policy "studyos_agent_audit_select_own" on public.studyos_agent_audit
 
 revoke all on public.studyos_agent_audit from anon, authenticated;
 grant select on public.studyos_agent_audit to authenticated;
+
+-- Funzioni della prima revisione della 1.8.0 con firme diverse: via, così ogni chiamata ha una sola
+-- funzione possibile (PostgREST rifiuta le chiamate ambigue). Rieseguendo il file non c'è più niente.
+drop function if exists public.studyos_agent_push(text, text, jsonb, text);
+drop function if exists public.studyos_agent_audit_list(text, integer, integer, text, text, timestamptz, timestamptz);
+drop function if exists public.studyos_agent_audit_own(integer, integer, text, text, timestamptz, timestamptz);
+drop function if exists public.studyos_agent_audit_rows(uuid, integer, integer, text, text, timestamptz, timestamptz);
+drop function if exists public.studyos_agent_restore_apply(uuid, uuid, uuid, text, text);
 
 -- Permesso attivo del segreto (riga intera: id, account, etichetta). Interna: nessun grant.
 create or replace function public.studyos_agent_grant_of(p_secret text)
@@ -216,7 +236,7 @@ $$;
 
 revoke all on function public.studyos_agent_grant_of(text) from public, anon, authenticated;
 
--- Immagine per il registro: il payload senza file incorporati.
+-- Immagine per il registro: il payload senza file incorporati (anche per i tombstone).
 create or replace function public.studyos_agent_audit_image(p_payload jsonb)
 returns jsonb
 language sql
@@ -247,8 +267,13 @@ $$;
 
 revoke all on function public.studyos_agent_audit_files(jsonb) from public, anon, authenticated;
 
--- Conservazione: via le voci oltre 90 giorni e oltre le 2000 più recenti dell'account. Usa solo
--- l'indice (user_id, created_at desc, id desc): al massimo 2001 voci lette.
+-- Conservazione, a ogni scrittura che lascia voci:
+-- 1. via le voci oltre 90 giorni: un tratto dell'indice (user_id, created_at desc, id desc), di
+--    solito vuoto;
+-- 2. tetto delle 2000 voci: si contano al massimo 2101 voci dell'account, dall'indice; solo oltre
+--    2100 si torna alle 2000 più recenti. Così l'ordinamento e la cancellazione grossa capitano una
+--    volta ogni 100 voci nuove circa, non a ogni scrittura (tra una potatura e l'altra un account
+--    può avere fino a 2100 voci).
 create or replace function public.studyos_agent_audit_prune(p_user uuid)
 returns void
 language plpgsql
@@ -258,9 +283,15 @@ as $$
 declare
   v_at timestamptz;
   v_id uuid;
+  v_count integer;
 begin
   delete from public.studyos_agent_audit as a
   where a.user_id = p_user and a.created_at < now() - interval '90 days';
+  select count(*) into v_count
+  from (select 1 from public.studyos_agent_audit as a where a.user_id = p_user limit 2101) as counted;
+  if v_count <= 2100 then
+    return;
+  end if;
   select a.created_at, a.id into v_at, v_id
   from public.studyos_agent_audit as a
   where a.user_id = p_user
@@ -277,16 +308,18 @@ revoke all on function public.studyos_agent_audit_prune(uuid) from public, anon,
 
 -- Stessa scrittura condizionale di push_studyos_rows, per l'account del segreto. I file
 -- incorporati tolti dal pull tornano dalla riga attuale se il payload non li porta.
--- Dalla 1.8.0 scrive anche il registro (con p_tool, lo strumento che ha chiesto la modifica).
--- La versione a tre argomenti si toglie: con p_tool predefinito un hub di prima la chiama ancora
--- uguale (PostgREST usa i valori predefiniti), e due versioni renderebbero ambigua la chiamata.
+-- Dalla 1.8.0 scrive anche il registro: p_tool è lo strumento che ha chiesto la modifica, p_call la
+-- chiamata (uguale su tutte le push della stessa richiesta). Le versioni con meno argomenti si
+-- tolgono: con i valori predefiniti un hub di prima chiama questa uguale (PostgREST usa i
+-- predefiniti), e più versioni renderebbero ambigua la chiamata.
 drop function if exists public.studyos_agent_push(text, text, jsonb);
 
 create or replace function public.studyos_agent_push(
   p_secret text,
   p_client_id text,
   p_rows jsonb,
-  p_tool text default ''
+  p_tool text default '',
+  p_call uuid default null
 )
 returns table(entity_type text, entity_id text, accepted boolean)
 language plpgsql
@@ -366,7 +399,7 @@ begin
       into v_applied, v_stamp;
 
     -- Registro: solo ciò che cambia davvero (non la stessa riga riscritta, non un'eliminazione di
-    -- ciò che non c'era o era già eliminato).
+    -- ciò che non c'era o era già eliminato). Nessuna immagine tiene file: solo before_files.
     if coalesce(v_applied, false)
        and (v_current is null or v_current is distinct from v_payload or v_current_deleted is distinct from v_deleted)
        and not (v_deleted and (v_current is null or v_current_deleted)) then
@@ -376,11 +409,11 @@ begin
         else 'update'
       end;
       insert into public.studyos_agent_audit
-        (user_id, grant_id, grant_label, tool, entity_type, entity_id, action, before, after, before_files, after_stamp)
+        (user_id, grant_id, grant_label, tool, call_id, entity_type, entity_id, action, before, after, before_files, after_stamp)
       values (
-        v_user, v_grant.id, coalesce(v_grant.label, ''), v_tool, v_type, v_id, v_action,
+        v_user, v_grant.id, coalesce(v_grant.label, ''), v_tool, p_call, v_type, v_id, v_action,
         case when v_action = 'create' then null else public.studyos_agent_audit_image(v_current) end,
-        case when v_deleted then v_payload else public.studyos_agent_audit_image(v_payload) end,
+        public.studyos_agent_audit_image(v_payload),
         case when v_action = 'delete' then public.studyos_agent_audit_files(v_current) end,
         v_stamp
       );
@@ -399,12 +432,17 @@ begin
 end;
 $$;
 
-revoke all on function public.studyos_agent_push(text, text, jsonb, text) from public;
-grant execute on function public.studyos_agent_push(text, text, jsonb, text) to anon, authenticated;
+revoke all on function public.studyos_agent_push(text, text, jsonb, text, uuid) from public;
+grant execute on function public.studyos_agent_push(text, text, jsonb, text, uuid) to anon, authenticated;
 
--- Voci del registro di un account, la più recente prima, con i filtri dello strumento
--- studyos_list_audit. can_restore = la riga ha ancora il timbro di quella scrittura e la voce non è
--- già stata annullata. total = voci che rispettano i filtri. Interna: nessun grant.
+-- Registro di un account per chiamate, la più recente prima, con i filtri di studyos_list_audit:
+-- una chiamata entra se almeno una sua voce rispetta i filtri, e arriva con le sue voci (le prime 5;
+-- tutte, fino a 200, se si chiede proprio quella chiamata con p_call_id). limit e offset contano le
+-- chiamate; total = chiamate che rispettano i filtri. Dentro una chiamata prima le eliminazioni,
+-- poi le creazioni, poi le modifiche (l'azione principale prima dei collegamenti tolti o rimessi).
+-- can_restore: la voce da sola si può annullare (la riga ha ancora il timbro di quella scrittura).
+-- call_can_restore: l'intera chiamata si può annullare (per ogni elemento, l'ultima voce non
+-- annullata ha ancora il suo timbro). Interna: nessun grant.
 create or replace function public.studyos_agent_audit_rows(
   p_user uuid,
   p_limit integer,
@@ -412,7 +450,8 @@ create or replace function public.studyos_agent_audit_rows(
   p_entity_id text,
   p_tool text,
   p_since timestamptz,
-  p_until timestamptz
+  p_until timestamptz,
+  p_call_id uuid
 )
 returns table(
   id uuid,
@@ -428,6 +467,11 @@ returns table(
   restore_of uuid,
   restored_at timestamptz,
   can_restore boolean,
+  call_id uuid,
+  call_at timestamptz,
+  call_size integer,
+  call_can_restore boolean,
+  call_restored_at timestamptz,
   total bigint
 )
 language sql
@@ -435,27 +479,67 @@ stable
 security definer
 set search_path = public
 as $$
-  select a.id, a.created_at, a.grant_label, a.grant_id is null and a.restore_of is not null, a.tool,
-    a.entity_type, a.entity_id, a.action, a.before, a.after, a.restore_of, a.restored_at,
-    a.restored_at is null and a.after_stamp is not null and exists (
-      select 1 from public.studyos_items as i
-      where i.user_id = a.user_id and i.entity_type = a.entity_type and i.entity_id = a.entity_id
-        and i.deleted = (a.action = 'delete')
-        and public.studyos_item_stamp(i.payload, i.deleted, i.updated_at) = a.after_stamp
-    ),
-    count(*) over ()
-  from public.studyos_agent_audit as a
-  where a.user_id = p_user
-    and (nullif(p_entity_id, '') is null or a.entity_id = p_entity_id)
-    and (nullif(p_tool, '') is null or a.tool = p_tool)
-    and (p_since is null or a.created_at >= p_since)
-    and (p_until is null or a.created_at < p_until)
-  order by a.created_at desc, a.id desc
-  offset greatest(coalesce(p_offset, 0), 0)
-  limit least(greatest(coalesce(p_limit, 20), 1), 100)
+  with hit as (
+    select distinct coalesce(a.call_id, a.id) as call_key
+    from public.studyos_agent_audit as a
+    where a.user_id = p_user
+      and (nullif(p_entity_id, '') is null or a.entity_id = p_entity_id)
+      and (nullif(p_tool, '') is null or a.tool = p_tool)
+      and (p_since is null or a.created_at >= p_since)
+      and (p_until is null or a.created_at < p_until)
+      and (p_call_id is null or coalesce(a.call_id, a.id) = p_call_id)
+  ),
+  calls as (
+    select coalesce(a.call_id, a.id) as call_key, max(a.created_at) as call_at, count(*)::integer as call_size,
+      case when bool_and(a.restored_at is not null) then max(a.restored_at) end as call_restored_at
+    from public.studyos_agent_audit as a
+    where a.user_id = p_user and coalesce(a.call_id, a.id) in (select h.call_key from hit as h)
+    group by 1
+  ),
+  page as (
+    select c.call_key, c.call_at, c.call_size, c.call_restored_at, count(*) over () as total
+    from calls as c
+    order by c.call_at desc, c.call_key desc
+    offset greatest(coalesce(p_offset, 0), 0)
+    limit least(greatest(coalesce(p_limit, 20), 1), 50)
+  ),
+  entries as (
+    select a.id, a.created_at, a.grant_label, a.grant_id, a.tool, a.entity_type, a.entity_id, a.action,
+      a.before, a.after, a.restore_of, a.restored_at,
+      p.call_key, p.call_at, p.call_size, p.call_restored_at, p.total,
+      a.restored_at is null and a.after_stamp is not null and exists (
+        select 1 from public.studyos_items as i
+        where i.user_id = a.user_id and i.entity_type = a.entity_type and i.entity_id = a.entity_id
+          and i.deleted = (a.action = 'delete')
+          and public.studyos_item_stamp(i.payload, i.deleted, i.updated_at) = a.after_stamp
+      ) as fresh,
+      row_number() over (
+        partition by p.call_key, a.entity_type, a.entity_id, a.restored_at is null
+        order by a.created_at desc, a.id desc
+      ) as item_rank,
+      row_number() over (
+        partition by p.call_key
+        order by case a.action when 'delete' then 0 when 'create' then 1 else 2 end, a.created_at, a.id
+      ) as position
+    from public.studyos_agent_audit as a
+    join page as p on coalesce(a.call_id, a.id) = p.call_key
+    where a.user_id = p_user
+  ),
+  judged as (
+    select e.*,
+      coalesce(bool_and(e.fresh) filter (where e.restored_at is null and e.item_rank = 1)
+        over (partition by e.call_key), false) as whole
+    from entries as e
+  )
+  select j.id, j.created_at, j.grant_label, j.grant_id is null and j.restore_of is not null, j.tool,
+    j.entity_type, j.entity_id, j.action, j.before, j.after, j.restore_of, j.restored_at, j.fresh,
+    j.call_key, j.call_at, j.call_size, j.whole, j.call_restored_at, j.total
+  from judged as j
+  where j.position <= case when p_call_id is null then 5 else 200 end
+  order by j.call_at desc, j.call_key desc, j.position
 $$;
 
-revoke all on function public.studyos_agent_audit_rows(uuid, integer, integer, text, text, timestamptz, timestamptz) from public, anon, authenticated;
+revoke all on function public.studyos_agent_audit_rows(uuid, integer, integer, text, text, timestamptz, timestamptz, uuid) from public, anon, authenticated;
 
 -- Registro per il connettore remoto (studyos_list_audit): col segreto, come pull e push.
 create or replace function public.studyos_agent_audit_list(
@@ -465,7 +549,8 @@ create or replace function public.studyos_agent_audit_list(
   p_entity_id text default null,
   p_tool text default null,
   p_since timestamptz default null,
-  p_until timestamptz default null
+  p_until timestamptz default null,
+  p_call_id uuid default null
 )
 returns table(
   id uuid,
@@ -481,6 +566,11 @@ returns table(
   restore_of uuid,
   restored_at timestamptz,
   can_restore boolean,
+  call_id uuid,
+  call_at timestamptz,
+  call_size integer,
+  call_can_restore boolean,
+  call_restored_at timestamptz,
   total bigint
 )
 language plpgsql
@@ -495,12 +585,12 @@ begin
     raise exception 'Collegamento dell''assistente non valido o revocato.' using errcode = '28000';
   end if;
   return query
-    select * from public.studyos_agent_audit_rows(v_grant.user_id, p_limit, p_offset, p_entity_id, p_tool, p_since, p_until);
+    select * from public.studyos_agent_audit_rows(v_grant.user_id, p_limit, p_offset, p_entity_id, p_tool, p_since, p_until, p_call_id);
 end;
 $$;
 
-revoke all on function public.studyos_agent_audit_list(text, integer, integer, text, text, timestamptz, timestamptz) from public;
-grant execute on function public.studyos_agent_audit_list(text, integer, integer, text, text, timestamptz, timestamptz) to anon, authenticated;
+revoke all on function public.studyos_agent_audit_list(text, integer, integer, text, text, timestamptz, timestamptz, uuid) from public;
+grant execute on function public.studyos_agent_audit_list(text, integer, integer, text, text, timestamptz, timestamptz, uuid) to anon, authenticated;
 
 -- Registro per l'app (Impostazioni → Agenti → «Modifiche del connettore»): solo le voci di chi ha
 -- fatto l'accesso.
@@ -510,7 +600,8 @@ create or replace function public.studyos_agent_audit_own(
   p_entity_id text default null,
   p_tool text default null,
   p_since timestamptz default null,
-  p_until timestamptz default null
+  p_until timestamptz default null,
+  p_call_id uuid default null
 )
 returns table(
   id uuid,
@@ -526,6 +617,11 @@ returns table(
   restore_of uuid,
   restored_at timestamptz,
   can_restore boolean,
+  call_id uuid,
+  call_at timestamptz,
+  call_size integer,
+  call_can_restore boolean,
+  call_restored_at timestamptz,
   total bigint
 )
 language plpgsql
@@ -538,21 +634,44 @@ begin
     raise exception 'Accedi con il tuo account.' using errcode = '28000';
   end if;
   return query
-    select * from public.studyos_agent_audit_rows(auth.uid(), p_limit, p_offset, p_entity_id, p_tool, p_since, p_until);
+    select * from public.studyos_agent_audit_rows(auth.uid(), p_limit, p_offset, p_entity_id, p_tool, p_since, p_until, p_call_id);
 end;
 $$;
 
-revoke all on function public.studyos_agent_audit_own(integer, integer, text, text, timestamptz, timestamptz) from public, anon;
-grant execute on function public.studyos_agent_audit_own(integer, integer, text, text, timestamptz, timestamptz) to authenticated;
+revoke all on function public.studyos_agent_audit_own(integer, integer, text, text, timestamptz, timestamptz, uuid) from public, anon;
+grant execute on function public.studyos_agent_audit_own(integer, integer, text, text, timestamptz, timestamptz, uuid) to authenticated;
 
--- Ripristino di una voce: rimette l'immagine "prima" come nuova scrittura con un timbro nuovo
--- (oltre quello attuale), solo se la riga non è cambiata da quella voce; altrimenti "conflict"
--- con la riga attuale e nessuna scrittura. Una creazione si annulla eliminando, un'eliminazione
--- rimettendo l'elemento (file compresi). Il ripristino lascia a sua volta una voce (restore_of) e
--- segna quella annullata (restored_at). Interna: nessun grant.
-create or replace function public.studyos_agent_restore_apply(
+-- Voci della chiamata che contiene p_id (id di una voce o della chiamata stessa). Interna.
+create or replace function public.studyos_agent_call_ids(p_user uuid, p_id uuid)
+returns uuid[]
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select array_agg(a.id)
+  from public.studyos_agent_audit as a
+  where a.user_id = p_user
+    and coalesce(a.call_id, a.id) = (
+      select coalesce(b.call_id, b.id)
+      from public.studyos_agent_audit as b
+      where b.user_id = p_user and (b.id = p_id or coalesce(b.call_id, b.id) = p_id)
+      limit 1
+    )
+$$;
+
+revoke all on function public.studyos_agent_call_ids(uuid, uuid) from public, anon, authenticated;
+
+-- Ripristino di un insieme di voci (una voce, o tutte quelle di una chiamata), tutto o niente.
+-- Per ogni elemento toccato: se la riga ha ancora il timbro dell'ultima voce non annullata, torna
+-- com'era prima della prima voce (una creazione si annulla eliminando, un'eliminazione rimettendo
+-- l'elemento con i suoi file); altrimenti nessuna scrittura e "conflict" con l'elenco degli elementi
+-- cambiati dopo (conflicts). Le scritture hanno un timbro nuovo, oltre quello attuale, e lasciano
+-- voci di ripristino (restore_of) con un loro call_id: annullare il ripristino rimette tutto.
+-- Interna: nessun grant.
+create or replace function public.studyos_agent_restore_set(
   p_user uuid,
-  p_audit_id uuid,
+  p_ids uuid[],
   p_grant_id uuid,
   p_label text,
   p_client_id text
@@ -563,9 +682,18 @@ security definer
 set search_path = public
 as $$
 declare
-  v_entry public.studyos_agent_audit;
+  v_call uuid := gen_random_uuid();
+  v_open uuid[];
+  v_first public.studyos_agent_audit;
+  v_target record;
+  v_newest public.studyos_agent_audit;
+  v_oldest public.studyos_agent_audit;
   v_item public.studyos_items;
   v_stamp timestamptz;
+  v_files jsonb;
+  v_conflicts jsonb := '[]'::jsonb;
+  v_changes jsonb := '[]'::jsonb;
+  v_items integer := 0;
   v_iso text;
   v_new jsonb;
   v_new_deleted boolean;
@@ -573,89 +701,146 @@ declare
   v_key text;
   v_new_id uuid;
 begin
-  select * into v_entry from public.studyos_agent_audit as a
-  where a.id = p_audit_id and a.user_id = p_user
+  -- Voci bloccate fino alla fine, sempre nello stesso ordine.
+  perform 1 from public.studyos_agent_audit as a
+  where a.user_id = p_user and a.id = any(p_ids)
+  order by a.id
   for update;
   if not found then
     return jsonb_build_object('status', 'not_found');
   end if;
-  if v_entry.restored_at is not null then
-    return jsonb_build_object('status', 'already_restored', 'entityType', v_entry.entity_type,
-      'entityId', v_entry.entity_id, 'restoredAt', v_entry.restored_at);
+  select array_agg(a.id) into v_open
+  from public.studyos_agent_audit as a
+  where a.user_id = p_user and a.id = any(p_ids) and a.restored_at is null;
+  if v_open is null then
+    select * into v_first from public.studyos_agent_audit as a
+    where a.user_id = p_user and a.id = any(p_ids)
+    order by a.restored_at desc, a.id
+    limit 1;
+    return jsonb_build_object('status', 'already_restored', 'entityType', v_first.entity_type,
+      'entityId', v_first.entity_id, 'restoredAt', v_first.restored_at);
   end if;
 
-  select * into v_item from public.studyos_items as i
-  where i.user_id = p_user and i.entity_type = v_entry.entity_type and i.entity_id = v_entry.entity_id
-  for update;
-  if not found then
-    return jsonb_build_object('status', 'conflict', 'entityType', v_entry.entity_type,
-      'entityId', v_entry.entity_id, 'current', null, 'currentDeleted', true);
-  end if;
-  v_stamp := public.studyos_item_stamp(v_item.payload, v_item.deleted, v_item.updated_at);
-  if v_entry.after_stamp is null
-     or v_stamp is distinct from v_entry.after_stamp
-     or v_item.deleted is distinct from (v_entry.action = 'delete') then
-    return jsonb_build_object('status', 'conflict', 'entityType', v_entry.entity_type,
-      'entityId', v_entry.entity_id,
-      'current', case when v_item.deleted then null else public.studyos_agent_audit_image(v_item.payload) end,
-      'currentDeleted', v_item.deleted);
-  end if;
-  if v_entry.action <> 'create' and jsonb_typeof(v_entry.before) is distinct from 'object' then
-    return jsonb_build_object('status', 'conflict', 'entityType', v_entry.entity_type,
-      'entityId', v_entry.entity_id, 'current', null, 'currentDeleted', v_item.deleted);
-  end if;
-
-  -- Timbro nuovo: adesso, e comunque oltre quello attuale (anche se un orologio avanti l'ha messo nel futuro).
-  v_iso := to_char(
-    greatest(clock_timestamp(), v_stamp + interval '1 millisecond') at time zone 'utc',
-    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
-  );
-  if v_entry.action = 'create' then
-    v_new := jsonb_build_object('id', v_entry.entity_id, 'deletedAt', v_iso);
-    v_new_deleted := true;
-    v_action := 'delete';
-  else
-    v_new := (v_entry.before - 'deletedAt') || coalesce(v_entry.before_files, '{}'::jsonb)
-      || jsonb_build_object('updatedAt', v_iso);
-    if not v_item.deleted then
-      foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl'] loop
-        if not (v_new ? v_key) and (v_item.payload ? v_key) then
-          v_new := v_new || jsonb_build_object(v_key, v_item.payload->v_key);
-        end if;
-      end loop;
+  -- 1. Controllo: niente si scrive finché ogni elemento non è com'era dopo l'ultima voce.
+  for v_target in
+    select a.entity_type, a.entity_id
+    from public.studyos_agent_audit as a
+    where a.id = any(v_open)
+    group by a.entity_type, a.entity_id
+    order by max(a.created_at) desc, a.entity_type, a.entity_id
+  loop
+    v_items := v_items + 1;
+    select * into v_newest from public.studyos_agent_audit as a
+    where a.id = any(v_open) and a.entity_type = v_target.entity_type and a.entity_id = v_target.entity_id
+    order by a.created_at desc, a.id desc limit 1;
+    select * into v_oldest from public.studyos_agent_audit as a
+    where a.id = any(v_open) and a.entity_type = v_target.entity_type and a.entity_id = v_target.entity_id
+    order by a.created_at, a.id limit 1;
+    select * into v_item from public.studyos_items as i
+    where i.user_id = p_user and i.entity_type = v_target.entity_type and i.entity_id = v_target.entity_id
+    for update;
+    if not found then
+      v_conflicts := v_conflicts || jsonb_build_array(jsonb_build_object('auditId', v_newest.id,
+        'entityType', v_target.entity_type, 'entityId', v_target.entity_id, 'current', null, 'currentDeleted', true));
+      continue;
     end if;
-    v_new_deleted := false;
-    v_action := case when v_entry.action = 'delete' then 'create' else 'update' end;
+    v_stamp := public.studyos_item_stamp(v_item.payload, v_item.deleted, v_item.updated_at);
+    if v_newest.after_stamp is null
+       or v_stamp is distinct from v_newest.after_stamp
+       or v_item.deleted is distinct from (v_newest.action = 'delete') then
+      v_conflicts := v_conflicts || jsonb_build_array(jsonb_build_object('auditId', v_newest.id,
+        'entityType', v_target.entity_type, 'entityId', v_target.entity_id,
+        'current', case when v_item.deleted then null else public.studyos_agent_audit_image(v_item.payload) end,
+        'currentDeleted', v_item.deleted));
+    elsif v_oldest.action <> 'create' and jsonb_typeof(v_oldest.before) is distinct from 'object' then
+      v_conflicts := v_conflicts || jsonb_build_array(jsonb_build_object('auditId', v_oldest.id,
+        'entityType', v_target.entity_type, 'entityId', v_target.entity_id, 'current', null, 'currentDeleted', v_item.deleted));
+    end if;
+  end loop;
+  if jsonb_array_length(v_conflicts) > 0 then
+    return (v_conflicts->0) || jsonb_build_object('status', 'conflict', 'items', v_items, 'conflicts', v_conflicts);
   end if;
 
-  update public.studyos_items
-  set payload = v_new, deleted = v_new_deleted, encrypted = false, client_id = p_client_id
-  where id = v_item.id;
+  -- 2. Scrittura, elemento per elemento (righe già bloccate al punto 1).
+  for v_target in
+    select a.entity_type, a.entity_id
+    from public.studyos_agent_audit as a
+    where a.id = any(v_open)
+    group by a.entity_type, a.entity_id
+    order by max(a.created_at) desc, a.entity_type, a.entity_id
+  loop
+    select * into v_newest from public.studyos_agent_audit as a
+    where a.id = any(v_open) and a.entity_type = v_target.entity_type and a.entity_id = v_target.entity_id
+    order by a.created_at desc, a.id desc limit 1;
+    select * into v_oldest from public.studyos_agent_audit as a
+    where a.id = any(v_open) and a.entity_type = v_target.entity_type and a.entity_id = v_target.entity_id
+    order by a.created_at, a.id limit 1;
+    select * into v_item from public.studyos_items as i
+    where i.user_id = p_user and i.entity_type = v_target.entity_type and i.entity_id = v_target.entity_id;
+    v_stamp := public.studyos_item_stamp(v_item.payload, v_item.deleted, v_item.updated_at);
+    -- Timbro nuovo: adesso, e comunque oltre quello attuale (anche se un orologio avanti l'ha messo nel futuro).
+    v_iso := to_char(
+      greatest(clock_timestamp(), v_stamp + interval '1 millisecond') at time zone 'utc',
+      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+    );
+    if v_oldest.action = 'create' then
+      -- Creato ed eliminato nella stessa chiamata: è già com'era prima.
+      continue when v_item.deleted;
+      v_new := jsonb_build_object('id', v_target.entity_id, 'deletedAt', v_iso);
+      v_new_deleted := true;
+      v_action := 'delete';
+    else
+      -- I file dell'ultima eliminazione di questo elemento (se c'è), altrimenti quelli della riga attuale.
+      select a.before_files into v_files from public.studyos_agent_audit as a
+      where a.id = any(v_open) and a.entity_type = v_target.entity_type and a.entity_id = v_target.entity_id
+        and a.before_files is not null
+      order by a.created_at desc, a.id desc limit 1;
+      v_new := (v_oldest.before - 'deletedAt') || coalesce(v_files, '{}'::jsonb)
+        || jsonb_build_object('updatedAt', v_iso);
+      if not v_item.deleted then
+        foreach v_key in array array['dataUrl', 'cover', 'avatarDataUrl'] loop
+          if not (v_new ? v_key) and (v_item.payload ? v_key) then
+            v_new := v_new || jsonb_build_object(v_key, v_item.payload->v_key);
+          end if;
+        end loop;
+      end if;
+      v_new_deleted := false;
+      v_action := case when v_item.deleted then 'create' else 'update' end;
+    end if;
 
-  insert into public.studyos_agent_audit
-    (user_id, grant_id, grant_label, tool, entity_type, entity_id, action, before, after, before_files, after_stamp, restore_of)
-  values (
-    p_user, p_grant_id, coalesce(p_label, ''), 'studyos_restore_change', v_entry.entity_type, v_entry.entity_id, v_action,
-    case when v_item.deleted then null else public.studyos_agent_audit_image(v_item.payload) end,
-    case when v_new_deleted then v_new else public.studyos_agent_audit_image(v_new) end,
-    case when v_action = 'delete' then public.studyos_agent_audit_files(v_item.payload) end,
-    public.studyos_item_stamp(v_new, v_new_deleted, now()),
-    v_entry.id
-  )
-  returning id into v_new_id;
-  update public.studyos_agent_audit set restored_at = clock_timestamp() where id = v_entry.id;
+    update public.studyos_items
+    set payload = v_new, deleted = v_new_deleted, encrypted = false, client_id = p_client_id
+    where id = v_item.id;
+
+    insert into public.studyos_agent_audit
+      (user_id, grant_id, grant_label, tool, call_id, entity_type, entity_id, action, before, after, before_files, after_stamp, restore_of)
+    values (
+      p_user, p_grant_id, coalesce(p_label, ''), 'studyos_restore_change', v_call, v_target.entity_type, v_target.entity_id, v_action,
+      case when v_item.deleted then null else public.studyos_agent_audit_image(v_item.payload) end,
+      public.studyos_agent_audit_image(v_new),
+      case when v_action = 'delete' then public.studyos_agent_audit_files(v_item.payload) end,
+      public.studyos_item_stamp(v_new, v_new_deleted, now()),
+      v_newest.id
+    )
+    returning id into v_new_id;
+    v_changes := v_changes || jsonb_build_array(jsonb_build_object('auditId', v_new_id,
+      'entityType', v_target.entity_type, 'entityId', v_target.entity_id, 'action', v_action,
+      'item', case when v_new_deleted then null else public.studyos_agent_audit_image(v_new) end));
+  end loop;
+
+  update public.studyos_agent_audit set restored_at = clock_timestamp() where id = any(v_open);
   perform public.studyos_agent_audit_prune(p_user);
 
-  return jsonb_build_object('status', 'restored', 'auditId', v_new_id, 'entityType', v_entry.entity_type,
-    'entityId', v_entry.entity_id, 'action', v_action,
-    'item', case when v_new_deleted then null else public.studyos_agent_audit_image(v_new) end);
+  -- In cima i campi del primo elemento, come la risposta di una voce sola.
+  return coalesce(v_changes->0, '{}'::jsonb) || jsonb_build_object('status', 'restored', 'callId', v_call,
+    'items', v_items, 'changes', v_changes);
 end;
 $$;
 
-revoke all on function public.studyos_agent_restore_apply(uuid, uuid, uuid, text, text) from public, anon, authenticated;
+revoke all on function public.studyos_agent_restore_set(uuid, uuid[], uuid, text, text) from public, anon, authenticated;
 
--- Ripristino dal connettore remoto (studyos_restore_change), col segreto. La riga scritta ha il
--- client_id del connettore, come le sue altre scritture.
+-- Ripristino di una sola voce dal connettore remoto (studyos_restore_change con onlyThisChange), col
+-- segreto. La riga scritta ha il client_id del connettore, come le sue altre scritture.
 create or replace function public.studyos_agent_restore(p_secret text, p_audit_id uuid)
 returns jsonb
 language plpgsql
@@ -668,15 +853,37 @@ begin
   if v_grant.user_id is null then
     raise exception 'Collegamento dell''assistente non valido o revocato.' using errcode = '28000';
   end if;
-  return public.studyos_agent_restore_apply(v_grant.user_id, p_audit_id, v_grant.id, v_grant.label, 'agent-remote');
+  return public.studyos_agent_restore_set(v_grant.user_id, array[p_audit_id], v_grant.id, v_grant.label, 'agent-remote');
 end;
 $$;
 
 revoke all on function public.studyos_agent_restore(text, uuid) from public;
 grant execute on function public.studyos_agent_restore(text, uuid) to anon, authenticated;
 
--- Ripristino dall'app («Ripristina» in «Modifiche del connettore»), per chi ha fatto l'accesso.
--- client_id vuoto: anche il dispositivo che ripristina riceve la riga al pull successivo.
+-- Ripristino di un'intera chiamata dal connettore remoto (studyos_restore_change): p_id è l'id di una
+-- sua voce o della chiamata.
+create or replace function public.studyos_agent_restore_call(p_secret text, p_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_grant public.studyos_agent_grants := public.studyos_agent_grant_of(p_secret);
+begin
+  if v_grant.user_id is null then
+    raise exception 'Collegamento dell''assistente non valido o revocato.' using errcode = '28000';
+  end if;
+  return public.studyos_agent_restore_set(v_grant.user_id, public.studyos_agent_call_ids(v_grant.user_id, p_id),
+    v_grant.id, v_grant.label, 'agent-remote');
+end;
+$$;
+
+revoke all on function public.studyos_agent_restore_call(text, uuid) from public;
+grant execute on function public.studyos_agent_restore_call(text, uuid) to anon, authenticated;
+
+-- Ripristino di una voce dall'app, per chi ha fatto l'accesso. client_id vuoto: anche il
+-- dispositivo che ripristina riceve la riga al pull successivo.
 create or replace function public.studyos_agent_restore_own(p_audit_id uuid)
 returns jsonb
 language plpgsql
@@ -687,9 +894,27 @@ begin
   if auth.uid() is null then
     raise exception 'Accedi con il tuo account.' using errcode = '28000';
   end if;
-  return public.studyos_agent_restore_apply(auth.uid(), p_audit_id, null, '', null);
+  return public.studyos_agent_restore_set(auth.uid(), array[p_audit_id], null, '', null);
 end;
 $$;
 
 revoke all on function public.studyos_agent_restore_own(uuid) from public, anon;
 grant execute on function public.studyos_agent_restore_own(uuid) to authenticated;
+
+-- «Ripristina» in «Modifiche del connettore»: l'intera azione (tutte le voci della chiamata).
+create or replace function public.studyos_agent_restore_call_own(p_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Accedi con il tuo account.' using errcode = '28000';
+  end if;
+  return public.studyos_agent_restore_set(auth.uid(), public.studyos_agent_call_ids(auth.uid(), p_id), null, '', null);
+end;
+$$;
+
+revoke all on function public.studyos_agent_restore_call_own(uuid) from public, anon;
+grant execute on function public.studyos_agent_restore_call_own(uuid) to authenticated;

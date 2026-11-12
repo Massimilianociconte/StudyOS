@@ -14,7 +14,7 @@ select
     and to_regprocedure('public.studyos_revoke_agent_grants()') is not null
     and to_regprocedure('public.studyos_agent_user(text)') is not null
     and to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)') is not null
-    and to_regprocedure('public.studyos_agent_push(text,text,jsonb,text)') is not null as rpc_ready,
+    and to_regprocedure('public.studyos_agent_push(text,text,jsonb,text,uuid)') is not null as rpc_ready,
   -- Permessi: si creano e si revocano solo con l'accesso fatto.
   coalesce(has_function_privilege('authenticated', to_regprocedure('public.studyos_create_agent_grant(text)'), 'EXECUTE')
     and has_function_privilege('authenticated', to_regprocedure('public.studyos_revoke_agent_grants()'), 'EXECUTE')
@@ -23,7 +23,7 @@ select
     as grant_rpc_ready,
   -- Pull e push: le chiama l'hub con la chiave publishable e il segreto del permesso.
   coalesce(has_function_privilege('anon', to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)'), 'EXECUTE')
-    and has_function_privilege('anon', to_regprocedure('public.studyos_agent_push(text,text,jsonb,text)'), 'EXECUTE'), false)
+    and has_function_privilege('anon', to_regprocedure('public.studyos_agent_push(text,text,jsonb,text,uuid)'), 'EXECUTE'), false)
     as hub_rpc_ready,
   -- Funzioni interne: nessuno le chiama da fuori.
   not coalesce(
@@ -40,10 +40,14 @@ select
     true)
     and coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_agent_grants'), 'SELECT'), false)
     as table_privileges_ready,
-  -- Registro del connettore (1.8.0): tabella con RLS di sola lettura per chi ne è proprietario, e
-  -- nessuna vecchia push a tre argomenti rimasta (renderebbe ambigua la chiamata dell'hub).
+  -- Registro del connettore (1.8.0): tabella con call_id e RLS di sola lettura per chi ne è
+  -- proprietario, e nessuna vecchia push a tre o quattro argomenti rimasta (renderebbe ambigua la
+  -- chiamata dell'hub).
   to_regclass('public.studyos_agent_audit') is not null
+    and exists (select 1 from pg_attribute where attrelid = to_regclass('public.studyos_agent_audit')
+      and attname = 'call_id' and not attisdropped)
     and to_regprocedure('public.studyos_agent_push(text,text,jsonb)') is null
+    and to_regprocedure('public.studyos_agent_push(text,text,jsonb,text)') is null
     and coalesce((select relrowsecurity from pg_class where oid = to_regclass('public.studyos_agent_audit')), false)
     and (select count(*) from pg_policies where schemaname = 'public' and tablename = 'studyos_agent_audit') = 1
     and coalesce((select cmd = 'SELECT' and qual like '%auth.uid()%' from pg_policies
@@ -56,21 +60,29 @@ select
       true)
     and coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_agent_audit'), 'SELECT'), false)
     as audit_table_ready,
-  -- Registro e ripristino: l'hub col segreto, l'app con l'accesso fatto (mai anon).
-  coalesce(has_function_privilege('anon', to_regprocedure('public.studyos_agent_audit_list(text,integer,integer,text,text,timestamptz,timestamptz)'), 'EXECUTE')
+  -- Registro e ripristino (una voce o un'intera chiamata): l'hub col segreto, l'app con l'accesso
+  -- fatto (mai anon). Nessuna versione della prima revisione rimasta.
+  coalesce(has_function_privilege('anon', to_regprocedure('public.studyos_agent_audit_list(text,integer,integer,text,text,timestamptz,timestamptz,uuid)'), 'EXECUTE')
     and has_function_privilege('anon', to_regprocedure('public.studyos_agent_restore(text,uuid)'), 'EXECUTE')
-    and has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_audit_own(integer,integer,text,text,timestamptz,timestamptz)'), 'EXECUTE')
+    and has_function_privilege('anon', to_regprocedure('public.studyos_agent_restore_call(text,uuid)'), 'EXECUTE')
+    and has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_audit_own(integer,integer,text,text,timestamptz,timestamptz,uuid)'), 'EXECUTE')
     and has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_restore_own(uuid)'), 'EXECUTE')
-    and not has_function_privilege('anon', to_regprocedure('public.studyos_agent_audit_own(integer,integer,text,text,timestamptz,timestamptz)'), 'EXECUTE')
-    and not has_function_privilege('anon', to_regprocedure('public.studyos_agent_restore_own(uuid)'), 'EXECUTE'), false)
+    and has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_restore_call_own(uuid)'), 'EXECUTE')
+    and not has_function_privilege('anon', to_regprocedure('public.studyos_agent_audit_own(integer,integer,text,text,timestamptz,timestamptz,uuid)'), 'EXECUTE')
+    and not has_function_privilege('anon', to_regprocedure('public.studyos_agent_restore_own(uuid)'), 'EXECUTE')
+    and not has_function_privilege('anon', to_regprocedure('public.studyos_agent_restore_call_own(uuid)'), 'EXECUTE'), false)
+    and to_regprocedure('public.studyos_agent_audit_list(text,integer,integer,text,text,timestamptz,timestamptz)') is null
+    and to_regprocedure('public.studyos_agent_audit_own(integer,integer,text,text,timestamptz,timestamptz)') is null
     as audit_rpc_ready,
   -- Funzioni interne del registro: nessuno le chiama da fuori (se mancano, non pronto).
   to_regprocedure('public.studyos_agent_grant_of(text)') is not null
     and to_regprocedure('public.studyos_agent_audit_image(jsonb)') is not null
     and to_regprocedure('public.studyos_agent_audit_files(jsonb)') is not null
     and to_regprocedure('public.studyos_agent_audit_prune(uuid)') is not null
-    and to_regprocedure('public.studyos_agent_audit_rows(uuid,integer,integer,text,text,timestamptz,timestamptz)') is not null
-    and to_regprocedure('public.studyos_agent_restore_apply(uuid,uuid,uuid,text,text)') is not null
+    and to_regprocedure('public.studyos_agent_audit_rows(uuid,integer,integer,text,text,timestamptz,timestamptz,uuid)') is not null
+    and to_regprocedure('public.studyos_agent_call_ids(uuid,uuid)') is not null
+    and to_regprocedure('public.studyos_agent_restore_set(uuid,uuid[],uuid,text,text)') is not null
+    and to_regprocedure('public.studyos_agent_restore_apply(uuid,uuid,uuid,text,text)') is null
     and not exists (
       select 1
       from unnest(array[
@@ -78,8 +90,9 @@ select
         'public.studyos_agent_audit_image(jsonb)',
         'public.studyos_agent_audit_files(jsonb)',
         'public.studyos_agent_audit_prune(uuid)',
-        'public.studyos_agent_audit_rows(uuid,integer,integer,text,text,timestamptz,timestamptz)',
-        'public.studyos_agent_restore_apply(uuid,uuid,uuid,text,text)'
+        'public.studyos_agent_audit_rows(uuid,integer,integer,text,text,timestamptz,timestamptz,uuid)',
+        'public.studyos_agent_call_ids(uuid,uuid)',
+        'public.studyos_agent_restore_set(uuid,uuid[],uuid,text,text)'
       ]) as fn(signature)
       cross join unnest(array['anon', 'authenticated']) as role(name)
       where has_function_privilege(role.name, to_regprocedure(fn.signature), 'EXECUTE')

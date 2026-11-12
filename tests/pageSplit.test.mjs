@@ -46,7 +46,9 @@ test("pagine: off-by-one, una parte, una pagina, parti uguali alle pagine", () =
   const single = splitPages({ from: 5, to: 5, parts: 1 });
   assertSound(single, 5, 5);
   assert.equal(single.parts[0].text, "p. 5 (1 pagina)");
-  assert.equal(single.summary, "p. 5 (1 pagina) in 1 parte: 1 = 1 pagine.");
+  assert.equal(single.summary, "p. 5 (1 pagina) in 1 parte.");
+  assert.equal(splitPages({ from: 10, to: 20, parts: 1 }).summary, "pp. 10–20 (11 pagine) in 1 parte.");
+  assert.equal(splitPages({ from: 1, to: 2, parts: 2 }).summary, "pp. 1–2 (2 pagine) in 2 parti: 1 + 1 = 2 pagine.");
   assert.deepEqual(ranges(splitPages({ from: 1, to: 3, parts: 3 })), [[1, 1, 1], [2, 2, 1], [3, 3, 1]]);
   // 1–100 in 3: 34 + 33 + 33, non 33 + 33 + 34 né 33 × 3 = 99.
   assert.deepEqual(ranges(splitPages({ from: 1, to: 100, parts: 3 })), [[1, 34, 34], [35, 67, 33], [68, 100, 33]]);
@@ -59,6 +61,12 @@ test("pagine: più parti che pagine è un errore chiaro", () => {
   assert.equal(result.ok, false);
   assert.match(result.error, /Le pagine sono 3/);
   assert.match(result.error, /meno delle parti \(4\)/);
+  // L'intervallo una volta sola, senza parentesi dentro parentesi.
+  assert.equal(result.error.startsWith("Le pagine sono 3 (pp. 1–3), meno delle parti (4)"), true, result.error);
+  const one = splitPages({ from: 7, to: 7, parts: 2 });
+  assert.equal(one.error.startsWith("C'è 1 pagina (p. 7), meno delle parti (2)"), true, one.error);
+  const days = splitPages({ from: 1, to: 2, startDate: "2026-11-16", endDate: "2026-11-20" });
+  assert.equal(days.error.startsWith("Le pagine sono 2 (pp. 1–2) e i giorni utili 5"), true, days.error);
 });
 
 test("pagine: perPart, l'ultima parte prende il resto", () => {

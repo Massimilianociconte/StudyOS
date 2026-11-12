@@ -9,12 +9,23 @@
 // 3. confronta prima e dopo per riferimento e scrive solo le entità cambiate con
 //    `studyos_agent_push`, con la regola LWW del cloud. L'app le ritira al pull successivo.
 // Il segreto del permesso (vedi supabase/agent.sql) arriva dal «Consenti» nell'app.
-// Dalla 1.8.0 la push porta anche il nome dello strumento: il database scrive il registro
-// (studyos_agent_audit), che studyos_list_audit legge e studyos_restore_change annulla.
+// Dalla 1.8.0 la push porta anche il nome dello strumento e un id della chiamata (uguale su tutte le
+// push della stessa richiesta): il database scrive il registro (studyos_agent_audit), che
+// studyos_list_audit legge per chiamate e studyos_restore_change annulla, una chiamata intera o una voce.
+// studyos_split_pages è puro: si risponde subito, senza leggere né scrivere il cloud.
 
 import { CLOUD_UNAVAILABLE } from "./catalog";
-import { configureAgentRuntime, executeAgentTool } from "./execute";
-import { AUDIT_UUID_RE, auditImage, auditPage, type RestoreOutcome, type ServerAuditRow } from "./remoteAudit";
+import { configureAgentRuntime, executeAgentTool, splitPagesResult } from "./execute";
+import {
+  AUDIT_UUID_RE,
+  auditImage,
+  auditPage,
+  auditTitle,
+  restoreConflicts,
+  restoredChanges,
+  type RestoreOutcome,
+  type ServerAuditRow
+} from "./remoteAudit";
 import { fail, toIso } from "./toolkit";
 import type { AgentCallResult } from "./types";
 import { withZonedDate } from "./zonedDate";
@@ -46,6 +57,10 @@ export interface CloudBackend {
   /** Chiave publishable (`sb_publishable_…`): le funzioni vogliono comunque il segreto. */
   key: string;
   fetch?: typeof fetch;
+  /** Orologio (prove). */
+  now?: () => number;
+  /** Id di una chiamata (prove). */
+  newCallId?: () => string;
 }
 
 export interface CloudRunner {
@@ -80,6 +95,10 @@ const PUSH_MAX_BYTES = 900_000;
 const PUSH_MAX_ROWS = 200;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_CACHED_ACCOUNTS = 16;
+/** Dopo un PGRST202 della push nuova, per quanto si scrive come prima prima di riprovare. */
+export const LEGACY_PUSH_RETRY_MS = 10 * 60_000;
+/** Chiamate per pagina di studyos_list_audit sul server. */
+const AUDIT_PAGE_MAX = 50;
 /** client_id delle righe scritte dal connettore: diverso da ogni scheda, così l'app le ritira. */
 export const CLOUD_CLIENT_ID = "agent-remote";
 
@@ -90,15 +109,20 @@ export const CLOUD_TEXT = {
   conflict: (count: number, partial: boolean) =>
     `${partial ? "Modifica salvata solo in parte" : "Modifica non salvata"}: ${count === 1 ? "un elemento è stato cambiato" : `${count} elementi sono stati cambiati`} nel frattempo da un altro dispositivo. Rileggi i dati e riprova.`,
   auditMissing: "Il registro del connettore non è ancora attivo: chi gestisce StudyOS deve eseguire di nuovo supabase/agent.sql.",
-  badAuditId: "id deve essere l'id (un uuid) di una voce restituita da studyos_list_audit.",
+  badAuditId: "id deve essere l'id (un uuid) di una voce o di una chiamata (callId) restituito da studyos_list_audit.",
   badDate: "since e until devono essere date ISO 8601.",
   restoreNotFound: "Questa modifica non c'è nel registro: rileggi gli id con studyos_list_audit (le voci durano 90 giorni).",
   restoreDone: "Questa modifica è già stata annullata.",
-  restoreConflict: "Non annullata: l'elemento è cambiato dopo questa modifica (nell'app o con un'altra modifica). Non è stato toccato niente: in current c'è com'è ora.",
+  /** what: «Titolo» (collection itemId) del primo elemento cambiato dopo. */
+  restoreConflict: (what: string, items: number) =>
+    items > 1
+      ? `Non annullata: ${what} è cambiato dopo questa azione (nell'app o con un'altra modifica). L'annullamento è tutto o niente: nessuno dei ${items} elementi è stato toccato. In conflicts ci sono gli elementi cambiati, com'erano adesso.`
+      : `Non annullata: ${what} è cambiato dopo questa modifica (nell'app o con un'altra modifica). Non è stato toccato niente: in current c'è com'è adesso.`,
   restored: (action: string) =>
     action === "delete" ? "Modifica annullata: l'elemento creato è stato eliminato."
       : action === "create" ? "Modifica annullata: l'elemento è di nuovo tra i dati."
-        : "Modifica annullata: l'elemento è tornato com'era prima."
+        : "Modifica annullata: l'elemento è tornato com'era prima.",
+  restoredCall: (count: number) => `Azione annullata: ${count} elementi sono tornati com'erano prima.`
 } as const;
 
 class GrantError extends Error {}
@@ -171,6 +195,8 @@ const exclusive = <T>(task: () => Promise<T>): Promise<T> => {
 export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
   const base = backend.url.replace(/\/+$/, "");
   const doFetch = backend.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
+  const now = backend.now ?? (() => Date.now());
+  const newCallId = backend.newCallId ?? (() => crypto.randomUUID());
   const caches = new Map<string, AccountCache>();
 
   const rpc = async <T>(fn: string, body: Record<string, unknown>): Promise<T> => {
@@ -227,30 +253,34 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     }
   };
 
-  // agent.sql di prima della 1.8.0: studyos_agent_push senza p_tool (e senza registro). Si scopre alla
-  // prima push rifiutata con PGRST202 e da lì si manda come prima.
-  let pushTakesTool = true;
+  // agent.sql di prima: studyos_agent_push senza p_tool e p_call (quella della prima revisione 1.8.0
+  // ha p_tool ma non p_call, e accetta la chiamata a tre argomenti). Una push rifiutata con PGRST202
+  // ripete la stessa scrittura come prima; per LEGACY_PUSH_RETRY_MS si scrive così, poi si riprova la
+  // push nuova: dopo aver rieseguito agent.sql il registro torna completo senza riavviare l'hub.
+  let legacyUntil = 0;
 
-  const pushBatch = async (secret: string, rows: PushRow[], tool: string) => {
+  const pushBatch = async (secret: string, rows: PushRow[], tool: string, callId: string) => {
     const body = { p_secret: secret, p_client_id: CLOUD_CLIENT_ID, p_rows: rows };
-    if (pushTakesTool) {
+    if (now() >= legacyUntil) {
       try {
-        return await rpc<Array<{ entity_type: string; entity_id: string; accepted: boolean }>>("studyos_agent_push", { ...body, p_tool: tool });
+        const results = await rpc<Array<{ entity_type: string; entity_id: string; accepted: boolean }>>("studyos_agent_push", { ...body, p_tool: tool, p_call: callId });
+        legacyUntil = 0;
+        return results;
       } catch (error) {
         if (!(error instanceof MissingFunctionError)) throw error;
-        pushTakesTool = false;
+        legacyUntil = now() + LEGACY_PUSH_RETRY_MS;
       }
     }
     return rpc<Array<{ entity_type: string; entity_id: string; accepted: boolean }>>("studyos_agent_push", body);
   };
 
-  const push = async (secret: string, cache: AccountCache, rows: PushRow[], tool: string) => {
+  const push = async (secret: string, cache: AccountCache, rows: PushRow[], tool: string, callId: string) => {
     const encoder = new TextEncoder();
     const sized = rows.map((row) => ({ row, size: encoder.encode(JSON.stringify(row)).length }));
     let accepted = 0;
     let refused = 0;
     for (const batch of chunkBySize(sized, (item) => item.size, PUSH_MAX_BYTES, PUSH_MAX_ROWS)) {
-      const results = await pushBatch(secret, batch.map((item) => item.row), tool);
+      const results = await pushBatch(secret, batch.map((item) => item.row), tool, callId);
       if (!Array.isArray(results) || results.length !== batch.length) throw new Error("Risposta del cloud incompleta.");
       const now = new Date().toISOString();
       for (const [index, { row }] of batch.entries()) {
@@ -292,16 +322,19 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     useStudyStore.setState({ ...emptyCollections() });
     if (!rows.length) return result;
 
-    const { accepted, refused } = await push(grant.secret, cache, rows, name);
+    // Un id per richiesta: tutte le push di questa chiamata finiscono nella stessa voce del registro.
+    const { accepted, refused } = await push(grant.secret, cache, rows, name, newCallId());
     if (!refused) return result;
     await refresh(grant.secret, cache).catch(() => caches.delete(grant.secret));
     return fail("failed", CLOUD_TEXT.conflict(refused, accepted > 0));
   };
 
-  /** studyos_list_audit sul connettore remoto: il registro del server, non quello di un browser. */
+  /** studyos_list_audit sul connettore remoto: il registro del server per chiamate, non quello di un browser. */
   const listAudit = async (grant: CloudGrant, args: Record<string, unknown>): Promise<AgentCallResult> => {
     const offset = typeof args.offset === "number" ? args.offset : 0;
-    const limit = typeof args.limit === "number" ? args.limit : 20;
+    const limit = Math.min(typeof args.limit === "number" ? args.limit : 20, AUDIT_PAGE_MAX);
+    const callId = typeof args.callId === "string" ? args.callId.trim().toLowerCase() : "";
+    if (callId && !AUDIT_UUID_RE.test(callId)) return fail("invalid", CLOUD_TEXT.badAuditId);
     // Date senza offset: ora locale della persona, come negli altri strumenti.
     const [since, until] = await withZonedDate(grant.timeZone, async () => [args.since, args.until].map((value) => (typeof value === "string" && value.trim() ? toIso(value) : undefined)));
     if (since === null || until === null) return fail("invalid", CLOUD_TEXT.badDate);
@@ -314,7 +347,8 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
         p_entity_id: typeof args.itemId === "string" && args.itemId ? args.itemId : null,
         p_tool: typeof args.tool === "string" && args.tool ? args.tool : null,
         p_since: since ?? null,
-        p_until: until ?? null
+        p_until: until ?? null,
+        ...(callId ? { p_call_id: callId } : {})
       });
     } catch (error) {
       if (error instanceof MissingFunctionError) return fail("failed", CLOUD_TEXT.auditMissing);
@@ -324,32 +358,63 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     return { ok: true, data: { source: "server", ...auditPage(rows, offset, limit) } };
   };
 
-  /** studyos_restore_change: il database rimette la versione di prima, solo se nessuno l'ha cambiata dopo. */
+  /**
+   * studyos_restore_change: il database rimette la versione di prima, solo se nessuno l'ha cambiata dopo.
+   * Di solito l'intera chiamata (tutte le sue modifiche, tutto o niente); con onlyThisChange una voce.
+   */
   const restoreChange = async (grant: CloudGrant, args: Record<string, unknown>): Promise<AgentCallResult> => {
     const id = typeof args.id === "string" ? args.id.trim().toLowerCase() : "";
     if (!AUDIT_UUID_RE.test(id)) return fail("invalid", CLOUD_TEXT.badAuditId);
+    const single = () => rpc<RestoreOutcome>("studyos_agent_restore", { p_secret: grant.secret, p_audit_id: id });
     let outcome: RestoreOutcome;
     try {
-      outcome = await rpc<RestoreOutcome>("studyos_agent_restore", { p_secret: grant.secret, p_audit_id: id });
+      if (args.onlyThisChange === true) {
+        outcome = await single();
+      } else {
+        try {
+          outcome = await rpc<RestoreOutcome>("studyos_agent_restore_call", { p_secret: grant.secret, p_id: id });
+        } catch (error) {
+          // agent.sql della prima revisione: nessun id di chiamata, ogni voce è una chiamata da sola.
+          if (!(error instanceof MissingFunctionError)) throw error;
+          outcome = await single();
+        }
+      }
     } catch (error) {
       if (error instanceof MissingFunctionError) return fail("failed", CLOUD_TEXT.auditMissing);
       throw error;
     }
     const where = (type: string, itemId: string) => ({ collection: COLLECTION_BY_ENTITY_TYPE[type] ?? type, itemId });
     switch (outcome?.status) {
-      case "restored":
+      case "restored": {
+        const changes = restoredChanges(outcome).map((change) => ({
+          auditId: change.auditId,
+          ...where(change.entityType, change.entityId),
+          action: change.action,
+          item: auditImage(change.entityType, change.item) ?? null
+        }));
+        const [first] = changes;
         return {
           ok: true,
-          data: { status: "restored", auditId: outcome.auditId, ...where(outcome.entityType, outcome.entityId), action: outcome.action, item: auditImage(outcome.entityType, outcome.item) ?? null },
-          summary: CLOUD_TEXT.restored(outcome.action)
+          data: { status: "restored", ...(outcome.callId ? { callId: outcome.callId } : {}), ...(first ?? {}), count: changes.length, changes },
+          summary: changes.length === 1 ? CLOUD_TEXT.restored(changes[0].action) : CLOUD_TEXT.restoredCall(changes.length)
         };
-      case "conflict":
+      }
+      case "conflict": {
+        const conflicts = restoreConflicts(outcome).map((conflict) => {
+          const current = auditImage(conflict.entityType, conflict.current) ?? null;
+          const title = auditTitle(current);
+          return { ...where(conflict.entityType, conflict.entityId), ...(title ? { title } : {}), current, currentDeleted: conflict.currentDeleted === true };
+        });
+        const [first] = conflicts;
+        const what = `${first.title ? `«${first.title}» ` : "l'elemento "}(${first.collection} ${first.itemId})`;
+        const items = Math.max(Number(outcome.items) || 1, conflicts.length);
         return {
           ok: false,
           code: "failed",
-          error: CLOUD_TEXT.restoreConflict,
-          data: { status: "conflict", ...where(outcome.entityType, outcome.entityId), current: auditImage(outcome.entityType, outcome.current) ?? null, currentDeleted: outcome.currentDeleted === true }
+          error: CLOUD_TEXT.restoreConflict(what, items),
+          data: { status: "conflict", ...first, items, conflicts }
         };
+      }
       case "already_restored":
         return { ok: false, code: "invalid", error: CLOUD_TEXT.restoreDone, data: { status: "already_restored", ...where(outcome.entityType, outcome.entityId), restoredAt: outcome.restoredAt } };
       case "not_found":
@@ -362,6 +427,8 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
   return {
     run: (grant, name, args) => {
       if (CLOUD_UNAVAILABLE.has(name)) return Promise.resolve(fail("invalid", CLOUD_TEXT.unavailable));
+      // Calcolo puro: nessun dato da leggere, nessuna attesa sugli altri account.
+      if (name === "studyos_split_pages") return Promise.resolve(splitPagesResult(args));
       return exclusive(async () => {
         try {
           if (name === "studyos_list_audit") return await listAudit(grant, args);

@@ -69,9 +69,18 @@ const WEEKDAY_NAME: Record<SplitWeekday, string> = {
 /** Numero di pagine di un intervallo inclusivo. */
 export const pageCount = (from: number, to: number) => to - from + 1;
 
+/** «1 pagina», «15 pagine». */
+export const pagesText = (count: number) => (count === 1 ? "1 pagina" : `${count} pagine`);
+
+/** «p. 7» oppure «pp. 120–134»: solo l'intervallo, con il trattino lungo. */
+export const pageRange = (from: number, to: number) => (from === to ? `p. ${from}` : `pp. ${from}–${to}`);
+
 /** «p. 7 (1 pagina)» oppure «pp. 120–134 (15 pagine)»: trattino lungo, conteggio inclusivo. */
-export const pageRangeText = (from: number, to: number) =>
-  from === to ? `p. ${from} (1 pagina)` : `pp. ${from}–${to} (${pageCount(from, to)} pagine)`;
+export const pageRangeText = (from: number, to: number) => `${pageRange(from, to)} (${pagesText(pageCount(from, to))})`;
+
+/** «Le pagine sono 3 (pp. 1–3)» / «C'è 1 pagina (p. 7)», per gli errori. */
+const pagesAre = (total: number, from: number, to: number) =>
+  `${total === 1 ? "C'è 1 pagina" : `Le pagine sono ${total}`} (${pageRange(from, to)})`;
 
 const fail = (error: string): PageSplitResult => ({ ok: false, error });
 
@@ -160,13 +169,13 @@ export const splitPages = (input: PageSplitInput): PageSplitResult => {
     dates = usableDays(SPLIT_MAX_PARTS, input.endDate);
     if (!dates.length) return fail("Nessun giorno utile tra startDate ed endDate con i giorni scelti.");
     if (dates.length > total) {
-      return fail(`Le pagine sono ${total} (${pageRangeText(from, to)}) e i giorni utili ${dates.length}: ogni giorno deve avere almeno una pagina. Accorcia il periodo o salta dei giorni.`);
+      return fail(`${pagesAre(total, from, to)} e i giorni utili ${dates.length}: ogni giorno deve avere almeno una pagina. Accorcia il periodo o salta dei giorni.`);
     }
     sizes = sizesFor(total, { parts: dates.length });
   } else if (hasParts) {
     const parts = input.parts as number;
     if (parts > total) {
-      return fail(`Le pagine sono ${total} (${pageRangeText(from, to)}), meno delle parti (${parts}): ogni parte deve avere almeno una pagina. Usa meno parti.`);
+      return fail(`${pagesAre(total, from, to)}, meno delle parti (${parts}): ogni parte deve avere almeno una pagina. Usa meno parti.`);
     }
     sizes = sizesFor(total, { parts });
   } else {
@@ -197,6 +206,8 @@ export const splitPages = (input: PageSplitInput): PageSplitResult => {
     });
   }
   const count = parts.length;
-  const summary = `${pageRangeText(from, to)} in ${count === 1 ? "1 parte" : `${count} parti`}: ${sizes.join(" + ")} = ${total} pagine.`;
+  const summary = count === 1
+    ? `${pageRangeText(from, to)} in 1 parte.`
+    : `${pageRangeText(from, to)} in ${count} parti: ${sizes.join(" + ")} = ${pagesText(total)}.`;
   return { ok: true, from, to, totalPages: total, partCount: count, parts, summary };
 };
