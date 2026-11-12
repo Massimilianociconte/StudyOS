@@ -53,7 +53,8 @@ per ciò che c'è sul dispositivo e le voci di uscita dai gruppi non vengono scr
 
 **Ricerca persone, inviti all'account e notifiche push (revisione dell'11/11/2026, `people.sql`).**
 `groups.sql` e `sharing.sql` contengono le stesse regole di `people.sql` sull'accettazione degli
-inviti (stesso testo, controllato da `scripts/supabase/people-check.mjs`), così rieseguirne uno
+inviti (stesso testo, controllato da `tests/peopleSql.test.mjs` in `npm test` e da
+`scripts/supabase/people-check.mjs` sullo stack locale), così rieseguirne uno
 in qualunque ordine non riapre l'accettazione per email. `people.sql` contiene anche la versione
 del 12/11/2026 di `accept_group_invite` (una sola voce per ingresso).
 
