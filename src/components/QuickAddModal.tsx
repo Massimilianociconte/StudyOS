@@ -68,8 +68,10 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
   const { subjects, addTask, addEvent, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
   // Il modale resta montato: a ogni apertura la data proposta torna "adesso" e il tipo è quello richiesto.
+  // Riparte anche vuoto: chiuso con Annulla, ✕ o Esc, prima teneva titolo e «Inizio ora» della volta prima.
   useEffect(() => {
     if (open) {
+      reset();
       const defaults = quickAddDefaults();
       setDate(defaults.start);
       setTaskDue(defaults.taskDue);
@@ -238,7 +240,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
                   {([
                     { id: "normal", label: "Da fare", hint: "Più avanti", icon: "Check" },
                     { id: "timer", label: "Inizio ora", hint: "Parte il timer", icon: "Timer" },
-                    { id: "completed", label: "Già fatta", hint: "Da segnare", icon: "Archive" }
+                    { id: "completed", label: "Già fatta", hint: "Salvata come fatta", icon: "Archive" }
                   ] as const).map((item) => (
                     <button
                       key={item.id}

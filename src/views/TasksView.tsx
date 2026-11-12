@@ -5,7 +5,7 @@ import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { daysUntil, selectableSubjects, subjectColor, subjectName, urgentTasks } from "../lib/selectors";
 import { NO_SUBJECT_LABEL, PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
-import { FILTER_CHIP_TEXT, TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
+import { FILTER_CHIP_TEXT, QUICK_TASK_TEXT, TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
 import { Button, EmptyState, HelpTip, IconButton, PageActions, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { DateField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
@@ -19,6 +19,7 @@ import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, sortByPriority, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
+import { priorityText, quickTaskChips, type QuickTaskChip } from "../lib/tasksUi";
 
 type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
 type SortMode = "deadline" | "priority" | "recent";
@@ -51,10 +52,6 @@ const DUE_BUCKETS: { id: string; title: string; test: (task: Task) => boolean }[
 ];
 
 const byDue = (a: Task, b: Task) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999");
-
-/** "Priorità media" invece di "Media": fuori da un campo etichettato il valore da solo non si capisce. */
-const priorityText = (priority: Task["priority"]) =>
-  priority === "urgent" ? PRIORITY_LABEL.urgent : `Priorità ${PRIORITY_LABEL[priority].toLowerCase()}`;
 
 const stepsText = (task: Task) => {
   const done = task.subtasks.filter((subtask) => subtask.done).length;
@@ -298,6 +295,8 @@ function TaskSummaryLine({
 /**
  * Aggiunta rapida: un campo solo, Invio per aggiungere. "Dettagli" apre materia, priorità e scadenza.
  * Con il filtro per materia attivo la nuova attività prende quella materia (così compare nell'elenco).
+ * A "Dettagli" chiuso le scelte diverse da quelle di base restano visibili come pillole con ✕, anche
+ * dopo l'aggiunta: valgono per le prossime attività finché non le togli.
  */
 function QuickTaskBar({
   subjects,
@@ -342,6 +341,12 @@ function QuickTaskBar({
   };
 
   const selectClass = "min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)]";
+  const chips = detailsOpen ? [] : quickTaskChips({ subjectId, priority, dueDate }, defaultSubjectId, subjects);
+  const clearChip = (id: QuickTaskChip["id"]) => {
+    if (id === "subject") setSubjectId(defaultSubjectId);
+    if (id === "priority") setPriority("medium");
+    if (id === "due") setDueDate("");
+  };
 
   return (
     <form onSubmit={submit} aria-label={TASKS_TEXT.quickAdd} className="soft-panel mb-4 p-2">
@@ -393,6 +398,25 @@ function QuickTaskBar({
             ))}
           </select>
           <DateField label={TASKS_TEXT.dueOptional} value={dueDate} onChange={setDueDate} optional compact />
+        </div>
+      ) : null}
+      {chips.length ? (
+        <div role="group" aria-label={QUICK_TASK_TEXT.applied} className="mt-1.5 flex flex-wrap items-center gap-2 px-1 pb-0.5">
+          {chips.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => clearChip(chip.id)}
+              aria-label={QUICK_TASK_TEXT.clear(chip.label)}
+              title={QUICK_TASK_TEXT.clear(chip.label)}
+              // Pillola alta 32 px, area di tocco 44 px (after:).
+              className="motion-safe relative inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] pl-3 pr-2 text-xs font-extrabold text-[var(--text)] after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--surface)]"
+            >
+              {chip.color ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: chip.color }} /> : null}
+              <span className="min-w-0 truncate">{chip.label}</span>
+              <Icon name="X" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+            </button>
+          ))}
         </div>
       ) : null}
       {/* Sempre presente: il lettore di schermo annuncia il testo appena compare. */}

@@ -60,6 +60,14 @@ export const TASK_EDITOR_TEXT = {
   addStep: "Aggiungi"
 } as const;
 
+/** Pillole dell'aggiunta rapida: le scelte di «Dettagli» che valgono per le prossime attività. */
+export const QUICK_TASK_TEXT = {
+  applied: "Scelte per le prossime attività",
+  deletedSubject: "Materia eliminata",
+  due: (date: string) => `Scade il ${date}`,
+  clear: (label: string) => `Togli «${label}» dalle prossime attività`
+} as const;
+
 export const TASKS_HELP = {
   views: {
     title: "Come vedere le attività",

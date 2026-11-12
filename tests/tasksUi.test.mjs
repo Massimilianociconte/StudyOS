@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addStep, cleanSteps, removeStep, renameStep, stepsDone, toggleStep } from "../src/lib/tasksUi.ts";
+import { addStep, cleanSteps, priorityText, quickTaskChips, removeStep, renameStep, stepsDone, toggleStep } from "../src/lib/tasksUi.ts";
 
 const STEPS = [
   { id: "s1", text: "Leggere il capitolo", done: true },
@@ -35,4 +35,44 @@ test("passaggi: al salvataggio i testi si puliscono e quelli rimasti vuoti spari
 test("passaggi: il conto dei fatti è quello delle righe dell'elenco", () => {
   assert.deepEqual(stepsDone(STEPS), { done: 1, total: 2 });
   assert.deepEqual(stepsDone([]), { done: 0, total: 0 });
+});
+
+const SUBJECTS = [
+  { id: "s1", name: "Analisi 1", color: "#ff0000" },
+  { id: "s2", name: "Fisica", color: "#00ff00" }
+];
+const BLANK = { subjectId: "", priority: "medium", dueDate: "" };
+
+test("aggiunta rapida: con le scelte di base non c'è nessuna pillola", () => {
+  assert.deepEqual(quickTaskChips(BLANK, "", SUBJECTS), []);
+});
+
+test("aggiunta rapida: ogni scelta diversa da quella di base si vede come pillola", () => {
+  const chips = quickTaskChips({ subjectId: "s2", priority: "urgent", dueDate: "2026-11-14" }, "", SUBJECTS);
+  assert.deepEqual(chips, [
+    { id: "subject", label: "Fisica", color: "#00ff00" },
+    { id: "priority", label: "Urgente" },
+    { id: "due", label: "Scade il 14 nov" }
+  ]);
+  assert.deepEqual(quickTaskChips({ ...BLANK, priority: "high" }, "", SUBJECTS), [{ id: "priority", label: "Priorità alta" }]);
+  assert.deepEqual(quickTaskChips({ ...BLANK, priority: "low" }, "", SUBJECTS), [{ id: "priority", label: "Priorità bassa" }]);
+});
+
+test("aggiunta rapida: la materia del filtro attivo non fa pillola (si vede già nel filtro), un'altra sì", () => {
+  assert.deepEqual(quickTaskChips({ ...BLANK, subjectId: "s1" }, "s1", SUBJECTS), []);
+  assert.deepEqual(quickTaskChips({ ...BLANK, subjectId: "s2" }, "s1", SUBJECTS), [{ id: "subject", label: "Fisica", color: "#00ff00" }]);
+  assert.deepEqual(quickTaskChips(BLANK, "s1", SUBJECTS), [{ id: "subject", label: "Nessuna materia" }], "materia tolta con il filtro attivo");
+});
+
+test("aggiunta rapida: una materia che non c'è più resta visibile invece di applicarsi di nascosto", () => {
+  assert.deepEqual(quickTaskChips({ ...BLANK, subjectId: "gone" }, "", SUBJECTS), [{ id: "subject", label: "Materia eliminata" }]);
+});
+
+test("aggiunta rapida: una data non valida non fa pillola", () => {
+  assert.deepEqual(quickTaskChips({ ...BLANK, dueDate: "domani" }, "", SUBJECTS), []);
+});
+
+test("priorità a parole: «Urgente» da sola, le altre con «Priorità»", () => {
+  assert.equal(priorityText("urgent"), "Urgente");
+  assert.equal(priorityText("medium"), "Priorità media");
 });
