@@ -79,7 +79,8 @@
 - Preferenze personali (nome, foto, ore settimanali, CFU del corso, BARB visibile): entità
   sincronizzata `preferences` con id `main`, letta con `selectPreferences` (oggetto stabile).
   Non rimettere dati personali in `settings`, che restano del dispositivo. L'id `main` è lo stesso
-  in ogni account: cambiando account con «unisci» le preferenze di prima si tolgono
+  in ogni account. Cambiando account (bindUser) OK = solo i dati del nuovo account, Annulla =
+  unisci; anche con «unisci» le preferenze di prima si tolgono
   (`accountSwitch.ts` → `personalRemovals`), altrimenti l'ultima scrittura vince e nome e foto
   passano al nuovo account. Una nuova collezione «della persona» va in `PERSONAL_COLLECTIONS`.
 - «Esci dall'account» esce solo da questo dispositivo (`signOut("local")`): con `global` si

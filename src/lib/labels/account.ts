@@ -16,7 +16,10 @@ export const ACCOUNT_TEXT = {
   leftKeep: "Sei uscito dall'account. I dati restano su questo dispositivo.",
   leftOffline: "Server non raggiungibile: sei uscito solo su questo dispositivo. Ricarico la pagina…",
   leaveFailed: "Uscita non riuscita. Riprova.",
-  /** Accesso con un altro account su un dispositivo con dati: OK = unisci, Annulla = sostituisci. */
+  /**
+   * Accesso con un altro account su un dispositivo con dati: OK = solo i dati del nuovo account
+   * (la scelta sicura: quelli di prima sono già nel loro account), Annulla = unisci.
+   */
   switchConfirm:
-    "I dati su questo dispositivo provengono da un altro account.\n\nOK = uniscili al nuovo account (nome, foto e preferenze restano quelli del nuovo account)\nAnnulla = sostituiscili con i dati del nuovo account"
+    "I dati su questo dispositivo sono di un altro account.\n\nOK = mostra solo i dati del nuovo account (consigliato: quelli di prima restano nel loro account)\nAnnulla = aggiungi i dati di prima al nuovo account (nome, foto e preferenze restano quelli del nuovo account)"
 } as const;

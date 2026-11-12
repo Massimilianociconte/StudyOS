@@ -42,6 +42,8 @@ export const UI_TEXT = {
   helpAria: (title: string) => `Aiuto: ${title}`,
   example: "Per esempio:",
   close: "Chiudi",
+  showPassword: "Mostra la password",
+  hidePassword: "Nascondi la password",
   /** Scadenza dell'attività nell'aggiunta rapida: parte vuota, si può scegliere. */
   dueOptional: "Entro quando? (facoltativa)"
 } as const;

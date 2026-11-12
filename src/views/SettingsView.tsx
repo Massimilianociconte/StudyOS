@@ -17,7 +17,7 @@ import { SETTINGS_JUMP_EVENT, settingsSectionFromEvent, takeSettingsSection, typ
 import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
 import { SETTINGS_TEXT } from "../lib/labels/settings";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { Button, Field, Panel, Pill, SectionTitle, fileInputClass, inputClass, useBackCloses } from "../components/ui";
+import { Button, Field, Panel, PasswordInput, Pill, SectionTitle, fileInputClass, inputClass, useBackCloses } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { CloudPanel } from "../components/CloudPanel";
 import { AgentSettings } from "../components/AgentDesk";
@@ -594,9 +594,7 @@ export function SettingsView() {
                 Se dimentichi la password, i dati di questo dispositivo non si possono più recuperare. Prima di attivarla scarica una copia di sicurezza.
               </p>
               <Field label="Scegli una password (almeno 10 caratteri)">
-                <input
-                  className={inputClass}
-                  type="password"
+                <PasswordInput
                   autoComplete="new-password"
                   value={vaultPassphrase}
                   onChange={(event) => setVaultPassphrase(event.target.value)}
@@ -613,9 +611,7 @@ export function SettingsView() {
             </>
           ) : (
             <Field label="Password attuale (serve solo per togliere la protezione)">
-              <input
-                className={inputClass}
-                type="password"
+              <PasswordInput
                 autoComplete="current-password"
                 value={vaultPassphrase}
                 onChange={(event) => setVaultPassphrase(event.target.value)}
@@ -659,9 +655,7 @@ export function SettingsView() {
 
             {exportEncrypted ? (
               <Field label="Password della copia (almeno 8 caratteri, ti servirà per ripristinarla)">
-                <input
-                  className={inputClass}
-                  type="password"
+                <PasswordInput
                   autoComplete="new-password"
                   value={backupPassphrase}
                   onChange={(event) => setBackupPassphrase(event.target.value)}
@@ -698,9 +692,7 @@ export function SettingsView() {
           </p>
           <div className="mt-4 grid grid-cols-1 gap-4">
             <Field label="Password della copia (solo se l'hai protetta)">
-              <input
-                className={inputClass}
-                type="password"
+              <PasswordInput
                 autoComplete="off"
                 value={importPassphrase}
                 onChange={(event) => setImportPassphrase(event.target.value)}

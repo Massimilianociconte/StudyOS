@@ -386,7 +386,10 @@ const bindUser = async (userId: string) => {
   const store = useStudyStore.getState();
   const hasData = countEntities(pickCollections(store)) > 0;
   if (bound && bound !== userId && hasData) {
-    const merge = typeof window === "undefined" || window.confirm(ACCOUNT_TEXT.switchConfirm);
+    // OK = solo il nuovo account: i dati di prima sono già tutti nel loro account (coda vuota, vedi
+    // sopra), quindi si tolgono solo da qui. Unire due persone diverse era la scelta di OK e
+    // portava nel nuovo account materie, eventi e (prima della correzione) nome e foto dell'altro.
+    const merge = typeof window === "undefined" || !window.confirm(ACCOUNT_TEXT.switchConfirm);
     if (!merge) await store.resetAllData({ propagate: false });
     else {
       // Nome, foto e preferenze sono della persona: si tolgono qui (senza invio) e la prima

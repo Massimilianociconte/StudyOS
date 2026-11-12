@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Field, Panel, Pill, inputClass } from "./ui";
+import { Button, Field, Panel, PasswordInput, Pill, inputClass } from "./ui";
 import { whenPersisted } from "../lib/persistence";
 import { signOutThisDevice } from "../lib/deviceSignOut";
 import { setCloudSyncState } from "../lib/cloudSyncState";
@@ -59,6 +59,7 @@ export function CloudPanel() {
   // «Esci dall'account» chiede sul posto: tenere i dati qui o toglierli (dispositivo non tuo).
   const [leaving, setLeaving] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [pendingEmail, setPendingEmail] = useState<string | null>(() =>
     typeof window !== "undefined" ? localStorage.getItem(PENDING_EMAIL_KEY) : null
   );
@@ -461,35 +462,57 @@ export function CloudPanel() {
             </div>
           ) : null}
 
-          <Field label="Email">
-            <input
-              className={inputClass}
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Es. nome@esempio.it"
-            />
-          </Field>
-          <Field label={mode === "signup" ? "Scegli una password (almeno 8 caratteri)" : "Password"}>
-            <input
-              className={inputClass}
-              type="password"
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </Field>
+          {/* Un vero modulo: Invio (o «Vai» sulla tastiera del telefono) invia come il pulsante. */}
+          <form
+            className="grid grid-cols-1 gap-3"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (busy) return;
+              void (mode === "signin" ? handleSignIn() : handleSignUp());
+            }}
+          >
+            <Field label="Email">
+              <input
+                className={inputClass}
+                type="email"
+                inputMode="email"
+                autoComplete={mode === "signup" ? "email" : "username"}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="next"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(event) => {
+                  // Invio sull'email con la password ancora vuota: si passa alla password invece di inviare.
+                  if (event.key !== "Enter" || password) return;
+                  event.preventDefault();
+                  passwordRef.current?.focus();
+                }}
+                placeholder="Es. nome@esempio.it"
+              />
+            </Field>
+            <Field label={mode === "signup" ? "Scegli una password (almeno 8 caratteri)" : "Password"}>
+              <PasswordInput
+                ref={passwordRef}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                enterKeyHint={mode === "signup" ? "done" : "go"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </Field>
 
-          {mode === "signin" ? (
-            <Button icon="LogIn" variant="primary" onClick={handleSignIn} disabled={busy}>
-              Accedi
-            </Button>
-          ) : (
-            <Button icon="UserPlus" variant="primary" onClick={handleSignUp} disabled={busy}>
-              Crea account
-            </Button>
-          )}
+            {mode === "signin" ? (
+              <Button type="submit" icon="LogIn" variant="primary" disabled={busy}>
+                Accedi
+              </Button>
+            ) : (
+              <Button type="submit" icon="UserPlus" variant="primary" disabled={busy}>
+                Crea account
+              </Button>
+            )}
+          </form>
         </div>
       )}
 

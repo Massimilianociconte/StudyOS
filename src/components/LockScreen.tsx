@@ -4,7 +4,7 @@ import { cloudConfigured, setCloudSyncState } from "../lib/cloudSyncState";
 import { signOutThisDevice } from "../lib/deviceSignOut";
 import { useCloudSession } from "../hooks/useCloudSession";
 import { LOCK_TEXT, lockAccountOf } from "../lib/labels/lock";
-import { Button, Field, inputClass } from "./ui";
+import { Button, Field, PasswordInput } from "./ui";
 import { Icon } from "./Icon";
 
 /** Il messaggio della logica parla di "passphrase": qui diventa una frase semplice con il passo successivo. */
@@ -135,11 +135,10 @@ export function LockScreen() {
         ) : (
           <div className="mt-6 text-left">
             <Field label="Password">
-              <input
+              <PasswordInput
                 ref={fieldRef}
-                className={inputClass}
-                type="password"
                 autoComplete="current-password"
+                enterKeyHint="go"
                 value={passphrase}
                 onChange={(event) => setPassphrase(event.target.value)}
                 onKeyDown={(event) => {

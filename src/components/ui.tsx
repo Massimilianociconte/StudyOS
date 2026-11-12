@@ -1,16 +1,20 @@
 import { createPortal } from "react-dom";
 import { AnimatePresence, m, useReducedMotion } from "framer-motion";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type PropsWithChildren,
   type ReactNode,
+  type Ref,
   type RefObject
 } from "react";
 import { Icon } from "./Icon";
@@ -184,21 +188,70 @@ export function ProgressRing({
   );
 }
 
+/** Il testo dell'etichetta di Field: chi ha un pulsante dentro l'etichetta lo usa per non prenderne il nome. */
+const FieldLabelContext = createContext<string | undefined>(undefined);
+
 export function Field({
   label,
   children,
   className = ""
 }: PropsWithChildren<{ label: string; className?: string }>) {
+  const labelId = useId();
   return (
     <label className={`block min-w-0 ${className}`}>
-      <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">{label}</span>
-      {children}
+      <span id={labelId} className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">
+        {label}
+      </span>
+      <FieldLabelContext.Provider value={labelId}>{children}</FieldLabelContext.Provider>
     </label>
   );
 }
 
 export const inputClass =
   "min-h-11 w-full rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)] placeholder:text-[var(--faint)]";
+
+/**
+ * Campo password con l'occhio per vederla mentre si scrive. Il pulsante non ruba il focus al
+ * campo (la tastiera del telefono resta aperta) e torna nascosta quando il campo si svuota.
+ */
+export function PasswordInput({
+  className = inputClass,
+  ref,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & { ref?: Ref<HTMLInputElement> }) {
+  const [shown, setShown] = useState(false);
+  const empty = props.value === "" || props.value === undefined;
+  useEffect(() => {
+    if (empty) setShown(false);
+  }, [empty]);
+  // Dentro <label> il nome del campo prenderebbe anche «Mostra la password» dal pulsante: si usa solo il testo dell'etichetta.
+  const labelId = useContext(FieldLabelContext);
+  return (
+    <span className="relative block">
+      <input
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        aria-labelledby={labelId}
+        {...props}
+        ref={ref}
+        type={shown ? "text" : "password"}
+        className={`${className} pr-12`}
+      />
+      <button
+        type="button"
+        aria-label={shown ? UI_TEXT.hidePassword : UI_TEXT.showPassword}
+        title={shown ? UI_TEXT.hidePassword : UI_TEXT.showPassword}
+        disabled={props.disabled}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => setShown((value) => !value)}
+        className="absolute right-0 top-0 grid h-11 w-11 grid-cols-1 place-items-center rounded-full text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-50"
+      >
+        <Icon name={shown ? "EyeOff" : "Eye"} className="h-5 w-5" />
+      </button>
+    </span>
+  );
+}
 
 /** Su un `fieldset disabled` (sola lettura): i campi si vedono attenuati e non invitano al clic. */
 export const DIMMED_DISABLED_FIELDS =
