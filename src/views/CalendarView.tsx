@@ -98,6 +98,7 @@ import {
   resolveCalendarMode,
   resolveSubjectFilter,
   subjectCalendarSummary,
+  subjectJumpDay,
   type CalendarViewId,
   type SubjectCalendarSummary
 } from "../lib/calendarFilter";
@@ -850,8 +851,12 @@ export function CalendarView() {
             summary={subjectSummary}
             onGoSubjects={() => setActiveView("subjects")}
             onFilter={(id) => {
+              // Si apre dove la materia ha qualcosa (la prossima voce, o l'ultima passata), nella vista
+              // da cui si era aperto il riepilogo: mai una settimana vuota con "1 impegno" nella scheda.
+              const day = subjectJumpDay({ subjectId: id, events, exams, tasks });
               setStoredSubject(id);
-              setMode("week");
+              if (day) setCursor(day);
+              setMode(returnMode.current);
             }}
             onOpenSubject={(id) => {
               writeUiState("subjects.open", id, "tab");
@@ -1284,8 +1289,9 @@ function ExamSession({
 }
 
 /**
- * Riepilogo "Per materia": ogni scheda mostra solo quella materia nel calendario (Settimana); "Apri
- * materia" porta alla sua scheda in Materie. Solo materie non archiviate, le superate in fondo.
+ * Riepilogo "Per materia": ogni scheda mostra solo quella materia nel calendario (nella vista di prima,
+ * sul giorno della sua prossima voce); "Apri materia" porta alla sua scheda in Materie. Solo materie
+ * non archiviate, le superate in fondo.
  */
 function SemesterMap({
   summary,
