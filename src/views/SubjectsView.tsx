@@ -398,7 +398,7 @@ function SubjectCard({
           type="button"
           onClick={onOpen}
           aria-haspopup="dialog"
-          className="min-w-0 flex-1 self-center text-left after:absolute after:inset-0 after:rounded-[var(--radius-sm)] after:content-[''] focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-[3px] focus-visible:after:outline-offset-2 focus-visible:after:outline-[color-mix(in_srgb,var(--accent)_62%,transparent)]"
+          className="min-w-0 flex-1 self-center text-left after:absolute after:inset-0 after:rounded-[var(--radius-sm)] after:content-[''] focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-[3px] focus-visible:after:outline-offset-2 focus-visible:after:outline-[color:var(--focus-ring)]"
         >
           <h3 className="two-line-safe text-base font-black leading-snug">{subject.name}</h3>
           <p className="one-line-safe text-xs font-bold text-[var(--muted)]">{subject.teacher || "Docente non indicato"}</p>

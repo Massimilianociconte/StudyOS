@@ -68,7 +68,7 @@ export function ColorPalette({
         <label
           htmlFor={inputId}
           // Il campo colore è nascosto (sr-only): il contorno del focus da tastiera va sul cerchio che si vede.
-          className="grid h-11 w-11 shrink-0 cursor-pointer grid-cols-1 place-items-center rounded-full has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:outline-offset-[3px] has-[:focus-visible]:outline-[color:color-mix(in_srgb,var(--accent)_62%,transparent)]"
+          className="grid h-11 w-11 shrink-0 cursor-pointer grid-cols-1 place-items-center rounded-full has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:outline-offset-[3px] has-[:focus-visible]:outline-[color:var(--focus-ring)]"
           title={EVENT_EDITOR_TEXT.colorCustom}
         >
           <span className="sr-only">{EVENT_EDITOR_TEXT.colorCustom}</span>
