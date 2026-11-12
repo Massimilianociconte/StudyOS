@@ -551,6 +551,7 @@ export const weekdaysText = (days: readonly Weekday[]) => {
 export const scopeOptions = ({
   action,
   date,
+  opened,
   ruleChanged = false,
   subjectChanged = false,
   pinsZone,
@@ -563,6 +564,8 @@ export const scopeOptions = ({
 }: {
   action: ScopeAction;
   date: string;
+  /** Il giorno aperto, se non è `date` (un giorno spostato da solo): la scelta nomina questo. */
+  opened?: string;
   ruleChanged?: boolean;
   subjectChanged?: boolean;
   /** La serie non ha un fuso: la prima modifica di un giorno lo fissa (quello del dispositivo). */
@@ -574,7 +577,7 @@ export const scopeOptions = ({
   rowContent?: boolean;
   daysShift?: { from: readonly Weekday[]; to: readonly Weekday[] };
 }): ScopeOption[] => {
-  const day = occurrenceDayText(date);
+  const day = occurrenceDayText(opened || date);
   const pin = pinsZone ? [SCOPE_TEXT.pinZone(pinsZone)] : [];
   const shift = daysShift && action !== "delete" ? { from: weekdaysText(daysShift.from), to: weekdaysText(daysShift.to) } : null;
   const range = {

@@ -65,9 +65,9 @@ import {
   vacationDraftFromEvent,
   vacationFields
 } from "../lib/occasionForms";
-import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
+import { findOccurrence, occurrenceTarget, shownDayOf } from "../lib/occurrenceLookup";
 import { applyRepeatFields, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
-import { civilDateOf, deviceTimeZone, isCivilDate, parseCivil } from "../lib/tz";
+import { civilDateOf, deviceTimeZone, isCivilDate, isValidTimeZone, parseCivil } from "../lib/tz";
 import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents } from "../lib/recurrence";
 import { EXAM_STATUS_LABEL, REPEAT_PICKER_TEXT } from "../lib/labels";
@@ -474,6 +474,13 @@ export function CalendarView() {
     return series ? { series, pinsZone: series.timeZone || series.allDay ? undefined : deviceTimeZone() } : null;
   };
 
+  /** Il giorno aperto come si vede (un giorno spostato da solo: il suo, non quello nella serie). */
+  const openedDay = (item: CalendarOccurrence) => {
+    const target = occurrenceTarget(item);
+    const zone = ownSeriesOf(target.seriesId)?.series.timeZone;
+    return target.row ? shownDayOf(item, isValidTimeZone(zone) ? zone : undefined) : undefined;
+  };
+
   /**
    * Modifica di un giorno di una mia serie con la portata scelta (vedi `occurrenceEditCalls`). "Tutti"
    * da un giorno cambiato da solo: la serie cambia e quel giorno, se c'è ancora, prende anche lui la
@@ -489,7 +496,7 @@ export function CalendarView() {
     const own = ownSeriesOf(target.seriesId);
     if (!own) throw new Error("series missing");
     const { calls } = occurrenceEditCalls({ item, series: own.series, scope, changes, shown });
-    for (const call of calls) await editOccurrence(target.seriesId, target.date, call.scope, call.patch);
+    for (const call of calls) await editOccurrence(call.seriesId ?? target.seriesId, target.date, call.scope, call.patch);
   };
 
   /**
@@ -522,6 +529,7 @@ export function CalendarView() {
     return scopeOptions({
       action,
       date: target.date,
+      opened: openedDay(item),
       ...flags,
       pinsZone: own?.pinsZone,
       impacts,
@@ -913,7 +921,7 @@ export function CalendarView() {
             const item = editingOccurrence;
             const target = occurrenceTarget(item);
             const span = seriesSpan(useStudyStore.getState().events, target.seriesId, target.date, civilDateOf(new Date()));
-            const scope = await askScope(SCOPE_TEXT.titleDelete(shortTitle(item.title)), scopeOptions({ action: "delete", date: target.date, span }), true);
+            const scope = await askScope(SCOPE_TEXT.titleDelete(shortTitle(item.title)), scopeOptions({ action: "delete", date: target.date, opened: openedDay(item), span }), true);
             if (!scope) return;
             try {
               // "Tutti": tutta la serie come la si vede, anche le parti nate da "Questo e i successivi".

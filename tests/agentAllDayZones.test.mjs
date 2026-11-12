@@ -159,3 +159,15 @@ test("agente, tutto il giorno: un evento singolo (e una vacanza di tre giorni) s
   assert.deepEqual(allDayDays(byId("e")), { first: "2026-12-14", last: "2026-12-14" });
   assert.equal(grid("2026-12-01", "2026-12-31"), "12-09..12-12 Mare | 12-14 Lezione");
 });
+
+test("agente, tutto il giorno: da un giorno spostato da solo, cambiati solo i giorni di durata (stesso primo giorno): la serie resta di lunedì, il giorno resta spostato", async () => {
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "this", start: "2026-11-18" });
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "following", start: "2026-11-18", end: "2026-11-19" });
+  assert.equal(grid(), "11-02 Lezione | 11-09 Lezione | 11-18..11-19 Lezione | 11-23..11-24 Lezione | 11-30..12-01 Lezione");
+  assert.deepEqual(normalizeRepeat(masters().find((item) => item.splitFrom === "s")).byWeekday, ["MO"]);
+  reset([MONDAYS]);
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "this", start: "2026-11-18" });
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "all", start: "2026-11-18", end: "2026-11-19" });
+  assert.equal(grid(), "11-02..11-03 Lezione | 11-09..11-10 Lezione | 11-18..11-19 Lezione | 11-23..11-24 Lezione | 11-30..12-01 Lezione");
+  assert.deepEqual(normalizeRepeat(byId("s")).byWeekday, ["MO"]);
+});

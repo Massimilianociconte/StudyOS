@@ -674,7 +674,7 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   const impact = scope === "following" ? scopeImpact(state().events, occurrence, scope, calls, undefined, changes) : null;
   const gone = impact?.gone ?? [];
   const goneMore = gone.length > REMOVED_DATES_SHOWN || impact?.goneMore === true;
-  for (const call of calls) await state().editOccurrence(target.seriesId, target.date, call.scope, call.patch);
+  for (const call of calls) await state().editOccurrence(call.seriesId ?? target.seriesId, target.date, call.scope, call.patch);
   // Nuovo inizio della serie (con «following», della parte nuova, `${serie}~${giorno}` come la crea
   // planEdit): l'agente vede se la prima data è cambiata.
   const after = state().events;
