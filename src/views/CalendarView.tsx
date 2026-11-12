@@ -85,6 +85,7 @@ import {
 import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { CourseIcon } from "../components/CourseIcon";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
@@ -217,8 +218,9 @@ export function CalendarView() {
     if (!isCalendarSummary(mode)) returnMode.current = mode;
     setMode(summary);
   };
-  // Data visualizzata e dettaglio aperto restano dopo un refresh della scheda.
-  const [cursorIso, setCursorIso] = useUiState("calendar.cursor", () => new Date().toISOString(), {
+  // Data visualizzata e dettaglio aperto restano dopo un refresh della scheda. Altre schermate (la
+  // ricerca) li scrivono e portano qui: con il Calendario già aperto si applicano senza rimontarlo.
+  const [cursorIso, setCursorIso] = useLinkedUiState("calendar.cursor", () => new Date().toISOString(), {
     scope: "tab",
     validate: (value) => typeof value === "string" && !Number.isNaN(Date.parse(value))
   });
@@ -227,9 +229,9 @@ export function CalendarView() {
     (next: Date | ((current: Date) => Date)) => setCursorIso((iso) => (typeof next === "function" ? next(new Date(iso)) : next).toISOString()),
     [setCursorIso]
   );
-  const [editingEventId, setEditingEventId] = useUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
+  const [editingEventId, setEditingEventId] = useLinkedUiState<string | null>("calendar.editingEvent", null, { scope: "tab", validate: isNullableString });
   // Giorno dell'occorrenza aperta di una serie (YYYY-MM-DD): con l'id la ritrova anche dopo un refresh.
-  const [editingDate, setEditingDate] = useUiState<string | null>("calendar.editingDate", null, {
+  const [editingDate, setEditingDate] = useLinkedUiState<string | null>("calendar.editingDate", null, {
     scope: "tab",
     validate: (value): value is string | null => value === null || isCivilDate(value)
   });
@@ -246,7 +248,7 @@ export function CalendarView() {
     scopeRequest?.resolve(scope);
     setScopeRequest(null);
   };
-  const [editingTaskId, setEditingTaskId] = useUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
+  const [editingTaskId, setEditingTaskId] = useLinkedUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
   // `draft` / `occasion`: dal modulo semplice ("Modulo completo"), con ciò che si era già scritto.
   const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string; draft?: EventDraft; occasion?: EventOccasion } | null>(null);
   // Percorsi semplici nuovi: ricorrenza (compleanno, anniversario…) o vacanza.
@@ -282,7 +284,7 @@ export function CalendarView() {
   const typeOverrides = useMemo(() => sanitizeTypeColorOverrides(selectPreferences({ preferences }).eventTypeColors), [preferences]);
   // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
   // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
-  const [storedSubject, setStoredSubject] = useUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
+  const [storedSubject, setStoredSubject] = useLinkedUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
   const subjectFilter = resolveSubjectFilter(storedSubject, subjects);
   const filterSubject = subjectFilter ? subjects.find((subject) => subject.id === subjectFilter) ?? null : null;
   useEffect(() => {

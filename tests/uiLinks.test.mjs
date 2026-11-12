@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { linkedUiChange } from "../src/lib/uiLinks.ts";
 
 const isFilter = (value) => value === "all" || value === "overdue" || value === "urgent";
@@ -25,4 +26,11 @@ test("collegamenti: null è valido quando il validatore lo accetta (es. «chiudi
   const nullable = (value) => value === null || typeof value === "string";
   assert.deepEqual(linkedUiChange(null, "t1", nullable), { seen: null, apply: true });
   assert.deepEqual(linkedUiChange("t2", null, nullable), { seen: "t2", apply: true });
+});
+
+test("collegamenti: il Calendario già aperto applica data, evento, giorno, attività e materia scritti da un'altra schermata", () => {
+  const source = readFileSync(new URL("../src/views/CalendarView.tsx", import.meta.url), "utf8");
+  for (const key of ["calendar.cursor", "calendar.editingEvent", "calendar.editingDate", "calendar.editingTask", "calendar.subject"]) {
+    assert.match(source, new RegExp(`useLinkedUiState(?:<[^>]*>)?\\("${key.replace(".", "\\.")}"`), key);
+  }
 });
