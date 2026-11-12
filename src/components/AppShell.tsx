@@ -128,13 +128,14 @@ export function AppShell({ children }: PropsWithChildren) {
     setQuickAddMode("task");
     setQuickAddOpen(true);
   };
-  const { activeView, setActiveView, settings, updateSettings, lockVault, persistError, retryPersist } = useStudyStore(
+  const { activeView, setActiveView, settings, updateSettings, lockVault, vaultBusy, persistError, retryPersist } = useStudyStore(
     useShallow((state) => ({
       activeView: state.activeView,
       setActiveView: state.setActiveView,
       settings: state.settings,
       updateSettings: state.updateSettings,
       lockVault: state.lockVault,
+      vaultBusy: state.vaultBusy,
       persistError: state.persistError,
       retryPersist: state.retryPersist
     }))
@@ -228,7 +229,13 @@ export function AppShell({ children }: PropsWithChildren) {
             </nav>
             <div className="mt-2 flex shrink-0 flex-col items-center gap-2">
               {settings.security.mode === "vault" ? (
-                <IconButton icon="Lock" label={SHELL_TEXT.lockAria} onClick={() => void lockVault().catch(() => undefined)} />
+                <IconButton
+                  icon="Lock"
+                  label={vaultBusy ? SHELL_TEXT.lockBusy : SHELL_TEXT.lockAria}
+                  disabled={vaultBusy}
+                  className="disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void lockVault().catch(() => undefined)}
+                />
               ) : null}
               <CloudStatusBadge compact onClick={() => openSettings("account")} />
             </div>
@@ -280,10 +287,11 @@ export function AppShell({ children }: PropsWithChildren) {
                   icon="Lock"
                   variant="soft"
                   className="mt-3 w-full"
-                  title={SHELL_TEXT.lockTitle}
+                  title={vaultBusy ? SHELL_TEXT.lockBusy : SHELL_TEXT.lockTitle}
+                  disabled={vaultBusy}
                   onClick={() => void lockVault().catch(() => undefined)}
                 >
-                  {SHELL_TEXT.lock}
+                  {vaultBusy ? SHELL_TEXT.lockBusy : SHELL_TEXT.lock}
                 </Button>
               ) : null}
               <CloudStatusBadge onClick={() => openSettings("account")} />
@@ -479,13 +487,14 @@ export function AppShell({ children }: PropsWithChildren) {
             icon="Lock"
             variant="soft"
             className="mt-3 w-full"
-            title={SHELL_TEXT.lockTitle}
+            title={vaultBusy ? SHELL_TEXT.lockBusy : SHELL_TEXT.lockTitle}
+            disabled={vaultBusy}
             onClick={() => {
               setMoreOpen(false);
               void lockVault().catch(() => undefined);
             }}
           >
-            {SHELL_TEXT.lock}
+            {vaultBusy ? SHELL_TEXT.lockBusy : SHELL_TEXT.lock}
           </Button>
         ) : null}
       </Drawer>

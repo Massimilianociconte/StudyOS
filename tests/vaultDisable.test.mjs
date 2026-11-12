@@ -77,13 +77,14 @@ test("P8: disattivare la password non perde le modifiche arrivate durante la ris
 
 test("P8: attivare e togliere la password copiano ciò che è su disco, dentro la stessa operazione esclusiva", () => {
   const source = readFileSync(new URL("../src/store/useStudyStore.ts", import.meta.url), "utf8");
-  const body = (name) => {
-    const start = source.indexOf(`${name}: async`);
+  // Le due operazioni girano dentro vaultStep (una alla volta, revisione A6): togliere sta in removeVault.
+  const body = (name, end) => {
+    const start = source.indexOf(name);
     assert.ok(start > 0, name);
-    return source.slice(start, source.indexOf("\n    },\n", start));
+    return source.slice(start, source.indexOf(end, start));
   };
-  for (const name of ["enableVault", "disableVault"]) {
-    const text = body(name);
+  for (const [name, end] of [["enableVault: (", "\n      }),\n"], ["const removeVault = async", "\n  };\n"]]) {
+    const text = body(name, end);
     // Niente copia dello stato presa prima dell'attesa e poi rimessa in memoria o nella base.
     assert.doesNotMatch(text, /pickCollections\(get\(\)\)/, name);
     assert.match(text, /runExclusive\(async \(\) => \{[\s\S]*persistedCollections\(\)[\s\S]*setVaultSession\([\s\S]*\}\);\s*await commit\(\);/, name);
