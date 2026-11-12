@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { Exam, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { subjectColor, subjectName } from "../lib/selectors";
-import { MAX_GRADE, MIN_GRADE, formatAverage, formatGrade, gradeStats, isValidGrade, librettoEntries, projectedStats, type LibrettoEntry } from "../lib/grades";
+import { MAX_GRADE, MIN_GRADE, formatAverage, formatGrade, gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats, type LibrettoEntry } from "../lib/grades";
 import {
   BARB_THESIS_LEVELS,
   DEGREE_PROGRAMS,
@@ -44,9 +44,8 @@ export function CareerView() {
   const entries = useMemo(() => librettoEntries(exams, subjects), [exams, subjects]);
   const stats = gradeStats(entries);
   const withTargets = projectedStats(entries, exams, subjects);
-  const missing = exams
-    .filter((exam) => !exam.archived && exam.status === "done" && !exam.passFail && !isValidGrade(exam.grade))
-    .sort((a, b) => b.date.localeCompare(a.date));
+  // Una riga per materia, mai per una materia già nel libretto.
+  const missing = missingGrades(exams, entries);
 
   const openEditor = (exam: Exam | null) => {
     setNotice("");
@@ -89,7 +88,8 @@ export function CareerView() {
         />
         <Tile
           label="Voto di partenza"
-          value={formatAverage(stats.base110)}
+          // Stesso numero e stesso formato della riga «Voto di partenza» del pannello qui sotto.
+          value={stats.base110 === null ? "—" : points(stats.base110)}
           detail="Media × 110 / 30"
           help={CAREER_HELP.base}
         />

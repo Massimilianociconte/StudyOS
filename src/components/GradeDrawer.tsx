@@ -2,7 +2,7 @@ import { useState } from "react";
 import { format, parseISO } from "date-fns";
 import type { Exam, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { MAX_GRADE, MIN_GRADE, isValidGrade } from "../lib/grades";
+import { MAX_GRADE, MIN_GRADE, examToRecord, isValidGrade } from "../lib/grades";
 import { DateField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
 import { CAREER_HELP } from "../lib/labels/career";
@@ -109,9 +109,8 @@ export function GradeDrawer({
       subjectId = await addSubject({ name, cfu, status: "completed", semester: "" });
     }
     if (!subjectId) return fail("Scegli la materia dell'esame.");
-    const pendingExam = exams
-      .filter((item) => item.subjectId === subjectId && item.status !== "done")
-      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    // Riusa l'esame «Sostenuto» senza voto (o il primo da dare): la materia resta una riga del libretto.
+    const pendingExam = examToRecord(exams, subjectId);
     if (pendingExam) await updateExam(pendingExam.id, result);
     else await addExam({ subjectId, targetGrade: Math.min(MAX_GRADE, grade || 28), ...result });
     const subject = useStudyStore.getState().subjects.find((item) => item.id === subjectId);
