@@ -6,7 +6,7 @@ import { readCoverImage } from "../lib/files";
 import { isDateToDecide } from "../lib/examOutcome";
 import { librettoEntries } from "../lib/grades";
 import { GradeDrawer } from "../components/GradeDrawer";
-import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
+import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
 import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
 import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
 import { HelpField } from "../components/HelpField";
@@ -414,7 +414,8 @@ function SubjectCard({
         {semester !== "non-definito" ? <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag> : null}
         <span>{subject.cfu} CFU</span>
         <span>{stats.openTasks.length} attività da fare</span>
-        <span>{formatHours(stats.studyMinutes)} h di studio</span>
+        {/* Come in Statistiche: «50 min», «1 h 15 min» (stesso formato, stessi numeri). */}
+        <span>{formatMinutes(stats.studyMinutes)} di studio</span>
         {stats.materials.length ? (
           <span className="inline-flex items-center gap-1" title={`${stats.materials.length} ${stats.materials.length === 1 ? "materiale" : "materiali"}`}>
             <Icon name="Paperclip" className="h-3 w-3" />
@@ -658,7 +659,7 @@ function SubjectDrawer({
           {/* I numeri che portano altrove sono pulsanti: "Da fare" → Attività della materia, "Esame tra" → l'esame. */}
           <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-3">
             <div className="col-span-2 min-w-0 min-[420px]:col-span-1">
-              <StatTile label="Ore di studio" value={`${formatHours(stats.studyMinutes)} h`} />
+              <StatTile label="Ore di studio" value={formatMinutes(stats.studyMinutes)} />
             </div>
             <StatTile label="Da fare" value={stats.openTasks.length} onClick={() => showTasks(subject.id)} />
             {stats.exam && isDateToDecide(stats.exam) ? (

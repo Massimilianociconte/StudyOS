@@ -1,31 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hoursThatAddUp } from "../src/lib/studyStats.ts";
-import { formatHours } from "../src/lib/labels.ts";
+import { minutesThatAddUp } from "../src/lib/studyStats.ts";
+import { formatMinutes } from "../src/lib/labels.ts";
 
 const total = (minutes) => minutes.reduce((sum, value) => sum + value, 0);
-const sum = (hours) => Math.round(hours.reduce((acc, value) => acc + value, 0) * 10) / 10;
-const shown = (hours) => formatHours(hours * 60);
 
-test("Statistiche: le ore per materia sommano al totale della settimana (1,3 h, non 0,8 + 0,4)", () => {
-  const minutes = [50, 25];
-  const hours = hoursThatAddUp(minutes);
-  assert.equal(formatHours(total(minutes)), "1,3");
-  assert.deepEqual(hours.map(shown), ["0,9", "0,4"]);
-  assert.equal(sum(hours), 1.3);
+test("Statistiche: righe in minuti come le schede delle materie, e sommano al totale", () => {
+  // 50 e 25 minuti: «50 min» e «25 min» (come «50 min di studio» sulla scheda), non 0,9 + 0,4 h.
+  const rows = minutesThatAddUp([50, 25]);
+  assert.deepEqual(rows.map(formatMinutes), ["50 min", "25 min"]);
+  assert.equal(total(rows), 75);
+  assert.equal(formatMinutes(total(rows)), "1 h 15 min");
 });
 
-test("Statistiche: somma giusta per ogni combinazione, ogni riga a meno di 6 minuti dal vero", () => {
-  for (let a = 0; a <= 120; a += 7) {
-    for (let b = 1; b <= 120; b += 11) {
-      for (const c of [0, 3, 25, 61]) {
+test("Statistiche: minuti con decimali (cronometro) sommano comunque al totale arrotondato", () => {
+  for (let a = 0; a <= 120; a += 7.5) {
+    for (let b = 0.5; b <= 120; b += 11.25) {
+      for (const c of [0, 0.5, 25.5, 61.4]) {
         const minutes = [a, b, c];
-        const hours = hoursThatAddUp(minutes);
-        assert.equal(formatHours(sum(hours) * 60), formatHours(total(minutes)), JSON.stringify(minutes));
-        hours.forEach((value, index) => assert.ok(Math.abs(value * 60 - minutes[index]) < 6, JSON.stringify(minutes)));
+        const rows = minutesThatAddUp(minutes);
+        assert.equal(total(rows), Math.round(total(minutes)), JSON.stringify(minutes));
+        rows.forEach((value, index) => {
+          assert.ok(Number.isInteger(value));
+          assert.ok(Math.abs(value - minutes[index]) < 1, JSON.stringify(minutes));
+        });
       }
     }
   }
-  assert.deepEqual(hoursThatAddUp([]), []);
-  assert.deepEqual(hoursThatAddUp([0, 0]), [0, 0]);
+  assert.deepEqual(minutesThatAddUp([]), []);
+  assert.deepEqual(minutesThatAddUp([0, 0]), [0, 0]);
+  assert.deepEqual(minutesThatAddUp([-5, 10]), [0, 10]);
 });

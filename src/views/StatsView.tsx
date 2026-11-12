@@ -13,9 +13,9 @@ import {
   SESSION_SOURCES,
   STATS_PERIODS,
   countInRange,
-  hoursThatAddUp,
   largestRemainderPercents,
   minutesBySubject,
+  minutesThatAddUp,
   periodRange,
   sessionSummary,
   sessionsInRange,
@@ -86,8 +86,8 @@ export function StatsView() {
   const bySubject = useMemo(() => minutesBySubject(subjects, inPeriod), [subjects, inPeriod]);
   // Percentuali arrotondate che sommano sempre a 100 (resto più grande).
   const subjectPercents = useMemo(() => largestRemainderPercents(bySubject.map((entry) => entry.minutes)), [bySubject]);
-  // Ore delle righe che sommano al totale mostrato (arrotondate una per una davano 0,8 + 0,4 = 1,3).
-  const subjectHours = useMemo(() => hoursThatAddUp(bySubject.map((entry) => entry.minutes)), [bySubject]);
+  // Tempo delle righe in minuti, come sulle schede delle materie («50 min»), che sommano al totale.
+  const subjectMinutes = useMemo(() => minutesThatAddUp(bySubject.map((entry) => entry.minutes)), [bySubject]);
   const trend = useMemo(() => {
     const unit = trendUnit(range.period);
     return trendBuckets(inPeriod, range, unit).map((bucket) => ({
@@ -264,7 +264,7 @@ export function StatsView() {
                         <Cell key={entry.id ?? "none"} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [`${formatHours(Number(value))} h`, String(name)]} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [formatMinutes(Number(value)), String(name)]} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -274,7 +274,7 @@ export function StatsView() {
                     <>
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: entry.color }} />
                       <span className="two-line-safe min-w-0 flex-1 font-bold leading-tight">{entry.name}</span>
-                      <span className="shrink-0 text-xs font-black tabular-nums">{formatHours(subjectHours[index] * 60)} h</span>
+                      <span className="shrink-0 text-xs font-black tabular-nums">{formatMinutes(subjectMinutes[index])}</span>
                       <span className="w-10 shrink-0 text-right text-xs font-bold text-[var(--muted)] tabular-nums">{subjectPercents[index]}%</span>
                     </>
                   );
