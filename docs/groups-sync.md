@@ -55,8 +55,9 @@ alcun errore.
 
 - `studyos_groups` (testo come id: stesso spazio degli id locali, nessuna rimappatura)
 - `studyos_group_members` (per gruppo: proprietario, amministratori, membri)
-- `studyos_group_invites` (a un account, `recipient_user_id`, o con codice; `recipient_email` solo
-  sui vecchi inviti)
+- `studyos_group_invites` (a un account, `recipient_user_id`, o con codice; `recipient_email` c'era
+  solo sui vecchi inviti: `people.sql`, dopo la migrazione, toglie quelli non legati e svuota
+  l'indirizzo degli altri, perché ogni membro lo leggeva)
 - `studyos_group_resources` (bacheca: link, note, file di riferimento, attività)
 - `studyos_group_activity` (append-only)
 
@@ -88,8 +89,9 @@ alcun errore.
   `visibleMemberName` e `getActor`). Prima la riserva era la parte dell'email prima della @, che
   vedevano gli altri membri, le notifiche e i loro agenti MCP: chi trova qualcuno con il `@nome` non
   deve poterne dedurre l'indirizzo. Lo stesso vale per il nome di chi condivide (`shareSync`).
-  I nomi così salvati prima li sostituisce `people.sql` (`names_from_email`, controllato da
-  `email_names_ready`).
+  I nomi così salvati prima li sostituisce `people.sql` una volta sola (segno `names_from_email`,
+  controllato da `email_names_ready`): rieseguirlo non tocca più i nomi, così chi sceglie apposta
+  un nome uguale alla parte prima della @ lo tiene.
 - **L'email dei membri non si salva** (revisione B4, [security-data.md](security-data.md)): la
   colonna `email` di `studyos_group_members` resta sempre vuota. Il trigger
   `studyos_group_members_no_email` la svuota anche se un'app vecchia la manda; `join_group_by_code`

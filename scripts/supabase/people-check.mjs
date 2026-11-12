@@ -464,8 +464,14 @@ const main = async () => {
     boundTo("studyos_group_invites", groupForBob));
   check("Migrazione: l'invito di condivisione per l'email di Bob passa al suo account", boundTo("studyos_share_invites", shareForBob) === bob.id,
     boundTo("studyos_share_invites", shareForBob));
-  check("Migrazione: senza account con quell'email l'invito resta slegato",
-    boundTo("studyos_group_invites", groupForErin) === "-" && boundTo("studyos_share_invites", shareForErin) === "-");
+  // Revisione B4: dopo la migrazione un invito di gruppo per email non legato sparisce e quello legato
+  // perde l'indirizzo (ogni membro del gruppo lo leggeva). Gli inviti di condivisione non cambiano.
+  const groupInviteRows = (id) => sql(`select count(*) from public.studyos_group_invites where id = ${lit(id)}`);
+  check("Migrazione: senza account con quell'email l'invito di gruppo sparisce e quello di condivisione resta slegato",
+    groupInviteRows(groupForErin) === "0" && boundTo("studyos_share_invites", shareForErin) === "-",
+    `${groupInviteRows(groupForErin)} righe, condivisione ${boundTo("studyos_share_invites", shareForErin)}`);
+  check("Migrazione: l'invito di gruppo legato non porta più l'indirizzo",
+    sql(`select coalesce(recipient_email, '-') from public.studyos_group_invites where id = ${lit(groupForBob)}`) === "-");
   const { data: migratedInbox } = await bob.client.from("studyos_group_invites").select("id").eq("recipient_user_id", bob.id).eq("status", "pending");
   check("Bob vede l'invito migrato", migratedInbox?.some((item) => item.id === groupForBob), JSON.stringify(migratedInbox));
   await errorIs("Con un destinatario il token non basta",
@@ -476,16 +482,19 @@ const main = async () => {
 
   const erin = await account("erin", "198.51.100.6", erinEmail);
   // Come la prima versione della migrazione (senza la data): legame verso chi si è registrato dopo.
-  sql(`update public.studyos_group_invites set recipient_user_id = ${lit(erin.id)} where id = ${lit(groupForErin)}`);
+  // L'invito di gruppo di Erin non c'è più: lo si riscrive già legato, come lo lasciava quella versione.
+  const oldBindGroup = legacyGroup("erin_oldbind", erinEmail);
+  sql(`update public.studyos_group_invites set recipient_user_id = ${lit(erin.id)}, code = '' where id = ${lit(oldBindGroup)}`);
   sql(`update public.studyos_share_invites set recipient_user_id = ${lit(erin.id)} where id = ${lit(shareForErin)}`);
   runPeopleSql();
-  check("Rieseguire people.sql non lega un account registrato dopo e scioglie il legame vecchio",
-    boundTo("studyos_group_invites", groupForErin) === "-" && boundTo("studyos_share_invites", shareForErin) === "-");
+  check("Rieseguire people.sql scioglie il legame vecchio (l'invito di gruppo, ormai slegato, sparisce)",
+    groupInviteRows(oldBindGroup) === "0" && boundTo("studyos_share_invites", shareForErin) === "-",
+    `${groupInviteRows(oldBindGroup)} righe, condivisione ${boundTo("studyos_share_invites", shareForErin)}`);
   await errorIs("Vecchio invito per email: non si accetta nemmeno con il token",
     erin.client.rpc("accept_share_invite", { p_invite_id: shareForErin, p_token: tokenErin, p_display_name: "Erin", p_reciprocal: [] }),
     "Invito scaduto: chiedine uno nuovo");
-  await errorIs("Vecchio invito di gruppo per email: non si accetta",
-    erin.client.rpc("accept_group_invite", { p_invite_id: groupForErin, p_display_name: "Erin" }), "Invito destinato a un altro account");
+  await errorIs("Vecchio invito di gruppo per email: non si accetta (non c'è più)",
+    erin.client.rpc("accept_group_invite", { p_invite_id: oldBindGroup, p_display_name: "Erin" }), "Invito non trovato");
   const { data: erinPreview } = await erin.client.rpc("preview_share_invite", { p_token: tokenErin });
   check("Anteprima del vecchio invito: «scaduto»", erinPreview?.[0]?.status === "expired" && erinPreview[0].for_other_account === false,
     JSON.stringify(erinPreview));

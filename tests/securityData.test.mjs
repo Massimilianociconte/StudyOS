@@ -64,8 +64,12 @@ test("verify.sql: controlli generici su ogni tabella studyos_ e ogni funzione de
   ]) {
     assert.match(verify, new RegExp(`\\bas ${column}\\b`), column);
   }
-  // Per nome, non per elenco: una tabella nuova (es. le sessioni d'esame dei gruppi) è già coperta.
-  assert.match(verify, /c\.relname like 'studyos\\_%'/);
+  // Ogni tabella di public (tranne quelle di un'estensione), non un elenco: una tabella nuova, anche
+  // senza il prefisso studyos_, è già coperta. E nessun ruolo dei client salta la RLS.
+  assert.doesNotMatch(verify, /relname like 'studyos/);
+  assert.match(verify, /d\.classid = 'pg_class'::regclass and d\.objid = c\.oid and d\.deptype = 'e'/);
+  assert.match(verify, /r\.rolname in \(select name from client_role\) and r\.rolbypassrls/);
+  assert.match(verify, /from public\.studyos_group_invites where recipient_email is not null/);
   assert.match(verify, /where n\.nspname = 'public' and p\.prosecdef/);
   assert.match(verify, /not relrowsecurity/);
   assert.match(verify, /has_table_privilege\(client_role\.name, rel\.rel_oid, 'TRUNCATE'\)/);
@@ -146,9 +150,26 @@ test("nomi presi dall'email: pulizia una tantum in people.sql, segnata e senza e
     assert.ok(people.includes(column), column);
   }
   assert.match(people, /insert into public\.studyos_migrations \(name\) values \('names_from_email'\) on conflict \(name\) do nothing;/);
+  // Una volta sola: con il segno il blocco esce prima di ogni update (un nome scelto apposta resta).
+  const cleanup = people.slice(people.indexOf("revoke all on function public.studyos_name_without_email"));
+  assert.match(cleanup, /^[\s\S]*?do \$\$\nbegin\n[^\n]*\n  if exists \(select 1 from public\.studyos_migrations where name = 'names_from_email'\) then\n    return;\n  end if;\n\n  update /);
+  assert.match(sql["people-verify.sql"],
+    /exists \(select 1 from public\.studyos_migrations where name = 'names_from_email'\)\n    and to_regprocedure\('public\.studyos_name_without_email\(uuid,text\)'\) is not null as email_names_ready/);
   // Il trigger di guardia delle risorse si riaccende nella stessa istruzione.
   assert.match(people, /disable trigger studyos_group_resources_guard;[\s\S]{0,600}enable trigger studyos_group_resources_guard;/);
   assert.match(sql["people-verify.sql"], /\bas email_names_ready\b/);
+});
+
+test("vecchi inviti di gruppo per email: indirizzo tolto in people.sql, dopo migrazione e controllo", () => {
+  const people = sql["people.sql"];
+  const drop = "delete from public.studyos_group_invites where recipient_email is not null and recipient_user_id is null;";
+  const blank = "update public.studyos_group_invites set recipient_email = null where recipient_email is not null;";
+  const code = people.indexOf("update public.studyos_group_invites\nset code = ''");
+  const migration = people.indexOf("insert into public.studyos_migrations (name) values ('people_email_invites');");
+  assert.ok(migration > 0 && code > migration, "la pulizia del codice segue la migrazione");
+  assert.ok(people.indexOf(drop) > code && people.indexOf(blank) > people.indexOf(drop), "dopo il codice: prima via i non legati, poi l'indirizzo");
+  // Non in groups.sql: gira prima di people.sql e toglierebbe gli indirizzi prima del legame.
+  assert.ok(!sql["groups.sql"].includes(drop) && !sql["groups.sql"].includes(blank));
 });
 
 test("TRUNCATE (ignora la RLS) tolto ai client sulle tabelle con privilegi ampi", () => {

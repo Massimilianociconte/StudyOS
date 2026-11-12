@@ -136,13 +136,13 @@ Cosa cambia:
 - **Email.** L'email dei membri dei gruppi non si salva più: la leggevano tutti i membri. Un
   trigger la toglie anche se un'app vecchia la manda, e lo script svuota quelle già salvate.
   Lo stesso vale per l'email di chi accetta un link di condivisione, che vedeva chi
-  condivideva. Restano gli indirizzi dei vecchi inviti per email (prima dell'11/11/2026),
-  visibili ai membri del gruppo finché l'invito esiste.
-- **Nomi.** `people.sql` sostituisce i nomi presi dalla parte dell'email prima della @ (membri,
-  proprietari, inviti, risorse, attività, condivisioni) con il nome del profilo online,
-  altrimenti con «Studente». La prima esecuzione è segnata in `studyos_migrations`
-  (`names_from_email`). Gira a ogni esecuzione e non legge né scrive email: le confronta
-  soltanto.
+  condivideva. `people.sql` toglie anche l'indirizzo dei vecchi inviti di gruppo per email (prima
+  dell'11/11/2026), che leggeva ogni membro: quelli non legati a un account spariscono.
+- **Nomi.** `people.sql` sostituisce, una volta sola, i nomi presi dalla parte dell'email prima
+  della @ (membri, proprietari, inviti, risorse, attività, condivisioni) con il nome del profilo
+  online, altrimenti con «Studente». Il segno `names_from_email` in `studyos_migrations` ferma le
+  esecuzioni successive: un nome scelto apposta uguale a quella parte resta. Non legge né
+  scrive email: le confronta soltanto.
 - **Cancellazione dall'account.** «Cancella anche dall'account» (`erase_studyos_account_items`)
   ora toglie anche:
   - la cronologia delle modifiche fatte da altri;
@@ -152,8 +152,8 @@ Cosa cambia:
   - i resoconti BARB.
 
   I gruppi restano. La colonna `erase_all_ready` di `verify.sql` lo controlla.
-- **Controlli generici.** Le nuove colonne di `verify.sql` valgono per ogni tabella
-  `public.studyos_*` e ogni funzione `SECURITY DEFINER`, anche quelle aggiunte dopo:
+- **Controlli generici.** Le nuove colonne di `verify.sql` valgono per ogni tabella di `public`
+  e ogni funzione `SECURITY DEFINER`, anche quelle aggiunte dopo:
   - `tables_rls_ready`;
   - `anon_closed_ready`;
   - `definer_functions_ready`;
