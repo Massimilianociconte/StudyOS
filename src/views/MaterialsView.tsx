@@ -6,7 +6,7 @@ import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, attachmentKind, capitalize
 import { MATERIALS_HELP, MATERIALS_TEXT } from "../lib/labels/materials";
 import { Button, EmptyState, Field, HelpTip, IconButton, SectionTitle, Segmented, Tag, inputClass, useDialogLayer } from "../components/ui";
 import { HelpField } from "../components/HelpField";
-import { goToView } from "../hooks/useLinkedUiState";
+import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
 import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
@@ -30,10 +30,14 @@ type KindFilter = "all" | AttachmentKind;
 const INVALID_LINK = "Link non valido: incolla l'indirizzo completo (Es. https://…).";
 
 /** Etichette mostrate: senza «link», che l'app aggiungeva da sola ai link salvati (quelle scritte da chi studia restano). */
+// Stessa regola di prima per `materials.query` (useUiState accettava solo stringhe).
+const isString = (value: unknown): value is string => typeof value === "string";
+
 const visibleTags = (attachment: Attachment) => attachment.tags.filter((tag) => !(attachment.externalUrl && tag === "link"));
 
 export function MaterialsView() {
-  const [query, setQuery] = useUiState("materials.query", "", { scope: "tab" });
+  // Scritta anche da Home e dalla ricerca: si applica pure se Materiali è già aperta.
+  const [query, setQuery] = useLinkedUiState("materials.query", "", { scope: "tab", validate: isString });
   const [kind, setKind] = useUiState<KindFilter>("materials.kind", "all", { validate: oneOf("all", "pdf", "image", "video", "doc", "link", "file") });
   const [savedSubjectFilter, setSubjectFilter] = useUiState("materials.subject", "");
   const [uploadError, setUploadError] = useState("");

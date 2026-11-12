@@ -24,6 +24,7 @@ import { BarbExamImport } from "../components/BarbExamImport";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { useOnce } from "../hooks/useOnce";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
 
 // Pannello Condividi (e supabase-js) scaricato solo al tocco, come in ShareButton: qui è una voce
 // del menu "Altre azioni" e non un pulsante, quindi il caricamento differito sta nella vista.
@@ -99,8 +100,9 @@ export function ExamsView() {
     () => (hasExams ? "personal" : preferences.showBarb || preferences.degreeProgram === "barb" ? "barb" : "personal"),
     { validate: oneOf("barb", "personal") }
   );
-  // Esame aperto nel modulo: scritto anche da altre schermate (writeUiState + setActiveView).
-  const [editingId, setEditingId] = useUiState<string | null>(EXAMS_EDITING_KEY, null, { scope: "tab", validate: isNullableString });
+  // Esame aperto nel modulo: scritto anche da altre schermate (goToView) e dalla ricerca, anche
+  // mentre Esami è già aperta: in quel caso si apre lo stesso, senza rimontare la vista.
+  const [editingId, setEditingId] = useLinkedUiState<string | null>(EXAMS_EDITING_KEY, null, { scope: "tab", validate: isNullableString });
   const editing = resolveExamEditing(editingId, exams);
   // Esame del calendario da aggiungere (Home, Statistiche): apre «Aggiungi esame» già compilato, poi si cancella.
   const [prefill, setPrefill] = useUiState<CalendarExamRef | null>(EXAMS_NEW_KEY, null, { scope: "tab", validate: isNullableCalendarExamRef });
