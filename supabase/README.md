@@ -69,7 +69,7 @@ Ordine esatto nel SQL Editor, una query alla volta:
 6. `group-exams.sql` (appelli condivisi dei gruppi, vedi «Appelli condivisi dei gruppi» in fondo;
    dopo `groups.sql`, `sharing.sql` e `people.sql`, anche dopo `push-reminders.sql`);
 7. `verify.sql`;
-8. `sharing-verify.sql` (le cinque colonne `group_exams_*` restano `false` finché non hai eseguito
+8. `sharing-verify.sql` (le sei colonne `group_exams_*` restano `false` finché non hai eseguito
    `group-exams.sql`; `group_exams_realtime_ready` dipende dalla pubblicazione `supabase_realtime`
    e `group_exams_agent_ready` anche da `agent.sql`);
 9. `people-verify.sql` (le colonne `pg_net_ready` e `vault_ready` restano `false` finché non
@@ -174,8 +174,8 @@ revisione.
 `sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
 dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha
 una transazione che lo avvolge) e premi Run; si può rieseguire. Poi incolla
-[sharing-verify.sql](sharing-verify.sql) in una nuova query: le colonne `*_ready` (14 di
-sharing, più le 5 `group_exams_*` dopo `group-exams.sql`) devono essere `true` (compresi `recipient_values_ready`, la regola sui valori scritti da chi
+[sharing-verify.sql](sharing-verify.sql) in una nuova query: le colonne `*_ready` (12 di
+sharing, più le 6 `group_exams_*`, in tutto 18 dopo `group-exams.sql`) devono essere `true` (compresi `recipient_values_ready`, la regola sui valori scritti da chi
 riceve, `triggers_ready`, che controlla anche i trigger su condivisioni e membri dei
 gruppi, e `light_history_ready`: la cronologia tiene copertine e file solo nelle eliminazioni, anche nel trigger), `shared_item_policies` deve valere `3` e `own_item_policies` `4`. Sul progetto
 reale `sharing.sql` non è mai stato eseguito: non serve alcuna pulizia di valori vecchi.
@@ -446,7 +446,9 @@ successiva: la revisione di questo giro aggiunge un controllo sulle righe dei me
 `people.sql` e, se lo usi, `push-reminders.sql` (l'ordine completo è nell'elenco numerato in cima):
 
 1. `group-exams.sql` — appelli del gruppo, correzioni al catalogo BARB e cronologia. Rieseguibile.
-   Se manca `groups.sql` aggiornato si ferma con «Esegui prima groups.sql (versione del 12/11)».
+   Se manca `groups.sql` aggiornato si ferma con «Esegui prima groups.sql (versione del 12/11 o successiva)».
+   Aggiunge anche un controllo sulla forma degli id dei nuovi gruppi (lettere, cifre, `_` e `-`): i gruppi
+   già salvati restano come sono. Agli agenti il connettore dà i testi dei membri senza nessuna email.
 2. `verify.sql`: `definer_functions_ready` deve restare `true` (l'ingresso del connettore
    `studyos_agent_group_snapshot` è tra quelli permessi); poi `sharing-verify.sql`: le colonne
    `group_exams_*` devono essere tutte `true`.

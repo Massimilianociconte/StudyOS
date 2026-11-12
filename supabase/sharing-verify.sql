@@ -111,7 +111,9 @@ select
         to_regprocedure('public.studyos_group_history_write(text,text,text,text,integer,jsonb,jsonb,text[],text)'),
         to_regprocedure('public.studyos_group_activity_write(text,text,text)'),
         to_regprocedure('public.studyos_exam_session_twin(text,jsonb,text)'),
-        to_regprocedure('public.studyos_hide_emails(text)')]) as f), false)
+        to_regprocedure('public.studyos_hide_emails(text,boolean)'),
+        to_regprocedure('public.studyos_email_normalize(text)'),
+        to_regprocedure('public.studyos_fields_only_unimi(jsonb)')]) as f), false)
     as group_exams_closed_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
       and schemaname = 'public' and tablename = 'studyos_group_exam_sessions')
@@ -119,4 +121,9 @@ select
       and schemaname = 'public' and tablename = 'studyos_group_catalog_overrides') as group_exams_realtime_ready,
   -- Il connettore remoto: la funzione dello snapshot e quella che riconosce il segreto (agent.sql).
   to_regprocedure('public.studyos_agent_group_snapshot(text)') is not null
-    and to_regprocedure('public.studyos_agent_user(text)') is not null as group_exams_agent_ready;
+    and to_regprocedure('public.studyos_agent_user(text)') is not null as group_exams_agent_ready,
+  -- La guardia sulle righe dei membri (groups.sql: l'account e il gruppo di una riga non cambiano) e la forma degli id dei gruppi.
+  exists (select 1 from pg_trigger where tgrelid = to_regclass('public.studyos_group_members')
+      and tgname = 'studyos_group_members_pin_identity' and not tgisinternal and tgenabled <> 'D')
+    and exists (select 1 from pg_constraint where conrelid = to_regclass('public.studyos_groups')
+      and conname = 'studyos_groups_id_shape') as group_exams_members_pinned_ready;

@@ -1,8 +1,8 @@
 -- Stub minimo di Supabase per provare gli script su un Postgres usa e getta (mai sul progetto reale).
 -- auth.uid() legge request.jwt.claim.sub; quattro utenti di prova.
-create role anon nologin;
-create role authenticated nologin;
-create role service_role nologin;
+do $$ begin if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if; end $$;
+do $$ begin if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if; end $$;
+do $$ begin if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin; end if; end $$;
 create schema auth;
 create table auth.users (id uuid primary key, email text, email_confirmed_at timestamptz, deleted_at timestamptz);
 create function auth.uid() returns uuid language sql stable as $$

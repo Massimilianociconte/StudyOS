@@ -14,7 +14,7 @@ test("email istituzionale: solo esattamente @unimi.it, in minuscolo", () => {
 test("testi: indirizzi non istituzionali nascosti, istituzionali tenuti solo se richiesto", () => {
   const text = "Prof: Mario.Rossi@UNIMI.IT, rappresentante anna@gmail.com, studente x@studenti.unimi.it, strano x@unimi.it@evil.com, y@unimi.it.evil.com.";
   const kept = redactEmails(text, true);
-  assert.ok(kept.includes("mario.rossi@unimi.it"));
+  assert.ok(kept.includes("Mario.Rossi@UNIMI.IT"), "gli indirizzi tenuti conservano le maiuscole");
   for (const leaked of ["anna@gmail.com", "x@studenti.unimi.it", "evil.com.", "y@unimi.it.evil"]) assert.ok(!kept.includes(leaked), leaked);
   assert.ok(!kept.includes("x@unimi.it@"), "un indirizzo attaccato a un'altra @ non passa");
   const none = redactEmails(text, false);
@@ -29,7 +29,7 @@ test("indirizzi: ogni forma di indirizzo non istituzionale sparisce (H1)", () =>
   const hidden = [
     "josé@gmail.com", "à@gmail.com", "o'brien@gmail.com", "x@münchen.de", "x@unimi.it​@gmail.com",
     "x@unimi.it@gmail.com", "a@@b.com", "x@unimi.it.evil.com", "x@xunimi.it", "x@UNIMI.IT.evil.com",
-    "mailto:anna@gmail.com", "<anna@gmail.com>", "a​@unimi.it", "x@unimi.it‍@evil.com", "x＠gmail.com", "anna@gmail.com."
+    "mailto:anna@gmail.com", "<anna@gmail.com>", "x@unimi.it‍@evil.com", "x＠gmail.com", "anna@gmail.com."
   ];
   for (const address of hidden) {
     for (const keep of [true, false]) {
@@ -38,15 +38,15 @@ test("indirizzi: ogni forma di indirizzo non istituzionale sparisce (H1)", () =>
       assert.ok(!/[@＠]/.test(out), `nessuna @ resta: ${out}`);
     }
   }
-  assert.equal(redactEmails("mailto:Mario@UNIMI.IT.", true), "mailto:mario@unimi.it.");
-  assert.equal(redactEmails("<Mario@UNIMI.IT>, ok", true), "<mario@unimi.it>, ok");
+  assert.equal(redactEmails("mailto:Mario@UNIMI.IT.", true), "mailto:Mario@UNIMI.IT.");
+  assert.equal(redactEmails("<Mario@UNIMI.IT>, ok", true), "<Mario@UNIMI.IT>, ok");
   assert.equal(redactEmails("(cl.biol@unimi.it)", true), "(cl.biol@unimi.it)");
   assert.equal(redactEmails("cl.biol@unimi.it", false), EMAIL_HIDDEN);
   assert.equal(redactEmails("niente da nascondere", false), "niente da nascondere");
   assert.equal(institutionalEmail("x@unimi.it\n"), "x@unimi.it", "gli spazi ai bordi si tolgono, quelli dentro no");
   assert.equal(institutionalEmail("x@unimi.it\n@evil.com"), null);
   assert.equal(institutionalEmail("evil%x.com@unimi.it"), "evil%x.com@unimi.it", "il % è ammesso come nella regola del server");
-  assert.equal(institutionalEmail("a​@unimi.it"), null);
+  assert.equal(institutionalEmail("a\u200B@unimi.it"), "a@unimi.it", "i caratteri invisibili si tolgono prima di confrontare (NFKC)");
 });
 
 test("righe di correzione: il client filtra di nuovo (L4)", () => {
