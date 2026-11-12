@@ -40,6 +40,7 @@ import type {
 } from "../types";
 import { DEFAULT_PREFERENCES, PREFERENCES_ID, SETTINGS_SCHEMA_VERSION, createEmptySnapshot, defaultSettings } from "../data/defaults";
 import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState";
+import { clearProfileStorage } from "../lib/deviceStorage";
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { isReminderNotificationId } from "../lib/reminderIds";
@@ -1682,7 +1683,11 @@ export const useStudyStore = create<StudyState>((set, get) => {
       resetBaseline(empty, settings);
       // Filtri ed elementi aperti puntavano ai dati appena cancellati.
       clearUiState();
-      set({ settings, locked: false, ...empty });
+      // Anche il resto del profilo sul dispositivo; il timer si ferma (anche nelle altre schede) e non
+      // salva più nel profilo nuovo una sessione della materia cancellata.
+      clearProfileStorage();
+      setTimerState(set, defaultTimer());
+      set({ settings, locked: false, timerReview: false, ...empty });
     },
 
     retryPersist: async () => {

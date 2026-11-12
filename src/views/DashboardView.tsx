@@ -41,6 +41,7 @@ import {
 } from "../lib/labels";
 import { HOME_GUIDE_TEXT, HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
 import { currentDegree, degreeOptionLabel, degreePatch, homeLinks } from "../lib/homeFirstRun";
+import { GETTING_STARTED_HIDDEN_KEY } from "../lib/deviceStorage";
 import { DEGREE_PROGRAM_IDS, type DegreeProgramId } from "../lib/graduation";
 import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import { useToday } from "../hooks/useToday";
@@ -677,8 +678,6 @@ export function DashboardView() {
     </div>
   );
 }
-
-const GETTING_STARTED_HIDDEN_KEY = "studyos-getting-started-hidden";
 
 const readHidden = () => {
   try {
