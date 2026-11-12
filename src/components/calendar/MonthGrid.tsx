@@ -137,7 +137,9 @@ export function MonthGrid({
                   key={`head-${key}`}
                   role="presentation"
                   {...dayTarget(day, key)}
-                  className={`flex min-w-0 cursor-copy items-center justify-between gap-1 px-1 pt-1 sm:px-1.5 sm:pt-1.5 ${isSameMonth(day, month) ? "" : "opacity-45"}`}
+                  // Giorni di un altro mese: numero nel colore attenuato del tema (≥ 4,5:1 sulla cella in
+                  // entrambi i temi), non trasparente come il fondo.
+                  className={`flex min-w-0 cursor-copy items-center justify-between gap-1 px-1 pt-1 sm:px-1.5 sm:pt-1.5 ${isSameMonth(day, month) ? "" : "text-[var(--faint)]"}`}
                   style={{ gridColumn: column + 1, gridRow: 1 }}
                 >
                   <button
@@ -318,7 +320,11 @@ function MonthEvent({
         <TypeIcon paint={paint} />
       </span>
       {item.sharedFrom ? <SharedMark origin={item.sharedFrom} compact /> : null}
-      <span className="shrink-0 tabular-nums text-[var(--muted)]">{timeLabel(item.start)}</span>
+      {/* Sotto lg l'orario lascerebbe al titolo una lettera: resta nel nome accessibile e nell'anteprima. */}
+      <span className="sr-only shrink-0 tabular-nums text-[var(--muted)] lg:not-sr-only">
+        {timeLabel(item.start)}
+        <span className="sr-only">, </span>
+      </span>
       <span className="min-w-0 truncate">{item.title}</span>
     </button>
   );

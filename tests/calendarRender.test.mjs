@@ -97,23 +97,50 @@ test("layoutTimedDay: tre eventi 15–16 affiancati dove c'è spazio, +N dove no
   );
   assert.deepEqual(wide.more, []);
 
+  // Settimana su computer (124 px): il "+N" prende 44 px (bersaglio da dito), gli eventi accanto restano
+  // larghi almeno MIN_EVENT_COLUMN_PX: ne entra uno.
   const narrow = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 124 });
+  assert.equal(narrow.merged, false);
   assert.deepEqual(
     narrow.placed.map(({ item, column, columns, narrowed }) => [item.id, column, columns, narrowed]),
-    [
-      ["a", 0, 2, true],
-      ["b", 1, 2, true]
-    ]
+    [["a", 0, 1, true]]
   );
+  assert.ok(124 - render.MORE_GUTTER_PX >= render.MIN_EVENT_COLUMN_PX);
+  assert.ok(render.MORE_GUTTER_PX >= render.TOUCH_TARGET_PX);
   assert.equal(narrow.more.length, 1);
-  assert.equal(narrow.more[0].count, 1);
+  assert.equal(narrow.more[0].count, 2);
   assert.deepEqual(
     narrow.more[0].items.map((item) => item.id),
     ["a", "b", "c"],
     "il +N apre l'elenco di tutta la fascia"
   );
   assert.equal(narrow.more[0].startMs, local(2026, 12, 5, 15).getTime());
-  assert.equal(CALENDAR_LAYOUT_TEXT.more(narrow.more[0].count), "+1");
+  assert.equal(CALENDAR_LAYOUT_TEXT.more(narrow.more[0].count), "+2");
+  // Tre colonne ci stanno a 200 px, ma con il "+N" accanto due (2 × 78 px).
+  const four = [...items, timed("d", [2026, 12, 5, 15], [2026, 12, 5, 16])];
+  const fourPieces = render.dayPieces(four, local(2026, 12, 5).getTime(), local(2026, 12, 6).getTime());
+  const mid = render.layoutTimedDay(fourPieces, { hourHeight: 46, columnWidth: 200 });
+  assert.deepEqual(mid.placed.map(({ item, columns }) => [item.id, columns]), [["a", 2], ["b", 2]]);
+  assert.equal(mid.more[0].count, 2);
+});
+
+test("layoutTimedDay: in una colonna stretta (Settimana sul tablet) la fascia diventa un solo pulsante largo quanto la colonna", () => {
+  const items = [timed("a", [2026, 12, 5, 15], [2026, 12, 5, 16]), timed("b", [2026, 12, 5, 15, 30], [2026, 12, 5, 17]), timed("alone", [2026, 12, 5, 18], [2026, 12, 5, 19])];
+  const pieces = render.dayPieces(items, local(2026, 12, 5).getTime(), local(2026, 12, 6).getTime());
+  const tablet = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 72 });
+  assert.equal(tablet.merged, true);
+  // L'evento da solo resta a tutta larghezza; quelli che si sovrappongono sono tutti nel pulsante.
+  assert.deepEqual(tablet.placed.map(({ item, narrowed }) => [item.id, narrowed]), [["alone", false]]);
+  assert.equal(tablet.more.length, 1);
+  assert.equal(tablet.more[0].count, 2);
+  assert.deepEqual(tablet.more[0].items.map((item) => item.id), ["a", "b"]);
+});
+
+test("monthDots: un pallino per voce nel suo colore, al più 3, poi «+N»", () => {
+  assert.deepEqual(render.monthDots([]), { dots: [], more: 0 });
+  assert.deepEqual(render.monthDots(["#111111", "#222222"]), { dots: ["#111111", "#222222"], more: 0 });
+  assert.deepEqual(render.monthDots(["#1", "#2", "#3", "#4", "#5"]), { dots: ["#1", "#2", "#3"], more: 2 });
+  assert.deepEqual(render.monthDots(["#1", "#2", "#3"], 2), { dots: ["#1", "#2"], more: 1 });
 });
 
 test("layoutTimedDay: sovrapposizioni parziali e eventi isolati a tutta larghezza", () => {

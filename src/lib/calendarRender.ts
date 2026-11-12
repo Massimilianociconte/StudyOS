@@ -25,8 +25,10 @@ const HOUR_MS = 3_600_000;
 export const MIN_EVENT_HEIGHT_PX = 20;
 /** Larghezza minima (px) di una colonna di eventi affiancati: sotto, i successivi vanno nel "+N". */
 export const MIN_EVENT_COLUMN_PX = 56;
-/** Spazio (px) a destra di una fascia con il "+N". */
-export const MORE_GUTTER_PX = 28;
+/** Lato minimo (px) di un bersaglio da dito. */
+export const TOUCH_TARGET_PX = 44;
+/** Spazio (px) a destra di una fascia con il "+N": largo un bersaglio da dito. */
+export const MORE_GUTTER_PX = TOUCH_TARGET_PX;
 
 /** Durata (ms) che occupa davvero un evento corto: l'altezza minima in px divisa per i px all'ora. */
 export const minDurationMsFor = (hourHeight: number, minHeightPx = MIN_EVENT_HEIGHT_PX) => Math.round((minHeightPx / hourHeight) * HOUR_MS);
@@ -123,25 +125,30 @@ export type MoreBand<T> = { cluster: number; count: number; startMs: number; end
 
 /**
  * Eventi contemporanei affiancati (layoutDayColumns con l'altezza minima della griglia). Se una fascia
- * ha più colonne di quante ne entrano (`columnWidth`), restano le prime e il resto diventa un "+N" che
- * apre l'elenco di tutta la fascia; `narrowed` = la fascia lascia spazio a destra per il "+N".
+ * ha più colonne di quante ne entrano (`columnWidth`), restano le prime che stanno accanto al "+N"
+ * (largo MORE_GUTTER_PX, ognuna almeno MIN_EVENT_COLUMN_PX) e il "+N" apre l'elenco di tutta la
+ * fascia; `narrowed` = la fascia lascia spazio a destra per il "+N". In una colonna troppo stretta
+ * per entrambi (`merged`, Settimana sul tablet) la fascia è solo il pulsante, largo quanto la colonna.
  */
 export function layoutTimedDay<T extends { occurrenceKey: string }>(
   pieces: readonly DayPiece<T>[],
   { hourHeight, columnWidth }: { hourHeight: number; columnWidth: number }
-): { placed: PlacedPiece<T>[]; more: MoreBand<T>[] } {
+): { placed: PlacedPiece<T>[]; more: MoreBand<T>[]; merged: boolean } {
   const byKey = new Map(pieces.map((piece) => [piece.item.occurrenceKey, piece]));
   const layout = layoutDayColumns(
     pieces.map((piece) => ({ id: piece.item.occurrenceKey, startMs: piece.startMs, endMs: piece.endMs })),
     { minDurationMs: minDurationMsFor(hourHeight) }
   );
-  const { items, more } = collapseForWidth(layout, maxColumnsFor(columnWidth));
+  const beside = columnWidth - MORE_GUTTER_PX;
+  const merged = !(beside >= MIN_EVENT_COLUMN_PX);
+  const { items, more } = collapseForWidth(layout, maxColumnsFor(columnWidth), merged ? 0 : maxColumnsFor(beside));
   const collapsed = new Set(more.map((group) => group.cluster));
   const placed = items.flatMap((entry) => {
     const piece = byKey.get(entry.id);
     return piece ? [{ ...piece, key: entry.id, column: entry.column, columns: entry.columns, span: entry.span, narrowed: collapsed.has(entry.cluster) }] : [];
   });
   return {
+    merged,
     placed,
     more: more.map((group) => ({
       cluster: group.cluster,
@@ -185,6 +192,15 @@ export function laneRows(items: readonly DayRangeItem[], weekStarts: readonly st
     return { weekStart, segments: visible, lanes: Math.min(lanes, cap), hidden };
   });
 }
+
+/**
+ * Pallini di una cella (Mese sul telefono, fascia raccolta della Settimana): uno per voce nel colore
+ * della sua tipologia, al più `max`; le altre si contano in «+N».
+ */
+export const monthDots = (colors: readonly string[], max = 3): { dots: string[]; more: number } => ({
+  dots: colors.slice(0, max),
+  more: Math.max(0, colors.length - max)
+});
 
 /** Voci del giorno (eventi con orario, esami, Attività) che una cella del Mese mostra sotto le barre. */
 export const monthItemBudget = (visibleLanes: number, limit = 3) => Math.max(1, limit - visibleLanes);

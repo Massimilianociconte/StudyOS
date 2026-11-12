@@ -50,7 +50,7 @@ export function ScopeChoice({
             </h2>
             {options.length > 1 ? <p className="mt-1 text-sm font-bold text-[var(--muted)]">{SCOPE_TEXT.intro}</p> : null}
           </div>
-          <IconButton icon="X" label={SCOPE_TEXT.cancel} onClick={onCancel} className="h-10 w-10" />
+          <IconButton icon="X" label={SCOPE_TEXT.cancel} onClick={onCancel} />
         </div>
         <ul className="grid grid-cols-1 gap-2">
           {options.map((option, index) => (

@@ -93,6 +93,18 @@ test("collapseForWidth: oltre 2 colonne le prime due più un +N per la fascia", 
   assert.equal(CALENDAR_LAYOUT_TEXT.more(3), "+3");
 });
 
+test("collapseForWidth: meno colonne visibili accanto al +N, o nessuna", () => {
+  const layout = layoutDayColumns([ev("a", [15], [16]), ev("b", [15], [16]), ev("c", [15], [16]), ev("alone", [18], [19])]);
+  const one = collapseForWidth(layout, 2, 1);
+  assert.deepEqual(one.items.map(({ id, column, columns }) => [id, column, columns]), [["a", 0, 1], ["alone", 0, 1]]);
+  assert.deepEqual(one.more[0].ids, ["b", "c"]);
+  assert.equal(one.more[0].count, 2);
+  const none = collapseForWidth(layout, 2, 0);
+  assert.deepEqual(none.items.map(({ id }) => id), ["alone"]);
+  assert.equal(none.more[0].count, 3);
+  assert.deepEqual(none.more[0].bandIds, ["a", "b", "c"]);
+});
+
 test("collapseForWidth: le larghezze restano dentro le colonne visibili", () => {
   const layout = layoutDayColumns([ev("A", [9], [11]), ev("B", [9, 30], [10, 30]), ev("D", [10], [10, 45]), ev("C", [10, 45], [12])], { minDurationMs: 0 });
   const collapsed = collapseForWidth(layout, 2);

@@ -16,12 +16,14 @@ import type { Holiday } from "../../lib/holidays";
 import {
   MIN_EVENT_HEIGHT_PX,
   MORE_GUTTER_PX,
+  TOUCH_TARGET_PX,
   atWallMinutes,
   dayPieces,
   holidayBars,
   holidayId,
   laneRows,
   layoutTimedDay,
+  monthDots,
   occasionText,
   wallMinutes,
   weekStartsOf,
@@ -94,6 +96,7 @@ export function TimeGrid({
 
   // Eventi di tutto il giorno o su più giorni: barre nella fascia in alto, non nella griglia oraria.
   const theme = useEventTheme();
+  const paintOf = useEventPaint();
   const bars = eventBars(occurrences);
   const barById = new Map(bars.map((bar) => [bar.id, bar]));
   const holidayById = new Map(holidays.map((holiday) => [holidayId(holiday), holiday]));
@@ -200,11 +203,12 @@ export function TimeGrid({
             </>
           );
           return onPickDay ? (
+            // Alto 40 px, area di tocco di 44 (2 px sopra e sotto, nello spazio prima della fascia in alto).
             <button
               key={day.toISOString()}
               type="button"
               onClick={() => onPickDay(day)}
-              className="flex items-center justify-center gap-1.5 rounded-[14px] py-1 hover:bg-[var(--surface-soft)] hover:underline hover:decoration-[var(--faint)] hover:underline-offset-4"
+              className="relative flex items-center justify-center gap-1.5 rounded-[14px] py-1 after:absolute after:-inset-y-0.5 after:inset-x-0 after:content-[''] hover:bg-[var(--surface-soft)] hover:underline hover:decoration-[var(--faint)] hover:underline-offset-4"
               aria-label={CALENDAR_VIEW_TEXT.openDay(format(day, "EEE d", { locale: it }), format(day, "EEEE d MMMM", { locale: it }))}
               title={CALENDAR_VIEW_TEXT.openDay(format(day, "EEE d", { locale: it }), format(day, "EEEE d MMMM", { locale: it }))}
             >
@@ -393,6 +397,12 @@ export function TimeGrid({
               ))}
               {entry.layout.more.map((more) => {
                 const { top, height } = boxOf(more.startMs, more.endMs, entry.dayEnd);
+                // Fascia bassa: l'area di tocco arriva a 44 px, sopra e sotto in parti uguali.
+                const reach = Math.max(0, (TOUCH_TARGET_PX - height) / 2);
+                const merged = entry.layout.merged;
+                const visible = merged ? CALENDAR_LAYOUT_TEXT.merged(more.count) : CALENDAR_LAYOUT_TEXT.more(more.count);
+                const explain = merged ? CALENDAR_LAYOUT_TEXT.mergedAria(more.count) : CALENDAR_LAYOUT_TEXT.moreAria(more.count);
+                const dots = merged ? monthDots(more.items.map((item) => paintOf(item, handlers.subjects).style.border)) : null;
                 return (
                   <button
                     key={more.cluster}
@@ -402,13 +412,23 @@ export function TimeGrid({
                       handlers.onPreviewHide();
                       setBand({ day: entry.day, band: more });
                     }}
-                    // Il nome comincia dal testo visibile ("+2"), poi la spiegazione.
-                    aria-label={`${CALENDAR_LAYOUT_TEXT.more(more.count)}, ${CALENDAR_LAYOUT_TEXT.moreAria(more.count)}`}
-                    title={CALENDAR_LAYOUT_TEXT.moreAria(more.count)}
-                    className="absolute right-0 z-[5] grid grid-cols-1 place-items-start justify-center rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black text-[var(--text)] after:absolute after:-inset-y-3 after:inset-x-0 after:content-[''] hover:bg-[var(--surface)]"
-                    style={{ top, height, width: MORE_GUTTER_PX - 2 }}
+                    // Il nome comincia dal testo visibile ("+2", "3 eventi"), poi la spiegazione.
+                    aria-label={`${visible}, ${explain}`}
+                    title={explain}
+                    className={`absolute z-[5] flex flex-col items-center gap-1 rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black leading-tight text-[var(--text)] hover:bg-[var(--surface)] ${
+                      merged ? "left-0 right-0 px-1" : "right-0"
+                    }`}
+                    style={{ top, height, ...(merged ? {} : { width: MORE_GUTTER_PX - 2 }) }}
                   >
-                    {CALENDAR_LAYOUT_TEXT.more(more.count)}
+                    {reach ? <span aria-hidden="true" className="absolute inset-x-0" style={{ top: -reach, bottom: -reach }} /> : null}
+                    {dots ? (
+                      <span aria-hidden="true" className="flex items-center gap-0.5">
+                        {dots.dots.map((color, index) => (
+                          <span key={index} className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+                        ))}
+                      </span>
+                    ) : null}
+                    <span className="max-w-full truncate">{visible}</span>
                   </button>
                 );
               })}

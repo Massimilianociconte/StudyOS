@@ -587,7 +587,8 @@ function TimeChooser({
                 setCursor(slot);
                 onPickSlot(slot);
               }}
-              className={`motion-safe min-h-10 rounded-[12px] text-sm font-extrabold tabular-nums disabled:cursor-not-allowed disabled:opacity-35 ${
+              // Alto 40 px, area di tocco di 44: 2 px sopra e sotto, nello spazio tra gli orari (4–6 px).
+              className={`motion-safe relative min-h-10 rounded-[12px] text-sm font-extrabold tabular-nums after:absolute after:-inset-y-0.5 after:inset-x-0 after:content-[''] disabled:cursor-not-allowed disabled:opacity-35 ${
                 chosen ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-soft)] text-[var(--text)] hover:bg-[var(--surface)]"
               }`}
             >
