@@ -6,7 +6,9 @@ import { SUBJECTS_TEXT } from "./labels/subjects";
 
 export type SemesterFilter = SemesterId | "tutti";
 
-const filterLabel = (id: SemesterId) => SEMESTER_FILTERS.find((item) => item.id === id)?.label ?? SEMESTER_LABEL[id];
+// Semestre sconosciuto: «Senza semestre», come nel sottotitolo (niente «Da definire»).
+const filterLabel = (id: SemesterId) =>
+  id === "non-definito" ? SUBJECTS_TEXT.noSemesterFilter : (SEMESTER_FILTERS.find((item) => item.id === id)?.label ?? SEMESTER_LABEL[id]);
 
 /**
  * Un solo filtro per semestre, con i conteggi: "Tutte 8 · 1° semestre 4 · 2° semestre 3 · Annuali 1".

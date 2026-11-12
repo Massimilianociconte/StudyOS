@@ -40,6 +40,8 @@ test("sottotitolo di Materie: parole semplici, senza «Da definire»", async () 
   const { SUBJECTS_TEXT } = await import("../src/lib/labels/subjects.ts");
   assert.equal(SUBJECTS_TEXT.subtitle(1, 6, cfuBySemester([{ semester: "non-definito", cfu: 6 }])).startsWith("1 materia in corso · 6 CFU."), true);
   assert.ok(!SUBJECTS_TEXT.subtitle(1, 6, "").includes("Da definire"));
+  const options = semesterFilterOptions(["primo", "non-definito"], "tutti");
+  assert.deepEqual(options.map((option) => option.label), ["Tutte", "1° semestre", "Senza semestre"]);
 });
 
 test("menu della scheda: In corso, Superata (→ voto), Altro stato…, Archivia (con Annulla)", () => {

@@ -32,6 +32,7 @@ export const SUBJECTS_TEXT = {
   semesterFilter: "Filtra le materie per semestre",
   /** Nel dettaglio dei CFU del sottotitolo, al posto di «Da definire». */
   noSemester: "senza semestre",
+  noSemesterFilter: "Senza semestre",
   allSemesters: "Tutte",
   add: "Aggiungi materia",
   nameField: "Nome della nuova materia",
