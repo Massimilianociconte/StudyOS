@@ -100,10 +100,21 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryAttempt = 0;
 const cleanups: Array<() => void> = [];
 
+// Voci ferme viste all'ultimo conteggio completo (-1: non ancora contate, o push ne ha appena segnate).
+let stuckSeen = -1;
+
 // Le voci ferme (troppo grandi, stuckOutbox.ts) non sono «modifiche da inviare»: non partiranno mai
-// così come sono. Si contano a parte e il pannello Account le elenca (P12).
+// così come sono. Si contano a parte e il pannello Account le elenca (P12). Gira dopo ogni salvataggio
+// locale: senza voci ferme basta count() (solo push le segna, una modifica locale le toglie); leggere
+// tutta la coda a ogni modifica pesava con una lunga coda offline.
 const refreshPendingCount = async () => {
+  if (stuckSeen === 0) {
+    const pending = await db.syncOutbox.count();
+    setState({ pendingCount: pending, pendingChanges: pending > 0, stuckCount: 0 });
+    return pending;
+  }
   const { pending, stuck } = countOutbox(await db.syncOutbox.toArray());
+  stuckSeen = stuck;
   setState({ pendingCount: pending, pendingChanges: pending > 0, stuckCount: stuck });
   return pending;
 };
@@ -321,10 +332,26 @@ const pull = async (userId: string, force = false) => {
 
 /** Righe su disco delle voci in coda senza entità in memoria (senza vault i dati stanno nelle tabelle). */
 const readStoredRows = async (rows: SyncOutboxRow[]) => {
-  const known = rows.filter((row) => (COLLECTIONS as readonly string[]).includes(row.collection));
-  const entries = await Promise.all(known.map(async (row) => [row.key, await collectionTable(row.collection).get(row.entityId)] as const));
-  return new Map<string, unknown>(entries);
+  // Una lettura per collezione (bulkGet), non una per voce.
+  const byCollection = new Map<CollectionKey, SyncOutboxRow[]>();
+  for (const row of rows) {
+    if (!(COLLECTIONS as readonly string[]).includes(row.collection)) continue;
+    byCollection.set(row.collection, [...(byCollection.get(row.collection) ?? []), row]);
+  }
+  const found = new Map<string, unknown>();
+  for (const [collection, list] of byCollection) {
+    const stored = await collectionTable(collection).bulkGet(list.map((row) => row.entityId));
+    list.forEach((row, index) => found.set(row.key, stored[index]));
+  }
+  return found;
 };
+
+/**
+ * Con Web Locks una sola scheda è attiva (activeTab.ts, stesso controllo di browserActiveTabEnv): le
+ * voci scritte da un'altra pagina vengono da prima del ricaricamento e la memoria le ha già lette dal
+ * disco. Rileggere ogni riga a ogni invio serve solo senza (P15).
+ */
+const singleActiveTab = () => typeof navigator !== "undefined" && typeof navigator.locks?.request === "function";
 
 /**
  * Rifiutata dal cloud con lo stesso timbro e un contenuto diverso (vedi `tieBreakStamp`): la copia
@@ -355,7 +382,7 @@ const push = async (userId: string) => {
   // stesso contenuto) e la voce dell'altra scheda spariva (P15). Col vault su disco c'è solo lo
   // snapshot cifrato: resta la copia in memoria (con il vault la guardia è la stessa, vedi docs).
   const vault = useStudyStore.getState().settings.security.mode === "vault";
-  const foreign = vault ? [] : queued.filter((row) => !row.deleted && row.writer !== OUTBOX_WRITER);
+  const foreign = vault || singleActiveTab() ? [] : queued.filter((row) => !row.deleted && row.writer !== OUTBOX_WRITER);
   const onDisk = foreign.length ? await readStoredRows(foreign) : new Map<string, unknown>();
   assertStoreReady();
   const index = indexCollections(pickCollections(useStudyStore.getState()));
@@ -461,6 +488,7 @@ const push = async (userId: string) => {
     // Voci che non partiranno mai così come sono: segnate come ferme, fuori dal conteggio delle
     // modifiche da inviare e nell'elenco del pannello Account (scarica una copia / togli dalla coda).
     // Una modifica locale le riaccoda senza segno e le rimette in gioco (P12).
+    stuckSeen = -1;
     await outboxTransaction(async () => {
       for (const { row, size } of oversized) {
         const next = parkedRow(await db.syncOutbox.get(row.key), row, size);

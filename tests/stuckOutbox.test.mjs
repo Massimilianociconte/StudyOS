@@ -77,6 +77,18 @@ test("P12: push segna le voci troppo grandi, i conteggi le tengono a parte, camb
   assert.match(labels, /stuckDiscardWarning/);
 });
 
+test("P12 (revisione): il conteggio dopo ogni salvataggio non legge tutta la coda", () => {
+  // refreshPendingCount gira dopo ogni salvataggio locale: con toArray() una lunga coda offline si
+  // leggeva per intero a ogni modifica. Senza voci ferme basta count(); solo push le segna.
+  const sync = readFileSync(new URL("../src/lib/cloudSync.ts", import.meta.url), "utf8");
+  const count = sync.slice(sync.indexOf("const refreshPendingCount"), sync.indexOf("const storeReady"));
+  assert.match(count, /if \(stuckSeen === 0\) \{\s*const pending = await db\.syncOutbox\.count\(\);/);
+  assert.match(count, /stuckSeen = stuck;/);
+  assert.match(sync, /let stuckSeen = -1;/);
+  const push = sync.slice(sync.indexOf("const push = async"), sync.indexOf("const firstSync"));
+  assert.match(push, /if \(oversized\.length\) \{\s*\/\/[\s\S]*?stuckSeen = -1;/);
+});
+
 test("P12 (revisione): testo chiaro, quali elementi si fermano, copia protetta come la copia di sicurezza", async () => {
   const { ACCOUNT_TEXT } = await import("../src/lib/labels/account.ts");
   // «scaricane una copia o toglili» faceva credere che scaricare bastasse: sblocca solo «Togli dalla coda».

@@ -103,7 +103,8 @@ Correzioni di novembre 2026 (sync personale):
 - senza Web Locks (più schede attive insieme) una scheda rimasta indietro non
   toglie più la voce accodata da un'altra: le voci portano chi le ha scritte
   (`writer`) e, senza vault, per quelle di un'altra pagina si invia la copia
-  più recente tra memoria e disco. Col vault su disco c'è solo lo snapshot
+  più recente tra memoria e disco (solo senza Web Locks, un `bulkGet` per
+  collezione: con la guardia la memoria le ha già). Col vault su disco c'è solo lo snapshot
   cifrato: il limite resta e la guardia a scheda unica è l'unica protezione (P15);
 - le voci che non partiranno mai così come sono (elemento oltre il limite di
   un invio, 900 KB) vengono segnate come ferme (`parked: "too-large"`,
