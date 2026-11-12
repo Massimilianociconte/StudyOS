@@ -427,7 +427,8 @@ export function AgentSettings() {
             ))}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="soft" icon="Clock" onClick={() => allowWritesFor15Minutes()} disabled={link.policy.write === "deny"}>
+            {/* A 320 px il testo va a capo invece di uscire dallo schermo. */}
+            <Button variant="soft" icon="Clock" onClick={() => allowWritesFor15Minutes()} disabled={link.policy.write === "deny"} className="max-w-full py-2 [&>span]:whitespace-normal">
               {AGENT_DESK_TEXT.trustWrites}
             </Button>
             {trusted ? <Button variant="ghost" onClick={() => clearTrustedWrites()}>{AGENT_DESK_TEXT.trustBack}</Button> : null}

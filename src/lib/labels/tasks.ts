@@ -61,7 +61,8 @@ export const TASK_EDITOR_TEXT = {
   discardTitle: "Scartare le modifiche?",
   discardText: "Quello che hai cambiato non è ancora salvato.",
   keepEditing: "Continua a modificare",
-  discard: "Scarta",
+  // Stesse parole di Materie, Obiettivi, Note, Studio ed Eventi.
+  discard: "Scarta le modifiche",
   minutesHint: "Se usi il timer si aggiorna da solo.",
   minutesRunning: "Il timer è in corso: se cambi i minuti, riparte da lì.",
   archivedHint: "Le archiviate spariscono dall'elenco: le ritrovi in fondo, con «Mostra le archiviate».",

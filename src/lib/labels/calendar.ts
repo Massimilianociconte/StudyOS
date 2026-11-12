@@ -169,9 +169,10 @@ export const EVENT_EDITOR_TEXT = {
   deleteShared: (title: string, owner: string) => `Eliminare «${title}» dal calendario di ${owner}? Resta nella sua cronologia e può ripristinarlo.`,
   deleteSeriesConfirm: (title: string) => `Eliminare l'evento «${title}»? Si ripete: verranno eliminate tutte le sue date. Non si può annullare.`,
   deleteAction: "Elimina",
-  unsavedTitle: "Chiudere senza salvare?",
-  unsavedText: "Le modifiche fatte in questo modulo andranno perse.",
-  unsavedDiscard: "Chiudi senza salvare",
+  // Stesse parole di Attività, Materie, Obiettivi, Note e Studio.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: "Quello che hai cambiato non è ancora salvato.",
+  unsavedDiscard: "Scarta le modifiche",
   unsavedKeep: "Continua a modificare",
   simpleForm: "Modulo completo",
   simpleFormHint: "Materia, priorità, ripetizione e il resto",

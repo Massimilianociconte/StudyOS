@@ -70,6 +70,9 @@ export function LockScreen() {
         dropSession: () => setCloudSyncState({ session: null, lastSync: null, status: cloudConfigured ? "idle" : "off", error: undefined }),
         schedule: (fn, ms) => void window.setTimeout(fn, ms)
       });
+      // Profilo vuoto: si riparte da Home («Per iniziare»), non dalla sezione aperta prima (ora vuota).
+      // Ancora bloccato: la sezione viene ricordata allo sblocco, al posto di quella di prima.
+      useStudyStore.getState().setActiveView("dashboard");
       await resetAllData({ propagate: false });
       // Sessione tolta solo dallo storage: supabase-js può averne una copia in memoria, si riparte puliti.
       if (signedOut === "removed-here") window.location.reload();

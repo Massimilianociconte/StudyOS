@@ -190,7 +190,9 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           id: subject.id,
           kind: "subject",
           title: subject.name,
-          subtitle: [subject.teacher, subject.semester, `${subject.cfu} CFU`].filter(Boolean).join(" · "),
+          // Niente semestre: il valore salvato può essere il segnaposto «Semestre», e quello vero vuole il
+          // catalogo del corso (fuori dal pacchetto iniziale). Basta il docente con i CFU.
+          subtitle: [subject.teacher, `${subject.cfu} CFU`].filter(Boolean).join(" · "),
           view: "subjects",
           icon: kindIcon.subject,
           score: s,
