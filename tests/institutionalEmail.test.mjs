@@ -30,6 +30,42 @@ test("institutionalEmail: solo @unimi.it esatto, in minuscolo, con la normalizza
   assert.equal(institutionalEmail(42), null);
 });
 
+test("tempo lineare: una corsa lunga e un testo grande non rallentano (NEW-1)", () => {
+  const run = `@${"x".repeat(50_000)}`;
+  let started = performance.now();
+  assert.equal(redactEmails(run, false), EMAIL_HIDDEN);
+  assert.ok(performance.now() - started < 1500, "50k in una corsa sola");
+  const mixed = "a@b ciao mondo prof@unimi.it, x.y@gmail.com ".repeat(9_500);
+  assert.ok(mixed.length > 400_000);
+  started = performance.now();
+  const out = redactEmails(mixed, true);
+  assert.ok(performance.now() - started < 4000, "400 KB di testo misto");
+  assert.ok(out.includes("prof@unimi.it") && !out.includes("gmail"));
+  started = performance.now();
+  assert.equal(onlyInstitutionalEmails(mixed), false);
+  assert.ok(performance.now() - started < 4000);
+  assert.equal(redactEmails("niente da nascondere ".repeat(30_000), false).length, 630_000, "senza chiocciola il testo torna com'è");
+});
+
+test("senza chiocciola il testo non si normalizza (NEW-4)", () => {
+  const plain = "Chimica 1º modulo … Ⅰ";
+  assert.equal(redactEmails(plain, false), plain);
+});
+
+test("ogni indirizzo @unimi.it dei dati dell'app passa la regola", () => {
+  const files = ["../src/data/university/barb.synced.json", "../src/data/university/barb.seed.ts"];
+  let count = 0;
+  for (const file of files) {
+    const text = readFileSync(new URL(file, import.meta.url), "utf8");
+    for (const address of text.match(/[A-Za-z0-9._%+-]+@unimi\.it/g) ?? []) {
+      count += 1;
+      assert.equal(institutionalEmail(address), address.toLowerCase(), address);
+      assert.equal(redactEmails(address, true), address, address);
+    }
+  }
+  assert.ok(count > 20, "trovati gli indirizzi dei dati");
+});
+
 test("il segnaposto e la normalizzazione", () => {
   assert.equal(EMAIL_HIDDEN, "[email nascosta]");
   assert.equal(normalizeEmailText("a​b­﻿c"), "abc");

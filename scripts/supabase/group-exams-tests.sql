@@ -451,7 +451,49 @@ select pg_temp.expect('E14 unimi con chiocciola larga: accettato, scritto normal
   and r -> 'row' -> 'fields' ->> 'email' = 'a@unimi.it')
 from (select public.save_group_catalog_override('gx', 'gover_e14', null, 'teacher', 'unimi-e14', 'X',
   jsonb_build_object('email', E'A＠UNIMI.IT')) as r) as t;
+-- NEW-2: la «%» non fa più parte della parte locale e le «@» scritte in altro modo contano come «@».
+select pg_temp.expect('E15 percento nella parte locale dell''email', r ->> 'status' = 'invalid' and r ->> 'field' = 'email')
+from (select public.save_group_catalog_override('gx', 'gover_e15', null, 'teacher', 'unimi-e15', 'X',
+  jsonb_build_object('email', 'bea.privata%gmail.com@unimi.it')) as r) as t;
+select pg_temp.expect('E16 mailto con %40', r ->> 'status' = 'invalid' and r ->> 'field' = 'url')
+from (select public.save_group_catalog_override('gx', 'gover_e16', null, 'contact', 'contatto:e16', 'X',
+  jsonb_build_object('url', 'mailto:bea.privata%40gmail.com')) as r) as t;
+select pg_temp.expect('E17 [at] in un contatto', r ->> 'status' = 'invalid' and r ->> 'field' = 'value')
+from (select public.save_group_catalog_override('gx', 'gover_e17', null, 'contact', 'contatto:e17', 'X',
+  jsonb_build_object('value', 'bea.privata[at]gmail.com')) as r) as t;
+-- NEW-4: senza «@» il snapshot dà il testo e le chiavi come sono salvati (nessuna piega NFKC).
+select pg_temp.expect('NF1 appello con ordinale e ellissi', public.save_group_exam_session('gx', 'gexam_nf1', null, jsonb_build_object(
+  'courseName', E'Chimica 1º modulo', 'date', '2027-09-01', 'kind', 'appello', 'notes', E'vedi sito…')) ->> 'status' = 'ok');
 reset role;
+set local role anon;
+select pg_temp.expect('NF2 testo e chiavi salvati, non normalizzati', exists (
+  select 1 from jsonb_array_elements(s -> 'sessions') as e
+  where e ->> 'id' = 'gexam_nf1' and e ->> 'course_name' = E'Chimica 1º modulo' and e ->> 'notes' = E'vedi sito…'
+    and e ->> 'course_key' = 'nome:chimica 1 modulo' and e ->> 'course_norm' = 'chimica 1 modulo'))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+-- NEW-5: i valori di una correzione che non sono testo (scritti direttamente) non arrivano agli agenti.
+update public.studyos_group_catalog_overrides set fields = fields
+  || jsonb_build_object('note2', jsonb_build_array('bea.privata@gmail.com'), 'office2', jsonb_build_object('x', 'y@gmail.com'))
+  where id = 'gover_t1';
+set local role anon;
+select pg_temp.expect('NF3 valori non testuali scartati', (s -> 'overrides')::text !~ 'bea.privata|y@gmail|note2|office2')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+-- NEW-1: un nome di gruppo enorme (300 KB, scritto dal proprietario) non fa scadere lo snapshot di nessuno.
+update public.studyos_groups set name = repeat('a@b ', 75000) where id = 'gx';
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LIN1 nome di gruppo da 300 KB: snapshot sotto il secondo',
+  length(s -> 'groups' -> 0 ->> 'name') <= 600 and (s -> 'groups' -> 0 ->> 'name') !~ '@')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = '8s';
+select pg_temp.expect('LIN2 il redattore da solo: 400 KB di «a@b » e 50 KB di una corsa sola',
+  length(public.studyos_hide_emails(repeat('a@b ', 100000))) > 0
+  and public.studyos_hide_emails('@' || repeat('x', 50000)) = '[email nascosta]');
+set local statement_timeout = 0;
+update public.studyos_groups set name = 'Farmaco' where id = 'gx';
 
 -- L4: ogni funzione nuova ha i privilegi giusti.
 select pg_temp.expect('G5 scrittura chiusa ad anon e aperta ad authenticated', bool_and(
@@ -459,6 +501,9 @@ select pg_temp.expect('G5 scrittura chiusa ad anon e aperta ad authenticated', b
 from unnest(array['public.save_group_exam_session(text,text,integer,jsonb)', 'public.delete_group_exam_session(text,integer)',
   'public.save_group_catalog_override(text,text,integer,text,text,text,jsonb)', 'public.delete_group_catalog_override(text,integer)',
   'public.restore_group_record(bigint,integer)']) as f;
+select pg_temp.expect('G7 il controllo di scrittura è chiuso ad anon e authenticated', not has_function_privilege('authenticated', 'public.studyos_only_unimi_emails(text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.studyos_only_unimi_emails(text)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'public.studyos_hide_emails_normalized(text,boolean)', 'EXECUTE'));
 select pg_temp.expect('G6 il redattore è chiuso ad authenticated', not has_function_privilege('authenticated', 'public.studyos_hide_emails(text,boolean)', 'EXECUTE')
   and not has_function_privilege('anon', 'public.studyos_hide_emails(text,boolean)', 'EXECUTE')
   and not has_function_privilege('authenticated', 'public.studyos_email_normalize(text)', 'EXECUTE')
@@ -511,6 +556,9 @@ from (select public.restore_group_record((select id from public.studyos_group_hi
 -- L6: chi viene tolto dal gruppo perde subito ogni accesso (lettura e scritture).
 select pg_temp.expect('RM0 prima: Ada legge', (select count(*) from public.studyos_group_exam_sessions where group_id = 'gx') > 0);
 reset role;
+-- Una voce di cronologia VERA del gruppo, letta prima che Ada esca (per il ripristino del test RM3).
+select max(id) as hid from public.studyos_group_history where group_id = 'gx' and before is not null \gset
+select pg_temp.expect('RM0b voce di cronologia trovata', :hid > 0);
 delete from public.studyos_group_members where group_id = 'gx' and user_id = :'ada';
 set local role authenticated;
 select set_config('request.jwt.claim.sub', :'ada', true) \g /dev/null
@@ -523,7 +571,10 @@ select pg_temp.expect('RM2 non scrive', public.save_group_exam_session('gx', 'ge
   jsonb_build_object('office', 'S')) ->> 'status' = 'denied');
 select pg_temp.expect('RM3 non elimina né ripristina', public.delete_group_exam_session('gexam_x2', 1) ->> 'status' = 'not_found'
   and public.delete_group_catalog_override('gover_t1', 1) ->> 'status' = 'not_found'
-  and public.restore_group_record((select max(id) from public.studyos_group_history), 1) ->> 'status' = 'not_found');
+  and public.restore_group_record(:hid, 1) ->> 'status' = 'not_found');
+reset role;
+select pg_temp.expect('RM3b la voce di cronologia esiste ancora: il rifiuto non era per un id nullo',
+  exists (select 1 from public.studyos_group_history where id = :hid));
 reset role;
 
 -- G1-G4: privilegi.

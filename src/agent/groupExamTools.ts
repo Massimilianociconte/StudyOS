@@ -60,6 +60,17 @@ export const failWith = (code: FailCode, error: string, data?: Record<string, un
 
 const groups = () => useGroupExamStore.getState();
 const groupNameOf = (groupId: string) => groupNamesOf(groups().groups).get(groupId) ?? "";
+/** Il nome del gruppo oscurato si calcola una volta per gruppo (non una volta per appello): lo ricorda finché il nome non cambia. */
+const hiddenGroupNames = new Map<string, { raw: string; text: string }>();
+const hiddenGroupName = (groupId: string) => {
+  const raw = groupNameOf(groupId);
+  const hit = hiddenGroupNames.get(groupId);
+  if (hit && hit.raw === raw) return hit.text;
+  if (hiddenGroupNames.size > 200) hiddenGroupNames.clear();
+  const text = agentMemberText(raw);
+  hiddenGroupNames.set(groupId, { raw, text });
+  return text;
+};
 /**
  * Come sessionMatchesSubject, ma sul nome oscurato: un agente non può confermare un nome grezzo (con un
  * indirizzo) creando una materia con quel nome.
@@ -88,7 +99,7 @@ export const publicSession = (session: GroupExamSession, plans: readonly ExamPla
   return {
     id: session.id,
     groupId: session.groupId,
-    groupName: agentMemberText(groupNameOf(session.groupId)),
+    groupName: hiddenGroupName(session.groupId),
     courseName: agentMemberText(session.courseName),
     courseId: session.courseId,
     date: session.date,

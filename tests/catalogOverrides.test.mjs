@@ -45,7 +45,7 @@ test("indirizzi: ogni forma di indirizzo non istituzionale sparisce (H1)", () =>
   assert.equal(redactEmails("niente da nascondere", false), "niente da nascondere");
   assert.equal(institutionalEmail("x@unimi.it\n"), "x@unimi.it", "gli spazi ai bordi si tolgono, quelli dentro no");
   assert.equal(institutionalEmail("x@unimi.it\n@evil.com"), null);
-  assert.equal(institutionalEmail("evil%x.com@unimi.it"), "evil%x.com@unimi.it", "il % è ammesso come nella regola del server");
+  assert.equal(institutionalEmail("evil%x.com@unimi.it"), null, "il % non fa più parte della parte locale (NEW-2)");
   assert.equal(institutionalEmail("a\u200B@unimi.it"), "a@unimi.it", "i caratteri invisibili si tolgono prima di confrontare (NFKC)");
 });
 

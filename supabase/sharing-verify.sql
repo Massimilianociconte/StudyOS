@@ -112,6 +112,8 @@ select
         to_regprocedure('public.studyos_group_activity_write(text,text,text)'),
         to_regprocedure('public.studyos_exam_session_twin(text,jsonb,text)'),
         to_regprocedure('public.studyos_hide_emails(text,boolean)'),
+        to_regprocedure('public.studyos_hide_emails_normalized(text,boolean)'),
+        to_regprocedure('public.studyos_only_unimi_emails(text)'),
         to_regprocedure('public.studyos_email_normalize(text)'),
         to_regprocedure('public.studyos_fields_only_unimi(jsonb)')]) as f), false)
     as group_exams_closed_ready,
@@ -124,6 +126,8 @@ select
     and to_regprocedure('public.studyos_agent_user(text)') is not null as group_exams_agent_ready,
   -- La guardia sulle righe dei membri (groups.sql: l'account e il gruppo di una riga non cambiano) e la forma degli id dei gruppi.
   exists (select 1 from pg_trigger where tgrelid = to_regclass('public.studyos_group_members')
-      and tgname = 'studyos_group_members_pin_identity' and not tgisinternal and tgenabled <> 'D')
+      and tgname = 'studyos_group_members_pin_identity' and not tgisinternal
+      and tgenabled in ('O', 'A') and tgtype = 19
+      and tgfoid = to_regprocedure('public.studyos_group_members_pin_identity()'))
     and exists (select 1 from pg_constraint where conrelid = to_regclass('public.studyos_groups')
       and conname = 'studyos_groups_id_shape') as group_exams_members_pinned_ready;

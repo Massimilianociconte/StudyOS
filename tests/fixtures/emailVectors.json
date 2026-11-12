@@ -21,7 +21,7 @@
     { "name": "punto esclamativo nella parte locale", "input": "bea!@gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
     { "name": "dominio che inizia con un punto", "input": "mario@.gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
     { "name": "dominio che inizia con un trattino basso", "input": "mario@_gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
-    { "name": "dominio dopo uno spazio", "input": "mario@ gmail.com", "hide": "[email nascosta] gmail.com", "keep": "[email nascosta] gmail.com", "only": false },
+    { "name": "dominio dopo uno spazio", "input": "mario@ gmail.com", "hide": "[email nascosta] [email nascosta]", "keep": "[email nascosta] [email nascosta]", "only": false },
     { "name": "chiocciola finale", "input": "mario@", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
     { "name": "carattere di controllo e I turca", "input": "\u0001a@UNİMI.IT", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
     { "name": "carattere di controllo e unimi", "input": "\u0001a@unimi.it", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
@@ -33,6 +33,25 @@
     { "name": "spazio non separabile", "input": "a b@gmail.com", "hide": "a [email nascosta]", "keep": "a [email nascosta]", "only": false },
     { "name": "maiuscole miste", "input": "A@Unimi.It", "hide": "[email nascosta]", "keep": "A@Unimi.It", "only": true },
     { "name": "senza email", "input": "Aula C03, ore 9", "hide": "Aula C03, ore 9", "keep": "Aula C03, ore 9", "only": true },
-    { "name": "il segnaposto stesso", "input": "[email nascosta]", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": true }
+    { "name": "il segnaposto stesso", "input": "[email nascosta]", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": true },
+    { "name": "chiocciola come %40", "input": "bea.privata%40gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "%40 con unimi", "input": "bea%40unimi.it", "hide": "[email nascosta]", "keep": "bea@unimi.it", "only": true },
+    { "name": "entità numerica", "input": "x&#64;gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "entità esadecimale", "input": "x&#x40;gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "entità commat", "input": "x&COMMAT;gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "(at) con spazi", "input": "bea (AT) gmail.com", "hide": "[email nascosta] [email nascosta] [email nascosta]", "keep": "[email nascosta] [email nascosta] [email nascosta]", "only": false },
+    { "name": "[at] attaccato", "input": "bea[at]gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "{at} attaccato", "input": "bea{AT}gmail.com", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "% nella parte locale", "input": "bea.privata%gmail.com@unimi.it", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "chiocciola staccata", "input": "bea.privata @ gmail.com", "hide": "[email nascosta] [email nascosta] [email nascosta]", "keep": "[email nascosta] [email nascosta] [email nascosta]", "only": false },
+    { "name": "chiocciola attaccata al dominio", "input": "mario @gmail.com", "hide": "[email nascosta] [email nascosta]", "keep": "[email nascosta] [email nascosta]", "only": false },
+    { "name": "chiocciola finale in una frase", "input": "scrivi a mario@ gmail.com oggi", "hide": "scrivi a [email nascosta] [email nascosta] oggi", "keep": "scrivi a [email nascosta] [email nascosta] oggi", "only": false },
+    { "name": "corsa troppo lunga", "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@unimi.it", "hide": "[email nascosta]", "keep": "[email nascosta]", "only": false },
+    { "name": "separatore di riga U+2028", "input": "ciao prof@unimi.it", "hide": "ciao [email nascosta]", "keep": "ciao prof@unimi.it", "only": true },
+    { "name": "NEL U+0085", "input": "a\u0085b@gmail.com", "hide": "a [email nascosta]", "keep": "a [email nascosta]", "only": false },
+    { "name": "spazio ogham U+1680", "input": "a b@gmail.com", "hide": "a [email nascosta]", "keep": "a [email nascosta]", "only": false },
+    { "name": "senza chiocciola resta com'è scritto", "input": "café​ senza email", "hide": "café​ senza email", "keep": "café​ senza email", "only": true },
+    { "name": "senza chiocciola: nessuna piega NFKC", "input": "Chimica 1º modulo …", "hide": "Chimica 1º modulo …", "keep": "Chimica 1º modulo …", "only": true },
+    { "name": "mailto con %40", "input": "mailto:bea.privata%40gmail.com", "hide": "mailto:[email nascosta]", "keep": "mailto:[email nascosta]", "only": false }
   ]
 }

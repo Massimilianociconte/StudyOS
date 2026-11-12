@@ -60,8 +60,13 @@ Piano: [superpowers/plans/2026-11-12-shared-exam-sessions.md](superpowers/plans/
 
 Una sola regola, in SQL e in TypeScript: `src/lib/institutionalEmail.ts` e le funzioni
 `studyos_email_normalize`, `studyos_hide_emails`, `studyos_only_unimi_emails` di `group-exams.sql`.
-Normalizza (NFKC), toglie i caratteri invisibili e porta in minuscolo solo l'ASCII. Un indirizzo vale solo se
-tutto è `nome@unimi.it` (maiuscole ignorate, niente sottodomini); il resto diventa «[email nascosta]».
+Normalizza (NFKC), toglie i caratteri invisibili, porta gli spazi strani a spazi e legge `%40`, `&#64;`,
+`&commat;`, `(at)`, `[at]`, `{at}` come `@`; senza nessuna `@` il testo resta com'è scritto. Una corsa di
+caratteri senza spazi che contiene `@` è un candidato (oltre 300 caratteri si nasconde senza analisi) e vale solo
+se tutto è `nome@unimi.it` (parte locale ASCII senza `%`, dominio senza distinzione di maiuscole, niente
+sottodomini); il resto diventa «[email nascosta]», e con una `@` all'inizio o alla fine si nascondono anche le
+corse vicine. È un lavoro lineare: un testo lungo non fa scadere lo snapshot del connettore (il nome del gruppo
+si taglia a 120 caratteri; nessun limite sul nome, perché il client non ne ha).
 I casi di prova sono in `tests/fixtures/emailVectors.json`; `scripts/supabase/email-vectors-tests.sql`
 si genera con `node scripts/supabase/gen-email-vectors.mjs` e un test fallisce se è vecchio.
 
