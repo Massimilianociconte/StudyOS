@@ -173,16 +173,13 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
       setError(T.tooBig);
       return;
     }
+    let loaded = ics;
     let text = "";
     try {
-      text = await file.text();
-    } catch {
-      setError(T.unreadable);
-      return;
-    }
-    let loaded = ics;
-    try {
       loaded ??= await import("../lib/ics");
+      // Byte, non testo: le righe piegate si uniscono prima di leggere l'UTF-8 (una piega può cadere in
+      // mezzo a una lettera accentata).
+      text = loaded.decodeIcsBytes(new Uint8Array(await file.arrayBuffer()));
     } catch {
       setError(T.unreadable);
       return;

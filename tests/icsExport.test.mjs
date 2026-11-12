@@ -355,3 +355,29 @@ test("un file di un'altra app non toglie «saltato» a un evento importato", () 
   const plan = copyOf(other, skipped);
   assert.deepEqual([plan.added, plan.updated, plan.puts.length], [0, 0, 0]);
 });
+
+// ------------------------------------------------------------------------------------------
+// Testo pulito (ricontrollo di rilascio, punto 6): un a capo o un carattere di controllo non rompe la riga
+// ------------------------------------------------------------------------------------------
+
+test("a capo di ogni tipo (CR da solo, CRLF, LF) diventano \\n; gli altri caratteri di controllo spariscono", () => {
+  const text = exportOf([
+    base({ title: "Ana\u0000tomia\u0007", description: "riga 1\rriga 2\r\nriga 3\nriga 4\u001b[31m\ttab", location: "Aula\u000b 3", timeZone: "Europe/Rome" })
+  ]);
+  for (const line of lines(text)) assert.doesNotMatch(line, /[\u0000-\u0008\u000a-\u001f\u007f]/, JSON.stringify(line));
+  const event = vevents(text)[0].replace(/\r\n /g, "");
+  assert.match(event, /\r\nSUMMARY:Anatomia\r\n/);
+  assert.match(event, /\r\nDESCRIPTION:riga 1\\nriga 2\\nriga 3\\nriga 4\[31m\ttab\r\n/);
+  assert.match(event, /\r\nLOCATION:Aula 3\r\n/);
+  const [copy] = parseIcs(text, { timeZone: "Europe/Rome" }).events;
+  assert.deepEqual([copy.title, copy.description, copy.location], ["Anatomia", "riga 1\nriga 2\nriga 3\nriga 4[31m\ttab", "Aula 3"]);
+});
+
+test("anche i valori scritti così come sono (UID, regola importata) non portano a capo nel file", () => {
+  const imported = series({ freq: "weekly" }, { id: "x\r\ny", sourceRRule: "FREQ=WEEKLY\r\nX-EVIL:1" });
+  const text = exportOf([imported]);
+  assert.ok(!lines(text).some((line) => line.startsWith("X-EVIL")), text);
+  // Ogni riga è una proprietà o la continuazione di una piegata: nessun pezzo di valore finito a capo.
+  for (const line of lines(text).filter(Boolean)) assert.match(line, /^( |[A-Z][A-Z0-9-]*[;:])/, JSON.stringify(line));
+  for (const line of lines(text)) assert.doesNotMatch(line, /[\u0000-\u0008\u000a-\u001f\u007f]/);
+});

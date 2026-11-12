@@ -87,7 +87,40 @@ const deviceZone = () => validZone(deviceTimeZone()) ?? "UTC";
 // Testo
 // ---------------------------------------------------------------------------------------
 
-export const escapeText = (value: string) => value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+/** Caratteri di controllo che non possono stare in una riga del file (il tab sì). */
+const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f]/g;
+
+/** Testo per il file: a capo di ogni tipo (anche un CR da solo) → \n, gli altri caratteri di controllo tolti. */
+export const escapeText = (value: string) =>
+  value
+    .replace(/\r\n|\r|\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+
+/**
+ * Testo di un file .ics da byte: le righe piegate (a capo seguito da spazio o tab, RFC 5545 §3.1) si uniscono
+ * prima di leggere l'UTF-8, così una piega in mezzo a un carattere di più byte non lo rompe.
+ */
+export const decodeIcsBytes = (bytes: Uint8Array) => {
+  const out = new Uint8Array(bytes.length);
+  let size = 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index];
+    if (byte === 13 || byte === 10) {
+      const next = byte === 13 && bytes[index + 1] === 10 ? index + 2 : index + 1;
+      if (bytes[next] === 32 || bytes[next] === 9) {
+        index = next;
+        continue;
+      }
+    }
+    out[size] = byte;
+    size += 1;
+  }
+  return new TextDecoder("utf-8").decode(out.subarray(0, size)).replace(/^﻿/, "");
+};
 
 export const unescapeText = (value: string) => value.replace(/\\([\\;,nN])/g, (_match, char: string) => (char === "n" || char === "N" ? "\n" : char));
 
@@ -1362,7 +1395,8 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     ...body,
     "END:VCALENDAR"
   ];
-  return `${lines.map(foldLine).join("\r\n")}\r\n`;
+  // Ultima rete: anche i valori scritti così come sono (UID, regole importate) non vanno a capo nel file.
+  return `${lines.map((line) => foldLine(line.replace(CONTROL_CHARS, ""))).join("\r\n")}\r\n`;
 };
 
 // ---------------------------------------------------------------------------------------

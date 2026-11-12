@@ -2,7 +2,7 @@
 // RECURRENCE-ID, VALARM; unione con il calendario senza doppioni (recurrence.md §7.2 caso 12).
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { buildIcs, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
+import { buildIcs, decodeIcsBytes, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
 import { previewWarnings } from "../src/lib/calendarGuide.ts";
 import { CALENDAR_GUIDE_TEXT } from "../src/lib/labels/calendarGuide.ts";
 import { applyEditPlan, applyRepeatFields, expandEvents, planDelete, planEdit } from "../src/lib/repeat.ts";
@@ -1520,4 +1520,25 @@ test("store importEvents: adottando i vecchi import, allegati, note e promemoria
   assert.equal(state.attachments[1].linkedEntityId, "altro");
   assert.equal(state.notes[0].linkedEntityId, "old-1");
   assert.equal(state.reminders[0].linkedEntityId, "old-1");
+});
+
+// ------------------------------------------------------------------------------------------
+// Righe piegate dentro un carattere (ricontrollo di rilascio, punto 7): si uniscono prima di leggere l'UTF-8
+// ------------------------------------------------------------------------------------------
+
+test("riga piegata in mezzo a un carattere di più byte (è, emoji): si uniscono i byte, poi si legge il testo", () => {
+  const encoder = new TextEncoder();
+  const head = encoder.encode("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:fold\r\nDTSTART:20261102T090000Z\r\nSUMMARY:Caff");
+  const e = encoder.encode("è"); // 2 byte: la piega cade tra i due
+  const smile = encoder.encode("😀"); // 4 byte: piega dopo il primo, con un a capo solo (LF) e un tab
+  const tail = encoder.encode(" ok\r\nDESCRIPTION:a\nb\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+  const bytes = new Uint8Array([...encoder.encode("﻿"), ...head, e[0], 13, 10, 32, e[1], 32, smile[0], 10, 9, ...smile.slice(1), ...tail]);
+  const text = decodeIcsBytes(bytes);
+  assert.ok(!text.includes("�") && !text.startsWith("﻿"), text);
+  const [event] = parseIcs(text, { timeZone: "Europe/Rome" }).events;
+  assert.equal(event.title, "Caffè 😀 ok");
+  // Un a capo senza spazio dopo non è una piega: resta una riga a sé (qui "b", che non è una proprietà).
+  assert.equal(event.description, "a");
+  // Leggere il testo prima e unire dopo dava caratteri rotti: è il caso che questa funzione evita.
+  assert.ok(new TextDecoder().decode(bytes).includes("�"));
 });
