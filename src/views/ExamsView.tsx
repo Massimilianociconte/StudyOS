@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { format, isBefore, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Exam } from "../types";
@@ -547,7 +548,9 @@ function PersonalExamsView({
         }}
       />
 
-      {formOpen ? (
+      {/* In body, come i Drawer: aperto da un'altra schermata (Calendario, Home, ricerca) arriva mentre la
+          sezione entra con un transform, che farebbe da riferimento al `fixed`; il pannello saltava a fine animazione. */}
+      {formOpen ? createPortal(
         <div
           ref={areaRef}
           className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
@@ -732,7 +735,8 @@ function PersonalExamsView({
               )}
             </div>
           </section>
-        </div>
+        </div>,
+        document.body
       ) : null}
 
       <SharedSection entityTypes={["exam"]} title="Progressi condivisi con te" />
