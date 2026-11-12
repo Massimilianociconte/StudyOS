@@ -592,6 +592,8 @@ export const pushSharedGroup = async (group: StudyGroup) => {
 
 // La chiave dei membri è (group_id, user_id): con on_conflict=id l'upsert falliva sempre, e il
 // proprietario non risultava membro (niente elenco membri né inviti nominali lato server).
+// Email sempre vuota: ogni membro legge le righe degli altri, e il server la toglie comunque
+// (studyos_group_members_no_email in supabase/groups.sql).
 export const pushSharedMembership = async (groupId: string, member: StudyGroup["members"][number]) =>
   Boolean(
     await pushRow(
@@ -599,7 +601,7 @@ export const pushSharedMembership = async (groupId: string, member: StudyGroup["
       {
         group_id: groupId,
         user_id: member.userId,
-        email: member.email ?? null,
+        email: null,
         display_name: member.displayName,
         role: member.role,
         joined_at: member.joinedAt

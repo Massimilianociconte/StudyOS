@@ -40,15 +40,25 @@ begin
 end;
 $$;
 
+-- Funzione di trigger: nessun client la chiama (un trigger parte senza il privilegio EXECUTE).
+revoke all on function public.set_studyos_updated_at() from public, anon, authenticated;
+
 drop trigger if exists studyos_items_updated_at on public.studyos_items;
 create trigger studyos_items_updated_at
 before update on public.studyos_items
 for each row execute function public.set_studyos_updated_at();
 
+-- RLS attiva, ma non forzata (force row level security): la tabella è del proprietario del database,
+-- che la usa solo dal SQL Editor e nelle funzioni SECURITY DEFINER, che controllano chi chiama da sé.
+-- Forzarla bloccherebbe quelle funzioni (per esempio il connettore remoto, che non ha auth.uid()).
+-- Nessun ruolo dei client (anon, authenticated) è proprietario: per loro la RLS vale sempre.
 alter table public.studyos_items enable row level security;
 
 revoke all on table public.studyos_items from anon;
 grant select, insert, update, delete on table public.studyos_items to authenticated;
+-- I privilegi predefiniti del progetto danno ad authenticated anche TRUNCATE (che ignora la RLS),
+-- REFERENCES e TRIGGER: l'app non li usa, si tolgono (verify.sql, tables_rls_ready).
+revoke truncate, references, trigger on table public.studyos_items from authenticated;
 
 drop policy if exists "studyos_select_own_items" on public.studyos_items;
 create policy "studyos_select_own_items"
@@ -107,7 +117,7 @@ as $$
   ) as source
 $$;
 
-revoke all on function public.studyos_item_stamp(jsonb, boolean, timestamptz) from public;
+revoke all on function public.studyos_item_stamp(jsonb, boolean, timestamptz) from public, anon;
 grant execute on function public.studyos_item_stamp(jsonb, boolean, timestamptz) to authenticated;
 
 -- PostgREST esegue l'intero batch in una transazione. Il controllo LWW avviene
@@ -202,10 +212,27 @@ grant execute on function public.push_studyos_rows(uuid, text, jsonb) to authent
 -- client_id vuoto: anche il dispositivo che cancella riceve le eliminazioni al prossimo pull.
 -- Toglie anche la vecchia riga snapshot (backup della sync v1) e, se la tabella c'è, i promemoria
 -- con l'app chiusa (push-reminders.sql). Restituisce le righe eliminate di studyos_items.
+--
+-- Protezione dei dati (revisione B4 del 12/11/2026): toglie anche i dati personali fuori da
+-- studyos_items, ciascuno solo se il suo script è stato eseguito:
+-- - cronologia delle modifiche fatte da altri ai propri dati (sharing.sql, copie vecchie dei dati);
+-- - condivisioni e inviti a condividere mandati (sharing.sql): con i dati vuoti non servono, e un dato
+--   nuovo non deve arrivare da solo a chi li riceveva (che riceve l'avviso «Accesso tolto»);
+-- - registro e permessi del connettore remoto (agent.sql): il registro ha copie prima e dopo dei dati,
+--   e un assistente ancora collegato riempirebbe di nuovo l'account appena svuotato;
+-- - nome e @nome del profilo online (people.sql). «Gli altri possono trovarmi» resta com'è: senza la
+--   riga varrebbe «sì», e chi aveva scelto «no» diventerebbe trovabile;
+-- - i resoconti della sincronizzazione BARB (university.sql, facoltativo e oggi non usato).
+-- Restano: gruppi, membri e contenuti dei gruppi (sono anche degli altri membri: si esce dal gruppo
+-- dall'app), condivisioni e inviti ricevuti da altri, le iscrizioni push dei dispositivi (si tolgono
+-- con l'uscita o con «Rimuovi»), i registri dei limiti (un'ora, senza contenuti) e i file nello spazio
+-- file, che toglie l'app con le API di Storage (eraseAccountFiles: il SQL non può cancellarli).
+-- SECURITY DEFINER perché registro, permessi del connettore e cronologia non sono cancellabili dal
+-- client; ogni istruzione è limitata a auth.uid(), senza parametri.
 create or replace function public.erase_studyos_account_items()
 returns integer
 language plpgsql
-security invoker
+security definer
 set search_path = public
 as $$
 declare
@@ -217,6 +244,28 @@ begin
   -- Promemoria con l'app chiusa (push-reminders.sql, se eseguito): spariscono con il resto.
   if to_regclass('public.studyos_push_reminders') is not null then
     delete from public.studyos_push_reminders where user_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_item_revisions') is not null then
+    delete from public.studyos_item_revisions where owner_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_shares') is not null then
+    delete from public.studyos_shares where owner_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_share_invites') is not null then
+    delete from public.studyos_share_invites where owner_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_agent_audit') is not null then
+    delete from public.studyos_agent_audit where user_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_agent_grants') is not null then
+    delete from public.studyos_agent_grants where user_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_profiles') is not null then
+    update public.studyos_profiles set display_name = '', handle = null
+    where user_id = auth.uid() and (display_name <> '' or handle is not null);
+  end if;
+  if to_regclass('public.university_sync_reports') is not null then
+    delete from public.university_sync_reports where user_id = auth.uid();
   end if;
   delete from public.studyos_items where user_id = auth.uid() and entity_type = 'snapshot';
   update public.studyos_items as item

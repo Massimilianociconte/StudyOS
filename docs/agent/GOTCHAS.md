@@ -7,6 +7,15 @@
   dataset è valido; `--force` richiede una revisione manuale del report.
 - Il vault cifra IndexedDB, mentre la sync Supabase invia ancora JSON non
   cifrato. Non descriverla come cifratura cloud end-to-end.
+- SQL nuovo (tabelle e funzioni): i privilegi predefiniti di Supabase danno tutto ad `anon` e
+  `authenticated` su ogni oggetto nuovo di `public`, e `revoke … from public` non li toglie.
+  Ogni tabella: RLS attiva, `revoke all … from anon`, niente `TRUNCATE` ad `authenticated`.
+  Ogni funzione definer: `set search_path` e `revoke … from public, anon`. Niente FORCE RLS (le
+  definer sono il passaggio controllato). Le colonne generiche di `verify.sql`
+  (`tables_rls_ready`, `anon_closed_ready`, `definer_functions_ready`, `security_issues`)
+  scoprono le dimenticanze in ogni tabella `studyos_*`. Mai salvare email dove altri le leggono:
+  membri e condivisioni hanno `email`/`grantee_email` sempre null. Vedi
+  [../security-data.md](../security-data.md).
 - Il lock del vault e l'applicazione di dati remoti richiedono una scrittura
   IndexedDB confermata. Gli errori di push non eliminano voci dall'outbox.
 - La sync cloud aggiornata richiede la funzione `push_studyos_rows` definita in

@@ -899,6 +899,91 @@ update public.studyos_group_invites
 set code = ''
 where code <> '' and (recipient_user_id is not null or recipient_email is not null);
 
+-- ─── Pulizia: nomi presi dalla parte dell'email prima della @ (revisione B4) ─
+-- Fino alla revisione del 12/11/2026 (sera) chi non aveva un nome nel profilo entrava nei gruppi, e
+-- condivideva, con la parte dell'email prima della @ (server e app). Quei nomi restano nelle righe già
+-- scritte: membri, proprietario del gruppo, chi ha mandato un invito, autore di risorse e attività,
+-- proprietario e destinatario di condivisioni e inviti. Si sostituiscono con il nome del profilo online
+-- (se non è anch'esso quella parte), altrimenti «Studente». Gira a ogni esecuzione ed è idempotente:
+-- sistema anche le righe scritte dopo da un'app non ancora aggiornata. Il segno names_from_email in
+-- studyos_migrations dice quando è girata la prima volta. Nessuna email esce: si confrontano soltanto.
+-- Restano i nomi dentro il testo delle voci «ha tolto … dal gruppo» (la voce non dice di chi è il nome).
+
+-- p_name, oppure il nome da usare al suo posto se è la parte prima della @ dell'email di p_user.
+-- Interna: solo questo script (SQL Editor) la usa.
+create or replace function public.studyos_name_without_email(p_user uuid, p_name text)
+returns text
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_local text;
+  v_profile text;
+begin
+  if p_user is null or nullif(btrim(coalesce(p_name, '')), '') is null then
+    return p_name;
+  end if;
+  select nullif(split_part(u.email, '@', 1), '') into v_local from auth.users u where u.id = p_user;
+  if v_local is null or btrim(p_name) not in (v_local, lower(v_local)) then
+    return p_name;
+  end if;
+  select nullif(btrim(p.display_name), '') into v_profile from public.studyos_profiles p where p.user_id = p_user;
+  if v_profile is null or v_profile in (v_local, lower(v_local)) then
+    return 'Studente';
+  end if;
+  return left(v_profile, 80);
+end;
+$$;
+
+revoke all on function public.studyos_name_without_email(uuid, text) from public, anon, authenticated;
+
+do $$
+begin
+  update public.studyos_group_members m
+  set display_name = public.studyos_name_without_email(public.studyos_uuid(m.user_id), m.display_name)
+  where public.studyos_name_without_email(public.studyos_uuid(m.user_id), m.display_name) is distinct from m.display_name;
+
+  update public.studyos_groups g
+  set owner_display_name = public.studyos_name_without_email(public.studyos_uuid(g.owner_id), g.owner_display_name)
+  where public.studyos_name_without_email(public.studyos_uuid(g.owner_id), g.owner_display_name) is distinct from g.owner_display_name;
+
+  update public.studyos_group_invites i
+  set from_display_name = public.studyos_name_without_email(public.studyos_uuid(i.from_user_id), i.from_display_name)
+  where public.studyos_name_without_email(public.studyos_uuid(i.from_user_id), i.from_display_name) is distinct from i.from_display_name;
+
+  update public.studyos_group_activity a
+  set actor_display_name = public.studyos_name_without_email(public.studyos_uuid(a.actor_user_id), a.actor_display_name)
+  where public.studyos_name_without_email(public.studyos_uuid(a.actor_user_id), a.actor_display_name) is distinct from a.actor_display_name;
+
+  -- Il trigger di guardia delle risorse rimette il nome dell'autore salvato: spento solo per questa
+  -- istruzione, nella stessa transazione (gli altri non lo vedono mai spento).
+  if exists (
+    select 1 from public.studyos_group_resources r
+    where public.studyos_name_without_email(public.studyos_uuid(r.added_by_user_id), r.added_by_display_name) is distinct from r.added_by_display_name
+  ) then
+    alter table public.studyos_group_resources disable trigger studyos_group_resources_guard;
+    update public.studyos_group_resources r
+    set added_by_display_name = public.studyos_name_without_email(public.studyos_uuid(r.added_by_user_id), r.added_by_display_name)
+    where public.studyos_name_without_email(public.studyos_uuid(r.added_by_user_id), r.added_by_display_name) is distinct from r.added_by_display_name;
+    alter table public.studyos_group_resources enable trigger studyos_group_resources_guard;
+  end if;
+
+  update public.studyos_shares s
+  set owner_name = public.studyos_name_without_email(s.owner_id, s.owner_name)
+  where public.studyos_name_without_email(s.owner_id, s.owner_name) is distinct from s.owner_name;
+
+  update public.studyos_shares s
+  set grantee_name = public.studyos_name_without_email(s.grantee_user_id, s.grantee_name)
+  where public.studyos_name_without_email(s.grantee_user_id, s.grantee_name) is distinct from s.grantee_name;
+
+  update public.studyos_share_invites i
+  set owner_name = public.studyos_name_without_email(i.owner_id, i.owner_name)
+  where public.studyos_name_without_email(i.owner_id, i.owner_name) is distinct from i.owner_name;
+
+  insert into public.studyos_migrations (name) values ('names_from_email') on conflict (name) do nothing;
+end $$;
+
 -- ─── Notifiche push ─────────────────────────────────────────────────────────
 
 -- Manda una notifica agli account indicati, tranne chi compie l'azione (auth.uid()) e senza
