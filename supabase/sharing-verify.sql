@@ -64,4 +64,31 @@ select
       where revision.change <> 'delete' and field.key ~ '^(cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl|__proto__)$'
     ) as light_history_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
-    and schemaname = 'public' and tablename = 'studyos_shares') as realtime_ready;
+    and schemaname = 'public' and tablename = 'studyos_shares') as realtime_ready,
+  -- Appelli condivisi dei gruppi (group-exams.sql): tabelle con RLS, funzioni, privilegi, realtime, connettore.
+  to_regclass('public.studyos_group_exam_sessions') is not null
+    and to_regclass('public.studyos_group_catalog_overrides') is not null
+    and to_regclass('public.studyos_group_history') is not null
+    and coalesce((select bool_and(relrowsecurity) from pg_class where oid in (
+      to_regclass('public.studyos_group_exam_sessions'), to_regclass('public.studyos_group_catalog_overrides'),
+      to_regclass('public.studyos_group_history'))), false) as group_exams_tables_ready,
+  to_regprocedure('public.save_group_exam_session(text,text,integer,jsonb)') is not null
+    and to_regprocedure('public.delete_group_exam_session(text,integer)') is not null
+    and to_regprocedure('public.save_group_catalog_override(text,text,integer,text,text,text,jsonb)') is not null
+    and to_regprocedure('public.delete_group_catalog_override(text,integer)') is not null
+    and to_regprocedure('public.restore_group_record(bigint,integer)') is not null
+    and coalesce(has_function_privilege('authenticated',
+      to_regprocedure('public.save_group_exam_session(text,text,integer,jsonb)'), 'EXECUTE'), false) as group_exams_rpc_ready,
+  -- Nessuna scrittura diretta e niente anon: si scrive solo con le funzioni.
+  not coalesce(has_function_privilege('anon',
+      to_regprocedure('public.save_group_exam_session(text,text,integer,jsonb)'), 'EXECUTE'), true)
+    and not coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_group_exam_sessions'), 'INSERT'), true)
+    and not coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_group_catalog_overrides'), 'UPDATE'), true)
+    and not coalesce(has_table_privilege('authenticated', to_regclass('public.studyos_group_history'), 'INSERT'), true)
+    and not coalesce(has_table_privilege('anon', to_regclass('public.studyos_group_exam_sessions'), 'SELECT'), true)
+    as group_exams_closed_ready,
+  exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'studyos_group_exam_sessions')
+    and exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
+      and schemaname = 'public' and tablename = 'studyos_group_catalog_overrides') as group_exams_realtime_ready,
+  to_regprocedure('public.studyos_agent_group_snapshot(text)') is not null as group_exams_agent_ready;

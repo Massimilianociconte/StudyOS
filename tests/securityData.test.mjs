@@ -23,13 +23,14 @@ const functions = () => {
   return found;
 };
 
-/** I sette ingressi che anon può chiamare (stesso elenco di anon_entry in verify.sql). */
+/** Gli otto ingressi che anon può chiamare (stesso elenco di anon_entry in verify.sql). */
 const ANON_ENTRIES = [
   "public.studyos_agent_pull",
   "public.studyos_agent_push",
   "public.studyos_agent_audit_list",
   "public.studyos_agent_restore",
   "public.studyos_agent_restore_call",
+  "public.studyos_agent_group_snapshot",
   "public.push_gone",
   "public.studyos_keepalive"
 ];
@@ -41,7 +42,7 @@ test("ogni funzione SECURITY DEFINER fissa il search_path", () => {
   assert.deepEqual(loose, []);
 });
 
-test("ogni funzione SECURITY DEFINER è tolta ad anon, tranne i sette ingressi con segreto o senza dati", () => {
+test("ogni funzione SECURITY DEFINER è tolta ad anon, tranne gli otto ingressi con segreto o senza dati", () => {
   const names = [...new Set(functions().filter((fn) => /security definer/i.test(fn.outside)).map((fn) => fn.name))];
   const open = names.filter((name) => {
     if (ANON_ENTRIES.includes(name)) return false;
