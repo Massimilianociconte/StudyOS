@@ -1574,6 +1574,24 @@ test("stesso evento scritto in altro modo (regola in altro ordine, X-WR-TIMEZONE
   }
 });
 
+test("il proprio export con le modifiche fatte qui, poi il file di Google invariato: le modifiche restano, senza avvisi", () => {
+  const mine = editedLocally(apply([], reimport([], TWO_LESSONS)));
+  const own = buildIcs({ events: mine, exams: [], tasks: [], subjects: [], timeZone: "Europe/Rome", now: new Date(NOW) });
+  // Il file dice com'è l'evento adesso: cambia solo la metà del file dell'impronta.
+  const back = reimport(mine, own);
+  assert.deepEqual(quietCounts(back, mine), QUIET);
+  let events = apply(mine, back);
+  const google = reimport(events, TWO_LESSONS);
+  assert.deepEqual([quietCounts(google, events), google.editsReplaced], [QUIET, 0]);
+  events = apply(events, google);
+  const anatomy = events.find((event) => event.sourceUid === "a@g");
+  assert.deepEqual([anatomy.title, anatomy.location], ["Anatomia (aula cambiata da me)", "Aula 5"]);
+  assert.equal(events.find((event) => event.sourceUid === "b@g" && !event.seriesId).title, "Chimica (mia)");
+  // Google cambia davvero: vince il file, e l'avviso dice che le modifiche fatte qui vengono sostituite.
+  const changed = reimport(events, COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02"), lesson("b@g", "Chimica (laboratorio)", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"])));
+  assert.deepEqual([changed.updated, changed.editsReplaced], [2, 2]);
+});
+
 // ------------------------------------------------------------------------------------------
 // File ostili da 5 MB e file troppo grandi (ricontrollo di rilascio, punti 5 e 10)
 // ------------------------------------------------------------------------------------------

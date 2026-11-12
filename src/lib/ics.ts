@@ -2341,10 +2341,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   /**
    * Evento aggiornato con i dati del file, o null se il file dice le stesse cose. Se il file non è cambiato
    * dall'ultimo import (stessa impronta), null anche se qui l'evento è stato modificato: le modifiche restano.
-   * `quiet`: si scrive solo l'impronta, e non conta come aggiornato. Succede se l'evento è uguale al file
-   * ma senza l'impronta giusta (import di una versione precedente, o file cambiato proprio come l'evento
-   * qui), o se il file dice le stesse cose scritte in altro modo (l'import scriverebbe lo stesso evento
-   * dell'ultima volta): le modifiche fatte qui restano, e cambia solo la metà del file dell'impronta.
+   * `quiet`: si scrive solo l'impronta, e non conta come aggiornato. Senza impronta (import di una
+   * versione precedente) e uguale al file, intera. Con l'impronta, solo la metà del file, se il file dice
+   * com'è l'evento adesso (anche con le modifiche fatte qui, come il proprio export) o le stesse cose
+   * scritte in altro modo (l'import scriverebbe lo stesso evento dell'ultima volta): le modifiche restano.
    */
   const updated = (existing: CalendarEvent, item: IcsImportItem, options: { rule: boolean; adopt?: string }): { event: CalendarEvent; quiet: boolean } | null => {
     const previous = stampParts(existing.sourceStamp);
@@ -2374,13 +2374,13 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       (!options.rule || ruleKey(current, timing?.startDate ?? "") === ruleKey(rule, incoming.startDate)) &&
       (item.reminders === undefined || reminderKey(existing, existing.reminders) === reminderKey(existing, item.reminders));
     if (same) {
-      // Solo gli eventi importati (i propri, ritrovati dal loro UID @studyos, restano come sono). Se
-      // l'impronta manca o non dice più com'è l'evento, si riscrive intera.
-      // (L'impronta dell'evento può essere stata scritta con o senza «saltato», a seconda del file di allora.)
+      // Solo gli eventi importati (i propri, ritrovati dal loro UID @studyos, restano come sono). Con
+      // l'impronta, cambia solo la metà del file: il file è scritto in altro modo, è un altro file con lo
+      // stesso evento (il proprio export e quello di Google), o dice com'è l'evento dopo le modifiche
+      // fatte qui (il proprio export): la metà dell'evento resta com'era l'import, così le modifiche
+      // restano tali anche col prossimo file che non le ha. Senza impronta (import di prima), intera.
       if (!existing.sourceUid) return null;
-      if (previous && (previous.event === eventStamp(existing, false) || previous.event === eventStamp(existing, true))) {
-        // L'evento è come l'import l'aveva scritto, ma il file è scritto in altro modo (o è un altro file con
-        // lo stesso evento, come il proprio export e quello di Google): solo la metà del file.
+      if (previous) {
         const refreshed = reworded();
         return refreshed ? { event: refreshed, quiet: true } : null;
       }

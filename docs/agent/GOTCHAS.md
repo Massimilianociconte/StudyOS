@@ -67,8 +67,9 @@
   o un'impronta del VTIMEZONE se il nome è inventato —, promemoria, «saltato»: uguale su ogni
   dispositivo, anche per le ore senza fuso); `<evento>` = come l'import l'ha scritto qui.
   Stesso `<file>` al prossimo import → le modifiche fatte qui restano; `<file>` diverso ma
-  l'import scriverebbe lo stesso `<evento>` (stesso evento scritto in altro modo) → le modifiche
-  restano e si aggiorna solo `<file>`, senza contarlo né avvisare; entrambi diversi → vince il
+  l'import scriverebbe lo stesso `<evento>` (stesso evento scritto in altro modo), o il file è
+  uguale all'evento com'è adesso (il proprio export con le modifiche) → le modifiche restano e
+  si aggiorna solo `<file>`, senza contarlo né avvisare; entrambi diversi → vince il
   file e l'anteprima lo dice (`editsReplaced`); senza impronta (import di prima) e uguale al
   file → si scrive solo l'impronta (non conta come aggiornato); diverso → vince il file, con
   avviso. Lo scrive solo `mergeIcsImport`: tolto da righe, figlie di una divisione e modifiche
