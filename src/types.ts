@@ -159,6 +159,11 @@ export interface CalendarEvent extends BaseEntity {
   /** UID dell'evento nel calendario .ics di origine: un nuovo import aggiorna invece di duplicare. */
   sourceUid?: string;
   /**
+   * Impronta (sempre testo) dell'evento com'era nel file all'ultimo import e di come l'import l'ha scritto
+   * (lib/ics.ts): un file non cambiato da allora non annulla le modifiche fatte qui.
+   */
+  sourceStamp?: string;
+  /**
    * Regola di ripetizione completa (sottoinsieme di RRULE). Vale solo se `repeatLegacy` coincide
    * ancora con `recurrence|recurrenceUntil`: se una versione vecchia dell'app cambia la ripetizione,
    * vince quella vecchia. `recurrence`/`recurrenceUntil` restano sempre scritti come proiezione.

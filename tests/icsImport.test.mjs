@@ -1270,6 +1270,107 @@ test("una RECURRENCE-ID senza la sua serie diventa un evento singolo, deduplicat
 });
 
 // ------------------------------------------------------------------------------------------
+// Reimportare un file non cambiato tiene le modifiche fatte qui (ricontrollo di rilascio, punto 2)
+// ------------------------------------------------------------------------------------------
+
+const COURSE_FILE = (...rows) => ics("X-WR-TIMEZONE:Europe/Rome", ...rows);
+const lesson = (uid, title, day, extra = []) => [
+  "BEGIN:VEVENT",
+  `UID:${uid}`,
+  `DTSTART;TZID=Europe/Rome:202611${day}T090000`,
+  `DTEND;TZID=Europe/Rome:202611${day}T100000`,
+  `SUMMARY:${title}`,
+  ...extra,
+  "END:VEVENT"
+];
+const TWO_LESSONS = COURSE_FILE(lesson("a@g", "Anatomia", "02"), lesson("b@g", "Chimica", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+const reimport = (events, text) => merge(events, parseIcs(text, { timeZone: "Europe/Rome" }), { timeZone: "Europe/Rome" });
+const editedLocally = (events) =>
+  events.map((event) =>
+    event.sourceUid === "a@g" ? { ...event, title: "Anatomia (aula cambiata da me)", location: "Aula 5" } : event.sourceUid === "b@g" && !event.seriesId ? { ...event, title: "Chimica (mia)" } : event
+  );
+
+test("ogni evento importato ricorda com'era nel file (un testo), le righe dei giorni no", () => {
+  const first = apply([], reimport([], COURSE_FILE(lesson("b@g", "Chimica", "03", ["RRULE:FREQ=WEEKLY;COUNT=4", "EXDATE;TZID=Europe/Rome:20261110T090000"]))));
+  const master = first.find((event) => !event.seriesId);
+  assert.equal(typeof master.sourceStamp, "string");
+  assert.ok(master.sourceStamp.length > 4);
+  const row = first.find((event) => event.seriesId);
+  assert.ok(row && !("sourceStamp" in row));
+});
+
+test("le modifiche fatte qui restano se il file non è cambiato dall'ultimo import: nessuna novità", () => {
+  const mine = editedLocally(apply([], reimport([], TWO_LESSONS)));
+  const plan = reimport(mine, TWO_LESSONS);
+  assert.deepEqual(counts(plan), NOTHING);
+  assert.equal(plan.editsReplaced, 0);
+  assert.deepEqual(plan.warnings, []);
+  // Anche più volte di seguito.
+  assert.deepEqual(counts(reimport(mine, TWO_LESSONS)), NOTHING);
+});
+
+test("se il file è cambiato si aggiorna, e l'anteprima dice quanti eventi modificati qui vengono sostituiti", () => {
+  const mine = editedLocally(apply([], reimport([], TWO_LESSONS)));
+  const changed = COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02"), lesson("b@g", "Chimica (laboratorio)", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+  const plan = reimport(mine, changed);
+  assert.equal(plan.updated, 2);
+  assert.equal(plan.editsReplaced, 2);
+  assert.equal(plan.warnings.length, 1);
+  assert.match(plan.warnings[0], /^2 eventi che avevi modificato qui sono cambiati nel file/);
+  assert.match(plan.warnings[0], /«Anatomia \(aula cambiata da me\)» e «Chimica \(mia\)»/);
+  assert.match(plan.warnings[0], /vengono sostituite da quelle del file/);
+  const after = apply(mine, plan);
+  const anatomy = after.find((event) => event.sourceUid === "a@g");
+  assert.equal(anatomy.title, "Anatomia (aula G21)");
+  assert.equal(anatomy.location, undefined);
+  // Dopo l'aggiornamento, nuove modifiche qui restano con lo stesso file.
+  const again = after.map((event) => (event.id === anatomy.id ? { ...event, title: "Anatomia (di nuovo mia)" } : event));
+  assert.deepEqual(counts(reimport(again, changed)), NOTHING);
+});
+
+test("file cambiato ed evento mai toccato qui: si aggiorna senza avviso; un solo evento lo dice al singolare", () => {
+  const first = apply([], reimport([], TWO_LESSONS));
+  const changed = COURSE_FILE(lesson("a@g", "Anatomia (aula G21)", "02"), lesson("b@g", "Chimica", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+  const clean = reimport(first, changed);
+  assert.deepEqual([clean.updated, clean.editsReplaced, clean.warnings.length], [1, 0, 0]);
+  // Chimica è cambiata solo qui (il file no): resta com'è; Anatomia è cambiata in entrambi.
+  const one = reimport(editedLocally(first), changed);
+  assert.deepEqual([one.updated, one.editsReplaced], [1, 1]);
+  assert.match(one.warnings[0], /^«Anatomia \(aula cambiata da me\)» è cambiato nel file/);
+  assert.equal(apply(editedLocally(first), one).find((event) => event.sourceUid === "b@g" && !event.seriesId).title, "Chimica (mia)");
+});
+
+test("una divisione fatta qui («questa e le successive») non conta come modifica sostituita", () => {
+  const first = apply([], reimport([], TWO_LESSONS));
+  const chem = first.find((event) => event.sourceUid === "b@g" && !event.seriesId);
+  const split = apply(first, planEdit(chem, first, "2026-11-17", "following", { title: "Chimica (aula nuova)" }, { now: NOW }));
+  const changed = COURSE_FILE(lesson("a@g", "Anatomia", "02"), lesson("b@g", "Chimica (orario nuovo)", "03", ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+  const plan = reimport(split, changed);
+  assert.deepEqual([plan.updated, plan.editsReplaced], [1, 0]);
+  const shown = window(apply(split, plan)).filter((line) => line.includes("Chimica"));
+  assert.deepEqual(shown, [
+    "2026-11-03T08:00:00.000Z Chimica (orario nuovo)",
+    "2026-11-10T08:00:00.000Z Chimica (orario nuovo)",
+    "2026-11-17T08:00:00.000Z Chimica (aula nuova)",
+    "2026-11-24T08:00:00.000Z Chimica (aula nuova)"
+  ]);
+});
+
+test("vecchi import senza impronta: come prima (lo stesso file rimette la sua versione), poi l'impronta c'è", () => {
+  const old = apply([], reimport([], TWO_LESSONS)).map((event) => {
+    const copy = { ...event };
+    delete copy.sourceStamp;
+    return copy;
+  });
+  const plan = reimport(editedLocally(old), TWO_LESSONS);
+  assert.deepEqual([plan.updated, plan.editsReplaced, plan.warnings.length], [2, 0, 0]);
+  const after = apply(editedLocally(old), plan);
+  assert.equal(after.find((event) => event.sourceUid === "a@g").title, "Anatomia");
+  assert.ok(after.filter((event) => !event.seriesId).every((event) => typeof event.sourceStamp === "string"));
+  assert.deepEqual(counts(reimport(editedLocally(after), TWO_LESSONS)), NOTHING);
+});
+
+// ------------------------------------------------------------------------------------------
 // Store
 // ------------------------------------------------------------------------------------------
 

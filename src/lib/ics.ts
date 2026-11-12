@@ -1804,6 +1804,8 @@ export interface IcsMergePlan {
   relinked: Map<string, string>;
   /** Cose da dire prima di scrivere (righe oltre il limite, vecchi import lasciati com'erano). */
   warnings: string[];
+  /** Eventi modificati qui dopo l'ultimo import, cambiati nel file: le modifiche fatte qui si perdono. */
+  editsReplaced: number;
 }
 
 type Linked = { linkedEntityType?: string; linkedEntityId?: string; updatedAt: string };
@@ -1844,7 +1846,30 @@ const joinNotes = (a: unknown, b: unknown) => {
 /** Campi di una sola scelta: nell'unione dei vecchi import passano se la serie tenuta non li ha, se diversi non si unisce. */
 const FILLED_FIELDS = ["subjectId", "goalId", "cover"] as const;
 
-const ROW_DROPPED = ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "sourceEdited", "splitFrom", "cancelled"] as const;
+const ROW_DROPPED = ["repeat", "repeatLegacy", "recurrenceUntil", "sourceUid", "sourceRecurrenceId", "sourceEdited", "sourceStamp", "splitFrom", "cancelled"] as const;
+
+/** Impronta corta di un testo (cyrb53: 53 bit in base 36), uguale per lo stesso testo su ogni dispositivo. */
+const hashText = (text: string) => {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
+
+/** Le due metà di `sourceStamp`: com'era l'evento nel file e come l'import l'ha scritto. */
+const stampParts = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const [file, event] = value.split(".");
+  return file && event ? { file, event } : null;
+};
 
 const withoutKeys = <T extends object>(value: T, keys: readonly string[]): T => {
   const copy = { ...value } as Record<string, unknown>;
@@ -1965,6 +1990,51 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   const today = civilDateOf(Number.isNaN(nowMs) ? Date.now() : nowMs, fallbackZone);
   const put = (event: CalendarEvent) => puts.set(event.id, event);
 
+  // Impronte (sourceStamp): l'evento com'è nel file, e come l'import lo scrive. Al prossimo import un file
+  // uguale lascia le modifiche fatte qui; un file cambiato le sostituisce, e lo si dice (`editsReplaced`).
+  /** Eventi modificati qui che il file cambiato sostituisce: id -> titolo di adesso. */
+  const replacedEdits = new Map<string, string>();
+  const fileStamp = (item: IcsImportItem) =>
+    hashText(
+      JSON.stringify([
+        item.title.trim(),
+        item.description.trim(),
+        item.location ?? "",
+        customColor(item).toLowerCase(),
+        item.start,
+        item.end,
+        item.allDay,
+        item.timeZone ?? "",
+        item.repeat ?? null,
+        item.reminders ?? null,
+        item.skipped ?? null
+      ])
+    );
+  /**
+   * I campi che l'import scrive, come si vedono: titolo, descrizione, luogo, colore scelto, orari, regola
+   * (senza la fine: una divisione fatta qui la sposta, e l'import la rispetta), promemoria, e «saltato» se
+   * il file lo dice.
+   */
+  const eventStamp = (event: CalendarEvent, withStatus: boolean) => {
+    const timing = timingOf(event, fallbackZone);
+    const rule = normalizeRepeat(event);
+    return hashText(
+      JSON.stringify([
+        String(event.title ?? "").trim(),
+        String(event.description ?? "").trim(),
+        locationOf(event),
+        event.colorCustom === true ? String(event.color ?? "").toLowerCase() : "",
+        timing ? (timing.allDay ? [timing.startDate, timing.endDate] : [timing.startMs, timing.endMs]) : null,
+        validZone(event.timeZone) ?? "",
+        ruleKey(rule ? { ...rule, end: undefined } : null, timing?.startDate ?? ""),
+        reminderKey(event, event.reminders),
+        withStatus ? event.status === "skipped" : null
+      ])
+    );
+  };
+  const stamped = (event: CalendarEvent, item: IcsImportItem): CalendarEvent =>
+    item.sourceUid ? { ...event, sourceStamp: `${fileStamp(item)}.${eventStamp(event, item.skipped !== undefined)}` } : event;
+
   const localMaster = (uid: string) => {
     const id = ownId(uid);
     const mine = id ? byId.get(id) : undefined;
@@ -2007,14 +2077,19 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       ...(item.occasion ? { occasion: item.occasion } : {}),
       ...extra
     };
-    const event = item.repeat ? applyRepeatFields({ ...base, repeat: item.repeat }, { repeatChanged: true, timeZone: fallbackZone }) : base;
+    const event = stamped(item.repeat ? applyRepeatFields({ ...base, repeat: item.repeat }, { repeatChanged: true, timeZone: fallbackZone }) : base, item);
     put(event);
     created.add(event.id);
     return event;
   };
 
-  /** Evento aggiornato con i dati del file, o null se il file dice le stesse cose. */
+  /**
+   * Evento aggiornato con i dati del file, o null se il file dice le stesse cose. Se il file non è cambiato
+   * dall'ultimo import (stessa impronta), null anche se qui l'evento è stato modificato: le modifiche restano.
+   */
   const updated = (existing: CalendarEvent, item: IcsImportItem, options: { rule: boolean; adopt?: string }) => {
+    const previous = stampParts(existing.sourceStamp);
+    if (!options.adopt && previous?.file === fileStamp(item)) return null;
     const timing = timingOf(existing, fallbackZone);
     const incoming = timingOf({ start: item.start, end: item.end, allDay: item.allDay, timeZone: item.timeZone ?? existing.timeZone }, fallbackZone);
     if (!incoming) return null;
@@ -2057,8 +2132,10 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       },
       item.location
     );
-    if (!options.rule) return next;
-    return applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone });
+    // Modificato qui dopo l'ultimo import (non è più come l'import l'aveva scritto): lo si dice prima.
+    if (previous && previous.event !== eventStamp(existing, item.skipped !== undefined)) replacedEdits.set(existing.id, String(existing.title ?? ""));
+    if (!options.rule) return stamped(next, item);
+    return stamped(applyRepeatFields({ ...next, repeat: rule ?? undefined, repeatLegacy: undefined }, { repeatChanged: true, timeZone: fallbackZone }), item);
   };
 
   /** Occorrenza della serie: stessa riga che crea il motore (copia della serie, senza regola). */
@@ -2470,5 +2547,16 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
   for (const [read, titles] of byRead) warnings.push(ICS_TEXT.tooManyRows([...new Set(titles)], read));
   for (const [title, date] of splitExisting) warnings.push(ICS_TEXT.splitsExisting(title, date));
   for (const title of new Set(keptApart)) warnings.push(ICS_TEXT.partKeptApart(title));
-  return { puts: [...puts.values()], deletes: [...deletes].filter((id) => !puts.has(id)), added: created.size, updated: touched.size, relinked, warnings };
+  // Solo gli eventi che questo import scrive davvero (un vecchio import che resta com'era no).
+  const replaced = [...replacedEdits].filter(([id]) => puts.has(id));
+  if (replaced.length) warnings.push(ICS_TEXT.editsReplaced(replaced.map(([, title]) => title)));
+  return {
+    puts: [...puts.values()],
+    deletes: [...deletes].filter((id) => !puts.has(id)),
+    added: created.size,
+    updated: touched.size,
+    relinked,
+    warnings,
+    editsReplaced: replaced.length
+  };
 };
