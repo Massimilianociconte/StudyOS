@@ -286,7 +286,10 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   una condivisione attiva in uno dei due sensi (`studyos_knows_user`).
 - **Aggiornamenti**: Realtime su `studyos_shares`, `studyos_share_invites` e sulle righe dei
   proprietari (fino a 100 persone per canale), più un controllo ogni 5 minuti e al ritorno
-  sulla scheda. Il confronto con tutti gli id visibili si fa al controllo dei 5 minuti, al
+  sulla scheda. A ogni `SUBSCRIBED` del canale (prima iscrizione, canale ricreato,
+  riconnessione) parte un pull di recupero con la solita attesa (`catchUpWhenSubscribed`): le
+  righe scritte prima che il canale fosse davvero iscritto non arrivano come evento e prima
+  restavano fuori fino all'evento dopo. Il confronto con tutti gli id visibili si fa al controllo dei 5 minuti, al
   ritorno sulla scheda se l'ultimo è più vecchio di 5 minuti e quando cambiano i permessi di
   un proprietario: un segnale Realtime scarica solo le righe cambiate. Un elemento che esce da
   un filtro sparisce al controllo successivo. Le cancellazioni vere (`DELETE`, solo account

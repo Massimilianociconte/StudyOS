@@ -1275,3 +1275,15 @@ export const sharedEditResult = (
   }
   return Object.keys(patch).length ? { ...latest, ...patch } : null;
 };
+
+/**
+ * Stato del canale realtime (callback di `subscribe`): a ogni SUBSCRIBED, compresa la prima iscrizione
+ * di un canale nuovo o ricreato e ogni riconnessione, chiede un pull di recupero. Le righe scritte da
+ * altri prima che il canale fosse davvero iscritto non arrivano come evento: senza questo restavano
+ * fuori fino all'evento dopo o al ricontrollo dei 5 minuti. `isCurrent`: un canale già sostituito tace.
+ */
+export const catchUpWhenSubscribed =
+  (isCurrent: () => boolean, pull: () => void) =>
+  (status: string): void => {
+    if (status === "SUBSCRIBED" && isCurrent()) pull();
+  };

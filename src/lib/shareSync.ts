@@ -38,6 +38,7 @@ import {
   SHARED_ENTITY_TYPES,
   PROTECTED_ENTITY_TYPES,
   canRestoreRevision,
+  catchUpWhenSubscribed,
   revisionFromRow,
   revisionTitle,
   safeCssColor,
@@ -528,7 +529,10 @@ const ensureRealtime = async (me: string, owners: string[], gen: number) => {
       }
     );
   }
-  channel = next.subscribe();
+  // A ogni SUBSCRIBED (prima iscrizione e riconnessioni) un pull di recupero, con la solita attesa: le
+  // righe scritte prima che il canale fosse davvero iscritto non arrivano come evento.
+  const subscribing = next;
+  channel = subscribing.subscribe(catchUpWhenSubscribed(() => channel === subscribing, () => schedule()));
 };
 
 // ——— Ciclo ———
