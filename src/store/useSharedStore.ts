@@ -9,6 +9,7 @@ import {
   dropUnshared,
   mergeSharedRows,
   prepareSharedWrite,
+  rebasePendingEdits,
   reconcileOwner,
   sharedKey,
   sharedWriteError,
@@ -21,8 +22,10 @@ import {
   type SharedItem,
   type SharedOutboxEntry,
   type SharedSubjectLabel,
+  withoutProtectedKeys,
   withoutSupersededRows
 } from "../lib/sharing";
+import { SHARE_NOTICE_TEXT } from "../lib/labels";
 import { readUiState, writeUiState } from "../lib/uiState";
 
 /** off = niente account o cloud; missing = supabase/sharing.sql non eseguito. */
@@ -74,7 +77,13 @@ export interface SharedState {
    * loro posto in cache. Se la rilettura non riesce restano in coda e la passata dopo riprova, invece di
    * mostrare come salvata una modifica che il server non ha.
    */
-  settleRejected: (ownerId: string, entries: readonly SharedOutboxEntry[], rows: readonly RemoteSharedRow[]) => Promise<void>;
+  settleRejected: (
+    ownerId: string,
+    entries: readonly SharedOutboxEntry[],
+    rows: readonly RemoteSharedRow[],
+    /** Tra `entries`, quelle rifiutate come "stale": con una base si riallineano sulla riga riletta (S4). */
+    stale?: readonly SharedOutboxEntry[]
+  ) => Promise<void>;
   toggleOwner: (ownerId: string) => void;
   setNotice: (text: string | null) => void;
   setSyncError: (text: string | null) => void;
@@ -195,11 +204,29 @@ export const useSharedStore = create<SharedState>((set, get) => {
    * Righe del server nella cache (LWW). Una voce in coda superata da una versione del server uguale o
    * più recente esce dalla coda: inviarla riscriverebbe la versione del proprietario a nome di chi guarda.
    */
-  const withServerRows = (ownerId: string, rows: readonly RemoteSharedRow[], outbox: readonly SharedOutboxEntry[]) => {
-    const live = withoutSupersededRows(rows, ownerId, outbox);
-    const items = mergeSharedRows(get().items, ownerId, live, pendingKeys(outbox));
-    const superseded = supersededOutboxKeys(get().items, ownerId, live, outbox);
-    return { items, outbox: superseded.size ? outbox.filter((entry) => !superseded.has(entry.key)) : [...outbox] };
+  const withServerRows = (
+    ownerId: string,
+    rows: readonly RemoteSharedRow[],
+    outbox: readonly SharedOutboxEntry[],
+    force?: ReadonlySet<string>
+  ) => {
+    // Prima le modifiche in coda partite da una versione ormai superata: si uniscono campo per campo (S4).
+    const rebased = rebasePendingEdits(get().items, ownerId, rows, outbox, { now: new Date().toISOString(), force });
+    const live = withoutSupersededRows(rebased.rows, ownerId, rebased.outbox);
+    const items = mergeSharedRows(rebased.items, ownerId, live, pendingKeys(rebased.outbox));
+    const superseded = supersededOutboxKeys(rebased.items, ownerId, live, rebased.outbox);
+    return {
+      items,
+      outbox: superseded.size ? rebased.outbox.filter((entry) => !superseded.has(entry.key)) : [...rebased.outbox],
+      conflicts: rebased.conflicts
+    };
+  };
+
+  /** Stesso campo cambiato qui e dal proprietario: è rimasta la versione più recente, lo si dice una volta. */
+  const noticeConflicts = (ownerId: string, conflicts: number) => {
+    if (!conflicts) return;
+    const owner = get().received.find((grant) => grant.ownerId === ownerId)?.ownerName ?? "";
+    set({ notice: SHARE_NOTICE_TEXT.conflict(owner) });
   };
 
   /** Applica un nuovo elenco di elementi (e di voci in coda) in memoria e, se si può, su disco. */
@@ -294,8 +321,11 @@ export const useSharedStore = create<SharedState>((set, get) => {
     applyRows: async (ownerId, rows) => {
       if (!get().viewerId) return;
       const before = get().outbox;
-      const { items, outbox } = withServerRows(ownerId, rows, before);
-      await writeItems(items, outbox.length === before.length ? undefined : outbox);
+      const { items, outbox, conflicts } = withServerRows(ownerId, rows, before);
+      // Anche voci riallineate (stessa lunghezza, voce nuova al posto della vecchia), non solo tolte.
+      const changed = outbox.length !== before.length || outbox.some((entry, index) => entry !== before[index]);
+      await writeItems(items, changed ? outbox : undefined);
+      noticeConflicts(ownerId, conflicts);
     },
 
     reconcile: async (ownerId, types, visible) => {
@@ -311,6 +341,16 @@ export const useSharedStore = create<SharedState>((set, get) => {
       if (error) throw new ShareUserError(error);
       const now = new Date().toISOString();
       const queued = state.outbox.find((candidate) => candidate.key === key);
+      // Versione del server da cui parte la modifica (S4): quella della voce già in coda, altrimenti la
+      // copia in cache, se è arrivata dal server. Un elemento creato qui non ne ha.
+      const base =
+        queued && !queued.deleted
+          ? queued.base && queued.baseAt
+            ? { base: queued.base, baseAt: queued.baseAt }
+            : null
+          : previous && previous.serverUpdatedAt !== ""
+            ? { base: withoutProtectedKeys(previous.entity), baseAt: previous.serverUpdatedAt }
+            : null;
       const next: SharedItem = {
         key,
         ownerId,
@@ -327,7 +367,8 @@ export const useSharedStore = create<SharedState>((set, get) => {
         deleted: false,
         queuedAt: now,
         // Una versione di prima forse già arrivata al server resta tale: l'eliminazione manderà il tombstone.
-        ...(queued?.attempted ? { attempted: true } : {})
+        ...(queued?.attempted ? { attempted: true } : {}),
+        ...(base ?? {})
       };
       await writeItems(
         previous ? state.items.map((candidate) => (candidate.key === key ? next : candidate)) : [...state.items, next],
@@ -391,12 +432,22 @@ export const useSharedStore = create<SharedState>((set, get) => {
       await writeItems(dropUnshared(items, get().received, pendingKeys(outbox)), outbox);
     },
 
-    settleRejected: async (ownerId, entries, rows) => {
+    settleRejected: async (ownerId, entries, rows, stale = []) => {
       if (!get().viewerId) return;
       // Una modifica fatta durante l'invio ha un queuedAt diverso: resta in coda, e vince se più recente.
       const done = new Set(entries.map(sentKey));
-      const { items, outbox } = withServerRows(ownerId, rows, get().outbox.filter((entry) => !done.has(sentKey(entry))));
+      // Rifiutate come "stale" con una base (S4): restano e si riallineano sulla riga riletta, invece di
+      // perdere per intero. Senza base (elemento creato qui, voce di prima) vince il server come prima.
+      const retry = stale.filter((entry) => !entry.deleted && entry.base);
+      const kept = new Set(retry.map(sentKey));
+      const { items, outbox, conflicts } = withServerRows(
+        ownerId,
+        rows,
+        get().outbox.filter((entry) => !done.has(sentKey(entry)) || kept.has(sentKey(entry))),
+        new Set(retry.map((entry) => entry.key))
+      );
       await writeItems(dropUnshared(items, get().received, pendingKeys(outbox)), outbox);
+      noticeConflicts(ownerId, conflicts);
     },
 
     toggleOwner: (ownerId) => {

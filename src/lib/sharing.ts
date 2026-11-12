@@ -353,6 +353,14 @@ export interface SharedOutboxEntry {
    * mandare il tombstone, altrimenti il pull lo riporterebbe in vita. Passa alle modifiche successive.
    */
   attempted?: boolean;
+  /**
+   * Versione del server da cui è partita la modifica in coda (senza chiavi protette) e il suo
+   * `updated_at`. Se intanto il proprietario cambia l'elemento, la modifica si riallinea sulla versione
+   * nuova campo per campo (rebasePendingEdits) invece di vincere o perdere per intero (S4). Assenti per
+   * un elemento creato qui e per le voci di versioni precedenti: lì resta la regola di prima.
+   */
+  base?: Payload;
+  baseAt?: string;
 }
 
 export interface SharedPushBatch {
@@ -1247,6 +1255,112 @@ export const CALENDAR_EVENT_FIELD_GROUPS = [
 const SHARED_EDIT_GROUPS: Record<string, readonly (readonly string[])[]> = {
   studySession: [["start", "end"]],
   calendarEvent: CALENDAR_EVENT_FIELD_GROUPS
+};
+
+/** Campi che non si uniscono: identità e timbri (il timbro della versione unita lo decide chi unisce). */
+const REBASE_SKIP = new Set(["id", "updatedAt", "deletedAt"]);
+
+const sameUnit = (a: Payload, b: Payload, unit: readonly string[]) => unit.every((key) => JSON.stringify(a[key]) === JSON.stringify(b[key]));
+
+/**
+ * Unione a tre vie di una modifica in coda (`local`, partita da `base`) con la versione nuova del server
+ * (`remote`). Si lavora per unità: un gruppo di SHARED_EDIT_GROUPS (es. orari) o un campo singolo, mai le
+ * chiavi protette. Cambiata solo qui: vale quella di qui. Cambiata da entrambi in modo diverso: vince il
+ * timbro più recente (a parità il proprietario) e l'unità finisce in `conflicts`. Il resto è del server.
+ * `differs`: la versione unita ha ancora qualcosa di qui da inviare.
+ */
+export const rebaseSharedEdit = (entityType: string, base: Payload, local: Payload, remote: Payload) => {
+  const groups = Object.hasOwn(SHARED_EDIT_GROUPS, entityType) ? SHARED_EDIT_GROUPS[entityType] : [];
+  const grouped = new Set(groups.flat());
+  const keys = new Set(
+    [...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)].filter((key) => !REBASE_SKIP.has(key) && !PROTECTED_KEY.test(key))
+  );
+  const units: (readonly string[])[] = [...groups, ...[...keys].filter((key) => !grouped.has(key)).map((key) => [key])];
+  const localNewer = timestampOf(str(local.updatedAt)) > timestampOf(str(remote.updatedAt));
+  const merged: Payload = { ...remote };
+  const conflicts: string[] = [];
+  let differs = false;
+  for (const unit of units) {
+    if (sameUnit(base, local, unit) || sameUnit(local, remote, unit)) continue;
+    if (!sameUnit(base, remote, unit)) {
+      conflicts.push(...unit);
+      if (!localNewer) continue;
+    }
+    for (const key of unit) {
+      if (Object.hasOwn(local, key)) merged[key] = local[key];
+      else delete merged[key];
+    }
+    differs = true;
+  }
+  return { merged, differs, conflicts };
+};
+
+/**
+ * Prima di applicare righe del server (pull o rilettura dopo un rifiuto): le modifiche in coda con una
+ * base (S4) si riallineano sulle righe nuove dello stesso elemento. La riga della base stessa
+ * (`updated_at` uguale) non tocca la modifica in coda, qualunque sia il suo timbro. Una riga nuova si
+ * unisce campo per campo (rebaseSharedEdit): se resta qualcosa di qui, la cache prende la versione
+ * unita con un timbro oltre l'ora del server della riga (così il server la accetta), la voce prende la
+ * riga come nuova base e un queuedAt nuovo (parte di nuovo, anche se un invio della versione di prima
+ * era in volo), e la riga non passa oltre. Se non resta nulla, la voce esce e la riga si applica.
+ * `force`: voci rifiutate come "stale", da riallineare anche sulla riga della base (orologio indietro).
+ * Le eliminazioni, del server o in coda, seguono le regole di prima.
+ */
+export const rebasePendingEdits = (
+  items: readonly SharedItem[],
+  ownerId: string,
+  rows: readonly RemoteSharedRow[],
+  outbox: readonly SharedOutboxEntry[],
+  options: { now: string; force?: ReadonlySet<string> }
+) => {
+  const queued = new Map(outbox.filter((entry) => !entry.deleted && entry.base).map((entry) => [entry.key, entry]));
+  if (!queued.size) return { items, rows, outbox, conflicts: 0 };
+  const force = options.force ?? new Set<string>();
+  const cached = new Map(items.map((entry) => [entry.key, entry]));
+  const replacedItems = new Map<string, SharedItem>();
+  const replacedEntries = new Map<string, SharedOutboxEntry | null>();
+  const passed: RemoteSharedRow[] = [];
+  let conflicts = 0;
+  for (const row of rows) {
+    const key = sharedKey(ownerId, row.entity_type, row.entity_id);
+    const entry = replacedEntries.has(key) ? replacedEntries.get(key) : queued.get(key);
+    const local = replacedItems.get(key) ?? cached.get(key);
+    if (!entry || !entry.base || !local) {
+      passed.push(row);
+      continue;
+    }
+    if (row.deleted) {
+      // Eliminato lassù: una modifica rifiutata non ha più nulla su cui riallinearsi.
+      if (force.has(key)) replacedEntries.set(key, null);
+      passed.push(row);
+      continue;
+    }
+    // La riga della base: stessa ora del server e stesso timbro. Nulla di nuovo, la modifica resta com'è.
+    const isBase = row.updated_at === entry.baseAt && str(row.payload.updatedAt) === str(entry.base.updatedAt);
+    if (isBase && !force.has(key)) continue;
+    const result = rebaseSharedEdit(row.entity_type, entry.base, local.entity, row.payload);
+    if (result.conflicts.length) conflicts += 1;
+    if (!result.differs) {
+      replacedEntries.set(key, null);
+      passed.push(row);
+      continue;
+    }
+    const at = Math.max(timestampOf(str(local.entity.updatedAt)), timestampOf(options.now), timestampOf(row.updated_at) + 1);
+    const queuedAt = options.now === entry.queuedAt ? new Date(timestampOf(options.now) + 1).toISOString() : options.now;
+    replacedItems.set(key, { ...local, entity: { ...result.merged, updatedAt: new Date(at).toISOString() } as SharedEntity, serverUpdatedAt: row.updated_at });
+    replacedEntries.set(key, { ...entry, base: withoutProtectedKeys(row.payload), baseAt: row.updated_at, queuedAt });
+  }
+  if (!replacedItems.size && !replacedEntries.size && passed.length === rows.length) return { items, rows, outbox, conflicts };
+  return {
+    items: items.map((entry) => replacedItems.get(entry.key) ?? entry),
+    rows: passed,
+    outbox: outbox.flatMap((entry) => {
+      if (!replacedEntries.has(entry.key) || entry !== queued.get(entry.key)) return [entry];
+      const next = replacedEntries.get(entry.key);
+      return next ? [next] : [];
+    }),
+    conflicts
+  };
 };
 
 /**

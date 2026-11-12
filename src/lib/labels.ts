@@ -657,6 +657,9 @@ export const SHARE_GONE_TEXT = "Questa condivisione non c'è più.";
 export const SHARE_NOTICE_TEXT = {
   denied: (owner: string) => `Non hai più il permesso di modificare i dati di ${owner || "questa persona"}: la modifica non è stata salvata.`,
   gone: (owner: string) => `${owner || "Il proprietario"} ha eliminato ciò che stavi modificando: la modifica non è stata salvata.`,
+  /** Stesso campo cambiato qui e dal proprietario (S4): gli altri campi si sono uniti. */
+  conflict: (owner: string) =>
+    `Tu e ${owner || "il proprietario"} avete cambiato la stessa informazione: è rimasta la modifica più recente. Le altre modifiche sono state unite.`,
   dismiss: "Ok",
   dismissTitle: "Chiudi l'avviso sulla condivisione"
 } as const;
