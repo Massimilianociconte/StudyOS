@@ -10,7 +10,7 @@ import {
   findTwin,
   newGroupRecordId,
   sessionFromRow,
-  sessionMatchesSubject,
+  normalizeCourseName,
   sessionTitle,
   sessionToFields,
   type CatalogOverride,
@@ -60,6 +60,15 @@ export const failWith = (code: FailCode, error: string, data?: Record<string, un
 
 const groups = () => useGroupExamStore.getState();
 const groupNameOf = (groupId: string) => groupNamesOf(groups().groups).get(groupId) ?? "";
+/**
+ * Come sessionMatchesSubject, ma sul nome oscurato: un agente non può confermare un nome grezzo (con un
+ * indirizzo) creando una materia con quel nome.
+ */
+const sessionMatchesSubject = (session: Pick<GroupExamSession, "courseId" | "courseName">, subject: { name: string; universityCourseId?: string | null }) => {
+  if (session.courseId && subject.universityCourseId === session.courseId) return true;
+  const name = normalizeCourseName(agentMemberText(session.courseName));
+  return name !== "" && name === normalizeCourseName(subject.name);
+};
 const subjectFor = (session: Pick<GroupExamSession, "courseId" | "courseName">) =>
   state().subjects.find((item) => !item.archived && sessionMatchesSubject(session, item));
 

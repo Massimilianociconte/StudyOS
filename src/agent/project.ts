@@ -121,12 +121,13 @@ export const publicGroup = (item: {
   members: Array<{ displayName: string; role: string }>;
 }) => ({
   id: item.id,
-  name: item.name,
-  description: item.description,
-  ownerDisplayName: item.ownerDisplayName,
+  // Nomi, descrizioni e nomi dei membri li scrivono i membri: mai un indirizzo agli agenti (spec §9.3).
+  name: agentMemberText(item.name),
+  description: agentMemberText(item.description),
+  ownerDisplayName: agentMemberText(item.ownerDisplayName),
   archived: item.archived,
   updatedAt: item.updatedAt,
-  members: item.members.map((member) => ({ displayName: member.displayName, role: member.role }))
+  members: item.members.map((member) => ({ displayName: agentMemberText(member.displayName), role: member.role }))
 });
 
 export const publicPreferences = (item: {

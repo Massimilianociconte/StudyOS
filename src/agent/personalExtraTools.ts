@@ -3,6 +3,7 @@
 import { addDays } from "date-fns";
 import { contactTargetId, scheduleRuleTargetId } from "../lib/catalogOverrides";
 import { checkConsistency, type ConsistencyInput, type ConsistencyIssue, type IssueSeverity } from "../lib/examConsistency";
+import { normalizeCourseName } from "../lib/groupExams";
 import { tagSummary, type TaggableType } from "../lib/itemTags";
 import { linkedCounts } from "../lib/subjectLinks";
 import { groupNamesOf, useGroupExamStore } from "../store/useGroupExamStore";
@@ -155,8 +156,21 @@ const catalogIds = async (): Promise<ConsistencyInput["catalog"]> => {
 
 const FIX_IN_APP = "Questa correzione si fa nell'app StudyOS: il connettore remoto non ha lo strumento.";
 
-const publicIssue = (issue: ConsistencyIssue) => {
-  const { fix, ...rest } = issue;
+/**
+ * Chiave del corso senza il testo grezzo: per `nome:` la stessa regola del server sullo snapshot
+ * (nome oscurato, poi normalizzato). Stabile tra una chiamata e l'altra.
+ */
+const safeCourseKey = (key: string, sessions: ReadonlyArray<{ courseKey: string; courseName: string }>) => {
+  if (!key.startsWith("nome:")) return key;
+  const hit = sessions.find((session) => session.courseKey === key);
+  return hit ? `nome:${normalizeCourseName(agentMemberText(hit.courseName))}` : "nome:";
+};
+
+const publicIssue = (issue: ConsistencyIssue, sessions: ReadonlyArray<{ courseKey: string; courseName: string }>) => {
+  const { fix, ...raw } = issue;
+  const rawKey = raw.refs.courseKey;
+  const safeKey = rawKey ? safeCourseKey(rawKey, sessions) : undefined;
+  const rest = rawKey && safeKey !== undefined ? { ...raw, id: raw.id.split(rawKey).join(safeKey), refs: { ...raw.refs, courseKey: safeKey } } : raw;
   const base = { ...rest, title: agentMemberText(issue.title), detail: agentMemberText(issue.detail) };
   if (!fix) return base;
   // Sul connettore remoto i suggerimenti con strumenti che non ci sono vanno fatti nell'app.
@@ -197,6 +211,6 @@ export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult>
     groupsChecked: report.groupsChecked,
     groupExamsChecked: report.groupExamsChecked,
     counts: { error: issues.filter((i) => i.severity === "error").length, warning: issues.filter((i) => i.severity === "warning").length, info: issues.filter((i) => i.severity === "info").length },
-    ...page(issues.map(publicIssue), args)
+    ...page(issues.map((issue) => publicIssue(issue, groups.sessions)), args)
   });
 };
