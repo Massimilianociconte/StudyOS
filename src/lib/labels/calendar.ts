@@ -71,7 +71,7 @@ export const CALENDAR_LAYOUT_TEXT = {
   moreAria: (count: number) => `Altri ${count} ${count === 1 ? "evento" : "eventi"} in questa fascia: apri l'elenco`,
   /** Colonna troppo stretta (Settimana sul tablet): la fascia è un solo pulsante con tutti i suoi eventi. */
   merged: (count: number) => `${count} ${count === 1 ? "evento" : "eventi"}`,
-  mergedAria: (count: number) => `${count} ${count === 1 ? "evento" : "eventi"} alla stessa ora: apri l'elenco`,
+  mergedAria: (count: number) => (count === 1 ? "1 evento sovrapposto: apri l'elenco" : `${count} eventi che si sovrappongono: apri l'elenco`),
   dayOfSpan: (index: number, total: number) => `giorno ${index} di ${total}`
 } as const;
 

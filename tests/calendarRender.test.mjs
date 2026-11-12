@@ -134,6 +134,27 @@ test("layoutTimedDay: in una colonna stretta (Settimana sul tablet) la fascia di
   assert.equal(tablet.more.length, 1);
   assert.equal(tablet.more[0].count, 2);
   assert.deepEqual(tablet.more[0].items.map((item) => item.id), ["a", "b"]);
+  // Anche con il mouse: accanto al "+N" non resterebbero 56 px.
+  assert.equal(render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 74, pointer: "mouse" }).merged, true);
+  assert.equal(CALENDAR_LAYOUT_TEXT.mergedAria(3), "3 eventi che si sovrappongono: apri l'elenco");
+});
+
+test("layoutTimedDay: con il mouse il \"+N\" è largo 28 px e due eventi stanno affiancati in 118 px", () => {
+  assert.equal(render.OVERLAP_SIZES.touch.gutter, render.TOUCH_TARGET_PX);
+  assert.ok(render.OVERLAP_SIZES.mouse.gutter >= 24, "sopra il minimo di 24 px");
+  const items = [timed("gym", [2026, 11, 13, 10], [2026, 11, 13, 12]), timed("exam", [2026, 11, 13, 10, 30], [2026, 11, 13, 12]), timed("c", [2026, 11, 13, 10, 45], [2026, 11, 13, 11, 30])];
+  const pieces = render.dayPieces(items, local(2026, 11, 13).getTime(), local(2026, 11, 14).getTime());
+  // Venerdì in Settimana a 1280 (circa 118 px).
+  const mouse = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 118, pointer: "mouse" });
+  assert.equal(mouse.merged, false);
+  assert.deepEqual(mouse.placed.map(({ item, column, columns, narrowed }) => [item.id, column, columns, narrowed]), [["gym", 0, 2, true], ["exam", 1, 2, true]]);
+  assert.equal(mouse.more[0].count, 1);
+  // Con il dito: "+N" da 44 px e un evento solo accanto.
+  const touch = render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 118, pointer: "touch" });
+  assert.deepEqual(touch.placed.map(({ item }) => item.id), ["gym"]);
+  assert.equal(touch.more[0].count, 2);
+  // Senza indicazione: dito (il caso più largo).
+  assert.deepEqual(render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 118 }).placed.length, 1);
 });
 
 test("dotColor: ogni colore di tipologia ha almeno 3:1 sulla cella e sul pulsante, nei due temi", async () => {

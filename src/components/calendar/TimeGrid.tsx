@@ -15,7 +15,6 @@ import { todayYmd } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";
 import {
   MIN_EVENT_HEIGHT_PX,
-  MORE_GUTTER_PX,
   TOUCH_TARGET_PX,
   atWallMinutes,
   dayPieces,
@@ -35,6 +34,7 @@ import { EventBar, HolidayChip, TypeIcon, eventBars, useEventPaint, useEventThem
 import { ExamChip, TaskChip } from "./chips";
 import { EventRow } from "./DayList";
 import {
+  COARSE_QUERY,
   PHONE_FAB_GUTTER_PX,
   PHONE_QUERY,
   canDrag,
@@ -58,8 +58,8 @@ const WEEK_LANES = 4;
 type Grab = { key: string; offsetMin: number };
 
 /** Posizione orizzontale di un evento affiancato: la fascia con "+N" lascia spazio a destra. */
-const horizontal = ({ column, columns, span, narrowed }: Pick<PlacedPiece<unknown>, "column" | "columns" | "span" | "narrowed">) => {
-  const room = narrowed ? `(100% - ${MORE_GUTTER_PX}px)` : "100%";
+const horizontal = ({ column, columns, span, narrowed }: Pick<PlacedPiece<unknown>, "column" | "columns" | "span" | "narrowed">, gutter: number) => {
+  const room = narrowed ? `(100% - ${gutter}px)` : "100%";
   return { left: `calc(${room} * ${column / columns} + 1px)`, width: `calc(${room} * ${span / columns} - 3px)` };
 };
 
@@ -105,6 +105,8 @@ export function TimeGrid({
   // Telefono: a destra degli eventi resta libera la striscia dove passa il pulsante "+" fisso, così
   // l'ultima colonna di eventi affiancati non finisce mai sotto di lui.
   const fabGutter = useMediaQuery(PHONE_QUERY) ? PHONE_FAB_GUTTER_PX : 0;
+  // "+N" da 44 px solo dove si tocca col dito; con il mouse 28 px e più eventi affiancati.
+  const pointer = useMediaQuery(COARSE_QUERY) ? "touch" : "mouse";
   // Larghezza di una colonna giorno per gli eventi (etichette orarie a sinistra, spazio tra le colonne).
   const columnWidth = (containerWidth ? (containerWidth - HOURS_COLUMN_PX - days.length * COLUMN_GAP_PX) / days.length : 200) - fabGutter;
 
@@ -133,7 +135,7 @@ export function TimeGrid({
       bars: laneRow ? [] : bars.filter((bar) => bar.startDay <= ymd && bar.endDay >= ymd),
       holidays: laneRow ? [] : holidays.filter((holiday) => holiday.date === ymd),
       pieces,
-      layout: layoutTimedDay(pieces, { hourHeight, columnWidth }),
+      layout: layoutTimedDay(pieces, { hourHeight, columnWidth, pointer }),
       tasks: tasks.filter((task) => task.dueDate && isSameDay(parseISO(task.dueDate), day)).sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? "")),
       exams: exams.filter((exam) => isSameDay(parseISO(exam.date), day))
     };
@@ -404,6 +406,7 @@ export function TimeGrid({
                   <TimedEvent
                     key={placed.key}
                     placed={placed}
+                    gutter={entry.layout.gutter}
                     {...boxOf(placed.startMs, placed.endMs, entry.dayEnd)}
                     hourHeight={hourHeight}
                     handlers={handlers}
@@ -429,13 +432,13 @@ export function TimeGrid({
                         handlers.onPreviewHide();
                         setBand({ day: entry.day, band: more });
                       }}
-                      // Il nome comincia dal testo visibile ("+2", "3 eventi"), poi la spiegazione.
-                      aria-label={`${visible}, ${explain}`}
+                      // Il nome comincia dal testo visibile ("+2", "3 eventi"), poi la spiegazione (senza ripeterlo).
+                      aria-label={explain.startsWith(visible) ? explain : `${visible}, ${explain}`}
                       title={explain}
                       className={`absolute z-[5] flex flex-col items-center gap-1 rounded-[10px] bg-[var(--surface-strong)] pt-1 text-[11px] font-black leading-tight text-[var(--text)] hover:bg-[var(--surface)] ${
                         merged ? "left-0 right-0 px-1" : "right-0"
                       }`}
-                      style={{ top, height, ...(merged ? {} : { width: MORE_GUTTER_PX - 2 }) }}
+                      style={{ top, height, ...(merged ? {} : { width: entry.layout.gutter - 2 }) }}
                     >
                       {reach ? <span aria-hidden="true" className="absolute inset-x-0" style={{ top: -reach, bottom: -reach }} /> : null}
                       {dots ? (
@@ -491,6 +494,7 @@ export function TimeGrid({
 /** Un evento con orario nella colonna del giorno: posizione e altezza dall'orario, larghezza dalla sua colonna. */
 function TimedEvent({
   placed,
+  gutter,
   top,
   height,
   hourHeight,
@@ -498,6 +502,8 @@ function TimedEvent({
   onGrab
 }: {
   placed: PlacedPiece<CalendarOccurrence>;
+  /** Larghezza (px) del "+N" accanto alla fascia (vedi layoutTimedDay). */
+  gutter: number;
   top: number;
   height: number;
   hourHeight: number;
@@ -545,7 +551,7 @@ function TimedEvent({
       style={{
         top,
         height,
-        ...horizontal(placed),
+        ...horizontal(placed, gutter),
         // Colore della tipologia (o della materia), con testo leggibile nel tema.
         borderLeftColor: paint.style.border,
         background: paint.style.background,

@@ -29,8 +29,18 @@ export const MIN_EVENT_HEIGHT_PX = 20;
 export const MIN_EVENT_COLUMN_PX = 56;
 /** Lato minimo (px) di un bersaglio da dito. */
 export const TOUCH_TARGET_PX = 44;
-/** Spazio (px) a destra di una fascia con il "+N": largo un bersaglio da dito. */
-export const MORE_GUTTER_PX = TOUCH_TARGET_PX;
+/**
+ * "+N" accanto a una fascia di eventi sovrapposti. Dito (`pointer: coarse`): largo 44 px, gli eventi
+ * accanto almeno MIN_EVENT_COLUMN_PX. Mouse: 28 px (sopra i 24 px minimi; l'altezza si allunga
+ * comunque a 44) e colonne affiancate fino a 44 px, così a 1280 due eventi stanno ancora vicini.
+ */
+export const OVERLAP_SIZES = {
+  touch: { gutter: TOUCH_TARGET_PX, column: MIN_EVENT_COLUMN_PX },
+  mouse: { gutter: 28, column: 44 }
+} as const;
+export type OverlapPointer = keyof typeof OVERLAP_SIZES;
+/** Spazio (px) a destra di una fascia con il "+N" sugli schermi touch: largo un bersaglio da dito. */
+export const MORE_GUTTER_PX = OVERLAP_SIZES.touch.gutter;
 
 /** Durata (ms) che occupa davvero un evento corto: l'altezza minima in px divisa per i px all'ora. */
 export const minDurationMsFor = (hourHeight: number, minHeightPx = MIN_EVENT_HEIGHT_PX) => Math.round((minHeightPx / hourHeight) * HOUR_MS);
@@ -128,22 +138,24 @@ export type MoreBand<T> = { cluster: number; count: number; startMs: number; end
 /**
  * Eventi contemporanei affiancati (layoutDayColumns con l'altezza minima della griglia). Se una fascia
  * ha più colonne di quante ne entrano (`columnWidth`), restano le prime che stanno accanto al "+N"
- * (largo MORE_GUTTER_PX, ognuna almeno MIN_EVENT_COLUMN_PX) e il "+N" apre l'elenco di tutta la
- * fascia; `narrowed` = la fascia lascia spazio a destra per il "+N". In una colonna troppo stretta
- * per entrambi (`merged`, Settimana sul tablet) la fascia è solo il pulsante, largo quanto la colonna.
+ * (larghezze in OVERLAP_SIZES per `pointer`, dito se non detto) e il "+N" apre l'elenco di tutta la
+ * fascia; `narrowed` = la fascia lascia `gutter` px a destra per il "+N". Se accanto al "+N" non
+ * restano MIN_EVENT_COLUMN_PX (`merged`, Settimana sul tablet) la fascia è solo il pulsante, largo
+ * quanto la colonna.
  */
 export function layoutTimedDay<T extends { occurrenceKey: string }>(
   pieces: readonly DayPiece<T>[],
-  { hourHeight, columnWidth }: { hourHeight: number; columnWidth: number }
-): { placed: PlacedPiece<T>[]; more: MoreBand<T>[]; merged: boolean } {
+  { hourHeight, columnWidth, pointer = "touch" }: { hourHeight: number; columnWidth: number; pointer?: OverlapPointer }
+): { placed: PlacedPiece<T>[]; more: MoreBand<T>[]; merged: boolean; gutter: number } {
   const byKey = new Map(pieces.map((piece) => [piece.item.occurrenceKey, piece]));
   const layout = layoutDayColumns(
     pieces.map((piece) => ({ id: piece.item.occurrenceKey, startMs: piece.startMs, endMs: piece.endMs })),
     { minDurationMs: minDurationMsFor(hourHeight) }
   );
-  const beside = columnWidth - MORE_GUTTER_PX;
+  const { gutter, column } = OVERLAP_SIZES[pointer] ?? OVERLAP_SIZES.touch;
+  const beside = columnWidth - gutter;
   const merged = !(beside >= MIN_EVENT_COLUMN_PX);
-  const { items, more } = collapseForWidth(layout, maxColumnsFor(columnWidth), merged ? 0 : maxColumnsFor(beside));
+  const { items, more } = collapseForWidth(layout, maxColumnsFor(columnWidth), merged ? 0 : maxColumnsFor(beside, column));
   const collapsed = new Set(more.map((group) => group.cluster));
   const placed = items.flatMap((entry) => {
     const piece = byKey.get(entry.id);
@@ -151,6 +163,7 @@ export function layoutTimedDay<T extends { occurrenceKey: string }>(
   });
   return {
     merged,
+    gutter,
     placed,
     more: more.map((group) => ({
       cluster: group.cluster,

@@ -73,5 +73,7 @@ export function useMediaQuery(query: string): boolean {
 export const PHONE_QUERY = "(max-width: 639px)";
 /** Sotto 768 px: l'intestazione del calendario si fa più semplice (vedi CalendarView). */
 export const NARROW_QUERY = "(max-width: 767px)";
+/** Schermo touch: il "+N" della griglia oraria è largo un dito (44 px), con il mouse 28 (vedi OVERLAP_SIZES). */
+export const COARSE_QUERY = "(pointer: coarse)";
 /** Spazio libero (px) a destra della griglia oraria sul telefono: lì passa il pulsante "+" fisso. */
 export const PHONE_FAB_GUTTER_PX = 56;
