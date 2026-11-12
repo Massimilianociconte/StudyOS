@@ -154,3 +154,12 @@ const importGuide = (device: GuideDevice, app: GuideApp): Guide => {
 /** Passi per portare il calendario da StudyOS a `app` (o viceversa) su `device`, oppure dove farlo. */
 export const guideFor = (direction: GuideDirection, device: GuideDevice, app: GuideApp): Guide =>
   direction === "export" ? exportGuide(device, app) : importGuide(device, app);
+
+/** Avvisi mostrati nell'anteprima dell'importazione: oltre, si dice solo quanti ne restano. */
+export const MAX_SHOWN_WARNINGS = 20;
+
+/** Avvisi dell'anteprima senza doppioni, al più `max`; `more`: quanti restano fuori. */
+export const previewWarnings = (warnings: readonly string[], max = MAX_SHOWN_WARNINGS) => {
+  const unique = [...new Set(warnings)];
+  return { shown: unique.slice(0, max), more: Math.max(0, unique.length - max) };
+};

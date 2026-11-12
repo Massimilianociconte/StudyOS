@@ -16,6 +16,7 @@ import {
   detectDevice,
   guideFor,
   isPhone,
+  previewWarnings,
   type GuideApp,
   type GuideDevice,
   type GuideDirection,
@@ -233,7 +234,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
       return Boolean(old && place && !old.location?.trim() && old.description?.includes(place));
     });
   }, [plan, events]);
-  const warnings = parsed ? [...parsed.warnings, ...(plan?.warnings ?? [])] : [];
+  const warnings = previewWarnings(parsed ? [...parsed.warnings, ...(plan?.warnings ?? [])] : []);
   const preview = useMemo(() => {
     if (!parsed || !ics) return null;
     const masters = parsed.events.filter((event) => !event.recurrenceId);
@@ -507,18 +508,19 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
           ))}
           {preview.count > preview.sample.length ? <li className="px-1.5 text-xs font-bold text-[var(--faint)]">{T.previewMore(preview.count - preview.sample.length)}</li> : null}
         </ul>
-        {warnings.length ? (
+        {warnings.shown.length ? (
           <div className="grid grid-cols-1 gap-1.5 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-[var(--warning-text)]">
             <p className="flex items-center gap-1.5 text-xs font-black">
               <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0" />
               {T.warningsTitle}
             </p>
             <ul className="grid grid-cols-1 gap-1 text-xs font-bold">
-              {warnings.map((warning) => (
+              {warnings.shown.map((warning) => (
                 <li key={warning} className="break-words">
                   {warning}
                 </li>
               ))}
+              {warnings.more ? <li className="break-words">{T.moreWarnings(warnings.more)}</li> : null}
             </ul>
           </div>
         ) : null}

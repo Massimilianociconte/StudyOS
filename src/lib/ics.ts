@@ -47,6 +47,16 @@ const MAX_EVENTS = 2000;
 /** Giorni esclusi o modificati letti per una serie, e in tutto il file: oltre, il file è sospetto. */
 const MAX_ROWS_PER_SERIES = 1000;
 const MAX_ROWS = 20_000;
+/**
+ * Date escluse lette dal file per un evento e in tutto il file (le più vicine a oggi): il doppio delle righe
+ * che l'unione tiene, così l'unione sceglie ancora; il resto non si legge nemmeno (un file ostile da 5 MB
+ * può averne 300.000, e ognuna costa una conversione di fuso).
+ */
+const MAX_DATES_PER_EVENT = 2 * MAX_ROWS_PER_SERIES;
+const MAX_DATES = 2 * MAX_ROWS;
+/** Fusi diversi cercati per file; quanti di questi confrontati con le regole del loro VTIMEZONE (costa di più). */
+const MAX_ZONE_LOOKUPS = 100;
+const MAX_ZONE_MATCHES = 20;
 /** Durata massima di un evento letto da un file (giorni): oltre è quasi certamente un errore. */
 const MAX_SPAN_DAYS = 366;
 /** X-STUDYOS-FROM vale entro questi giorni dal primo giorno della figlia (uno spostamento, non di più). */
@@ -1414,7 +1424,50 @@ export interface IcsParseResult {
 export interface IcsParseOptions {
   /** Fuso da usare per le ore senza fuso e per i fusi sconosciuti (predefinito: dispositivo). */
   timeZone?: string;
+  /** Oggi, per scegliere cosa leggere di un file troppo grande (predefinito: adesso). */
+  now?: string | number | Date;
 }
+
+/** Giorno (numero di giorni dal 1970) dalle prime cifre di una data del file, senza fuso; NaN se non è una data. */
+const rawDay = (value: string) => {
+  const match = /^\s*(\d{4})(\d{2})(\d{2})/.exec(value);
+  return match ? Math.floor(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / DAY_MS) : Number.NaN;
+};
+
+/**
+ * I `max` elementi con la chiave più bassa, nell'ordine di partenza (a pari chiave, i primi). Chiave non
+ * numerica = ultimi. Lineare più un ordinamento di numeri: regge le 300.000 date di un file ostile.
+ */
+const lowestKeys = <T>(items: readonly T[], keyOf: (item: T) => number, max: number): T[] => {
+  if (items.length <= max) return [...items];
+  if (max <= 0) return [];
+  const keys = new Float64Array(items.length);
+  items.forEach((item, index) => {
+    const key = keyOf(item);
+    keys[index] = Number.isNaN(key) ? Number.POSITIVE_INFINITY : key;
+  });
+  const threshold = Float64Array.from(keys).sort()[max - 1];
+  let below = 0;
+  for (const key of keys) if (key < threshold) below += 1;
+  let ties = max - below;
+  return items.filter((_, index) => keys[index] < threshold || (keys[index] === threshold && ties-- > 0));
+};
+
+/** Ultimo giorno (come `rawDay`) raggiunto da una RRULE che parte il giorno `start`; Infinity = senza fine. */
+const RULE_STEP_DAYS: Record<string, number> = { DAILY: 1, WEEKLY: 7, MONTHLY: 31, YEARLY: 366 };
+const ruleReachDay = (rule: string, start: number) => {
+  const text = rule.toUpperCase();
+  const until = /(?:^|;)\s*UNTIL=([^;]*)/.exec(text);
+  if (until) {
+    const day = rawDay(until[1]);
+    return Number.isNaN(day) ? start : Math.max(start, day);
+  }
+  const count = /(?:^|;)\s*COUNT=(\d+)/.exec(text);
+  if (!count) return Number.POSITIVE_INFINITY;
+  const interval = Number(/(?:^|;)\s*INTERVAL=(\d+)/.exec(text)?.[1] ?? 1) || 1;
+  const step = RULE_STEP_DAYS[/(?:^|;)\s*FREQ=([A-Z]+)/.exec(text)?.[1] ?? ""] ?? 1;
+  return start + Math.min(Number(count[1]), 1e6) * interval * step;
+};
 
 type DateValue = { type: "date"; date: string } | { type: "time"; ms: number; zone: string; floating: boolean; utc: boolean };
 
@@ -1460,8 +1513,41 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
   let todos = 0;
   let tooMany = false;
   const tooLong: string[] = [];
+  const nowMs = new Date(options.now ?? Date.now()).getTime();
+  const today = Math.floor((Number.isFinite(nowMs) ? nowMs : Date.now()) / DAY_MS);
+  let zoneLookups = 0;
+  let zoneMatches = 0;
+  let dateBudget = MAX_DATES;
+  /** Serie a cui il tetto del file ha tolto date escluse: quante ne sono state lette \u2192 titoli. */
+  const starved = new Map<number, string[]>();
 
-  for (const calendar of parseComponents(text.replace(/^\uFEFF/, "")).filter((component) => component.name === "VCALENDAR")) {
+  const calendars = parseComponents(text.replace(/^\uFEFF/, "")).filter((component) => component.name === "VCALENDAR");
+  const studyOsFile = (calendar: Component) => /StudyOS/i.test(propOf(calendar, "PRODID")?.value ?? "");
+  // Pi\u00F9 di MAX_EVENTS eventi: si leggono i pi\u00F9 vicini a oggi. Prima quelli in corso o in arrivo (dal pi\u00F9
+  // vicino), poi i passati (dal pi\u00F9 recente); gli eventi senza data e quelli annullati per ultimi.
+  const allEvents = calendars.flatMap((calendar) => {
+    const fromStudyOs = studyOsFile(calendar);
+    return calendar.children.filter((child) => child.name === "VEVENT").map((vevent) => ({ vevent, fromStudyOs }));
+  });
+  let chosen: Set<Component> | null = null;
+  if (allEvents.length > MAX_EVENTS) {
+    const PAST = 1e8;
+    const rank = ({ vevent, fromStudyOs }: { vevent: Component; fromStudyOs: boolean }) => {
+      const start = rawDay(propOf(vevent, "DTSTART")?.value ?? "");
+      if (Number.isNaN(start)) return Number.NaN;
+      const rid = propOf(vevent, "RECURRENCE-ID");
+      if (!rid && !fromStudyOs && propOf(vevent, "STATUS")?.value.trim().toUpperCase() === "CANCELLED") return Number.NaN;
+      const rule = rid ? undefined : propOf(vevent, "RRULE")?.value;
+      const endDay = rawDay(propOf(vevent, "DTEND")?.value ?? "");
+      const end = rule ? ruleReachDay(rule, start) : Number.isNaN(endDay) ? start : Math.max(start, endDay);
+      return end >= today ? Math.max(0, start - today) : PAST + (today - end);
+    };
+    const kept = lowestKeys(allEvents, rank, MAX_EVENTS);
+    chosen = new Set(kept.map((entry) => entry.vevent));
+    tooMany = true;
+  }
+
+  for (const calendar of calendars) {
     // TZID come testo (RFC 5545): le virgole di Exchange arrivano protette ("Amsterdam\, Berlino").
     const tzidOf = (value: string | undefined) => unescapeText((value ?? "").trim().replace(/^"(.*)"$/, "$1")).trim();
     const vtimezones = new Map(calendar.children.filter((child) => child.name === "VTIMEZONE").map((child) => [tzidOf(propOf(child, "TZID")?.value), child]));
@@ -1473,7 +1559,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     const calendarZone = plainZone(propOf(calendar, "X-WR-TIMEZONE")?.value);
     // File scritto da StudyOS: dice per ogni evento se è saltato (prima con STATUS:CANCELLED, che StudyOS
     // non ha mai usato per un annullamento vero: quelli sono EXDATE o eventi tolti dal file).
-    const fromStudyOs = /StudyOS/i.test(propOf(calendar, "PRODID")?.value ?? "");
+    const fromStudyOs = studyOsFile(calendar);
     const defaultZone = calendarZone ?? fallbackZone;
     const resolved = new Map<string, string>();
 
@@ -1481,6 +1567,13 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     const resolveZone = (tzid: string, year: number) => {
       const known = resolved.get(tzid);
       if (known) return known;
+      // Un file con migliaia di fusi diversi è ostile: oltre i primi non si cercano più (ora di qui).
+      if (zoneLookups >= MAX_ZONE_LOOKUPS) {
+        unknownZones.add(tzid);
+        resolved.set(tzid, defaultZone);
+        return defaultZone;
+      }
+      zoneLookups += 1;
       let zone = plainZone(tzid);
       if (!zone) {
         const path = /([A-Za-z_]+\/[A-Za-z_+\-0-9]+(?:\/[A-Za-z_+\-0-9]+)?)$/.exec(tzid);
@@ -1489,7 +1582,8 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       }
       const definition = vtimezones.get(tzid);
       if (!zone && definition) zone = plainZone(propOf(definition, "X-LIC-LOCATION")?.value);
-      if (!zone && definition) {
+      if (!zone && definition && zoneMatches < MAX_ZONE_MATCHES) {
+        zoneMatches += 1;
         // Nome inventato (es. "Ora dell'Europa centrale"): il primo fuso con gli stessi scarti.
         const rules = zoneRules(definition);
         if (!rules.empty) {
@@ -1531,6 +1625,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     const vevents = calendar.children.filter((child) => child.name === "VEVENT");
     todos += calendar.children.filter((child) => child.name === "VTODO").length;
     for (const vevent of vevents) {
+      if (chosen && !chosen.has(vevent)) continue;
       if (events.length >= MAX_EVENTS) {
         tooMany = true;
         break;
@@ -1679,23 +1774,27 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
           if (!group.titles.includes(title)) group.titles.push(title);
           groups.set(key, group);
         }
-        const exdates = propsOf(vevent, "EXDATE").flatMap((property) =>
-          property.value
-            .split(",")
-            .map((value) => readDate(property, value.trim(), zone))
-            .filter((value): value is DateValue => value !== null)
-            .map(canonical)
-        );
+        // Date escluse: si leggono solo le più vicine a oggi, per evento e in tutto il file. Quelle tolte da
+        // un evento con troppe date le dice l'unione (che ne tiene ancora meno); quelle tolte dal tetto del
+        // file si dicono qui.
+        const nearest = (name: string, max: number) => {
+          const values = propsOf(vevent, name).flatMap((property) => property.value.split(",").map((value) => ({ property, value: value.trim() })));
+          const kept = lowestKeys(values, (entry) => Math.abs(rawDay(entry.value) - today), max);
+          return { kept, total: values.length };
+        };
+        const room = Math.min(MAX_DATES_PER_EVENT, dateBudget);
+        const listed = nearest("EXDATE", room);
+        dateBudget -= listed.kept.length;
+        if (listed.total > room && room < MAX_DATES_PER_EVENT) starved.set(room, [...(starved.get(room) ?? []), title]);
+        const exdates = listed.kept.map(({ property, value }) => readDate(property, value, zone)).filter((value): value is DateValue => value !== null).map(canonical);
         if (exdates.length) event.exdates = [...new Set(exdates)].sort();
         const excluded = new Set(exdates);
-        const edited = propsOf(vevent, "X-STUDYOS-EDITED").flatMap((property) =>
-          property.value
-            .split(",")
-            .map((value) => readDate(property, value.trim(), zone))
-            .filter((value): value is DateValue => value !== null)
-            .map(canonical)
-            .filter((value) => excluded.has(value))
-        );
+        // X-STUDYOS-EDITED segna alcune di quelle date: non ne servono più di quante se ne sono lette.
+        const edited = nearest("X-STUDYOS-EDITED", listed.kept.length)
+          .kept.map(({ property, value }) => readDate(property, value, zone))
+          .filter((value): value is DateValue => value !== null)
+          .map(canonical)
+          .filter((value) => excluded.has(value));
         if (edited.length) event.editedExdates = [...new Set(edited)].sort();
         if (propOf(vevent, "RDATE") || propOf(vevent, "EXRULE")) extraDates = true;
       }
@@ -1736,7 +1835,9 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
     }
   }
 
-  if (unknownZones.size) for (const zone of unknownZones) warnings.push(ICS_TEXT.unknownZone(zone));
+  if (unknownZones.size === 1) warnings.push(ICS_TEXT.unknownZone([...unknownZones][0]));
+  else if (unknownZones.size) warnings.push(ICS_TEXT.unknownZones([...unknownZones]));
+  for (const [read, titles] of starved) warnings.push(ICS_TEXT.tooManyRows([...new Set(titles)], read));
   for (const group of simplified.values()) warnings.push(ICS_TEXT.simplified(group.titles, group.parts));
   for (const group of firstOnly.values()) warnings.push(ICS_TEXT.firstOnly(group.titles, group.parts));
   if (multiple.length) warnings.push(ICS_TEXT.multipleRules([...new Set(multiple)]));

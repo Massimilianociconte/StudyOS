@@ -59,6 +59,7 @@ export const CALENDAR_GUIDE_TEXT = {
   categoryHint: "Usato quando il titolo non fa capire il tipo (es. «Esame», «Laboratorio»).",
   matchSubjects: (count: number) => `Collega alle mie materie in base al titolo (${count} ${count === 1 ? "riconosciuto" : "riconosciuti"})`,
   warningsTitle: "Da controllare",
+  moreWarnings: (count: number) => (count === 1 ? "…e un altro avviso." : `…e altri ${count} avvisi.`),
   /** Pulsante dell'anteprima, con i conti veri dell'unione con il calendario. */
   apply: (added: number, updated: number) => {
     const add = added === 1 ? "Aggiungi 1 evento" : `Aggiungi ${added} eventi`;

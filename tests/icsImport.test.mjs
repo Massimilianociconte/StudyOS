@@ -3,6 +3,8 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { buildIcs, icsImportItems, mergeIcsImport, parseIcs } from "../src/lib/ics.ts";
+import { previewWarnings } from "../src/lib/calendarGuide.ts";
+import { CALENDAR_GUIDE_TEXT } from "../src/lib/labels/calendarGuide.ts";
 import { applyEditPlan, applyRepeatFields, expandEvents, planDelete, planEdit } from "../src/lib/repeat.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 
@@ -1064,7 +1066,9 @@ test("file ostile: 18.000 date escluse si leggono e si uniscono in tempo lineare
   // Di solito sta sotto il mezzo secondo; il tetto largo regge una macchina carica (test in parallelo)
   // e fallisce comunque se il confronto delle liste torna quadratico (decine di secondi).
   assert.ok(elapsed < 4000, `${Math.round(elapsed)} ms`);
-  assert.equal(parsed.events.find((event) => event.uid === "flood").editedExdates.length, 18000);
+  // Si leggono le 2000 più vicine a oggi (il doppio delle righe che l'unione tiene per una serie).
+  assert.equal(parsed.events.find((event) => event.uid === "flood").exdates.length, 2000);
+  assert.equal(parsed.events.find((event) => event.uid === "flood").editedExdates.length, 2000);
   assert.equal(plan.added, 2);
   assert.ok(plan.puts.length <= 2 + 2 * 1000, `${plan.puts.length} righe`);
   assert.ok(plan.puts.filter((event) => event.seriesId).length >= 1000);
@@ -1368,6 +1372,113 @@ test("vecchi import senza impronta: come prima (lo stesso file rimette la sua ve
   assert.equal(after.find((event) => event.sourceUid === "a@g").title, "Anatomia");
   assert.ok(after.filter((event) => !event.seriesId).every((event) => typeof event.sourceStamp === "string"));
   assert.deepEqual(counts(reimport(editedLocally(after), TWO_LESSONS)), NOTHING);
+});
+
+// ------------------------------------------------------------------------------------------
+// File ostili da 5 MB e file troppo grandi (ricontrollo di rilascio, punti 5 e 10)
+// ------------------------------------------------------------------------------------------
+
+const FIVE_MB = 5 * 1024 * 1024;
+const wrapped = (body) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${body}END:VCALENDAR\r\n`;
+/** Lettura e unione come nell'anteprima, con il tempo impiegato. */
+const timed = (text) => {
+  const started = performance.now();
+  const parsed = parseIcs(text, { timeZone: "Europe/Rome", now: NOW });
+  const plan = merge([], parsed, { timeZone: "Europe/Rome" });
+  return { parsed, plan, elapsed: performance.now() - started, warnings: [...parsed.warnings, ...plan.warnings] };
+};
+// Tetto largo per una macchina carica (test in parallelo): da soli stanno sotto il mezzo secondo, prima
+// di questa correzione 12 s (fusi inventati), 5 s (fusi sconosciuti) e 4,6 s (300.000 date escluse).
+const CEILING_MS = 4000;
+
+test("file ostile: migliaia di fusi inventati, ognuno con il suo VTIMEZONE, su date escluse: veloce, pochi avvisi", () => {
+  let zones = "";
+  let exdates = "";
+  for (let index = 0; zones.length + exdates.length < FIVE_MB - 2000; index += 1) {
+    const minutes = String(index % 60).padStart(2, "0");
+    zones += `BEGIN:VTIMEZONE\r\nTZID:Z${index}\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+01${minutes}\r\nTZOFFSETTO:+01${minutes}\r\nDTSTART:19700101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n`;
+    exdates += `EXDATE;TZID=Z${index}:20261103T090000\r\n`;
+  }
+  const { parsed, elapsed, warnings } = timed(wrapped(`${zones}BEGIN:VEVENT\r\nUID:c\r\nDTSTART;TZID=Europe/Rome:20261102T090000\r\nRRULE:FREQ=DAILY\r\n${exdates}SUMMARY:c\r\nEND:VEVENT\r\n`));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.equal(parsed.events.length, 1);
+  assert.ok(warnings.length <= 3, warnings.join("\n"));
+  assert.match(warnings.find((warning) => warning.includes("fusi orari")), /^I fusi orari «Z\d+», «Z\d+», «Z\d+» e altri [\d.]+ non sono stati riconosciuti/);
+});
+
+test("file ostile: date escluse ognuna con un fuso sconosciuto diverso: veloce, un avviso solo", () => {
+  let exdates = "";
+  for (let index = 0; exdates.length < FIVE_MB - 2000; index += 1) exdates += `EXDATE;TZID=Nowhere/Zone${index}:20261103T090000\r\n`;
+  const { elapsed, warnings } = timed(wrapped(`BEGIN:VEVENT\r\nUID:c2\r\nDTSTART;TZID=Europe/Rome:20261102T090000\r\nRRULE:FREQ=DAILY\r\n${exdates}SUMMARY:c\r\nEND:VEVENT\r\n`));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.equal(warnings.filter((warning) => warning.includes("fus")).length, 1, warnings.join("\n"));
+});
+
+test("file ostile: una riga EXDATE con 300.000 date: si leggono le più vicine a oggi, veloce", () => {
+  const values = [];
+  for (let day = Date.UTC(2026, 10, 3); values.length * 16 < FIVE_MB - 400; day += 86_400_000) values.push(`${new Date(day).toISOString().slice(0, 10).replace(/-/g, "")}T090000`);
+  const { parsed, plan, elapsed, warnings } = timed(wrapped(`BEGIN:VEVENT\r\nUID:e\r\nDTSTART;TZID=Europe/Rome:20261102T090000\r\nRRULE:FREQ=DAILY\r\nEXDATE;TZID=Europe/Rome:${values.join(",")}\r\nSUMMARY:Tante\r\nEND:VEVENT\r\n`));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.ok(values.length > 300_000);
+  assert.equal(parsed.events[0].exdates.length, 2000);
+  const rows = plan.puts.filter((event) => event.seriesId).map((event) => event.originalDate).sort();
+  assert.deepEqual([rows.length, rows[0], rows.at(-1)], [1000, "2026-11-03", "2029-07-29"]);
+  assert.deepEqual(warnings, ["«Tante» ha troppi giorni esclusi o modificati: sono stati letti solo i 1000 più vicini a oggi."]);
+});
+
+test("file ostile: tante serie con migliaia di date escluse: c'è un tetto per tutto il file, e l'avviso lo dice", () => {
+  const stamp = (ms) => `${new Date(ms).toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`;
+  const series = Array.from({ length: 30 }, (_, index) => [
+    "BEGIN:VEVENT",
+    `UID:t${index}`,
+    "DTSTART:20200101T090000Z",
+    "RRULE:FREQ=DAILY",
+    `EXDATE:${Array.from({ length: 2000 }, (_, offset) => stamp(Date.UTC(2020, 0, 1, 9) + offset * 86_400_000)).join(",")}`,
+    `SUMMARY:Serie ${index + 1}`,
+    "END:VEVENT"
+  ]);
+  const { parsed, elapsed, warnings } = timed(ics(...series));
+  assert.ok(elapsed < CEILING_MS, `${Math.round(elapsed)} ms`);
+  assert.equal(parsed.events.reduce((sum, event) => sum + (event.exdates?.length ?? 0), 0), 40_000);
+  assert.ok(warnings.some((warning) => /^«Serie 21», «Serie 22», «Serie 23» e altri 7 eventi: il file ha troppi giorni esclusi/.test(warning)), warnings.join("\n"));
+});
+
+test("anteprima: avvisi senza doppioni, al più 20, poi «e altri N avvisi»", () => {
+  const many = Array.from({ length: 45 }, (_, index) => `Avviso ${index % 30}`);
+  assert.deepEqual(previewWarnings(many), { shown: Array.from({ length: 20 }, (_, index) => `Avviso ${index}`), more: 10 });
+  assert.deepEqual(previewWarnings(["a", "a", "b"]), { shown: ["a", "b"], more: 0 });
+  assert.match(CALENDAR_GUIDE_TEXT.moreWarnings(10), /^…e altri 10 avvisi\.?$/);
+  assert.match(CALENDAR_GUIDE_TEXT.moreWarnings(1), /^…e un altro avviso\.?$/);
+});
+
+/** Un VEVENT al giorno `day` (YYYYMMDD) delle 9, titolo `title`; `extra` righe in più. */
+const dayEvent = (uid, day, title, extra = []) => ["BEGIN:VEVENT", `UID:${uid}`, `DTSTART:${day}T090000Z`, `DTEND:${day}T100000Z`, `SUMMARY:${title}`, ...extra, "END:VEVENT"];
+const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, "");
+
+test("file con più di 2000 eventi: si leggono i 2000 più vicini a oggi, prima i prossimi e poi i più recenti", () => {
+  const today = Date.parse(NOW);
+  // 1500 passati (dal più vecchio), poi 900 futuri: nel file prima i vecchi.
+  const past = Array.from({ length: 1500 }, (_, index) => dayEvent(`p${index}`, dayOf(today - (1500 - index) * 86_400_000), `Passato ${1500 - index}`));
+  const future = Array.from({ length: 900 }, (_, index) => dayEvent(`f${index}`, dayOf(today + (index + 1) * 86_400_000), `Futuro ${index + 1}`));
+  // Una serie iniziata nel 2010 e ancora in corso conta come «prossima».
+  const ongoing = dayEvent("serie", "20100104", "Serie in corso", ["RRULE:FREQ=WEEKLY"]);
+  const parsed = parseIcs(ics(...past, ongoing, ...future), { timeZone: "UTC", now: NOW });
+  assert.equal(parsed.events.length, 2000);
+  const titles = new Set(parsed.events.map((event) => event.title));
+  assert.ok(titles.has("Serie in corso"));
+  assert.ok(titles.has("Futuro 900") && titles.has("Futuro 1"));
+  assert.ok(titles.has("Passato 1") && titles.has("Passato 1099"));
+  assert.ok(!titles.has("Passato 1100") && !titles.has("Passato 1500"));
+  // Nell'ordine del file.
+  assert.equal(parsed.events[0].title, "Passato 1099");
+  assert.deepEqual(parsed.warnings, [
+    "Il file ha più di 2000 eventi: sono stati letti i 2000 più vicini a oggi (prima i prossimi, poi i più recenti). Se ti servono anche gli altri, importa un calendario alla volta."
+  ]);
+  // Solo futuri, più di 2000: i 2000 più vicini, nessun passato.
+  const far = Array.from({ length: 2100 }, (_, index) => dayEvent(`x${index}`, dayOf(today + (2100 - index) * 86_400_000), `Tra ${2100 - index}`));
+  const onlyFuture = parseIcs(ics(dayEvent("old", "20200101", "Vecchio"), ...far), { timeZone: "UTC", now: NOW });
+  const kept = new Set(onlyFuture.events.map((event) => event.title));
+  assert.ok(kept.has("Tra 1") && kept.has("Tra 2000") && !kept.has("Tra 2001") && !kept.has("Vecchio"));
 });
 
 // ------------------------------------------------------------------------------------------
