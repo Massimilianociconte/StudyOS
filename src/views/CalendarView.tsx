@@ -66,7 +66,7 @@ import {
   vacationFields
 } from "../lib/occasionForms";
 import { findOccurrence, occurrenceTarget, shownDayOf } from "../lib/occurrenceLookup";
-import { applyRepeatFields, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
+import { applyRepeatFields, familyLastDate, isOccurrenceRow, normalizeRepeat, type OccurrenceScope } from "../lib/repeat";
 import { civilDateOf, deviceTimeZone, isCivilDate, isValidTimeZone, parseCivil } from "../lib/tz";
 import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents } from "../lib/recurrence";
@@ -543,7 +543,8 @@ export function CalendarView() {
       span: seriesSpan(current, target.seriesId, target.date, civilDateOf(new Date())),
       newStart,
       rowContent: Boolean(own && target.row && rowHasOwnContent(item, own.series)),
-      daysShift
+      daysShift,
+      endless: familyLastDate(current, target.seriesId) === undefined
     });
   };
 

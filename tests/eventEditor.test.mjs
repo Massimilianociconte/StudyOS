@@ -388,6 +388,10 @@ test("scelta della portata: ciò che si perde, sparisce, raddoppia, si sposta o 
   const kept = scopeOptions({ action: "edit", date: "2026-11-24", impacts: { following: impact({ kept: 2, laterParts: 1, laterOwnTime: 1 }) } }).find((o) => o.id === "following");
   assert.deepEqual(kept.warnings, []);
   assert.ok(kept.details.includes(SCOPE_TEXT.rowsKept) && kept.details.includes(SCOPE_TEXT.followingKeepsEnd) && kept.details.includes(SCOPE_TEXT.followingKeepsSplits));
+  // Una serie che non finisce: «finisce quando finiva prima» non si dice.
+  const endless = scopeOptions({ action: "edit", date: "2026-11-24", endless: true }).find((o) => o.id === "following");
+  assert.ok(!endless.details.includes(SCOPE_TEXT.followingKeepsEnd));
+  assert.ok(!endless.warnings.includes(SCOPE_TEXT.followingKeepsEnd));
   // Un solo elenco, senza doppioni: ogni riga è avviso o dettaglio.
   assert.equal(new Set([...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]).size, SCOPE_WARNING_KEYS.length + SCOPE_DETAIL_KEYS.length);
   for (const key of [...SCOPE_WARNING_KEYS, ...SCOPE_DETAIL_KEYS]) assert.ok(key in SCOPE_TEXT, key);

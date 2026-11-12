@@ -641,7 +641,8 @@ export const scopeOptions = ({
   span,
   newStart,
   rowContent = false,
-  daysShift
+  daysShift,
+  endless = false
 }: {
   action: ScopeAction;
   date: string;
@@ -657,6 +658,8 @@ export const scopeOptions = ({
   newStart?: string;
   rowContent?: boolean;
   daysShift?: { from: readonly Weekday[]; to: readonly Weekday[] };
+  /** La serie non finisce: "finisce quando finiva prima" non ha senso e non si dice. */
+  endless?: boolean;
 }): ScopeOption[] => {
   const day = occurrenceDayText(opened || date);
   const pin: ScopeLine[] = pinsZone ? [["pinZone", SCOPE_TEXT.pinZone(pinsZone)]] : [];
@@ -718,11 +721,11 @@ export const scopeOptions = ({
           // modifica sposta l'ultima data, si dice quella nuova.
           ...(ruleChanged || impacts.following?.gone?.length
             ? []
-            : [
-                impacts.following?.endsOn
-                  ? (["followingNewEnd", SCOPE_TEXT.followingNewEnd(occurrenceDayText(impacts.following.endsOn))] as const)
-                  : (["followingKeepsEnd", SCOPE_TEXT.followingKeepsEnd] as const)
-              ]),
+            : impacts.following?.endsOn
+              ? [["followingNewEnd", SCOPE_TEXT.followingNewEnd(occurrenceDayText(impacts.following.endsOn))] as const]
+              : endless
+                ? []
+                : [["followingKeepsEnd", SCOPE_TEXT.followingKeepsEnd] as const]),
           ...pin
         ];
   const firstDay = span?.start === date && span.parts === 1;

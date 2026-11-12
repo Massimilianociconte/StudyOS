@@ -24,7 +24,8 @@ import {
   type EventDraft
 } from "../../lib/eventEditor";
 import { eventTypeIcon, eventTypeKey, eventTypeLabel, type TypeColorOverrides } from "../../lib/eventColors";
-import { describeRule, isOccurrenceRow } from "../../lib/repeat";
+import { isOccurrenceRow } from "../../lib/repeat";
+import { ruleSentence } from "../../lib/repeatPicker";
 import { normalizeExternalUrl, safeHref } from "../../lib/safeUrl";
 import { safeCssColor, type SharedOrigin } from "../../lib/sharing";
 import { selectableSubjects } from "../../lib/selectors";
@@ -244,7 +245,7 @@ export function EventEditor({
   const othersEvent = Boolean(sharedFrom) || inOtherCalendar;
   const sharedRow = Boolean(sharedFrom && event && isOccurrenceRow(event));
   const moreHint = draft.repeat
-    ? describeRule(draft.repeat, ruleDay)
+    ? ruleSentence(draft.repeat, ruleDay)
     : othersEvent
       ? imported || inOtherCalendar
         ? EVENT_EDITOR_TEXT.sectionMoreHintOtherNoLinks
@@ -571,6 +572,7 @@ export function EventEditor({
                     onChange={(rule) => update((value) => ({ ...value, repeat: rule }))}
                     disabled={readOnly || sharedRow}
                     note={sharedRow ? EVENT_EDITOR_TEXT.repeatSharedRow : repeatNote}
+                    startCounts={!occurrenceDate}
                   />
                   {othersEvent ? (
                     <p className="text-xs font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.remindersPersonal}</p>

@@ -123,6 +123,8 @@ export const EVENT_EDITOR_TEXT = {
   endFollows: "Se cambi l'inizio, la fine si sposta e la durata resta la stessa.",
   /** Ripetizione personalizzata il cui schema non comprende il giorno d'inizio: il motore lo conta comunque. */
   repeatStartExtra: (day: string) => `Anche ${day}, il giorno d'inizio, che conta come la prima volta.`,
+  /** Regola «fino al» un giorno che non è una delle volte (es. domenica 22): l'ultima volta vera. */
+  repeatLastTime: (day: string) => `(ultima volta ${day})`,
   type: "Tipologia",
   typeOccasions: "Ogni anno",
   color: "Colore",

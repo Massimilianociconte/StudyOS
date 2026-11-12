@@ -4,12 +4,14 @@ import {
   adaptRuleToStart,
   customError,
   customFromRule,
+  lastRealDate,
   monthlyChoiceId,
   monthlyChoices,
   presetIdOf,
   repeatPresets,
   repeatSummary,
   ruleFromCustom,
+  ruleSentence,
   startOutsideRule,
   weekdayOf,
   weekdayPosition
@@ -197,4 +199,28 @@ test("repeatSummary: la frase della regola e, se serve, il giorno d'inizio in pi
     repeatSummary({ freq: "monthly", monthly: { by: "lastDay" } }, START),
     "Ogni mese l'ultimo giorno. Anche giovedì 12 novembre, il giorno d'inizio, che conta come la prima volta."
   );
+});
+
+test("repeatSummary: modificando da un giorno della serie l'inizio non è una volta in più e non si dice", () => {
+  // Mercoledì 25 aperto, regola cambiata in mar + ven: l'inizio segue la regola (la scelta dice «Spariscono: mer 25 nov»).
+  const rule = { freq: "weekly", byWeekday: ["TU", "FR"] };
+  assert.equal(repeatSummary(rule, "2026-11-25", { startCounts: false }), "Ogni settimana mar, ven");
+  // Nuovo evento (o serie intera): il giorno d'inizio conta davvero come la prima volta, quindi si dice.
+  assert.match(repeatSummary(rule, "2026-11-25"), /Anche mercoledì 25 novembre, il giorno d'inizio/);
+});
+
+test("ruleSentence: «fino al» un giorno che non è una volta nomina l'ultima volta vera", () => {
+  // Ogni giovedì fino a domenica 22 novembre: l'ultima volta è giovedì 19.
+  const rule = { freq: "weekly", byWeekday: ["TH"], end: { type: "until", date: "2026-11-22" } };
+  assert.equal(lastRealDate(rule, START), "2026-11-19");
+  assert.equal(ruleSentence(rule, START), "Ogni settimana il giovedì, fino al 22 novembre (ultima volta giovedì 19 novembre)");
+  assert.equal(repeatSummary(rule, START), "Ogni settimana il giovedì, fino al 22 novembre (ultima volta giovedì 19 novembre)");
+  // Fino a un giovedì: è già l'ultima volta, niente da aggiungere.
+  const onDay = { ...rule, end: { type: "until", date: "2026-11-19" } };
+  assert.equal(lastRealDate(onDay, START), undefined);
+  assert.equal(ruleSentence(onDay, START), "Ogni settimana il giovedì, fino al 19 novembre");
+  // Non finisce o finisce dopo N volte: nessuna data da aggiungere.
+  assert.equal(lastRealDate({ freq: "weekly" }, START), undefined);
+  assert.equal(lastRealDate({ freq: "weekly", end: { type: "count", count: 3 } }, START), undefined);
+  assert.equal(ruleSentence(null, START), describeRule(null, START));
 });
