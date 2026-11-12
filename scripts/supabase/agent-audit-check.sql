@@ -99,9 +99,13 @@ select 'L3 segreto sbagliato: 28000', pg_temp.outcome($$select * from public.stu
 select 'L4 anon non legge la tabella né scrive voci', pg_temp.outcome($$select * from public.studyos_agent_audit$$) = '42501'
   and pg_temp.outcome($$insert into public.studyos_agent_audit (user_id, entity_type, entity_id, action) values ('11111111-1111-1111-1111-111111111111', 'task', 'x', 'create')$$) = '42501';
 select 'L5 anon non usa le funzioni dell''app né quelle interne', pg_temp.outcome($$select public.studyos_agent_restore_own(gen_random_uuid())$$) = '42501'
+  and pg_temp.outcome($$select public.studyos_agent_restore_call_own(gen_random_uuid())$$) = '42501'
   and pg_temp.outcome($$select * from public.studyos_agent_audit_own()$$) = '42501'
-  and pg_temp.outcome($$select public.studyos_agent_restore_apply('11111111-1111-1111-1111-111111111111', gen_random_uuid(), null, '', null)$$) = '42501'
+  and pg_temp.outcome($$select public.studyos_agent_restore_set('11111111-1111-1111-1111-111111111111', array[gen_random_uuid()], null, '', null)$$) = '42501'
+  and pg_temp.outcome($$select public.studyos_agent_call_ids('11111111-1111-1111-1111-111111111111', gen_random_uuid())$$) = '42501'
   and pg_temp.outcome($$select public.studyos_agent_audit_prune('11111111-1111-1111-1111-111111111111')$$) = '42501';
+select 'L6 hub di prima: ogni voce è una chiamata da sola', bool_and(call_size = 1 and call_id = id) and max(total) = 4
+from public.studyos_agent_audit_list(:'secret');
 reset role;
 
 -- Bea vede solo le sue voci (nessuna) e non ripristina quelle di Alice.
@@ -184,6 +188,164 @@ select 'D3 annullare il ripristino rimette l''elemento', public.studyos_agent_re
 reset role;
 select 'D4 l''evento è tornato', not deleted and payload->>'title' = 'Lezione' from public.studyos_items where entity_id = 'au_event';
 
+-- Un tombstone con un file dentro: il file non entra nell'immagine «dopo» (solo before_files).
+set role anon;
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'au_new', 'deleted', true, 'payload',
+    jsonb_build_object('id', 'au_new', 'deletedAt', '2026-11-05T09:00:00.000Z', 'cover', 'data:image/png;base64,ALTRA'))
+), 'studyos_delete_task') \g /dev/null
+reset role;
+select 'D5 tombstone: nessun file nell''immagine dopo', count(*) = 1 and bool_and(not (after ? 'cover') and after->>'deletedAt' = '2026-11-05T09:00:00.000Z')
+from public.studyos_agent_audit where entity_id = 'au_new' and action = 'delete';
+
+-- Una chiamata, più elementi (come studyos_delete_session: elimina la sessione e la toglie da
+-- obiettivo e nota), anche su due push con lo stesso p_call. L'app crea gli elementi prima.
+set role authenticated;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false) \g /dev/null
+select push_studyos_rows('11111111-1111-1111-1111-111111111111', 'browser', jsonb_build_array(
+  jsonb_build_object('entity_type', 'studySession', 'entity_id', 'm_session', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm_session', 'title', 'Sessione 1', 'updatedAt', '2026-11-07T08:00:00.000Z')),
+  jsonb_build_object('entity_type', 'goal', 'entity_id', 'm_goal', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm_goal', 'title', 'Obiettivo 1', 'sessionIds', jsonb_build_array('m_session'), 'updatedAt', '2026-11-07T08:00:00.000Z')),
+  jsonb_build_object('entity_type', 'note', 'entity_id', 'm_note', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm_note', 'title', 'Nota 1', 'sessionId', 'm_session', 'updatedAt', '2026-11-07T08:00:00.000Z')),
+  jsonb_build_object('entity_type', 'studySession', 'entity_id', 'm2_session', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm2_session', 'title', 'Sessione 2', 'updatedAt', '2026-11-07T08:00:00.000Z', 'cover', 'data:image/png;base64,S2')),
+  jsonb_build_object('entity_type', 'goal', 'entity_id', 'm2_goal', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm2_goal', 'title', 'Obiettivo 2', 'sessionIds', jsonb_build_array('m2_session'), 'updatedAt', '2026-11-07T08:00:00.000Z')),
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm3_a', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm3_a', 'title', 'A', 'updatedAt', '2026-11-07T08:00:00.000Z')),
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm3_b', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm3_b', 'title', 'B', 'updatedAt', '2026-11-07T08:00:00.000Z')),
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm4_a', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm4_a', 'title', 'Quattro', 'updatedAt', '2026-11-07T08:00:00.000Z'))
+)) \g /dev/null
+reset role;
+select set_config('request.jwt.claim.sub', '', false) \g /dev/null
+
+set role anon;
+-- Chiamata 1: tre elementi, in due push.
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'goal', 'entity_id', 'm_goal', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm_goal', 'title', 'Obiettivo 1', 'sessionIds', '[]'::jsonb, 'updatedAt', '2026-11-07T09:00:00.000Z')),
+  jsonb_build_object('entity_type', 'studySession', 'entity_id', 'm_session', 'deleted', true, 'payload',
+    jsonb_build_object('id', 'm_session', 'deletedAt', '2026-11-07T09:00:00.000Z'))
+), 'studyos_delete_session', 'aaaaaaaa-0000-4000-8000-000000000001') \g /dev/null
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'note', 'entity_id', 'm_note', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm_note', 'title', 'Nota 1', 'updatedAt', '2026-11-07T09:00:00.000Z'))
+), 'studyos_delete_session', 'aaaaaaaa-0000-4000-8000-000000000001') \g /dev/null
+-- Chiamata 2: elimina una sessione (con copertina), aggiorna l'obiettivo, crea e poi modifica un task.
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'studySession', 'entity_id', 'm2_session', 'deleted', true, 'payload',
+    jsonb_build_object('id', 'm2_session', 'deletedAt', '2026-11-07T10:00:00.000Z')),
+  jsonb_build_object('entity_type', 'goal', 'entity_id', 'm2_goal', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm2_goal', 'title', 'Obiettivo 2', 'sessionIds', '[]'::jsonb, 'updatedAt', '2026-11-07T10:00:00.000Z')),
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm2_new', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm2_new', 'title', 'Nuovo', 'updatedAt', '2026-11-07T10:00:00.000Z'))
+), 'studyos_delete_session', 'aaaaaaaa-0000-4000-8000-000000000002') \g /dev/null
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm2_new', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm2_new', 'title', 'Nuovo, rivisto', 'updatedAt', '2026-11-07T10:00:01.000Z'))
+), 'studyos_delete_session', 'aaaaaaaa-0000-4000-8000-000000000002') \g /dev/null
+-- Chiamata 3: due modifiche; chiamata 4: una modifica.
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm3_a', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm3_a', 'title', 'A2', 'updatedAt', '2026-11-07T11:00:00.000Z')),
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm3_b', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm3_b', 'title', 'B2', 'updatedAt', '2026-11-07T11:00:00.000Z'))
+), 'studyos_update_task', 'aaaaaaaa-0000-4000-8000-000000000003') \g /dev/null
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'm4_a', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm4_a', 'title', 'Quattro bis', 'updatedAt', '2026-11-07T12:00:00.000Z'))
+), 'studyos_update_task', 'aaaaaaaa-0000-4000-8000-000000000004') \g /dev/null
+
+select 'M1 elenco per chiamata: la chiamata 1 con 3 voci, l''eliminazione prima, annullabile intera',
+  count(*) = 3 and bool_and(call_id = 'aaaaaaaa-0000-4000-8000-000000000001' and call_size = 3 and call_can_restore)
+  and (array_agg(l.action order by l.ordinality))[1] = 'delete'
+from public.studyos_agent_audit_list(:'secret', p_call_id => 'aaaaaaaa-0000-4000-8000-000000000001') with ordinality as l;
+select 'M1 limit e offset contano le chiamate; la più recente è la 4', count(distinct call_id) = 2 and max(total) >= 8
+  and (array_agg(call_id order by l.ordinality))[1] = 'aaaaaaaa-0000-4000-8000-000000000004'
+from public.studyos_agent_audit_list(:'secret', p_limit => 2) with ordinality as l;
+select 'M1 filtro per elemento: arriva tutta la chiamata', count(*) = 3
+from public.studyos_agent_audit_list(:'secret', p_entity_id => 'm_note');
+reset role;
+select id as m_goal_audit from public.studyos_agent_audit where entity_id = 'm_goal' \gset
+select id as m2_goal_audit from public.studyos_agent_audit where entity_id = 'm2_goal' \gset
+select id as m3_a_audit from public.studyos_agent_audit where entity_id = 'm3_a' \gset
+
+-- L'app cambia la nota dopo: l'intera chiamata 1 è in conflitto e niente si scrive.
+set role authenticated;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false) \g /dev/null
+select push_studyos_rows('11111111-1111-1111-1111-111111111111', 'browser', jsonb_build_array(
+  jsonb_build_object('entity_type', 'note', 'entity_id', 'm_note', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'm_note', 'title', 'Nota 1, scritta in app', 'updatedAt', '2026-11-07T13:00:00.000Z'))
+)) \g /dev/null
+reset role;
+select set_config('request.jwt.claim.sub', '', false) \g /dev/null
+set role anon;
+select 'M2 chiamata in conflitto: dice quale elemento, tutto il resto intatto', r->>'status' = 'conflict'
+  and jsonb_array_length(r->'conflicts') = 1 and r->'conflicts'->0->>'entityId' = 'm_note'
+  and r->>'entityId' = 'm_note' and r->'current'->>'title' = 'Nota 1, scritta in app' and (r->>'items')::int = 3
+from (select public.studyos_agent_restore_call(:'secret', :'m_goal_audit') as r) as x;
+select 'M2 elenco: la chiamata non è più annullabile intera, la voce dell''obiettivo sì', bool_and(not call_can_restore)
+  and bool_or(entity_id = 'm_goal' and can_restore)
+from public.studyos_agent_audit_list(:'secret', p_call_id => 'aaaaaaaa-0000-4000-8000-000000000001');
+reset role;
+select 'M2 niente scritto, niente segnato', (select deleted from public.studyos_items where entity_id = 'm_session')
+  and (select payload->'sessionIds' = '[]'::jsonb from public.studyos_items where entity_id = 'm_goal')
+  and (select count(*) = 0 from public.studyos_agent_audit where call_id = 'aaaaaaaa-0000-4000-8000-000000000001' and restored_at is not null);
+
+-- Chiamata 2: si annulla tutta insieme, a partire dall'id di una sua voce.
+set role anon;
+select 'M3 chiamata annullata: tre elementi', r->>'status' = 'restored' and (r->>'items')::int = 3
+  and jsonb_array_length(r->'changes') = 3
+from (select public.studyos_agent_restore_call(:'secret', :'m2_goal_audit') as r) as x;
+reset role;
+select 'M4 sessione rimessa con la copertina, obiettivo ricollegato, task creato eliminato',
+  (select not deleted and payload->>'title' = 'Sessione 2' and payload->>'cover' = 'data:image/png;base64,S2'
+     from public.studyos_items where entity_id = 'm2_session')
+  and (select payload->'sessionIds' = '["m2_session"]'::jsonb from public.studyos_items where entity_id = 'm2_goal')
+  and (select deleted from public.studyos_items where entity_id = 'm2_new');
+select 'M5 voci segnate; i ripristini sono una chiamata sola con l''id del permesso',
+  (select bool_and(restored_at is not null) from public.studyos_agent_audit where call_id = 'aaaaaaaa-0000-4000-8000-000000000002')
+  and (select count(*) = 3 and count(distinct call_id) = 1 and bool_and(tool = 'studyos_restore_change' and grant_id is not null and call_id is not null)
+       from public.studyos_agent_audit
+       where restore_of in (select id from public.studyos_agent_audit where call_id = 'aaaaaaaa-0000-4000-8000-000000000002'));
+select call_id as undo_call from public.studyos_agent_audit
+where restore_of in (select id from public.studyos_agent_audit where call_id = 'aaaaaaaa-0000-4000-8000-000000000002') limit 1 \gset
+set role anon;
+select 'M6 di nuovo: già annullata', public.studyos_agent_restore_call(:'secret', 'aaaaaaaa-0000-4000-8000-000000000002')->>'status' = 'already_restored';
+select 'M6 chiamata sconosciuta', public.studyos_agent_restore_call(:'secret', gen_random_uuid())->>'status' = 'not_found';
+select 'M7 annullare il ripristino rimette la chiamata com''era', public.studyos_agent_restore_call(:'secret', :'undo_call')->>'status' = 'restored';
+reset role;
+select 'M7 sessione di nuovo eliminata, task di nuovo com''era dopo la chiamata',
+  (select deleted from public.studyos_items where entity_id = 'm2_session')
+  and (select not deleted and payload->>'title' = 'Nuovo, rivisto' from public.studyos_items where entity_id = 'm2_new');
+
+-- Chiamata 3: una voce da sola, poi il resto della chiamata.
+set role anon;
+select 'M8 una voce da sola dentro una chiamata', public.studyos_agent_restore(:'secret', :'m3_a_audit')->>'status' = 'restored';
+select 'M8 poi il resto della chiamata: un elemento', (r->>'items')::int = 1 and r->>'entityId' = 'm3_b'
+from (select public.studyos_agent_restore_call(:'secret', 'aaaaaaaa-0000-4000-8000-000000000003') as r) as x;
+reset role;
+select 'M8 entrambi com''erano', (select string_agg(payload->>'title', ',' order by entity_id) = 'A,B'
+  from public.studyos_items where entity_id in ('m3_a', 'm3_b'));
+
+-- Chiamata 4 dall'app (Alice); Bea non la trova.
+set role authenticated;
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', false) \g /dev/null
+select 'M9 Bea non annulla le chiamate di Alice', public.studyos_agent_restore_call_own('aaaaaaaa-0000-4000-8000-000000000004')->>'status' = 'not_found';
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false) \g /dev/null
+select 'M9 l''app vede le chiamate', bool_and(call_size = 1 and call_can_restore)
+from public.studyos_agent_audit_own(p_call_id => 'aaaaaaaa-0000-4000-8000-000000000004');
+select 'M9 Alice annulla la chiamata dall''app', public.studyos_agent_restore_call_own('aaaaaaaa-0000-4000-8000-000000000004')->>'status' = 'restored';
+reset role;
+select set_config('request.jwt.claim.sub', '', false) \g /dev/null
+select 'M9 scritta per ogni dispositivo', payload->>'title' = 'Quattro' and client_id is null
+from public.studyos_items where entity_id = 'm4_a';
+select 'M10 voce di un hub di prima: la sua chiamata è lei sola', public.studyos_agent_call_ids('11111111-1111-1111-1111-111111111111', :'file_audit') = array[:'file_audit'::uuid];
+
 -- Conservazione: al massimo 2000 voci per account e nessuna oltre 90 giorni.
 insert into public.studyos_agent_audit (user_id, entity_type, entity_id, action, created_at)
 select '11111111-1111-1111-1111-111111111111', 'task', 'old_' || n, 'update', now() - interval '91 days' - n * interval '1 second'
@@ -199,6 +361,15 @@ select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
 reset role;
 select 'P1 potatura: 2000 voci, nessuna oltre 90 giorni, la più recente resta',
   count(*) = 2000 and min(created_at) > now() - interval '90 days' and bool_or(entity_id = 'au_last')
+from public.studyos_agent_audit where user_id = '11111111-1111-1111-1111-111111111111';
+-- Sotto le 2100 voci non si pota (niente ordinamento né cancellazione a ogni scrittura).
+set role anon;
+select public.studyos_agent_push(:'secret', 'agent-remote', jsonb_build_array(
+  jsonb_build_object('entity_type', 'task', 'entity_id', 'au_last', 'deleted', false, 'payload',
+    jsonb_build_object('id', 'au_last', 'title', 'Ultima, di nuovo', 'updatedAt', '2026-11-06T09:00:00.000Z'))
+), 'studyos_update_task') \g /dev/null
+reset role;
+select 'P2 2001 voci: sotto la soglia, nessuna potatura', count(*) = 2001
 from public.studyos_agent_audit where user_id = '11111111-1111-1111-1111-111111111111';
 
 -- Un permesso revocato non scrive, non legge e non ripristina.

@@ -101,8 +101,10 @@ Una modalità alla volta:
 `labels` (facoltativo) dà un'etichetta a ogni parte, in ordine. Ogni parte ha `from`, `to`,
 `pages`, `date` e `weekday` quando ci sono giorni, e `text` pronto per titolo o descrizione
 («pp. 120–135 (16 pagine)», «p. 7 (1 pagina)»); `summary` riassume il conto («… in 4 parti: 16 + 15
-+ 15 + 15 = 61 pagine.»). I giorni sono date civili: il cambio d'ora non sposta niente. La logica è
-in `src/agent/pageSplit.ts`, i test in `tests/pageSplit.test.mjs`.
++ 15 + 15 = 61 pagine.», con una parte sola solo «… in 1 parte.»). Gli errori citano l'intervallo una
+volta («Le pagine sono 3 (pp. 1–3), meno delle parti (4)…»). I giorni sono date civili: il cambio
+d'ora non sposta niente. È un calcolo puro: sul connettore remoto risponde senza leggere il cloud. La
+logica è in `src/agent/pageSplit.ts`, i test in `tests/pageSplit.test.mjs`.
 
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
 salvo una policy impostata da te su «Consenti».
@@ -115,8 +117,8 @@ non hanno ancora una schermata dedicata nell'app.
 Se una conferma tarda, l'agente riceve `pending_approval` e deve rileggere
 l'esito con `studyos_approval_status`, senza ripetere l'azione. Sul connettore
 `/mcp` il registro delle azioni resta in questo browser: `studyos_list_audit` lo legge (il più
-recente prima, filtri `tool`, `since`, `until`, paginato con `limit` e `offset`; `itemId` qui dà
-errore, perché il browser non salva gli id). Il ripristino (`studyos_restore_change`) c'è solo sul
+recente prima, filtri `tool`, `since`, `until`, paginato con `limit` e `offset`; `itemId` e
+`callId` qui danno errore, perché il browser non salva gli id). Il ripristino (`studyos_restore_change`) c'è solo sul
 connettore remoto, che salva prima e dopo di ogni modifica: su `/mcp` non compare in
 `tools/list`.
 
@@ -301,41 +303,82 @@ Differenze dal primo connettore:
 
 Dalla 1.8.0 (con `agent.sql` rieseguito, vedi `supabase/README.md`) ogni riga che il connettore
 remoto cambia lascia una voce nella tabella `studyos_agent_audit`: quando, quale permesso
-(etichetta del connettore, es. «ChatGPT»), quale strumento, tipo e id dell'elemento, azione
-`create`/`update`/`delete`, l'elemento prima e dopo. La scrive `studyos_agent_push` nella stessa
-transazione della modifica: l'hub non può saltarla, e le riscritture che non cambiano niente non
-lasciano voci. Le immagini non contengono file, copertine né foto; solo un'eliminazione tiene a parte
-i file dell'elemento eliminato, per poterlo rimettere intero. Le voci restano 90 giorni e al massimo
-le ultime 2000 per account: le funzioni che scrivono tolgono le altre, usando solo l'indice.
-Nessun client scrive o cancella voci; la persona legge le sue (RLS).
+(etichetta del connettore, es. «ChatGPT»), quale strumento, in quale chiamata, tipo e id
+dell'elemento, azione `create`/`update`/`delete`, l'elemento prima e dopo. La scrive
+`studyos_agent_push` nella stessa transazione della modifica: l'hub non può saltarla, e le
+riscritture che non cambiano niente non lasciano voci. Nessun client scrive o cancella voci; la
+persona legge le sue (RLS).
 
-- `studyos_list_audit` (remoto) chiama `studyos_agent_audit_list` col segreto: voci dalla più
-  recente, filtri `itemId`, `tool`, `since`, `until` (senza offset valgono nell'ora locale della
-  persona), `limit` e `offset`, `total` dal server. Ogni voce ha `id`, `at`, `tool`, `collection`,
-  `itemId`, `title`, `action`; una modifica ha `changed` e solo quei campi in `before`/`after`, una
-  creazione l'elemento in `after`, un'eliminazione l'elemento in `before` (testi oltre 300
-  caratteri accorciati, con `truncated`); `canRestore` dice se si può ancora annullare. Prima di
-  arrivare all'agente le immagini passano dalle proiezioni degli altri strumenti e perdono, a ogni
-  profondità, email, codici di invito, token, iscrizioni push, id di account e file.
-- `studyos_restore_change` (`id`, `confirm: true`; distruttivo, serve lo scope di scrittura)
-  chiama `studyos_agent_restore`: rimette la versione di prima come nuova scrittura con un timbro
-  nuovo (oltre quello attuale). Una creazione si annulla eliminando, un'eliminazione rimettendo
-  l'elemento (file compresi), una modifica tornando ai valori di prima. Solo se l'elemento ha ancora
-  il timbro di quella scrittura: altrimenti `conflict` con l'elemento com'è ora in `current`, e
-  niente viene scritto. Il ripristino lascia a sua volta una voce (`restoreOf`), quindi si può
-  annullare anche lui; la voce annullata ha `restoredAt` e non si ripristina due volte.
+**Una chiamata, più elementi.** Uno strumento può cambiare più elementi in una volta: per esempio
+`studyos_delete_session` elimina la sessione e la toglie da obiettivi, note, materiali e
+promemoria collegati. L'hub manda con ogni push l'id della chiamata (`p_call`, uguale su tutte le
+push della stessa richiesta) e il database lo scrive su ogni voce (`call_id`). Elenco e ripristino
+lavorano per chiamata, così una sessione non torna mai senza i suoi collegamenti. Le voci scritte da
+un hub di prima (senza `p_call`) sono ciascuna una chiamata da sola.
+
+**Immagini e file.** Le immagini prima e dopo non contengono file, copertine né foto, neanche
+quelle di un'eliminazione. Solo un'eliminazione tiene a parte i file dell'elemento eliminato
+(`before_files`), per poterlo rimettere intero. È uno scambio voluto: il ripristino di un materiale
+eliminato funziona davvero, ma occupa spazio nel database. Oggi i file sono incorporati nelle righe
+(fino a 600 KiB l'uno), quindi un «elimina tutti i materiali» tiene quei file per 90 giorni e un
+account molto attivo può occupare decine di MB di registro (circa 2000 voci da qualche decina di
+kB). Sul piano Free (500 MB di database) va tenuto d'occhio. Quando gli allegati passeranno a
+Supabase Storage, `before_files` terrà solo il riferimento al file, non il file: il registro
+tornerà leggero senza cambiare il modo di ripristinare.
+
+**Quanto resta.** Le voci restano 90 giorni e circa le ultime 2000 per account. A ogni scrittura
+che lascia voci il database toglie quelle oltre 90 giorni (un tratto dell'indice
+`(user_id, created_at desc, id desc)`, di solito vuoto) e conta al massimo 2101 voci dell'account
+dall'indice; solo quando sono più di 2100 riporta il registro alle 2000 più recenti. Così
+l'ordinamento e la cancellazione grossa capitano circa una volta ogni 100 voci nuove, non a ogni
+scrittura; tra una potatura e l'altra un account può avere fino a 2100 voci.
+
+- `studyos_list_audit` (remoto) chiama `studyos_agent_audit_list` col segreto e risponde **per
+  chiamata**, dalla più recente: ogni elemento di `items` ha `callId`, `at`, `tool`, `by`,
+  `connector`, `size` (modifiche della chiamata), `canRestore` (si annulla intera), `restoredAt`
+  se è già stata annullata, e `changes`. Ogni modifica ha `id`, `collection`, `itemId`, `title`,
+  `action`, `canRestore` (si annulla da sola); un aggiornamento ha `changed` e solo quei campi in
+  `before`/`after`, una creazione l'elemento in `after`, un'eliminazione l'elemento in `before`
+  (testi oltre 300 caratteri accorciati, con `truncated`). `changes` ne mostra al massimo 5
+  (prima le eliminazioni, poi le creazioni, poi gli aggiornamenti) e `moreChanges` dice quante
+  mancano; con il filtro `callId` arrivano tutte (fino a 200). Filtri `itemId`, `tool`, `since`,
+  `until` (senza offset valgono nell'ora locale della persona) e `callId`: una chiamata entra se
+  almeno una sua modifica li rispetta. `limit` (al massimo 50), `offset` e `total` contano le
+  chiamate. Prima di arrivare all'agente le immagini passano dalle proiezioni degli altri strumenti
+  e perdono, a ogni profondità, email, codici di invito, token, iscrizioni push, id di account e
+  file.
+- `studyos_restore_change` (`id`, `confirm: true`, `onlyThisChange` facoltativo; distruttivo, serve
+  lo scope di scrittura) annulla **l'intera chiamata** che contiene `id` (un `callId` o l'id di una
+  sua modifica) con `studyos_agent_restore_call`, tutto o niente: per ogni elemento controlla che
+  abbia ancora il timbro dell'ultima modifica della chiamata; se anche uno solo è cambiato dopo,
+  risponde `conflict` con `conflicts` (gli elementi cambiati, com'erano adesso) e non scrive niente.
+  Altrimenti rimette ogni elemento com'era prima della chiamata, con un timbro nuovo (oltre quello
+  attuale): una creazione si annulla eliminando, un'eliminazione rimettendo l'elemento (file
+  compresi), un aggiornamento tornando ai valori di prima. Con `onlyThisChange: true` annulla solo
+  quella modifica (`studyos_agent_restore`), come prima. Il ripristino lascia a sua volta voci con un
+  loro `callId` (e `restoreOf`), quindi si può annullare anche lui; la chiamata annullata ha
+  `restoredAt` e non si ripristina due volte.
 - Nell'app, **Impostazioni → Agenti → Connettore remoto → «Modifiche del connettore»** (con
-  l'accesso all'account fatto) apre un pannello caricato solo al tocco: quando, chi (il connettore o
-  «Tu, dall'app»), cosa è cambiato in parole semplici («Ha modificato l'attività «Ripasso»: titolo e
-  scadenza.») e «Ripristina» con conferma. Usa `studyos_agent_audit_own` e
-  `studyos_agent_restore_own` (solo le voci di chi ha fatto l'accesso); la riga ripristinata ha
-  `client_id` vuoto, così arriva anche al dispositivo che l'ha chiesta, e l'app chiede subito una
-  sincronizzazione.
+  l'accesso all'account fatto) apre un pannello caricato solo al tocco, con una riga per richiesta:
+  quando, chi (il connettore o «Tu, dall'app»), cosa è cambiato in parole semplici («Ha eliminato la
+  sessione di studio «Ripasso».», «Ha modificato l'obiettivo «Esame»: sessioni collegate.»; i
+  ripristini fatti dalla persona: «Hai rimesso…», «Hai eliminato…») e «Ripristina» con conferma, che
+  annulla tutta la richiesta. Usa `studyos_agent_audit_own` e `studyos_agent_restore_call_own` (solo
+  le voci di chi ha fatto l'accesso); le righe ripristinate hanno `client_id` vuoto, così arrivano
+  anche al dispositivo che l'ha chiesto, e l'app chiede subito una sincronizzazione. Dopo un
+  ripristino l'elenco si rilegge per intero, comprese le righe aperte con «Mostra altre».
 
-Con `agent.sql` di prima il Worker 1.8.0 scrive come prima (riprova la push senza `p_tool`) e
-`studyos_list_audit` risponde che il registro non è ancora attivo. Un Worker di prima con
-`agent.sql` nuovo scrive lo stesso il registro, con lo strumento vuoto. Prova su Postgres usa e
-getta: `scripts/supabase/agent-audit-check.sql`.
+Con `agent.sql` di prima il Worker 1.8.0 scrive come prima: una push rifiutata (PGRST202) si ripete
+senza `p_tool` e `p_call`, e per 10 minuti si scrive così; poi si riprova la push nuova, quindi dopo
+aver rieseguito `agent.sql` il registro torna completo senza riavviare l'hub. Senza
+`studyos_agent_restore_call` (agent.sql della prima revisione 1.8.0, senza chiamate) il ripristino
+annulla la singola voce, che lì è la sua chiamata; senza registro `studyos_list_audit` risponde che
+non è ancora attivo. Un Worker di prima con `agent.sql` nuovo scrive lo stesso il registro, con lo
+strumento vuoto e ogni voce come chiamata da sola. Prova su Postgres usa e getta:
+`scripts/supabase/agent-audit-check.sql`.
+
+`studyos_split_pages` sul connettore remoto non legge il cloud: è un calcolo, risponde anche se il
+cloud è lento o non risponde.
 
 «Scollega il connettore remoto» e «Revoca gli accessi di questo browser» in Impostazioni →
 Agenti revocano tutti i permessi remoti dell'account (anche senza browser collegato, con

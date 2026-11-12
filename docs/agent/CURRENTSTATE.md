@@ -351,3 +351,11 @@ SQL su Postgres 17 temporaneo con stub di `pg_net`, Vault e `pg_cron` (script ap
 36 controlli verdi). Sul progetto reale, non ancora fatto: attivare `pg_cron`, eseguire
 `push-reminders.sql` e rieseguire `schema.sql`, `push-reminders-verify.sql` tutto verde, deploy del
 Worker. La consegna vera con l'app chiusa si prova su un browser vero dopo il deploy.
+
+Dopo la revisione: le voci hanno `call_id` (una chiamata dello strumento, anche su più push) e si
+elencano e si annullano per chiamata, tutto o niente, con l'elemento in conflitto nella risposta
+(`studyos_agent_restore_call(_own)`; `onlyThisChange` per una voce sola); frasi «Hai…» per i
+ripristini fatti dall'app; nessun file nelle immagini dei tombstone; potatura delle 2000 voci solo
+oltre 2100; il Worker riprova la push nuova ogni 10 minuti dopo un PGRST202; `studyos_split_pages`
+sul remoto non legge il cloud. `agent-audit-check.sql` 59 controlli, anche sopra l'`agent.sql`
+della prima revisione.

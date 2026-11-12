@@ -242,20 +242,31 @@ mostra le ultime risposte del Worker.
 
 **Revisione del 12/11/2026 (connettore 1.8.0): riesegui `agent.sql`, poi `agent-verify.sql`.**
 Ogni modifica del connettore remoto finisce in un registro sul server
-(`studyos_agent_audit`): cosa è cambiato, prima e dopo, con quale strumento. Lo scrive
-`studyos_agent_push` stessa, quindi l'hub non può saltarlo. Le voci restano 90 giorni, al
-massimo le ultime 2000 per account. Da **Impostazioni → Agenti → Modifiche del connettore**
-(o con `studyos_restore_change` dal connettore) una modifica si annulla, solo se l'elemento non è
-cambiato dopo. Ordine, una query alla volta:
+(`studyos_agent_audit`): cosa è cambiato, prima e dopo, con quale strumento e in quale richiesta.
+Lo scrive `studyos_agent_push` stessa, quindi l'hub non può saltarlo. Le modifiche nate dalla
+stessa richiesta (per esempio «elimina la sessione», che la toglie anche da obiettivi e note)
+stanno insieme e si annullano insieme, tutto o niente. Le voci restano 90 giorni, circa le ultime
+2000 per account. Da **Impostazioni → Agenti → Modifiche del connettore** (o con
+`studyos_restore_change` dal connettore) una richiesta si annulla, solo se nessuno dei suoi
+elementi è cambiato dopo. Ordine, una query alla volta:
 
-1. `agent.sql` (dopo `schema.sql`; toglie la vecchia `studyos_agent_push` a tre argomenti e crea
-   quella con `p_tool`: un hub di prima la chiama ancora uguale);
-2. `agent-verify.sql`: tutte le colonne `*_ready` `true`, comprese le nuove `audit_table_ready`,
+1. `agent.sql` (dopo `schema.sql`; si può rieseguire, anche sopra la prima revisione della 1.8.0:
+   aggiunge la colonna `call_id`, toglie le versioni vecchie di `studyos_agent_push` e delle
+   funzioni del registro e crea quelle nuove; un hub di prima chiama la push ancora uguale);
+2. `agent-verify.sql`: tutte le colonne `*_ready` `true`, comprese `audit_table_ready`,
    `audit_rpc_ready` e `audit_internal_private_ready`; `audit_entries` conta le voci.
 
+Spazio occupato: le voci non contengono file, tranne quelle di un'eliminazione, che tengono a
+parte i file dell'elemento eliminato per poterlo rimettere intero. Oggi i file sono dentro le
+righe (fino a 600 KiB l'uno): eliminare molti materiali con un agente tiene quei file per 90
+giorni, e un account molto attivo può arrivare a decine di MB di registro. Sul piano Free (500 MB)
+controllalo ogni tanto con `audit_entries` e lo spazio del database. Quando gli allegati passeranno
+a Supabase Storage, il registro terrà solo il riferimento al file e tornerà leggero.
+
 Poi serve il deploy del Worker 1.8.0 (vedi [docs/agent-mcp.md](../docs/agent-mcp.md)). Senza la
-revisione SQL il Worker 1.8.0 scrive come prima e risponde che il registro non è ancora attivo;
-senza il deploy il registro si riempie lo stesso (con lo strumento vuoto) e l'app lo mostra.
+revisione SQL il Worker 1.8.0 scrive come prima (e ogni 10 minuti riprova la scrittura nuova) e
+risponde che il registro non è ancora attivo; senza il deploy il registro si riempie lo stesso
+(con lo strumento vuoto, ogni modifica come richiesta a sé) e l'app lo mostra.
 Prova su un Postgres usa e getta con lo stub di auth (mai sul progetto reale), dopo `schema.sql`
 e `agent.sql`: `psql "$URL" -v ON_ERROR_STOP=1 -f scripts/supabase/agent-audit-check.sql` (ogni
 riga deve finire con `|t`).

@@ -1151,8 +1151,8 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_audit",
     title: "Registro azioni degli agenti",
-    description: "Legge il registro delle azioni già chieste dagli agenti su questo browser, la più recente prima: strumento, esito, orario. Filtri tool, since e until; itemId vale solo sul connettore remoto (qui gli id non si salvano). Paginato con limit e offset. Non include passphrase, file o codici di invito.",
-    cloudDescription: "Legge il registro del server con le modifiche fatte ai dati da questo connettore remoto, la più recente prima: quando (at), strumento (tool), elemento (collection, itemId, title), action create/update/delete, campi cambiati (changed) con i valori prima e dopo, se si può ancora ripristinare (canRestore). Filtri itemId, tool, since e until; paginato con limit e offset. Le modifiche più vecchie di 90 giorni, e oltre le ultime 2000, non ci sono più. Per annullare una modifica usa studyos_restore_change con il suo id. Non include file, email o codici di invito.",
+    description: "Legge il registro delle azioni già chieste dagli agenti su questo browser, la più recente prima: strumento, esito, orario. Filtri tool, since e until; itemId e callId valgono solo sul connettore remoto (qui gli id non si salvano). Paginato con limit e offset. Non include passphrase, file o codici di invito.",
+    cloudDescription: "Legge il registro del server con le modifiche fatte ai dati da questo connettore remoto, per chiamata, la più recente prima. Ogni voce di items è una chiamata di uno strumento: callId, quando (at), strumento (tool), quante modifiche (size) e le modifiche (changes: elemento con collection, itemId, title, action create/update/delete, campi cambiati in changed con i valori prima e dopo). Una chiamata può cambiare più elementi (es. eliminare una sessione la toglie anche da obiettivi e note): changes ne mostra al massimo 5, moreChanges dice quante mancano, il filtro callId le mostra tutte. canRestore della chiamata = si può annullare intera; canRestore di una modifica = si può annullare da sola. Filtri itemId, tool, since, until e callId; limit e offset contano le chiamate (al massimo 50 per pagina). Le modifiche più vecchie di 90 giorni, e oltre le ultime 2000 circa, non ci sono più. Per annullare usa studyos_restore_change. Non include file, email o codici di invito.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
@@ -1161,21 +1161,23 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
       itemId: { ...ID, description: "Solo le modifiche di questo elemento (id StudyOS). Solo sul connettore remoto." },
       tool: { type: "string", minLength: 1, maxLength: 80, pattern: "^studyos_[a-z0-9_]{1,72}$", description: "Solo le azioni di questo strumento, es. studyos_update_task." },
       since: { type: "string", format: "date-time", description: `Solo da questo istante in poi. ${WHEN}` },
-      until: { type: "string", format: "date-time", description: `Solo prima di questo istante. ${WHEN}` }
+      until: { type: "string", format: "date-time", description: `Solo prima di questo istante. ${WHEN}` },
+      callId: { ...ID, description: "Solo questa chiamata (callId da un elenco precedente), con tutte le sue modifiche. Solo sul connettore remoto." }
     }),
     summary: () => "Leggere il registro delle azioni degli agenti"
   }),
   tool({
     name: "studyos_restore_change",
     title: "Annulla una modifica del connettore",
-    description: "Annulla una modifica del registro del server (id da studyos_list_audit): un elemento creato viene eliminato, uno modificato torna com'era prima, uno eliminato torna tra i dati. Funziona solo se l'elemento non è cambiato dopo quella modifica: altrimenti risponde conflict con l'elemento attuale e non tocca niente. Il ripristino finisce a sua volta nel registro. Richiede confirm=true: usalo solo se la persona l'ha chiesto.",
+    description: "Annulla una chiamata del registro del server (id = callId, o l'id di una sua modifica, da studyos_list_audit): tutte le sue modifiche insieme, tutto o niente. Un elemento creato viene eliminato, uno modificato torna com'era prima, uno eliminato torna tra i dati. Funziona solo se nessuno di quegli elementi è cambiato dopo: altrimenti risponde conflict con gli elementi cambiati (conflicts, com'erano adesso) e non tocca niente. Con onlyThisChange=true e l'id di una modifica annulla solo quella (sconsigliato: es. una sessione tornerebbe senza i suoi collegamenti). Il ripristino finisce a sua volta nel registro, come una chiamata. Richiede confirm=true: usalo solo se la persona l'ha chiesto.",
     risk: "destructive",
     idempotent: false,
     inputSchema: objectSchema({
-      id: { ...ID, description: "id della modifica (un uuid), restituito da studyos_list_audit." },
+      id: { ...ID, description: "callId di una chiamata, o id di una sua modifica (un uuid), restituito da studyos_list_audit." },
+      onlyThisChange: { type: "boolean", default: false, description: "true: annulla solo la modifica con questo id, non il resto della sua chiamata." },
       confirm: CONFIRM
     }, ["id", "confirm"]),
-    summary: () => "Annullare una modifica del connettore remoto"
+    summary: () => "Annullare un'azione del connettore remoto"
   })
 ];
 

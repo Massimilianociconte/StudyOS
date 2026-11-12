@@ -78,7 +78,12 @@ export const CHANGE_FIELD_LABEL: Record<string, string> = {
   readAt: "lettura",
   displayName: "nome del profilo",
   weeklyTargetMinutes: "obiettivo settimanale",
-  tags: "etichette"
+  tags: "etichette",
+  // Collegamenti (es. eliminare una sessione la toglie da obiettivi, note e materiali).
+  linkedSessionIds: "sessioni collegate",
+  linkedTaskIds: "attività collegate",
+  linkedEntityId: "collegamento",
+  linkedEntityType: "collegamento"
 };
 
 export const AGENT_CHANGES_TEXT = {
@@ -88,7 +93,7 @@ export const AGENT_CHANGES_TEXT = {
   title: "Modifiche del connettore",
   eyebrow: "Connettore remoto",
   intro:
-    "Qui trovi ogni modifica che ChatGPT o Claude hanno fatto ai tuoi dati con il connettore remoto, la più recente in alto. Restano 90 giorni (al massimo le ultime 2000). «Ripristina» annulla una modifica, se l'elemento non è cambiato dopo.",
+    "Qui trovi ogni modifica che ChatGPT o Claude hanno fatto ai tuoi dati con il connettore remoto, la più recente in alto. Le modifiche nate da una sola richiesta stanno insieme. Restano 90 giorni (circa le ultime 2000). «Ripristina» annulla tutta la richiesta, se nessuno di quegli elementi è cambiato dopo.",
   loading: "Caricamento…",
   empty: "Nessuna modifica del connettore remoto finora.",
   signIn: "Fai l'accesso al tuo account (Impostazioni → Account e sincronizzazione) per vedere le modifiche del connettore.",
@@ -102,21 +107,37 @@ export const AGENT_CHANGES_TEXT = {
   byConnector: (label: string) => label || "Connettore remoto",
   unnamed: "senza titolo",
   otherFields: "altri dettagli",
-  created: (what: string, title: string) => `Ha creato ${what} «${title}».`,
-  updated: (what: string, title: string, fields: string) => (fields ? `Ha modificato ${what} «${title}»: ${fields}.` : `Ha modificato ${what} «${title}».`),
-  deleted: (what: string, title: string) => `Ha eliminato ${what} «${title}».`,
+  /** Frasi delle modifiche del connettore. */
+  byAgent: {
+    created: (what: string, title: string) => `Ha creato ${what} «${title}».`,
+    updated: (what: string, title: string, fields: string) => (fields ? `Ha modificato ${what} «${title}»: ${fields}.` : `Ha modificato ${what} «${title}».`),
+    deleted: (what: string, title: string) => `Ha eliminato ${what} «${title}».`
+  },
+  /** Frasi dei ripristini fatti dalla persona nell'app (accanto a «Tu, dall'app»). */
+  byYou: {
+    created: (what: string, title: string) => `Hai rimesso ${what} «${title}».`,
+    updated: (what: string, title: string, fields: string) => (fields ? `Hai riportato ${what} «${title}» com'era: ${fields}.` : `Hai riportato ${what} «${title}» com'era.`),
+    deleted: (what: string, title: string) => `Hai eliminato ${what} «${title}».`
+  },
+  /** Più modifiche nate dalla stessa richiesta. */
+  together: (count: number) => `Una sola richiesta, ${count} modifiche: «Ripristina» le annulla tutte insieme.`,
+  moreChanges: (count: number) => (count === 1 ? "…e un'altra modifica." : `…e altre ${count} modifiche.`),
   /** Ripristino: la voce che annulla un'altra modifica. */
   undo: "Annulla una modifica precedente.",
   restoredAt: (when: string) => `Annullata il ${when}.`,
-  changedLater: "L'elemento è cambiato dopo: questa modifica non si può più annullare.",
+  changedLater: "Un elemento è cambiato dopo: questa modifica non si può più annullare.",
   confirm: {
     create: (title: string) => `Annullare questa modifica? «${title}» sparisce dai tuoi dati.`,
     update: (title: string) => `Annullare questa modifica? «${title}» torna com'era prima.`,
-    delete: (title: string) => `Annullare questa modifica? «${title}» torna tra i tuoi dati.`
+    delete: (title: string) => `Annullare questa modifica? «${title}» torna tra i tuoi dati.`,
+    many: (count: number) => `Annullare tutta la richiesta? Le ${count} modifiche tornano indietro insieme. Se uno di questi elementi è cambiato dopo, non si tocca niente.`
   },
   outcome: {
     restored: "Fatto: modifica annullata. I tuoi dispositivi la ricevono alla sincronizzazione.",
+    restoredMany: (count: number) => `Fatto: ${count} elementi sono tornati com'erano. I tuoi dispositivi li ricevono alla sincronizzazione.`,
     conflict: "Non annullata: l'elemento è cambiato dopo questa modifica. Non è stato toccato niente.",
+    conflictMany: (title?: string) =>
+      `Non annullata: ${title ? `«${title}»` : "uno degli elementi"} è cambiato dopo. Si annulla tutto o niente, quindi non è stato toccato niente.`,
     already: "Questa modifica era già stata annullata.",
     notFound: "Questa modifica non c'è più nel registro.",
     failed: "Ripristino non riuscito. Controlla la connessione e riprova."
