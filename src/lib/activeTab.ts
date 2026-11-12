@@ -17,6 +17,7 @@
 export const ACTIVE_TAB_LOCK = "studyos-active-tab";
 export const ACTIVE_TAB_CHANNEL = "studyos-active-tab";
 export const TAKEOVER_TIMEOUT_MS = 3_000;
+const QUERY_RETRY_MS = 300;
 
 const TAKEOVER_MESSAGE = "studyos:takeover";
 const BUSY = "busy";
@@ -40,6 +41,7 @@ export interface LockRequestOptions {
 /** Il sottoinsieme di `navigator.locks` che serve. */
 export interface LockManagerLike {
   request: (name: string, options: LockRequestOptions, callback: (lock: unknown) => unknown) => Promise<unknown>;
+  query: () => Promise<{ pending?: Array<{ name?: string }> }>;
 }
 
 /** Il sottoinsieme di `BroadcastChannel` che serve. */
@@ -169,9 +171,32 @@ export const startActiveTab = (env: ActiveTabEnv, hooks: ActiveTabHooks, reason:
     );
   };
 
+  /** C'è davvero una scheda in coda per il blocco? (chi chiede si mette in coda PRIMA di scrivere) */
+  const someoneWaiting = async () => {
+    try {
+      const snapshot = await env.locks!.query();
+      return (snapshot.pending ?? []).some((request) => request.name === ACTIVE_TAB_LOCK);
+    } catch {
+      return false;
+    }
+  };
+
+  // Il messaggio è solo un indizio: qualsiasi pagina della stessa origine può mandarlo (su
+  // *.github.io tutti i repo dell'account). Si cede il posto solo se una richiesta è in coda;
+  // un secondo controllo poco dopo copre una richiesta registrata un attimo dopo il messaggio.
   env.channel?.addEventListener("message", (event) => {
-    if (!isTakeover(event.data) || state !== "active" || handingOff) return;
+    if (!isTakeover(event.data) || state !== "active" || handingOff || !env.locks) return;
     handingOff = true;
+    void someoneWaiting().then((waiting) => {
+      if (waiting) return handOff();
+      env.setTimeout(() => {
+        void someoneWaiting().then((late) => (late ? handOff() : (handingOff = false)));
+      }, QUERY_RETRY_MS);
+    });
+  });
+
+  const handOff = () => {
+    if (state !== "active") return;
     hooks.handOff().then(
       () => {
         if (state !== "active") return;
@@ -184,7 +209,7 @@ export const startActiveTab = (env: ActiveTabEnv, hooks: ActiveTabHooks, reason:
         handingOff = false;
       }
     );
-  });
+  };
 
   if (!env.locks) {
     activate();

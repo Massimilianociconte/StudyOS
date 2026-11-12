@@ -58,8 +58,19 @@ const createLockHub = () => {
           });
           queue.push(entry);
           processQueue();
-        })
+        }),
+      // Come navigator.locks.query(): richieste in attesa di tutte le schede dell'origine.
+      query: async () => ({
+        held: holder ? [{ name: ACTIVE_TAB_LOCK }] : [],
+        pending: queue.map(() => ({ name: ACTIVE_TAB_LOCK }))
+      })
     }),
+    /** Una richiesta in coda creata da fuori (per il test del controllo ripetuto). */
+    enqueueFrom: (tab) => {
+      const entry = { tab, callback: () => new Promise(() => undefined), resolve: () => undefined, reject: () => undefined };
+      queue.push(entry);
+      processQueue();
+    },
     // La pagina si ricarica o si chiude: i suoi blocchi spariscono senza rifiuti.
     dropTab: (tab) => {
       if (holder?.tab === tab) holder = null;
@@ -215,6 +226,33 @@ test("Usa questa scheda: l'attiva salva tutto, poi lascia; la nuova apre l'app d
   // Il conto alla rovescia dei 3 s non riporta la guardia dopo che l'app è aperta.
   world.timers.advance(TAKEOVER_TIMEOUT_MS);
   assert.equal(b.log.at(-1), "activate");
+});
+
+test("un messaggio di passaggio senza nessuna richiesta in coda non fa nulla (è solo un indizio)", async () => {
+  const world = createWorld();
+  const a = openTab(world, "A");
+  await settle();
+  // Qualsiasi pagina della stessa origine (es. un altro repo su *.github.io) può mandarlo.
+  world.channels.open().postMessage({ type: "studyos:takeover" });
+  await settle();
+  world.timers.advance(TAKEOVER_TIMEOUT_MS);
+  await settle();
+  assert.deepEqual(a.log, ["activate"], "niente salvataggio forzato, niente ricaricamento");
+  assert.equal(world.locks.holderTab(), "A");
+});
+
+test("la richiesta in coda arrivata un attimo dopo il messaggio vale comunque", async () => {
+  const world = createWorld();
+  const a = openTab(world, "A");
+  await settle();
+  world.channels.open().postMessage({ type: "studyos:takeover" });
+  await settle();
+  assert.deepEqual(a.log, ["activate"]);
+  world.locks.enqueueFrom("B");
+  world.timers.advance(TAKEOVER_TIMEOUT_MS);
+  await settle();
+  assert.deepEqual(a.log, ["activate", "handOff", "saved", "leave"]);
+  assert.equal(world.locks.holderTab(), "B");
 });
 
 test("la scheda appena attivata a sua volta cede il posto alla successiva", async () => {
