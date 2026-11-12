@@ -1,15 +1,90 @@
 // Libretto e laurea.
 // Testi che si caricano con la schermata che li usa; le etichette condivise (valori enum, testi comuni) sono in ../labels.
 
-/** Libretto e laurea: corso di laurea in sola lettura, stato vuoto. */
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/** Libretto e laurea: riepilogo in alto, libretto, calcolo del voto di laurea. */
 export const CAREER_TEXT = {
+  title: "Libretto e laurea",
+  subtitle: "Registra i voti degli esami: medie e voto di laurea previsto si calcolano da soli.",
   rulesOf: (name: string, level: string, cfu: number) => `Regole di: ${name} · ${level} · ${cfu} CFU`,
   changeInSettings: "Cambia in Impostazioni",
   changeInSettingsAria: "Cambia il corso di laurea in Impostazioni",
   basis: "Media da usare",
   recordGrade: "Registra un voto",
   emptyTitle: "Ancora nessun voto nel libretto",
-  emptyBody: "Registra i voti degli esami che hai superato: medie e voto di laurea previsto si aggiornano da soli. Per esempio: Biochimica, 28, 6 CFU."
+  emptyBody: "Registra i voti degli esami che hai superato: medie e voto di laurea previsto si aggiornano da soli. Per esempio: Biochimica, 28, 6 CFU.",
+  noSubjects: "Non hai ancora materie: aggiungile in Materie oppure creale mentre registri un voto.",
+  goToSubjects: "Vai a Materie",
+
+  /** Riquadro in alto: il voto previsto e i tre numeri che contano. */
+  hero: {
+    label: "Voto di laurea previsto",
+    outOf: "/ 110",
+    empty: "Registra almeno un voto, o metti un voto obiettivo agli esami in programma, per vedere la stima.",
+    top: "Con queste ipotesi arrivi a 110.",
+    missing: (points: string) => `Ti mancano ${points} punti per il 110.`,
+    assumptions: "Stima con le tue ipotesi sulla tesi.",
+    editAssumptions: "Cambia le ipotesi",
+    gauge: (value: string) => `Voto di laurea previsto: ${value} su 110`,
+    overTop: (total: string) => `Il calcolo dà ${total}: sopra 110 la lode la decide la commissione.`
+  },
+  kpi: {
+    weighted: "Media ponderata",
+    arithmetic: (value: string) => `Aritmetica ${value}`,
+    passed: "Esami superati",
+    passedNone: "Registra il primo voto",
+    passedMissing: (count: number) => `${plural(count, "esame", "esami")} senza voto`,
+    passedHonors: (count: number) => `${count} con lode`,
+    passedPlain: "Idoneità comprese",
+    cfu: "CFU acquisiti",
+    cfuOf: (total: number) => `/ ${total}`,
+    cfuLeft: (count: number) => `Ne mancano ${count}`,
+    cfuDone: "Tutti i CFU del corso",
+    cfuBar: "CFU acquisiti sul totale del corso"
+  },
+
+  /** Su telefono e tablet una parte alla volta; dal computer le due parti affiancate. */
+  tabs: { label: "Parte da mostrare", libretto: "Libretto", laurea: "Voto di laurea" },
+
+  libretto: {
+    title: "Esami superati",
+    sortLabel: "Ordina il libretto",
+    sorts: { recent: "Recenti", grade: "Voto", cfu: "CFU" },
+    missingTitle: "Superati senza voto",
+    missingWhen: (date: string) => `Superato il ${date}`,
+    addGrade: "Aggiungi voto",
+    honors: "lode",
+    passFail: "idoneo",
+    open: (name: string, grade: string) => `${name}: ${grade}. Modifica il voto`,
+    legend: "La lode vale 30 nella media. Le idoneità danno CFU ma non entrano nella media. Gli esami con più CFU pesano di più."
+  },
+
+  graduation: {
+    title: "Come si arriva al voto",
+    base: (average: string) => `Voto di partenza (media ${average} × 110 / 30)`,
+    total: "Totale",
+    manifesto: "Totale secondo il Manifesto 2026/27 (+1 per l'estero)",
+    upTo: (points: string) => `Fino a +${points}`,
+    reached: "Con queste ipotesi arrivi a 110.",
+    needed: (average: string) => `Per arrivare a 110 ti serve una media ponderata di almeno ${average}.`,
+    plannedTooHigh: (cfu: number, average: string) => `Gli esami in programma (${cfu} CFU) da soli non bastano: servirebbe una media di ${average}.`,
+    plannedPass: (cfu: number) => `Negli esami in programma (${cfu} CFU) ti basta passarli.`,
+    planned: (cfu: number, average: string) => `Negli esami in programma (${cfu} CFU) ti serve una media di ${average}.`,
+    empty: "Registra almeno un voto, o metti un voto obiettivo agli esami in programma, per vedere il calcolo.",
+    hypotheses: "Le tue ipotesi",
+    thesisSb: "Voto che prevedi per la prova finale",
+    thesisBarb: "Punti che prevedi per la tesi",
+    basisRegistered: "Voti registrati",
+    basisTargets: "Con obiettivi",
+    basisUsed: (average: string) => `Media usata nel calcolo: ${average}`,
+    basisOnlyRegistered: "Metti un voto obiettivo agli esami in programma per vedere dove arriveresti.",
+    abroadSb: "Programma Erasmus svolto almeno al 70%",
+    abroadBarb: "Tesi svolta all'estero o almeno 3 esami superati all'estero",
+    how: "Come si calcola e fonti",
+    estimate: "È una stima: voto finale, eventuali arrotondamenti e lode li decide la commissione di laurea.",
+    sources: "Fonti ufficiali delle regole"
+  }
 } as const;
 
 /** Modulo breve del voto (GradeDrawer): esito dell'esame, voto, idoneità o non superato. */
