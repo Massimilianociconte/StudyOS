@@ -23,18 +23,25 @@ export const lazyView = <T extends Record<string, unknown>, K extends keyof T>(
       }
       return { default: module[name] as never };
     } catch (error) {
-      let alreadyReloaded = true;
-      try {
-        alreadyReloaded = sessionStorage.getItem(CHUNK_RELOAD_KEY) === "1";
-        if (!alreadyReloaded) sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
-      } catch {
-        // senza storage non si rischia un loop di ricariche
-      }
-      if (!alreadyReloaded) {
-        await whenPersisted().catch(() => undefined);
-        window.location.reload();
-        return new Promise<{ default: never }>(() => undefined);
-      }
+      if (await reloadOnceForMissingChunk()) return new Promise<{ default: never }>(() => undefined);
       throw error;
     }
   });
+
+/**
+ * Un pezzo dell'app non si è caricato: salva e ricarica la pagina, una sola volta per sessione.
+ * Restituisce true se la ricarica è partita (chi chiama aspetta e basta), false se c'è già stata.
+ */
+export async function reloadOnceForMissingChunk(): Promise<boolean> {
+  let alreadyReloaded = true;
+  try {
+    alreadyReloaded = sessionStorage.getItem(CHUNK_RELOAD_KEY) === "1";
+    if (!alreadyReloaded) sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
+  } catch {
+    // senza storage non si rischia un loop di ricariche
+  }
+  if (alreadyReloaded) return false;
+  await whenPersisted().catch(() => undefined);
+  window.location.reload();
+  return true;
+}

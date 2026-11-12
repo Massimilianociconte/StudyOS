@@ -12,10 +12,26 @@ import {
   startActiveTab
 } from "./lib/activeTab";
 import { handOffPersistence, haltPersistence } from "./lib/persistence";
+import { reloadOnceForMissingChunk } from "./lib/lazyView";
 import "./index.css";
 
 // Le funzioni di animazione si caricano dopo il primo disegno (le `m.*` restano ferme finché non arrivano).
-const loadMotionFeatures = () => import("./lib/motionFeatures").then((module) => module.default);
+// Senza di loro gli elementi resterebbero al loro stato iniziale, spesso trasparenti: due nuovi tentativi,
+// poi una sola ricarica della pagina, come per le viste.
+const loadMotionFeatures = async () => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return (await import("./lib/motionFeatures")).default;
+    } catch (error) {
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+        continue;
+      }
+      if (await reloadOnceForMissingChunk()) return new Promise<never>(() => undefined);
+      throw error;
+    }
+  }
+};
 
 const root = ReactDOM.createRoot(document.getElementById("root")!);
 
