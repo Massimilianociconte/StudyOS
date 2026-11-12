@@ -55,6 +55,7 @@ import {
   COLLECTIONS,
   COLLECTION_BY_ENTITY_TYPE,
   countEntities,
+  laterStamp,
   normalizeCollections,
   pickCollections,
   timestampOf,
@@ -1480,8 +1481,10 @@ export const useStudyStore = create<StudyState>((set, get) => {
       const now = nowIso();
       set((state) => {
         const current = state.preferences.find((item) => item.id === PREFERENCES_ID);
+        // Sempre dopo la copia che sostituisce: una copia con l'orario avanti (orologio di un altro
+        // dispositivo) farebbe rifiutare la modifica dal cloud, e al pull tornerebbe il valore di prima.
         const next: Preferences = current
-          ? { ...current, ...patch, updatedAt: now }
+          ? { ...current, ...patch, updatedAt: laterStamp(current.updatedAt) }
           : { ...DEFAULT_PREFERENCES, tags: [], createdAt: now, updatedAt: now, ...patch };
         return { preferences: [next, ...state.preferences.filter((item) => item.id !== PREFERENCES_ID)] };
       });

@@ -33,6 +33,19 @@ export interface PlannedChange {
   entity: SyncableEntity | null;
   /** Timestamp LWW del valore remoto: lo store lo ricontrolla al momento dell'applicazione. */
   stamp: number;
+  /** Il valore dell'account sostituisce quello locale anche se più recente (vedi `accountWins`). */
+  force?: true;
+}
+
+export interface MergeOptions {
+  /** Pull forzato: il remoto vince su tutto. */
+  force?: boolean;
+  /**
+   * Collezioni in cui la copia dell'account vince sempre su quella del dispositivo (primo
+   * collegamento dell'account qui). Il dispositivo può avere nome e foto di un'altra persona:
+   * con last-writer-wins la copia locale, se più recente, sostituiva quella dell'account.
+   */
+  accountWins?: ReadonlySet<CollectionKey>;
 }
 
 export interface MergePlan {
@@ -65,7 +78,7 @@ export const planMerge = (
   rows: RemoteRow[],
   local: CollectionsState,
   pending: Map<string, PendingOutbox>,
-  options: { force?: boolean } = {}
+  options: MergeOptions = {}
 ): MergePlan => {
   const plan: MergePlan = { changes: [], requeue: [], dropOutbox: [], skipped: 0, ignored: 0 };
   const index = indexCollections(local);
@@ -87,13 +100,17 @@ export const planMerge = (
     const stamp = remoteStamp(row);
     const localEntity = index[collection].get(row.entity_id);
     const localPending = pending.get(key);
+    const accountWins = Boolean(options.accountWins?.has(collection));
 
-    if (options.force) {
+    if (options.force || accountWins) {
+      // Con accountWins la modifica va applicata anche se la copia locale è più recente: lo store
+      // altrimenti la scarterebbe (ricontrollo LWW in applyRemoteChanges).
+      const flag = accountWins ? { force: true as const } : {};
       if (row.deleted) {
-        if (localEntity) plan.changes.push({ collection, id: row.entity_id, entity: null, stamp });
+        if (localEntity) plan.changes.push({ collection, id: row.entity_id, entity: null, stamp, ...flag });
         else plan.skipped += 1;
       } else {
-        plan.changes.push({ collection, id: row.entity_id, entity: row.payload as SyncableEntity, stamp });
+        plan.changes.push({ collection, id: row.entity_id, entity: row.payload as SyncableEntity, stamp, ...flag });
       }
       if (localPending) plan.dropOutbox.push(key);
       continue;

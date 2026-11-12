@@ -113,3 +113,52 @@ test("col vault la regola resta quella di prima: la voce orfana si scarta", () =
   assert.deepEqual(plan.send, []);
   assert.deepEqual(plan.drop.map((row) => row.key), ["task:a"]);
 });
+
+// Primo collegamento di un account su un dispositivo: nome, foto e preferenze dell'account vincono
+// sempre sulla copia del dispositivo, anche se quella è più recente. Prima la copia del dispositivo
+// (di un'altra persona) veniva riaccodata e sostituiva nome e foto nell'account.
+const prefs = (updatedAt, displayName) => ({ id: "main", updatedAt, displayName });
+const prefsRow = (updatedAt, payload, deleted = false) => ({
+  entity_type: "preferences",
+  entity_id: "main",
+  payload,
+  deleted,
+  updated_at: updatedAt
+});
+const ownPrefs = new Set(["preferences"]);
+
+test("primo collegamento: le preferenze dell'account vincono su quelle più recenti del dispositivo", () => {
+  const plan = planMerge(
+    [prefsRow("2026-01-01T00:00:00Z", prefs("2026-01-01T00:00:00Z", "Camilla"))],
+    normalizeCollections({ preferences: [prefs("2026-03-01T00:00:00Z", "Altra persona")] }),
+    new Map([["preferences:main", { deleted: false }]]),
+    { accountWins: ownPrefs }
+  );
+  assert.equal(plan.requeue.length, 0);
+  assert.equal(plan.changes.length, 1);
+  assert.equal(plan.changes[0].entity.displayName, "Camilla");
+  assert.equal(plan.changes[0].force, true);
+  assert.deepEqual(plan.dropOutbox, ["preferences:main"]);
+});
+
+test("primo collegamento: un account senza preferenze tiene quelle del dispositivo", () => {
+  const plan = planMerge([], normalizeCollections({ preferences: [prefs("2026-03-01T00:00:00Z", "Io")] }), new Map(), { accountWins: ownPrefs });
+  assert.equal(plan.changes.length, 0);
+  assert.equal(plan.requeue.length, 0);
+});
+
+test("primo collegamento: le altre collezioni restano last-writer-wins", () => {
+  const plan = planMerge([row("a", "2026-01-01T00:00:00Z", task("a", "2026-01-01T00:00:00Z"))], local([task("a", "2026-01-05T00:00:00Z")]), new Map(), { accountWins: ownPrefs });
+  assert.equal(plan.changes.length, 0);
+  assert.deepEqual(plan.requeue, [{ collection: "tasks", id: "a" }]);
+});
+
+test("senza accountWins le preferenze restano last-writer-wins (sync normale)", () => {
+  const plan = planMerge(
+    [prefsRow("2026-01-01T00:00:00Z", prefs("2026-01-01T00:00:00Z", "Vecchio"))],
+    normalizeCollections({ preferences: [prefs("2026-03-01T00:00:00Z", "Nuovo")] }),
+    new Map()
+  );
+  assert.equal(plan.changes.length, 0);
+  assert.deepEqual(plan.requeue, [{ collection: "preferences", id: "main" }]);
+});

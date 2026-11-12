@@ -16,7 +16,7 @@ import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type Collect
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, type PendingOutbox, type RemoteRow } from "./syncMerge";
-import { personalRemovals } from "./accountSwitch";
+import { PERSONAL_COLLECTIONS, personalRemovals } from "./accountSwitch";
 import { ACCOUNT_TEXT } from "./labels/account";
 import {
   getSession,
@@ -201,7 +201,7 @@ const requeueEntities = async (items: Array<{ collection: CollectionKey; id: str
   });
 };
 
-const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean) => {
+const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean, accountWins?: ReadonlySet<CollectionKey>) => {
   if (!rows.length) return 0;
   assertStoreReady();
   const outbox = await db.syncOutbox.toArray();
@@ -209,11 +209,11 @@ const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean) => {
   // le righe arrivate tardi non devono riempire di nuovo il dispositivo appena svuotato.
   assertSameSession(userId);
   const pending = new Map<string, PendingOutbox>(outbox.map((row) => [row.key, { deleted: row.deleted, deletedAt: row.deletedAt }]));
-  const plan = planMerge(rows, pickCollections(useStudyStore.getState()), pending, { force });
+  const plan = planMerge(rows, pickCollections(useStudyStore.getState()), pending, { force, accountWins });
   if (plan.changes.length) {
     await useStudyStore
       .getState()
-      .applyRemoteChanges(plan.changes.map((change) => ({ ...change, force })));
+      .applyRemoteChanges(plan.changes.map((change) => ({ ...change, force: force || change.force === true })));
   }
   if (plan.dropOutbox.length) {
     await outboxTransaction(async () => {
@@ -356,11 +356,14 @@ const firstSync = async (userId: string) => {
     if (page.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
+  // Nome, foto e preferenze dell'account vincono sulla copia di questo dispositivo, che può essere
+  // di un'altra persona (primo accesso qui): la copia locale resta solo se l'account non ne ha.
+  const accountWins = new Set(PERSONAL_COLLECTIONS);
   if (!rows.length) {
     const legacy = await pullLegacySnapshot(userId);
-    if (legacy?.payload) await mergeRows(userId, legacySnapshotToRows(legacy.payload, legacy.updated_at), false);
+    if (legacy?.payload) await mergeRows(userId, legacySnapshotToRows(legacy.payload, legacy.updated_at), false, accountWins);
   } else {
-    await mergeRows(userId, rows, false);
+    await mergeRows(userId, rows, false, accountWins);
   }
   const maxSeen = rows.reduce<string | null>((max, row) => (!max || row.updated_at > max ? row.updated_at : max), null);
   // Senza stato locale disponibile non si può accodare nulla: il flag "migrated" non va scritto.

@@ -83,6 +83,11 @@
   unisci; anche con «unisci» le preferenze di prima si tolgono
   (`accountSwitch.ts` → `personalRemovals`), altrimenti l'ultima scrittura vince e nome e foto
   passano al nuovo account. Una nuova collezione «della persona» va in `PERSONAL_COLLECTIONS`.
+  Alla prima sync di un account su un dispositivo (`firstSync`, anche dopo «Togli i dati da qui»
+  o al primo accesso in assoluto, senza domanda) la copia dell'account di queste collezioni vince
+  sempre su quella locale (`planMerge` `accountWins`): quella locale resta solo se l'account non
+  ne ha. `updatePreferences` timbra con `laterStamp`: una copia con l'orario avanti non deve far
+  rifiutare la correzione di nome e foto.
 - «Esci dall'account» esce solo da questo dispositivo (`signOut("local")`): con `global` si
   chiudevano anche gli altri dispositivi dell'account. «Togli i dati da qui» riusa il flusso di
   «Ho dimenticato la password» (`signOutThisDevice` poi `resetAllData({ propagate: false })`).
