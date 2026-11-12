@@ -219,6 +219,8 @@ function GraduationPanel({
   const honors = entries.filter((entry) => entry.honors).length;
   const thesis = program === "scienze-biologiche" ? sbThesisGrade : barbThesisPoints;
   const projection = projectGraduation({ program, weightedAverage: average, honors, thesis, abroad });
+  // C'è una stima (voti registrati o voti obiettivo): solo allora le ipotesi e le fonti servono.
+  const hasEstimate = weighted !== null || targetsWeighted !== null;
 
   // Media necessaria per 110 con lo scenario scelto e, se ci sono esami in programma, voto
   // medio che serve in quegli esami.
@@ -307,6 +309,8 @@ function GraduationPanel({
         </p>
       )}
 
+      {/* Libretto vuoto e nessun voto obiettivo: niente ipotesi né fonti finché non c'è una stima. */}
+      {hasEstimate ? (
       <div className="mt-4 border-t border-[var(--border)] pt-3">
         <p className="mb-2 text-[11px] font-black uppercase text-[var(--faint)]">Le tue ipotesi</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -352,6 +356,7 @@ function GraduationPanel({
           </span>
         </label>
       </div>
+      ) : null}
 
       {projection ? (
         <ul className="mt-3 grid grid-cols-1 gap-1 text-xs font-bold text-[var(--muted)]">
@@ -368,6 +373,7 @@ function GraduationPanel({
         </ul>
       ) : null}
 
+      {hasEstimate ? (
       <div className="mt-4 border-t border-[var(--border)] pt-3">
         <p className="mb-1 text-[11px] font-black uppercase text-[var(--faint)]">Fonti ufficiali delle regole</p>
         <ul className="grid grid-cols-1 gap-1">
@@ -383,6 +389,7 @@ function GraduationPanel({
           ))}
         </ul>
       </div>
+      ) : null}
     </Panel>
   );
 }
