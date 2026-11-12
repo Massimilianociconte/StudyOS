@@ -20,26 +20,47 @@ export function semesterFilterOptions(semesters: readonly SemesterId[], selected
   ];
 }
 
-/** CFU per semestre per il sottotitolo: "1° semestre 21 CFU · 2° semestre 6 CFU". */
+/**
+ * CFU per semestre per il sottotitolo: "1° semestre 21 CFU · 2° semestre 6 CFU · senza semestre 3 CFU".
+ * Con un solo periodo il dettaglio ripeterebbe il totale: stringa vuota.
+ */
 export function cfuBySemester(items: ReadonlyArray<{ semester: SemesterId; cfu: number }>) {
-  return SEMESTER_IDS.filter((id) => items.some((item) => item.semester === id))
-    .map((id) => `${SEMESTER_LABEL[id]} ${items.filter((item) => item.semester === id).reduce((sum, item) => sum + (item.cfu || 0), 0)} CFU`)
+  const present = SEMESTER_IDS.filter((id) => items.some((item) => item.semester === id));
+  if (present.length < 2) return "";
+  return present
+    .map((id) => `${id === "non-definito" ? SUBJECTS_TEXT.noSemester : SEMESTER_LABEL[id]} ${items.filter((item) => item.semester === id).reduce((sum, item) => sum + (item.cfu || 0), 0)} CFU`)
     .join(" · ");
 }
 
 export const isArchivedSubject = (subject: Pick<Subject, "status" | "archived">) => subject.status === "archived" || Boolean(subject.archived);
 
-export type SubjectMenuItem = { kind: "status"; status: Subject["status"] } | { kind: "archive" } | { kind: "restore" } | { kind: "delete" };
+export type SubjectMenuItem =
+  | { kind: "status"; status: Subject["status"] }
+  | { kind: "complete" }
+  | { kind: "other" }
+  | { kind: "archive" }
+  | { kind: "restore" }
+  | { kind: "delete" };
 
-const MENU_STATUSES: Subject["status"][] = ["not-started", "active", "review", "exam-ready", "completed"];
+/** Stati meno usati, sotto «Altro stato…». */
+const OTHER_STATUSES: Subject["status"][] = ["not-started", "review", "exam-ready"];
+
+/** Stati di «Altro stato…» per questa materia (non quello che ha già). */
+export const otherStatuses = (subject: Pick<Subject, "status">): Subject["status"][] => OTHER_STATUSES.filter((status) => status !== subject.status);
 
 /**
- * Voci del menu "⋯" di una scheda. In corso: gli altri stati e "Archivia" (subito, con Annulla).
+ * Voci del menu "⋯" di una scheda: «In corso», «Superata» (chiede il voto), «Altro stato…» (gli
+ * altri stati, sul posto: ogni stato resta a due passi) e «Archivia» (subito, con Annulla).
  * Archiviata: "Ripristina" ed "Elimina per sempre" (con la conferma sul posto).
  */
 export function subjectMenuItems(subject: Pick<Subject, "status" | "archived">): SubjectMenuItem[] {
   if (isArchivedSubject(subject)) return [{ kind: "restore" }, { kind: "delete" }];
-  return [...MENU_STATUSES.filter((status) => status !== subject.status).map((status) => ({ kind: "status" as const, status })), { kind: "archive" }];
+  return [
+    ...(subject.status !== "active" ? [{ kind: "status" as const, status: "active" as const }] : []),
+    ...(subject.status !== "completed" ? [{ kind: "complete" as const }] : []),
+    ...(otherStatuses(subject).length ? [{ kind: "other" as const }] : []),
+    { kind: "archive" }
+  ];
 }
 
 /** Colore della nuova materia: il primo non usato dalle materie non archiviate, poi a rotazione. */

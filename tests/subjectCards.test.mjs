@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cfuBySemester, nextSubjectColor, semesterFilterOptions, subjectMenuItems } from "../src/lib/subjectCards.ts";
+import { cfuBySemester, nextSubjectColor, otherStatuses, semesterFilterOptions, subjectMenuItems } from "../src/lib/subjectCards.ts";
 
 test("semestre: un solo filtro con i conteggi, solo i semestri che hanno materie", () => {
   const options = semesterFilterOptions(["primo", "primo", "secondo", "annuale", "primo"], "tutti");
@@ -28,21 +28,45 @@ test("semestre: i CFU per semestre per il sottotitolo, nell'ordine dei semestri"
       { semester: "primo", cfu: 12 },
       { semester: "non-definito", cfu: 0 }
     ]),
-    "1° semestre 21 CFU · 2° semestre 6 CFU · Da definire 0 CFU"
+    "1° semestre 21 CFU · 2° semestre 6 CFU · senza semestre 0 CFU"
   );
   assert.equal(cfuBySemester([]), "");
+  // Un solo periodo ripeterebbe il totale («6 CFU (Da definire 6 CFU)»): niente dettaglio.
+  assert.equal(cfuBySemester([{ semester: "non-definito", cfu: 6 }]), "");
+  assert.equal(cfuBySemester([{ semester: "primo", cfu: 6 }, { semester: "primo", cfu: 9 }]), "");
 });
 
-test("menu della scheda: una materia in corso cambia stato o si archivia (con Annulla)", () => {
+test("sottotitolo di Materie: parole semplici, senza «Da definire»", async () => {
+  const { SUBJECTS_TEXT } = await import("../src/lib/labels/subjects.ts");
+  assert.equal(SUBJECTS_TEXT.subtitle(1, 6, cfuBySemester([{ semester: "non-definito", cfu: 6 }])).startsWith("1 materia in corso · 6 CFU."), true);
+  assert.ok(!SUBJECTS_TEXT.subtitle(1, 6, "").includes("Da definire"));
+});
+
+test("menu della scheda: In corso, Superata (→ voto), Altro stato…, Archivia (con Annulla)", () => {
   const items = subjectMenuItems({ status: "active", archived: false });
-  assert.deepEqual(items, [
-    { kind: "status", status: "not-started" },
-    { kind: "status", status: "review" },
-    { kind: "status", status: "exam-ready" },
-    { kind: "status", status: "completed" },
+  assert.deepEqual(items, [{ kind: "complete" }, { kind: "other" }, { kind: "archive" }]);
+  assert.ok(!items.some((item) => item.kind === "delete"), "dalle materie in corso non si elimina per sempre");
+  assert.deepEqual(subjectMenuItems({ status: "review", archived: false }), [
+    { kind: "status", status: "active" },
+    { kind: "complete" },
+    { kind: "other" },
     { kind: "archive" }
   ]);
-  assert.ok(!items.some((item) => item.kind === "delete"), "dalle materie in corso non si elimina per sempre");
+  // Superata: torna in corso o cambia stato, niente «Superata» di nuovo.
+  assert.deepEqual(subjectMenuItems({ status: "completed", archived: false }), [{ kind: "status", status: "active" }, { kind: "other" }, { kind: "archive" }]);
+});
+
+test("menu della scheda: «Altro stato…» raccoglie gli stati meno usati, tranne quello attuale", () => {
+  assert.deepEqual(otherStatuses({ status: "active" }), ["not-started", "review", "exam-ready"]);
+  assert.deepEqual(otherStatuses({ status: "review" }), ["not-started", "exam-ready"]);
+  // Ogni stato resta raggiungibile in due passi: dal menu o da «Altro stato…».
+  for (const status of ["not-started", "active", "review", "exam-ready", "completed"]) {
+    const reachable = new Set([
+      ...subjectMenuItems({ status, archived: false }).flatMap((item) => (item.kind === "status" ? [item.status] : item.kind === "complete" ? ["completed"] : [])),
+      ...otherStatuses({ status })
+    ]);
+    for (const other of ["not-started", "active", "review", "exam-ready", "completed"]) if (other !== status) assert.ok(reachable.has(other), `${status} → ${other}`);
+  }
 });
 
 test("menu della scheda: una materia archiviata si ripristina o si elimina per sempre", () => {

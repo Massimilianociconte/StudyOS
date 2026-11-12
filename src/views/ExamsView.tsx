@@ -8,7 +8,7 @@ import { EXAM_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels
 import { EXAMS_HELP, EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
-import { readImageFile } from "../lib/files";
+import { readCoverImage } from "../lib/files";
 import { isDateToDecide, withoutDateToDecide } from "../lib/examOutcome";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
@@ -628,7 +628,8 @@ function PersonalExamsView({
                       accept="image/*"
                       onChange={async (event) => {
                         try {
-                          const cover = await readImageFile(event.target.files?.[0]);
+                          // Ridotta come la foto del profilo: una foto da telefono va bene.
+                          const cover = await readCoverImage(event.target.files?.[0]);
                           if (cover) setDraft((value) => ({ ...value, cover }));
                         } catch (error) {
                           setMessage(error instanceof Error ? error.message : "Immagine non valida: scegli un altro file.");
