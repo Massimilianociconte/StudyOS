@@ -27,6 +27,9 @@ const fakeBrowser = () => {
       states.push({ [DRAWER_STATE_KEY]: id });
       index += 1;
     },
+    replace: (id) => {
+      states[index] = { [DRAWER_STATE_KEY]: id };
+    },
     go: (delta) => {
       goes.push(delta);
       queued.push(delta);
@@ -261,11 +264,53 @@ test("Avanti su una voce di un drawer già chiuso: si torna indietro, nessun dra
 
 test("voci di un caricamento precedente (pagina ricaricata con un drawer aperto) contano come pagina", () => {
   const { browser, history } = setup();
-  browser.replaceState({ [DRAWER_STATE_KEY]: "vecchio:1" });
+  browser.env.push("vecchio:1"); // la voce del drawer aperto prima della ricarica
   const log = [];
   closingDrawer(history, log, "A");
   browser.back();
   assert.deepEqual(log, ["A"]);
+  assert.equal(browser.index, 1, "si resta nell'app");
+});
+
+test("ricariche con un drawer aperto: la voce si riusa, niente Indietro a vuoto", () => {
+  const browser = fakeBrowser();
+  let history = browser.attach(createDrawerHistory(browser.env));
+  const log = [];
+  closingDrawer(history, log, "A");
+  assert.equal(browser.length, 3, "app + drawer");
+  for (let reload = 0; reload < 3; reload += 1) {
+    // Ricarica: nuovo caricamento sulla stessa voce, il drawer si riapre (elemento ricordato).
+    history = browser.attach(createDrawerHistory(browser.env));
+    closingDrawer(history, log, "A");
+    assert.equal(browser.length, 3, `ricarica ${reload + 1}: nessuna voce in più`);
+    assert.equal(browser.index, 2);
+  }
+  browser.back();
+  assert.deepEqual(log, ["A"], "un Indietro chiude il drawer");
+  assert.equal(browser.index, 1);
+  browser.back();
+  assert.equal(browser.index, 0, "il successivo esce dall'app: nessuna voce morta");
+});
+
+test("ricarica e poi ✕: la voce riusata si toglie come le altre", () => {
+  const browser = fakeBrowser();
+  let history = browser.attach(createDrawerHistory(browser.env));
+  closingDrawer(history, [], "A");
+  history = browser.attach(createDrawerHistory(browser.env));
+  const drawer = closingDrawer(history, [], "A");
+  history.close(drawer.token);
+  assert.deepEqual(browser.goes, [-1]);
+  browser.traversals();
+  assert.equal(browser.index, 1);
+  closingDrawer(history, [], "B");
+  assert.equal(browser.length, 3, "il drawer successivo aggiunge la sua voce sopra l'app");
+});
+
+test("un drawer di questo caricamento non sostituisce mai la voce corrente", () => {
+  const { browser, history } = setup();
+  closingDrawer(history, [], "A");
+  closingDrawer(history, [], "B");
+  assert.equal(browser.length, 4, "annidati: una voce ciascuno");
 });
 
 test("se l'Indietro chiesto non arriva, dopo un po' le aperture non restano in attesa", () => {

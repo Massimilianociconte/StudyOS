@@ -495,6 +495,7 @@ const drawerHistory =
     ? null
     : createDrawerHistory({
         push: (id) => window.history.pushState({ [DRAWER_STATE_KEY]: id }, ""),
+        replace: (id) => window.history.replaceState({ [DRAWER_STATE_KEY]: id }, ""),
         go: (delta) => window.history.go(delta),
         current: () => {
           const state: unknown = window.history.state;

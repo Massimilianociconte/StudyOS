@@ -14,6 +14,8 @@ export const DRAWER_STATE_KEY = "studyosDrawer";
 export interface DrawerHistoryEnv {
   /** Aggiunge una voce con questo id (pushState, senza cambiare indirizzo). */
   push: (id: string) => void;
+  /** Mette questo id nella voce corrente (replaceState, senza cambiare indirizzo). */
+  replace: (id: string) => void;
   /** Sposta la cronologia (history.go): asincrono, arriva come popstate. */
   go: (delta: number) => void;
   /** Id della voce corrente, o null se non è di un drawer. */
@@ -66,7 +68,11 @@ export function createDrawerHistory(env: DrawerHistoryEnv) {
 
   const push = (drawer: OpenDrawer) => {
     counter += 1;
-    env.push(idOf(counter));
+    // Ricarica con un drawer aperto: la pagina riparte sulla voce di quel drawer. Il primo drawer la
+    // riusa invece di aggiungerne un'altra, così le ricariche non lasciano Indietro a vuoto.
+    const current = env.current();
+    if (!entries.length && current !== null && seqOf(current) === 0) env.replace(idOf(counter));
+    else env.push(idOf(counter));
     drawer.seq = counter;
     drawer.asked = false;
     entries.push({ seq: counter, drawer });
