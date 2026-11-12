@@ -10,12 +10,12 @@ import { SHARE_NOTICE_TEXT, SHELL_TEXT } from "../lib/labels";
 import { Icon } from "./Icon";
 import { Button, Drawer, IconButton } from "./ui";
 import { NotificationsBell } from "./NotificationsBell";
-import { NotificationsPanel } from "./NotificationsPanel";
-import { QuickAddModal, type QuickAddMode } from "./QuickAddModal";
+import type { QuickAddMode } from "./QuickAddModal";
+import { DeferredPart } from "./DeferredPart";
+import { lazyView } from "../lib/lazyView";
 import { CloudStatusBadge } from "./CloudStatusBadge";
 import { GlobalSearch } from "./GlobalSearch";
 import { TaskTimerReminder } from "./TaskTimerReminder";
-import { AgentDock } from "./AgentDesk";
 import { StudyTimerWatcher } from "./StudyTimerWatcher";
 import { requestSettingsSection } from "../lib/settingsJump";
 import { QUICK_ADD_EVENT } from "../lib/quickAdd";
@@ -59,6 +59,14 @@ const navGroups: { title: string; items: NavItem[] }[] = [
 const settingsItem: NavItem = { view: "settings", label: "Impostazioni", short: "Impostazioni", icon: "Settings", hint: "Profilo, account e copie di sicurezza" };
 
 const MOBILE_PRIMARY: AppView[] = ["dashboard", "calendar", "tasks", "study"];
+// Pannelli e modali che non servono al primo disegno: arrivano in differita (e si scaldano a riposo).
+const loadQuickAdd = () => import("./QuickAddModal");
+const loadNotificationsPanel = () => import("./NotificationsPanel");
+const loadAgentDock = () => import("./AgentDesk");
+const QuickAddModal = lazyView(loadQuickAdd, "QuickAddModal");
+const NotificationsPanel = lazyView(loadNotificationsPanel, "NotificationsPanel");
+const AgentDock = lazyView(loadAgentDock, "AgentDock");
+
 const mobileItems = navGroups[0].items.filter((item) => MOBILE_PRIMARY.includes(item.view));
 
 /** Per quanto resta in vista la conferma dell'aggiunta rapida. */
@@ -66,6 +74,23 @@ const QUICK_ADD_DONE_MS = 5000;
 
 export function AppShell({ children }: PropsWithChildren) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  // Il modale si monta alla prima apertura e poi resta montato (come prima).
+  const [quickAddMounted, setQuickAddMounted] = useState(false);
+  useEffect(() => {
+    if (quickAddOpen) setQuickAddMounted(true);
+  }, [quickAddOpen]);
+  useEffect(() => {
+    const warm = () => {
+      void loadQuickAdd().catch(() => undefined);
+      void loadNotificationsPanel().catch(() => undefined);
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(warm, { timeout: 4000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(warm, 1500);
+    return () => window.clearTimeout(id);
+  }, []);
   const [quickAddMode, setQuickAddMode] = useState<QuickAddMode>("task");
   const [moreOpen, setMoreOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -451,14 +476,20 @@ export function AppShell({ children }: PropsWithChildren) {
       </Drawer>
 
       <TaskTimerReminder />
-      <AgentDock />
+      <DeferredPart>
+        <AgentDock />
+      </DeferredPart>
       <StudyTimerWatcher />
-      <QuickAddModal
-        open={quickAddOpen}
-        initialMode={quickAddMode}
-        onClose={() => setQuickAddOpen(false)}
-        onSaved={(text) => setQuickAddDone({ text })}
-      />
+      {quickAddMounted || quickAddOpen ? (
+        <DeferredPart>
+          <QuickAddModal
+            open={quickAddOpen}
+            initialMode={quickAddMode}
+            onClose={() => setQuickAddOpen(false)}
+            onSaved={(text) => setQuickAddDone({ text })}
+          />
+        </DeferredPart>
+      ) : null}
       {/* Conferma dell'aggiunta rapida, in alto e sopra la pagina (in basso ci sono barra, «+» e avvisi).
           Non si tocca (i tocchi passano sotto) e sparisce da sola; la regione resta montata per gli screen reader. */}
       <div
@@ -473,7 +504,11 @@ export function AppShell({ children }: PropsWithChildren) {
           </p>
         ) : null}
       </div>
-      {notificationsOpen ? <NotificationsPanel onClose={() => setNotificationsOpen(false)} /> : null}
+      {notificationsOpen ? (
+        <DeferredPart>
+          <NotificationsPanel onClose={() => setNotificationsOpen(false)} />
+        </DeferredPart>
+      ) : null}
     </main>
   );
 }

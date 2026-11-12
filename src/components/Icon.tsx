@@ -96,7 +96,12 @@ import {
   ShieldCheck
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { CourseIcon } from "./CourseIcon";
+import { Suspense } from "react";
+import { lazyView } from "../lib/lazyView";
+
+// Le icone dei corsi BARB (tracciati SVG pesanti) si caricano solo quando servono; intanto resta uno spazio
+// della stessa misura (la classe porta già larghezza e altezza).
+const CourseIcon = lazyView(() => import("./CourseIcon"), "CourseIcon");
 
 const icons = {
   Activity,
@@ -199,7 +204,13 @@ const icons = {
 export type IconName = keyof typeof icons;
 
 export function Icon({ name, className }: { name: string; className?: string }) {
-  if (name.startsWith("barb:")) return <CourseIcon course={{ id: name.slice(5), name: "" }} className={className} />;
+  if (name.startsWith("barb:")) {
+    return (
+      <Suspense fallback={<span className={className} aria-hidden="true" />}>
+        <CourseIcon course={{ id: name.slice(5), name: "" }} className={className} />
+      </Suspense>
+    );
+  }
   const Component = icons[name as IconName] ?? CircleDot;
   return <Component className={className} aria-hidden="true" strokeWidth={2.15} />;
 }

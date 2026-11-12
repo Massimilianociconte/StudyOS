@@ -1,51 +1,17 @@
-import { lazy, Suspense, useEffect } from "react";
-import type { ComponentType, ReactNode } from "react";
+import { Suspense, useEffect } from "react";
+import type { ReactNode } from "react";
 import { m } from "framer-motion";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "./store/useStudyStore";
 import { AppShell } from "./components/AppShell";
 import { LockScreen } from "./components/LockScreen";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
-import { whenPersisted } from "./lib/persistence";
+import { lazyView } from "./lib/lazyView";
 import { cloudConfigured } from "./lib/cloudSyncState";
 import { useViewMemory } from "./lib/uiState";
-import { startAgentLink } from "./lib/agentLink";
 import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
 import { useShareInviteLinks } from "./hooks/useShareInviteLinks";
 import type { AppView } from "./types";
-
-const CHUNK_RELOAD_KEY = "studyos-chunk-reload";
-
-/**
- * Dopo un nuovo deploy una scheda aperta con la build precedente non trova più i vecchi chunk
- * delle viste: si salva e si ricarica una sola volta invece di mostrare una pagina rotta.
- */
-const lazyView = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
-  lazy(async () => {
-    try {
-      const module = await loader();
-      try {
-        sessionStorage.removeItem(CHUNK_RELOAD_KEY);
-      } catch {
-        // storage non disponibile
-      }
-      return { default: module[name] as ComponentType };
-    } catch (error) {
-      let alreadyReloaded = true;
-      try {
-        alreadyReloaded = sessionStorage.getItem(CHUNK_RELOAD_KEY) === "1";
-        if (!alreadyReloaded) sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
-      } catch {
-        // senza storage non si rischia un loop di ricariche
-      }
-      if (!alreadyReloaded) {
-        await whenPersisted().catch(() => undefined);
-        window.location.reload();
-        return new Promise<{ default: ComponentType }>(() => undefined);
-      }
-      throw error;
-    }
-  });
 
 const DashboardView = lazyView(() => import("./views/DashboardView"), "DashboardView");
 const CalendarView = lazyView(() => import("./views/CalendarView"), "CalendarView");
@@ -117,7 +83,17 @@ export default function App() {
 
   useEffect(() => {
     if (loading) return;
-    return startAgentLink();
+    // Il collegamento agli agenti arriva in differita: non serve al primo disegno.
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void import("./lib/agentLink").then((module) => {
+      if (cancelled) return;
+      stop = module.startAgentLink();
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
   }, [loading]);
 
   if (loading) {

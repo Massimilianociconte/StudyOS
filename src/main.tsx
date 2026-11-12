@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { LazyMotion, MotionConfig, domAnimation } from "framer-motion";
+import { LazyMotion, MotionConfig } from "framer-motion";
 import App from "./App";
 import { TabGuard } from "./components/TabGuard";
 import {
@@ -14,6 +14,9 @@ import {
 import { handOffPersistence, haltPersistence } from "./lib/persistence";
 import "./index.css";
 
+// Le funzioni di animazione si caricano dopo il primo disegno (le `m.*` restano ferme finché non arrivano).
+const loadMotionFeatures = () => import("./lib/motionFeatures").then((module) => module.default);
+
 const root = ReactDOM.createRoot(document.getElementById("root")!);
 
 // Una sola scheda attiva per profilo (src/lib/activeTab.ts): l'app si monta solo con il blocco,
@@ -26,7 +29,7 @@ const activeTab = startActiveTab(
       root.render(
         <React.StrictMode>
           {/* Solo le animazioni usate (ingresso/uscita, niente layout): bundle iniziale più leggero. */}
-          <LazyMotion features={domAnimation} strict>
+          <LazyMotion features={loadMotionFeatures} strict>
             {/* Chi chiede al sistema meno movimento non vede scivolamenti (framer di base: "never"). */}
             <MotionConfig reducedMotion="user">
               <App />

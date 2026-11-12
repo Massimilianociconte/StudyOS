@@ -213,7 +213,12 @@
 - Bundle iniziale: niente import statici di `lib/supabase`, `lib/groupSync` o dei dati BARB
   (`university/examSessions`, JSON) da store, shell o componenti sempre montati; usare
   `import()` (vedi App, NotificationsBell, `importBarbExamSessions`). Animazioni con `m.` sotto
-  `LazyMotion` (strict): `motion.` lancia errore.
+  `LazyMotion` (strict): `motion.` lancia errore. Le funzioni di animazione si caricano dopo
+  il primo disegno (`lib/motionFeatures.ts`); modale di aggiunta rapida, pannello notifiche,
+  `AgentDock`, `NoteDrawer`, `CourseIcon` e `agentLink` sono dietro `lazyView` (`lib/lazyView.ts`,
+  ricarica una volta se il chunk è vecchio) e `DeferredPart`. Il test `tests/entryBundle.test.mjs`
+  segue gli import statici da `main.tsx` e fallisce se ci rientra un pezzo pesante o recharts.
+  Ultima misura: ingresso 236 -> 196 kB gzip.
 - `Drawer` usa un portal su `body` e una pila: Esc e Tab li gestisce solo il drawer in cima.
   Un drawer dentro un altro (es. Invita sopra il dettaglio del gruppo) è quindi sicuro.
 - `isSharedAvailable` (groupSync): senza sessione non memorizza nulla e salva in IndexedDB solo

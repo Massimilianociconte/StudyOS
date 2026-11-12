@@ -27,7 +27,10 @@ import { allDayFirstDate, searchHits } from "../lib/repeat";
 import { nextSearchIndex, searchOptionId, searchPanelBox } from "../lib/searchUi";
 import { openItemPlan, searchKindEntity, type OccurrenceAt, type SearchKind } from "../lib/openItem";
 import { writeUiState } from "../lib/uiState";
-import { NoteDrawer } from "./NoteDrawer";
+import { lazyView } from "../lib/lazyView";
+import { DeferredPart } from "./DeferredPart";
+
+const NoteDrawer = lazyView(() => import("./NoteDrawer"), "NoteDrawer");
 import { NOTES_TEXT } from "../lib/labels/notes";
 
 type ResultKind = SearchKind;
@@ -360,6 +363,11 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
 
   // Nota aperta dalla ricerca: si legge sul posto, in un Drawer (non ha una sezione sua).
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+  // Il pannello della nota si monta alla prima apertura e poi resta (così la chiusura anima come prima).
+  const [noteDrawerMounted, setNoteDrawerMounted] = useState(false);
+  useEffect(() => {
+    if (openNoteId) setNoteDrawerMounted(true);
+  }, [openNoteId]);
 
   // Il risultato apre proprio l'elemento: chiavi della sezione d'arrivo (lib/openItem) e poi la sezione.
   const jump = (result: SearchResult) => {
@@ -546,7 +554,11 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           </m.div>
         ) : null}
       </AnimatePresence>
-      <NoteDrawer noteId={openNoteId} onClose={() => setOpenNoteId(null)} />
+      {noteDrawerMounted || openNoteId ? (
+        <DeferredPart>
+          <NoteDrawer noteId={openNoteId} onClose={() => setOpenNoteId(null)} />
+        </DeferredPart>
+      ) : null}
     </div>
   );
 }
