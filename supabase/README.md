@@ -112,6 +112,61 @@ Se `con_ip` è 0, il limite per IP è spento e resta solo quello per account (30
 minuto). La ricerca resta esatta (email intera o @nome): chi prova indirizzi a caso deve
 indovinarli interi, uno per ricerca.
 
+**Protezione dei dati (revisione B4 del 12/11/2026).** Cosa si salva dove, chi lo legge e cosa
+fare se perdi un dispositivo: [docs/security-data.md](../docs/security-data.md). Nel SQL Editor,
+una query alla volta e solo gli script che usi (tutti si possono rieseguire):
+
+1. `schema.sql`;
+2. `groups.sql`;
+3. `sharing.sql`;
+4. `people.sql`;
+5. `university.sql`, solo se l'avevi eseguito;
+6. `verify.sql`: tutte le colonne `*_ready` `true` (tranne quelle dei file, se non usi
+   `storage.sql`) e `security_issues` vuota (`NULL`). Se non è vuota, elenca gli oggetti da
+   sistemare;
+7. `people-verify.sql`: anche `email_names_ready` `true`.
+
+Cosa cambia:
+
+- **Privilegi.** Il controllo ha trovato 15 problemi. Nove funzioni dei gruppi e delle
+  condivisioni erano chiamabili anche senza account (non facevano nulla, ma non devono
+  esserlo). Gli account avevano `TRUNCATE`, che svuota una tabella ignorando la RLS, su
+  `studyos_items` e sulle cinque tabelle dei gruppi. Ora sono tolti. Le funzioni dei trigger non
+  si possono chiamare direttamente.
+- **Email.** L'email dei membri dei gruppi non si salva più: la leggevano tutti i membri. Un
+  trigger la toglie anche se un'app vecchia la manda, e lo script svuota quelle già salvate.
+  Lo stesso vale per l'email di chi accetta un link di condivisione, che vedeva chi
+  condivideva. Restano gli indirizzi dei vecchi inviti per email (prima dell'11/11/2026),
+  visibili ai membri del gruppo finché l'invito esiste.
+- **Nomi.** `people.sql` sostituisce i nomi presi dalla parte dell'email prima della @ (membri,
+  proprietari, inviti, risorse, attività, condivisioni) con il nome del profilo online,
+  altrimenti con «Studente». La prima esecuzione è segnata in `studyos_migrations`
+  (`names_from_email`). Gira a ogni esecuzione e non legge né scrive email: le confronta
+  soltanto.
+- **Cancellazione dall'account.** «Cancella anche dall'account» (`erase_studyos_account_items`)
+  ora toglie anche:
+  - la cronologia delle modifiche fatte da altri;
+  - le condivisioni e i link mandati;
+  - permessi e registro del connettore remoto;
+  - nome e @nome del profilo online;
+  - i resoconti BARB.
+
+  I gruppi restano. La colonna `erase_all_ready` di `verify.sql` lo controlla.
+- **Controlli generici.** Le nuove colonne di `verify.sql` valgono per ogni tabella
+  `public.studyos_*` e ogni funzione `SECURITY DEFINER`, anche quelle aggiunte dopo:
+  - `tables_rls_ready`;
+  - `anon_closed_ready`;
+  - `definer_functions_ready`;
+  - `security_issues`;
+  - `emails_hidden_ready`;
+  - `erase_all_ready`.
+
+  Riesegui `verify.sql` dopo ogni script nuovo.
+
+Esegui gli script **prima** del push su `main`: il testo di «Cancella anche dall'account»
+nell'app descrive già la nuova cancellazione. Il resto dell'app funziona anche senza questa
+revisione.
+
 `sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
 dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha
 una transazione che lo avvolge) e premi Run; si può rieseguire. Poi incolla

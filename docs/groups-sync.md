@@ -35,8 +35,8 @@ verifiche. Rieseguire `groups.sql` due volte di fila non cambia nulla (provato s
   giorni (`studyos-pending-invite` in localStorage), pulisce l'URL e apre
   Gruppi con la scheda **Invito ricevuto**: anteprima dal server (RPC
   `preview_group_invite`: nome, descrizione, membri, responsabile) e un tocco
-  su **Entra nel gruppo**. La conferma è voluta: entrando, nome ed email sono
-  visibili agli altri membri.
+  su **Entra nel gruppo**. La conferma è voluta: entrando, il nome è visibile agli
+  altri membri. L'email no (vedi sotto).
 - Senza accesso: **Accedi o registrati per entrare** apre il login nella
   stessa schermata; appena arriva la sessione (login, registrazione o ritorno
   dalla conferma email su questo dispositivo) si entra da soli con quell'account.
@@ -88,6 +88,13 @@ alcun errore.
   `visibleMemberName` e `getActor`). Prima la riserva era la parte dell'email prima della @, che
   vedevano gli altri membri, le notifiche e i loro agenti MCP: chi trova qualcuno con il `@nome` non
   deve poterne dedurre l'indirizzo. Lo stesso vale per il nome di chi condivide (`shareSync`).
+  I nomi così salvati prima li sostituisce `people.sql` (`names_from_email`, controllato da
+  `email_names_ready`).
+- **L'email dei membri non si salva** (revisione B4, [security-data.md](security-data.md)): la
+  colonna `email` di `studyos_group_members` resta sempre vuota. Il trigger
+  `studyos_group_members_no_email` la svuota anche se un'app vecchia la manda; `join_group_by_code`
+  non la legge più dal token; il client manda `null`. Lo stesso per `grantee_email` delle
+  condivisioni accettate da un link.
 - **Un invito a una persona non porta il codice del gruppo** (`code = ''`): chi lo riceve non può
   entrare con il codice dopo aver rifiutato o dopo il ritiro dell'invito. Il client usa `code` solo
   per gli inviti con codice.

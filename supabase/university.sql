@@ -16,6 +16,8 @@ create table if not exists public.university_sync_reports (
 alter table public.university_sync_reports enable row level security;
 
 revoke all on table public.university_sync_reports from anon;
+-- Solo i due privilegi che servono (i predefiniti del progetto danno anche TRUNCATE, che ignora la RLS).
+revoke all on table public.university_sync_reports from authenticated;
 grant select, insert on table public.university_sync_reports to authenticated;
 
 drop policy if exists "university_reports_select_own" on public.university_sync_reports;

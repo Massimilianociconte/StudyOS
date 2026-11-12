@@ -118,6 +118,11 @@ grant select, insert, update, delete on table public.studyos_group_members to au
 grant select, insert, update, delete on table public.studyos_group_invites to authenticated;
 grant select, insert, update, delete on table public.studyos_group_resources to authenticated;
 grant select, insert, update, delete on table public.studyos_group_activity to authenticated;
+-- I privilegi predefiniti del progetto danno ad authenticated anche TRUNCATE (che ignora la RLS),
+-- REFERENCES e TRIGGER: l'app non li usa, si tolgono (verify.sql, tables_rls_ready).
+revoke truncate, references, trigger on table public.studyos_groups, public.studyos_group_members,
+  public.studyos_group_invites, public.studyos_group_resources, public.studyos_group_activity
+  from authenticated;
 
 -- helper: appartengo al gruppo? (DEFINER per non rientrare nelle policy: sola lettura)
 create or replace function public.studyos_is_group_member(p_group_id text)
@@ -144,6 +149,13 @@ as $$
   select role from public.studyos_group_members
   where group_id = p_group_id and user_id = auth.uid()::text
 $$;
+
+-- Le due funzioni servono alle policy di chi ha fatto l'accesso. I privilegi predefiniti del progetto
+-- danno EXECUTE anche ad anon e "revoke ... from public" non lo toglie: si toglie in modo esplicito.
+revoke all on function public.studyos_is_group_member(text) from public, anon;
+revoke all on function public.studyos_group_role(text) from public, anon;
+grant execute on function public.studyos_is_group_member(text) to authenticated;
+grant execute on function public.studyos_group_role(text) to authenticated;
 
 -- Gruppi: lettura membri, scrittura proprietario, creazione autenticata.
 drop policy if exists studyos_groups_select on public.studyos_groups;
@@ -268,6 +280,8 @@ begin
 end;
 $$;
 
+revoke all on function public.studyos_group_resources_guard() from public, anon, authenticated;
+
 drop trigger if exists studyos_group_resources_guard on public.studyos_group_resources;
 create trigger studyos_group_resources_guard
   before update on public.studyos_group_resources
@@ -290,7 +304,7 @@ begin
 end;
 $$;
 
-revoke all on function public.studyos_group_stamp() from public;
+revoke all on function public.studyos_group_stamp() from public, anon, authenticated;
 
 drop trigger if exists studyos_groups_stamp on public.studyos_groups;
 create trigger studyos_groups_stamp
@@ -345,12 +359,39 @@ begin
 end;
 $$;
 
-revoke all on function public.studyos_group_member_left_activity() from public;
+revoke all on function public.studyos_group_member_left_activity() from public, anon, authenticated;
 
 drop trigger if exists studyos_group_member_left_activity on public.studyos_group_members;
 create trigger studyos_group_member_left_activity
   after delete on public.studyos_group_members
   for each row execute function public.studyos_group_member_left_activity();
+
+-- ─── Email dei membri: mai salvata (revisione B4 del 12/11/2026) ───────────
+-- Ogni membro legge tutte le righe dei membri del suo gruppo (la RLS filtra le righe, non le colonne):
+-- un'email salvata lì la vedevano tutti, e i loro dispositivi la tenevano. Prima la scrivevano l'app
+-- (il proprietario alla creazione) e join_group_by_code (chi entra con il codice). Nessuno la usa: il
+-- server la toglie a ogni scrittura, anche da un'app vecchia, e qui sotto da quelle già salvate. La
+-- colonna resta per non rompere le app che la mandano ancora.
+create or replace function public.studyos_group_members_no_email()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  new.email := null;
+  return new;
+end;
+$$;
+
+revoke all on function public.studyos_group_members_no_email() from public, anon, authenticated;
+
+drop trigger if exists studyos_group_members_no_email on public.studyos_group_members;
+create trigger studyos_group_members_no_email
+  before insert or update on public.studyos_group_members
+  for each row execute function public.studyos_group_members_no_email();
+
+-- Email già salvate: via (idempotente, alla seconda esecuzione non trova righe).
+update public.studyos_group_members set email = null where email is not null;
 
 -- ─── RPC (SECURITY DEFINER: verifiche atomiche lato server) ─────────────────
 
@@ -428,7 +469,7 @@ begin
 end;
 $$;
 
-revoke all on function public.accept_group_invite(text, text) from public;
+revoke all on function public.accept_group_invite(text, text) from public, anon;
 grant execute on function public.accept_group_invite(text, text) to authenticated;
 
 -- Rifiuta un invito nominale: solo l'account destinatario, come accept_group_invite.
@@ -460,10 +501,11 @@ begin
 end;
 $$;
 
-revoke all on function public.decline_group_invite(text) from public;
+revoke all on function public.decline_group_invite(text) from public, anon;
 grant execute on function public.decline_group_invite(text) to authenticated;
 
--- Unione con codice: valida il codice e aggiunge il membro, restituisce il gruppo.
+-- Unione con codice: valida il codice e aggiunge il membro, restituisce il gruppo. Senza email: gli
+-- altri membri leggono la riga (revisione B4, vedi studyos_group_members_no_email).
 create or replace function public.join_group_by_code(p_code text, p_display_name text default null)
 returns text
 language plpgsql
@@ -472,7 +514,6 @@ set search_path = public
 as $$
 declare
   v_group public.studyos_groups%rowtype;
-  v_email text := lower(auth.jwt() ->> 'email');
   v_name text := public.studyos_member_name(p_display_name, null);
   v_added integer;
 begin
@@ -485,7 +526,7 @@ begin
     raise exception 'Codice non valido';
   end if;
   insert into public.studyos_group_members (group_id, user_id, email, display_name, role)
-  values (v_group.id, auth.uid()::text, v_email, v_name, 'member')
+  values (v_group.id, auth.uid()::text, null, v_name, 'member')
   on conflict (group_id, user_id) do nothing;
   get diagnostics v_added = row_count;
   -- Solo se è entrato adesso: un membro che reinseriva il codice scriveva un'altra voce. Un id nuovo
@@ -498,7 +539,7 @@ begin
 end;
 $$;
 
-revoke all on function public.join_group_by_code(text, text) from public;
+revoke all on function public.join_group_by_code(text, text) from public, anon;
 grant execute on function public.join_group_by_code(text, text) to authenticated;
 
 -- Anteprima di un invito (link/QR/codice): chi ha il codice vede nome, descrizione, numero di
@@ -528,7 +569,7 @@ as $$
   where auth.uid() is not null and upper(g.invite_code) = upper(p_code)
 $$;
 
-revoke all on function public.preview_group_invite(text) from public;
+revoke all on function public.preview_group_invite(text) from public, anon;
 grant execute on function public.preview_group_invite(text) to authenticated;
 
 -- ─── Realtime ───────────────────────────────────────────────────────────────

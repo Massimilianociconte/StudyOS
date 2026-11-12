@@ -119,6 +119,27 @@ select
         where u.id = i.recipient_user_id and lower(u.email) = lower(i.recipient_email)
           and u.deleted_at is null and u.email_confirmed_at < timestamptz '2026-11-11 00:00:00+01'))
     as legacy_invites_safe_ready,
+  -- Revisione B4: nessun nome salvato è la parte dell'email prima della @ del suo account (pulizia di
+  -- people.sql, segno names_from_email). Solo confronti: nel risultato non esce nessuna email. Se torna
+  -- false dopo la pulizia, un'app non ancora aggiornata ha scritto di nuovo un nome così (o qualcuno ha
+  -- scelto proprio quel nome): riesegui people.sql.
+  exists (select 1 from public.studyos_migrations where name = 'names_from_email')
+    and not exists (
+      select 1
+      from (
+        select m.user_id as account, m.display_name as name from public.studyos_group_members m
+        union all select g.owner_id, g.owner_display_name from public.studyos_groups g
+        union all select i.from_user_id, i.from_display_name from public.studyos_group_invites i
+        union all select r.added_by_user_id, r.added_by_display_name from public.studyos_group_resources r
+        union all select a.actor_user_id, a.actor_display_name from public.studyos_group_activity a
+        union all select s.owner_id::text, s.owner_name from public.studyos_shares s
+        union all select s.grantee_user_id::text, s.grantee_name from public.studyos_shares s
+        union all select i.owner_id::text, i.owner_name from public.studyos_share_invites i
+      ) as stored
+      join auth.users u on u.id::text = stored.account
+      where nullif(split_part(u.email, '@', 1), '') is not null
+        and btrim(stored.name) in (split_part(u.email, '@', 1), lower(split_part(u.email, '@', 1)))
+    ) as email_names_ready,
   -- Revisione del 12/11/2026 (promemoria con l'app chiusa): sessione e testo privato per iscrizione,
   -- sessione scritta dal server, account di ogni iscrizione nelle push (filtro del service worker).
   (select count(*) from information_schema.columns where table_schema = 'public'

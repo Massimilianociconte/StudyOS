@@ -11,5 +11,6 @@
 - Promemoria con l'app chiusa (Web Push dei promemoria, `push-reminders.sql`, pg_cron) e notifiche spente a ogni uscita → [../push-reminders.md](../push-reminders.md)
 - Agenti MCP (ChatGPT, Claude, client locali, route `/push` del Worker) → [../agent-mcp.md](../agent-mcp.md)
 - Prove end-to-end con due account sullo stack Supabase locale (`npm run e2e`) → [../../tests/e2e/README.md](../../tests/e2e/README.md)
+- Protezione dei dati: cosa si salva dove, chi legge, cifratura a riposo, cosa toglie «Cancella anche dall'account», dispositivo perso, controlli RLS generici di `verify.sql` e perché niente FORCE RLS → [../security-data.md](../security-data.md)
 - File dei materiali (Supabase Storage, copia locale, migrazione dei file incorporati) → [../superpowers/specs/2026-11-12-attachments-storage-design.md](../superpowers/specs/2026-11-12-attachments-storage-design.md)
 - Domande aperte → [OPENQUESTIONS.md](OPENQUESTIONS.md)

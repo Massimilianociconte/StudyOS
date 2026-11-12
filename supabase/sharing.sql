@@ -330,6 +330,8 @@ begin
 end;
 $$;
 
+revoke all on function public.studyos_items_guard() from public, anon, authenticated;
+
 drop trigger if exists studyos_items_guard on public.studyos_items;
 create trigger studyos_items_guard
 before update on public.studyos_items
@@ -582,7 +584,7 @@ begin
 end;
 $$;
 
-revoke all on function public.studyos_items_recipient_values() from public;
+revoke all on function public.studyos_items_recipient_values() from public, anon, authenticated;
 
 drop trigger if exists studyos_items_recipient_values on public.studyos_items;
 create trigger studyos_items_recipient_values
@@ -645,7 +647,7 @@ begin
 end;
 $$;
 
-revoke all on function public.studyos_items_revision() from public;
+revoke all on function public.studyos_items_revision() from public, anon, authenticated;
 
 drop trigger if exists studyos_items_revision on public.studyos_items;
 create trigger studyos_items_revision
@@ -733,6 +735,8 @@ begin
 end;
 $$;
 
+revoke all on function public.studyos_shares_guard() from public, anon, authenticated;
+
 drop trigger if exists studyos_shares_guard on public.studyos_shares;
 create trigger studyos_shares_guard
 before update on public.studyos_shares
@@ -752,7 +756,7 @@ begin
 end;
 $$;
 
-revoke all on function public.studyos_group_member_left() from public;
+revoke all on function public.studyos_group_member_left() from public, anon, authenticated;
 
 drop trigger if exists studyos_group_member_left on public.studyos_group_members;
 create trigger studyos_group_member_left
@@ -988,7 +992,6 @@ set search_path = public
 as $$
 declare
   v_invite public.studyos_share_invites%rowtype;
-  v_email text := public.studyos_account_email();
   v_name text := public.studyos_share_name(p_display_name);
   v_item jsonb;
   v_request jsonb;
@@ -998,6 +1001,8 @@ begin
   v_invite := public.studyos_claim_share_invite(p_invite_id, p_token);
   perform public.studyos_validate_share_items(coalesce(p_reciprocal, '[]'::jsonb), false);
 
+  -- grantee_email sempre vuota (revisione B4 del 12/11/2026): prima, con un invito via link, il
+  -- proprietario leggeva l'email di chi accettava. Chi riceve si vede solo con il nome che sceglie.
   for v_item in select value from jsonb_array_elements(v_invite.offers) loop
     insert into public.studyos_shares
       (owner_id, owner_name, scope, subject_ids, permission, grantee_user_id, grantee_name, grantee_email)
@@ -1009,7 +1014,7 @@ begin
       coalesce(v_item->>'permission', 'view'),
       auth.uid(),
       v_name,
-      case when v_invite.recipient_user_id is not null then null else v_email end
+      null
     )
     on conflict (owner_id, scope, (coalesce('u:' || grantee_user_id::text, 'g:' || grantee_group_id))) do update set
       permission = excluded.permission,
@@ -1169,8 +1174,8 @@ as $$
   end
 $$;
 
-revoke all on function public.studyos_recipient_newer(jsonb, boolean, jsonb, boolean, timestamptz) from public;
-revoke all on function public.studyos_recipient_stamped(jsonb, boolean, jsonb, boolean, timestamptz) from public;
+revoke all on function public.studyos_recipient_newer(jsonb, boolean, jsonb, boolean, timestamptz) from public, anon;
+revoke all on function public.studyos_recipient_stamped(jsonb, boolean, jsonb, boolean, timestamptz) from public, anon;
 grant execute on function public.studyos_recipient_newer(jsonb, boolean, jsonb, boolean, timestamptz) to authenticated;
 grant execute on function public.studyos_recipient_stamped(jsonb, boolean, jsonb, boolean, timestamptz) to authenticated;
 
@@ -1334,6 +1339,12 @@ revoke all on function public.decline_share_invite(uuid, text) from anon;
 revoke all on function public.shared_subject_labels() from anon;
 revoke all on function public.push_shared_rows(uuid, text, jsonb) from anon;
 revoke all on function public.studyos_claim_share_invite(uuid, text) from anon, authenticated;
+
+-- Email di chi ha accettato un invito via link, salvate prima della revisione B4: via (il proprietario
+-- le leggeva; accept_share_invite non le scrive più). Idempotente: alla seconda esecuzione non trova
+-- righe. studyos_shares_guard rinnova updated_at, così le app rileggono la riga; il permesso non
+-- cambia e non parte nessuna notifica.
+update public.studyos_shares set grantee_email = null where grantee_email is not null;
 
 -- ─── Realtime ───────────────────────────────────────────────────────────────
 -- studyos_items è già nella pubblicazione (schema.sql). Il client usa gli eventi come segnale.

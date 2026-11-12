@@ -85,7 +85,8 @@ export const SETTINGS_TEXT = {
     deviceOnly: "Svuota solo questo dispositivo",
     deviceOnlyHint: "Svuota solo questo dispositivo: i dati restano nell'account e vengono riscaricati.",
     alsoCloud: "Cancella anche dall'account",
-    alsoCloudHint: "Cancella anche dall'account: spariscono anche dagli altri dispositivi collegati. Non si può annullare.",
+    alsoCloudHint:
+      "Cancella anche dall'account: spariscono anche dagli altri dispositivi collegati, insieme a nome e @nome del profilo online, alle tue condivisioni e al connettore remoto degli assistenti. Restano i gruppi e ciò che altri condividono con te. Non si può annullare.",
     confirmLocal: "Cancella tutti i dati",
     cancel: "Annulla",
     accountUnreachable:
