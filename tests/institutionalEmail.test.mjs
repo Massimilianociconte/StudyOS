@@ -2,16 +2,25 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { buildSql } from "../scripts/supabase/gen-email-vectors.mjs";
-import { EMAIL_HIDDEN, institutionalEmail, normalizeEmailText, onlyInstitutionalEmails, redactEmails } from "../src/lib/institutionalEmail.ts";
+import { EMAIL_HIDDEN, cutAtRunBoundary, institutionalEmail, normalizeEmailText, onlyInstitutionalEmails, redactEmails } from "../src/lib/institutionalEmail.ts";
 
-const { vectors } = JSON.parse(readFileSync(new URL("./fixtures/emailVectors.json", import.meta.url), "utf8"));
+const { vectors, cuts } = JSON.parse(readFileSync(new URL("./fixtures/emailVectors.json", import.meta.url), "utf8"));
 
 test("la tabella di esempi: ogni vettore dà lo stesso risultato nel client", () => {
   assert.ok(vectors.length >= 30);
   for (const v of vectors) {
-    assert.equal(redactEmails(v.input, false), v.hide, `nascondi: ${v.name}`);
-    assert.equal(redactEmails(v.input, true), v.keep, `tieni unimi: ${v.name}`);
-    assert.equal(onlyInstitutionalEmails(v.input), v.only, `solo unimi: ${v.name}`);
+    const url = v.url === true;
+    assert.equal(redactEmails(v.input, false, url), v.hide, `nascondi: ${v.name}`);
+    assert.equal(redactEmails(v.input, true, url), v.keep, `tieni unimi: ${v.name}`);
+    assert.equal(onlyInstitutionalEmails(v.input, url), v.only, `solo unimi: ${v.name}`);
+  }
+});
+
+test("i tagli dei nomi di gruppo: stesso taglio e stesso testo per l'agente nel client", () => {
+  assert.ok(cuts.length >= 10);
+  for (const c of cuts) {
+    assert.equal(cutAtRunBoundary(c.input, 120), c.cut, `taglio: ${c.name}`);
+    assert.equal(redactEmails(cutAtRunBoundary(c.input, 120), false), c.agent, `agente: ${c.name}`);
   }
 });
 
@@ -38,13 +47,62 @@ test("tempo lineare: una corsa lunga e un testo grande non rallentano (NEW-1)", 
   const mixed = "a@b ciao mondo prof@unimi.it, x.y@gmail.com ".repeat(9_500);
   assert.ok(mixed.length > 400_000);
   started = performance.now();
-  const out = redactEmails(mixed, true);
+  assert.equal(redactEmails(mixed, true), EMAIL_HIDDEN, "più di 10 chiocciole: tutto nascosto");
   assert.ok(performance.now() - started < 4000, "400 KB di testo misto");
-  assert.ok(out.includes("prof@unimi.it") && !out.includes("gmail"));
   started = performance.now();
   assert.equal(onlyInstitutionalEmails(mixed), false);
   assert.ok(performance.now() - started < 4000);
+  // 400 KB di parole con 10 indirizzi: si analizza, e resta lineare.
+  const words = `${"ciao mondo ".repeat(18_000)}prof@unimi.it, x.y@gmail.com ${"a@b ".repeat(8)}fine`;
+  assert.ok(words.length > 190_000);
+  started = performance.now();
+  const out = redactEmails(words, true);
+  assert.ok(performance.now() - started < 4000, "testo lungo con 10 chiocciole");
+  assert.ok(out.includes("prof@unimi.it") && !out.includes("gmail") && out.endsWith(" fine"));
   assert.equal(redactEmails("niente da nascondere ".repeat(30_000), false).length, 630_000, "senza chiocciola il testo torna com'è");
+});
+
+test("R3-1: oltre 10 chiocciole tutto il valore è nascosto, fino a 10 si analizza", () => {
+  assert.equal(redactEmails("@ ".repeat(11).trim(), false), EMAIL_HIDDEN);
+  assert.equal(redactEmails("a＠b ".repeat(11).trim(), false), EMAIL_HIDDEN, "si contano dopo la normalizzazione");
+  assert.equal(redactEmails("a%40b ".repeat(11).trim(), false), EMAIL_HIDDEN);
+  const ten = Array.from({ length: 10 }, (_, i) => `p${i}@unimi.it`).join(" ");
+  assert.equal(redactEmails(ten, true), ten);
+  assert.equal(onlyInstitutionalEmails(ten), true);
+  assert.equal(onlyInstitutionalEmails(`${ten} q@unimi.it`), false);
+});
+
+test("R3-3: il limite di 300 conta i caratteri Unicode (una emoji è uno), come char_length in Postgres", () => {
+  const emoji = "\u{1F600}";
+  assert.equal(redactEmails(`${emoji.repeat(299)}@ ciao`, false), `${EMAIL_HIDDEN} ${EMAIL_HIDDEN}`, "300 caratteri: si analizza");
+  assert.equal(redactEmails(`${emoji.repeat(300)}@ ciao`, false), `${EMAIL_HIDDEN} ciao`, "301 caratteri: nascosta per intero");
+});
+
+test("R3-6: (at) solo se attaccato; nei link «%40» del percorso resta", () => {
+  assert.equal(normalizeEmailText("Sede di Asti (AT), aula 3"), "Sede di Asti (AT), aula 3");
+  assert.equal(normalizeEmailText("bea(at)gmail.com"), "bea@gmail.com");
+  assert.equal(normalizeEmailText("a(at)(at)b"), "a@@b");
+  const teams = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0";
+  assert.equal(normalizeEmailText(teams, true), teams);
+  assert.equal(normalizeEmailText(teams), teams.replace("%40", "@"), "fuori da un campo link «%40» resta «@»");
+  assert.equal(normalizeEmailText("https://a%40b.it@x.it/p%40q", true), "https://a@b.it@x.it/p%40q");
+  assert.equal(normalizeEmailText("mailto:a%40b.it?cc=c%40d.it", true), "mailto:a@b.it?cc=c@d.it");
+  assert.equal(normalizeEmailText("https://x.it/p%40q a%40b", true), "https://x.it/p%40q a@b", "dopo lo spazio non è più il link");
+});
+
+test("R3-4/R3-5: il taglio a 120 cade al confine di una parola, mai dentro un indirizzo", () => {
+  assert.equal(cutAtRunBoundary("Farmaco", 120), "Farmaco");
+  assert.equal(cutAtRunBoundary(`${"x".repeat(110)} bea.privata@gmail.com`, 120), "x".repeat(110));
+  assert.equal(cutAtRunBoundary(`${"x".repeat(105)} bea.privata(at)gmail.com`, 120), "x".repeat(105));
+  assert.equal(cutAtRunBoundary(`${"y".repeat(120)} z`, 120), "y".repeat(120), "parola che finisce proprio a 120");
+  assert.equal(cutAtRunBoundary("w".repeat(300), 120), "", "una parola sola più lunga: niente");
+  const emoji = "\u{1F600}";
+  assert.equal(cutAtRunBoundary(`${emoji.repeat(100)} ${emoji.repeat(30)}`, 120), emoji.repeat(100), "si contano i caratteri Unicode");
+  assert.equal(cutAtRunBoundary(`${emoji.repeat(119)} ab`, 120), emoji.repeat(119));
+  const huge = "a@b ".repeat(75_000);
+  const started = performance.now();
+  assert.equal(cutAtRunBoundary(huge, 120).length, 119);
+  assert.ok(performance.now() - started < 200);
 });
 
 test("senza chiocciola il testo non si normalizza (NEW-4)", () => {

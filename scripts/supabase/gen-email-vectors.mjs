@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
-const vectors = JSON.parse(readFileSync(fileURLToPath(new URL("../../tests/fixtures/emailVectors.json", import.meta.url)), "utf8")).vectors;
+const { vectors, cuts } = JSON.parse(readFileSync(fileURLToPath(new URL("../../tests/fixtures/emailVectors.json", import.meta.url)), "utf8"));
 
 /** Stringa SQL E'…' con ogni carattere non ASCII scritto come \uXXXX (nessun problema di codifica). */
 export const sqlText = (value) => {
@@ -37,9 +37,18 @@ export const buildSql = () => {
   vectors.forEach((v, i) => {
     const id = sqlText(`${i + 1} ${v.name}`);
     const input = sqlText(v.input);
-    lines.push(`select pg_temp.vec(${id} || ' (nascondi)', public.studyos_hide_emails(${input}, false) = ${sqlText(v.hide)});`);
-    lines.push(`select pg_temp.vec(${id} || ' (tieni unimi)', public.studyos_hide_emails(${input}, true) = ${sqlText(v.keep)});`);
-    lines.push(`select pg_temp.vec(${id} || ' (solo unimi)', public.studyos_only_unimi_emails(${input}) is ${v.only ? "true" : "false"});`);
+    // url: il vettore è il valore di un campo link (url, website) e si prova in quel modo.
+    const url = v.url ? "true" : "false";
+    lines.push(`select pg_temp.vec(${id} || ' (nascondi)', public.studyos_hide_emails(${input}, false, ${url}) = ${sqlText(v.hide)});`);
+    lines.push(`select pg_temp.vec(${id} || ' (tieni unimi)', public.studyos_hide_emails(${input}, true, ${url}) = ${sqlText(v.keep)});`);
+    lines.push(`select pg_temp.vec(${id} || ' (solo unimi)', public.studyos_only_unimi_emails(${input}, ${url}) is ${v.only ? "true" : "false"});`);
+  });
+  // cuts: nomi di gruppo (anche oltre 120 caratteri), tagliati al confine di una corsa PRIMA di oscurarli (come nell'istantanea).
+  cuts.forEach((c, i) => {
+    const id = sqlText(`taglio ${i + 1} ${c.name}`);
+    const input = sqlText(c.input);
+    lines.push(`select pg_temp.vec(${id}, public.studyos_cut_at_run(${input}, 120) = ${sqlText(c.cut)});`);
+    lines.push(`select pg_temp.vec(${id} || ' (agente)', public.studyos_hide_emails(public.studyos_cut_at_run(${input}, 120), false) = ${sqlText(c.agent)});`);
   });
   lines.push("rollback;", "\\echo 'email-vectors-tests: tutto ok'", "");
   return lines.join("\n");

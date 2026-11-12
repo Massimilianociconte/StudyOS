@@ -26,7 +26,7 @@ import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
 import { sanitizeReminders } from "../lib/repeat";
 import { groupNamesOf, useGroupExamStore } from "../store/useGroupExamStore";
 import type { ExamPlan, ExamPlanStatus } from "../types";
-import { agentMemberText } from "./project";
+import { agentGroupName, agentMemberText } from "./project";
 import { fail, ok, optional, page, state, text, type Args } from "./toolkit";
 import type { AgentCallResult } from "./types";
 
@@ -60,14 +60,18 @@ export const failWith = (code: FailCode, error: string, data?: Record<string, un
 
 const groups = () => useGroupExamStore.getState();
 const groupNameOf = (groupId: string) => groupNamesOf(groups().groups).get(groupId) ?? "";
-/** Il nome del gruppo oscurato si calcola una volta per gruppo (non una volta per appello): lo ricorda finché il nome non cambia. */
+/**
+ * Nome del gruppo per gli agenti (agentGroupName: tagliato a 120 caratteri al confine di una parola, poi senza
+ * indirizzi). Si calcola una volta per gruppo, non una volta per appello: lo ricorda finché il nome non cambia.
+ * Lo usano tutti i punti che danno il nome di un gruppo (appelli, correzioni, elenco dei gruppi).
+ */
 const hiddenGroupNames = new Map<string, { raw: string; text: string }>();
-const hiddenGroupName = (groupId: string) => {
+export const hiddenGroupName = (groupId: string) => {
   const raw = groupNameOf(groupId);
   const hit = hiddenGroupNames.get(groupId);
   if (hit && hit.raw === raw) return hit.text;
   if (hiddenGroupNames.size > 200) hiddenGroupNames.clear();
-  const text = agentMemberText(raw);
+  const text = agentGroupName(raw);
   hiddenGroupNames.set(groupId, { raw, text });
   return text;
 };
@@ -127,7 +131,7 @@ export const publicSession = (session: GroupExamSession, plans: readonly ExamPla
 const publicOverride = (row: CatalogOverride) => ({
   id: row.id,
   groupId: row.groupId,
-  groupName: agentMemberText(groupNameOf(row.groupId)),
+  groupName: hiddenGroupName(row.groupId),
   targetKind: row.targetKind,
   targetId: row.targetId,
   targetLabel: agentMemberText(row.targetLabel),
@@ -232,7 +236,7 @@ export const listGroupExamSessions = (args: Args): AgentCallResult => {
   );
   const listed = page(items, args);
   return ok({
-    groups: current.groups.map((group) => ({ groupId: group.id, name: agentMemberText(group.name) })),
+    groups: current.groups.map((group) => ({ groupId: group.id, name: hiddenGroupName(group.id) })),
     ...listed,
     items: listed.items.map((session) => publicSession(session, plans))
   });
@@ -388,7 +392,7 @@ export const restoreGroupChange = async (args: Args): Promise<AgentCallResult> =
 const snapshotView = (plan: ExamPlan) => ({
   id: plan.sessionId,
   groupId: plan.snapshot.groupId,
-  groupName: agentMemberText(plan.snapshot.groupName),
+  groupName: agentGroupName(plan.snapshot.groupName),
   courseName: agentMemberText(plan.snapshot.courseName),
   date: plan.snapshot.date,
   kind: plan.snapshot.kind,

@@ -9,6 +9,7 @@ import {
   publicAttachment,
   publicEntity,
   publicGroup,
+  agentGroupName,
   agentMemberText,
   agentUrl,
   publicPreferences,
@@ -425,7 +426,7 @@ const entityLabel = (id: string): string | undefined => {
   const exam = current.exams.find((item) => item.id === id);
   if (exam) return `esame di ${nameOf(subjectNames(), exam.subjectId) ?? "materia sconosciuta"}`;
   const group = current.studyGroups.find((item) => item.id === id);
-  return group ? agentMemberText(group.name) : undefined;
+  return group ? agentGroupName(group.name) : undefined;
 };
 
 /**

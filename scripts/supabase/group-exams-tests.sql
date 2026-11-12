@@ -461,6 +461,42 @@ from (select public.save_group_catalog_override('gx', 'gover_e16', null, 'contac
 select pg_temp.expect('E17 [at] in un contatto', r ->> 'status' = 'invalid' and r ->> 'field' = 'value')
 from (select public.save_group_catalog_override('gx', 'gover_e17', null, 'contact', 'contatto:e17', 'X',
   jsonb_build_object('value', 'bea.privata[at]gmail.com')) as r) as t;
+-- R3-6: nei link (url, website) «%40» nel percorso non è una chiocciola; «(AT)» staccato non è una chiocciola.
+select pg_temp.expect('E18 link di Teams nel contatto: accettato com''è', r ->> 'status' = 'ok'
+  and r -> 'row' -> 'fields' ->> 'url' = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0')
+from (select public.save_group_catalog_override('gx', 'gover_e18', null, 'contact', 'contatto:e18', 'Lezioni online',
+  jsonb_build_object('url', 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0')) as r) as t;
+select pg_temp.expect('E19 Google Calendar nel sito del docente: accettato', r ->> 'status' = 'ok'
+  and r -> 'row' -> 'fields' ->> 'website' = 'https://calendar.google.com/calendar/embed?src=c_abc%40group.calendar.google.com')
+from (select public.save_group_catalog_override('gx', 'gover_e19', null, 'teacher', 'unimi-e19', 'X',
+  jsonb_build_object('website', 'https://calendar.google.com/calendar/embed?src=c_abc%40group.calendar.google.com')) as r) as t;
+select pg_temp.expect('E20 «Sede di Asti (AT), aula 3» nella sede del corso: accettato', r ->> 'status' = 'ok'
+  and r -> 'row' -> 'fields' ->> 'site' = 'Sede di Asti (AT), aula 3')
+from (select public.save_group_catalog_override('gx', 'gover_e20', null, 'course', 'corso-e20', 'Corso',
+  jsonb_build_object('site', 'Sede di Asti (AT), aula 3')) as r) as t;
+select pg_temp.expect('E21 bea(at)gmail.com: rifiutato', r ->> 'status' = 'invalid' and r ->> 'field' = 'note')
+from (select public.save_group_catalog_override('gx', 'gover_e21', null, 'teacher', 'unimi-e21', 'X',
+  jsonb_build_object('note', 'scrivi a bea(at)gmail.com')) as r) as t;
+select pg_temp.expect('E22 %40 in un testo che non è un link: rifiutato', r ->> 'status' = 'invalid' and r ->> 'field' = 'note')
+from (select public.save_group_catalog_override('gx', 'gover_e22', null, 'teacher', 'unimi-e22', 'X',
+  jsonb_build_object('note', 'scrivi a bea%40gmail.com')) as r) as t;
+select pg_temp.expect('E23 %40 nell''utente di un link: rifiutato', r ->> 'status' = 'invalid' and r ->> 'field' = 'url')
+from (select public.save_group_catalog_override('gx', 'gover_e23', null, 'contact', 'contatto:e23', 'X',
+  jsonb_build_object('url', 'https://bea.privata%40gmail.com@example.com/')) as r) as t;
+select pg_temp.expect('E24 chiocciola vera nel percorso di un link: rifiutata', r ->> 'status' = 'invalid' and r ->> 'field' = 'url')
+from (select public.save_group_catalog_override('gx', 'gover_e24', null, 'contact', 'contatto:e24', 'X',
+  jsonb_build_object('url', 'https://example.com/@bea')) as r) as t;
+reset role;
+set local role anon;
+select pg_temp.expect('E25 lo snapshot dà i link con %40 nel percorso com''erano', exists (
+    select 1 from jsonb_array_elements(s -> 'overrides') as o
+    where o ->> 'id' = 'gover_e18' and o -> 'fields' ->> 'url' = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0')
+  and exists (select 1 from jsonb_array_elements(s -> 'overrides') as o
+    where o ->> 'id' = 'gover_e20' and o -> 'fields' ->> 'site' = 'Sede di Asti (AT), aula 3'))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
 -- NEW-4: senza «@» il snapshot dà il testo e le chiavi come sono salvati (nessuna piega NFKC).
 select pg_temp.expect('NF1 appello con ordinale e ellissi', public.save_group_exam_session('gx', 'gexam_nf1', null, jsonb_build_object(
   'courseName', E'Chimica 1º modulo', 'date', '2027-09-01', 'kind', 'appello', 'notes', E'vedi sito…')) ->> 'status' = 'ok');
@@ -480,8 +516,81 @@ set local role anon;
 select pg_temp.expect('NF3 valori non testuali scartati', (s -> 'overrides')::text !~ 'bea.privata|y@gmail|note2|office2')
 from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
 reset role;
--- NEW-1: un nome di gruppo enorme (300 KB, scritto dal proprietario) non fa scadere lo snapshot di nessuno.
+-- R3-5: il nome di un gruppo ha al massimo 120 caratteri (Unicode) quando lo si scrive o lo si cambia. È un
+-- trigger, non un CHECK: i nomi vecchi più lunghi restano e il resto del gruppo si modifica ancora.
+do $$
+begin
+  insert into public.studyos_groups (id, name, owner_id, owner_display_name, invite_code)
+    values ('gnl1', repeat('n', 121), '11111111-1111-1111-1111-111111111111', 'Olga', 'NL-CODE-1');
+  raise exception 'FALLITO: NL1 nome di 121 caratteri accettato';
+exception when sqlstate '23514' then
+  null;
+end $$;
+select 'ok NL1 nome di 121 caratteri rifiutato';
+insert into public.studyos_groups (id, name, owner_id, owner_display_name, invite_code)
+  values ('gnl2', repeat(chr(128512), 120), :'olga', 'Olga', 'NL-CODE-2');
+select pg_temp.expect('NL2 120 caratteri accettati (anche 120 emoji: si contano i caratteri, non i byte)', char_length(name) = 120)
+from public.studyos_groups where id = 'gnl2';
+do $$
+begin
+  update public.studyos_groups set name = repeat('n', 121) where id = 'gnl2';
+  raise exception 'FALLITO: NL3 rinomina a 121 caratteri accettata';
+exception when sqlstate '23514' then
+  null;
+end $$;
+select 'ok NL3 rinomina a 121 caratteri rifiutata';
+-- Un nome più lungo salvato prima del limite (qui si spegne il trigger per scriverlo).
+set local session_replication_role = replica;
+update public.studyos_groups set name = repeat('v', 200) where id = 'gnl2';
+set local session_replication_role = origin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+update public.studyos_groups set description = 'nuova' where id = 'gnl2';
+select pg_temp.expect('NL4 il proprietario cambia la descrizione senza toccare il nome lungo', description = 'nuova' and char_length(name) = 200)
+from public.studyos_groups where id = 'gnl2';
+-- L'app scrive con un upsert che riporta tutto, nome compreso: con lo stesso nome passa.
+insert into public.studyos_groups (id, name, description, owner_id, owner_display_name, invite_code)
+  values ('gnl2', repeat('v', 200), 'dall''app', :'olga', 'Olga', 'NL-CODE-2')
+  on conflict (id) do update set name = excluded.name, description = excluded.description;
+select pg_temp.expect('NL5 upsert dell''app con lo stesso nome lungo', description = 'dall''app') from public.studyos_groups where id = 'gnl2';
+do $$
+begin
+  insert into public.studyos_groups (id, name, description, owner_id, owner_display_name, invite_code)
+    values ('gnl2', repeat('w', 200), 'altro', '11111111-1111-1111-1111-111111111111', 'Olga', 'NL-CODE-2')
+    on conflict (id) do update set name = excluded.name, description = excluded.description;
+  raise exception 'FALLITO: NL6 upsert con un altro nome lungo accettato';
+exception when sqlstate '23514' then
+  null;
+end $$;
+select 'ok NL6 upsert con un altro nome lungo rifiutato';
+update public.studyos_groups set name = 'Nome corto' where id = 'gnl2';
+select pg_temp.expect('NL7 rinomina a un nome corto', name = 'Nome corto') from public.studyos_groups where id = 'gnl2';
+reset role;
+delete from public.studyos_groups where id = 'gnl2';
+
+-- R3-4: un nome vecchio più lungo di 120 si taglia al confine di una parola PRIMA di oscurarlo: mai un pezzo di
+-- indirizzo senza «@» (tagliato a metà, «bea.privata@gmail.com» diventerebbe «bea.priv»).
+set local session_replication_role = replica;
+update public.studyos_groups set name = repeat('x', 110) || ' bea.privata@gmail.com' where id = 'gx';
+set local session_replication_role = origin;
+set local role anon;
+select pg_temp.expect('SN1 nome tagliato al confine di una parola', (select e ->> 'name' from jsonb_array_elements(s -> 'groups') as e
+  where e ->> 'id' = 'gx') = repeat('x', 110))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local session_replication_role = replica;
+update public.studyos_groups set name = repeat('x', 105) || ' bea.privata(at)gmail.com' where id = 'gx';
+set local session_replication_role = origin;
+set local role anon;
+select pg_temp.expect('SN2 nemmeno «bea.privata(at» resta', (select e ->> 'name' from jsonb_array_elements(s -> 'groups') as e
+  where e ->> 'id' = 'gx') = repeat('x', 105))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+
+-- NEW-1: un nome di gruppo enorme (300 KB, salvato prima del limite) non fa scadere lo snapshot di nessuno.
+set local session_replication_role = replica;
 update public.studyos_groups set name = repeat('a@b ', 75000) where id = 'gx';
+set local session_replication_role = origin;
 set local role anon;
 set local statement_timeout = '1s';
 select pg_temp.expect('LIN1 nome di gruppo da 300 KB: snapshot sotto il secondo',
@@ -490,10 +599,67 @@ from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
 reset role;
 set local statement_timeout = '8s';
 select pg_temp.expect('LIN2 il redattore da solo: 400 KB di «a@b » e 50 KB di una corsa sola',
-  length(public.studyos_hide_emails(repeat('a@b ', 100000))) > 0
+  public.studyos_hide_emails(repeat('a@b ', 100000)) = '[email nascosta]'
   and public.studyos_hide_emails('@' || repeat('x', 50000)) = '[email nascosta]');
+select pg_temp.expect('LIN3 400 KB con 10 chiocciole: si analizza ed è lineare',
+  public.studyos_hide_emails(repeat('ciao mondo ', 36000) || 'prof@unimi.it, x.y@gmail.com ' || repeat('a@b ', 8) || 'fine', true)
+    = repeat('ciao mondo ', 36000) || 'prof@unimi.it, [email nascosta] ' || repeat('[email nascosta] ', 8) || 'fine');
 set local statement_timeout = 0;
+set local session_replication_role = replica;
 update public.studyos_groups set name = 'Farmaco' where id = 'gx';
+set local session_replication_role = origin;
+
+-- R3-1: 2000 appelli scritti da un membro, ogni testo al limite della sua colonna e pieno di «@»: lo snapshot
+-- (come anon, come il Worker) resta sotto il secondo. Tre forme: «@ @ …» (troppe chiocciole: tutto nascosto),
+-- «a@b a@b …», e la più cara, 10 chiocciole per valore (il massimo che si analizza) con corse vicine da nascondere.
+create function pg_temp.load_sessions(p_course text, p_label text, p_room text, p_notes text, p_name text) returns integer
+language sql as $$
+  delete from public.studyos_group_exam_sessions where id like 'gexam_load_%';
+  insert into public.studyos_group_exam_sessions (id, group_id, course_key, course_name, course_norm, exam_date, kind, label, room, notes,
+      created_by, created_by_name, updated_by, updated_by_name)
+    select 'gexam_load_' || g, 'gx', 'nome:load' || g, p_course, 'load' || g, date '2028-01-01' + (g % 300), 'appello',
+      p_label, p_room, p_notes, 'u-load', p_name, 'u-load', p_name
+    from generate_series(1, 2000) as g;
+  select count(*)::integer from public.studyos_group_exam_sessions where id like 'gexam_load_%';
+$$;
+select pg_temp.expect('LOAD0 le tre forme rispettano i limiti delle colonne', bool_and(char_length(c) between 150 and 160
+  and char_length(l) between 75 and 80 and char_length(r) between 115 and 120 and char_length(n) between 975 and 1000))
+from (values
+  (rtrim(repeat('a@ ', 53)) || 'z', rtrim(repeat('@ ', 40)), rtrim(repeat('@ ', 60)), rtrim(repeat('@ ', 500))),
+  (left(repeat('a@b ', 40), 159) || 'z', left(repeat('a@b ', 20), 80), left(repeat('a@b ', 30), 120), left(repeat('a@b ', 250), 1000)),
+  (left(repeat('c@d ', 10) || repeat('e', 160), 160), left(repeat('q@ ', 10) || repeat('z', 80), 80),
+   left(repeat('@r ', 10) || repeat('s', 120), 120), repeat(' @ ' || repeat('y', 95), 10))) as v (c, l, r, n);
+select pg_temp.expect('LOAD1a 2000 appelli «@ @ …»', pg_temp.load_sessions(rtrim(repeat('a@ ', 53)) || 'z', rtrim(repeat('@ ', 40)),
+  rtrim(repeat('@ ', 60)), rtrim(repeat('@ ', 500)), rtrim(repeat('@ ', 40))) = 2000);
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LOAD1 snapshot sotto il secondo, nessuna chiocciola', jsonb_array_length(s -> 'sessions') = 2000
+  and (s -> 'sessions')::text !~ '@')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = 0;
+select pg_temp.expect('LOAD2a 2000 appelli «a@b a@b …»', pg_temp.load_sessions(left(repeat('a@b ', 40), 159) || 'z',
+  left(repeat('a@b ', 20), 80), left(repeat('a@b ', 30), 120), left(repeat('a@b ', 250), 1000), left(repeat('a@b ', 20), 80)) = 2000);
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LOAD2 snapshot sotto il secondo, nessuna chiocciola', jsonb_array_length(s -> 'sessions') = 2000
+  and (s -> 'sessions')::text !~ '@')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = 0;
+select pg_temp.expect('LOAD3a 2000 appelli con 10 chiocciole per testo', pg_temp.load_sessions(left(repeat('c@d ', 10) || repeat('e', 160), 160),
+  left(repeat('q@ ', 10) || repeat('z', 80), 80), left(repeat('@r ', 10) || repeat('s', 120), 120),
+  repeat(' @ ' || repeat('y', 95), 10), left(repeat('q@ ', 10) || repeat('z', 80), 80)) = 2000);
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LOAD3 snapshot sotto il secondo, nessuna chiocciola, i vicini nascosti', jsonb_array_length(s -> 'sessions') = 2000
+  and (s -> 'sessions')::text !~ '@' and (s -> 'sessions')::text !~ 'yyy'
+  and (select e ->> 'notes' from jsonb_array_elements(s -> 'sessions') as e where e ->> 'id' = 'gexam_load_1')
+    = repeat(' [email nascosta] [email nascosta]', 10))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = 0;
+delete from public.studyos_group_exam_sessions where id like 'gexam_load_%';
 
 -- L4: ogni funzione nuova ha i privilegi giusti.
 select pg_temp.expect('G5 scrittura chiusa ad anon e aperta ad authenticated', bool_and(
@@ -501,13 +667,16 @@ select pg_temp.expect('G5 scrittura chiusa ad anon e aperta ad authenticated', b
 from unnest(array['public.save_group_exam_session(text,text,integer,jsonb)', 'public.delete_group_exam_session(text,integer)',
   'public.save_group_catalog_override(text,text,integer,text,text,text,jsonb)', 'public.delete_group_catalog_override(text,integer)',
   'public.restore_group_record(bigint,integer)']) as f;
-select pg_temp.expect('G7 il controllo di scrittura è chiuso ad anon e authenticated', not has_function_privilege('authenticated', 'public.studyos_only_unimi_emails(text)', 'EXECUTE')
-  and not has_function_privilege('anon', 'public.studyos_only_unimi_emails(text)', 'EXECUTE')
-  and not has_function_privilege('authenticated', 'public.studyos_hide_emails_normalized(text,boolean)', 'EXECUTE'));
-select pg_temp.expect('G6 il redattore è chiuso ad authenticated', not has_function_privilege('authenticated', 'public.studyos_hide_emails(text,boolean)', 'EXECUTE')
-  and not has_function_privilege('anon', 'public.studyos_hide_emails(text,boolean)', 'EXECUTE')
-  and not has_function_privilege('authenticated', 'public.studyos_email_normalize(text)', 'EXECUTE')
-  and not has_function_privilege('authenticated', 'public.studyos_fields_only_unimi(jsonb)', 'EXECUTE'));
+select pg_temp.expect('G6 redattore, controlli di scrittura, pulizia delle correzioni e limite del nome: chiusi a tutti',
+  bool_and(f is not null and not has_function_privilege('anon', f, 'EXECUTE') and not has_function_privilege('authenticated', f, 'EXECUTE')
+    and not has_function_privilege('public', f, 'EXECUTE')) and count(*) = 7)
+from unnest(array[to_regprocedure('public.studyos_hide_emails(text,boolean,boolean,boolean)'),
+  to_regprocedure('public.studyos_only_unimi_emails(text,boolean)'), to_regprocedure('public.studyos_email_normalize(text,boolean)'),
+  to_regprocedure('public.studyos_fields_only_unimi(jsonb)'), to_regprocedure('public.studyos_catalog_override_clean(text,jsonb)'),
+  to_regprocedure('public.studyos_groups_name_limit()'), to_regprocedure('public.studyos_cut_at_run(text,integer)')]) as f;
+select pg_temp.expect('G7 le firme vecchie non ci sono più', to_regprocedure('public.studyos_hide_emails_normalized(text,boolean)') is null
+  and to_regprocedure('public.studyos_hide_emails(text,boolean)') is null and to_regprocedure('public.studyos_hide_emails(text)') is null
+  and to_regprocedure('public.studyos_only_unimi_emails(text)') is null and to_regprocedure('public.studyos_email_normalize(text)') is null);
 
 -- X1: il proprietario non può cambiare l'account di una riga di membro né iscrivere un altro account.
 set local role authenticated;

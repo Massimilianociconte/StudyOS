@@ -37,7 +37,7 @@ import { GROUP_FORM_TEXT, GROUP_SYNC_TEXT } from "../lib/labels/groups";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
 import { peopleLabels } from "../lib/labels";
 import { groupInviteRecipient, isExpiredEmailInvite } from "../lib/people";
-import { isReceivedInvite } from "../lib/groups";
+import { GROUP_NAME_MAX, isReceivedInvite } from "../lib/groups";
 
 type DetailTab = "bacheca" | "membri" | "attivita" | "appelli" | "catalogo";
 
@@ -488,7 +488,7 @@ function CreateGroupModal({ actor, needsAccount, onLogin, onClose, onCreated }: 
           </div>
         ) : null}
         <Field label="Nome del gruppo">
-          <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Es. Fisiologia — sessione estiva" data-autofocus />
+          <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} maxLength={GROUP_NAME_MAX} placeholder="Es. Fisiologia — sessione estiva" data-autofocus />
         </Field>
         <Field label="Descrizione (facoltativa)">
           <textarea className={`${inputClass} min-h-20 py-3`} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Es. Corso, obiettivi, regole del gruppo" />

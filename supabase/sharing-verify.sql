@@ -111,11 +111,13 @@ select
         to_regprocedure('public.studyos_group_history_write(text,text,text,text,integer,jsonb,jsonb,text[],text)'),
         to_regprocedure('public.studyos_group_activity_write(text,text,text)'),
         to_regprocedure('public.studyos_exam_session_twin(text,jsonb,text)'),
-        to_regprocedure('public.studyos_hide_emails(text,boolean)'),
-        to_regprocedure('public.studyos_hide_emails_normalized(text,boolean)'),
-        to_regprocedure('public.studyos_only_unimi_emails(text)'),
-        to_regprocedure('public.studyos_email_normalize(text)'),
-        to_regprocedure('public.studyos_fields_only_unimi(jsonb)')]) as f), false)
+        to_regprocedure('public.studyos_hide_emails(text,boolean,boolean,boolean)'),
+        to_regprocedure('public.studyos_only_unimi_emails(text,boolean)'),
+        to_regprocedure('public.studyos_cut_at_run(text,integer)'),
+        to_regprocedure('public.studyos_email_normalize(text,boolean)'),
+        to_regprocedure('public.studyos_fields_only_unimi(jsonb)'),
+        to_regprocedure('public.studyos_catalog_override_clean(text,jsonb)'),
+        to_regprocedure('public.studyos_groups_name_limit()')]) as f), false)
     as group_exams_closed_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
       and schemaname = 'public' and tablename = 'studyos_group_exam_sessions')
@@ -124,10 +126,18 @@ select
   -- Il connettore remoto: la funzione dello snapshot e quella che riconosce il segreto (agent.sql).
   to_regprocedure('public.studyos_agent_group_snapshot(text)') is not null
     and to_regprocedure('public.studyos_agent_user(text)') is not null as group_exams_agent_ready,
-  -- La guardia sulle righe dei membri (groups.sql: l'account e il gruppo di una riga non cambiano) e la forma degli id dei gruppi.
+  -- La guardia sulle righe dei membri (groups.sql: l'account e il gruppo di una riga non cambiano), attiva su OGNI
+  -- modifica (niente elenco di colonne, niente WHEN), la forma degli id dei gruppi e il limite di 120 caratteri sul
+  -- nome di un gruppo quando lo si scrive o lo si cambia (group-exams.sql).
   exists (select 1 from pg_trigger where tgrelid = to_regclass('public.studyos_group_members')
       and tgname = 'studyos_group_members_pin_identity' and not tgisinternal
       and tgenabled in ('O', 'A') and tgtype = 19
+      and tgattr = ''::int2vector and tgqual is null
       and tgfoid = to_regprocedure('public.studyos_group_members_pin_identity()'))
     and exists (select 1 from pg_constraint where conrelid = to_regclass('public.studyos_groups')
-      and conname = 'studyos_groups_id_shape') as group_exams_members_pinned_ready;
+      and conname = 'studyos_groups_id_shape')
+    and exists (select 1 from pg_trigger where tgrelid = to_regclass('public.studyos_groups')
+      and tgname = 'studyos_groups_name_limit' and not tgisinternal
+      and tgenabled in ('O', 'A') and tgtype = 23
+      and tgattr = ''::int2vector and tgqual is null
+      and tgfoid = to_regprocedure('public.studyos_groups_name_limit()')) as group_exams_members_pinned_ready;

@@ -39,7 +39,8 @@ export const cleanOverrideFields = (kind: CatalogTargetKind, input: unknown): Cl
     } else if (key === "website" && /^mailto:/i.test(value)) {
       return { ok: false, field: "website", message: GROUP_EXAM_FIELD_ERROR.overrideWebsite };
     }
-    if (!onlyInstitutionalEmails(value)) return { ok: false, field: key, message: GROUP_EXAM_FIELD_ERROR.overrideEmail };
+    // url e website sono link: «%40» nel percorso (Teams, Google Calendar) non è una chiocciola.
+    if (!onlyInstitutionalEmails(value, key === "url" || key === "website")) return { ok: false, field: key, message: GROUP_EXAM_FIELD_ERROR.overrideEmail };
     out[key] = value;
   }
   if (!Object.keys(out).length) return { ok: false, field: "fields", message: GROUP_EXAM_FIELD_ERROR.overrideEmpty };

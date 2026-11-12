@@ -2,7 +2,8 @@
  * Proiezioni verso gli agenti: niente file, foto, codici di invito o segreti del vault. Email: solo gli
  * indirizzi esattamente @unimi.it di docenti e contatti dell'università (AGENT_INSTITUTIONAL_EMAILS).
  */
-import { institutionalEmail, redactEmails } from "../lib/institutionalEmail";
+import { GROUP_NAME_MAX } from "../lib/groups";
+import { cutAtRunBoundary, institutionalEmail, redactEmails } from "../lib/institutionalEmail";
 
 /** Lunghezza dei testi lunghi (descrizioni, note) negli elenchi. */
 export const BRIEF_MAX = 300;
@@ -122,7 +123,7 @@ export const publicGroup = (item: {
 }) => ({
   id: item.id,
   // Nomi, descrizioni e nomi dei membri li scrivono i membri: mai un indirizzo agli agenti (spec §9.3).
-  name: agentMemberText(item.name),
+  name: agentGroupName(item.name),
   description: agentMemberText(item.description),
   ownerDisplayName: agentMemberText(item.ownerDisplayName),
   archived: item.archived,
@@ -170,6 +171,13 @@ export const agentCatalogText = (text: string | null | undefined, allow = instit
 
 /** Testo scritto dai membri (note, aule, nomi, cronologia): tutti gli indirizzi oscurati, sempre. */
 export const agentMemberText = (text: string | null | undefined) => redactEmails(text ?? "", false);
+
+/**
+ * Nome di un gruppo per gli agenti: al massimo GROUP_NAME_MAX caratteri, tagliato al confine di una parola
+ * PRIMA di oscurare (mai metà di un indirizzo che sfugge al controllo), poi senza indirizzi. Stesso taglio
+ * dello snapshot del connettore (studyos_agent_group_snapshot).
+ */
+export const agentGroupName = (name: string | null | undefined) => agentMemberText(cutAtRunBoundary(name ?? "", GROUP_NAME_MAX));
 
 /**
  * Indirizzo scritto da un membro (risorsa di un gruppo): solo http(s), mai mailto, e solo se nemmeno la

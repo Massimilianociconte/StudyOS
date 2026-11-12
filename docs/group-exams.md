@@ -60,15 +60,37 @@ Piano: [superpowers/plans/2026-11-12-shared-exam-sessions.md](superpowers/plans/
 
 Una sola regola, in SQL e in TypeScript: `src/lib/institutionalEmail.ts` e le funzioni
 `studyos_email_normalize`, `studyos_hide_emails`, `studyos_only_unimi_emails` di `group-exams.sql`.
-Normalizza (NFKC), toglie i caratteri invisibili, porta gli spazi strani a spazi e legge `%40`, `&#64;`,
-`&commat;`, `(at)`, `[at]`, `{at}` come `@`; senza nessuna `@` il testo resta com'è scritto. Una corsa di
-caratteri senza spazi che contiene `@` è un candidato (oltre 300 caratteri si nasconde senza analisi) e vale solo
-se tutto è `nome@unimi.it` (parte locale ASCII senza `%`, dominio senza distinzione di maiuscole, niente
-sottodomini); il resto diventa «[email nascosta]», e con una `@` all'inizio o alla fine si nascondono anche le
-corse vicine. È un lavoro lineare: un testo lungo non fa scadere lo snapshot del connettore (il nome del gruppo
-si taglia a 120 caratteri; nessun limite sul nome, perché il client non ne ha).
-I casi di prova sono in `tests/fixtures/emailVectors.json`; `scripts/supabase/email-vectors-tests.sql`
-si genera con `node scripts/supabase/gen-email-vectors.mjs` e un test fallisce se è vecchio.
+Normalizza (NFKC), toglie i caratteri invisibili, porta gli spazi strani a spazi e legge `&#64;`, `&#x40;`,
+`&commat;` e `%40` come `@`. `(at)`, `[at]` e `{at}` valgono `@` solo se attaccati a qualcosa da tutti e due i
+lati: «bea(at)gmail.com» sì, «Sede di Asti (AT), aula 3» no. Nei campi link (`url`, `website`) `%40` resta com'è
+nel percorso di un indirizzo http(s), cioè dalla prima `/`, `?` o `#` dopo il nome del sito (link di Teams e di
+Google Calendar); vale `@` prima del percorso e in un `mailto:`. Senza nessuna `@` il testo resta com'è scritto.
+
+- Più di 10 `@` in un valore: tutto il valore diventa «[email nascosta]».
+- Una corsa di caratteri senza spazi che contiene `@` è un candidato. Oltre 300 caratteri si nasconde senza
+  analisi; una corsa lunga senza `@` resta. I caratteri si contano come in Postgres: una emoji vale uno.
+- Il candidato resta solo se tutto è `nome@unimi.it` (parte locale ASCII senza `%`, dominio senza distinzione di
+  maiuscole, niente sottodomini). Il resto diventa «[email nascosta]», e con una `@` all'inizio o alla fine si
+  nascondono anche le corse vicine.
+
+Il lavoro per valore è limitato (al massimo 10 `@`, candidati fino a 300 caratteri), quindi il tempo dello
+snapshot dipende dal numero di righe e non da cosa c'è scritto. Su un Postgres locale, con 2000 appelli e ogni
+testo al limite della colonna: circa 0,09 s se i testi sono pieni di `a@b` o di `@ `, circa 0,5 s nel caso
+peggiore (10 `@` per testo, ognuna con vicini da nascondere). Le prove `LOAD1`-`LOAD3` di
+`scripts/supabase/group-exams-tests.sql` chiedono lo snapshot da anon sotto il secondo. Lo snapshot non fallisce
+per il contenuto: se un valore desse un errore, lo rifà valore per valore e quel valore diventa «[email nascosta]».
+
+Il nome di un gruppo ha al massimo 120 caratteri: il modulo ha `maxLength` 120 e il trigger
+`studyos_groups_name_limit` rifiuta un nome più lungo quando il nome cambia («Il nome del gruppo può avere al
+massimo 120 caratteri.»). Niente vincolo CHECK: i gruppi già salvati con un nome più lungo restano. Agli agenti
+quei nomi arrivano tagliati a 120 caratteri al confine di una corsa PRIMA di nascondere gli indirizzi
+(`studyos_cut_at_run` nello snapshot, `cutAtRunBoundary` in `agentGroupName`): mai metà di un indirizzo. Se la
+prima corsa tolta inizia con `@` («bea.privata @gmail.com» tagliato fra le due parole) si toglie anche l'ultima
+corsa tenuta.
+
+I casi di prova sono in `tests/fixtures/emailVectors.json` (`vectors` per la regola, `cuts` per il taglio dei
+nomi); `scripts/supabase/email-vectors-tests.sql` si genera con `node scripts/supabase/gen-email-vectors.mjs` e
+un test fallisce se è vecchio.
 
 - Le correzioni al catalogo accettano solo indirizzi istituzionali (`nome.cognome@unimi.it` come forma);
   altrimenti `invalid` con `field = 'targetLabel'` (nome del contatto) o sul campo.
@@ -98,8 +120,10 @@ al gruppo, senza `alwaysAsk`.
 
 Un trigger in `supabase/groups.sql` (`studyos_group_members_pin_identity`) tiene fissi `user_id` e `group_id`
 di una riga di membro: chi gestisce un gruppo non può iscrivere una persona senza il suo consenso.
-`group-exams.sql` si rifiuta di partire se manca (vecchio `groups.sql`). Colonna di prontezza:
-`group_exams_members_pinned_ready` in `supabase/sharing-verify.sql`.
+`group-exams.sql` si rifiuta di partire se manca (vecchio `groups.sql`) o se è stato cambiato: deve essere
+attivo, `before insert or update` per riga, senza elenco di colonne (`update of …`) e senza condizione
+(`when …`). Colonna di prontezza: `group_exams_members_pinned_ready` in `supabase/sharing-verify.sql`, che
+controlla anche il trigger del limite sul nome del gruppo.
 
 ## Da eseguire
 

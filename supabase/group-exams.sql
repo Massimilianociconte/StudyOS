@@ -20,6 +20,7 @@ begin
                     where tgrelid = to_regclass('public.studyos_group_members')
                       and tgname = 'studyos_group_members_pin_identity' and not tgisinternal
                       and tgenabled in ('O', 'A') and tgtype = 19
+                      and tgattr = ''::int2vector and tgqual is null
                       and tgfoid = to_regprocedure('public.studyos_group_members_pin_identity()')) then
     raise exception 'Esegui prima groups.sql (versione del 12/11 o successiva): mancano tabelle, funzioni o la guardia sulle righe dei membri.';
   end if;
@@ -30,6 +31,36 @@ end $$;
 alter table public.studyos_groups drop constraint if exists studyos_groups_id_shape;
 alter table public.studyos_groups add constraint studyos_groups_id_shape
   check (id ~ '^[A-Za-z0-9_-]{1,120}$') not valid;
+
+-- Il nome di un gruppo arriva a tutti i membri e ai loro agenti: al massimo 120 caratteri quando lo si scrive o lo si
+-- cambia (l'app ha lo stesso limite). Niente vincolo CHECK: i gruppi già salvati con un nome più lungo restano e si
+-- possono ancora modificare finché il nome non cambia. L'app scrive con un upsert (insert … on conflict do update):
+-- anche l'insert che riporta il nome già salvato non è un cambio.
+create or replace function public.studyos_groups_name_limit()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  if coalesce(char_length(new.name), 0) <= 120 then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' and new.name is not distinct from old.name then
+    return new;
+  end if;
+  if tg_op = 'INSERT' and exists (select 1 from public.studyos_groups as g where g.id = new.id and g.name = new.name) then
+    return new;
+  end if;
+  raise exception 'Il nome del gruppo può avere al massimo 120 caratteri.' using errcode = '23514';
+end;
+$$;
+
+revoke all on function public.studyos_groups_name_limit() from public, anon, authenticated;
+
+drop trigger if exists studyos_groups_name_limit on public.studyos_groups;
+create trigger studyos_groups_name_limit
+  before insert or update on public.studyos_groups
+  for each row execute function public.studyos_groups_name_limit();
 
 -- ---------------------------------------------------------------------------------------------
 -- Funzioni pure
@@ -87,115 +118,287 @@ $$;
 -- Regola unica sulle email (stessa di src/lib/institutionalEmail.ts; stessi esempi in
 -- tests/fixtures/emailVectors.json, da cui nasce scripts/supabase/email-vectors-tests.sql):
 -- 1. il testo si normalizza: NFKC («＠» e «﹫» diventano «@»), niente caratteri invisibili (U+00AD, U+200B-200F,
---    U+202A-202E, U+2060, U+2066-2069, U+FEFF), gli spazi strani (U+0085, U+2028, U+2029, U+1680) diventano spazi e
---    «%40», «&#64;», «&commat;», «(at)», «[at]», «{at}» diventano «@». Senza nessuna «@» il testo resta com'è stato
---    scritto (nessuna normalizzazione visibile);
--- 2. ogni corsa di caratteri senza spazi ASCII che contiene una «@» è UN candidato (oltre 300 caratteri: sempre
---    nascosto per intero);
--- 3. si toglie dal candidato l'inizio (virgolette, parentesi aperte, «mailto:») e la fine (punteggiatura): il
+--    U+202A-202E, U+2060, U+2066-2069, U+FEFF), gli spazi strani (U+0085, U+2028, U+2029, U+1680) diventano spazi;
+--    «&#64;», «&#x40;», «&commat;» e «%40» diventano «@», «(at)», «[at]», «{at}» solo se attaccati a qualcosa da
+--    tutti e due i lati («bea(at)gmail.com» sì, «Sede di Asti (AT), aula 3» no). Nei link (campi url e website,
+--    p_url) «%40» resta com'è nel percorso di un indirizzo http(s), cioè dalla prima «/», «?» o «#» dopo il nome
+--    del sito (i link di Teams e di Google Calendar hanno «%40thread.v2», «%40group.calendar.google.com»); vale
+--    «@» nel destinatario di un «mailto:» e prima del percorso (dove stanno utente e password). Senza nessuna «@»
+--    il testo resta com'è stato scritto (nessuna normalizzazione visibile);
+-- 2. più di 10 «@» in un valore: tutto il valore diventa «[email nascosta]» (così il lavoro per valore resta piccolo);
+-- 3. ogni corsa di caratteri senza spazi ASCII che contiene una «@» è UN candidato (oltre 300 caratteri Unicode:
+--    sempre nascosto per intero; una corsa lunga senza «@», un link, resta);
+-- 4. si toglie dal candidato l'inizio (virgolette, parentesi aperte, «mailto:») e la fine (punteggiatura): il
 --    resto si tiene solo se è per intero «parte-locale@unimi.it», parte locale ASCII `[A-Za-z0-9._+-]+`, dominio
 --    confrontato solo con maiuscole/minuscole ASCII; altrimenti tutto il candidato diventa «[email nascosta]». Se
 --    il candidato nascosto inizia con «@» si nasconde anche la corsa prima, se finisce con «@» anche quella dopo.
--- Gli indirizzi tenuti restano con le loro maiuscole. Tempo lineare: nessun testo lungo può far scadere una chiamata.
-create or replace function public.studyos_email_normalize(p_text text)
-returns text
-language sql
-immutable
-set search_path = pg_catalog
-as $$
-  select regexp_replace(
-    regexp_replace(
-      regexp_replace(normalize(coalesce(p_text, ''), NFKC),
-        '[\u00AD\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]', '', 'g'),
-      '[\u0085\u2028\u2029\u1680]', ' ', 'g'),
-    '%40|&#0*64;|&#[xX]0*40;|&[cC][oO][mM][mM][aA][tT];|\([aA][tT]\)|\[[aA][tT]\]|\{[aA][tT]\}', '@', 'g')
-$$;
-
--- Parte che lavora sul testo GIÀ normalizzato e con almeno una «@».
-create or replace function public.studyos_hide_emails_normalized(p_norm text, p_keep boolean)
-returns text
-language sql
-immutable
-set search_path = pg_catalog
-as $$
-  with tok as (
-    select r.ord, r.m[1] as ws, r.m[2] as run
-    from regexp_matches(p_norm, '([ \t\n\r\f\v]+)|([^ \t\n\r\f\v]+)', 'g') with ordinality as r (m, ord)
-  ), runs as (
-    select t.ord, t.run, char_length(t.run) > 300 as long_run, position('@' in t.run) > 0 as has_at
-    from tok as t where t.run is not null
-  ), parts as (
-    select u.ord, u.has_at, u.long_run,
-      case when u.has_at and not u.long_run then regexp_match(u.run,
-        '^([''’`*"(<\[]*(?:[mM][aA][iI][lL][tT][oO]:)?)(.*?)([.,;:!?)>\]''’`*"]*)$') end as p
-    from runs as u
-  ), cls as (
-    select q.ord, q.long_run, q.p[1] as lead, q.p[3] as trail,
-      q.has_at and (q.long_run or not coalesce(coalesce(p_keep, false)
-        and q.p[2] ~ '^[A-Za-z0-9._+-]+@[uU][nN][iI][mM][iI]\.[iI][tT]$', false)) as hide,
-      q.p[2] as core
-    from parts as q
-  ), flags as (
-    select c.ord, c.long_run, c.lead, c.trail, c.hide,
-      (c.hide and not c.long_run and left(c.core, 1) = '@') as ex_prev,
-      (c.hide and not c.long_run and right(c.core, 1) = '@') as ex_next
-    from cls as c
-  ), final as (
-    select f.ord, f.long_run, f.lead, f.trail, f.hide,
-      coalesce(lag(f.ex_next) over (order by f.ord), false) or coalesce(lead(f.ex_prev) over (order by f.ord), false) as full_hide
-    from flags as f
-  )
-  select string_agg(
-    case when t.run is null then t.ws
-         when f.full_hide or f.long_run then '[email nascosta]'
-         when f.hide then coalesce(f.lead, '') || '[email nascosta]' || coalesce(f.trail, '')
-         else t.run end, '' order by t.ord)
-  from tok as t left join final as f on f.ord = t.ord
-$$;
-
--- Nasconde gli indirizzi; con p_keep restano gli @unimi.it (solo nei campi email e contatti del catalogo).
--- Mai un errore per il contenuto: in caso di problemi il testo intero diventa «[email nascosta]».
+-- Gli indirizzi tenuti restano con le loro maiuscole.
+drop function if exists public.studyos_hide_emails_normalized(text, boolean);
 drop function if exists public.studyos_hide_emails(text);
-create or replace function public.studyos_hide_emails(p_text text, p_keep boolean default false)
+drop function if exists public.studyos_hide_emails(text, boolean);
+drop function if exists public.studyos_only_unimi_emails(text);
+drop function if exists public.studyos_email_normalize(text);
+
+create or replace function public.studyos_email_normalize(p_text text, p_url boolean default false)
 returns text
 language plpgsql
 immutable
 set search_path = pg_catalog
 as $$
 declare
-  v_norm text;
+  v text := coalesce(p_text, '');
+  v_head text;
+  v_path text;
 begin
+  -- NFKC, invisibili e spazi strani riguardano solo caratteri fuori da ASCII: un testo tutto ASCII non cambia
+  -- (in UTF-8 ha tanti byte quanti caratteri), e un testo già in forma NFKC non si ricompone.
+  if octet_length(v) <> char_length(v) then
+    if not (v is nfkc normalized) then
+      v := normalize(v, nfkc);
+    end if;
+    v := regexp_replace(regexp_replace(v, '[\u00AD\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]', '', 'g'),
+      '[\u0085\u2028\u2029\u1680]', ' ', 'g');
+  end if;
+  -- Le «@» scritte in altro modo iniziano tutte con «&», «(», «[» o «{».
+  if strpos(v, '&') > 0 or strpos(v, '(') > 0 or strpos(v, '[') > 0 or strpos(v, '{') > 0 then
+    v := regexp_replace(v,
+      '&#0*64;|&#[xX]0*40;|&[cC][oO][mM][mM][aA][tT];|(?<=[^ \t\n\r\f\v])(?:\([aA][tT]\)|\[[aA][tT]\]|\{[aA][tT]\})(?=[^ \t\n\r\f\v])',
+      '@', 'g');
+  end if;
+  if strpos(v, '%40') = 0 then
+    return v;
+  end if;
+  if p_url then
+    v_head := substring(v from '^[hH][tT][tT][pP][sS]?://[^/?# \t\n\r\f\v]*');
+    if v_head is not null then
+      v_path := substring(substr(v, char_length(v_head) + 1) from '^[^ \t\n\r\f\v]*');
+      return replace(v_head, '%40', '@') || v_path
+        || replace(substr(v, char_length(v_head) + char_length(v_path) + 1), '%40', '@');
+    end if;
+  end if;
+  return replace(v, '%40', '@');
+end;
+$$;
+
+-- Nasconde gli indirizzi; con p_keep restano gli @unimi.it (solo nei campi email e contatto del catalogo), con
+-- p_url il testo è un link (campi url e website). Lavoro piccolo e lineare per valore: si guardano solo le corse
+-- con «@» (al massimo 10) e le corse vicine, con poche istruzioni per «@»; il resto del testo si copia com'è.
+-- Mai un errore per il contenuto: con p_safe (il default) qualsiasi problema dà «[email nascosta]» per tutto il
+-- valore. Lo snapshot la chiama con p_safe = false (niente sottotransazione per valore) dentro UN solo blocco di
+-- eccezione, e se qualcosa va storto la rifà con p_safe = true.
+create or replace function public.studyos_hide_emails(p_text text, p_keep boolean default false,
+  p_url boolean default false, p_safe boolean default true)
+returns text
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v text;
+  w text[];
+  v_parts text[];
+  v_prefix text := '';
+  v_cur text;
+  v_runs text[] := '{}';
+  v_gaps text[] := '{}';
+  v_shown text[];
+  v_full boolean[];
+  v_first boolean[];
+  v_last boolean[];
+  v_core text;
+  v_rest text;
+  v_region text;
+  v_n integer;
+  v_k integer;
+  v_i integer;
+  v_j integer;
+  v_near boolean := false;
+  v_out text;
+begin
+  if p_safe then
+    begin
+      return public.studyos_hide_emails(p_text, p_keep, p_url, false);
+    exception when others then
+      return '[email nascosta]';
+    end;
+  end if;
   if p_text is null then
     return null;
   end if;
-  v_norm := public.studyos_email_normalize(p_text);
-  if position('@' in v_norm) = 0 then
+  v := public.studyos_email_normalize(p_text, p_url);
+  if strpos(v, '@') = 0 then
     return p_text;
   end if;
-  return public.studyos_hide_emails_normalized(v_norm, p_keep);
-exception when others then
-  return '[email nascosta]';
+  if octet_length(v) - octet_length(replace(v, '@', '')) > 10 then
+    return '[email nascosta]';
+  end if;
+  -- Le corse con «@» (v_runs) e il testo fra l'una e l'altra (v_gaps[j]: dopo la corsa j; l'ultimo è la coda).
+  -- Si divide alle «@»: un pezzo senza spazi sta tutto nella corsa; uno con spazi dà la fine della corsa prima
+  -- (fino al primo spazio), il testo in mezzo e l'inizio della corsa dopo (dall'ultimo spazio). I confini si
+  -- cercano in w, lo stesso testo con ogni spazio ASCII scritto « » (stesse posizioni; regexp_replace, molto
+  -- più veloce di translate sui testi lunghi).
+  v_parts := string_to_array(v, '@');
+  w := string_to_array(regexp_replace(v, '[\t\n\r\f\v]', ' ', 'g'), '@');
+  v_n := array_length(v_parts, 1);
+  v_j := strpos(reverse(w[1]), ' ');
+  if v_j > 0 then
+    v_prefix := left(v_parts[1], char_length(v_parts[1]) - v_j + 1);
+    v_cur := right(v_parts[1], v_j - 1);
+  else
+    v_cur := v_parts[1];
+  end if;
+  for v_k in 2 .. v_n loop
+    v_i := strpos(w[v_k], ' ');
+    if v_i = 0 then
+      v_cur := v_cur || '@' || v_parts[v_k];
+    else
+      v_j := strpos(reverse(w[v_k]), ' ');
+      v_runs := v_runs || (v_cur || '@' || left(v_parts[v_k], v_i - 1));
+      v_gaps := v_gaps || substr(v_parts[v_k], v_i, char_length(v_parts[v_k]) - v_j + 2 - v_i);
+      v_cur := right(v_parts[v_k], v_j - 1);
+    end if;
+  end loop;
+  -- Dopo l'ultima «@»: se l'ultimo pezzo aveva uno spazio, quello che resta è testo (fine della coda); altrimenti
+  -- è l'ultima corsa.
+  if v_i = 0 then
+    v_runs := v_runs || v_cur;
+    v_gaps := v_gaps || ''::text;
+  else
+    v_gaps[array_length(v_gaps, 1)] := v_gaps[array_length(v_gaps, 1)] || v_cur;
+  end if;
+  v_n := array_length(v_runs, 1);
+  v_shown := v_runs;
+  v_full := array_fill(false, array[v_n]);
+  v_first := v_full;
+  v_last := v_full;
+  for v_k in 1 .. v_n loop
+    if char_length(v_runs[v_k]) > 300 then
+      v_full[v_k] := true;
+      continue;
+    end if;
+    -- Inizio (virgolette, parentesi aperte, poi «mailto:») e fine (punteggiatura) del candidato: v_rest è il resto.
+    v_core := ltrim(v_runs[v_k], '''’`*"(<[');
+    if translate(left(v_core, 7), 'MAILTO', 'mailto') = 'mailto:' then
+      v_core := substr(v_core, 8);
+    end if;
+    v_rest := rtrim(v_core, '.,;:!?)>]''’`*"');
+    if p_keep and v_rest ~ '^[A-Za-z0-9._+-]+@[uU][nN][iI][mM][iI]\.[iI][tT]$' then
+      continue;
+    end if;
+    v_shown[v_k] := left(v_runs[v_k], char_length(v_runs[v_k]) - char_length(v_core)) || '[email nascosta]'
+      || right(v_core, char_length(v_core) - char_length(v_rest));
+    -- La corsa prima: l'ultima del testo in mezzo, o la corsa con «@» prima se in mezzo ci sono solo spazi.
+    if left(v_rest, 1) = '@' then
+      if (case when v_k = 1 then v_prefix else v_gaps[v_k - 1] end) ~ '[^ \t\n\r\f\v]' then
+        v_last[v_k] := true;
+        v_near := true;
+      elsif v_k > 1 then
+        v_full[v_k - 1] := true;
+      end if;
+    end if;
+    -- La corsa dopo: la prima del testo in mezzo, o la corsa con «@» dopo.
+    if right(v_rest, 1) = '@' then
+      if v_gaps[v_k] ~ '[^ \t\n\r\f\v]' then
+        v_first[v_k] := true;
+        v_near := true;
+      elsif v_k < v_n then
+        v_full[v_k + 1] := true;
+      end if;
+    end if;
+  end loop;
+  v_out := v_prefix;
+  if not v_near then
+    for v_k in 1 .. v_n loop
+      v_out := v_out || case when v_full[v_k] then '[email nascosta]' else v_shown[v_k] end || v_gaps[v_k];
+    end loop;
+    return v_out;
+  end if;
+  -- Corse vicine da nascondere: in un testo in mezzo la prima corsa (v_first della corsa prima) e/o l'ultima
+  -- (v_last della corsa dopo); se c'è una corsa sola e la chiedono tutte e due, diventa un solo segnaposto.
+  if v_last[1] then
+    v_out := reverse(regexp_replace(reverse(v_prefix), '^([ \t\n\r\f\v]*)[^ \t\n\r\f\v]+', '\1]atsocsan liame['));
+  end if;
+  for v_k in 1 .. v_n loop
+    v_region := v_gaps[v_k];
+    if v_k < v_n and v_last[v_k + 1] and v_first[v_k]
+       and v_region ~ '^[ \t\n\r\f\v]*[^ \t\n\r\f\v]+[ \t\n\r\f\v]*$' then
+      v_region := regexp_replace(v_region, '[^ \t\n\r\f\v]+', '[email nascosta]');
+    else
+      if v_k < v_n and v_last[v_k + 1] then
+        v_region := reverse(regexp_replace(reverse(v_region), '^([ \t\n\r\f\v]*)[^ \t\n\r\f\v]+', '\1]atsocsan liame['));
+      end if;
+      if v_first[v_k] then
+        v_region := regexp_replace(v_region, '^([ \t\n\r\f\v]*)[^ \t\n\r\f\v]+', '\1[email nascosta]');
+      end if;
+    end if;
+    v_out := v_out || case when v_full[v_k] then '[email nascosta]' else v_shown[v_k] end || v_region;
+  end loop;
+  return v_out;
 end;
 $$;
 
 -- Testo con indirizzi email: vale solo se ogni indirizzo è esattamente @unimi.it (niente
 -- sottodomini, niente «@» rimasti, niente trucchi Unicode). Stessa regola di onlyInstitutionalEmails nel client.
-create or replace function public.studyos_only_unimi_emails(p_text text)
+create or replace function public.studyos_only_unimi_emails(p_text text, p_url boolean default false)
 returns boolean
-language sql
+language plpgsql
 immutable
 set search_path = pg_catalog
 as $$
-  select position('@' in n.v) = 0 or public.studyos_hide_emails_normalized(n.v, true) = n.v
-  from (select public.studyos_email_normalize(p_text) as v) as n
+declare
+  v text := public.studyos_email_normalize(p_text, p_url);
+begin
+  return strpos(v, '@') = 0 or public.studyos_hide_emails(p_text, true, p_url) = v;
+end;
 $$;
 
-revoke all on function public.studyos_email_normalize(text) from public, anon, authenticated;
-revoke all on function public.studyos_hide_emails_normalized(text, boolean) from public, anon, authenticated;
-revoke all on function public.studyos_hide_emails(text, boolean) from public, anon, authenticated;
-revoke all on function public.studyos_only_unimi_emails(text) from public, anon, authenticated;
+-- Taglia un testo a p_max caratteri al confine di una corsa (spazi ASCII) PRIMA di oscurarlo: mai metà di una parola,
+-- quindi mai un pezzo di indirizzo. Se la prima corsa tolta, normalizzata, inizia con «@» (dopo virgolette, parentesi
+-- e «mailto:», e non supera 300 caratteri) nel testo intero la regola delle corse vicine nasconderebbe l'ultima corsa
+-- tenuta («bea.privata @gmail.com» tagliato fra le due parole): si toglie anche quella (con le corse che, normalizzate,
+-- restano vuote). Stesso taglio di cutAtRunBoundary in src/lib/institutionalEmail.ts. Mai un errore: «» se qualcosa
+-- va storto.
+create or replace function public.studyos_cut_at_run(p_text text, p_max integer)
+returns text
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v_kept text;
+  v_rest text;
+  v_last text;
+  v_next text;
+begin
+  if p_text is null or char_length(p_text) <= p_max then
+    return p_text;
+  end if;
+  v_kept := reverse(regexp_replace(reverse(left(p_text, p_max + 1)), '^[^ \t\n\r\f\v]*[ \t\n\r\f\v]*', ''));
+  v_next := substring(public.studyos_email_normalize(substr(p_text, char_length(v_kept) + 1))
+    from '^[ \t\n\r\f\v]*([^ \t\n\r\f\v]*)');
+  if char_length(v_next) > 300
+     or left(regexp_replace(v_next, '^[''’`*"(<\[]*(?:[mM][aA][iI][lL][tT][oO]:)?', ''), 1) is distinct from '@' then
+    return v_kept;
+  end if;
+  loop
+    v_rest := reverse(regexp_replace(reverse(v_kept), '^[^ \t\n\r\f\v]*[ \t\n\r\f\v]*', ''));
+    v_last := substr(v_kept, char_length(v_rest) + 1);
+    v_kept := v_rest;
+    exit when v_kept = '' or public.studyos_email_normalize(v_last) ~ '[^ \t\n\r\f\v]';
+  end loop;
+  return v_kept;
+exception when others then
+  return '';
+end;
+$$;
 
--- Ogni valore testuale di un oggetto jsonb contiene solo indirizzi @unimi.it (si controlla valore per valore).
+revoke all on function public.studyos_email_normalize(text, boolean) from public, anon, authenticated;
+revoke all on function public.studyos_hide_emails(text, boolean, boolean, boolean) from public, anon, authenticated;
+revoke all on function public.studyos_only_unimi_emails(text, boolean) from public, anon, authenticated;
+revoke all on function public.studyos_cut_at_run(text, integer) from public, anon, authenticated;
+
+-- Ogni valore testuale di un oggetto jsonb contiene solo indirizzi @unimi.it (si controlla valore per valore;
+-- url e website come link).
 create or replace function public.studyos_fields_only_unimi(p_fields jsonb)
 returns boolean
 language sql
@@ -204,7 +407,8 @@ set search_path = pg_catalog
 as $$
   select case when jsonb_typeof(p_fields) = 'object' then not exists (
     select 1 from jsonb_each(p_fields) as e
-    where jsonb_typeof(e.value) = 'string' and not public.studyos_only_unimi_emails(e.value #>> '{}'))
+    where jsonb_typeof(e.value) = 'string'
+      and not public.studyos_only_unimi_emails(e.value #>> '{}', e.key in ('url', 'website')))
   else true end
 $$;
 
@@ -508,7 +712,8 @@ begin
     if jsonb_typeof(p_fields -> v_key) <> 'string' then
       return jsonb_build_object('ok', false, 'field', v_key, 'message', 'Valore non valido.');
     end if;
-    v_value := btrim(regexp_replace(public.studyos_email_normalize(p_fields ->> v_key), '\s+', ' ', 'g'));
+    -- url e website sono link: «%40» nel percorso (Teams, Google Calendar) resta com'è.
+    v_value := btrim(regexp_replace(public.studyos_email_normalize(p_fields ->> v_key, v_key in ('url', 'website')), '\s+', ' ', 'g'));
     if v_value = '' then
       continue;
     end if;
@@ -529,7 +734,7 @@ begin
     elsif v_key = 'website' and v_value ~* '^mailto:' then
       return jsonb_build_object('ok', false, 'field', 'website', 'message', 'Il sito deve iniziare con https://.');
     end if;
-    if not public.studyos_only_unimi_emails(v_value) then
+    if not public.studyos_only_unimi_emails(v_value, v_key in ('url', 'website')) then
       return jsonb_build_object('ok', false, 'field', v_key, 'message', 'Solo indirizzi istituzionali che finiscono con @unimi.it.');
     end if;
     v_out := v_out || jsonb_build_object(v_key, v_value);
@@ -540,6 +745,9 @@ begin
   return jsonb_build_object('ok', true, 'value', v_out);
 end;
 $$;
+
+-- Solo save_group_catalog_override (definer) la chiama: chiusa a tutti gli altri.
+revoke all on function public.studyos_catalog_override_clean(text, jsonb) from public, anon, authenticated;
 
 -- Campi cambiati tra due righe di un appello (nomi dei campi del client).
 create or replace function public.studyos_exam_session_changes(p_old jsonb, p_new jsonb)
@@ -1164,6 +1372,9 @@ as $$
 declare
   v_user uuid := public.studyos_agent_user(p_secret);
   v_me text;
+  -- false: il redattore lavora senza una sottotransazione per valore (veloce). Se qualcosa va storto si rifà
+  -- tutto con true: ogni valore che dà un errore diventa «[email nascosta]» (mai un errore per il contenuto).
+  v_safe boolean := false;
 begin
   if v_user is null then
     raise exception 'Collegamento dell''assistente non valido o revocato.' using errcode = '28000';
@@ -1173,62 +1384,80 @@ begin
   -- (nemmeno @unimi.it: un membro può averlo); gli @unimi.it restano solo nei campi email e contatto
   -- delle correzioni (email, value, url, website). Si redige valore per valore, mai rileggendo JSON.
   -- Solo gruppi con id di forma sicura (gli id li sceglie il client): gli altri non escono dal server.
-  return jsonb_build_object(
-    'groups', coalesce((
-      select jsonb_agg(jsonb_build_object('id', g.id, 'name', public.studyos_hide_emails(left(g.name, 120))) order by g.name, g.id)
-      from public.studyos_groups as g
-      join public.studyos_group_members as m on m.group_id = g.id and m.user_id = v_me
-      where g.id ~ '^[A-Za-z0-9_-]{1,120}$'), '[]'::jsonb),
-    'sessions', coalesce((
-      select jsonb_agg(jsonb_build_object(
-          'id', s.id, 'group_id', s.group_id,
-          -- Senza «@» nel nome si restituiscono il testo e le chiavi come sono salvati; con una «@» il nome è
-          -- oscurato e le chiavi si ricavano da quello (il nome si oscura una sola volta per riga).
-          'course_key', case when s.course_key like 'barb:%' or cn.name is not distinct from s.course_name then s.course_key
-            else 'nome:' || public.studyos_course_norm(cn.name) end,
-          'course_id', s.course_id,
-          'course_name', cn.name,
-          'course_norm', case when cn.name is not distinct from s.course_name then s.course_norm
-            else public.studyos_course_norm(cn.name) end,
-          'exam_date', s.exam_date, 'kind', s.kind, 'label', public.studyos_hide_emails(left(s.label, 200)),
-          'exam_time', s.exam_time, 'room', public.studyos_hide_emails(left(s.room, 200)),
-          'notes', public.studyos_hide_emails(left(s.notes, 2000)),
-          'registration_opens', s.registration_opens, 'registration_closes', s.registration_closes,
-          'barb_session_id', s.barb_session_id, 'source', s.source, 'version', s.version,
-          'created_by_name', public.studyos_hide_emails(left(s.created_by_name, 200)),
-          'updated_by_name', public.studyos_hide_emails(left(s.updated_by_name, 200)),
-          'deleted_at', s.deleted_at, 'deleted_by_name', public.studyos_hide_emails(left(s.deleted_by_name, 200)),
-          'created_at', s.created_at, 'updated_at', s.updated_at,
-          'mine', s.created_by = v_me) order by s.exam_date, s.id)
-      from (
-        select * from public.studyos_group_exam_sessions
-        where group_id in (select group_id from public.studyos_group_members where user_id = v_me)
-          and group_id ~ '^[A-Za-z0-9_-]{1,120}$'
-        order by exam_date desc, id
-        limit 2000
-      ) as s
-      cross join lateral (select public.studyos_hide_emails(left(s.course_name, 200)) as name) as cn), '[]'::jsonb),
-    'overrides', coalesce((
-      select jsonb_agg(jsonb_build_object(
-          'id', o.id, 'group_id', o.group_id, 'target_kind', o.target_kind, 'target_id', o.target_id,
-          'target_label', public.studyos_hide_emails(left(o.target_label, 200)),
-          -- Solo valori di testo (la funzione di scrittura non ne accetta altri): quelli di altro tipo si scartano.
-          'fields', coalesce((
-            select jsonb_object_agg(e.key, to_jsonb(public.studyos_hide_emails(left(e.value #>> '{}', 1000),
-              e.key in ('email', 'value', 'url', 'website'))))
-            from jsonb_each(o.fields) as e
-            where jsonb_typeof(e.value) = 'string'), '{}'::jsonb),
-          'version', o.version,
-          'created_by_name', public.studyos_hide_emails(left(o.created_by_name, 200)),
-          'updated_by_name', public.studyos_hide_emails(left(o.updated_by_name, 200)),
-          'deleted_at', o.deleted_at, 'deleted_by_name', public.studyos_hide_emails(left(o.deleted_by_name, 200)),
-          'created_at', o.created_at, 'updated_at', o.updated_at,
-          'mine', o.created_by = v_me) order by o.target_kind, o.target_id)
-      from public.studyos_group_catalog_overrides as o
-      where o.deleted_at is null
-        and o.group_id ~ '^[A-Za-z0-9_-]{1,120}$'
-        and o.group_id in (select group_id from public.studyos_group_members where user_id = v_me)), '[]'::jsonb)
-  );
+  loop
+    begin
+      return jsonb_build_object(
+        'groups', coalesce((
+          -- Il nome si taglia a 120 caratteri PRIMA di oscurarlo, al confine di una parola: mai un pezzo di
+          -- indirizzo (i nomi nuovi non superano 120: trigger studyos_groups_name_limit; questi sono i vecchi).
+          select jsonb_agg(jsonb_build_object('id', g.id, 'name', public.studyos_hide_emails(
+              public.studyos_cut_at_run(g.name, 120), false, false, v_safe)) order by g.name, g.id)
+          from public.studyos_groups as g
+          join public.studyos_group_members as m on m.group_id = g.id and m.user_id = v_me
+          where g.id ~ '^[A-Za-z0-9_-]{1,120}$'), '[]'::jsonb),
+        'sessions', coalesce((
+          select jsonb_agg(jsonb_build_object(
+              'id', s.id, 'group_id', s.group_id,
+              -- Senza «@» nel nome si restituiscono il testo e le chiavi come sono salvati; con una «@» il nome è
+              -- oscurato e le chiavi si ricavano da quello (il nome si oscura una sola volta per riga).
+              'course_key', case when s.course_key like 'barb:%' or cn.name is not distinct from s.course_name then s.course_key
+                else 'nome:' || public.studyos_course_norm(cn.name) end,
+              'course_id', s.course_id,
+              'course_name', cn.name,
+              'course_norm', case when cn.name is not distinct from s.course_name then s.course_norm
+                else public.studyos_course_norm(cn.name) end,
+              'exam_date', s.exam_date, 'kind', s.kind,
+              'label', public.studyos_hide_emails(left(s.label, 200), false, false, v_safe),
+              'exam_time', s.exam_time,
+              'room', public.studyos_hide_emails(left(s.room, 200), false, false, v_safe),
+              'notes', public.studyos_hide_emails(left(s.notes, 2000), false, false, v_safe),
+              'registration_opens', s.registration_opens, 'registration_closes', s.registration_closes,
+              'barb_session_id', s.barb_session_id, 'source', s.source, 'version', s.version,
+              'created_by_name', public.studyos_hide_emails(left(s.created_by_name, 200), false, false, v_safe),
+              'updated_by_name', public.studyos_hide_emails(left(s.updated_by_name, 200), false, false, v_safe),
+              'deleted_at', s.deleted_at,
+              'deleted_by_name', public.studyos_hide_emails(left(s.deleted_by_name, 200), false, false, v_safe),
+              'created_at', s.created_at, 'updated_at', s.updated_at,
+              'mine', s.created_by = v_me) order by s.exam_date, s.id)
+          from (
+            select * from public.studyos_group_exam_sessions
+            where group_id in (select group_id from public.studyos_group_members where user_id = v_me)
+              and group_id ~ '^[A-Za-z0-9_-]{1,120}$'
+            order by exam_date desc, id
+            limit 2000
+          ) as s
+          cross join lateral (select public.studyos_hide_emails(left(s.course_name, 200), false, false, v_safe) as name) as cn),
+          '[]'::jsonb),
+        'overrides', coalesce((
+          select jsonb_agg(jsonb_build_object(
+              'id', o.id, 'group_id', o.group_id, 'target_kind', o.target_kind, 'target_id', o.target_id,
+              'target_label', public.studyos_hide_emails(left(o.target_label, 200), false, false, v_safe),
+              -- Solo valori di testo (la funzione di scrittura non ne accetta altri): quelli di altro tipo si scartano.
+              -- url e website sono link: «%40» nel loro percorso non è una chiocciola.
+              'fields', coalesce((
+                select jsonb_object_agg(e.key, to_jsonb(public.studyos_hide_emails(left(e.value #>> '{}', 1000),
+                  e.key in ('email', 'value', 'url', 'website'), e.key in ('url', 'website'), v_safe)))
+                from jsonb_each(o.fields) as e
+                where jsonb_typeof(e.value) = 'string'), '{}'::jsonb),
+              'version', o.version,
+              'created_by_name', public.studyos_hide_emails(left(o.created_by_name, 200), false, false, v_safe),
+              'updated_by_name', public.studyos_hide_emails(left(o.updated_by_name, 200), false, false, v_safe),
+              'deleted_at', o.deleted_at,
+              'deleted_by_name', public.studyos_hide_emails(left(o.deleted_by_name, 200), false, false, v_safe),
+              'created_at', o.created_at, 'updated_at', o.updated_at,
+              'mine', o.created_by = v_me) order by o.target_kind, o.target_id)
+          from public.studyos_group_catalog_overrides as o
+          where o.deleted_at is null
+            and o.group_id ~ '^[A-Za-z0-9_-]{1,120}$'
+            and o.group_id in (select group_id from public.studyos_group_members where user_id = v_me)), '[]'::jsonb)
+      );
+    exception when others then
+      if v_safe then
+        raise;
+      end if;
+      v_safe := true;
+    end;
+  end loop;
 end;
 $$;
 

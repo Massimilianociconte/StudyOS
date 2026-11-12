@@ -5,6 +5,8 @@
 # sulla macchina, la seconda passata si salta.
 # Uso: LC_ALL=C LANG=C zsh scripts/supabase/scratch-pg.sh
 # Richiede initdb/pg_ctl/psql (Postgres 15+). Mai sul progetto reale.
+# HOOK (facoltativo): comando eseguito in ogni database dopo gli script, con DB_URL esportato (prove di carico,
+# confronti con il client); con HOOK_ONLY=1 si esegue solo quello, senza le prove.
 set -e
 REPO=${0:A:h:h:h}
 DATA=$(mktemp -d)/data
@@ -23,6 +25,10 @@ run_db() {
     done
   done
   echo "script applicati due volte ($1)"
+  if [[ -n "${HOOK:-}" ]]; then
+    DB_URL="$URL" zsh -c "$HOOK" || { echo "FAIL hook ($1)"; exit 1; }
+    [[ "${HOOK_ONLY:-}" == 1 ]] && return 0
+  fi
   psql "$URL" -q -v ON_ERROR_STOP=1 -f "$REPO/scripts/supabase/email-vectors-tests.sql"
   psql "$URL" -q -v ON_ERROR_STOP=1 -f "$REPO/scripts/supabase/group-exams-tests.sql"
   psql "$URL" -q -f "$REPO/supabase/sharing-verify.sql"

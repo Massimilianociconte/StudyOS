@@ -36,6 +36,13 @@ export const groupInviteLink = (code: string) => `${inviteLinkBase()}#invito=${e
 export const groupInviteMessage = (groupName: string, inviter: string, code: string) =>
   `${inviter} ti invita nel gruppo di studio "${groupName}" su StudyOS.\n\nEntra da qui: ${groupInviteLink(code)}\n\nOppure apri Gruppi → Entra con un codice e scrivi ${normalizeInviteCode(code)}`;
 
+/**
+ * Caratteri al massimo nel nome di un gruppo (caratteri Unicode, come char_length in Postgres). Il server
+ * rifiuta un nome più lungo quando lo si scrive o lo si cambia (studyos_groups_name_limit in
+ * supabase/group-exams.sql); un nome più vecchio e più lungo arriva agli agenti tagliato a questa lunghezza.
+ */
+export const GROUP_NAME_MAX = 120;
+
 /** Gruppi ascoltati in tempo reale al massimo (limite del filtro `in` di Supabase Realtime). */
 export const REALTIME_GROUPS_MAX = 100;
 

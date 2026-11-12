@@ -204,7 +204,9 @@ Una sola regola in SQL e in TypeScript (`studyos_hide_emails`, `src/lib/institut
 `tests/fixtures/emailVectors.json`). Agli agenti il testo scritto dai membri arriva sempre senza
 indirizzi, `@unimi.it` compreso; solo i campi `email`, `website`, `url` e `value` di una correzione del
 catalogo possono mostrarlo. Lo snapshot del connettore (`studyos_agent_group_snapshot`) redige valore per
-valore e salta i gruppi con id di forma insolita. Dettagli in [group-exams.md](group-exams.md).
+valore e salta i gruppi con id di forma insolita; un valore con più di 10 `@` si nasconde per intero, e il
+nome di un gruppo (al massimo 120 caratteri) si taglia al confine di una parola prima di nascondere gli
+indirizzi. Dettagli in [group-exams.md](group-exams.md).
 
 ## Limiti noti
 

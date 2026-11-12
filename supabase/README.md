@@ -449,6 +449,8 @@ successiva: la revisione di questo giro aggiunge un controllo sulle righe dei me
    Se manca `groups.sql` aggiornato si ferma con «Esegui prima groups.sql (versione del 12/11 o successiva)».
    Aggiunge anche un controllo sulla forma degli id dei nuovi gruppi (lettere, cifre, `_` e `-`): i gruppi
    già salvati restano come sono. Agli agenti il connettore dà i testi dei membri senza nessuna email.
+   Il nome di un gruppo nuovo o rinominato può avere al massimo 120 caratteri (trigger
+   `studyos_groups_name_limit`, stesso limite nell'app); i nomi più lunghi già salvati restano.
 2. `verify.sql`: `definer_functions_ready` deve restare `true` (l'ingresso del connettore
    `studyos_agent_group_snapshot` è tra quelli permessi); poi `sharing-verify.sql`: le colonne
    `group_exams_*` devono essere tutte `true`.

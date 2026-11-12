@@ -29,7 +29,7 @@ export const CATALOG_OVERRIDE_FIELDS: Record<CatalogTargetKind, readonly string[
 export const safeOverrideValue = (kind: CatalogTargetKind, key: string, value: unknown): string | null => {
   if (typeof value !== "string" || !CATALOG_OVERRIDE_FIELDS[kind].includes(key)) return null;
   if (key === "email") return institutionalEmail(value);
-  return onlyInstitutionalEmails(value) ? value : null;
+  return onlyInstitutionalEmails(value, key === "url" || key === "website") ? value : null;
 };
 
 /** Appello del gruppo come lo legge il client (righe del server in camelCase). */

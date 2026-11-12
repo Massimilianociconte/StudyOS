@@ -13,8 +13,8 @@ import { newGroupRecordId, type CatalogOverride, type CatalogTargetKind } from "
 import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import type { BarbTeacher, ScheduleRule } from "../lib/university/types";
-import { groupNamesOf, useGroupExamStore } from "../store/useGroupExamStore";
-import { failWith, groupExamsReady, groupWrite } from "./groupExamTools";
+import { useGroupExamStore } from "../store/useGroupExamStore";
+import { failWith, groupExamsReady, groupWrite, hiddenGroupName } from "./groupExamTools";
 import { agentCatalogText, agentMemberText, agentTeacherEmail } from "./project";
 import { fail, ok, optional, page, text, type Args } from "./toolkit";
 import type { AgentCallResult } from "./types";
@@ -27,7 +27,6 @@ const NEEDS_VERSION = "Il gruppo ha già una correzione per questo elemento: pas
 
 const catalog = async () => (await import("../data/university/barb.dataset")).BARB_DATASET;
 const groups = () => useGroupExamStore.getState();
-const groupNameOf = (groupId: string) => groupNamesOf(groups().groups).get(groupId) ?? "";
 
 /** Link per gli agenti: http(s) sicuro; mailto solo verso un indirizzo istituzionale. */
 const agentLink = (value: string | null | undefined): string | null => {
@@ -55,7 +54,7 @@ const shownFields = (fields: Record<string, unknown>) => Object.fromEntries(Obje
 export const publicCorrection = (row: CatalogOverride) => ({
   overrideId: row.id,
   groupId: row.groupId,
-  groupName: agentMemberText(groupNameOf(row.groupId)),
+  groupName: hiddenGroupName(row.groupId),
   targetKind: row.targetKind,
   targetId: row.targetId,
   targetLabel: agentMemberText(row.targetLabel),
