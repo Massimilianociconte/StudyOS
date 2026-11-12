@@ -38,7 +38,9 @@ import {
   formatMinutes,
   occasionAgeText
 } from "../lib/labels";
-import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT } from "../lib/labels/home";
+import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
+import { homeTimerSummary } from "../lib/homeTimer";
+import { useNow } from "../hooks/useNow";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
@@ -139,6 +141,45 @@ function useBarbLookup(enabled: boolean) {
   return lookup;
 }
 
+/**
+ * Azione del titolo: «Inizia a studiare», oppure il timer già avviato («Pomodoro · Chimica · 18:42»)
+ * che riporta a Studio. Legge lo stato del timer dallo store; il tick di un secondo ridisegna solo
+ * questo pulsante e solo mentre il timer corre.
+ */
+function StudyAction({ onGo }: { onGo: () => void }) {
+  const timer = useStudyStore((state) => state.timer);
+  const subjects = useStudyStore((state) => state.subjects);
+  const now = useNow(1000, timer.running).getTime();
+  const summary = homeTimerSummary(timer, subjects, now);
+  if (!summary) {
+    return (
+      <Button icon="Timer" variant="soft" onClick={onGo} title="Apre il timer nella sezione Studio">
+        Inizia a studiare
+      </Button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onGo}
+      aria-label={HOME_TIMER_TEXT.aria(summary.text)}
+      title={HOME_TIMER_TEXT.title}
+      className="motion-safe inline-flex min-h-11 max-w-full items-center gap-2 sm:max-w-xs rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] pl-3 pr-2.5 text-sm font-extrabold text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)]"
+    >
+      <span className="relative grid h-2.5 w-2.5 shrink-0 grid-cols-1 place-items-center" aria-hidden="true">
+        {summary.state === "running" ? <span className="absolute inset-0 rounded-full bg-[var(--accent)] opacity-60 motion-safe:animate-ping" /> : null}
+        <span className={`h-2.5 w-2.5 rounded-full ${summary.state === "running" ? "bg-[var(--accent)]" : "bg-[var(--faint)]"}`} />
+      </span>
+      <Icon name={summary.icon} className="h-4 w-4 shrink-0" />
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="min-w-0 truncate">{summary.lead}</span>
+        <span className="shrink-0 tabular-nums">· {summary.tail}</span>
+      </span>
+      <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+    </button>
+  );
+}
+
 export function DashboardView() {
   const store = useStudyStore();
   const { events, tasks, subjects, exams, sessions, attachments, goals, topics, setActiveView, toggleTask } = store;
@@ -222,11 +263,7 @@ export function DashboardView() {
       <SectionTitle
         title={welcomeName ? `Ciao, ${welcomeName}` : "Home"}
         subtitle={`${capitalizeFirst(format(now, "EEEE d MMMM", { locale: it }))} · ${todaySummary}`}
-        action={
-          <Button icon="Timer" variant="soft" onClick={() => setActiveView("study")} title="Apre il timer nella sezione Studio">
-            Inizia a studiare
-          </Button>
-        }
+        action={<StudyAction onGo={() => setActiveView("study")} />}
       />
 
       <GettingStarted
