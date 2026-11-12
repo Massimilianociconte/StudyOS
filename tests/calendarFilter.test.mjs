@@ -168,6 +168,49 @@ test("subjectCalendarSummary: una serie ricorrente conta 1, esami e scadenze inc
   assert.equal(s3.items, 0);
 });
 
+test("subjectCalendarSummary: una serie divisa («questa e le successive») conta una volta", () => {
+  const weekly = (byWeekday) => ({ recurrence: "weekly", repeat: { freq: "weekly", byWeekday }, repeatLegacy: "weekly|" });
+  const summary = subjectCalendarSummary({
+    subjects: [subject("s1"), subject("s2")],
+    events: [
+      event("lezione", { subjectId: "s1", ...weekly(["TU"]) }),
+      event("lezione-dal-17", { subjectId: "s1", splitFrom: "lezione", originalDate: "2026-11-17", ...weekly(["TU"]) }),
+      event("lezione-dal-24", { subjectId: "s1", splitFrom: "lezione-dal-17", originalDate: "2026-11-24", ...weekly(["TU"]) }),
+      event("ricevimento", { subjectId: "s1" }),
+      // Una parte spostata su un'altra materia conta là (e anche qui, per la parte che resta).
+      event("esercitazione", { subjectId: "s1", recurrence: "daily" }),
+      event("esercitazione-s2", { subjectId: "s2", splitFrom: "esercitazione", originalDate: "2026-11-20", recurrence: "daily" }),
+      // Una madre eliminata non sposta il conto della figlia.
+      event("vecchia", { subjectId: "s2", archived: true, ...weekly(["FR"]) }),
+      event("vecchia-dal-20", { subjectId: "s2", splitFrom: "vecchia", ...weekly(["FR"]) })
+    ],
+    exams: [],
+    tasks: []
+  });
+  const [s1, s2] = summary.rows;
+  assert.deepEqual({ events: s1.events, weekly: s1.weekly }, { events: 3, weekly: 1 });
+  assert.deepEqual({ events: s2.events, weekly: s2.weekly }, { events: 2, weekly: 1 });
+});
+
+test("subjectCalendarSummary: «ogni settimana» legge la regola `repeat`, non solo il campo vecchio", () => {
+  const summary = subjectCalendarSummary({
+    subjects: [subject("s1")],
+    events: [
+      // Lunedì e mercoledì, con inizio di martedì: per le app vecchie è "none", ma è settimanale.
+      event("lun-mer", { subjectId: "s1", recurrence: "none", repeat: { freq: "weekly", byWeekday: ["MO", "WE"] }, repeatLegacy: "none|" }),
+      event("feriali", { subjectId: "s1", recurrence: "weekly", repeat: { freq: "weekly", byWeekday: ["MO", "TU", "WE", "TH", "FR"] }, repeatLegacy: "weekly|" }),
+      event("vecchio stile", { subjectId: "s1", recurrence: "weekly" }),
+      // Ogni 2 settimane non è "ogni settimana".
+      event("quindicinale", { subjectId: "s1", recurrence: "none", repeat: { freq: "weekly", interval: 2 }, repeatLegacy: "none|" }),
+      // Un'app vecchia ha cambiato la ripetizione in "ogni giorno": vale quella.
+      event("cambiato", { subjectId: "s1", recurrence: "daily", repeat: { freq: "weekly" }, repeatLegacy: "weekly|" })
+    ],
+    exams: [],
+    tasks: []
+  });
+  assert.deepEqual({ events: summary.rows[0].events, weekly: summary.rows[0].weekly }, { events: 5, weekly: 3 });
+});
+
 test("subjectCalendarSummary: tre informazioni distinte (materie del piano, materie con impegni, impegni per materia)", () => {
   const summary = subjectCalendarSummary({
     subjects: [subject("s1"), subject("s2"), subject("s3"), subject("s4", { archived: true })],

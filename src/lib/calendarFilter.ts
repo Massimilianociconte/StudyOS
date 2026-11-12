@@ -4,6 +4,7 @@
 // Il filtro lavora su qualunque elenco di voci mostrate (occorrenze, attività, esami, sessioni…)
 // che abbia `subjectId`: un nuovo modello di occorrenze si aggancia passando i suoi elenchi.
 import type { CalendarEvent, Exam, Subject, Task } from "../types";
+import { isOccurrenceRow, normalizeRepeat } from "./repeat";
 
 /* ------------------------------------------------------------------ */
 /* Filtro per materia                                                   */
@@ -57,9 +58,9 @@ export const resolveSubjectFilter = (stored: unknown, subjects: readonly Subject
 
 export interface SubjectCalendarRow<S> {
   subject: S;
-  /** Eventi propri non archiviati: una serie che si ripete conta 1. */
+  /** Eventi propri non archiviati: una serie che si ripete conta 1, anche se divisa in parti. */
   events: number;
-  /** Di questi, quanti si ripetono ogni settimana. */
+  /** Di questi, quanti si ripetono ogni settimana (in uno o più giorni). */
   weekly: number;
   exams: number;
   /** Attività con una scadenza (anche già fatte: il calendario le mostra barrate). */
@@ -78,6 +79,48 @@ export interface SubjectCalendarSummary<S> {
   rows: SubjectCalendarRow<S>[];
 }
 
+type SummaryEvent = Pick<CalendarEvent, "id" | "subjectId" | "archived" | "start" | "recurrence"> &
+  Partial<Pick<CalendarEvent, "splitFrom" | "seriesId" | "repeat" | "repeatLegacy" | "recurrenceUntil">>;
+
+/**
+ * Radice di ogni serie divisa con "questa e le successive" (`splitFrom` fino alla prima serie, anche
+ * archiviata): le parti di una serie sono un impegno solo. Protetta dai cicli (dati di altri dispositivi).
+ */
+const seriesRoots = (events: readonly SummaryEvent[]) => {
+  const byId = new Map(events.map((event) => [event.id, event]));
+  const roots = new Map<string, string>();
+  return (id: string): string => {
+    const known = roots.get(id);
+    if (known !== undefined) return known;
+    const seen = new Set<string>();
+    let current = id;
+    while (!seen.has(current)) {
+      seen.add(current);
+      const parent = byId.get(current)?.splitFrom;
+      if (typeof parent !== "string" || !parent || !byId.has(parent)) break;
+      current = parent;
+    }
+    for (const visited of seen) roots.set(visited, current);
+    return current;
+  };
+};
+
+/**
+ * "Ogni settimana", in qualunque giorno: la regola `repeat` se vale (anche lun e mer, o i feriali),
+ * altrimenti i campi vecchi. Ogni 2 settimane no; "ogni 7 giorni" sì.
+ */
+const repeatsWeekly = (event: SummaryEvent) => {
+  const rule = normalizeRepeat(event);
+  if (!rule) return false;
+  const interval = rule.interval ?? 1;
+  return (rule.freq === "weekly" && interval === 1) || (rule.freq === "daily" && interval === 7);
+};
+
+const startTime = (event: SummaryEvent) => {
+  const time = Date.parse(event.start);
+  return Number.isFinite(time) ? time : Number.NEGATIVE_INFINITY;
+};
+
 export const subjectCalendarSummary = <S extends SubjectState>({
   subjects,
   events,
@@ -85,20 +128,30 @@ export const subjectCalendarSummary = <S extends SubjectState>({
   tasks
 }: {
   subjects: readonly S[];
-  events: readonly Pick<CalendarEvent, "subjectId" | "archived" | "recurrence">[];
+  events: readonly SummaryEvent[];
   exams: readonly Pick<Exam, "subjectId" | "archived">[];
   tasks: readonly Pick<Task, "subjectId" | "archived" | "status" | "dueDate">[];
 }): SubjectCalendarSummary<S> => {
   const plan = subjects.filter((subject) => !isArchivedSubject(subject));
   const ordered = [...plan.filter((subject) => subject.status !== "completed"), ...plan.filter((subject) => subject.status === "completed")];
+  const series = events.filter((event) => !isOccurrenceRow(event));
+  const rootOf = seriesRoots(series);
   const rows = ordered.map((subject) => {
-    const own = events.filter((event) => !event.archived && event.subjectId === subject.id);
+    // Una serie (con le sue parti divise) conta una volta; per "ogni settimana" vale la parte più recente.
+    const families = new Map<string, SummaryEvent>();
+    for (const event of series) {
+      if (event.archived || event.subjectId !== subject.id) continue;
+      const root = rootOf(event.id);
+      const latest = families.get(root);
+      if (!latest || startTime(event) > startTime(latest)) families.set(root, event);
+    }
+    const own = [...families.values()];
     const examCount = exams.filter((exam) => !exam.archived && exam.subjectId === subject.id).length;
     const deadlines = tasks.filter((task) => !task.archived && task.status !== "archived" && Boolean(task.dueDate) && task.subjectId === subject.id).length;
     return {
       subject,
       events: own.length,
-      weekly: own.filter((event) => event.recurrence === "weekly").length,
+      weekly: own.filter(repeatsWeekly).length,
       exams: examCount,
       deadlines,
       items: own.length + examCount + deadlines,
