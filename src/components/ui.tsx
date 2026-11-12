@@ -600,7 +600,10 @@ export function Drawer({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget && dismissOutside) onClose();
+            if (event.target !== event.currentTarget || !dismissOutside) return;
+            // Il focus resta dov'è: se il drawer non si chiude («Scartare le modifiche?») non finisce sul body.
+            event.preventDefault();
+            onClose();
           }}
         >
           <m.div
