@@ -63,3 +63,13 @@ export const cleanSteps = (steps: TaskStep[]): TaskStep[] =>
   steps.map((step) => ({ ...step, text: step.text.trim() })).filter((step) => step.text);
 
 export const stepsDone = (steps: TaskStep[]) => ({ done: steps.filter((step) => step.done).length, total: steps.length });
+
+/** Bozza dell'editor diversa da com'era all'apertura (stessa forma: basta confrontare il JSON). */
+export const draftChanged = <T>(initial: T, draft: T) => JSON.stringify(initial) !== JSON.stringify(draft);
+
+/**
+ * Esc, ✕, tocco fuori o «Annulla» nell'editor: senza modifiche chiude; con modifiche chiede
+ * «Scartare le modifiche?» sul posto; una nuova richiesta mentre chiede torna a modificare.
+ */
+export const editorCloseRequest = (changed: boolean, asking: boolean): "close" | "ask" | "keep" =>
+  !changed ? "close" : asking ? "keep" : "ask";

@@ -49,6 +49,21 @@ export const TASKS_TEXT = {
 
 /** Editor di un'attività (anche quello aperto dal calendario). */
 export const TASK_EDITOR_TEXT = {
+  eyebrow: "Attività",
+  title: "Modifica attività",
+  added: (date: string) => `Aggiunta il ${date}`,
+  completed: (date: string) => `Completata il ${date}`,
+  late: "in ritardo",
+  save: "Salva modifiche",
+  saving: "Salvataggio…",
+  cancel: "Annulla",
+  remove: "Elimina attività",
+  discardTitle: "Scartare le modifiche?",
+  discardText: "Quello che hai cambiato non è ancora salvato.",
+  keepEditing: "Continua a modificare",
+  discard: "Scarta le modifiche",
+  minutesHint: "Se usi il timer si aggiorna da solo.",
+  minutesRunning: "Il timer è in corso: se cambi i minuti, riparte da lì.",
   steps: "Passaggi",
   stepsCount: (done: number, total: number) => `${done} di ${total} fatti`,
   stepsHint: "Dividi l'attività in piccoli passi da spuntare.",

@@ -1,18 +1,17 @@
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Field, HelpTip, IconButton, Pill, inputClass, useDialogLayer } from "./ui";
+import { Button, Drawer, Field, HelpTip, IconButton, inputClass } from "./ui";
 import { DateTimeField } from "./DatePicker";
 import { HelpField } from "./HelpField";
 import { DurationField } from "./DurationField";
 import { durationToMinutes, minutesToDuration } from "../lib/duration";
-import { ENERGY_LABEL, PRIORITY_LABEL, TASK_STATUS_LABEL, formatMinutes } from "../lib/labels";
-import { TASK_EDITOR_TEXT, TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
+import { ENERGY_LABEL, PRIORITY_LABEL, TASK_STATUS_LABEL } from "../lib/labels";
+import { TASK_EDITOR_TEXT, TASKS_HELP } from "../lib/labels/tasks";
 import { useNow } from "../hooks/useNow";
 import { editedMinutesPatch, formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds, taskMinutesFieldValue } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
-import { addStep, cleanSteps, removeStep, renameStep, stepsDone, toggleStep, type TaskStep } from "../lib/tasksUi";
+import { addStep, cleanSteps, draftChanged, editorCloseRequest, removeStep, renameStep, stepsDone, toggleStep, type TaskStep } from "../lib/tasksUi";
 import { createId } from "../lib/id";
 
 const toDatetimeLocal = (date?: string) => {
@@ -44,7 +43,7 @@ export function TaskEditorModal({
   const initialDuration = minutesToDuration(task.estimatedMinutes ?? 45);
   // Con il timer che corre il campo parte dai minuti misurati finora: se non lo tocchi non si manda.
   const [initialMinutes] = useState(() => taskMinutesFieldValue(task));
-  const [draft, setDraft] = useState({
+  const [initialDraft] = useState(() => ({
     title: task.title,
     description: task.description,
     status: task.status,
@@ -60,9 +59,13 @@ export function TaskEditorModal({
     difficulty: String(task.difficulty),
     importance: String(task.importance),
     steps: task.subtasks
-  });
+  }));
+  const [draft, setDraft] = useState(initialDraft);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // «Scartare le modifiche?» sul posto, al posto dei pulsanti: Esc e tocco fuori non perdono più nulla.
+  const [asking, setAsking] = useState(false);
+  const footerRef = useRef<HTMLDivElement>(null);
   // "Altre opzioni" parte aperta solo se contiene già note o tag, così nulla di scritto resta nascosto.
   const [moreOpenAtStart] = useState(() => Boolean(task.notes.trim() || task.tags.length));
   const moreRef = useRef<HTMLDetailsElement>(null);
@@ -70,11 +73,19 @@ export function TaskEditorModal({
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
   const completedLate = isTaskCompletedLate(task);
-  const titleId = useId();
 
-  const panelRef = useRef<HTMLElement>(null);
-  const areaRef = useRef<HTMLDivElement>(null);
-  useDialogLayer(true, { panelRef, areaRef, onEscape: onClose });
+  const keepEditing = () => {
+    setAsking(false);
+    requestAnimationFrame(() => footerRef.current?.querySelector<HTMLElement>("[data-save]")?.focus());
+  };
+
+  const requestClose = () => {
+    if (saving) return;
+    const next = editorCloseRequest(draftChanged(initialDraft, draft), asking);
+    if (next === "close") onClose();
+    else if (next === "ask") setAsking(true);
+    else keepEditing();
+  };
 
   const showMore = () => {
     if (moreRef.current) moreRef.current.open = true;
@@ -149,27 +160,68 @@ export function TaskEditorModal({
             ? "Salvando parte il timer: ogni tanto ti chiederà come va."
             : "Scegli «In corso» per far partire il timer.";
 
-  // Portal su body come Drawer: dentro la vista la barra in basso del telefono restava sopra la finestra.
-  return createPortal(
-    <div
-      ref={areaRef}
-      className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section ref={panelRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-3xl overflow-y-auto p-4 outline-none sm:p-5">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-black uppercase text-[var(--faint)]">Attività</p>
-            <h3 id={titleId} className="safe-text text-2xl font-black">Modifica attività</h3>
-          </div>
-          <IconButton icon="X" label={TASKS_TEXT.close} onClick={onClose} className="h-10 w-10" />
-        </div>
+  // Date che non sono campi del modulo: in una riga sotto il titolo (prima una fila di pillole che
+  // ripeteva stato, durata e minuti e spingeva «Salva» sotto la piega sul telefono).
+  const facts = (
+    <p className="text-xs font-bold text-[var(--muted)]">
+      {TASK_EDITOR_TEXT.added(shortDate(task.createdAt))}
+      {task.completedAt ? ` · ${TASK_EDITOR_TEXT.completed(shortDate(task.completedAt))}` : null}
+      {completedLate ? <span className="text-[var(--warning-text)]"> · {TASK_EDITOR_TEXT.late}</span> : null}
+    </p>
+  );
 
+  const footer = asking ? (
+    <div role="group" aria-label={TASK_EDITOR_TEXT.discardTitle} className="grid grid-cols-1 gap-2">
+      <div>
+        <p className="text-sm font-black">{TASK_EDITOR_TEXT.discardTitle}</p>
+        <p className="text-xs font-bold text-[var(--muted)]">{TASK_EDITOR_TEXT.discardText}</p>
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="soft" onClick={keepEditing} autoFocus>
+          {TASK_EDITOR_TEXT.keepEditing}
+        </Button>
+        <Button variant="danger" icon="X" onClick={onClose}>
+          {TASK_EDITOR_TEXT.discard}
+        </Button>
+      </div>
+    </div>
+  ) : (
+    <div ref={footerRef} className="flex items-center justify-between gap-2">
+      {/* Solo icona sul telefono, così i tre pulsanti stanno in una riga. */}
+      <Button
+        variant="danger"
+        icon="Trash2"
+        onClick={() => onDelete(task)}
+        disabled={saving}
+        aria-label={TASK_EDITOR_TEXT.remove}
+        title={TASK_EDITOR_TEXT.remove}
+        className="w-11 shrink-0 !gap-0 !px-0 sm:w-auto sm:!gap-2 sm:!px-4"
+      >
+        <span className="hidden sm:inline">{TASK_EDITOR_TEXT.remove}</span>
+      </Button>
+      <div className="flex min-w-0 justify-end gap-2">
+        <Button variant="soft" onClick={requestClose} disabled={saving}>
+          {TASK_EDITOR_TEXT.cancel}
+        </Button>
+        <Button data-save variant="primary" icon="Check" onClick={() => void save()} disabled={saving}>
+          {saving ? TASK_EDITOR_TEXT.saving : TASK_EDITOR_TEXT.save}
+        </Button>
+      </div>
+    </div>
+  );
+
+  // Drawer condiviso: a destra su desktop, foglio dal basso sul telefono, pulsanti sempre in vista.
+  return (
+    <Drawer
+      open
+      onClose={requestClose}
+      eyebrow={<span className="text-xs font-black uppercase text-[var(--faint)]">{TASK_EDITOR_TEXT.eyebrow}</span>}
+      title={TASK_EDITOR_TEXT.title}
+      headerExtra={facts}
+      footer={footer}
+      width="max-w-[720px]"
+    >
+      <div className="min-w-0">
         <div className="grid grid-cols-1 gap-3">
           <Field label="Cosa devi fare">
             <input
@@ -270,7 +322,7 @@ export function TaskEditorModal({
                   <Field label="Tempo impiegato (minuti, facoltativo)">
                     <input className={inputClass} type="number" min={0} step={5} value={draft.actualMinutes} onChange={(event) => setDraft((value) => ({ ...value, actualMinutes: event.target.value }))} placeholder="Es. 50" />
                   </Field>
-                  <p className="mt-1 text-xs font-bold text-[var(--faint)]">Se usi il timer si aggiorna da solo.</p>
+                  <p className="mt-1 text-xs font-bold text-[var(--faint)]">{timerRunning && draft.status === "doing" ? TASK_EDITOR_TEXT.minutesRunning : TASK_EDITOR_TEXT.minutesHint}</p>
                 </div>
               </div>
 
@@ -289,40 +341,14 @@ export function TaskEditorModal({
             </div>
           </details>
 
-          <div className="quiet-panel flex flex-wrap gap-2 p-3">
-            <Pill>{TASK_STATUS_LABEL[draft.status]}</Pill>
-            <Pill>Aggiunta il {shortDate(task.createdAt)}</Pill>
-            <Pill>{formatMinutes(durationToMinutes(Number(draft.durationValue.replace(",", ".")) || 0, draft.durationUnit))} previsti</Pill>
-            {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent-ink)]">Timer attivo: {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
-            {draft.actualMinutes ? <Pill>{draft.actualMinutes} min impiegati</Pill> : null}
-            {task.completedAt ? <Pill>Completata il {shortDate(task.completedAt)}</Pill> : null}
-            {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">Completata in ritardo</Pill> : null}
-          </div>
-
           {error ? (
             <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
               {error}
             </p>
           ) : null}
-
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <Button variant="danger" icon="Trash2" onClick={() => onDelete(task)} disabled={saving}>
-              Elimina attività
-            </Button>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="soft" onClick={onClose} disabled={saving}>
-                Annulla
-              </Button>
-              <Button variant="primary" icon="Check" onClick={() => void save()} disabled={saving}>
-                {saving ? "Salvataggio…" : "Salva modifiche"}
-              </Button>
-            </div>
-          </div>
         </div>
-      </section>
-    </div>
-    ,
-    document.body
+      </div>
+    </Drawer>
   );
 }
 

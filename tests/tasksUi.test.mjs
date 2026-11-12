@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addStep, cleanSteps, priorityText, quickTaskChips, removeStep, renameStep, stepsDone, toggleStep } from "../src/lib/tasksUi.ts";
+import { addStep, cleanSteps, draftChanged, editorCloseRequest, priorityText, quickTaskChips, removeStep, renameStep, stepsDone, toggleStep } from "../src/lib/tasksUi.ts";
 
 const STEPS = [
   { id: "s1", text: "Leggere il capitolo", done: true },
@@ -75,4 +75,19 @@ test("aggiunta rapida: una data non valida non fa pillola", () => {
 test("priorità a parole: «Urgente» da sola, le altre con «Priorità»", () => {
   assert.equal(priorityText("urgent"), "Urgente");
   assert.equal(priorityText("medium"), "Priorità media");
+});
+
+const DRAFT = { title: "Esercizi", status: "doing", actualMinutes: "40", steps: STEPS };
+
+test("editor: modifiche non salvate solo se qualcosa è davvero diverso da quando l'hai aperto", () => {
+  assert.equal(draftChanged(DRAFT, { ...DRAFT }), false);
+  assert.equal(draftChanged(DRAFT, { ...DRAFT, title: "Esercizi 1-10" }), true);
+  assert.equal(draftChanged(DRAFT, { ...DRAFT, steps: toggleStep(STEPS, "s2") }), true);
+  assert.equal(draftChanged(DRAFT, { ...DRAFT, steps: toggleStep(toggleStep(STEPS, "s2"), "s2") }), false, "spuntato e tolto");
+});
+
+test("editor: chiudere senza modifiche chiude; con modifiche chiede; chiudere di nuovo mentre chiede torna a modificare", () => {
+  assert.equal(editorCloseRequest(false, false), "close");
+  assert.equal(editorCloseRequest(true, false), "ask");
+  assert.equal(editorCloseRequest(true, true), "keep");
 });
