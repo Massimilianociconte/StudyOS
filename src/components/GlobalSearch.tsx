@@ -24,8 +24,11 @@ import {
 import { safeCssColor } from "../lib/sharing";
 import { allDayFirstDate, searchHits } from "../lib/repeat";
 import { nextSearchIndex, searchOptionId, searchPanelBox } from "../lib/searchUi";
+import type { SearchKind } from "../lib/openItem";
+import { NoteDrawer } from "./NoteDrawer";
+import { NOTES_TEXT } from "../lib/labels/notes";
 
-type ResultKind = "task" | "event" | "subject" | "exam" | "material" | "session" | "topic" | "goal" | "note";
+type ResultKind = SearchKind;
 
 interface SearchResult {
   id: string;
@@ -306,9 +309,9 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
         out.push({
           id: note.id,
           kind: "note",
-          title: note.title,
+          title: note.title.trim() || NOTES_TEXT.untitled,
           subtitle: note.body.slice(0, 80),
-          view: "materials",
+          view: "materials", // non usata: la nota si apre sul posto
           icon: kindIcon.note,
           score: s
         });
@@ -331,10 +334,18 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
+  // Nota aperta dalla ricerca: si legge sul posto, in un Drawer (non ha una sezione sua).
+  const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+
   const jump = (result: SearchResult) => {
-    onJump(result.view);
     setQuery("");
     setOpen(false);
+    if (result.kind === "note") {
+      // Il focus resta nel campo: chiudendo il Drawer torna qui.
+      setOpenNoteId(result.id);
+      return;
+    }
+    onJump(result.view);
     inputRef.current?.blur();
   };
 
@@ -507,6 +518,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           </m.div>
         ) : null}
       </AnimatePresence>
+      <NoteDrawer noteId={openNoteId} onClose={() => setOpenNoteId(null)} />
     </div>
   );
 }
