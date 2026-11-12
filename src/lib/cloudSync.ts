@@ -14,7 +14,7 @@ import { getCloudSyncState, setCloudSyncState } from "./cloudSyncState";
 import { useStudyStore } from "../store/useStudyStore";
 import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey } from "./collections";
 import { db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
-import { outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
+import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import {
   getSession,
@@ -88,7 +88,8 @@ const refreshPendingCount = async () => {
 
 const storeReady = () => {
   const store = useStudyStore.getState();
-  return !store.loading && !store.locked;
+  // Un'altra scheda è diventata quella attiva (activeTab.ts): questa non sincronizza più.
+  return !store.loading && !store.locked && !isPersistenceHalted();
 };
 
 class SyncSuspendedError extends Error {

@@ -539,6 +539,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
 
     init: async () => {
       set({ loading: true, error: undefined });
+      // Scheda rimasta sulla guardia (activeTab.ts) e poi diventata attiva: il timer letto all'apertura
+      // della pagina può essere vecchio; quello su disco (anche avviato nell'altra scheda) vince.
+      get().reloadStudyTimer();
       try {
         const savedSettings = await db.settings.get("settings");
         const settings = savedSettings ? upgradeSettings(savedSettings) : defaultSettings();

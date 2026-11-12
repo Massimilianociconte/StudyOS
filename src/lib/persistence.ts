@@ -97,6 +97,23 @@ let vaultKey: VaultKey | null = null;
 let vaultMode = false;
 let vaultDirty = false;
 let suspended = false;
+// Un'altra scheda è diventata quella attiva (src/lib/activeTab.ts): da qui in poi niente scritture.
+// Definitivo: la scheda si ricarica nella schermata di guardia.
+let halted = false;
+
+export class PersistenceHaltedError extends Error {
+  constructor() {
+    super("StudyOS è attivo in un'altra scheda: questa non salva più.");
+    this.name = "PersistenceHaltedError";
+  }
+}
+
+export const isPersistenceHalted = () => halted;
+
+/** Blocco preso da un'altra scheda: smette subito di scrivere, senza salvare nulla. */
+export const haltPersistence = () => {
+  halted = true;
+};
 // Entità applicate dal cloud dopo l'ultimo flush: vanno scritte ma non riaccodate nell'outbox.
 const remoteRefs = new Map<string, SyncableEntity | null>();
 
@@ -172,15 +189,25 @@ const snapshotOf = (collections: CollectionsState): StudySnapshot => ({
   ...collections
 });
 
-const flush = async () => {
-  if (!host) return;
+/** Modifiche in memoria non ancora su disco (null: nulla da scrivere, es. vault bloccato). */
+const pendingWrites = () => {
+  if (!host) return null;
   const state = host.getState();
-  if (suspended || state.locked) return;
-
+  if (suspended || state.locked) return null;
   const diff = diffCollections(state.collections, baseline);
   const settingsChanged = state.settings !== baselineSettings;
   const needsVaultWrite = vaultMode && (diff.count > 0 || vaultDirty);
-  if (!diff.count && !settingsChanged && !needsVaultWrite) {
+  return { state, diff, settingsChanged, any: diff.count > 0 || settingsChanged || needsVaultWrite };
+};
+
+const flush = async () => {
+  // Chi aspetta (es. la sync prima di avanzare il cursore) non deve credere che i dati siano salvati.
+  if (halted) throw new PersistenceHaltedError();
+  if (!host) return;
+  const pendingNow = pendingWrites();
+  if (!pendingNow) return;
+  const { state, diff, settingsChanged } = pendingNow;
+  if (!pendingNow.any) {
     // Stato già allineato al disco (es. dopo un rollback): un vecchio errore non è più attuale.
     host.onError(undefined);
     return;
@@ -254,6 +281,19 @@ export const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
 
 /** Attende che tutte le scritture in coda siano completate (es. prima di un export). */
 export const whenPersisted = () => chain.then(() => undefined);
+
+/**
+ * Un'altra scheda chiede il posto: salva tutto (dati, impostazioni, outbox del cloud) in coda ai
+ * flush già chiesti, poi smette di scrivere. Il controllo finale e lo stop sono nello stesso tick:
+ * nessuna modifica può restare a metà. Se il salvataggio fallisce la promise è rifiutata e la scheda
+ * continua a scrivere (resta attiva).
+ */
+export const handOffPersistence = () =>
+  runExclusive(async () => {
+    for (let round = 0; round < 3 && pendingWrites()?.any; round += 1) await flush();
+    if (pendingWrites()?.any) throw new Error("Modifiche ancora in corso: riprova tra un attimo.");
+    halted = true;
+  });
 
 export const clearAllLocalData = async () => {
   await db.transaction("rw", [db.vault, db.syncOutbox, db.meta, db.sharedItems, db.sharedOutbox, ...dataTables], async () => {
