@@ -147,6 +147,16 @@ export const setPersistenceSuspended = (value: boolean) => {
 };
 
 /**
+ * Le entità come sono su disco adesso (l'ultimo stato salvato). Una riscrittura completa (password
+ * dell'app messa o tolta) copia queste dentro `runExclusive`, dove nessun salvataggio è a metà: le
+ * modifiche arrivate dopo restano differenze dallo stato salvato e le scrive il salvataggio dopo, nel
+ * formato nuovo e con la loro voce in coda. Prima si copiava lo stato preso prima dell'attesa e lo si
+ * rimetteva in memoria: un pull o una sessione salvata nel frattempo sparivano (P8).
+ */
+export const persistedCollections = (): CollectionsState =>
+  Object.fromEntries(COLLECTIONS.map((key) => [key, [...baseline[key].values()]])) as unknown as CollectionsState;
+
+/**
  * true se l'entità è ancora su disco (ultimo stato salvato). Chi non la trova in memoria capisce
  * così se è stata eliminata qui e non ancora salvata (da non rimettere con un pull già in volo).
  */

@@ -68,6 +68,7 @@ import {
   configurePersistence,
   isPersisted,
   markRemoteApplied,
+  persistedCollections,
   requestPersist,
   resetBaseline,
   runExclusive,
@@ -686,19 +687,22 @@ export const useStudyStore = create<StudyState>((set, get) => {
         updatedAt: nowIso()
       };
       const key = await deriveVaultKey(passphrase);
-      const collections = pickCollections(get());
       await runExclusive(async () => {
+        // Ciò che è su disco ora (nessun salvataggio a metà): le modifiche arrivate durante la
+        // derivazione della chiave o la scrittura restano differenze e le cifra il salvataggio dopo.
+        const collections = persistedCollections();
         const record = await encryptWithKey(JSON.stringify(snapshotFromState(collections)), key);
         await db.transaction("rw", [db.settings, db.vault, ...COLLECTIONS.map((c) => db[c])], async () => {
           await db.settings.put(settings);
           await db.vault.put(record);
           await Promise.all(COLLECTIONS.map((c) => db[c].clear()));
         });
+        // Nello stesso passo, prima di qualunque salvataggio in coda: da qui si scrive cifrato.
+        sessionPassphrase = passphrase;
+        setVaultSession(true, key);
+        set({ settings, locked: false });
       });
-      sessionPassphrase = passphrase;
-      setVaultSession(true, key);
-      resetBaseline(collections, settings);
-      set({ settings, locked: false });
+      await commit();
     },
 
     disableVault: async (passphrase) => {
@@ -706,13 +710,16 @@ export const useStudyStore = create<StudyState>((set, get) => {
       if (!currentPassphrase) throw new Error("Serve la passphrase per disattivare il vault.");
 
       await commit();
-      let collections = pickCollections(get());
+      // Bloccato: la memoria è vuota e la copia vera è quella cifrata. Sbloccato: si copia ciò che è su
+      // disco al momento della riscrittura (persistedCollections, dentro runExclusive), mai uno stato
+      // preso prima dell'attesa e poi rimesso in memoria (P8).
+      let unlocked: CollectionsState | null = null;
       if (get().locked) {
         const vault = await db.vault.get("main");
         if (!vault) throw new Error("Vault locale non trovato.");
         const key = await deriveVaultKey(currentPassphrase, vault.salt, vault.iterations);
         try {
-          collections = applySnapshot(JSON.parse(await decryptWithKey(vault, key)) as StudySnapshot);
+          unlocked = applySnapshot(JSON.parse(await decryptWithKey(vault, key)) as StudySnapshot);
         } catch {
           throw new Error("Passphrase non valida.");
         }
@@ -727,6 +734,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
         updatedAt: nowIso()
       };
       await runExclusive(async () => {
+        const collections = unlocked ?? persistedCollections();
         await db.transaction("rw", [db.settings, db.vault, ...dataTables], async () => {
           await db.settings.put(settings);
           for (const key of COLLECTIONS) {
@@ -737,12 +745,20 @@ export const useStudyStore = create<StudyState>((set, get) => {
           }
           await db.vault.clear();
         });
+        // Nello stesso passo, prima di qualunque salvataggio in coda: da qui si scrive in chiaro.
+        sessionPassphrase = undefined;
+        setVaultSession(false, null);
+        if (unlocked) {
+          resetBaseline(unlocked, settings);
+          setPersistenceSuspended(false);
+          set({ settings, locked: false, ...unlocked });
+        } else {
+          // Le modifiche arrivate durante la riscrittura restano in memoria e nello stato da salvare:
+          // il salvataggio qui sotto le scrive in chiaro, in coda per il cloud se sono di qui.
+          set({ settings, locked: false });
+        }
       });
-      sessionPassphrase = undefined;
-      setVaultSession(false, null);
-      resetBaseline(collections, settings);
-      setPersistenceSuspended(false);
-      set({ settings, locked: false, ...collections });
+      await commit();
     },
 
     setActiveView: (view) => set({ activeView: view }),

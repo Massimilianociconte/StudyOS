@@ -77,3 +77,12 @@ all'altro dispositivo; le modifiche remote arrivano in realtime; un evento
 reimportato con lo stesso UID viene aggiornato, non duplicato; con
 `cloud:schema` riportato a 1 il client recupera un'entità mancante.
 
+Correzioni di novembre 2026 (sync personale):
+
+- attivare o togliere la password del dispositivo riscrive le tabelle con ciò
+  che è già su disco (`persistedCollections()`), dentro la stessa operazione
+  esclusiva che cambia modalità. Le modifiche arrivate nel frattempo (pull dal
+  cloud, sessione del Pomodoro) restano in memoria e le salva il passo dopo,
+  già nella nuova modalità; prima venivano sovrascritte da una copia presa
+  prima dell'attesa e il cursore cloud le saltava (P8).
+
