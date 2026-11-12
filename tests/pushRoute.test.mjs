@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_BODY_CHARS, MAX_PUSH_BODY_BYTES, MAX_TITLE_CHARS, PUSH_CONCURRENCY, VAPID_SUBJECT, handlePush, parseNotification } from "../worker/push.ts";
+import {
+  MAX_BODY_CHARS,
+  MAX_ENDPOINT_CHARS,
+  MAX_PUSH_BODY_BYTES,
+  MAX_PUSH_SUBSCRIPTIONS,
+  MAX_TITLE_CHARS,
+  PUSH_CONCURRENCY,
+  VAPID_SUBJECT,
+  handlePush,
+  parseNotification,
+  parseSubscription
+} from "../worker/push.ts";
 import { VAPID_PUBLIC_KEY } from "../src/lib/pushKeys.ts";
 import { pushTopic } from "../worker/webPush.ts";
 import { b64u, decryptPush, makeReceiver } from "./fixtures/pushReceiver.mjs";
@@ -105,7 +116,7 @@ test("/push: metodo, segreto e configurazione prima di tutto, senza chiamare la 
   assert.equal(calls.length, 0);
 });
 
-test("/push: corpo oltre 64 kB, JSON rotto, notifica non valida, più di 49 iscrizioni", async (t) => {
+test(`/push: corpo oltre ${Math.ceil(MAX_PUSH_BODY_BYTES / 1024)} kB, JSON rotto, notifica non valida, più di 49 iscrizioni`, async (t) => {
   const { calls } = stubFetch(t, async () => new Response(null, { status: 201 }));
   const { publicKey } = await vapid;
   const env = await envFor();
@@ -114,6 +125,8 @@ test("/push: corpo oltre 64 kB, JSON rotto, notifica non valida, più di 49 iscr
   assert.equal((await handlePush(pushRequest("{non json"), env, publicKey)).status, 400);
   for (const notification of [
     { ...NOTIFICATION, kind: "chat" },
+    { ...NOTIFICATION, kind: "reminders" },
+    { ...NOTIFICATION, kind: "REMINDER" },
     { ...NOTIFICATION, title: " " },
     { ...NOTIFICATION, body: 3 },
     { ...NOTIFICATION, url: "https://evil.example" },
@@ -236,4 +249,81 @@ test(`/push: al massimo ${PUSH_CONCURRENCY} invii in parallelo`, async (t) => {
   assert.equal(calls.length, 20);
   assert.ok(state.maxInFlight > 1, "invia in parallelo");
   assert.ok(state.maxInFlight <= PUSH_CONCURRENCY, `in volo al massimo ${PUSH_CONCURRENCY}, visti ${state.maxInFlight}`);
+});
+
+test("/push: promemoria con l'app chiusa (kind reminder) cifrato e consegnato con il suo tag", async (t) => {
+  const { publicKey } = await vapid;
+  const device = await subscriptionOf("https://web.push.apple.com/reminder");
+  const { calls } = stubFetch(t, async () => new Response(null, { status: 201 }));
+  quietConsole(t);
+  const reminder = {
+    kind: "reminder",
+    title: "Lezione",
+    body: "Tra 15 minuti · 10:00",
+    url: "?apri=calendario",
+    tag: "studyos-reminder-e1@2026-11-12#0d15m@1794474900000"
+  };
+  const response = await handlePush(pushRequest({ notification: reminder, subscriptions: [device.row] }), await envFor(), publicKey);
+  assert.deepEqual(await response.json(), { sent: 1, gone: 0 });
+  assert.equal(calls[0].init.headers.topic, await pushTopic(reminder.tag));
+  assert.equal((await decryptPush(calls[0].init.body, device.receiver)).text, JSON.stringify(reminder));
+});
+
+const pad = (prefix, fill) => prefix + fill.repeat(MAX_ENDPOINT_CHARS - prefix.length);
+const MAX_NOTIFICATION = {
+  kind: "permission",
+  title: "😀".repeat(MAX_TITLE_CHARS),
+  body: "😀".repeat(MAX_BODY_CHARS),
+  url: "?apri=condivisione",
+  tag: "t".repeat(200)
+};
+/** Riga al limite del vincolo di studyos_push_subscriptions, con l'escape JSON più lungo per ogni carattere. */
+const hostileRow = (index) => ({ endpoint: pad(`https://x${index}.example/`, "\u0001"), p256dh: `${"A".repeat(100)}==`, auth: `${"B".repeat(32)}==` });
+
+test("/push: endpoint non ASCII, con spazi o caratteri di controllo si scartano uno per uno", () => {
+  const keys = { p256dh: "A".repeat(87), auth: "B".repeat(22) };
+  assert.ok(parseSubscription({ endpoint: pad("https://fcm.googleapis.com/fcm/send/", "a"), ...keys }), "2048 caratteri ASCII vanno bene");
+  assert.equal(parseSubscription({ endpoint: `${pad("https://fcm.googleapis.com/fcm/send/", "a")}a`, ...keys }), null);
+  for (const endpoint of [
+    "https://fcm.googleapis.com/fcm/send/è",
+    "https://fcm.googleapis.com/fcm send",
+    "https://fcm.googleapis.com/\u0001",
+    "https://ex😀.example/a"
+  ]) {
+    assert.equal(parseSubscription({ endpoint, ...keys }), null, JSON.stringify(endpoint));
+  }
+});
+
+test("/push: un lotto pieno al limite del database non viene mai respinto per la dimensione", async (t) => {
+  const { publicKey } = await vapid;
+  const { calls } = stubFetch(t, async () => new Response(null, { status: 201 }));
+  quietConsole(t);
+  const subscriptions = Array.from({ length: MAX_PUSH_SUBSCRIPTIONS }, (_, index) => hostileRow(index));
+  const worst = JSON.stringify({ notification: MAX_NOTIFICATION, subscriptions });
+  const bytes = Buffer.byteLength(worst);
+  assert.ok(bytes > 500 * 1024, `caso peggiore davvero grande: ${bytes} byte`);
+  assert.ok(bytes <= MAX_PUSH_BODY_BYTES, `${bytes} > ${MAX_PUSH_BODY_BYTES}`);
+  const response = await handlePush(pushRequest(worst), await envFor(), publicKey);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { sent: 0, gone: 0 });
+  assert.equal(calls.length, 0, "nessun invio verso endpoint inventati");
+});
+
+test("/push: gli endpoint lunghissimi di un account non tolgono le notifiche agli altri dello stesso lotto", async (t) => {
+  const { publicKey } = await vapid;
+  const { receiver, row } = await subscriptionOf("https://fcm.googleapis.com/fcm/send/base");
+  const { calls } = stubFetch(t, async () => new Response(null, { status: 201 }));
+  quietConsole(t);
+  // Come un lotto di studyos_push_notify: le iscrizioni di più account, in ordine di account.
+  const others = Array.from({ length: 19 }, (_, index) => ({ ...row, endpoint: pad(`https://fcm.googleapis.com/fcm/send/${index}-`, "a") }));
+  const hostile = Array.from({ length: 30 }, (_, index) => hostileRow(index));
+  const body = JSON.stringify({ notification: MAX_NOTIFICATION, subscriptions: [...others.slice(0, 9), ...hostile, ...others.slice(9)] });
+  assert.ok(Buffer.byteLength(body) > 128 * 1024, "con il limite di prima (64 kB, poi 128 kB) sarebbe stato 413");
+  const response = await handlePush(pushRequest(body), await envFor(), publicKey);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { sent: 19, gone: 0 });
+  assert.deepEqual(calls.map((call) => call.url).sort(), others.map((item) => item.endpoint).sort());
+  const message = JSON.parse((await decryptPush(calls[0].init.body, receiver)).text);
+  assert.equal(message.title, MAX_NOTIFICATION.title);
+  assert.equal(message.body, MAX_NOTIFICATION.body);
 });

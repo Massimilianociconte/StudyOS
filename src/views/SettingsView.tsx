@@ -12,6 +12,7 @@ import { selectPreferences, useStudyStore, snapshotFromState } from "../store/us
 import { whenPersisted } from "../lib/persistence";
 import { eraseAccountData, isSignedIn, requestSync, resetCloudDeviceState } from "../lib/cloudSync";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSyncState";
+import { turnOffPushHere } from "../lib/pushDevice";
 import { resizeImageFile } from "../lib/files";
 import { SETTINGS_JUMP_EVENT, settingsSectionFromEvent, takeSettingsSection, type SettingsSection } from "../lib/settingsJump";
 import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
@@ -332,12 +333,17 @@ export function SettingsView() {
     setMessage("");
     focusInDetail("[data-erase-open]");
     try {
+      // Come ogni uscita e cancellazione: le notifiche di questo dispositivo si spengono per prime,
+      // finché la sessione c'è (si riaccendono da Impostazioni → Profilo).
+      await turnOffPushHere();
       if (mode !== "local") {
         const alsoCloud = mode === "cloud";
         await resetAllData({ propagate: alsoCloud });
         // Prima della sync: il server elimina anche ciò che questo dispositivo non ha mai ricevuto, e il
         // pull che segue non riporta qui i dati arrivati da altri dispositivi.
         const erased = alsoCloud ? await eraseAccountData() : null;
+        // Anche i promemoria con l'app chiusa (le funzioni del server vecchie non li toccano).
+        if (alsoCloud) await import("../lib/pushReminderSync").then((module) => module.clearPushReminders()).catch(() => undefined);
         if (alsoCloud) await requestSync();
         else await resetCloudDeviceState();
         const sync = getCloudSyncState();

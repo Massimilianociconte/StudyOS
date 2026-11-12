@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStudyStore } from "../store/useStudyStore";
 import { cloudConfigured, setCloudSyncState } from "../lib/cloudSyncState";
 import { signOutThisDevice } from "../lib/deviceSignOut";
+import { turnOffPushHere } from "../lib/pushDevice";
 import { useCloudSession } from "../hooks/useCloudSession";
 import { LOCK_TEXT, lockAccountOf } from "../lib/labels/lock";
 import { Button, Field, PasswordInput } from "./ui";
@@ -56,13 +57,15 @@ export function LockScreen() {
     setEraseError("");
   };
 
-  // Solo questo dispositivo, mai i dati dell'account. Prima si esce dall'account (solo qui), poi si
-  // cancella: allo sblocco la sincronizzazione non trova una sessione e non riscarica nulla.
+  // Solo questo dispositivo, mai i dati dell'account. Prima si spengono le notifiche di questo
+  // dispositivo (serve ancora la sessione), poi si esce dall'account (solo qui), poi si cancella:
+  // allo sblocco la sincronizzazione non trova una sessione e non riscarica nulla.
   const erase = async () => {
     if (erasing) return;
     setErasing(true);
     setEraseError("");
     try {
+      await turnOffPushHere();
       const signedOut = await signOutThisDevice({
         configured: cloudConfigured,
         signOut: () => import("../lib/supabase").then((module) => module.signOut("local")),

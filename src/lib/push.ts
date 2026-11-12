@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { VAPID_PUBLIC_KEY } from "./pushKeys";
+import { AUTH_STORAGE_KEYS } from "./deviceSignOut";
 
 export type PushSupport = "ok" | "unsupported" | "ios-install" | "denied";
 
@@ -80,6 +81,33 @@ export const parsePushState = (raw: string | null): PushState | null => {
   } catch {
     return null;
   }
+};
+
+/**
+ * Account della sessione salvata da supabase-js (valore grezzo della chiave `studyos-auth`):
+ * `null` = nessuna sessione salvata, `undefined` = valore che non si sa leggere (si lascia stare).
+ */
+export const storedAuthUserId = (raw: string | null): string | null | undefined => {
+  if (raw === null || raw === "") return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as { user?: { id?: unknown }; currentSession?: { user?: { id?: unknown } } };
+    const id = record.user?.id ?? record.currentSession?.user?.id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * L'account che ha acceso le notifiche qui non ha più una sessione su questo dispositivo: nessuna
+ * sessione salvata (uscita da un'altra scheda, sessione scaduta o revocata e tolta da supabase-js)
+ * o una sessione di un altro account. Una sessione ancora salvata ma non rinnovata (offline) non conta.
+ */
+export const pushOwnerSignedOut = (ownerId: string, rawAuth: string | null): boolean => {
+  const stored = storedAuthUserId(rawAuth);
+  return stored === null || (stored !== undefined && stored !== ownerId);
 };
 
 export const shouldRefresh = (previous: PushState | null, endpoint: string, userId: string, now: number): boolean =>
@@ -226,6 +254,40 @@ export const disablePush = async (): Promise<void> => {
     if (cloud) await deleteRow(cloud, endpoint);
   } catch {
     // niente da fare: l'iscrizione si ripulisce da sola alla prima notifica respinta
+  }
+};
+
+const readAuthStorage = (): string | null => {
+  try {
+    return window.localStorage.getItem(AUTH_STORAGE_KEYS[0]);
+  } catch {
+    // storage illeggibile: come una sessione che non si sa leggere, non si tocca niente
+    return "?";
+  }
+};
+
+/**
+ * Sessione finita senza passare da «Esci» (scaduta o revocata, uscita da un'altra scheda o da un
+ * altro dispositivo con «esci ovunque», un altro account entrato): se questo dispositivo riceveva le
+ * notifiche per l'account che non c'è più, l'iscrizione del browser si annulla, così le sue notifiche
+ * smettono di comparire qui. La riga sul server non si può più togliere da qui (manca la sessione):
+ * la toglie push_gone alla prima notifica respinta dal servizio push. Non lancia mai.
+ */
+export const dropPushOfEndedSession = async (): Promise<boolean> => {
+  try {
+    const state = readState();
+    if (!state || typeof navigator === "undefined" || !("serviceWorker" in navigator)) return false;
+    // Si aspetta che supabase-js abbia deciso della sessione salvata (rinnovata o tolta).
+    const { supabase } = await import("./supabase");
+    if (supabase) await supabase.auth.getSession().catch(() => undefined);
+    if (!pushOwnerSignedOut(state.userId, readAuthStorage())) return false;
+    clearState();
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = registration ? await registration.pushManager.getSubscription() : null;
+    if (subscription) await subscription.unsubscribe().catch(() => false);
+    return true;
+  } catch {
+    return false;
   }
 };
 

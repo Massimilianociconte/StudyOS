@@ -2,9 +2,10 @@
 // Logica pura e senza dipendenze: la usano l'hook useOpenLink e i test.
 
 /** Gli unici valori accettati: i parametri `url` che il server mette nelle notifiche. */
-export type OpenTarget = "notifiche" | "condivisione" | "gruppi";
+export type OpenTarget = "notifiche" | "condivisione" | "gruppi" | "calendario";
 
-const TARGETS: readonly OpenTarget[] = ["notifiche", "condivisione", "gruppi"];
+/** "calendario": promemoria di un evento (push con l'app chiusa o notifica della scheda aperta). */
+const TARGETS: readonly OpenTarget[] = ["notifiche", "condivisione", "gruppi", "calendario"];
 
 /** Il pannello Notifiche non è una sezione ma un cassetto della shell: si apre con questo evento. */
 export const OPEN_NOTIFICATIONS_EVENT = "studyos:open-notifications";

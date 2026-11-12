@@ -24,7 +24,7 @@ export const LOCK_TEXT = {
   recovery: (account: LockAccount): string[] => {
     if (account === "signed-in")
       return [
-        "Questo dispositivo esce anche dal tuo account StudyOS; gli altri dispositivi restano collegati e i dati nell'account restano come sono. Le modifiche fatte qui e non ancora arrivate nell'account vanno perse.",
+        "Questo dispositivo esce anche dal tuo account StudyOS e non riceve più le sue notifiche; gli altri dispositivi restano collegati e i dati nell'account restano come sono. Le modifiche fatte qui e non ancora arrivate nell'account vanno perse.",
         "Accedi di nuovo da Impostazioni → Account e i dati tornano dal tuo account. Poi puoi scegliere una nuova password in Impostazioni.",
         BACKUP_LINE
       ];

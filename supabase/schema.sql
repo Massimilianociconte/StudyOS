@@ -187,7 +187,8 @@ grant execute on function public.push_studyos_rows(uuid, text, jsonb) to authent
 -- dispositivo con l'orologio avanti l'aveva messo nel futuro): vince su ogni copia già sincronizzata,
 -- mentre una modifica fatta dopo su un altro dispositivo resta, come per ogni eliminazione.
 -- client_id vuoto: anche il dispositivo che cancella riceve le eliminazioni al prossimo pull.
--- Toglie anche la vecchia riga snapshot (backup della sync v1). Restituisce le righe eliminate.
+-- Toglie anche la vecchia riga snapshot (backup della sync v1) e, se la tabella c'è, i promemoria
+-- con l'app chiusa (push-reminders.sql). Restituisce le righe eliminate di studyos_items.
 create or replace function public.erase_studyos_account_items()
 returns integer
 language plpgsql
@@ -199,6 +200,10 @@ declare
 begin
   if auth.uid() is null then
     raise exception 'Accesso richiesto';
+  end if;
+  -- Promemoria con l'app chiusa (push-reminders.sql, se eseguito): spariscono con il resto.
+  if to_regclass('public.studyos_push_reminders') is not null then
+    delete from public.studyos_push_reminders where user_id = auth.uid();
   end if;
   delete from public.studyos_items where user_id = auth.uid() and entity_type = 'snapshot';
   update public.studyos_items as item

@@ -479,10 +479,28 @@
 - iPhone e iPad: le push esistono solo con StudyOS nella schermata Home
   (`pushSupport()` = `ios-install` altrimenti). Un cambio della chiave VAPID
   (`src/lib/pushKeys.ts`) invalida le iscrizioni: `syncPushSubscription` rifà quelle di chi le
-  aveva attivate, e l'uscita dall'account le toglie (`CloudPanel` chiama `disablePush` prima di
-  `signOut`, sia «Esci» sia «Esci e togli i dati», con un'attesa massima di 5 s), altrimenti il dispositivo continuerebbe a ricevere le notifiche del vecchio account.
-  Dispositivo condiviso: quando l'app si avvia con una sessione, `syncPushSubscription` toglie
-  dal browser l'iscrizione se appartiene a un altro account, così le notifiche di un altro account non continuano ad arrivare.
+  aveva attivate, e l'uscita dall'account le toglie, altrimenti il dispositivo continuerebbe a
+  ricevere le notifiche del vecchio account.
+- Notifiche e fine della sessione: ogni uscita o cancellazione chiama `turnOffPushHere()`
+  (`src/lib/pushDevice.ts`, attesa massima 5 s, non lancia) **prima** di `signOut`,
+  `signOutThisDevice` o `resetAllData`: «Esci», «Esci e togli i dati» (`CloudPanel`), «Ho
+  dimenticato la password» (`LockScreen`) e i tre modi di «Cancella tutti i dati»
+  (`SettingsView`). È l'unico percorso: `disablePush` lo chiamano solo `pushDevice` e
+  l'interruttore (`PushToggle`); `tests/pushDevice.test.mjs` controlla ogni chiamante. La
+  sessione che finisce da sola (scaduta, revocata, uscita da un'altra scheda o dispositivo,
+  altro account) la segue `startPushSessionGuard` in `App`: con un account `syncPushSubscription`,
+  senza `dropPushOfEndedSession`, che annulla l'iscrizione del browser solo se la chiave
+  `studyos-auth` non c'è più o è di un altro account (offline la sessione resta salvata e non si
+  tocca niente). La riga sul server la toglie `push_gone` alla prima notifica respinta.
+- Promemoria con l'app chiusa (`supabase/push-reminders.sql`, `src/lib/pushReminderSync.ts`):
+  scheda aperta e push usano lo **stesso tag** `studyos-reminder-<chiave>` (`reminderTagOf`), così
+  il sistema mostra una notifica sola. La scheda segna `sent_at` solo dopo aver mostrato una
+  notifica di sistema vera (non solo la campanella). Il client confronta i promemoria voluti con le
+  righe in attesa sul server solo dopo un giro completo della sync in questa pagina (`status`
+  `idle` e `lastSync` dopo l'apertura): prima i dati locali possono essere vecchi e toglierebbero
+  le righe scritte da un altro dispositivo. Il Worker accetta corpi fino a ≈ 617 kB
+  (`MAX_PUSH_BODY_BYTES`: lotto pieno nel caso peggiore) e scarta uno per uno gli endpoint non
+  ASCII: le iscrizioni di un account non fanno mai respingere quelle degli altri.
 - `public/sw.js`: l'indirizzo della notifica (`data.url`, es. `?apri=notifiche`) si risolve
   sempre contro `self.registration.scope` e fuori dall'app ripiega sulla pagina iniziale. Il
   cassetto Notifiche non è una sezione: lo apre l'evento `studyos:open-notifications`.

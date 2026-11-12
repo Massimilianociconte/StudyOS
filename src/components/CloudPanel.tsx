@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Field, Panel, PasswordInput, Pill, inputClass } from "./ui";
 import { whenPersisted } from "../lib/persistence";
 import { signOutThisDevice } from "../lib/deviceSignOut";
+import { turnOffPushHere } from "../lib/pushDevice";
 import { setCloudSyncState } from "../lib/cloudSyncState";
 import { ACCOUNT_TEXT } from "../lib/labels/account";
 import { SHARED_PENDING_TEXT } from "../lib/labels/sharing";
@@ -26,19 +27,6 @@ import {
 } from "../lib/cloudSync";
 
 const PENDING_EMAIL_KEY = "studyos-pending-confirmation-email";
-
-/** Massima attesa per spegnere le notifiche push prima dell'uscita: la rete lenta non blocca l'uscita. */
-const PUSH_OFF_TIMEOUT_MS = 5000;
-
-/**
- * Prima dell'uscita serve ancora la sessione: toglie l'iscrizione push di questo dispositivo, così le
- * notifiche di questo account non continuano ad arrivare a chi usa il dispositivo dopo. Non lancia mai.
- */
-const turnOffPushHere = () =>
-  Promise.race([
-    import("../lib/push").then((module) => module.disablePush()),
-    new Promise<void>((resolve) => window.setTimeout(resolve, PUSH_OFF_TIMEOUT_MS))
-  ]).catch(() => undefined);
 
 const formatRelative = (iso: string | null) => {
   if (!iso) return "mai";
