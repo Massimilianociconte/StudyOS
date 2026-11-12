@@ -1,18 +1,19 @@
-import { useId, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Field, HelpTip, IconButton, Pill, inputClass, useDialogLayer } from "./ui";
+import { Button, Drawer, Field, HelpTip, IconButton, inputClass } from "./ui";
 import { DateTimeField } from "./DatePicker";
 import { HelpField } from "./HelpField";
 import { DurationField } from "./DurationField";
 import { durationToMinutes, minutesToDuration } from "../lib/duration";
-import { ENERGY_LABEL, PRIORITY_LABEL, TASK_STATUS_LABEL, formatMinutes } from "../lib/labels";
-import { TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
+import { ENERGY_LABEL, PRIORITY_LABEL, TASK_STATUS_LABEL } from "../lib/labels";
+import { TASK_EDITOR_TEXT, TASKS_HELP } from "../lib/labels/tasks";
 import { useNow } from "../hooks/useNow";
-import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
+import { editedMinutesPatch, formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds, taskMinutesFieldValue } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
 import { LinkedNotes } from "./NoteDrawer";
+import { addStep, cleanSteps, draftChanged, editorCloseRequest, removeStep, renameStep, stepsDone, toggleStep, type TaskStep } from "../lib/tasksUi";
+import { createId } from "../lib/id";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -41,24 +42,31 @@ export function TaskEditorModal({
   onDelete: (task: Task) => Promise<void>;
 }) {
   const initialDuration = minutesToDuration(task.estimatedMinutes ?? 45);
-  const [draft, setDraft] = useState({
+  // Con il timer che corre il campo parte dai minuti misurati finora: se non lo tocchi non si manda.
+  const [initialMinutes] = useState(() => taskMinutesFieldValue(task));
+  const [initialDraft] = useState(() => ({
     title: task.title,
     description: task.description,
     status: task.status,
     dueDate: toDatetimeLocal(task.dueDate),
     durationValue: initialDuration.value,
     durationUnit: initialDuration.unit,
-    actualMinutes: task.actualMinutes === undefined ? "" : String(task.actualMinutes),
+    actualMinutes: initialMinutes,
     energy: task.energy,
     priority: task.priority,
     subjectId: task.subjectId ?? "",
     tags: task.tags.join(", "),
     notes: task.notes,
     difficulty: String(task.difficulty),
-    importance: String(task.importance)
-  });
+    importance: String(task.importance),
+    steps: task.subtasks
+  }));
+  const [draft, setDraft] = useState(initialDraft);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // «Scartare le modifiche?» sul posto, al posto dei pulsanti: Esc e tocco fuori non perdono più nulla.
+  const [asking, setAsking] = useState(false);
+  const footerRef = useRef<HTMLDivElement>(null);
   // "Altre opzioni" parte aperta solo se contiene già note o tag, così nulla di scritto resta nascosto.
   const [moreOpenAtStart] = useState(() => Boolean(task.notes.trim() || task.tags.length));
   const moreRef = useRef<HTMLDetailsElement>(null);
@@ -66,11 +74,27 @@ export function TaskEditorModal({
   const now = useNow(1000, timerRunning);
   const elapsedSeconds = taskElapsedSeconds(task, now);
   const completedLate = isTaskCompletedLate(task);
-  const titleId = useId();
 
-  const panelRef = useRef<HTMLElement>(null);
-  const areaRef = useRef<HTMLDivElement>(null);
-  useDialogLayer(true, { panelRef, areaRef, onEscape: onClose });
+  // La domanda prende il focus sulla scelta sicura (Invio o Esc tornano a modificare).
+  // Al frame dopo: aperta dal tocco fuori, il focus del mousedown arriva dopo l'effetto e lo toglierebbe.
+  useEffect(() => {
+    if (!asking) return;
+    const frame = requestAnimationFrame(() => footerRef.current?.querySelector<HTMLElement>("[data-keep]")?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [asking]);
+
+  const keepEditing = () => {
+    setAsking(false);
+    requestAnimationFrame(() => footerRef.current?.querySelector<HTMLElement>("[data-save]")?.focus());
+  };
+
+  const requestClose = () => {
+    if (saving) return;
+    const next = editorCloseRequest(draftChanged(initialDraft, draft), asking);
+    if (next === "close") onClose();
+    else if (next === "ask") setAsking(true);
+    else keepEditing();
+  };
 
   const showMore = () => {
     if (moreRef.current) moreRef.current.open = true;
@@ -88,7 +112,7 @@ export function TaskEditorModal({
     const estimatedMinutes = draft.durationValue.trim() === "" || !Number.isFinite(parsedDuration) || parsedDuration < 0
       ? NaN
       : durationToMinutes(parsedDuration, draft.durationUnit);
-    const actualMinutes = draft.actualMinutes.trim() ? Number(draft.actualMinutes) : undefined;
+    const actualMinutes = draft.actualMinutes.trim() ? Number(draft.actualMinutes.trim().replace(",", ".")) : undefined;
     const difficulty = Number(draft.difficulty);
     const importance = Number(draft.importance);
     const dueDate = draft.dueDate ? new Date(draft.dueDate) : undefined;
@@ -116,10 +140,11 @@ export function TaskEditorModal({
         status: draft.status,
         dueDate: dueDate?.toISOString(),
         estimatedMinutes,
-        actualMinutes,
+        ...editedMinutesPatch(initialMinutes, draft.actualMinutes),
         energy: draft.energy,
         priority: draft.priority,
         subjectId: draft.subjectId || undefined,
+        subtasks: cleanSteps(draft.steps),
         tags: parseTags(draft.tags),
         notes: draft.notes.trim(),
         difficulty: Math.max(1, Math.min(5, difficulty)) as Task["difficulty"],
@@ -135,7 +160,7 @@ export function TaskEditorModal({
 
   const statusHint =
     draft.status === "archived"
-      ? "Le attività archiviate spariscono dall'elenco."
+      ? TASK_EDITOR_TEXT.archivedHint
       : timerRunning && draft.status !== "doing"
         ? "Salvando, il timer si ferma e il tempo fatto resta registrato."
         : timerRunning
@@ -144,27 +169,68 @@ export function TaskEditorModal({
             ? "Salvando parte il timer: ogni tanto ti chiederà come va."
             : "Scegli «In corso» per far partire il timer.";
 
-  // Portal su body come Drawer: dentro la vista la barra in basso del telefono restava sopra la finestra.
-  return createPortal(
-    <div
-      ref={areaRef}
-      className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section ref={panelRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-3xl overflow-y-auto p-4 outline-none sm:p-5">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-black uppercase text-[var(--faint)]">Attività</p>
-            <h3 id={titleId} className="safe-text text-2xl font-black">Modifica attività</h3>
-          </div>
-          <IconButton icon="X" label={TASKS_TEXT.close} onClick={onClose} className="h-10 w-10" />
-        </div>
+  // Date che non sono campi del modulo: in una riga sotto il titolo (prima una fila di pillole che
+  // ripeteva stato, durata e minuti e spingeva «Salva» sotto la piega sul telefono).
+  const facts = (
+    <p className="text-xs font-bold text-[var(--muted)]">
+      {TASK_EDITOR_TEXT.added(shortDate(task.createdAt))}
+      {task.completedAt ? ` · ${TASK_EDITOR_TEXT.completed(shortDate(task.completedAt))}` : null}
+      {completedLate ? <span className="text-[var(--warning-text)]"> · {TASK_EDITOR_TEXT.late}</span> : null}
+    </p>
+  );
 
+  const footer = asking ? (
+    <div key="ask" ref={footerRef} role="group" aria-label={TASK_EDITOR_TEXT.discardTitle} className="grid grid-cols-1 gap-2">
+      <div>
+        <p className="text-sm font-black">{TASK_EDITOR_TEXT.discardTitle}</p>
+        <p className="text-xs font-bold text-[var(--muted)]">{TASK_EDITOR_TEXT.discardText}</p>
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button data-keep variant="soft" onClick={keepEditing}>
+          {TASK_EDITOR_TEXT.keepEditing}
+        </Button>
+        <Button variant="danger" icon="X" onClick={onClose}>
+          {TASK_EDITOR_TEXT.discard}
+        </Button>
+      </div>
+    </div>
+  ) : (
+    <div key="edit" ref={footerRef} className="flex items-center justify-between gap-2">
+      {/* Solo icona sul telefono, così i tre pulsanti stanno in una riga. */}
+      <Button
+        variant="danger"
+        icon="Trash2"
+        onClick={() => onDelete(task)}
+        disabled={saving}
+        aria-label={TASK_EDITOR_TEXT.remove}
+        title={TASK_EDITOR_TEXT.remove}
+        className="w-11 shrink-0 !gap-0 !px-0 sm:w-auto sm:!gap-2 sm:!px-4"
+      >
+        <span className="hidden sm:inline">{TASK_EDITOR_TEXT.remove}</span>
+      </Button>
+      <div className="flex min-w-0 justify-end gap-2">
+        <Button variant="soft" onClick={requestClose} disabled={saving}>
+          {TASK_EDITOR_TEXT.cancel}
+        </Button>
+        <Button data-save variant="primary" icon="Check" onClick={() => void save()} disabled={saving}>
+          {saving ? TASK_EDITOR_TEXT.saving : TASK_EDITOR_TEXT.save}
+        </Button>
+      </div>
+    </div>
+  );
+
+  // Drawer condiviso: a destra su desktop, foglio dal basso sul telefono, pulsanti sempre in vista.
+  return (
+    <Drawer
+      open
+      onClose={requestClose}
+      eyebrow={<span className="text-xs font-black uppercase text-[var(--faint)]">{TASK_EDITOR_TEXT.eyebrow}</span>}
+      title={TASK_EDITOR_TEXT.title}
+      headerExtra={facts}
+      footer={footer}
+      width="max-w-[720px]"
+    >
+      <div className="min-w-0">
         <div className="grid grid-cols-1 gap-3">
           <Field label="Cosa devi fare">
             <input
@@ -209,6 +275,8 @@ export function TaskEditorModal({
               <p className="mt-1 text-xs font-bold text-[var(--faint)]">{statusHint}</p>
             </div>
           </div>
+
+          <TaskStepsField steps={draft.steps} onChange={(steps) => setDraft((value) => ({ ...value, steps }))} />
 
           <Field label="Descrizione (facoltativa)">
             <textarea
@@ -264,7 +332,7 @@ export function TaskEditorModal({
                   <Field label="Tempo impiegato (minuti, facoltativo)">
                     <input className={inputClass} type="number" min={0} step={5} value={draft.actualMinutes} onChange={(event) => setDraft((value) => ({ ...value, actualMinutes: event.target.value }))} placeholder="Es. 50" />
                   </Field>
-                  <p className="mt-1 text-xs font-bold text-[var(--faint)]">Se usi il timer si aggiorna da solo.</p>
+                  <p className="mt-1 text-xs font-bold text-[var(--faint)]">{timerRunning && draft.status === "doing" ? TASK_EDITOR_TEXT.minutesRunning : TASK_EDITOR_TEXT.minutesHint}</p>
                 </div>
               </div>
 
@@ -283,39 +351,119 @@ export function TaskEditorModal({
             </div>
           </details>
 
-          <div className="quiet-panel flex flex-wrap gap-2 p-3">
-            <Pill>{TASK_STATUS_LABEL[draft.status]}</Pill>
-            <Pill>Aggiunta il {shortDate(task.createdAt)}</Pill>
-            <Pill>{formatMinutes(durationToMinutes(Number(draft.durationValue.replace(",", ".")) || 0, draft.durationUnit))} previsti</Pill>
-            {timerRunning ? <Pill className="border-[var(--accent)] text-[var(--accent-ink)]">Timer attivo: {formatElapsedSeconds(elapsedSeconds)}</Pill> : null}
-            {draft.actualMinutes ? <Pill>{draft.actualMinutes} min impiegati</Pill> : null}
-            {task.completedAt ? <Pill>Completata il {shortDate(task.completedAt)}</Pill> : null}
-            {completedLate ? <Pill className="border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]">Completata in ritardo</Pill> : null}
-          </div>
-
           {error ? (
             <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
               {error}
             </p>
           ) : null}
-
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <Button variant="danger" icon="Trash2" onClick={() => onDelete(task)} disabled={saving}>
-              Elimina attività
-            </Button>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="soft" onClick={onClose} disabled={saving}>
-                Annulla
-              </Button>
-              <Button variant="primary" icon="Check" onClick={() => void save()} disabled={saving}>
-                {saving ? "Salvataggio…" : "Salva modifiche"}
-              </Button>
-            </div>
-          </div>
         </div>
-      </section>
-    </div>
-    ,
-    document.body
+      </div>
+    </Drawer>
+  );
+}
+
+/**
+ * Passaggi da spuntare. Invio nel campo nuovo aggiunge e resta lì; Invio su un passaggio porta al
+ * campo nuovo; Backspace su un passaggio vuoto lo toglie e torna al precedente.
+ */
+function TaskStepsField({ steps, onChange }: { steps: TaskStep[]; onChange: (steps: TaskStep[]) => void }) {
+  const [text, setText] = useState("");
+  const listRef = useRef<HTMLUListElement>(null);
+  const newRef = useRef<HTMLInputElement>(null);
+  const headingId = useId();
+  const count = stepsDone(steps);
+
+  const add = () => {
+    const next = addStep(steps, text, createId("subtask"));
+    if (next === steps) return;
+    onChange(next);
+    setText("");
+    newRef.current?.focus();
+  };
+
+  const focusStep = (index: number) => {
+    const inputs = listRef.current?.querySelectorAll<HTMLInputElement>("input[data-step]");
+    (inputs?.[index] ?? newRef.current)?.focus();
+  };
+
+  const onStepKey = (event: KeyboardEvent<HTMLInputElement>, step: TaskStep, index: number) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      newRef.current?.focus();
+    } else if (event.key === "Backspace" && step.text === "") {
+      event.preventDefault();
+      onChange(removeStep(steps, step.id));
+      requestAnimationFrame(() => focusStep(index - 1));
+    }
+  };
+
+  return (
+    <section aria-labelledby={headingId} className="grid grid-cols-1 gap-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 id={headingId} className="text-sm font-extrabold">
+          {TASK_EDITOR_TEXT.steps}
+        </h4>
+        {count.total ? <span className="text-xs font-bold text-[var(--muted)]">{TASK_EDITOR_TEXT.stepsCount(count.done, count.total)}</span> : null}
+      </div>
+      {steps.length ? (
+        <ul ref={listRef} className="grid grid-cols-1 gap-0.5">
+          {steps.map((step, index) => {
+            const name = step.text.trim() || TASK_EDITOR_TEXT.stepText(index + 1);
+            return (
+              <li key={step.id} className="flex min-w-0 items-center gap-1">
+                {/* Etichetta da 44 px attorno alla casella: il tocco vicino la spunta. */}
+                <label className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center">
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 cursor-pointer accent-[var(--accent)]"
+                    checked={step.done}
+                    onChange={() => onChange(toggleStep(steps, step.id))}
+                    aria-label={TASK_EDITOR_TEXT.stepDone(name)}
+                  />
+                </label>
+                <input
+                  data-step
+                  className={`${inputClass} min-w-0 flex-1 ${step.done ? "text-[var(--muted)] line-through" : ""}`}
+                  value={step.text}
+                  onChange={(event) => onChange(renameStep(steps, step.id, event.target.value))}
+                  onKeyDown={(event) => onStepKey(event, step, index)}
+                  aria-label={TASK_EDITOR_TEXT.stepText(index + 1)}
+                />
+                <IconButton
+                  icon="X"
+                  label={TASK_EDITOR_TEXT.removeStep(name)}
+                  className="bg-transparent text-[var(--muted)] hover:text-[var(--text)]"
+                  onClick={() => {
+                    onChange(removeStep(steps, step.id));
+                    newRef.current?.focus();
+                  }}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="text-xs font-bold text-[var(--faint)]">{TASK_EDITOR_TEXT.stepsHint}</p>
+      )}
+      <div className="flex min-w-0 items-center gap-2">
+        <input
+          ref={newRef}
+          className={`${inputClass} min-w-0 flex-1`}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            add();
+          }}
+          placeholder={TASK_EDITOR_TEXT.newStepPlaceholder}
+          aria-label={TASK_EDITOR_TEXT.newStep}
+          enterKeyHint="enter"
+        />
+        <Button variant="soft" icon="Plus" onClick={add} disabled={!text.trim()} className="shrink-0">
+          {TASK_EDITOR_TEXT.addStep}
+        </Button>
+      </div>
+    </section>
   );
 }

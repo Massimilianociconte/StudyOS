@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { daysUntil, selectableSubjects, subjectColor, subjectName, urgentTasks } from "../lib/selectors";
 import { NO_SUBJECT_LABEL, PRIORITY_LABEL, PRIORITY_TONE, TASK_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
-import { FILTER_CHIP_TEXT, TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
+import { FILTER_CHIP_TEXT, QUICK_TASK_TEXT, TASKS_HELP, TASKS_LIST_TEXT, TASKS_TEXT } from "../lib/labels/tasks";
 import { Button, EmptyState, HelpTip, IconButton, PageActions, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { DateField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
@@ -17,14 +17,25 @@ import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
-import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
+import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, sortByPriority, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
+import { chipFocusAfterRemove, priorityText, quickTaskChips, type QuickTaskChip } from "../lib/tasksUi";
 
 type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
 type SortMode = "deadline" | "priority" | "recent";
 type Subjects = ReturnType<typeof useStudyStore.getState>["subjects"];
 
 const statuses = (["todo", "doing", "blocked", "done", "postponed"] as const).map((id) => ({ id, label: TASK_STATUS_LABEL[id] }));
+
+const VIEWS: { id: TaskMode; label: string; icon: string; title: string }[] = [
+  { id: "list", label: "Lista", icon: "List", title: "Tutte le attività, raggruppate per scadenza" },
+  { id: "focus", label: "Piano di oggi", icon: "Zap", title: "Solo le 6 attività più urgenti" },
+  { id: "subject", label: "Per materia", icon: "BookOpen", title: "Le attività da fare divise per materia" },
+  { id: "kanban", label: "Per stato", icon: "LayoutGrid", title: "Colonne Da fare, In corso, Completata…: sposta le attività da una all'altra" },
+  { id: "matrix", label: "Urgenza e importanza", icon: "Grid2X2", title: "Quattro riquadri: cosa fare subito, pianificare, ridurre o rimandare" }
+];
+// Sul telefono nomi brevi e niente icone: a 375 px stanno tutte in una riga, senza nomi tagliati.
+const PHONE_VIEWS = VIEWS.map(({ id, title }) => ({ id, title, label: TASKS_LIST_TEXT.viewsShort[id] }));
 
 const isOpen = isOpenTask;
 
@@ -51,10 +62,6 @@ const DUE_BUCKETS: { id: string; title: string; test: (task: Task) => boolean }[
 ];
 
 const byDue = (a: Task, b: Task) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999");
-
-/** "Priorità media" invece di "Media": fuori da un campo etichettato il valore da solo non si capisce. */
-const priorityText = (priority: Task["priority"]) =>
-  priority === "urgent" ? PRIORITY_LABEL.urgent : `Priorità ${PRIORITY_LABEL[priority].toLowerCase()}`;
 
 const stepsText = (task: Task) => {
   const done = task.subtasks.filter((subtask) => subtask.done).length;
@@ -87,6 +94,11 @@ export function TasksView() {
 
   const visible = useMemo(() => tasks.filter((task) => task.status !== "archived"), [tasks]);
   const ofSubject = useMemo(() => filterTasks(visible, "all", subjectFilter?.id ?? null), [visible, subjectFilter?.id]);
+  // Archiviate: fuori dall'elenco, ma ritrovabili (e ripristinabili) in fondo alla lista.
+  const archived = useMemo(
+    () => filterTasks(tasks.filter((task) => task.status === "archived"), "all", subjectFilter?.id ?? null),
+    [tasks, subjectFilter?.id]
+  );
   const shown = useMemo(() => filterTasks(ofSubject, filter, null), [ofSubject, filter]);
   const open = shown.filter(isOpen);
   // Il riepilogo conta la materia scelta ma non "in ritardo / urgenti": quei numeri sono i pulsanti dei filtri.
@@ -148,7 +160,19 @@ export function TasksView() {
       <SectionTitle
         title="Attività"
         subtitle="Segna cosa devi fare, con scadenza e priorità, e spunta ogni attività quando l'hai finita."
-        action={<PageActions primary={hasAnyTask ? newTaskButton : undefined} more={share.action ? [share.action] : []} />}
+        action={
+          <PageActions
+            primary={
+              hasAnyTask ? (
+                // Sul telefono ci sono già l'aggiunta rapida e il "+" in basso: qui solo da tablet in su.
+                <Button icon="Plus" variant="primary" onClick={() => setCreateOpen(true)} className="hidden md:inline-flex">
+                  {TASKS_TEXT.newTask}
+                </Button>
+              ) : undefined
+            }
+            more={share.action ? [share.action] : []}
+          />
+        }
       />
       {share.element}
 
@@ -181,20 +205,14 @@ export function TasksView() {
           <QuickTaskBar subjects={subjects} onAdd={addTask} defaultSubjectId={subjectFilter?.id ?? ""} filtered={filtered} />
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            {/* Telefono: riga intera con i nomi brevi; il "?" passa alla riga sotto, accanto all'ordine. */}
+            <div className="w-full md:hidden">
+              <Segmented label={TASKS_TEXT.views} value={mode} onChange={setMode} size="sm" className="min-w-0" options={PHONE_VIEWS} />
+            </div>
             <div className="flex min-w-0 max-w-full items-center gap-2">
-              <Segmented
-                label={TASKS_TEXT.views}
-                value={mode}
-                onChange={setMode}
-                className="min-w-0"
-                options={[
-                  { id: "list", label: "Lista", icon: "List", title: "Tutte le attività, raggruppate per scadenza" },
-                  { id: "focus", label: "Piano di oggi", icon: "Zap", title: "Solo le 6 attività più urgenti" },
-                  { id: "subject", label: "Per materia", icon: "BookOpen", title: "Le attività da fare divise per materia" },
-                  { id: "kanban", label: "Per stato", icon: "LayoutGrid", title: "Colonne Da fare, In corso, Completata…: sposta le attività da una all'altra" },
-                  { id: "matrix", label: "Urgenza e importanza", icon: "Grid2X2", title: "Quattro riquadri: cosa fare subito, pianificare, ridurre o rimandare" }
-                ]}
-              />
+              <div className="hidden min-w-0 md:flex">
+                <Segmented label={TASKS_TEXT.views} value={mode} onChange={setMode} className="min-w-0" options={VIEWS} />
+              </div>
               <HelpTip {...TASKS_HELP.views} />
             </div>
             {mode === "list" ? (
@@ -214,7 +232,7 @@ export function TasksView() {
           </div>
 
           {mode === "list" ? (
-            <GroupedList tasks={shown} sort={sort} actions={rowActions} onNew={() => setCreateOpen(true)} empty={filtered ? emptyFiltered : null} />
+            <GroupedList tasks={shown} archived={archived} sort={sort} actions={rowActions} onNew={() => setCreateOpen(true)} empty={filtered ? emptyFiltered : null} />
           ) : null}
           {mode === "focus" ? (
             <Panel>
@@ -298,6 +316,8 @@ function TaskSummaryLine({
 /**
  * Aggiunta rapida: un campo solo, Invio per aggiungere. "Dettagli" apre materia, priorità e scadenza.
  * Con il filtro per materia attivo la nuova attività prende quella materia (così compare nell'elenco).
+ * A "Dettagli" chiuso le scelte diverse da quelle di base restano visibili come pillole con ✕, anche
+ * dopo l'aggiunta: valgono per le prossime attività finché non le togli.
  */
 function QuickTaskBar({
   subjects,
@@ -342,6 +362,20 @@ function QuickTaskBar({
   };
 
   const selectClass = "min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)]";
+  const titleRef = useRef<HTMLInputElement>(null);
+  const chipsRef = useRef<HTMLDivElement>(null);
+  const chips = detailsOpen ? [] : quickTaskChips({ subjectId, priority, dueDate }, defaultSubjectId, subjects);
+  const clearChip = (id: QuickTaskChip["id"], index: number) => {
+    if (id === "subject") setSubjectId(defaultSubjectId);
+    if (id === "priority") setPriority("medium");
+    if (id === "due") setDueDate("");
+    // Il pulsante tolto sparisce: il focus passa alla pillola accanto o al campo, non al fondo pagina.
+    const target = chipFocusAfterRemove(index, chips.length - 1);
+    requestAnimationFrame(() => {
+      const next = target === null ? null : chipsRef.current?.querySelectorAll<HTMLElement>("button")[target];
+      (next ?? titleRef.current)?.focus();
+    });
+  };
 
   return (
     <form onSubmit={submit} aria-label={TASKS_TEXT.quickAdd} className="soft-panel mb-4 p-2">
@@ -350,6 +384,7 @@ function QuickTaskBar({
           <span className="sr-only">{TASKS_TEXT.quickAddField}</span>
           <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
           <input
+            ref={titleRef}
             id="quick-task-title"
             className={`${inputClass} pl-10`}
             value={title}
@@ -395,6 +430,25 @@ function QuickTaskBar({
           <DateField label={TASKS_TEXT.dueOptional} value={dueDate} onChange={setDueDate} optional compact />
         </div>
       ) : null}
+      {chips.length ? (
+        <div ref={chipsRef} role="group" aria-label={QUICK_TASK_TEXT.applied} className="mt-1.5 flex flex-wrap items-center gap-2 px-1 pb-0.5">
+          {chips.map((chip, index) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => clearChip(chip.id, index)}
+              aria-label={QUICK_TASK_TEXT.clear(chip.label)}
+              title={QUICK_TASK_TEXT.clear(chip.label)}
+              // Pillola alta 32 px, area di tocco 44 px (after:).
+              className="motion-safe relative inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] pl-3 pr-2 text-xs font-extrabold text-[var(--text)] after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--surface)]"
+            >
+              {chip.color ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: chip.color }} /> : null}
+              <span className="min-w-0 truncate">{chip.label}</span>
+              <Icon name="X" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+            </button>
+          ))}
+        </div>
+      ) : null}
       {/* Sempre presente: il lettore di schermo annuncia il testo appena compare. */}
       <div role="status" aria-live="polite">
         {added ? <p className="mt-1.5 px-2 text-xs font-bold text-[var(--muted)]">{added}</p> : null}
@@ -409,10 +463,13 @@ interface RowActions {
   onStatus: (id: string, status: Task["status"]) => void;
   onEdit: (id: string) => void;
   onDelete: (task: Task) => void;
+  /** «Ripristina» di un'archiviata (senza: torna «Da fare» e basta). */
+  onRestore?: (task: Task) => void;
 }
 
 function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; compact?: boolean }) {
   const done = task.status === "done";
+  const archivedRow = task.status === "archived";
   const overdue = isOverdue(task);
   const completedLate = isTaskCompletedLate(task);
   const timerRunning = isTaskTimerRunning(task);
@@ -420,7 +477,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
   const elapsedSeconds = taskElapsedSeconds(task, now);
 
   return (
-    <li className={`group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)] ${done ? "opacity-60" : ""}`}>
+    <li data-task-row={task.id} className={`group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)] ${done || archivedRow ? "opacity-60" : ""}`}>
       <button
         type="button"
         aria-label={done ? `Segna «${task.title}» come da fare` : `Segna «${task.title}» come fatta`}
@@ -434,7 +491,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
         {done ? <Icon name="Check" className="h-3.5 w-3.5" /> : null}
       </button>
 
-      <button type="button" onClick={() => actions.onEdit(task.id)} className="min-w-0 flex-1 text-left">
+      <button type="button" data-row-open onClick={() => actions.onEdit(task.id)} className="min-w-0 flex-1 text-left">
         <span className={`one-line-safe block text-sm font-extrabold ${done ? "line-through" : ""}`} title={task.title}>
           {task.title}
         </span>
@@ -477,9 +534,14 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
         </span>
       ) : null}
 
-      {!compact ? (
+      {archivedRow ? (
+        // Archiviata: il menu degli stati non la prevede; si rimette tra le attività da fare da qui.
+        <Button variant="soft" icon="RotateCcw" onClick={() => (actions.onRestore ? actions.onRestore(task) : actions.onStatus(task.id, "todo"))} title={TASKS_LIST_TEXT.restoreAria(task.title)} aria-label={TASKS_LIST_TEXT.restoreAria(task.title)} className="shrink-0 !px-3 !text-xs">
+          {TASKS_LIST_TEXT.restore}
+        </Button>
+      ) : !compact ? (
         <select
-          className="hidden min-h-8 shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2.5 text-xs font-black md:block"
+          className="hidden min-h-11 shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2.5 text-xs font-black md:block"
           value={task.status}
           onChange={(event) => actions.onStatus(task.id, event.target.value as Task["status"])}
           aria-label={`Stato di "${task.title}"`}
@@ -520,12 +582,15 @@ function RowList({ tasks, actions, compact, empty }: { tasks: Task[]; actions: R
 
 function GroupedList({
   tasks,
+  archived,
   sort,
   actions,
   onNew,
   empty
 }: {
   tasks: Task[];
+  /** Archiviate (stessa materia del filtro): in fondo, dietro «Mostra le archiviate». */
+  archived: Task[];
   sort: SortMode;
   actions: RowActions;
   onNew: () => void;
@@ -533,6 +598,35 @@ function GroupedList({
   empty: ReactNode;
 }) {
   const [showDone, setShowDone] = useUiState("tasks.showDone", false);
+  const [showArchived, setShowArchived] = useUiState("tasks.showArchived", false, { validate: (value) => typeof value === "boolean" });
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [notice, setNotice] = useState("");
+  const [restoredId, setRestoredId] = useState<string | null>(null);
+
+  // «Ripristina» toglie la riga dalle archiviate: il focus va alla riga tornata tra le da fare; se
+  // non si vede (filtro attivo), alle archiviate; se non ne restano, al campo dell'aggiunta rapida.
+  const archivedActions: RowActions = {
+    ...actions,
+    onRestore: (task) => {
+      actions.onStatus(task.id, "todo");
+      setNotice(TASKS_LIST_TEXT.restored);
+      setRestoredId(task.id);
+    }
+  };
+
+  useEffect(() => {
+    if (!restoredId) return;
+    const row = document.querySelector<HTMLElement>(`[data-task-row="${CSS.escape(restoredId)}"] [data-row-open]`);
+    const archivedToggle = bottomRef.current?.querySelector<HTMLElement>("[data-archived-toggle]");
+    (row ?? archivedToggle ?? document.getElementById("quick-task-title"))?.focus();
+    setRestoredId(null);
+  }, [restoredId, tasks]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const open = tasks.filter(isOpen);
   const done = tasks
     .filter((task) => task.status === "done")
@@ -544,8 +638,8 @@ function GroupedList({
       : [
           {
             id: sort,
-            title: sort === "priority" ? "Dalla più urgente" : "Aggiunte di recente",
-            items: sort === "priority" ? urgentTasks(open, open.length) : [...open].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            title: sort === "priority" ? "Dalla priorità più alta" : "Aggiunte di recente",
+            items: sort === "priority" ? sortByPriority(open) : [...open].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
           }
         ];
 
@@ -581,22 +675,59 @@ function GroupedList({
           ))}
         </div>
       )}
-      {done.length ? (
-        <div className="mt-4 border-t border-[var(--border)] pt-3">
-          <button
-            type="button"
-            onClick={() => setShowDone((value) => !value)}
-            aria-expanded={showDone}
-            className="flex min-h-11 w-full items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-left text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
-          >
-            <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${showDone ? "rotate-90" : ""}`} />
-            {showDone ? "Nascondi le completate" : "Mostra le completate"}
-            <span className="rounded-full bg-[var(--surface-strong)] px-1.5 text-[11px] text-[var(--muted)]">{done.length}</span>
-          </button>
-          {showDone ? <RowList tasks={done} actions={actions} /> : null}
+      {done.length || archived.length ? (
+        <div ref={bottomRef} className="mt-4 border-t border-[var(--border)] pt-3">
+          {done.length ? (
+            <>
+              <ShowMoreToggle open={showDone} onToggle={() => setShowDone((value) => !value)} count={done.length}>
+                {showDone ? "Nascondi le completate" : "Mostra le completate"}
+              </ShowMoreToggle>
+              {showDone ? <RowList tasks={done} actions={actions} /> : null}
+            </>
+          ) : null}
+          {archived.length ? (
+            <>
+              <ShowMoreToggle open={showArchived} onToggle={() => setShowArchived((value) => !value)} count={archived.length} archivedToggle>
+                {showArchived ? TASKS_LIST_TEXT.hideArchived : TASKS_LIST_TEXT.showArchived}
+              </ShowMoreToggle>
+              {showArchived ? <RowList tasks={archived} actions={archivedActions} /> : null}
+            </>
+          ) : null}
         </div>
       ) : null}
+      {/* Sempre presente: il lettore di schermo annuncia «Attività ripristinata» appena compare. */}
+      <div role="status" aria-live="polite">
+        {notice ? <p className="mt-2 px-2.5 text-xs font-bold text-[var(--muted)]">{notice}</p> : null}
+      </div>
     </Panel>
+  );
+}
+
+function ShowMoreToggle({
+  open,
+  onToggle,
+  count,
+  archivedToggle,
+  children
+}: {
+  open: boolean;
+  onToggle: () => void;
+  count: number;
+  archivedToggle?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      data-archived-toggle={archivedToggle || undefined}
+      onClick={onToggle}
+      aria-expanded={open}
+      className="flex min-h-11 w-full items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-left text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
+    >
+      <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`} />
+      {children}
+      <span className="rounded-full bg-[var(--surface-strong)] px-1.5 text-[11px] text-[var(--muted)]">{count}</span>
+    </button>
   );
 }
 

@@ -47,6 +47,53 @@ export const TASKS_TEXT = {
   close: "Chiudi senza salvare"
 } as const;
 
+/** Editor di un'attività (anche quello aperto dal calendario). */
+export const TASK_EDITOR_TEXT = {
+  eyebrow: "Attività",
+  title: "Modifica attività",
+  added: (date: string) => `Aggiunta il ${date}`,
+  completed: (date: string) => `Completata il ${date}`,
+  late: "in ritardo",
+  save: "Salva modifiche",
+  saving: "Salvataggio…",
+  cancel: "Annulla",
+  remove: "Elimina attività",
+  discardTitle: "Scartare le modifiche?",
+  discardText: "Quello che hai cambiato non è ancora salvato.",
+  keepEditing: "Continua a modificare",
+  discard: "Scarta",
+  minutesHint: "Se usi il timer si aggiorna da solo.",
+  minutesRunning: "Il timer è in corso: se cambi i minuti, riparte da lì.",
+  archivedHint: "Le archiviate spariscono dall'elenco: le ritrovi in fondo, con «Mostra le archiviate».",
+  steps: "Passaggi",
+  stepsCount: (done: number, total: number) => `${done} di ${total} fatti`,
+  stepsHint: "Dividi l'attività in piccoli passi da spuntare.",
+  stepText: (index: number) => `Passaggio ${index}`,
+  stepDone: (text: string) => `Fatto: ${text}`,
+  removeStep: (text: string) => `Togli il passaggio «${text}»`,
+  newStep: "Nuovo passaggio",
+  newStepPlaceholder: "Es. Esercizi da 1 a 5",
+  addStep: "Aggiungi"
+} as const;
+
+/** Pillole dell'aggiunta rapida: le scelte di «Dettagli» che valgono per le prossime attività. */
+export const QUICK_TASK_TEXT = {
+  applied: "Scelte per le prossime attività",
+  deletedSubject: "Materia eliminata",
+  due: (date: string) => `Scade il ${date}`,
+  clear: (label: string) => `Togli «${label}» dalle prossime attività`
+} as const;
+
+/** Elenco: nomi brevi delle viste sul telefono (a 375 px stanno tutti in una riga), archiviate. */
+export const TASKS_LIST_TEXT = {
+  viewsShort: { list: "Lista", focus: "Oggi", subject: "Materie", kanban: "Stato", matrix: "Urgenza" },
+  showArchived: "Mostra le archiviate",
+  hideArchived: "Nascondi le archiviate",
+  restore: "Ripristina",
+  restored: "Attività ripristinata",
+  restoreAria: (title: string) => `Ripristina «${title}» tra le attività da fare`
+} as const;
+
 export const TASKS_HELP = {
   views: {
     title: "Come vedere le attività",
