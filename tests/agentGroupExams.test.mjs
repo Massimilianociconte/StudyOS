@@ -49,6 +49,8 @@ const seed = (sessions = [session()]) => {
     reminders: [],
     studyGroups: []
   });
+  // Un pull non porta indietro una riga più nuova già in memoria (spec §5.3): ogni prova riparte da zero.
+  useGroupExamStore.getState().reset();
   useGroupExamStore.getState().setSnapshot({ viewerId: "me", groups: [{ id: "g1", name: "Farmaco" }], sessions, overrides: [] });
 };
 

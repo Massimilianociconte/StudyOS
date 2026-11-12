@@ -38,7 +38,7 @@ test("il watcher pianifica sulle sorgenti, non solo sugli eventi", () => {
   assert.match(watcher, /reminderSourceEvents\(/);
   assert.match(watcher, /planReminders\(sources, now\)/);
   assert.match(watcher, /missedReminders\(sources, now\)/);
-  assert.match(watcher, /\}, \[sources, ready, wake, addNotification\]\);/);
+  assert.match(watcher, /\}, \[sources, confirmed, ready, wake, addNotification\]\);/);
 });
 
 test("i promemoria push (app chiusa) usano le stesse sorgenti e seguono appelli e piano", () => {

@@ -12,6 +12,9 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
+/** Id dei promemoria autonomi trasformati in eventi di un istante (reminderSources). */
+export const STANDALONE_REMINDER_PREFIX = "reminder:";
+
 /** Fin dove si guarda avanti. */
 export const REMINDER_HORIZON_MS = 48 * HOUR_MS;
 /** Un promemoria passato da poco (app appena aperta, scheda in pausa) avvisa ancora. */
@@ -127,7 +130,9 @@ export function missedReminders(
   const nowMs = now.getTime();
   return collectReminders(events, nowMs, nowMs - windowMs, nowMs - graceMs - 1, (item, at, startMs) => {
     const created = Date.parse(item.createdAt);
-    return startMs > nowMs && (Number.isNaN(created) || created < at);
+    // Un promemoria autonomo è un istante: «non ancora cominciato» non vale, e scaduto ad app chiusa arriva qui.
+    const open = startMs > nowMs || (typeof item.id === "string" && item.id.startsWith(STANDALONE_REMINDER_PREFIX));
+    return open && (Number.isNaN(created) || created < at);
   });
 }
 

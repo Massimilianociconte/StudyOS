@@ -7,7 +7,8 @@ import { GROUP_EXAM_TEXT } from "./labels";
 
 export const GROUP_EXAM_NOTIFICATION_PREFIX = "notif-gexam-";
 
-export type GroupExamNotification = Pick<AppNotification, "id" | "kind" | "title" | "body" | "linkView" | "linkGroupId">;
+/** `createdAt` = istante dell'evento sul server: una lettura o eliminazione fatta dopo, su un dispositivo qualsiasi, vince la sync. */
+export type GroupExamNotification = Pick<AppNotification, "id" | "kind" | "title" | "body" | "linkView" | "linkGroupId" | "createdAt">;
 
 interface NotifyInput {
   sessions: readonly GroupExamSession[];
@@ -46,17 +47,17 @@ export const planGroupExamNotifications = ({ sessions, plans, subjects, me, wate
     const plan = planOf.get(session.id);
     if (watermark !== undefined) {
       if (isAfter(session.createdAt, watermark) && session.createdBy !== me && !session.deletedAt && session.date >= today && subjects.some((subject) => !subject.archived && sessionMatchesSubject(session, subject))) {
-        out.push({ id: `${GROUP_EXAM_NOTIFICATION_PREFIX}new-${session.id}`, kind: "group", title: GROUP_EXAM_TEXT.notifyNewTitle, body: GROUP_EXAM_TEXT.notifyNewBody(title, formatDay(session.date), session.createdByName || GROUP_EXAM_TEXT.someMember), linkView: "groups", linkGroupId: session.groupId });
+        out.push({ id: `${GROUP_EXAM_NOTIFICATION_PREFIX}new-${session.id}`, kind: "group", title: GROUP_EXAM_TEXT.notifyNewTitle, body: GROUP_EXAM_TEXT.notifyNewBody(title, formatDay(session.date), session.createdByName || GROUP_EXAM_TEXT.someMember), linkView: "groups", linkGroupId: session.groupId, createdAt: session.createdAt });
       }
       if (plan?.selected && session.updatedBy !== me && isAfter(touched, watermark)) {
         if (session.deletedAt) {
-          out.push({ id: `${GROUP_EXAM_NOTIFICATION_PREFIX}${session.id}-deleted`, kind: "group", title: GROUP_EXAM_TEXT.notifyDeletedTitle, body: GROUP_EXAM_TEXT.notifyDeletedBody(title, formatDay(session.date), session.deletedByName || GROUP_EXAM_TEXT.someMember), linkView: "groups", linkGroupId: session.groupId });
+          out.push({ id: `${GROUP_EXAM_NOTIFICATION_PREFIX}${session.id}-deleted`, kind: "group", title: GROUP_EXAM_TEXT.notifyDeletedTitle, body: GROUP_EXAM_TEXT.notifyDeletedBody(title, formatDay(session.date), session.deletedByName || GROUP_EXAM_TEXT.someMember), linkView: "groups", linkGroupId: session.groupId, createdAt: session.deletedAt });
         } else if (session.version > plan.snapshot.version) {
           const s = plan.snapshot;
           const before = { courseId: null, courseName: s.courseName, date: s.date, kind: s.kind, label: "", time: s.time, room: s.room, notes: "", registrationOpens: null, registrationCloses: s.registrationCloses, barbSessionId: null, source: "member" as const };
           const changes = describeSessionChanges(before, { ...before, courseName: session.courseName, date: session.date, kind: session.kind, time: session.time, room: session.room, registrationCloses: session.registrationCloses });
           if (changes.length) {
-            out.push({ id: `${GROUP_EXAM_NOTIFICATION_PREFIX}${session.id}-v${session.version}`, kind: "group", title: GROUP_EXAM_TEXT.notifyChangedTitle, body: GROUP_EXAM_TEXT.notifyChangedBody(title, changes.join("; "), session.updatedByName || GROUP_EXAM_TEXT.someMember), linkView: "groups", linkGroupId: session.groupId });
+            out.push({ id: `${GROUP_EXAM_NOTIFICATION_PREFIX}${session.id}-v${session.version}`, kind: "group", title: GROUP_EXAM_TEXT.notifyChangedTitle, body: GROUP_EXAM_TEXT.notifyChangedBody(title, changes.join("; "), session.updatedByName || GROUP_EXAM_TEXT.someMember), linkView: "groups", linkGroupId: session.groupId, createdAt: session.updatedAt });
           }
         }
       }

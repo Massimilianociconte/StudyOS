@@ -54,15 +54,29 @@ export const useGroupExamStore = create<GroupExamState>()((set, get) => ({
   ...EMPTY,
   setSnapshot: ({ viewerId, groups, sessions, overrides }) => {
     const ids = new Set(groups.map((group) => group.id));
-    set({
+    // Stesso account: una riga già in memoria più nuova di quella letta (scrittura o evento realtime arrivati
+    // durante il pull) non perde mai; una cancellazione non torna viva. Righe assenti dal pull: tolte.
+    const keep = get().viewerId === viewerId;
+    const newest = <T extends { id: string; groupId: string; version: number }>(pulled: readonly T[], memory: readonly T[]) => {
+      if (!keep) return latest(pulled, ids);
+      const held = new Map(memory.map((row) => [row.id, row]));
+      return latest(
+        pulled.map((row) => {
+          const mine = held.get(row.id);
+          return mine && mine.version > row.version ? mine : row;
+        }),
+        ids
+      );
+    };
+    set((state) => ({
       viewerId,
       groups,
       ready: true,
       available: true,
       error: "",
-      sessions: latest(sessions, ids).sort(bySessionDate),
-      overrides: latest(overrides, ids)
-    });
+      sessions: newest(sessions, state.sessions).sort(bySessionDate),
+      overrides: newest(overrides, state.overrides)
+    }));
   },
   setGroups: (groups) => {
     const ids = new Set(groups.map((group) => group.id));
