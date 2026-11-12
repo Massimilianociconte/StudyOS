@@ -40,6 +40,8 @@ import {
   occasionAgeText
 } from "../lib/labels";
 import { HOME_GUIDE_TEXT, HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
+import { EXAMS_TEXT } from "../lib/labels/exams";
+import { requestCalendarTransfer } from "../lib/calendarJump";
 import { currentDegree, degreeOptionLabel, degreePatch, homeLinks } from "../lib/homeFirstRun";
 import { GETTING_STARTED_HIDDEN_KEY } from "../lib/deviceStorage";
 import { DEGREE_PROGRAM_IDS, type DegreeProgramId } from "../lib/graduation";
@@ -449,8 +451,9 @@ export function DashboardView() {
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <Tag color={PRIORITY_TONE[nextTask.priority]}>{PRIORITY_LABEL[nextTask.priority]}</Tag>
                     {nextTask.dueDate ? (
-                      <Tag className={daysUntil(nextTask.dueDate) < 0 ? "text-[var(--danger-text)]" : ""}>
-                        {daysUntil(nextTask.dueDate) < 0 ? "Scaduta" : `Entro ${shortDate(nextTask.dueDate)}`}
+                      // «!»: il Tag ha già il suo colore attenuato, che altrimenti vincerebbe sul rosso.
+                      <Tag className={daysUntil(nextTask.dueDate) < 0 ? "!text-[var(--danger-text)]" : ""}>
+                        {daysUntil(nextTask.dueDate) < 0 ? HOME_TEXT.overdue : `Entro ${shortDate(nextTask.dueDate)}`}
                       </Tag>
                     ) : null}
                     {nextTask.subjectId ? <Tag color={subjectColor(subjects, nextTask.subjectId)}>{subjectName(subjects, nextTask.subjectId)}</Tag> : null}
@@ -468,7 +471,14 @@ export function DashboardView() {
                           <button type="button" onClick={() => openTask(task.id)} className={`${ROW} gap-2 py-1.5 text-sm`}>
                             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PRIORITY_TONE[task.priority] }} />
                             <span className="one-line-safe min-w-0 flex-1 font-bold">{task.title}</span>
-                            {task.dueDate ? <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{shortDate(task.dueDate)}</span> : null}
+                            {/* Scaduta: la parola (non solo il colore), come nell'attività in evidenza. */}
+                            {task.dueDate ? (
+                              daysUntil(task.dueDate) < 0 ? (
+                                <span className="shrink-0 text-xs font-black text-[var(--danger-text)]">{HOME_TEXT.overdueOn(shortDate(task.dueDate))}</span>
+                              ) : (
+                                <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{shortDate(task.dueDate)}</span>
+                              )
+                            ) : null}
                             <RowChevron />
                           </button>
                         </li>
@@ -488,7 +498,8 @@ export function DashboardView() {
               <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {nextExams.map((exam) => {
                   const color = subjectColor(subjects, exam.subjectId);
-                  const days = studyDaysUntil(exam.date);
+                  // Il giorno dell'esame: «Oggi», non «0 giorni» (come nelle schede di Esami).
+                  const countdown = EXAMS_TEXT.countdown(studyDaysUntil(exam.date));
                   return (
                     <li key={exam.id}>
                       <button
@@ -497,8 +508,8 @@ export function DashboardView() {
                         className="motion-safe flex w-full min-w-0 items-center gap-3 rounded-[18px] border border-transparent bg-[var(--surface-soft)] p-3 text-left hover:border-[var(--border)] hover:bg-[var(--surface)]"
                       >
                         <span className="grid w-14 shrink-0 grid-cols-1 place-items-center rounded-[14px] py-1.5 text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
-                          <span className="text-xl font-black leading-none tabular-nums">{days}</span>
-                          <span className="text-[10px] font-black uppercase text-[var(--muted)]">{days === 1 ? "giorno" : "giorni"}</span>
+                          <span className={`font-black leading-none tabular-nums ${countdown.unit ? "text-xl" : "text-base"}`}>{countdown.value}</span>
+                          {countdown.unit ? <span className="text-[10px] font-black uppercase text-[var(--muted)]">{countdown.unit}</span> : null}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="two-line-safe block text-sm font-black leading-tight">{subjectName(subjects, exam.subjectId)}</span>
@@ -721,6 +732,11 @@ function GettingStarted({
   onGo: (view: AppView) => void;
   onHide: () => void;
 }) {
+  // Passo delle lezioni: scorciatoia che apre il Calendario con la guida «Importa» già aperta (un tocco, non tre).
+  const importCalendar = () => {
+    requestCalendarTransfer("import");
+    onGo("calendar");
+  };
   const steps: { key: keyof typeof done; icon: string; title: string; body: string; action: string; run: () => void }[] = [
     {
       key: "subjects",
@@ -793,7 +809,8 @@ function GettingStarted({
               >
                 {isDone ? <Icon name="Check" className="h-3.5 w-3.5" /> : index + 1}
               </span>
-              {step.title}
+              {/* Passo fatto: titolo attenuato col colore (non con l'opacità, che rendeva «Fatto.» illeggibile). */}
+              <span className={isDone ? "text-[var(--muted)]" : undefined}>{step.title}</span>
             </span>
           );
           const action = (
@@ -838,7 +855,7 @@ function GettingStarted({
             );
           }
           return (
-            <li key={step.key} className={`flex min-w-0 flex-col rounded-[20px] bg-[var(--surface-soft)] ${isDone ? "opacity-60" : ""}`}>
+            <li key={step.key} className="flex min-w-0 flex-col rounded-[20px] bg-[var(--surface-soft)]">
               <button
                 type="button"
                 onClick={step.run}
@@ -846,9 +863,19 @@ function GettingStarted({
                 className="flex w-full min-w-0 flex-1 flex-col items-start gap-1 rounded-[20px] p-3 text-left hover:bg-[var(--surface)]"
               >
                 {heading}
-                <span className="text-xs font-bold text-[var(--muted)]">{isDone ? "Fatto." : step.body}</span>
+                <span className="text-xs font-bold text-[var(--muted)]">{isDone ? HOME_GUIDE_TEXT.done : step.body}</span>
                 {isDone ? null : <span className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-black text-[var(--accent-ink)]">{action}</span>}
               </button>
+              {/* La descrizione promette l'importazione: qui è a un tocco (Calendario con la guida già aperta). */}
+              {step.key === "calendar" && !isDone ? (
+                <button
+                  type="button"
+                  onClick={importCalendar}
+                  className="mx-1 mb-1 inline-flex min-h-11 items-center gap-1.5 self-start rounded-full px-2 text-left text-xs font-black text-[var(--accent-ink)] hover:bg-[var(--surface)] hover:underline"
+                >
+                  <Icon name="Import" className="h-3.5 w-3.5 shrink-0" /> {HOME_GUIDE_TEXT.importCalendar}
+                </button>
+              ) : null}
             </li>
           );
         })}

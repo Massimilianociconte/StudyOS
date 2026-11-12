@@ -43,6 +43,7 @@ import {
 import { Icon } from "../components/Icon";
 import { SEMESTER_LABEL, SEMESTER_TONE, subjectSemester } from "../lib/semesters";
 import { CalendarTransfer, transferMenuItem, type CalendarTransferHandle } from "../components/CalendarTransfer";
+import { takeCalendarTransfer } from "../lib/calendarJump";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { EventEditor } from "../components/calendar/EventEditor";
 import { ScopeChoice } from "../components/calendar/ScopeChoice";
@@ -260,6 +261,15 @@ export function CalendarView() {
   const [preview, setPreview] = useState<CalendarPreviewState | null>(null);
   const [sharePhase, setSharePhase] = useState<"idle" | "loading" | "open">("idle");
   const transfer = useRef<CalendarTransferHandle>(null);
+  // Richiesta dalla Home («Importa da Google o Apple»): letta una volta sola, solo quando la guida è
+  // montata (prima la vista può mostrare il caricamento). Il ref regge il doppio effetto di StrictMode.
+  const transferJumped = useRef(false);
+  useEffect(() => {
+    if (transferJumped.current || !transfer.current) return;
+    transferJumped.current = true;
+    const direction = takeCalendarTransfer();
+    if (direction) transfer.current.open(direction);
+  });
   const {
     events,
     subjects,
