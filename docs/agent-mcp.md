@@ -52,9 +52,12 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.4.0, che aggiunge il connettore remoto di un solo account (vedi sotto). Gli
-strumenti del connettore `/mcp` sono quelli della 1.3.0: se l'hai già ricreato per la
-1.3.0 non serve rifarlo, altrimenti ricrealo (vedi «Ripubblicare dopo una modifica»).
+versione 1.5.0 (`/health` la mostra dopo il deploy): rispetto alla 1.4.0, che ha aggiunto il
+connettore remoto di un solo account (vedi sotto), corregge fuso orario, serie ripetute,
+link della bacheca e limiti di `/register` e `/authorize`. Strumenti e parametri del
+connettore `/mcp` sono quelli della 1.3.0; cambiano solo le descrizioni di
+`studyos_update_event` e `studyos_delete_event`, quindi ricrea il connettore perché
+l'assistente le legga (vedi «Ripubblicare dopo una modifica»).
 
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
 salvo una policy impostata da te su «Consenti».
@@ -85,10 +88,12 @@ collegamento la conferma compare in Impostazioni → Agenti del browser
 collegato. Sono accettati redirect https, loopback con qualsiasi porta
 (`http://127.0.0.1:…`, `http://localhost:…`) e schemi delle app native come
 `cursor://`. La registrazione è aperta a chiunque, quindi ha dei limiti: al massimo 50
-client; oltre, l'hub toglie quelli senza token, consensi o codici validi, dal più vecchio, e
-una registrazione mai usata scade dopo 24 ore. Una richiesta di consenso vale 5 minuti; ne
-restano aperte al massimo 5 per client (la nuova prende il posto della più vecchia) e 20 in
-tutto (oltre, la pagina di autorizzazione dice di riprovare tra qualche minuto). «Revoca
+client; oltre, l'hub toglie quelli senza token, consensi o codici validi, dal più vecchio, ma
+mai uno registrato da meno di 2 minuti, e una registrazione mai usata scade dopo 24 ore. Una
+richiesta di consenso vale 5 minuti; ne restano aperte al massimo 5 per client (la nuova prende
+il posto della più vecchia) e 20 in tutto: oltre, la nuova prende il posto della più vecchia,
+prima tra quelle di client che non hanno mai ottenuto un accesso, così chi si collega davvero
+non resta fuori. «Revoca
 l'accesso agli assistenti» toglie token, consensi e client registrati: per riaverlo, scollega e
 ricollega il connettore nell'assistente. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
 (`initialize` per i client precedenti, `server/discover` per il 2026), sempre in

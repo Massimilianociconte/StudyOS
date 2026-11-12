@@ -9,7 +9,7 @@ export const AGENT_RESOURCE_PATH = `${AGENT_HUB_ORIGIN}${AGENT_MCP_PATH}`;
 
 export const AGENT_SERVER_NAME = "studyos-mcp-server";
 
-export const AGENT_SERVER_VERSION = "1.4.0";
+export const AGENT_SERVER_VERSION = "1.5.0";
 
 export const AGENT_PROTOCOL_VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 

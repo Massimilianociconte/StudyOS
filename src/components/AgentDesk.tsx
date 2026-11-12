@@ -274,9 +274,7 @@ export function AgentSettings() {
           Revoca l'accesso agli assistenti
         </Button>
       </div>
-      <p className="text-sm font-bold text-[var(--muted)]">
-        Gli assistenti autorizzati perdono subito l'accesso e dovranno chiederlo di nuovo. Questo browser resta collegato, perché serve solo a portarti le loro richieste.
-      </p>
+      <p className="text-sm font-bold text-[var(--muted)]">{agentAccountLabels.revokeHint}</p>
 
       <div>
         <h4 className="text-sm font-black">Ultime azioni</h4>
