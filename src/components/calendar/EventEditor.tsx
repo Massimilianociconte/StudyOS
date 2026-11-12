@@ -17,6 +17,7 @@ import {
   editorChanges,
   occurrenceDayText,
   setDraftAllDay,
+  setDraftCategory,
   setDraftDuration,
   validateDraft,
   type ColorContext,
@@ -175,7 +176,8 @@ export function EventEditor({
   };
   // Spostare un giorno di una serie non ne cambia la regola (la cambia solo chi la sceglie).
   const moveStart = (current: EventDraft, value: string) => (occurrenceDate ? { ...changeStart(current, value, zone), repeat: current.repeat } : changeStart(current, value, zone));
-  const setCategory = (category: EventCategory) => update((value) => ({ ...value, category, color: draftColor({ ...value, category }, colorContext(value.subjectId)) }));
+  // «Vacanza» passa a tutto il giorno, dal giorno scelto allo stesso giorno (come «Nuova vacanza»).
+  const setCategory = (category: EventCategory) => update((value) => setDraftCategory(value, category, colorContext(value.subjectId)));
   const setSubject = (subjectId: string) => update((value) => ({ ...value, subjectId, color: draftColor(value, colorContext(subjectId)) }));
 
   const submit = async () => {
@@ -536,6 +538,11 @@ export function EventEditor({
                   </Field>
                   {subjectField}
                 </div>
+                {draft.category === "vacation" && draft.allDay && base.category !== "vacation" ? (
+                  <p role="status" className="-mt-1 text-xs font-bold text-[var(--muted)]">
+                    {EVENT_EDITOR_TEXT.vacationAllDay}
+                  </p>
+                ) : null}
                 {typeExtra?.(draft)}
                 <ColorPalette
                   label={EVENT_EDITOR_TEXT.color}

@@ -19,6 +19,7 @@ import {
   removeReminder,
   scopeOptions,
   setDraftAllDay,
+  setDraftCategory,
   setDraftDuration,
   draftDuration,
   shiftPatchDays,
@@ -26,6 +27,7 @@ import {
   validateDraft,
   withTypeColor
 } from "../src/lib/eventEditor.ts";
+import { newVacationDraft, vacationFields } from "../src/lib/occasionForms.ts";
 import { localMidnight } from "../src/lib/tz.ts";
 
 const at = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
@@ -149,6 +151,50 @@ test("tutto il giorno acceso e spento: si ritrovano gli orari, altrimenti 9–10
   const midnight = setDraftAllDay({ ...draft, allDay: true, start: "2026-11-12T00:00", end: "2026-11-12T00:00" }, false);
   assert.equal(midnight.start, "2026-11-12T09:00");
   assert.equal(midnight.end, "2026-11-12T10:00");
+});
+
+test("Tipologia «Vacanza» nel modulo completo: tutto il giorno, dal giorno scelto allo stesso giorno, come «Nuova vacanza»", () => {
+  const draft = { ...newEventDraft({ start: at(2026, 11, 12, 14) }), title: "Mare", description: "Portare il libro" };
+  const vacation = setDraftCategory(draft, "vacation", {});
+  assert.equal(vacation.category, "vacation");
+  assert.equal(vacation.allDay, true);
+  assert.equal(vacation.start.slice(0, 10), "2026-11-12");
+  assert.equal(vacation.end.slice(0, 10), "2026-11-12");
+  assert.equal(vacation.title, "Mare");
+  assert.equal(vacation.description, "Portare il libro");
+  assert.equal(vacation.color, draftColor({ ...draft, category: "vacation" }, {}));
+  // Gli stessi istanti salvati del modulo vacanza (date civili a mezzanotte).
+  const saved = draftPatch(vacation);
+  const form = vacationFields({ ...newVacationDraft("2026-11-12"), title: "Mare" });
+  assert.equal(saved.start, form.start);
+  assert.equal(saved.end, form.end);
+  assert.equal(saved.allDay, true);
+  // Togliendo «Tutto il giorno» tornano gli orari di prima.
+  const back = setDraftAllDay(vacation, false);
+  assert.equal(back.start, "2026-11-12T14:00");
+  assert.equal(back.end, "2026-11-12T15:00");
+});
+
+test("Tipologia «Vacanza»: un evento a cavallo della mezzanotte resta sul suo giorno; un periodo già scelto resta", () => {
+  const late = { ...newEventDraft({ start: at(2026, 11, 12, 23) }), end: "2026-11-13T01:00" };
+  const vacation = setDraftCategory(late, "vacation", {});
+  assert.equal(vacation.start.slice(0, 10), "2026-11-12");
+  assert.equal(vacation.end.slice(0, 10), "2026-11-12");
+  const range = { ...newEventDraft({ start: at(2026, 12, 20) }), allDay: true, start: "2026-12-20T00:00", end: "2026-12-27T00:00" };
+  const kept = setDraftCategory(range, "vacation", {});
+  assert.equal(kept.start, range.start);
+  assert.equal(kept.end, range.end);
+});
+
+test("Altre tipologie: cambia solo il colore automatico, l'orario resta", () => {
+  const draft = newEventDraft({ start: at(2026, 11, 12, 14) });
+  const exam = setDraftCategory(draft, "exam", {});
+  assert.equal(exam.allDay, false);
+  assert.equal(exam.start, draft.start);
+  assert.equal(exam.end, draft.end);
+  assert.equal(exam.color, draftColor({ ...draft, category: "exam" }, {}));
+  const custom = setDraftCategory({ ...draft, color: "#EF4444", colorCustom: true }, "vacation", {});
+  assert.equal(custom.color, "#EF4444");
 });
 
 test("spostando l'inizio la fine segue con la stessa durata; la ripetizione segue il giorno", () => {

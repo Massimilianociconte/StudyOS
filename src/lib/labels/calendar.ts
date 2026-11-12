@@ -111,6 +111,8 @@ export const EVENT_EDITOR_TEXT = {
   daysLabel: (count: number) => (count === 1 ? "1 giorno" : `${count} giorni`),
   allDay: "Tutto il giorno",
   allDayHint: "Occupa giornate intere, senza orari",
+  /** Tipologia «Vacanza» scelta nel modulo completo: passa a tutto il giorno (come «Nuova vacanza»). */
+  vacationAllDay: "Una vacanza occupa giornate intere: scegli il primo e l'ultimo giorno in «Dal» e «Al».",
   endFollows: "Se cambi l'inizio, la fine si sposta e la durata resta la stessa.",
   type: "Tipologia",
   typeOccasions: "Ogni anno",

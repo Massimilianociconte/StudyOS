@@ -336,6 +336,19 @@ export const setDraftAllDay = <T extends EventDraft>(draft: T, on: boolean): T =
 };
 
 /**
+ * Nuova tipologia: il colore la segue (se non è scelto a mano). «Vacanza» è sempre di tutto il giorno,
+ * come «Nuova vacanza»: un evento con orario diventa il suo primo giorno, dal… al… lo stesso giorno
+ * (gli orari restano per quando si toglie "Tutto il giorno"); un periodo già di tutto il giorno resta.
+ */
+export const setDraftCategory = <T extends EventDraft>(draft: T, category: EventCategory, context: ColorContext): T => {
+  const next = { ...draft, category, color: draftColor({ ...draft, category }, context) };
+  if (category !== "vacation" || draft.allDay) return next;
+  const day = dateOf(draft.start);
+  if (!isCivilDate(day)) return { ...next, allDay: true };
+  return { ...next, allDay: true, end: withDate(day, timeOf(draft.end)) };
+};
+
+/**
  * Evento di un'altra persona dopo la modifica `changes` del modulo, sopra la sua ultima versione
  * `latest` (ciò che il proprietario ha cambiato nel frattempo resta). null = nulla da salvare.
  * - Promemoria: sono personali, suonerebbero sui dispositivi del proprietario. Restano i suoi.
