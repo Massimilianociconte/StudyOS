@@ -17,6 +17,32 @@
 - La sync cloud non deve mai leggere lo stato con vault bloccato o app in
   caricamento: `cloudSync.ts` interrompe la passata (`SyncSuspendedError`)
   senza toccare outbox e cursori. Una voce put senza entità non è un tombstone.
+- Una sola scheda attiva per profilo del browser (`src/lib/activeTab.ts`, decisa in
+  `src/main.tsx` prima di montare `<App />`): blocco Web Locks `studyos-active-tab`
+  tenuto per tutta la vita della pagina. Le altre schede mostrano solo `TabGuard`
+  (niente `init()`, niente scritture, niente sync). Due schede attive si cancellavano i
+  dati: col vault ogni salvataggio ricifra l'intera copia in memoria (vince l'ultima).
+  «Usa questa scheda» → messaggio su BroadcastChannel → l'attiva chiama
+  `handOffPersistence()` (flush completo, outbox compresa, poi stop) e si ricarica nella
+  guardia; se il salvataggio fallisce resta attiva. «Usa comunque qui» (dopo ~3 s senza
+  risposta) prende il blocco con `steal`: la scheda derubata chiama `haltPersistence()`
+  senza salvare e si ricarica. Dopo lo stop `requestPersist` rifiuta con
+  `PersistenceHaltedError` (la sync non avanza il cursore) e `storeReady()` della sync è
+  falso. `shareSync`/`useSharedStore` non controllano lo stop: si fermano col
+  ricaricamento. Nuove scritture fuori dallo store: controllare `isPersistenceHalted()`
+  DENTRO la transazione, dopo ogni attesa (come `flush` dopo la cifratura e prima di ogni
+  scrittura, e `outboxTransaction` in `cloudSync.ts`): una scheda congelata può perdere il
+  blocco a metà. Il messaggio di passaggio è solo un indizio (qualsiasi pagina della stessa
+  origine può mandarlo): l'attiva cede solo se `navigator.locks.query()` mostra una
+  richiesta in coda per il blocco.
+- Senza `navigator.locks` (browser vecchi; contesto non sicuro, es. dev su
+  `http://<IP di rete>`) non c'è guardia: come prima, due schede possono sovrascriversi.
+  La guardia valuta comunque i moduli dell'app (import statico di `App`): niente effetti
+  con scritture a livello di modulo; `init()` rilegge il timer dal disco perché quello
+  letto all'apertura della guardia può essere vecchio.
+- Outbox cloud: senza vault una voce put la cui entità non è in memoria non si scarta
+  se la riga è ancora in IndexedDB: si invia quella (`planOrphanPuts`). Col vault si
+  scarta come prima.
 - unimi.it offusca a volte le email via Cloudflare (`/cdn-cgi/l/email-protection`):
   `parsers.ts` le decodifica prima di hash e parsing, altrimenti ogni check
   segnala pagine "cambiate" inesistenti.

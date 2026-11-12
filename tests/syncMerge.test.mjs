@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planMerge, legacySnapshotToRows, chunkBySize } from "../src/lib/syncMerge.ts";
+import { planMerge, legacySnapshotToRows, chunkBySize, planOrphanPuts } from "../src/lib/syncMerge.ts";
 import { normalizeCollections } from "../src/lib/collections.ts";
 
 const task = (id, updatedAt, extra = {}) => ({ id, updatedAt, title: id, ...extra });
@@ -87,4 +87,29 @@ test("migrazione snapshot legacy -> righe per-entità", () => {
 test("chunkBySize rispetta limiti di byte e righe", () => {
   const batches = chunkBySize([5, 5, 5, 20, 1, 1], (n) => n, 10, 2);
   assert.deepEqual(batches, [[5, 5], [5], [20], [1, 1]]);
+});
+
+// ---------- voci in coda senza entità in memoria (modifica fatta in un'altra scheda) ----------
+
+const queuedPut = (id) => ({ key: `task:${id}`, collection: "tasks", entityType: "task", entityId: id, deleted: false, queuedAt: 1 });
+
+test("voce in coda senza entità in memoria ma ancora su disco: si invia la riga salvata, non si scarta", () => {
+  const stored = task("a", "2026-11-12T10:00:00Z", { title: "Scritta in scheda A" });
+  const plan = planOrphanPuts([queuedPut("a")], new Map([["task:a", stored]]), false);
+  assert.deepEqual(plan.drop, []);
+  assert.equal(plan.send.length, 1);
+  assert.equal(plan.send[0].row.key, "task:a");
+  assert.equal(plan.send[0].entity, stored);
+});
+
+test("voce in coda senza entità né in memoria né su disco: si scarta (mai un'eliminazione cloud)", () => {
+  const plan = planOrphanPuts([queuedPut("a"), queuedPut("b")], new Map([["task:b", { id: "altro" }]]), false);
+  assert.deepEqual(plan.send, []);
+  assert.deepEqual(plan.drop.map((row) => row.key), ["task:a", "task:b"]);
+});
+
+test("col vault la regola resta quella di prima: la voce orfana si scarta", () => {
+  const plan = planOrphanPuts([queuedPut("a")], new Map([["task:a", task("a", "2026-11-12T10:00:00Z")]]), true);
+  assert.deepEqual(plan.send, []);
+  assert.deepEqual(plan.drop.map((row) => row.key), ["task:a"]);
 });

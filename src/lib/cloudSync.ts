@@ -13,9 +13,9 @@ import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import { getCloudSyncState, setCloudSyncState } from "./cloudSyncState";
 import { useStudyStore } from "../store/useStudyStore";
 import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey } from "./collections";
-import { db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
-import { outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
-import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, type PendingOutbox, type RemoteRow } from "./syncMerge";
+import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
+import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
+import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import {
   getSession,
   isCloudConfigured,
@@ -88,7 +88,8 @@ const refreshPendingCount = async () => {
 
 const storeReady = () => {
   const store = useStudyStore.getState();
-  return !store.loading && !store.locked;
+  // Un'altra scheda è diventata quella attiva (activeTab.ts): questa non sincronizza più.
+  return !store.loading && !store.locked && !isPersistenceHalted();
 };
 
 class SyncSuspendedError extends Error {
@@ -106,6 +107,17 @@ class SyncSuspendedError extends Error {
 const assertStoreReady = () => {
   if (!storeReady()) throw new SyncSuspendedError();
 };
+
+/**
+ * Ogni scrittura dell'outbox arriva dopo un'attesa (rete, lettura): nel frattempo un'altra scheda
+ * può aver preso il blocco (activeTab.ts). Il controllo è dentro la transazione: se la scheda è
+ * stata fermata, la transazione si annulla e nulla viene scritto.
+ */
+const outboxTransaction = <T,>(work: () => Promise<T>) =>
+  db.transaction("rw", db.syncOutbox, async () => {
+    if (isPersistenceHalted()) throw new SyncSuspendedError();
+    return work();
+  });
 
 
 const schedule = (delay: number) => {
@@ -152,14 +164,14 @@ const enqueueAllLocal = async (skip: Set<string> = new Set()) => {
       });
     }
   }
-  if (rows.length) await db.syncOutbox.bulkPut(rows);
+  if (rows.length) await outboxTransaction(() => db.syncOutbox.bulkPut(rows));
   return rows.length;
 };
 
 const requeueEntities = async (items: Array<{ collection: CollectionKey; id: string }>) => {
   if (!items.length) return;
   const base = Date.now() * 1000;
-  await db.transaction("rw", db.syncOutbox, async () => {
+  await outboxTransaction(async () => {
     for (const [index, item] of items.entries()) {
       const key = outboxKey(item.collection, item.id);
       if (await db.syncOutbox.get(key)) continue; // una modifica locale più recente è già in coda
@@ -187,7 +199,7 @@ const mergeRows = async (rows: RemoteRow[], force: boolean) => {
       .applyRemoteChanges(plan.changes.map((change) => ({ ...change, force })));
   }
   if (plan.dropOutbox.length) {
-    await db.transaction("rw", db.syncOutbox, async () => {
+    await outboxTransaction(async () => {
       for (const key of plan.dropOutbox) {
         const previous = outbox.find((row) => row.key === key);
         const current = await db.syncOutbox.get(key);
@@ -219,6 +231,13 @@ const pull = async (userId: string, force = false) => {
   return applied;
 };
 
+/** Righe su disco delle voci in coda senza entità in memoria (senza vault i dati stanno nelle tabelle). */
+const readStoredRows = async (rows: SyncOutboxRow[]) => {
+  const known = rows.filter((row) => (COLLECTIONS as readonly string[]).includes(row.collection));
+  const entries = await Promise.all(known.map(async (row) => [row.key, await collectionTable(row.collection).get(row.entityId)] as const));
+  return new Map<string, unknown>(entries);
+};
+
 const push = async (userId: string) => {
   assertStoreReady();
   const queued = await db.syncOutbox.orderBy("queuedAt").toArray();
@@ -227,27 +246,42 @@ const push = async (userId: string) => {
   const index = indexCollections(pickCollections(useStudyStore.getState()));
   const encoder = new TextEncoder();
 
+  const prepare = (row: SyncOutboxRow, entity: unknown) => {
+    const payload = row.deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? new Date(row.queuedAt / 1000).toISOString() } : entity;
+    const push: PushRow = { entity_type: row.entityType, entity_id: row.entityId, payload, deleted: row.deleted };
+    return { row, push, size: encoder.encode(JSON.stringify(push)).length };
+  };
   const orphans: SyncOutboxRow[] = [];
   const prepared = queued.flatMap((row) => {
     const entity = index[row.collection]?.get(row.entityId);
     // Una voce "put" senza entità in memoria non diventa MAI un'eliminazione cloud: le
-    // eliminazioni reali arrivano dall'outbox con deleted=true. La voce orfana viene scartata.
+    // eliminazioni reali arrivano dall'outbox con deleted=true.
     if (!row.deleted && !entity) {
       orphans.push(row);
       return [];
     }
-    const payload = row.deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? new Date(row.queuedAt / 1000).toISOString() } : entity;
-    const push: PushRow = { entity_type: row.entityType, entity_id: row.entityId, payload, deleted: row.deleted };
-    return [{ row, push, size: encoder.encode(JSON.stringify(push)).length }];
+    return [prepare(row, entity)];
   });
 
   if (orphans.length) {
-    await db.transaction("rw", db.syncOutbox, async () => {
-      for (const row of orphans) {
-        const current = await db.syncOutbox.get(row.key);
-        if (current && current.queuedAt === row.queuedAt && !current.deleted) await db.syncOutbox.delete(row.key);
-      }
-    });
+    // Senza vault la riga può essere ancora su disco (scritta in un'altra scheda): si invia quella.
+    // Si scartano solo le voci senza riga, e col vault (una sola scheda) come prima.
+    const vault = useStudyStore.getState().settings.security.mode === "vault";
+    const stored = vault ? new Map<string, unknown>() : await readStoredRows(orphans);
+    assertStoreReady();
+    const { send, drop } = planOrphanPuts(orphans, stored, vault);
+    if (send.length) {
+      prepared.push(...send.map((item) => prepare(item.row, item.entity)));
+      prepared.sort((a, b) => a.row.queuedAt - b.row.queuedAt);
+    }
+    if (drop.length) {
+      await outboxTransaction(async () => {
+        for (const row of drop) {
+          const current = await db.syncOutbox.get(row.key);
+          if (current && current.queuedAt === row.queuedAt && !current.deleted) await db.syncOutbox.delete(row.key);
+        }
+      });
+    }
   }
 
   let sent = 0;
@@ -265,7 +299,7 @@ const push = async (userId: string) => {
       const results = await pushEntityRows(userId, clientId, batch.map((item) => item.push));
       const accepted = new Set(results.filter((result) => result.accepted).map((result) => `${result.entity_type}:${result.entity_id}`));
       // Rimuove dall'outbox solo le voci accettate e non riaccodate nel frattempo.
-      await db.transaction("rw", db.syncOutbox, async () => {
+      await outboxTransaction(async () => {
         for (const item of batch) {
           if (!accepted.has(item.row.key)) continue;
           const current = await db.syncOutbox.get(item.row.key);
@@ -342,7 +376,7 @@ const bindUser = async (userId: string) => {
   }
   // Solo un account precedente noto consente di scartare una coda già vuota.
   // Al primo collegamento i tombstone creati offline devono restare in coda.
-  if (bound) await db.syncOutbox.clear();
+  if (bound) await outboxTransaction(() => db.syncOutbox.clear());
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));
   await setMeta(metaKeys.boundUser, userId);

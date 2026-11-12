@@ -480,3 +480,31 @@ test("store: il timer vecchio in localStorage si carica come prima (kind assente
   const storage = memoryStorage({ [TIMER_STORAGE_KEY]: JSON.stringify({ mode: "classic", running: false, remainingSeconds: 600, durationSeconds: 2700 }) });
   assert.equal(loadTimer(storage).kind, "pomodoro");
 });
+
+test("store: una scheda che diventa attiva dopo la guardia riprende il timer avviato nell'altra", async () => {
+  // La guardia (src/lib/activeTab.ts) non monta l'app, ma il modulo dello store è già caricato con il
+  // timer letto all'apertura della pagina. Quando la scheda prende il posto, l'avvio rilegge il disco.
+  const storage = memoryStorage();
+  globalThis.localStorage = storage;
+  try {
+    const now = Date.now();
+    seedStore({ timer: { ...defaultTimer(), changedAt: now - 10 * MIN } });
+    const running = {
+      ...defaultTimer("pomodoro", { kind: "stopwatch", subjectId: "s2" }),
+      running: true,
+      startedAt: now - 5 * MIN,
+      runningSince: now - 5 * MIN,
+      sessionId: "session_altra_scheda",
+      changedAt: now - 5 * MIN
+    };
+    storage.setItem(TIMER_STORAGE_KEY, JSON.stringify(running));
+    // In Node non c'è IndexedDB: il caricamento dei dati fallisce, il timer si rilegge comunque prima.
+    await store.getState().init();
+    assert.equal(store.getState().timer.running, true);
+    assert.equal(store.getState().timer.sessionId, "session_altra_scheda");
+    assert.equal(storage.getItem(TIMER_STORAGE_KEY), JSON.stringify(running), "solo lettura: il disco non cambia");
+  } finally {
+    delete globalThis.localStorage;
+    store.setState({ error: undefined });
+  }
+});
