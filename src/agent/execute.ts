@@ -1159,7 +1159,7 @@ const addGroupResource = async (args: Args): Promise<AgentCallResult> => {
     if (!safe) return fail("invalid", "Per un link serve un indirizzo http, https o mailto.");
     url = safe;
   }
-  const { getActor, pushSharedResource, logSharedActivity } = await import("../lib/groupSync");
+  const { getActor, publishResource, logSharedActivity } = await import("../lib/groupSync");
   const actor = await getActor();
   const id = await state().addGroupResource({
     groupId: group.id,
@@ -1171,16 +1171,25 @@ const addGroupResource = async (args: Args): Promise<AgentCallResult> => {
     addedByDisplayName: actor.displayName
   });
   const resource = state().groupResources.find((item) => item.id === id);
-  if (resource) await pushSharedResource(resource).catch(() => undefined);
+  // Se il server non risponde resta in coda e parte da sola (vedi publishResource).
+  const shared = resource && (group.sharedAt || group.ownerId === actor.userId) ? await publishResource(resource).catch(() => false) : false;
   await logSharedActivity(group.id, actor.displayName, `ha pubblicato «${text(args.title).trim()}»`).catch(() => undefined);
-  return ok({ id });
+  return ok({ id, shared });
 };
 
 const deleteGroupResource = async (id: string): Promise<AgentCallResult> => {
-  if (!state().groupResources.some((item) => item.id === id)) return fail("not_found", "Risorsa non trovata.");
-  const { deleteSharedResource } = await import("../lib/groupSync");
+  const resource = state().groupResources.find((item) => item.id === id);
+  if (!resource) return fail("not_found", "Risorsa non trovata.");
+  const group = state().studyGroups.find((item) => item.id === resource.groupId);
+  // In un gruppo condiviso prima il server: se non riesce (rete, o risorsa di un altro membro) la
+  // risorsa resta per tutti, anche qui. Prima spariva solo qui e tornava al pull successivo.
+  if (group?.sharedAt && resource.sharedAt) {
+    const { deleteSharedResource } = await import("../lib/groupSync");
+    if (!(await deleteSharedResource(id).catch(() => false))) {
+      return fail("failed", "Eliminazione non riuscita: il server dei gruppi non risponde o la risorsa è di un altro membro.");
+    }
+  }
   await state().deleteGroupResource(id);
-  await deleteSharedResource(id).catch(() => undefined);
   return ok({ id, deleted: true });
 };
 

@@ -46,6 +46,11 @@ export interface MergeOptions {
    * con last-writer-wins la copia locale, se più recente, sostituiva quella dell'account.
    */
   accountWins?: ReadonlySet<CollectionKey>;
+  /**
+   * Righe da non applicare: la loro verità è altrove (gruppi pubblicati → tabelle condivise, vedi
+   * syncScope). Contano come ignorate; la coda locale di quelle chiavi la sistema il push.
+   */
+  skip?: (collection: CollectionKey, row: RemoteRow, local: SyncableEntity | undefined) => boolean;
 }
 
 export interface MergePlan {
@@ -83,6 +88,70 @@ export const tieBreakStamp = (local: Pick<SyncableEntity, "updatedAt"> | undefin
   return new Date(stamp + 1).toISOString();
 };
 
+const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+/** Senza regex con lookbehind (Safari prima della 16.4 non la compila). */
+const cleanString = (value: string) => {
+  let out = "";
+  let changed = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0) {
+      changed = true;
+      continue;
+    }
+    if (isHigh(code) && index + 1 < value.length && isLow(value.charCodeAt(index + 1))) {
+      out += value[index] + value[index + 1];
+      index += 1;
+      continue;
+    }
+    if (isHigh(code) || isLow(code)) {
+      out += "�";
+      changed = true;
+      continue;
+    }
+    out += value[index];
+  }
+  return changed ? out : value;
+};
+
+// eslint-disable-next-line no-control-regex
+const SUSPECT = /[\u0000\uD800-\uDFFF]/;
+
+/**
+ * Copia inviabile al cloud: jsonb rifiuta `\u0000` e i surrogati spaiati (una mezza emoji tagliata
+ * da uno slice), e un solo valore così faceva fallire per sempre tutto il lotto di 200 righe. Lo zero
+ * si toglie, il mezzo carattere diventa U+FFFD. Stesso oggetto se non c'è niente da cambiare.
+ */
+export const wellFormedForJsonb = <T>(value: T): T => {
+  if (typeof value === "string") {
+    // Controllo veloce: quasi tutte le stringhe (anche gli allegati in base64) non hanno né zeri né surrogati.
+    return (SUSPECT.test(value) ? cleanString(value) : value) as T;
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const clean = wellFormedForJsonb(item);
+      if (clean !== item) changed = true;
+      return clean;
+    });
+    return (changed ? next : value) as T;
+  }
+  if (value && typeof value === "object") {
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      const cleanKey = wellFormedForJsonb(key);
+      const clean = wellFormedForJsonb(item);
+      if (clean !== item || cleanKey !== key) changed = true;
+      next[cleanKey] = clean;
+    }
+    return (changed ? next : value) as T;
+  }
+  return value;
+};
+
 export const indexCollections = (state: CollectionsState) =>
   Object.fromEntries(
     COLLECTIONS.map((key) => [key, new Map((state[key] as unknown as SyncableEntity[]).map((item) => [item.id, item]))])
@@ -113,6 +182,10 @@ export const planMerge = (
     const key = keyOf(collection, row.entity_id);
     const stamp = remoteStamp(row);
     const localEntity = index[collection].get(row.entity_id);
+    if (options.skip?.(collection, row, localEntity)) {
+      plan.ignored += 1;
+      continue;
+    }
     const localPending = pending.get(key);
     const accountWins = Boolean(options.accountWins?.has(collection));
 

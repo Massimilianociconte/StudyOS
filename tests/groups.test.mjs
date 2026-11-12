@@ -1,13 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  classifyGroupRpcError,
   groupInviteLink,
   groupInviteMessage,
+  inviteNotificationId,
   isInviteCodeShape,
   makeGroupInviteCode,
   mergeSharedSnapshot,
   normalizeInviteCode,
-  realtimeGroupIds
+  realtimeGroupIds,
+  settleInviteNotifications
 } from "../src/lib/groups.ts";
 import { durationToMinutes, minutesToDuration } from "../src/lib/duration.ts";
 
@@ -196,4 +199,82 @@ test("realtimeGroupIds: id sicuri per il filtro Realtime, senza doppioni, ordina
   assert.deepEqual(realtimeGroupIds(["ok-1", "a,b", "x)", "c.d", "e f", "", 7]), ["ok-1"]);
   assert.equal(realtimeGroupIds(Array.from({ length: 150 }, (_, i) => `g${String(i).padStart(3, "0")}`)).length, 100);
   assert.deepEqual(realtimeGroupIds([]), []);
+});
+
+const invite = (id, extra = {}) => ({
+  ...base,
+  id,
+  updatedAt: "2026-10-06T10:00:00.000Z",
+  groupId: "g1",
+  groupName: "Fisio",
+  fromUserId: "alice",
+  fromDisplayName: "Alice",
+  recipientEmail: "bob@example.com",
+  code: "GRP-AB12-CD34",
+  status: "pending",
+  ...extra
+});
+
+test("merge condiviso: un invito ricevuto in attesa che il server non ha più sparisce (ritirato o gruppo eliminato)", () => {
+  const local = { ...empty, invites: [invite("i1"), invite("i2"), invite("i3", { status: "accepted" }), invite("mine", { fromUserId: "bob", recipientEmail: "carla@example.com" })] };
+  // Il server restituisce solo i2: i1 è stato cancellato (gruppo eliminato), i3 è storia, «mine» l'ho mandato io.
+  const merged = mergeSharedSnapshot(local, { ...empty, invites: [invite("i2")] }, "bob", [], { receivedEmail: "Bob@Example.com" });
+  assert.deepEqual(merged.invites.map((item) => item.id).sort(), ["i2", "i3", "mine"]);
+  // Senza la lettura completa degli inviti ricevuti (niente email) non si toglie nulla.
+  const partial = mergeSharedSnapshot(local, { ...empty, invites: [invite("i2")] }, "bob");
+  assert.equal(partial.invites.length, 4);
+});
+
+test("merge condiviso: un invito accettato da un altro dispositivo arriva come accettato", () => {
+  const local = { ...empty, invites: [invite("i1")] };
+  const server = { ...empty, invites: [invite("i1", { status: "accepted", updatedAt: "2026-10-07T09:00:00.123456+00:00" })] };
+  const merged = mergeSharedSnapshot(local, server, "bob", [], { receivedEmail: "bob@example.com" });
+  assert.equal(merged.invites[0].status, "accepted");
+  assert.equal(merged.freshInvites.length, 0);
+});
+
+test("merge condiviso: gli inviti di un gruppo sparito se ne vanno, salvo quelli che il server ha ancora", () => {
+  const shared = { ...group([member("alice", "owner"), member("bob")]), sharedAt: "2026-10-06T10:00:00.000Z" };
+  const local = { ...empty, groups: [shared], invites: [invite("old", { fromUserId: "bob", recipientEmail: "carla@example.com" }), invite("still")] };
+  const merged = mergeSharedSnapshot(local, { ...empty, invites: [invite("still")] }, "bob", ["g1"], { receivedEmail: "bob@example.com" });
+  assert.deepEqual(merged.groups, []);
+  assert.deepEqual(merged.invites.map((item) => item.id), ["still"]);
+});
+
+test("notifiche degli inviti: lette quando nessun invito ricevuto per quel gruppo è più in attesa", () => {
+  const now = "2026-10-08T10:00:00.000Z";
+  const notification = (id, groupId, extra = {}) => ({ id, kind: "invite", linkGroupId: groupId, updatedAt: "2026-10-06T10:00:00.000Z", ...extra });
+  const notifications = [
+    notification("n1", "g1"),
+    notification("n2", "g2"),
+    notification("n3", "g3", { readAt: "2026-10-07T10:00:00.000Z" }),
+    { id: "n4", kind: "group", linkGroupId: "g2", updatedAt: "2026-10-06T10:00:00.000Z" }
+  ];
+  const invites = [invite("i1", { groupId: "g1" }), invite("i2", { groupId: "g2", status: "accepted" }), invite("sent", { groupId: "g2", fromUserId: "bob", recipientEmail: "x@example.com" })];
+  const settled = settleInviteNotifications(notifications, invites, "bob@example.com", now);
+  assert.deepEqual(settled.filter((item) => item.readAt === now).map((item) => item.id), ["n2"]);
+  assert.equal(settled[0], notifications[0]);
+  // Niente da cambiare (o senza email): stesso array, così lo store non riscrive.
+  assert.equal(settleInviteNotifications(settled, invites, "bob@example.com", now), settled);
+  assert.equal(settleInviteNotifications(notifications, invites, "", now), notifications);
+  assert.equal(inviteNotificationId("i1"), "notif-group-invite-i1");
+});
+
+test("notifiche degli inviti con id stabile: si chiudono per il loro invito, anche con un altro invito in attesa nel gruppo", () => {
+  const now = "2026-10-08T10:00:00.000Z";
+  const stable = (inviteId) => ({ id: inviteNotificationId(inviteId), kind: "invite", linkGroupId: "g1", updatedAt: "2026-10-06T10:00:00.000Z" });
+  const notifications = [stable("withdrawn"), stable("open")];
+  // «withdrawn» non c'è più sul server, «open» è ancora in attesa nello stesso gruppo.
+  const settled = settleInviteNotifications(notifications, [invite("open")], "bob@example.com", now);
+  assert.deepEqual(settled.map((item) => Boolean(item.readAt)), [true, false]);
+});
+
+test("esiti delle RPC dei gruppi: solo la rete è da riprovare", () => {
+  assert.equal(classifyGroupRpcError(null), "ok");
+  assert.equal(classifyGroupRpcError({ message: "Invito già gestito" }), "handled");
+  assert.equal(classifyGroupRpcError({ message: "Invito non trovato" }), "not-found");
+  assert.equal(classifyGroupRpcError({ message: "Invito destinato a un altro account" }), "other-account");
+  assert.equal(classifyGroupRpcError({ message: "Codice non valido" }), "invalid-code");
+  assert.equal(classifyGroupRpcError({ message: "Failed to fetch" }), "unavailable");
+  assert.equal(classifyGroupRpcError({ message: "Accesso richiesto" }), "unavailable");
 });

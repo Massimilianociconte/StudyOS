@@ -16,11 +16,11 @@ import {
   getActor,
   joinGroupWithCode,
   logSharedActivity,
+  publishGroup,
+  publishResource,
   pullSharedUpdates,
   pushSharedGroup,
   pushSharedMemberRole,
-  pushSharedMembership,
-  pushSharedResource,
   pushSharedResourcePin,
   removeSharedMember,
   type Actor
@@ -28,7 +28,7 @@ import {
 import { safeHref } from "../lib/safeUrl";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
-import { GROUP_FORM_TEXT } from "../lib/labels/groups";
+import { GROUP_FORM_TEXT, GROUP_SYNC_TEXT } from "../lib/labels/groups";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
 
 type DetailTab = "bacheca" | "membri" | "attivita";
@@ -99,9 +99,14 @@ export function GroupsView() {
   }, []);
 
   const myId = actor?.userId;
-  const received = groupInvites
-    .filter((invite) => invite.status === "pending" && invite.fromUserId !== myId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // Ricevuti = indirizzati alla mia email. Con «diverso da me» comparivano, da disconnessi (id del
+  // dispositivo), gli inviti che avevo MANDATO io, con «Accetta» e «Rifiuta» funzionanti.
+  const myEmail = session ? actor?.email?.toLowerCase() : undefined;
+  const received = myEmail
+    ? groupInvites
+        .filter((invite) => invite.status === "pending" && invite.fromUserId !== myId && invite.recipientEmail?.toLowerCase() === myEmail)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    : [];
   const open = openId ? studyGroups.find((group) => group.id === openId) ?? null : null;
 
   const refresh = async () => {
@@ -319,38 +324,48 @@ function GroupCard({ group, myId, resources, onOpen, onInvite }: { group: StudyG
 }
 
 function InviteCard({ inviteId, actor, onDone }: { inviteId: string; actor: Actor | null; onDone: (text: string) => void }) {
-  const { groupInvites, acceptGroupInvite, declineGroupInvite } = useStudyStore();
+  const groupInvites = useStudyStore((state) => state.groupInvites);
   const invite = groupInvites.find((item) => item.id === inviteId);
   const [busy, setBusy] = useState(false);
   if (!invite) return null;
+  // Rispondere vale solo sul server: senza account non c'è niente da accettare.
+  const canAnswer = Boolean(actor?.email);
 
-  const accept = async () => {
-    if (!actor || busy) return;
+  /**
+   * Il server decide; qui si segue la sua risposta. Rete assente = l'invito resta in attesa (prima
+   * diventava «accettato» solo su questo dispositivo, senza entrare davvero nel gruppo).
+   */
+  const answer = async (choice: "accept" | "decline") => {
+    if (!actor?.email || busy) return;
     setBusy(true);
     try {
-      const remote = await acceptInviteRemote(invite.id, actor.displayName);
+      const outcome = choice === "accept" ? await acceptInviteRemote(invite.id, actor.displayName) : await declineInviteRemote(invite.id);
       const store = useStudyStore.getState();
-      if (remote) await pullSharedUpdates();
-      await store.acceptGroupInvite(invite.id, actor);
-      // Con il backend condiviso l'ingresso è già registrato dal server (niente voce doppia).
-      if (!remote) await useStudyStore.getState().logGroupActivity(invite.groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
-      onDone(`Benvenuto in "${invite.groupName}".`);
+      if (outcome === "unavailable") {
+        onDone(GROUP_SYNC_TEXT.offlineAnswer);
+        return;
+      }
+      if (outcome === "other-account") {
+        onDone(GROUP_SYNC_TEXT.otherAccount);
+        return;
+      }
+      if (outcome === "not-found") {
+        await store.settleGroupInvite(invite.id, "withdrawn");
+        onDone(GROUP_SYNC_TEXT.inviteGone);
+        return;
+      }
+      // Accettato qui o già risposto altrove: il pull porta gruppo, membri e stato vero dell'invito.
+      await pullSharedUpdates();
+      if (outcome === "handled") {
+        const joined = useStudyStore.getState().studyGroups.find((group) => group.id === invite.groupId && group.members.some((member) => member.userId === actor.userId));
+        await store.settleGroupInvite(invite.id, joined ? "accepted" : "declined");
+        onDone(joined ? GROUP_SYNC_TEXT.alreadyMember(invite.groupName) : GROUP_SYNC_TEXT.alreadyAnswered);
+        return;
+      }
+      await store.settleGroupInvite(invite.id, choice === "accept" ? "accepted" : "declined");
+      onDone(choice === "accept" ? GROUP_SYNC_TEXT.welcome(invite.groupName) : GROUP_SYNC_TEXT.declined);
     } catch (cause) {
-      onDone(cause instanceof Error ? cause.message : "Non è stato possibile accettare l'invito. Riprova.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const decline = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await declineInviteRemote(invite.id);
-      await declineGroupInvite(invite.id);
-      onDone("Invito rifiutato.");
-    } catch (cause) {
-      onDone(cause instanceof Error ? cause.message : "Non è stato possibile rifiutare l'invito. Riprova.");
+      onDone(cause instanceof Error ? cause.message : GROUP_SYNC_TEXT.offlineAnswer);
     } finally {
       setBusy(false);
     }
@@ -369,10 +384,10 @@ function InviteCard({ inviteId, actor, onDone }: { inviteId: string; actor: Acto
         </span>
       </span>
       <span className="flex shrink-0 gap-2">
-        <Button variant="primary" icon="Check" onClick={() => void accept()} disabled={busy || !actor}>
+        <Button variant="primary" icon="Check" onClick={() => void answer("accept")} disabled={busy || !canAnswer} title={canAnswer ? undefined : GROUP_SYNC_TEXT.needsAccount}>
           Accetta
         </Button>
-        <Button variant="soft" onClick={() => void decline()} disabled={busy}>
+        <Button variant="soft" onClick={() => void answer("decline")} disabled={busy || !canAnswer} title={canAnswer ? undefined : GROUP_SYNC_TEXT.needsAccount}>
           Rifiuta
         </Button>
       </span>
@@ -407,9 +422,9 @@ function CreateGroupModal({ actor, needsAccount, onLogin, onClose, onCreated }: 
       const id = await store.createStudyGroup({ name, description }, actor);
       const group = useStudyStore.getState().studyGroups.find((g) => g.id === id);
       if (group) {
-        await pushSharedGroup(group);
-        await pushSharedMembership(id, group.members[0]);
-        await logSharedActivity(id, actor.displayName, "ha creato il gruppo").catch(() => undefined);
+        // Gruppo e riga del proprietario insieme; se il server non risponde si riprova da soli dopo.
+        if (await publishGroup(group)) await logSharedActivity(id, actor.displayName, "ha creato il gruppo").catch(() => undefined);
+        else await useStudyStore.getState().logGroupActivity(id, actor.displayName, "ha creato il gruppo").catch(() => undefined);
       }
       onCreated(id);
       onClose();
@@ -489,6 +504,8 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
   const sentInvites = groupInvites.filter((i) => i.groupId === group.id && i.status === "pending");
   const myRole = actor ? group.members.find((m) => m.userId === actor.userId)?.role : undefined;
   const isOwner = myRole === "owner";
+  // Esiti delle azioni sui membri: qui dentro, non nel messaggio della pagina coperto dal pannello.
+  const [memberNotice, setMemberNotice] = useState("");
 
   return (
     <Drawer
@@ -533,7 +550,7 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
           ) : (
             <ul className="grid grid-cols-1 gap-2">
               {resources.map((resource) => (
-                <ResourceRow key={resource.id} resource={resource} canManage={isOwner || resource.addedByUserId === actor?.userId} />
+                <ResourceRow key={resource.id} resource={resource} canManage={isOwner || resource.addedByUserId === actor?.userId} shared={Boolean(group.sharedAt)} />
               ))}
             </ul>
           )}
@@ -546,9 +563,14 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
             <h4 className="text-sm font-black">Chi studia qui</h4>
             <Button variant="soft" icon="UserPlus" onClick={() => setInviteOpen(true)} disabled={!actor}>Invita</Button>
           </div>
+          {memberNotice ? (
+            <p role="status" className="mb-3 rounded-[14px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
+              {memberNotice}
+            </p>
+          ) : null}
           <ul className="grid grid-cols-1 gap-2">
             {group.members.map((member) => (
-              <MemberRow key={member.userId} group={group} member={member} isOwner={isOwner} myId={actor?.userId} onClose={onClose} onNotice={onNotice} />
+              <MemberRow key={member.userId} group={group} member={member} isOwner={isOwner} actor={actor} onClose={onClose} onNotice={setMemberNotice} onLeft={onNotice} />
             ))}
           </ul>
           <details className="quiet-panel mt-3 p-3">
@@ -597,9 +619,46 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
   );
 }
 
-function ResourceRow({ resource, canManage }: { resource: GroupResource; canManage: boolean }) {
+function ResourceRow({ resource, canManage, shared }: { resource: GroupResource; canManage: boolean; shared: boolean }) {
   const store = useStudyStore();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  // In un gruppo condiviso decide il server: prima la scrittura lì, poi qui. Un errore lasciava una
+  // copia diversa su questo dispositivo (fissata solo qui, eliminata solo qui e poi ricomparsa).
+  const published = shared && Boolean(resource.sharedAt);
+
+  const togglePin = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (published && !(await pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))) {
+        setError(GROUP_SYNC_TEXT.pinFailed);
+        return;
+      }
+      await store.toggleResourcePin(resource.id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setConfirmDelete(false);
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (published && !(await deleteSharedResource(resource.id))) {
+        setError(GROUP_SYNC_TEXT.deleteResourceFailed);
+        return;
+      }
+      await store.deleteGroupResource(resource.id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <li className={`quiet-panel min-w-0 p-3 ${resource.pinned ? "ring-1 ring-[var(--accent)]" : ""}`}>
       <div className="flex min-w-0 items-start gap-3">
@@ -618,11 +677,13 @@ function ResourceRow({ resource, canManage }: { resource: GroupResource; canMana
           ) : null}
           {resource.body ? <p className="safe-text mt-0.5 whitespace-pre-line text-xs text-[var(--muted)]">{resource.body}</p> : null}
           <p className="mt-1 text-[11px] font-bold text-[var(--faint)]">{RESOURCE_LABEL[resource.kind]} · aggiunto da {resource.addedByDisplayName}</p>
+          {shared && !resource.sharedAt ? <p className="mt-1 text-[11px] font-bold text-[var(--muted)]">{GROUP_SYNC_TEXT.notPublished}</p> : null}
+          {error ? <p role="alert" className="mt-1 text-xs font-bold text-[var(--danger-text)]">{error}</p> : null}
         </div>
         {canManage ? (
           // Cerchi da 32 px con area di tocco da 44 (after:-inset-1.5); gap-3 = le due aree non si sovrappongono.
           <span className="flex shrink-0 gap-3">
-            <button type="button" onClick={() => void store.toggleResourcePin(resource.id).then(() => pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
+            <button type="button" onClick={() => void togglePin()} disabled={busy} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
               className={`relative grid h-8 w-8 grid-cols-1 place-items-center rounded-full after:absolute after:-inset-1.5 after:content-[''] ${resource.pinned ? "bg-[var(--accent)] text-[#10131d]" : "hover:bg-[var(--surface-strong)]"}`}>
               <Icon name="Pin" className="h-4 w-4" />
             </button>
@@ -639,10 +700,7 @@ function ResourceRow({ resource, canManage }: { resource: GroupResource; canMana
             confirmLabel="Elimina dalla bacheca"
             icon="Trash2"
             onCancel={() => setConfirmDelete(false)}
-            onConfirm={() => {
-              setConfirmDelete(false);
-              void store.deleteGroupResource(resource.id).then(() => deleteSharedResource(resource.id));
-            }}
+            onConfirm={() => void remove()}
           />
         </div>
       ) : null}
@@ -650,17 +708,52 @@ function ResourceRow({ resource, canManage }: { resource: GroupResource; canMana
   );
 }
 
-function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group: StudyGroup; member: GroupMember; isOwner: boolean; myId?: string; onClose: () => void; onNotice: (text: string) => void }) {
+/**
+ * Uscire o eliminare un gruppo: per un gruppo condiviso prima il server, poi la copia qui. Se il server
+ * non risponde non si tocca nulla e lo si dice (prima il gruppo spariva solo qui e poi ricompariva).
+ */
+const leaveGroup = async (group: StudyGroup, me: Pick<GroupMember, "userId" | "displayName">): Promise<{ ok: boolean; text: string }> => {
+  const store = useStudyStore.getState();
+  const owner = group.ownerId === me.userId;
+  if (group.sharedAt) {
+    if (owner) {
+      if (!(await deleteSharedGroup(group.id))) return { ok: false, text: GROUP_SYNC_TEXT.deleteGroupFailed };
+    } else {
+      // Prima la voce in cronologia (serve ancora essere membri per pubblicarla), poi l'uscita.
+      await logSharedActivity(group.id, me.displayName, "ha lasciato il gruppo").catch(() => undefined);
+      if (!(await removeSharedMember(group.id, me.userId))) return { ok: false, text: GROUP_SYNC_TEXT.leaveFailed };
+    }
+  } else if (owner) {
+    // Mai confermato come pubblicato: se il server l'ha comunque, si prova a toglierlo anche lì.
+    void deleteSharedGroup(group.id).catch(() => undefined);
+  }
+  // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
+  await store.deleteStudyGroup(group.id);
+  return { ok: true, text: owner ? `Gruppo "${group.name}" eliminato.` : `Hai lasciato il gruppo "${group.name}".` };
+};
+
+function MemberRow({ group, member, isOwner, actor, onClose, onNotice, onLeft }: { group: StudyGroup; member: GroupMember; isOwner: boolean; actor: Actor | null; onClose: () => void; onNotice: (text: string) => void; onLeft: (text: string) => void }) {
   const store = useStudyStore();
+  const myId = actor?.userId;
   const isSelf = member.userId === myId;
   const canRemove = isOwner && !isSelf;
+  const [busy, setBusy] = useState(false);
 
   const changeRole = async (role: GroupMember["role"]) => {
-    await store.updateStudyGroup(group.id, { members: group.members.map((m) => (m.userId === member.userId ? { ...m, role } : m)) });
-    const updated = useStudyStore.getState().studyGroups.find((g) => g.id === group.id);
-    if (updated) {
-      await pushSharedGroup(updated);
-      await pushSharedMemberRole(group.id, member.userId, role);
+    if (busy) return;
+    setBusy(true);
+    try {
+      // Prima il ruolo sul server, poi il gruppo (il cui aggiornamento avvisa gli altri): al contrario un
+      // pull arrivato in mezzo rimetteva il ruolo vecchio ovunque.
+      if (group.sharedAt && !(await pushSharedMemberRole(group.id, member.userId, role))) {
+        onNotice(GROUP_SYNC_TEXT.roleFailed(member.displayName));
+        return;
+      }
+      await store.updateStudyGroup(group.id, { members: group.members.map((m) => (m.userId === member.userId ? { ...m, role } : m)) });
+      const updated = useStudyStore.getState().studyGroups.find((g) => g.id === group.id);
+      if (updated && group.sharedAt) await pushSharedGroup(updated);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -668,9 +761,23 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
 
   const remove = async () => {
     setConfirm(null);
-    await store.updateStudyGroup(group.id, { members: group.members.filter((m) => m.userId !== member.userId) });
-    await removeSharedMember(group.id, member.userId);
-    onNotice(`${member.displayName} non fa più parte del gruppo.`);
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (group.sharedAt && !(await removeSharedMember(group.id, member.userId))) {
+        onNotice(GROUP_SYNC_TEXT.removeFailed(member.displayName));
+        return;
+      }
+      await store.updateStudyGroup(group.id, { members: group.members.filter((m) => m.userId !== member.userId) });
+      if (group.sharedAt) {
+        // La tabella dei membri non manda eventi: la voce in cronologia avvisa subito gli altri membri.
+        const me = group.members.find((m) => m.userId === myId)?.displayName || actor?.displayName || "";
+        if (me) await logSharedActivity(group.id, me, GROUP_SYNC_TEXT.removedMemberActivity(member.displayName)).catch(() => undefined);
+      }
+      onNotice(GROUP_SYNC_TEXT.removedMember(member.displayName));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const askLeave = () => {
@@ -685,21 +792,20 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
 
   const leave = async () => {
     setConfirm(null);
-    const storeState = useStudyStore.getState();
-    if (group.members.length === 1) {
-      await storeState.deleteStudyGroup(group.id);
-      await deleteSharedGroup(group.id);
-      onNotice("Gruppo eliminato: eri l'unico membro.");
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await leaveGroup(group, member);
+      if (!result.ok) {
+        onNotice(result.text);
+        return;
+      }
+      const lastOwner = group.members.length === 1 && group.ownerId === member.userId;
+      onLeft(lastOwner ? "Gruppo eliminato: eri l'unico membro." : result.text);
       onClose();
-      return;
+    } finally {
+      setBusy(false);
     }
-    // Prima la voce in cronologia (serve ancora essere membri per pubblicarla), poi l'uscita.
-    await logSharedActivity(group.id, member.displayName, "ha lasciato il gruppo").catch(() => undefined);
-    await removeSharedMember(group.id, member.userId);
-    // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
-    await storeState.deleteStudyGroup(group.id);
-    onNotice(`Hai lasciato il gruppo "${group.name}".`);
-    onClose();
   };
 
   return (
@@ -717,6 +823,7 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
             className="min-h-11 shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-xs font-black"
             value={member.role}
             onChange={(event) => void changeRole(event.target.value as GroupMember["role"])}
+            disabled={busy}
             aria-label={`Ruolo di ${member.displayName}`}
             title="Cambia ruolo"
           >
@@ -778,22 +885,21 @@ function GroupDetailFooter({ group, actor, isOwner, onClose, onNotice }: { group
     setStep(isOwner && group.members.length > 1 ? "blocked" : "confirm");
   };
 
+  const [error, setError] = useState("");
+
   const leave = async () => {
     if (!actor || busy) return;
     setBusy(true);
-    const store = useStudyStore.getState();
+    setError("");
     try {
-      if (isOwner) {
-        await store.deleteStudyGroup(group.id);
-        await deleteSharedGroup(group.id);
-        onNotice(`Gruppo "${group.name}" eliminato.`);
-      } else {
-        await logSharedActivity(group.id, actor.displayName, "ha lasciato il gruppo").catch(() => undefined);
-        await removeSharedMember(group.id, actor.userId);
-        // Chi esce non tiene una copia del gruppo (bacheca e cronologia comprese).
-        await store.deleteStudyGroup(group.id);
-        onNotice(`Hai lasciato il gruppo "${group.name}".`);
+      const result = await leaveGroup(group, actor);
+      if (!result.ok) {
+        // Resta aperto con il motivo: il messaggio della pagina sarebbe nascosto dietro il pannello.
+        setError(result.text);
+        setStep("idle");
+        return;
       }
+      onNotice(result.text);
       onClose();
     } finally {
       setBusy(false);
@@ -835,6 +941,7 @@ function GroupDetailFooter({ group, actor, isOwner, onClose, onNotice }: { group
       <Button variant={isOwner ? "danger" : "soft"} icon={isOwner ? "Trash2" : "LogOut"} onClick={ask} disabled={!actor}>
         {isOwner ? "Elimina gruppo" : "Esci dal gruppo"}
       </Button>
+      {error ? <p role="alert" className="min-w-0 flex-1 text-xs font-bold text-[var(--danger-text)]">{error}</p> : null}
     </div>
   );
 }
@@ -882,7 +989,8 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
         addedByDisplayName: actor.displayName
       });
       const created = useStudyStore.getState().groupResources.find((r) => r.id === id);
-      if (created) await pushSharedResource(created);
+      // Se il server non risponde la risorsa resta «non ancora condivisa» e si riprova da sola.
+      if (created && (group.sharedAt || group.ownerId === actor.userId)) await publishResource(created);
       await logSharedActivity(group.id, actor.displayName, `ha aggiunto "${title.trim()}"`).catch(() => undefined);
       onClose();
     } catch (cause) {

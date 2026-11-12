@@ -86,14 +86,33 @@
   Alla prima sync di un account su un dispositivo (`firstSync`, anche dopo «Togli i dati da qui»
   o al primo accesso in assoluto, senza domanda) la copia dell'account di queste collezioni vince
   sempre su quella locale (`planMerge` `accountWins`): quella locale resta solo se l'account non
-  ne ha. `updatePreferences` timbra con `laterStamp`: una copia con l'orario avanti non deve far
-  rifiutare la correzione di nome e foto.
+  ne ha. Solo alla prima unione (`cloud:merged:<utente>` in `meta`): se poi l'invio fallisce e
+  `firstSync` riparte, una correzione fatta qui nel frattempo non torna indietro. Si azzera con il
+  cambio di account e con il reset della cache locale. `updatePreferences` timbra con `laterStamp`:
+  una copia con l'orario avanti non deve far rifiutare la correzione di nome e foto.
 - Il cloud personale (`push_studyos_rows`) accetta lo stesso timbro solo con lo stesso contenuto.
-  Ogni cambio a un'entità sincronizzata deve spostare `updatedAt`, anche quando lo fa un merge
-  (membri e `sharedAt` dei gruppi: `mergeSharedSnapshot` avanza di 1 ms). Senza, il push veniva
-  rifiutato per sempre: «Conflitto cloud irrisolto per studyGroup:…» e, alla prima sync
-  dell'account, `firstSync` ripartiva a ogni passata. Rete di sicurezza: un rifiuto a parità
-  di timbro (al millisecondo) fa ripartire la copia di qui 1 ms dopo (`tieBreakStamp`, `breakTie`).
+  Ogni cambio a un'entità sincronizzata deve spostare `updatedAt` in avanti. Lo garantisce il
+  flush della persistenza per tutti (`advanceStamps` in `persistence.ts`): un'entità cambiata
+  il cui timbro non supera quello salvato (orologio indietro, codice che cambia il contenuto
+  senza timbro, merge) prende `laterStamp` = max(adesso, precedente + 1 ms), e così il tombstone
+  di un'eliminazione. Prima un orologio indietro rendeva perse le modifiche (il server teneva la
+  copia «più recente») e alcune scritture (`ics.ts`, `groupSync`) non timbravano. Rete di
+  sicurezza: un rifiuto a parità di timbro fa ripartire la copia di qui 1 ms dopo (`tieBreakStamp`).
+- Gruppi pubblicati fuori dal cloud personale (`syncScope.ts`, `isServerBacked`): `studyGroups` e
+  `groupResources` con `sharedAt`, `groupActivities` di un gruppo pubblicato, `groupInvites` di un
+  gruppo pubblicato o non sul dispositivo non si inviano, non si applicano dal pull e non si
+  riaccodano. La loro verità sono le tabelle dei gruppi (`groupSync`). Non rimetterli nel cloud
+  personale: due fonti di verità facevano sparire e ricomparire un gruppo dopo un rientro e
+  rinotificavano gli inviti a ogni pull. Vedi `docs/groups-sync.md`.
+- Pull personale per chiave (`updated_at`, `id`), mai per posizione: con `range` una riga
+  aggiornata tra due pagine scivolava in fondo e la successiva veniva saltata per sempre (il
+  cursore la superava). Stessa regola per le righe condivise e per la bacheca dei gruppi.
+- Prima di unire le righe del cloud si completa il flush locale (`requestPersist`): un'eliminazione
+  non ancora scritta non deve essere resuscitata. Una riga del cloud per un'entità che qui non c'è
+  ma è nella baseline salvata (eliminata ora, tombstone in arrivo) non si riapplica (`isPersisted`).
+- jsonb rifiuta `\u0000` e i surrogati spaiati (mezza emoji da uno `slice`): `wellFormedForJsonb`
+  pulisce il payload prima dell'invio. Un solo valore così faceva fallire per sempre il lotto di
+  200 righe. Niente regex con lookbehind: Safari prima della 16.4 non la compila e l'app non parte.
 - «Esci dall'account» esce solo da questo dispositivo (`signOut("local")`): con `global` si
   chiudevano anche gli altri dispositivi dell'account. «Togli i dati da qui» riusa il flusso di
   «Ho dimenticato la password» (`signOutThisDevice` poi `resetAllData({ propagate: false })`).

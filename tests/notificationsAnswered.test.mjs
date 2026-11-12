@@ -39,14 +39,35 @@ const readIds = () =>
 
 test("accettare un invito segna letta solo la sua notifica di invito", async () => {
   seed();
-  await useStudyStore.getState().acceptGroupInvite("inv-1", { userId: "u-me", displayName: "Io" });
+  await useStudyStore.getState().settleGroupInvite("inv-1", "accepted");
   assert.deepEqual(readIds(), ["n-invite-1"]);
+  assert.equal(useStudyStore.getState().groupInvites.find((item) => item.id === "inv-1").status, "accepted");
+  // I membri arrivano dal server: rispondere non tocca i gruppi locali.
+  assert.deepEqual(useStudyStore.getState().studyGroups, []);
 });
 
 test("rifiutare un invito segna letta la sua notifica di invito", async () => {
   seed();
-  await useStudyStore.getState().declineGroupInvite("inv-2");
+  await useStudyStore.getState().settleGroupInvite("inv-2", "declined");
   assert.deepEqual(readIds(), ["n-invite-2"]);
+  assert.equal(useStudyStore.getState().groupInvites.find((item) => item.id === "inv-2").status, "declined");
+});
+
+test("invito ritirato o gruppo eliminato: l'invito sparisce e la notifica diventa letta", async () => {
+  seed();
+  await useStudyStore.getState().settleGroupInvite("inv-1", "withdrawn");
+  assert.deepEqual(readIds(), ["n-invite-1"]);
+  assert.deepEqual(useStudyStore.getState().groupInvites.map((item) => item.id), ["inv-2"]);
+});
+
+test("una risposta non cambia un invito già risposto e ignora un id sconosciuto", async () => {
+  seed();
+  await useStudyStore.getState().settleGroupInvite("inv-1", "declined");
+  await useStudyStore.getState().settleGroupInvite("inv-1", "accepted");
+  assert.equal(useStudyStore.getState().groupInvites.find((item) => item.id === "inv-1").status, "declined");
+  const before = useStudyStore.getState().notifications;
+  await useStudyStore.getState().settleGroupInvite("nessuno", "accepted");
+  assert.equal(useStudyStore.getState().notifications, before);
 });
 
 test("markNotificationsReadWhere: solo le non lette che rispettano la condizione", async () => {

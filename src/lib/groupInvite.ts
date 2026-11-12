@@ -7,6 +7,12 @@ export const INVITE_PARAM = "invito";
 const STORAGE_KEY = "studyos-pending-invite";
 /** Un invito dimenticato non deve far entrare in un gruppo settimane dopo. */
 const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+/**
+ * «Entra» scelto prima di accedere vale per quell'accesso (registrazione e conferma email comprese),
+ * non per sempre: giorni dopo, su un computer condiviso, faceva entrare nel gruppo l'account di
+ * chiunque accedesse. Scaduto, la scheda dell'invito resta e chiede di nuovo.
+ */
+export const CONFIRM_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 export const PENDING_INVITE_EVENT = "studyos:pending-invite";
 export const GROUP_JOINED_EVENT = "studyos:group-joined";
 
@@ -74,7 +80,8 @@ export const readPendingInvite = (now: number = Date.now()): PendingInvite | nul
     const value = JSON.parse(raw) as Partial<PendingInvite>;
     if (typeof value.code !== "string" || !isInviteCodeShape(value.code) || typeof value.savedAt !== "number") return null;
     if (now - value.savedAt > MAX_AGE_MS || value.savedAt > now + 60_000) return null;
-    return { code: normalizeInviteCode(value.code), savedAt: value.savedAt, confirmed: value.confirmed === true };
+    const confirmed = value.confirmed === true && now - value.savedAt <= CONFIRM_MAX_AGE_MS;
+    return { code: normalizeInviteCode(value.code), savedAt: value.savedAt, confirmed };
   } catch {
     return null;
   }

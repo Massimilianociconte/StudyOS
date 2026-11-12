@@ -1162,6 +1162,10 @@ export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
   "studyos_revoke_share",
   "studyos_add_group_resource",
   "studyos_delete_group_resource",
+  // I gruppi condivisi stanno nelle tabelle dei gruppi, non più nel cloud personale (lib/syncScope):
+  // dal cloud personale si leggerebbe una copia vecchia.
+  "studyos_list_groups",
+  "studyos_list_group_board",
   "studyos_timer_status",
   "studyos_timer_control",
   "studyos_list_audit",

@@ -18,14 +18,14 @@ import {
   joinGroupWithCode,
   logSharedActivity,
   previewInvite,
+  publishGroup,
+  publishInvite,
   pullSharedUpdates,
-  pushSharedGroup,
-  pushSharedInvite,
-  pushSharedMembership,
   regenerateInviteCode,
   type Actor,
   type InvitePreviewResult
 } from "../lib/groupSync";
+import { GROUP_SYNC_TEXT } from "../lib/labels/groups";
 import { Button, Drawer, Field, inputClass } from "./ui";
 import { Icon } from "./Icon";
 import { CloudPanel } from "./CloudPanel";
@@ -90,10 +90,7 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
     if (!loggedIn || group.sharedAt || !isOwner || deviceOnly) return;
     let alive = true;
     setPublishing(true);
-    void (async () => {
-      const owner = group.members.find((member) => member.userId === group.ownerId);
-      if ((await pushSharedGroup(group)) && owner) await pushSharedMembership(group.id, owner);
-    })().finally(() => {
+    void publishGroup(group).finally(() => {
       if (alive) setPublishing(false);
     });
     return () => {
@@ -205,11 +202,17 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
         code
       });
       const created = useStudyStore.getState().groupInvites.find((invite) => invite.id === id);
-      if (created) await pushSharedInvite(created);
-      await logSharedActivity(group.id, actor.displayName, `ha invitato ${recipient}`).catch(() => undefined);
+      // Se il server non risponde l'invito resta in coda e parte da solo: prima si diceva «inviato»
+      // e l'invitato non riceveva mai nulla.
+      const sent = created ? await publishInvite(created) : false;
       setEmail("");
-      onNotice(`Invito inviato a ${recipient}: lo trova nella campanella e in Gruppi al prossimo accesso.`);
-      setStatus(`Invito inviato a ${recipient}.`);
+      if (sent) {
+        await logSharedActivity(group.id, actor.displayName, `ha invitato ${recipient}`).catch(() => undefined);
+        onNotice(`Invito inviato a ${recipient}: lo trova nella campanella e in Gruppi al prossimo accesso.`);
+        setStatus(`Invito inviato a ${recipient}.`);
+      } else {
+        setStatus(GROUP_SYNC_TEXT.inviteQueued(recipient));
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Non è stato possibile inviare l'invito. Riprova.");
     } finally {

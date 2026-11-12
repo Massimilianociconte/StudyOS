@@ -66,6 +66,7 @@ import {
 import {
   clearAllLocalData,
   configurePersistence,
+  isPersisted,
   markRemoteApplied,
   requestPersist,
   resetBaseline,
@@ -238,9 +239,12 @@ interface StudyState {
   deleteStudyGroup: (id: string) => Promise<void>;
   /** Crea un invito pendente (per email e/o codice condivisibile). */
   createGroupInvite: (invite: Partial<GroupInvite> & Pick<GroupInvite, "groupId" | "groupName" | "fromUserId" | "fromDisplayName" | "code">) => Promise<string>;
-  /** Accetta un invito: entra nei membri e lo segna accettato. */
-  acceptGroupInvite: (inviteId: string, member: Pick<GroupMember, "userId" | "displayName" | "email">) => Promise<void>;
-  declineGroupInvite: (inviteId: string) => Promise<void>;
+  /**
+   * Risposta a un invito ricevuta dal server: «accepted»/«declined» lo segnano, «withdrawn» (invito o
+   * gruppo non più esistenti) lo toglie. I membri arrivano dal server, non si toccano qui. In ogni caso
+   * la notifica «accetta o rifiuta» diventa letta.
+   */
+  settleGroupInvite: (inviteId: string, outcome: "accepted" | "declined" | "withdrawn") => Promise<void>;
   /** Entra in un gruppo tramite codice di invito; errore se il codice non esiste. */
   joinGroupByCode: (code: string, member: Pick<GroupMember, "userId" | "displayName" | "email">) => Promise<string>;
   addGroupResource: (resource: Partial<GroupResource> & Pick<GroupResource, "groupId" | "kind" | "title" | "addedByUserId" | "addedByDisplayName">) => Promise<string>;
@@ -521,7 +525,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
     onError: (message) => {
       if (get().persistError !== message) set({ persistError: message });
-    }
+    },
+    replace: (patch) => set(patch as Partial<StoreState>)
   });
 
   const detachLinked = (type: string, id: string) =>
@@ -964,39 +969,17 @@ export const useStudyStore = create<StudyState>((set, get) => {
       return created.id;
     },
 
-    acceptGroupInvite: async (inviteId, member) => {
+    settleGroupInvite: async (inviteId, outcome) => {
       const now = nowIso();
       const invite = get().groupInvites.find((item) => item.id === inviteId);
-      if (!invite) throw new Error("Invito non trovato.");
-      if (invite.status !== "pending") throw new Error("Invito già gestito.");
-      const group = get().studyGroups.find((item) => item.id === invite.groupId);
+      if (!invite) return;
       set((state) => ({
-        groupInvites: state.groupInvites.map((item) => (item.id === inviteId ? { ...item, status: "accepted" as const, updatedAt: now } : item)),
-        studyGroups: group && !group.members.some((m) => m.userId === member.userId)
-          ? state.studyGroups.map((item) =>
-              item.id === group.id
-                ? {
-                    ...item,
-                    members: [...item.members, { userId: member.userId, email: member.email, displayName: member.displayName, role: "member" as const, joinedAt: now }],
-                    updatedAt: now
-                  }
-                : item
-            )
-          : state.studyGroups,
+        groupInvites:
+          outcome === "withdrawn"
+            ? state.groupInvites.filter((item) => item.id !== inviteId)
+            : state.groupInvites.map((item) => (item.id === inviteId && item.status === "pending" ? { ...item, status: outcome, updatedAt: now } : item)),
         // L'invito ha avuto risposta: la notifica che chiedeva «accetta o rifiuta» non resta da leggere.
         notifications: answeredInviteNotificationsRead(state.notifications, invite.groupId, now)
-      }));
-      await commit();
-    },
-
-    declineGroupInvite: async (inviteId) => {
-      const now = nowIso();
-      const invite = get().groupInvites.find((item) => item.id === inviteId);
-      set((state) => ({
-        groupInvites: state.groupInvites.map((item) =>
-          item.id === inviteId && item.status === "pending" ? { ...item, status: "declined" as const, updatedAt: now } : item
-        ),
-        notifications: invite ? answeredInviteNotificationsRead(state.notifications, invite.groupId, now) : state.notifications
       }));
       await commit();
     },
@@ -1715,6 +1698,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
           if (!change.force && current && change.stamp !== undefined && timestampOf(current.updatedAt) > change.stamp) {
             continue; // modificata localmente dopo il calcolo del merge: vince la versione locale
           }
+          // Eliminata qui mentre la richiesta era in volo e non ancora salvata (niente tombstone in
+          // coda quando il merge l'ha letta): rimetterla annullerebbe l'eliminazione in silenzio.
+          if (!change.force && !current && change.entity && isPersisted(key, change.id)) continue;
           if (change.entity) byId.set(change.id, change.entity);
           else byId.delete(change.id);
           markRemoteApplied(key, change.id, change.entity);

@@ -178,27 +178,48 @@ export const pullEntityRow = async (userId: string, entityType: string, entityId
  * Righe modificate dopo `since` (updated_at lato server), in ordine crescente.
  * Le righe scritte da questo client (stessa sessione di pagina) sono escluse: sono già locali.
  */
+/** Ultima riga di una pagina: la pagina dopo parte da qui (paginazione per chiave). */
+export interface PullAfter {
+  updated_at: string;
+  id: string;
+}
+
+const quoted = (value: string) => `"${value.replace(/["\\]/g, "")}"`;
+
+/**
+ * Una pagina del pull personale in ordine (updated_at, id). Si prosegue dall'ultima riga ricevuta e
+ * non per posizione: con l'offset, una riga aggiornata da un altro dispositivo tra una pagina e
+ * l'altra si spostava in fondo e faceva saltare la riga successiva, per sempre (il cursore la
+ * superava). Così una riga aggiornata torna solo più avanti.
+ */
 export const pullEntityRows = async (
   userId: string,
   since: string | null,
-  offset: number,
+  after: PullAfter | null,
   limit: number,
   excludeClientId?: string
-): Promise<RemoteRow[]> => {
+): Promise<Array<RemoteRow & { id: string }>> => {
   const client = requireClient();
   let query = client
     .from(TABLE)
-    .select("entity_type, entity_id, payload, deleted, updated_at, client_id")
+    .select("id, entity_type, entity_id, payload, deleted, updated_at, client_id")
     .eq("user_id", userId)
     .neq("entity_type", LEGACY_SNAPSHOT_TYPE)
     .order("updated_at", { ascending: true })
     .order("id", { ascending: true })
-    .range(offset, offset + limit - 1);
-  if (since) query = query.gte("updated_at", since);
-  if (excludeClientId) query = query.or(`client_id.is.null,client_id.neq.${excludeClientId}`);
+    .limit(limit);
+  const conditions: string[] = [];
+  if (after) {
+    const at = quoted(after.updated_at);
+    conditions.push(`or(updated_at.gt.${at},and(updated_at.eq.${at},id.gt.${quoted(after.id)}))`);
+  } else if (since) {
+    query = query.gte("updated_at", since);
+  }
+  if (excludeClientId) conditions.push(`or(client_id.is.null,client_id.neq.${quoted(excludeClientId)})`);
+  if (conditions.length) query = query.or(`and(${conditions.join(",")})`);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return (data ?? []) as RemoteRow[];
+  return (data ?? []) as Array<RemoteRow & { id: string }>;
 };
 
 export interface LegacySnapshotRow {

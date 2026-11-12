@@ -110,9 +110,47 @@ alcun errore.
   (ruolo di un membro, fissare la risorsa di un altro) si usa un `update`
   mirato. I membri hanno chiave `group_id,user_id`, non `id`.
 - Il pull legge prima le proprie appartenenze sul server, poi gruppi, membri,
-  bacheca e cronologia. I membri arrivano sempre dal server; ciò che è già
-  stato visto sul server (`sharedAt`) e poi sparisce è stato eliminato (o si è
-  stati rimossi) e sparisce anche in locale.
+  bacheca (a pagine per `id`, mai troncata) e cronologia. I membri arrivano sempre dal
+  server; ciò che è già stato visto sul server (`sharedAt`) e poi sparisce è stato
+  eliminato (o si è stati rimossi) e sparisce anche in locale, con i suoi inviti.
+- **Una sola fonte di verità** (dal 12/11/2026, `src/lib/syncScope.ts`): gruppi pubblicati
+  (`sharedAt`), le loro risorse pubblicate, cronologia e inviti di un gruppo pubblicato (o di
+  un gruppo che non è sul dispositivo, cioè gli inviti ricevuti) **non passano più dal cloud
+  personale** (`studyos_items`): né in invio, né in lettura, né nel reinvio completo. Prima
+  vivevano in due posti e l'eliminazione locale (uscita, rimozione) diventava un tombstone
+  personale datato «adesso» che vinceva sul gruppo rientrato con il timbro vecchio del server:
+  il gruppo ricompariva e spariva di continuo e ogni pull rinotificava gli inviti. I gruppi mai
+  pubblicati (creati senza account) e le proprie risorse non ancora pubblicate restano nel cloud
+  personale. Le righe vecchie dei gruppi rimaste in `studyos_items` si ignorano; il connettore
+  MCP remoto, che legge solo il cloud personale, non espone più i gruppi.
+- **Inviti ricevuti**: si leggono tutti quelli in attesa più quelli risposti negli ultimi 30
+  giorni. Un invito accettato o rifiutato da un altro dispositivo si allinea; uno in attesa che
+  il server non ha più (ritirato, gruppo eliminato) sparisce. La notifica di un invito ha id
+  `notif-group-invite-<id>` (una sola su tutti i dispositivi) e diventa letta quando per quel
+  gruppo non resta nessun invito ricevuto in attesa. L'elenco «Inviti ricevuti» mostra solo gli
+  inviti alla propria email, e solo con l'account collegato.
+- **Il server decide**: accetta/rifiuta usano solo l'RPC. Rete assente = l'invito resta in
+  attesa con un messaggio («Invito già gestito», «Invito non trovato», «altro account» hanno
+  ciascuno il loro esito, `classifyGroupRpcError`). Uscire, eliminare il gruppo, togliere un
+  membro, cambiare ruolo, fissare o eliminare una risorsa condivisa scrivono prima sul server;
+  se non riesce la copia locale non cambia e l'app lo dice. Le cancellazioni e gli `update`
+  controllano le righe toccate: con la RLS una riga non permessa dà zero righe senza errore. Il
+  ruolo si scrive prima del gruppo, così il segnale Realtime non porta un pull col ruolo vecchio.
+- **Pubblicazioni da riprovare**: gruppo (con la riga del proprietario), risorsa o invito per
+  email creati quando il server non rispondeva entrano in una coda (`groupSync:publishQueue:v1`
+  in Dexie `meta`, per account) e si riprovano dopo ogni pull riuscito. Solo il dispositivo che
+  li ha creati li riprova: un elemento eliminato sul server non torna da un'altra copia. Dopo il
+  pull si ripubblica anche la riga del proprietario se il server non l'ha (creazione interrotta
+  tra le due scritture). «Disattiva i vecchi inviti» che non riesce a pubblicare il codice nuovo
+  rimette quello vecchio.
+- **Ingresso dopo l'accesso**: «Entra» scelto prima di accedere vale 2 ore
+  (`CONFIRM_MAX_AGE_MS`): dopo, la scheda dell'invito chiede di nuovo, così chi accede giorni
+  dopo sullo stesso computer non entra nel gruppo di un altro. Se il server non risponde
+  l'invito resta e si riprova (dopo 15 s, 60 s e al ritorno della rete), invece di finire in
+  «Codice non valido». Un gruppo pubblicato si raggiunge solo dal server: niente ingresso «in
+  locale».
+- Il pull ricontrolla l'account prima di unire i dati e prima delle notifiche: un'uscita a metà
+  passata non riempie il profilo svuotato con i gruppi dell'account di prima.
 
 ## Verifiche eseguite
 
@@ -167,7 +205,9 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   aveva dato a quel gruppo; eliminare il gruppo le cancella tutte.
 - **Una sola copia**: chi riceve legge le righe originali di `studyos_items` tramite RLS
   (`studyos_shares`). Il client scrive solo con l'RPC `push_shared_rows` (stessa regola LWW
-  della sync personale, al massimo 200 righe, esiti `stale` e `denied`); il server accetta
+  della sync personale, al massimo 200 righe e 900 KB per lotto, per proprietario, esiti
+  `stale` e `denied`; un lotto che fallisce non ferma gli altri né il pull, e alla passata dopo
+  parte per ultimo; un errore di rete o un timeout ferma i lotti dopo di lui); il server accetta
   anche le scritture dirette sulla tabella che la RLS consente, ripulite dallo stesso trigger
   (vedi sotto). Nel client i dati altrui
   vivono in `useSharedStore` e nelle tabelle Dexie `sharedItems` e `sharedOutbox`, mai
@@ -200,7 +240,10 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   toglie già prima dell'invio `cover`, `dataUrl`, gli altri `*DataUrl` e `sourceUid`: il
   server, senza la chiave, tiene il valore salvato.
 - **Avvisi a chi riceve**: un rifiuto (`denied`) mostra "Non hai più il permesso di
-  modificare i dati di …" in cima a ogni sezione, con il pulsante "Ok" per chiuderlo. Se
+  modificare i dati di …" in cima a ogni sezione, con il pulsante "Ok" per chiuderlo. Le righe
+  rifiutate si rileggono prima di togliere la voce dalla coda (se la rilettura fallisce la voce
+  resta e si riprova); un'eliminazione rifiutata di una riga che non c'è più o è già eliminata
+  conta come riuscita, senza avviso. Se
   una condivisione è sparita mentre la si cambiava o toglieva, l'app lo dice ("Questa
   condivisione non c'è più.") e ricarica l'elenco.
 - **Cronometro**: se chi ha "Può modificare" cambia lo stato di un'attività condivisa, il
@@ -234,7 +277,9 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
 - **Inviti**: `create_share_invite` restituisce un token di 64 caratteri esadecimali; sul
   server resta solo il suo hash (`token_hash`, non leggibile dai client). Link
   `…/StudyOS/#condividi=` seguito dal token, valido 14 giorni; l'invito aperto resta in sospeso in
-  `localStorage` (`studyos-pending-share`, 14 giorni) finché non si accede. Un invito con
+  `localStorage` (`studyos-pending-share`, 14 giorni) finché non si accede; l'uscita o il cambio
+  di account lo cancellano (un link aperto da disconnessi sopravvive invece ad accesso,
+  registrazione e conferma email). Un invito con
   email vale solo per quell'account. Chi accetta può condividere qualcosa in cambio, se
   l'invito lo chiede.
 - **Senza invito** si può condividere solo con chi si conosce già: un gruppo in comune o
@@ -263,8 +308,15 @@ girare fuori da localhost.
 - Le notifiche push/email non esistono: gli inviti arrivano nel pannello
   Notifiche all'apertura dell'app (realtime se aperta) e via link/email manuale.
 - Enforce MFA/SSO: invariato rispetto a `schema.sql`.
-- Condivisione, limiti noti: il logout scarta le modifiche a dati altrui non ancora inviate;
-  dopo lo sblocco con la password dell'app la prima sync non mostra le notifiche di
+- Chi esce scrive «ha lasciato il gruppo» prima di togliersi (dopo non è più membro e la RLS
+  rifiuterebbe la voce) e la cronologia non ha policy di delete: se la rete cade proprio tra le
+  due chiamate la voce resta anche se l'uscita non è riuscita (il gruppo resta e l'app lo dice).
+  La correzione vera è un trigger sul delete di `studyos_group_members`, da aggiungere in SQL.
+- Condivisione, limiti noti: il logout scarta le modifiche a dati altrui non ancora inviate
+  (il pannello di uscita lo dice e offre «Sincronizza ora»); blocco, sblocco e cambio della
+  password dell'app le conservano in memoria (anche ad app bloccata: nessuna vista le mostra e
+  non vanno su disco, ma il blocco non le toglie dalla memoria come i dati personali), ma con la password attiva un ricaricamento o il
+  passaggio a un'altra scheda («Usa questa scheda») le perde; dopo lo sblocco con la password dell'app la prima sync non mostra le notifiche di
   "nuova condivisione"; il token di invito viaggia in `?condividi=` nel reindirizzamento
   della conferma email (scelta di design) e può finire nei log di autenticazione o proxy e
   nella cronologia del browser, ma è monouso e scade dopo 14 giorni; la cronologia mostra al
@@ -277,6 +329,11 @@ girare fuori da localhost.
 - Chi riceve una sezione vede l'id e l'ora di eliminazione degli elementi eliminati di quel
   tipo anche fuori dal suo filtro per materie: l'elemento eliminato conserva solo id e data,
   quindi la materia non si può più controllare. Titoli e contenuti non arrivano.
+- Se l'orologio del proprietario è avanti, la modifica di chi riceve a un suo elemento appena
+  salvato perde (`stale`) e torna indietro finché l'orologio vero non lo supera. Il client non
+  può timbrare «versione + 1 ms»: il trigger `studyos_items_recipient_values` riporta a now()
+  ogni timbro futuro dopo averlo accettato e il proprietario ripubblicherebbe la sua copia sopra,
+  in silenzio. Serve `greatest(now(), timbro salvato + 1 ms)` nel trigger, poi il client può seguire.
 - L'avviso "Non hai più il permesso…" compare anche quando il server rifiuta un valore
   (colore, link, tipo di un campo) con il permesso ancora attivo.
 - Le cache dei dati altrui hanno portato il database locale (Dexie) alla versione 6. Non

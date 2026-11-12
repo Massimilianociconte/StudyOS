@@ -66,6 +66,21 @@ test("invito in sospeso: salvato, confermato, mantenuto al ritorno dalla conferm
   assert.ok(events.every((type) => type === "studyos:pending-invite") && events.length >= 4);
 });
 
+test("invito confermato prima di accedere: vale per quell'accesso, non per chi accede giorni dopo", () => {
+  const t0 = Date.UTC(2026, 9, 8, 10);
+  savePendingInvite("GRP-AB12-CD34", t0);
+  confirmPendingInvite(t0);
+  assert.equal(readPendingInvite(t0 + 60 * 60 * 1000).confirmed, true);
+  // Dopo qualche ora l'invito resta (la scheda chiede di nuovo) ma non entra più da solo.
+  const later = readPendingInvite(t0 + 3 * 60 * 60 * 1000);
+  assert.equal(later.code, "GRP-AB12-CD34");
+  assert.equal(later.confirmed, false);
+  // Il ritorno dalla conferma email dopo la scadenza non riattiva la conferma.
+  savePendingInvite("GRP-AB12-CD34", t0 + 3 * 60 * 60 * 1000);
+  assert.equal(readPendingInvite(t0 + 3 * 60 * 60 * 1000 + 1000).confirmed, false);
+  clearPendingInvite();
+});
+
 test("invito: link di condivisione per WhatsApp e Telegram codificati", () => {
   const text = "Entra: https://x.io/#invito=GRP-AB12-CD34";
   assert.equal(whatsappShareUrl(text), `https://wa.me/?text=${encodeURIComponent(text)}`);

@@ -10,8 +10,9 @@
 // - ogni modifica locale accoda la chiave nell'outbox del cloud sync (le modifiche
 //   arrivate dal cloud no, per evitare eco infinite).
 
-import type { StudySnapshot, UserSettings } from "../types";
-import { COLLECTIONS, ENTITY_TYPES, type CollectionKey, type CollectionsState, type SyncableEntity } from "./collections";
+import type { StudyGroup, StudySnapshot, UserSettings } from "../types";
+import { COLLECTIONS, ENTITY_TYPES, laterStamp, timestampOf, type CollectionKey, type CollectionsState, type SyncableEntity } from "./collections";
+import { groupLookup, isServerBacked } from "./syncScope";
 import { collectionTable, dataTables, db, type SyncOutboxRow } from "./db";
 import { encryptWithKey, type VaultKey } from "./crypto";
 
@@ -78,6 +79,8 @@ export interface PersistHostState {
 export interface PersistHost {
   getState: () => PersistHostState;
   onError: (message: string | undefined) => void;
+  /** Sostituisce nello stato le entità a cui il flush ha dovuto dare un timbro nuovo (vedi `advanceStamps`). */
+  replace?: (patch: Partial<CollectionsState>) => void;
 }
 
 const localChangeListeners = new Set<(count: number) => void>();
@@ -143,21 +146,71 @@ export const setPersistenceSuspended = (value: boolean) => {
   suspended = value;
 };
 
+/**
+ * true se l'entità è ancora su disco (ultimo stato salvato). Chi non la trova in memoria capisce
+ * così se è stata eliminata qui e non ancora salvata (da non rimettere con un pull già in volo).
+ */
+export const isPersisted = (collection: CollectionKey, id: string) => baseline[collection].has(id);
+
 export const markRemoteApplied = (collection: CollectionKey, id: string, entity: SyncableEntity | null) => {
   remoteRefs.set(outboxKey(collection, id), entity);
   if (vaultMode) vaultDirty = true;
 };
 
-const buildOutbox = (diff: CollectionDiff): SyncOutboxRow[] => {
+const isRemoteEcho = (collection: CollectionKey, id: string, current: SyncableEntity | null) => {
+  const key = outboxKey(collection, id);
+  return remoteRefs.has(key) && remoteRefs.get(key) === current;
+};
+
+/**
+ * Una modifica locale deve sempre portare il timbro avanti: il cloud accetta solo un updatedAt più
+ * recente di quello che ha (e lo stesso solo con lo stesso contenuto). Un'azione che cambia il
+ * contenuto senza toccare updatedAt, o un orologio indietro rispetto al dispositivo che ha scritto
+ * prima, faceva rifiutare la modifica: il pull rimetteva la copia del cloud e la modifica spariva
+ * in silenzio (o restava bloccata in coda). Qui, in un punto solo per tutte le azioni, l'entità
+ * riceve `laterStamp` del timbro di prima. Restano fuori le copie arrivate dal cloud (eco) e i
+ * gruppi pubblicati, che hanno il timbro del server (vedi syncScope).
+ * Muta `diff.puts` e restituisce la patch da rimettere nello stato (stessi oggetti: il prossimo diff
+ * non li rivede).
+ */
+export const advanceStamps = (
+  diff: CollectionDiff,
+  base: Baseline,
+  collections: CollectionsState,
+  options: { isEcho?: (collection: CollectionKey, item: SyncableEntity) => boolean; now?: number } = {}
+): Partial<CollectionsState> => {
+  const patch: Partial<Record<CollectionKey, SyncableEntity[]>> = {};
+  const groupOf = groupLookup(collections.studyGroups, base.studyGroups.values() as Iterable<StudyGroup>);
+  for (const key of COLLECTIONS) {
+    const puts = diff.puts[key];
+    if (!puts?.length) continue;
+    const bumped = new Map<string, SyncableEntity>();
+    for (const [index, item] of puts.entries()) {
+      const previous = base[key].get(item.id);
+      if (!previous || timestampOf(item.updatedAt) > timestampOf(previous.updatedAt)) continue;
+      if (options.isEcho?.(key, item) || isServerBacked(key, item, groupOf)) continue;
+      if (JSON.stringify(item) === JSON.stringify(previous)) continue;
+      const next = { ...item, updatedAt: laterStamp(previous.updatedAt, options.now) };
+      puts[index] = next;
+      bumped.set(item.id, next);
+    }
+    if (bumped.size) {
+      patch[key] = (collections[key] as unknown as SyncableEntity[]).map((item) => bumped.get(item.id) ?? item);
+    }
+  }
+  return patch as Partial<CollectionsState>;
+};
+
+const buildOutbox = (diff: CollectionDiff, collections: CollectionsState): SyncOutboxRow[] => {
   const rows: SyncOutboxRow[] = [];
-  const now = new Date().toISOString();
-  const isRemoteEcho = (collection: CollectionKey, id: string, current: SyncableEntity | null) => {
-    const key = outboxKey(collection, id);
-    return remoteRefs.has(key) && remoteRefs.get(key) === current;
-  };
+  const now = Date.now();
+  // I gruppi pubblicati stanno nelle tabelle condivise, non nel cloud personale (vedi syncScope).
+  // Per un'eliminazione conta com'era l'entità prima, con il suo gruppo anche se è sparito insieme.
+  const groupOf = groupLookup(collections.studyGroups, baseline.studyGroups.values() as Iterable<StudyGroup>);
   for (const key of COLLECTIONS) {
     for (const item of diff.puts[key] ?? []) {
       if (isRemoteEcho(key, item.id, item)) continue;
+      if (isServerBacked(key, item, groupOf)) continue;
       rows.push({
         key: outboxKey(key, item.id),
         collection: key,
@@ -169,13 +222,16 @@ const buildOutbox = (diff: CollectionDiff): SyncOutboxRow[] => {
     }
     for (const id of diff.deletes[key] ?? []) {
       if (isRemoteEcho(key, id, null)) continue;
+      const previous = baseline[key].get(id);
+      if (previous && isServerBacked(key, previous, groupOf)) continue;
       rows.push({
         key: outboxKey(key, id),
         collection: key,
         entityType: ENTITY_TYPES[key],
         entityId: id,
         deleted: true,
-        deletedAt: now,
+        // Come per le modifiche: dopo l'ultimo timbro visto, anche con l'orologio indietro.
+        deletedAt: laterStamp(previous?.updatedAt, now),
         queuedAt: nextQueuedAt()
       });
     }
@@ -221,13 +277,17 @@ const flush = async () => {
     return;
   }
 
-  const outbox = buildOutbox(diff);
+  // Sincrono fino alla prima attesa: nessuna azione può cambiare lo stato tra il diff e la patch.
+  const stamped = advanceStamps(diff, baseline, state.collections, { isEcho: (key, item) => isRemoteEcho(key, item.id, item) });
+  if (Object.keys(stamped).length) host.replace?.(stamped);
+  const collections: CollectionsState = { ...state.collections, ...stamped };
+  const outbox = buildOutbox(diff, collections);
   const remoteKeysInFlush = new Map(remoteRefs);
 
   try {
     if (vaultMode) {
       if (!vaultKey) throw new Error("Vault bloccato: sblocca il workspace per salvare le modifiche.");
-      const record = await encryptWithKey(JSON.stringify(snapshotOf(state.collections)), vaultKey);
+      const record = await encryptWithKey(JSON.stringify(snapshotOf(collections)), vaultKey);
       // Col vault questa scrittura sostituisce l'intera copia: mai dopo lo stop.
       assertNotHalted();
       await db.transaction("rw", [db.settings, db.vault, db.syncOutbox], async () => {

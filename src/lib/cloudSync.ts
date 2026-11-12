@@ -12,10 +12,12 @@
 import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import { getCloudSyncState, setCloudSyncState } from "./cloudSyncState";
 import { useStudyStore } from "../store/useStudyStore";
-import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey } from "./collections";
+import type { StudyGroup } from "../types";
+import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey, type CollectionsState } from "./collections";
+import { GROUP_COLLECTIONS, groupLookup, isServerBacked } from "./syncScope";
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
-import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, tieBreakStamp, type PendingOutbox, type RemoteRow } from "./syncMerge";
+import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import { PERSONAL_COLLECTIONS, personalRemovals } from "./accountSwitch";
 import { ACCOUNT_TEXT } from "./labels/account";
 import {
@@ -24,6 +26,7 @@ import {
   onAuthChange,
   pullEntityRow,
   pullEntityRows,
+  type PullAfter,
   pullLegacySnapshot,
   pushEntityRows,
   subscribeRemoteChanges,
@@ -51,6 +54,8 @@ const SYNC_SCHEMA = 3;
 const metaKeys = {
   cursor: (userId: string) => `cloud:cursor:${userId}`,
   migrated: (userId: string) => `cloud:migrated:${userId}`,
+  /** Prima unione con l'account già fatta (anche se l'invio poi è fallito): «vince l'account» una volta sola. */
+  merged: (userId: string) => `cloud:merged:${userId}`,
   schema: (userId: string) => `cloud:schema:${userId}`,
   boundUser: "cloud:boundUser",
   lastSync: (userId: string) => `cloud:lastSync:${userId}`
@@ -161,6 +166,7 @@ const scheduleRetry = () => {
 const enqueueAllLocal = async (skip: Set<string> = new Set()) => {
   const collections = pickCollections(useStudyStore.getState());
   const existing = new Set([...(await db.syncOutbox.toCollection().primaryKeys()), ...skip]);
+  const groupOf = groupLookup(collections.studyGroups);
   const base = Date.now() * 1000;
   let counter = 0;
   const rows: SyncOutboxRow[] = [];
@@ -168,6 +174,7 @@ const enqueueAllLocal = async (skip: Set<string> = new Set()) => {
     for (const item of collections[collection] as unknown as Array<{ id: string }>) {
       const key = outboxKey(collection, item.id);
       if (existing.has(key)) continue;
+      if (isServerBacked(collection, item, groupOf)) continue;
       rows.push({
         key,
         collection,
@@ -201,15 +208,37 @@ const requeueEntities = async (items: Array<{ collection: CollectionKey; id: str
   });
 };
 
+/**
+ * Righe del cloud personale da non applicare: gruppi pubblicati e ciò che ne dipende, la cui verità
+ * sono le tabelle condivise (syncScope). Vale sia per com'è qui sia per com'è arrivata la riga; i
+ * gruppi arrivati nella stessa pagina contano, così la bacheca di un gruppo solo locale non si perde.
+ */
+const skipServerBacked = (rows: RemoteRow[], collections: CollectionsState) => {
+  const incomingGroups = rows.flatMap((row) =>
+    row.entity_type === ENTITY_TYPES.studyGroups && !row.deleted && row.payload && typeof row.payload === "object" && (row.payload as { id?: unknown }).id === row.entity_id
+      ? [row.payload as StudyGroup]
+      : []
+  );
+  const groupOf = groupLookup(collections.studyGroups, incomingGroups);
+  return (collection: CollectionKey, row: RemoteRow, local: unknown) =>
+    GROUP_COLLECTIONS.has(collection) &&
+    ((local !== undefined && isServerBacked(collection, local, groupOf)) || (!row.deleted && isServerBacked(collection, row.payload, groupOf)));
+};
+
 const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean, accountWins?: ReadonlySet<CollectionKey>) => {
   if (!rows.length) return 0;
+  assertStoreReady();
+  // Modifiche fatte mentre la pagina era in volo: prima su disco e in coda, così il merge le vede
+  // come in attesa (un'eliminazione non ancora salvata sembrava «mai avuta» e tornava).
+  await requestPersist();
   assertStoreReady();
   const outbox = await db.syncOutbox.toArray();
   // Uscita dall'account (o cambio) mentre la richiesta era in volo, es. «Togli i dati da qui»:
   // le righe arrivate tardi non devono riempire di nuovo il dispositivo appena svuotato.
   assertSameSession(userId);
   const pending = new Map<string, PendingOutbox>(outbox.map((row) => [row.key, { deleted: row.deleted, deletedAt: row.deletedAt }]));
-  const plan = planMerge(rows, pickCollections(useStudyStore.getState()), pending, { force, accountWins });
+  const collections = pickCollections(useStudyStore.getState());
+  const plan = planMerge(rows, collections, pending, { force, accountWins, skip: skipServerBacked(rows, collections) });
   if (plan.changes.length) {
     await useStudyStore
       .getState()
@@ -231,18 +260,19 @@ const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean, acco
 const pull = async (userId: string, force = false) => {
   const cursor = force ? undefined : await getMeta<string>(metaKeys.cursor(userId));
   const since = cursor ? new Date(Date.parse(cursor) - CURSOR_OVERLAP_MS).toISOString() : null;
-  let offset = 0;
+  let after: PullAfter | null = null;
   let maxSeen = cursor ?? null;
   let applied = 0;
   for (;;) {
-    const rows = await pullEntityRows(userId, since, offset, PAGE_SIZE, force ? undefined : clientId);
+    const rows = await pullEntityRows(userId, since, after, PAGE_SIZE, force ? undefined : clientId);
     if (!rows.length) break;
     applied += await mergeRows(userId, rows, force);
     for (const row of rows) {
       if (!maxSeen || row.updated_at > maxSeen) maxSeen = row.updated_at;
     }
     if (rows.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+    const last = rows[rows.length - 1];
+    after = { updated_at: last.updated_at, id: last.id };
   }
   assertSameSession(userId);
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
@@ -284,17 +314,24 @@ const push = async (userId: string) => {
   const encoder = new TextEncoder();
 
   const prepare = (row: SyncOutboxRow, entity: unknown) => {
-    const payload = row.deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? new Date(row.queuedAt / 1000).toISOString() } : entity;
+    const payload = row.deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? new Date(row.queuedAt / 1000).toISOString() } : wellFormedForJsonb(entity);
     const push: PushRow = { entity_type: row.entityType, entity_id: row.entityId, payload, deleted: row.deleted };
     return { row, push, size: encoder.encode(JSON.stringify(push)).length };
   };
   const orphans: SyncOutboxRow[] = [];
+  // Voci accodate prima che il gruppo fosse pubblicato (o da una versione di prima): non partono.
+  const outOfScope: SyncOutboxRow[] = [];
+  const groupOf = groupLookup(pickCollections(useStudyStore.getState()).studyGroups);
   const prepared = queued.flatMap((row) => {
     const entity = index[row.collection]?.get(row.entityId);
     // Una voce "put" senza entità in memoria non diventa MAI un'eliminazione cloud: le
     // eliminazioni reali arrivano dall'outbox con deleted=true.
     if (!row.deleted && !entity) {
       orphans.push(row);
+      return [];
+    }
+    if (!row.deleted && isServerBacked(row.collection, entity, groupOf)) {
+      outOfScope.push(row);
       return [];
     }
     return [prepare(row, entity)];
@@ -307,8 +344,10 @@ const push = async (userId: string) => {
     const stored = vault ? new Map<string, unknown>() : await readStoredRows(orphans);
     assertStoreReady();
     const { send, drop } = planOrphanPuts(orphans, stored, vault);
-    if (send.length) {
-      prepared.push(...send.map((item) => prepare(item.row, item.entity)));
+    const inScope = send.filter((item) => !isServerBacked(item.row.collection, item.entity, groupOf));
+    outOfScope.push(...send.filter((item) => !inScope.includes(item)).map((item) => item.row));
+    if (inScope.length) {
+      prepared.push(...inScope.map((item) => prepare(item.row, item.entity)));
       prepared.sort((a, b) => a.row.queuedAt - b.row.queuedAt);
     }
     if (drop.length) {
@@ -319,6 +358,14 @@ const push = async (userId: string) => {
         }
       });
     }
+  }
+  if (outOfScope.length) {
+    await outboxTransaction(async () => {
+      for (const row of outOfScope) {
+        const current = await db.syncOutbox.get(row.key);
+        if (current && current.queuedAt === row.queuedAt) await db.syncOutbox.delete(row.key);
+      }
+    });
   }
 
   let sent = 0;
@@ -376,22 +423,27 @@ const push = async (userId: string) => {
 /** Prima sync di un account su questo dispositivo: merge completo + migrazione dallo snapshot legacy. */
 const firstSync = async (userId: string) => {
   const rows: RemoteRow[] = [];
-  let offset = 0;
+  let after: PullAfter | null = null;
   for (;;) {
-    const page = await pullEntityRows(userId, null, offset, PAGE_SIZE);
+    const page = await pullEntityRows(userId, null, after, PAGE_SIZE);
     rows.push(...page);
     if (page.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+    const last = page[page.length - 1];
+    after = { updated_at: last.updated_at, id: last.id };
   }
   // Nome, foto e preferenze dell'account vincono sulla copia di questo dispositivo, che può essere
   // di un'altra persona (primo accesso qui): la copia locale resta solo se l'account non ne ha.
-  const accountWins = new Set(PERSONAL_COLLECTIONS);
+  // Solo alla prima unione: se l'invio fallisce e la prima sync riparte, una modifica fatta qui nel
+  // frattempo (nome corretto) non deve tornare indietro.
+  const accountWins = (await getMeta<string>(metaKeys.merged(userId))) ? undefined : new Set(PERSONAL_COLLECTIONS);
   if (!rows.length) {
     const legacy = await pullLegacySnapshot(userId);
     if (legacy?.payload) await mergeRows(userId, legacySnapshotToRows(legacy.payload, legacy.updated_at), false, accountWins);
   } else {
     await mergeRows(userId, rows, false, accountWins);
   }
+  assertSameSession(userId);
+  await setMeta(metaKeys.merged(userId), new Date().toISOString());
   const maxSeen = rows.reduce<string | null>((max, row) => (!max || row.updated_at > max ? row.updated_at : max), null);
   // Senza stato locale disponibile non si può accodare nulla: il flag "migrated" non va scritto.
   assertStoreReady();
@@ -433,6 +485,7 @@ const bindUser = async (userId: string) => {
   if (bound) await outboxTransaction(() => db.syncOutbox.clear());
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));
+  await deleteMeta(metaKeys.merged(userId));
   await setMeta(metaKeys.boundUser, userId);
   return true;
 };
@@ -460,7 +513,14 @@ const syncOnce = async () => {
       const force = forceNextPull;
       forceNextPull = false;
       if (schema < SYNC_SCHEMA) await deleteMeta(metaKeys.cursor(userId));
-      await pull(userId, force);
+      try {
+        await pull(userId, force);
+      } catch (error) {
+        // «Scarica di nuovo dal cloud» fallito (rete): il prossimo tentativo deve ripeterlo, non fare un
+        // pull normale e lasciare la copia locale com'era. Non per un altro account (sessione cambiata).
+        if (force && !(error instanceof SessionChangedError)) forceNextPull = true;
+        throw error;
+      }
       await push(userId);
     }
     if (schema < SYNC_SCHEMA) await setMeta(metaKeys.schema(userId), SYNC_SCHEMA);
@@ -547,6 +607,8 @@ const handleSession = (session: Session | null) => {
 
 const applySession = async (session: Session | null) => {
   if (!session) {
+    // Una richiesta di riscaricare tutto vale per l'account che l'ha chiesta, non per il prossimo.
+    forceNextPull = false;
     await stopRealtime();
     setState({
       session: null,
@@ -557,6 +619,7 @@ const applySession = async (session: Session | null) => {
     return;
   }
   const sameUser = currentSession()?.user.id === session.user.id;
+  if (!sameUser) forceNextPull = false;
   setState({ session, error: undefined });
   if (sameUser && realtimeChannel) return; // semplice refresh del token
   const lastSync = (await getMeta<string>(metaKeys.lastSync(session.user.id))) ?? null;
@@ -647,6 +710,7 @@ export const resetCloudDeviceState = async () => {
   if (!userId) return;
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));
+  await deleteMeta(metaKeys.merged(userId));
   retryAttempt = 0;
   await requestSync();
 };

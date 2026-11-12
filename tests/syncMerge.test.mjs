@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planMerge, legacySnapshotToRows, chunkBySize, planOrphanPuts, tieBreakStamp } from "../src/lib/syncMerge.ts";
+import { planMerge, legacySnapshotToRows, chunkBySize, planOrphanPuts, tieBreakStamp, wellFormedForJsonb } from "../src/lib/syncMerge.ts";
 import { normalizeCollections } from "../src/lib/collections.ts";
 
 const task = (id, updatedAt, extra = {}) => ({ id, updatedAt, title: id, ...extra });
@@ -161,6 +161,21 @@ test("senza accountWins le preferenze restano last-writer-wins (sync normale)", 
   );
   assert.equal(plan.changes.length, 0);
   assert.deepEqual(plan.requeue, [{ collection: "preferences", id: "main" }]);
+});
+
+test("wellFormedForJsonb: niente zeri né mezze emoji (jsonb li rifiuta e bloccava tutto il lotto)", () => {
+  const emoji = "😀";
+  const entity = { id: "n", title: `ok ${emoji}`, body: "a\u0000b", tags: ["x\uD83D", "\uDE00y"], nested: { name: "fine\uD83D" } };
+  const clean = wellFormedForJsonb(entity);
+  assert.equal(clean.title, `ok ${emoji}`);
+  assert.equal(clean.body, "ab");
+  assert.deepEqual(clean.tags, ["x�", "�y"]);
+  assert.equal(clean.nested.name, "fine�");
+  // Niente da cambiare: stesso oggetto (nessuna copia per ogni riga in coda).
+  const fine = { id: "t", title: `ciao ${emoji}`, list: [1, "due", null], ok: true };
+  assert.equal(wellFormedForJsonb(fine), fine);
+  // Il JSON prodotto non contiene più sequenze che Postgres rifiuta.
+  assert.ok(!/\\u0000|\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f])/i.test(JSON.stringify(clean)));
 });
 
 test("pareggio di timbro con contenuto diverso: la copia di qui riparte 1 ms dopo", () => {

@@ -1,7 +1,17 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
 import { getMeta, setMeta } from "./db";
-import { makeGroupInviteCode, mergeSharedSnapshot, realtimeGroupIds, type SharedSnapshot } from "./groups";
+import {
+  classifyGroupRpcError,
+  inviteNotificationId,
+  makeGroupInviteCode,
+  mergeSharedSnapshot,
+  normalizeInviteCode,
+  realtimeGroupIds,
+  settleInviteNotifications,
+  type GroupRpcOutcome,
+  type SharedSnapshot
+} from "./groups";
 import { GROUP_JOINED_EVENT, clearPendingInvite, readPendingInvite } from "./groupInvite";
 import { getSession, isCloudConfigured, supabase } from "./supabase";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -170,7 +180,9 @@ const toActivity = (row: Record<string, unknown>): GroupActivity => ({
   text: String(row.text ?? "")
 });
 
-type SharedPatch = Partial<Pick<ReturnType<typeof useStudyStore.getState>, "studyGroups" | "groupInvites" | "groupResources" | "groupActivities">>;
+type SharedPatch = Partial<
+  Pick<ReturnType<typeof useStudyStore.getState>, "studyGroups" | "groupInvites" | "groupResources" | "groupActivities" | "notifications">
+>;
 
 /**
  * setState da solo resta in memoria: lo store salva su IndexedDB (e accoda per la sync personale)
@@ -181,38 +193,61 @@ const applyShared = async (patch: SharedPatch) => {
   await useStudyStore.getState().retryPersist();
 };
 
-const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds: string[]) => {
+const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds: string[], email: string) => {
   const state = useStudyStore.getState();
   const merged = mergeSharedSnapshot(
     { groups: state.studyGroups, invites: state.groupInvites, resources: state.groupResources, activities: state.groupActivities },
     snapshot,
     me,
-    queriedGroupIds
+    queriedGroupIds,
+    { receivedEmail: email || undefined }
   );
   await applyShared({
     studyGroups: merged.groups,
     groupInvites: merged.invites,
     groupResources: merged.resources,
-    groupActivities: merged.activities
+    groupActivities: merged.activities,
+    // Inviti risposti altrove o ritirati: la loro notifica «accetta o rifiuta» non resta da leggere.
+    notifications: settleInviteNotifications(state.notifications, merged.invites, email, new Date().toISOString())
   });
   return { freshInvites: merged.freshInvites, freshGroups: merged.freshGroups };
 };
 
-const notifyFreshInvites = async (fresh: GroupInvite[]) => {
-  const state = useStudyStore.getState();
+/** Notifica di un invito ricevuto: id stabile, quindi una sola su tutti i dispositivi dell'account. */
+const notifyInvite = (invite: GroupInvite) =>
+  useStudyStore
+    .getState()
+    .addNotification({
+      id: inviteNotificationId(invite.id),
+      kind: "invite",
+      title: `Invito al gruppo "${invite.groupName}"`,
+      body: `${invite.fromDisplayName} ti ha invitato${invite.groupDescription ? `: ${invite.groupDescription}` : "."} Apri per accettare o rifiutare.`,
+      linkView: "groups",
+      linkGroupId: invite.groupId
+    })
+    .catch(() => undefined);
+
+const notifyFreshInvites = async (fresh: GroupInvite[], me: string, email: string) => {
   for (const invite of fresh) {
-    if (invite.status !== "pending") continue;
-    await state
-      .addNotification({
-        kind: "invite",
-        title: `Invito al gruppo "${invite.groupName}"`,
-        body: `${invite.fromDisplayName} ti ha invitato${invite.groupDescription ? `: ${invite.groupDescription}` : "."} Apri per accettare o rifiutare.`,
-        linkView: "groups",
-        linkGroupId: invite.groupId
-      })
-      .catch(() => undefined);
+    // Solo quelli ricevuti: anche gli inviti mandati da me arrivano dal server come «nuovi».
+    if (invite.status !== "pending" || invite.fromUserId === me || invite.recipientEmail?.toLowerCase() !== email) continue;
+    await notifyInvite(invite);
   }
 };
+
+/** L'account è ancora quello della passata? (uscita o cambio account durante le letture) */
+const stillSignedInAs = async (me: string) => {
+  try {
+    return (await getSession())?.user.id === me;
+  } catch {
+    return false;
+  }
+};
+
+/** Inviti ricevuti già risposti: si rileggono per un mese, così uno risposto altrove si allinea qui. */
+const RECEIVED_HISTORY_MS = 30 * 24 * 60 * 60 * 1000;
+/** Righe per pagina delle risorse (sotto il tetto predefinito di PostgREST, 1000). */
+const RESOURCE_PAGE = 500;
 
 let pullRunning: Promise<boolean> | null = null;
 let pullQueued: Promise<boolean> | null = null;
@@ -257,8 +292,17 @@ const pullOnce = async (): Promise<boolean> => {
   const email = (session.user.email ?? "").toLowerCase();
   try {
     const snapshot: SharedSnapshot = { groups: [], invites: [], resources: [], activities: [] };
+    /** Gruppi miei sul server in cui la mia riga da proprietario manca. */
+    const ownerless: StudyGroup[] = [];
     if (email) {
-      const { data, error } = await supabase.from("studyos_group_invites").select("*").eq("recipient_email", email).eq("status", "pending");
+      // Tutti quelli in attesa e quelli risposti di recente: un invito accettato o rifiutato da un altro
+      // dispositivo (o ritirato) restava «in attesa» qui per sempre, con la sua notifica da leggere.
+      const since = new Date(Date.now() - RECEIVED_HISTORY_MS).toISOString();
+      const { data, error } = await supabase
+        .from("studyos_group_invites")
+        .select("*")
+        .eq("recipient_email", email)
+        .or(`status.eq.pending,updated_at.gte."${since}"`);
       if (error) throw error;
       snapshot.invites.push(...(data ?? []).map(toInvite));
     }
@@ -296,12 +340,24 @@ const pullOnce = async (): Promise<boolean> => {
       for (const row of groups ?? []) {
         const group = toGroup(row);
         const local = localGroups.find((g) => g.id === group.id);
-        group.members = byGroup.get(group.id) ?? local?.members ?? [];
+        const serverMembers = byGroup.get(group.id);
+        if (group.ownerId === me && !serverMembers?.some((member) => member.userId === me)) ownerless.push(group);
+        group.members = serverMembers ?? local?.members ?? [];
         snapshot.groups.push(group);
       }
-      const { data: resources, error: resourcesError } = await supabase.from("studyos_group_resources").select("*").in("group_id", myGroupIds);
-      if (resourcesError) throw resourcesError;
-      snapshot.resources.push(...(resources ?? []).map(toResource));
+      // A pagine per chiave (id): una risposta troncata dal tetto di righe del server faceva sembrare
+      // eliminate le risorse mancanti, che sparivano qui.
+      let afterId = "";
+      for (;;) {
+        let page = supabase.from("studyos_group_resources").select("*").in("group_id", myGroupIds).order("id", { ascending: true }).limit(RESOURCE_PAGE);
+        if (afterId) page = page.gt("id", afterId);
+        const { data: resources, error: resourcesError } = await page;
+        if (resourcesError) throw resourcesError;
+        const rows = resources ?? [];
+        snapshot.resources.push(...rows.map(toResource));
+        if (rows.length < RESOURCE_PAGE) break;
+        afterId = String(rows[rows.length - 1].id);
+      }
       const { data: activities, error: activitiesError } = await supabase
         .from("studyos_group_activity")
         .select("*")
@@ -311,15 +367,141 @@ const pullOnce = async (): Promise<boolean> => {
       if (activitiesError) throw activitiesError;
       snapshot.activities.push(...(activities ?? []).map(toActivity));
     }
-    const { freshInvites } = await mergeShared(snapshot, me, myGroupIds);
-    await notifyFreshInvites(freshInvites);
+    // Uscita («Esci e togli i dati») o cambio account durante le letture: i dati di prima non devono
+    // finire nel profilo svuotato (e da lì nel cloud del prossimo account).
+    if (!(await stillSignedInAs(me))) return false;
+    const { freshInvites } = await mergeShared(snapshot, me, myGroupIds, email);
+    if (!(await stillSignedInAs(me))) return false;
+    await notifyFreshInvites(freshInvites, me, email);
     lastGroupPullAt = Date.now();
     watchedMe = me;
+    await repairOwnership(ownerless, me, email);
+    await flushPublishQueue(me);
     // Gruppi cambiati (entrato, uscito, creato): il canale in tempo reale segue quelli nuovi.
     if (mailboxOn) await watchGroups(me, myGroupIds);
     return true;
   } catch {
     return false;
+  }
+};
+
+/**
+ * Gruppo mio sul server senza la mia riga tra i membri (creazione interrotta tra le due scritture):
+ * senza, non potevo invitare, pubblicare né vedere chi entrava. La riga si ripubblica.
+ */
+const repairOwnership = async (ownerless: StudyGroup[], me: string, email: string) => {
+  for (const group of ownerless) {
+    if (!(await stillSignedInAs(me))) return;
+    const local = useStudyStore.getState().studyGroups.find((item) => item.id === group.id);
+    const mine = local?.members.find((member) => member.userId === me);
+    await pushSharedMembership(group.id, {
+      userId: me,
+      email: mine?.email ?? (email || undefined),
+      displayName: mine?.displayName || group.ownerDisplayName || profileName() || "Studente",
+      role: "owner",
+      joinedAt: mine?.joinedAt ?? group.createdAt
+    });
+  }
+};
+
+// ——— Pubblicazioni da riprovare ———
+// Gruppo, risorsa o invito nominale creati qui quando il server non rispondeva restavano solo su questo
+// dispositivo per sempre (gli altri membri non li vedevano, l'invitato non riceveva nulla). Si ricordano
+// qui e si riprovano dopo ogni pull riuscito. Solo il dispositivo che li ha creati li riprova: un elemento
+// eliminato sul server non può tornare da un'altra copia.
+
+type PublishKind = "group" | "resource" | "invite";
+interface PublishEntry {
+  kind: PublishKind;
+  id: string;
+  userId: string;
+}
+
+const PUBLISH_QUEUE_KEY = "groupSync:publishQueue:v1";
+const PUBLISH_QUEUE_MAX = 200;
+let publishChain: Promise<unknown> = Promise.resolve();
+
+const samePublish = (a: PublishEntry) => (b: PublishEntry) => a.kind === b.kind && a.id === b.id && a.userId === b.userId;
+
+const isPublishEntry = (value: unknown): value is PublishEntry =>
+  Boolean(value) &&
+  typeof value === "object" &&
+  ["group", "resource", "invite"].includes((value as PublishEntry).kind) &&
+  typeof (value as PublishEntry).id === "string" &&
+  typeof (value as PublishEntry).userId === "string";
+
+/** Modifiche alla coda una alla volta (lettura e scrittura su IndexedDB non si accavallano). */
+const editPublishQueue = (edit: (entries: PublishEntry[]) => PublishEntry[]): Promise<PublishEntry[]> => {
+  const run = publishChain.then(async () => {
+    const stored = await getMeta<unknown>(PUBLISH_QUEUE_KEY).catch(() => undefined);
+    const current = Array.isArray(stored) ? stored.filter(isPublishEntry) : [];
+    const next = edit(current);
+    await setMeta(PUBLISH_QUEUE_KEY, next).catch(() => undefined);
+    return next;
+  });
+  publishChain = run.catch(() => undefined);
+  return run;
+};
+
+const rememberPublish = async (kind: PublishKind, id: string, ok: boolean) => {
+  let userId = "";
+  try {
+    userId = (await getSession())?.user.id ?? "";
+  } catch {
+    userId = "";
+  }
+  if (!userId) return; // senza account non c'è un server da raggiungere
+  const entry = { kind, id, userId };
+  await editPublishQueue((entries) =>
+    ok ? entries.filter((item) => !samePublish(entry)(item)) : entries.some(samePublish(entry)) ? entries : [...entries, entry].slice(-PUBLISH_QUEUE_MAX)
+  );
+};
+
+/** Gruppo e mia riga da proprietario. Se non riesce, si riprova dopo il prossimo pull. */
+export const publishGroup = async (group: StudyGroup): Promise<boolean> => {
+  const owner = group.members.find((member) => member.userId === group.ownerId);
+  const ok = (await pushSharedGroup(group)) && (!owner || (await pushSharedMembership(group.id, owner)));
+  await rememberPublish("group", group.id, ok);
+  return ok;
+};
+
+export const publishResource = async (resource: GroupResource): Promise<boolean> => {
+  const ok = await pushSharedResource(resource);
+  await rememberPublish("resource", resource.id, ok);
+  return ok;
+};
+
+export const publishInvite = async (invite: GroupInvite): Promise<boolean> => {
+  const ok = await pushSharedInvite(invite);
+  await rememberPublish("invite", invite.id, ok);
+  return ok;
+};
+
+const flushPublishQueue = async (me: string) => {
+  const entries = (await editPublishQueue((list) => list)).filter((entry) => entry.userId === me);
+  // Prima i gruppi: risorse e inviti di un gruppo non ancora pubblicato fallirebbero.
+  const order: PublishKind[] = ["group", "resource", "invite"];
+  for (const kind of order) {
+    for (const entry of entries.filter((item) => item.kind === kind)) {
+      if (!(await stillSignedInAs(me))) return;
+      const state = useStudyStore.getState();
+      const done = () => editPublishQueue((list) => list.filter((item) => !samePublish(entry)(item)));
+      if (kind === "group") {
+        const group = state.studyGroups.find((item) => item.id === entry.id);
+        if (!group || group.ownerId !== me) await done();
+        else await publishGroup(group);
+      } else if (kind === "resource") {
+        const resource = state.groupResources.find((item) => item.id === entry.id);
+        const group = resource ? state.studyGroups.find((item) => item.id === resource.groupId) : undefined;
+        if (!resource || !group || resource.sharedAt) await done();
+        else if (group.sharedAt) await publishResource(resource);
+      } else {
+        const invite = state.groupInvites.find((item) => item.id === entry.id);
+        const group = invite ? state.studyGroups.find((item) => item.id === invite.groupId) : undefined;
+        if (!invite || !group || invite.status !== "pending") await done();
+        else if (group.sharedAt) await publishInvite(invite);
+      }
+    }
   }
 };
 
@@ -334,15 +516,28 @@ const pushRow = async (table: string, row: Record<string, unknown>, onConflict =
   }
 };
 
-const deleteRow = async (table: string, id: string) => {
+/**
+ * Cancellazione che dice la verità: con la RLS una riga che non posso cancellare non dà errore, solo
+ * zero righe. true solo se dopo la chiamata la riga non c'è più (cancellata ora o già prima).
+ */
+const deleteWhere = async (table: string, match: Record<string, string>) => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   try {
-    const { error } = await supabase.from(table).delete().eq("id", id);
-    return !error;
+    let removal = supabase.from(table).delete();
+    for (const [column, value] of Object.entries(match)) removal = removal.eq(column, value);
+    const { data, error } = await removal.select();
+    if (error) return false;
+    if (data?.length) return true;
+    let check = supabase.from(table).select("*", { count: "exact", head: true });
+    for (const [column, value] of Object.entries(match)) check = check.eq(column, value);
+    const { count, error: checkError } = await check;
+    return !checkError && count === 0;
   } catch {
     return false;
   }
 };
+
+const deleteRow = (table: string, id: string) => deleteWhere(table, { id });
 
 /** Pubblicazione riuscita: da qui in poi, se sparisce dal server, è stato eliminato. */
 const markShared = async (kind: "group" | "resource", id: string) => {
@@ -388,25 +583,20 @@ export const pushSharedMembership = (groupId: string, member: StudyGroup["member
   );
 
 /** Rimozione di un membro (proprietario) o uscita volontaria: senza, al pull ricompariva. */
-export const removeSharedMember = async (groupId: string, userId: string) => {
-  if (!(await isSharedAvailable()) || !supabase) return false;
-  try {
-    const { error } = await supabase.from("studyos_group_members").delete().eq("group_id", groupId).eq("user_id", userId);
-    return !error;
-  } catch {
-    return false;
-  }
-};
+export const removeSharedMember = (groupId: string, userId: string) =>
+  deleteWhere("studyos_group_members", { group_id: groupId, user_id: userId });
 
 // Ruolo e fissaggio con update mirati, non upsert: Postgres applica il controllo di INSERT
 // alla riga proposta anche quando diventa update, e la riga è di un altro utente.
+// Come per le cancellazioni, una riga esclusa dalla RLS dà zero righe senza errore: conta solo se
+// la modifica ha toccato almeno una riga.
 const updateRows = async (table: string, patch: Record<string, unknown>, match: Record<string, string>) => {
   if (!(await isSharedAvailable()) || !supabase) return false;
   try {
     let query = supabase.from(table).update(patch);
     for (const [column, value] of Object.entries(match)) query = query.eq(column, value);
-    const { error } = await query;
-    return !error;
+    const { data, error } = await query.select();
+    return !error && Boolean(data?.length);
   } catch {
     return false;
   }
@@ -472,37 +662,42 @@ const callGroupRpc = async (name: string, args: Record<string, unknown>, display
   return first;
 };
 
-/** Accettazione lato server: verifica destinatario, aggiunge membro, registra attività. */
-export const acceptInviteRemote = async (inviteId: string, displayName: string = profileName()): Promise<boolean> => {
-  if (!(await isSharedAvailable()) || !supabase) return false;
+/**
+ * Accettazione lato server: verifica destinatario, aggiunge membro, registra attività. Un errore di rete
+ * non è più «accettato in locale»: l'invito resta in attesa e si riprova (vedi GroupRpcOutcome).
+ */
+export const acceptInviteRemote = async (inviteId: string, displayName: string = profileName()): Promise<GroupRpcOutcome> => {
+  if (!(await isSharedAvailable()) || !supabase) return "unavailable";
   try {
     const { error } = await callGroupRpc("accept_group_invite", { p_invite_id: inviteId }, displayName);
-    return !error;
+    return classifyGroupRpcError(error);
   } catch {
-    return false;
+    return "unavailable";
   }
 };
 
-export const declineInviteRemote = async (inviteId: string): Promise<boolean> => {
-  if (!(await isSharedAvailable()) || !supabase) return false;
+export const declineInviteRemote = async (inviteId: string): Promise<GroupRpcOutcome> => {
+  if (!(await isSharedAvailable()) || !supabase) return "unavailable";
   try {
     const { error } = await supabase.rpc("decline_group_invite", { p_invite_id: inviteId });
-    return !error;
+    return classifyGroupRpcError(error);
   } catch {
-    return false;
+    return "unavailable";
   }
 };
 
+export type JoinByCodeResult = { status: "ok"; groupId: string } | { status: "invalid-code" } | { status: "unavailable" };
+
 /** Unione con codice lato server: valida il codice e aggiunge il membro. */
-export const joinByCodeRemote = async (code: string, displayName: string): Promise<{ groupId: string } | null> => {
-  if (!(await isSharedAvailable()) || !supabase) return null;
+export const joinByCodeRemote = async (code: string, displayName: string): Promise<JoinByCodeResult> => {
+  if (!(await isSharedAvailable()) || !supabase) return { status: "unavailable" };
   try {
-    const { data, error } = await callGroupRpc("join_group_by_code", { p_code: code.trim().toUpperCase() }, displayName);
-    if (error || !data) return null;
-    const groupId = typeof data === "string" ? data : (data as { group_id?: string }).group_id;
-    return groupId ? { groupId } : null;
+    const { data, error } = await callGroupRpc("join_group_by_code", { p_code: normalizeInviteCode(code) }, displayName);
+    if (error) return classifyGroupRpcError(error) === "invalid-code" ? { status: "invalid-code" } : { status: "unavailable" };
+    const groupId = typeof data === "string" ? data : (data as { group_id?: string } | null)?.group_id;
+    return groupId ? { status: "ok", groupId } : { status: "invalid-code" };
   } catch {
-    return null;
+    return { status: "unavailable" };
   }
 };
 
@@ -557,23 +752,37 @@ export const previewInvite = async (code: string): Promise<InvitePreviewResult> 
  * Ingresso con un codice (digitato, link o QR): prima il backend condiviso (vale tra account e
  * dispositivi), poi il gruppo locale se è su questo dispositivo. Ritorna l'id del gruppo.
  */
+/** Ingresso non riuscito. `retryable`: il server non ha risposto, l'invito resta valido. */
+export class GroupJoinError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+    this.name = "GroupJoinError";
+  }
+}
+
 export const joinGroupWithCode = async (code: string, actor: Actor): Promise<string> => {
   const remote = await joinByCodeRemote(code, profileName());
-  const store = useStudyStore.getState();
-  let groupId = "";
-  try {
-    groupId = await store.joinGroupByCode(code, actor);
-  } catch {
-    groupId = "";
-  }
-  if (remote) {
+  if (remote.status === "ok") {
+    // Con il backend condiviso l'ingresso è già registrato dal server (niente voce doppia).
     await pullSharedUpdates();
-    groupId = groupId || remote.groupId;
+    return remote.groupId;
   }
-  if (!groupId) throw new Error("Codice non valido o gruppo non più disponibile. Chiedi un nuovo invito.");
-  // Con il backend condiviso l'ingresso è già registrato dal server (niente voce doppia).
-  if (!remote) await store.logGroupActivity(groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
-  return groupId;
+  const store = useStudyStore.getState();
+  const normalized = normalizeInviteCode(code);
+  const local = store.studyGroups.find((group) => group.inviteCode.toUpperCase() === normalized);
+  // Già dentro (es. ricliccato il link): non è un errore e non si scrive un altro ingresso.
+  if (local?.members.some((member) => member.userId === actor.userId)) return local.id;
+  // Gruppo mai pubblicato, solo su questo dispositivo: si entra qui. Un gruppo condiviso invece si
+  // raggiunge solo dal server: entrare «in locale» mostrava un gruppo di cui non si era membri davvero.
+  if (local && !local.sharedAt) {
+    const groupId = await store.joinGroupByCode(code, actor);
+    await store.logGroupActivity(groupId, actor.displayName, "è entrato nel gruppo").catch(() => undefined);
+    return groupId;
+  }
+  if (remote.status === "invalid-code" || !isCloudConfigured()) {
+    throw new GroupJoinError("Codice non valido o gruppo non più disponibile. Chiedi un nuovo invito.", false);
+  }
+  throw new GroupJoinError("Il server dei gruppi non risponde: controlla la connessione e riprova. L'invito resta valido.", true);
 };
 
 const announceJoined = (groupId: string) => {
@@ -585,10 +794,30 @@ const announceJoined = (groupId: string) => {
 };
 
 let completing = false;
+/** Nuovi tentativi automatici quando il server non risponde (poi resta la scheda dell'invito). */
+const COMPLETE_RETRY_MS = [15_000, 60_000];
+let completeAttempt = 0;
+let completeRetry: ReturnType<typeof setTimeout> | null = null;
+
+const retryCompleteLater = () => {
+  if (typeof window === "undefined" || completeRetry) return;
+  const delay = COMPLETE_RETRY_MS[completeAttempt];
+  if (delay === undefined) return;
+  completeAttempt += 1;
+  const again = () => {
+    if (completeRetry) clearTimeout(completeRetry);
+    completeRetry = null;
+    window.removeEventListener("online", again);
+    void completePendingInvite();
+  };
+  completeRetry = setTimeout(again, delay);
+  window.addEventListener("online", again, { once: true });
+};
 
 /**
  * Dopo login o registrazione: se l'utente aveva già scelto "Entra" su un invito, entra da solo con
  * l'account appena usato. Senza conferma non fa nulla (la scheda dell'invito resta in Gruppi).
+ * Se il server non risponde l'invito resta (prima veniva scartato con «Codice non valido»).
  */
 export const completePendingInvite = async (): Promise<void> => {
   const pending = readPendingInvite();
@@ -597,9 +826,13 @@ export const completePendingInvite = async (): Promise<void> => {
   try {
     const actor = await getActor();
     if (!actor.email) return; // ancora senza sessione: si riprova al prossimo login
+    // «Ignora» o un altro link nel frattempo: si entra solo nell'invito ancora confermato.
+    const still = readPendingInvite();
+    if (!still?.confirmed || still.code !== pending.code) return;
     const store = useStudyStore.getState();
     try {
       const groupId = await joinGroupWithCode(pending.code, actor);
+      completeAttempt = 0;
       clearPendingInvite();
       const name = useStudyStore.getState().studyGroups.find((group) => group.id === groupId)?.name ?? "il gruppo";
       await store
@@ -607,6 +840,12 @@ export const completePendingInvite = async (): Promise<void> => {
         .catch(() => undefined);
       announceJoined(groupId);
     } catch (cause) {
+      if (cause instanceof GroupJoinError && cause.retryable) {
+        // L'invito resta confermato: si riprova da soli tra poco o al ritorno della rete.
+        retryCompleteLater();
+        return;
+      }
+      completeAttempt = 0;
       clearPendingInvite();
       await store
         .addNotification({ kind: "system", title: "Invito non riuscito", body: cause instanceof Error ? cause.message : "Chiedi un nuovo invito.", linkView: "groups" })
@@ -620,6 +859,7 @@ export const completePendingInvite = async (): Promise<void> => {
 /** Nuovo codice: link e QR già inviati smettono di funzionare. Solo il proprietario lo pubblica. */
 export const regenerateInviteCode = async (groupId: string): Promise<string> => {
   const store = useStudyStore.getState();
+  const previous = store.studyGroups.find((item) => item.id === groupId)?.inviteCode;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const inviteCode = makeGroupInviteCode();
     await store.updateStudyGroup(groupId, { inviteCode });
@@ -629,7 +869,10 @@ export const regenerateInviteCode = async (groupId: string): Promise<string> => 
     // (indice univoco) fa fallire la pubblicazione: se ne prova un altro.
     if (!group.sharedAt || (await pushSharedGroup(group))) return inviteCode;
   }
-  throw new Error("Non è stato possibile pubblicare il nuovo codice. Riprova.");
+  // Nessun codice pubblicato: torna quello che vale ancora sul server. Restava un codice mai pubblicato
+  // (link e QR morti) mentre i vecchi link, che si volevano disattivare, funzionavano ancora.
+  if (previous) await store.updateStudyGroup(groupId, { inviteCode: previous });
+  throw new Error("Non è stato possibile pubblicare il nuovo codice: i vecchi link funzionano ancora. Controlla la connessione e riprova.");
 };
 
 let inviteChannel: RealtimeChannel | null = null;
@@ -658,15 +901,7 @@ const startInviteSubscription = (email: string) => {
         const state = useStudyStore.getState();
         if (state.groupInvites.some((item) => item.id === invite.id)) return;
         void applyShared({ groupInvites: [invite, ...state.groupInvites] });
-        void state
-          .addNotification({
-            kind: "invite",
-            title: `Invito al gruppo "${invite.groupName}"`,
-            body: `${invite.fromDisplayName} ti ha invitato. Apri per accettare o rifiutare.`,
-            linkView: "groups",
-            linkGroupId: invite.groupId
-          })
-          .catch(() => undefined);
+        if (invite.status === "pending") void notifyInvite(invite);
       }
     )
     .subscribe();

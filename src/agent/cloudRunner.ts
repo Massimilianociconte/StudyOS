@@ -27,6 +27,7 @@ import {
 } from "../lib/collections";
 import { baselineFrom, diffCollections, setPersistenceSuspended } from "../lib/persistence";
 import { chunkBySize } from "../lib/syncMerge";
+import { GROUP_COLLECTIONS } from "../lib/syncScope";
 import { useSharedStore } from "../store/useSharedStore";
 import { useStudyStore } from "../store/useStudyStore";
 
@@ -111,6 +112,9 @@ const collectionsFrom = (cache: AccountCache): CollectionsState => {
     if (row.deleted) continue;
     const collection = COLLECTION_BY_ENTITY_TYPE[row.entity_type];
     if (!collection || !isEntity(row.payload, row.entity_id)) continue;
+    // Gruppi: la verità è nelle tabelle condivise; nel cloud personale ne resta solo una copia vecchia
+    // (o nessuna). Fuori anche dalla panoramica e dalla ricerca, e mai riscritti da qui.
+    if (GROUP_COLLECTIONS.has(collection)) continue;
     collections[collection].push(row.payload);
   }
   return collections as unknown as CollectionsState;

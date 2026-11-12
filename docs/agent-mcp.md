@@ -247,8 +247,10 @@ Differenze dal primo connettore:
 - Nessuna conferma nell'app: il consenso iniziale vale per tutte le azioni dello scope
   scelto. Le eliminazioni chiedono comunque `confirm: true`.
 - Gli strumenti non hanno il parametro `account`: il connettore è già legato a un account.
-- Non ci sono gli strumenti dei dati condivisi, le risorse dei gruppi, il cronometro, il
-  registro delle azioni, `studyos_approval_status` e `studyos_list_accounts`.
+- Non ci sono gli strumenti dei dati condivisi, i gruppi (elenco, bacheca e risorse), il
+  cronometro, il registro delle azioni, `studyos_approval_status` e `studyos_list_accounts`.
+  I gruppi condivisi stanno nelle tabelle dei gruppi e non nel cloud personale che l'hub legge:
+  da lì si vedrebbe una copia vecchia. Panoramica e ricerca remote non contano i gruppi.
 - File, copertine e foto non arrivano all'hub. Quando l'hub modifica un elemento, il
   database li rimette dalla riga attuale.
 - Se l'app ha cambiato lo stesso elemento dopo l'ultima lettura dell'hub, la scrittura è
