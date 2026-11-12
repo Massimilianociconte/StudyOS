@@ -7,7 +7,7 @@ export const TAB_GUARD_TEXT = {
   titleMoved: "StudyOS è passato a un'altra scheda",
   bodyMoved: "Ora StudyOS è aperto nell'altra scheda. Puoi continuare lì o tornare qui.",
   use: "Usa questa scheda",
-  useNote: "L'altra scheda si mette in pausa: non si perde nulla.",
+  useNote: "Le modifiche salvate restano. Un modulo aperto nell'altra scheda si chiude senza salvare.",
   waiting: "Sto passando StudyOS a questa scheda…",
   slow: "L'altra scheda non risponde: forse è in pausa sullo sfondo.",
   force: "Usa comunque qui",
