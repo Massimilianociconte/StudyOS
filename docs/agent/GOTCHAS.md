@@ -225,6 +225,11 @@
 - Eliminare «Questo e i successivi» (`planDelete`) toglie tutte le parti dopo della famiglia
   (`laterPartsOf`, comprese le divisioni degli antenati), come la regola nuova di A; modulo e
   agente passano dallo stesso piano.
+- Agente e «Tutti»: `studyos_delete_event` senza `occurrenceDate` su una serie è «Tutti»
+  (`planDelete` con `includeSplits` dal primo giorno: tutta la famiglia, anche dall'id di una
+  parte; `parts` nel risultato). `studyos_update_event` senza `occurrenceDate` o con `scope=all`
+  è «Tutti» della modifica: cambia solo quella serie e le parti dopo (divise prima con
+  «Questo e i successivi») restano, elencate in `keptParts` come le dice la scelta del calendario.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),
   elementi come `person_…:tipo:id`; mai email, token, codici o id di account. Gli strumenti
   distruttivi hanno solo `id` e `confirm`; `studyos_share_with` e `studyos_update_share`
@@ -236,7 +241,11 @@
   concedere il SELECT su tutta la tabella: esporrebbe l'hash del token.
 - Connettore remoto (`src/agent/cloudRunner.ts`): durante un'esecuzione `globalThis.Date` è
   `ZonedDate` (`src/agent/zonedDate.ts`) nel fuso di chi ha dato il consenso, perché il Worker gira
-  in UTC. Il `Date` globale è uno solo: le esecuzioni sono serializzate da un lock del modulo, e
+  in UTC. Anche `deviceTimeZone()` (`src/lib/tz.ts`) restituisce quel fuso (lo imposta
+  `withZonedDate`): store e motore lo fissano sulle serie nuove e sulle divisioni. Il codice che
+  ha bisogno del fuso «del dispositivo» passa da `deviceTimeZone()`, mai da
+  `Intl.DateTimeFormat().resolvedOptions()`, che sul Worker dice "UTC" (le serie create dal
+  connettore finivano in UTC e d'estate un'ora dopo). Il `Date` globale è uno solo: le esecuzioni sono serializzate da un lock del modulo, e
   un modulo caricato con `import()` durante l'esecuzione non deve salvare `Date` in una costante
   (resterebbe `ZonedDate` anche dopo). Lo store condiviso
   (`useStudyStore`) si riempie con i dati dell'account solo per la durata della chiamata, con la
@@ -244,9 +253,26 @@
 - Connettore remoto, CPU: il piano Free dà 10 ms per richiesta. Non mettere calcoli costosi dentro
   un comparatore di `sort` sui dati dell'account (`urgentTasks` costava 8 ms per date ricalcolate a
   ogni confronto). Misura con un account di prova grande prima di aggiungere lavoro alle risposte
-  di `studyos_overview`.
+  di `studyos_overview`. `withZonedDate` riusa una classe `ZonedDate` per fuso: crearne una a ogni
+  chiamata faceva ricompilare al motore ogni `new Date` (in Node, account con 1500 attività, 800
+  eventi e 1000 sessioni: seconda `studyos_overview` da 45–52 a 28–31 ms; account piccolo invariato,
+  6–15 ms). Il resto è `parseISO`/`format` di date-fns per ogni sessione e attività nei selettori
+  (`studyStreak`, `studyMinutesThisWeek`, `urgentTasks`), più caro con `ZonedDate`. I numeri di Node
+  non sono quelli del Worker: misura `cpuTime` con `wrangler tail` sull'account vero prima di
+  concludere che serve il piano a pagamento.
 - Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
   legato al token OAuth); il database ne tiene l'hash. «Revoca l'accesso agli assistenti» revoca
   tutti i permessi dell'account (`studyos_revoke_agent_grants`), anche a browser scollegato.
+- OAuth dell'hub: `/register` e `/authorize` sono aperti a chiunque. `oauth.ts` tiene al massimo
+  50 client (al limite toglie quelli senza token, consensi o codici, dal più vecchio, ma non nei
+  2 minuti dopo la registrazione; una registrazione mai usata scade dopo 24 ore) e 5 consensi
+  aperti per client, 20 in tutto, per 5 minuti. Oltre i 20 il nuovo prende il posto del più
+  vecchio, prima quelli dei client senza `usedAt`: mai un 429, che chiunque potrebbe rinnovare
+  per tenere fuori l'utente vero. `httpHub` toglie dalla coda i consensi sostituiti. `revokeAll`
+  toglie anche i client. Non togliere questi limiti: senza, 50 registrazioni bloccavano per
+  sempre i connettori nuovi.
+  `/pair` si blocca con 8 tentativi sbagliati negli ultimi 10 minuti (finestra scorrevole,
+  `pairFailureTimes` nello stato salvato; i tentativi rifiutati col blocco non contano): un
+  contatore che non scende mai teneva il blocco per sempre con un tentativo ogni 10 minuti.
 - Locale: la porta 8787 può essere occupata da un'altra app. Per `wrangler dev` usa
   `--port 8797` e controlla con `lsof -iTCP:8787` prima di mandare richieste a 8787.

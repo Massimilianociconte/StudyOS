@@ -227,3 +227,72 @@ test("plannedRows: solo le entità cambiate, timbro sempre più recente del clou
   assert.equal(goal.deleted, true);
   assert.equal(goal.payload.id, "goal_gone");
 });
+
+// Il Worker gira in UTC: ogni calcolo che dipende dal fuso (fuso fissato sulle serie, giorno di un
+// tutto il giorno, divisioni) deve usare quello del permesso, anche dopo un cambio d'ora.
+// Con TZ=UTC (npm test nella matrice dei fusi) è esattamente la situazione del Worker.
+test("connettore remoto: serie create e cambiate nel fuso del permesso, anche dopo il cambio d'ora", async () => {
+  const { cloud, runner } = setup();
+  const payload = (id) => cloud.row("alice", "calendarEvent", id)?.payload;
+  const startsOf = (result) => result.data.items.map((item) => item.start);
+
+  // Roma: lunedì 9:00 d'inverno (CET), la serie resta alle 9:00 anche d'estate (CEST).
+  const made = await runner.run(rome(A), "studyos_create_event", {
+    title: "Lezione", start: "2026-11-16T09:00", end: "2026-11-16T10:00", repeat: { freq: "weekly", byWeekday: ["MO"] }
+  });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  assert.equal(made.data.start, "2026-11-16T08:00:00.000Z");
+  assert.equal(payload(made.data.id).timeZone, "Europe/Rome");
+  const june = await runner.run(rome(A), "studyos_list_events", { from: "2027-06-07T00:00", to: "2027-06-15T00:00" });
+  assert.deepEqual(startsOf(june), ["2027-06-07T07:00:00.000Z", "2027-06-14T07:00:00.000Z"]);
+
+  // «Questo e i successivi» d'estate: la parte nuova è alle 11:00 di Roma e porta lo stesso fuso.
+  const split = await runner.run(rome(A), "studyos_update_event", {
+    id: made.data.id, occurrenceDate: "2027-06-07", scope: "following", start: "2027-06-07T11:00", end: "2027-06-07T12:00"
+  });
+  assert.equal(split.ok, true, JSON.stringify(split));
+  assert.equal(payload(`${made.data.id}~2027-06-07`).timeZone, "Europe/Rome");
+  const after = await runner.run(rome(A), "studyos_list_events", { from: "2027-06-07T00:00", to: "2027-06-15T00:00" });
+  assert.deepEqual(startsOf(after), ["2027-06-07T09:00:00.000Z", "2027-06-14T09:00:00.000Z"]);
+  const winter = await runner.run(rome(A), "studyos_list_events", { from: "2026-11-23T00:00", to: "2026-11-24T00:00" });
+  assert.deepEqual(startsOf(winter), ["2026-11-23T08:00:00.000Z"]);
+
+  // Tutto il giorno: il compleanno resta il 3 dicembre nel fuso della persona.
+  const birthday = await runner.run(rome(A), "studyos_create_event", { title: "Compleanno", start: "2026-12-03", allDay: true, occasion: { kind: "birthday", person: "Ada" } });
+  assert.equal(birthday.ok, true, JSON.stringify(birthday));
+  assert.equal(payload(birthday.data.id).timeZone, "Europe/Rome");
+  const nextYear = await runner.run(rome(A), "studyos_list_events", { from: "2027-12-01T00:00", to: "2027-12-06T00:00" });
+  assert.deepEqual(nextYear.data.items.map((item) => item.occurrenceDate), ["2027-12-03"]);
+});
+
+test("connettore remoto: New York, la serie segue la fine dell'ora legale e il giorno cambiato da solo", async () => {
+  const { cloud, runner } = setup();
+  const york = { secret: A, timeZone: "America/New_York" };
+  const payload = (id) => cloud.row("alice", "calendarEvent", id)?.payload;
+  // Lunedì 26 ottobre 2026 alle 9:00 EDT (-4); l'ora legale finisce domenica 1 novembre.
+  const made = await runner.run(york, "studyos_create_event", {
+    title: "Seminar", start: "2026-10-26T09:00", end: "2026-10-26T10:00", repeat: { freq: "weekly" }
+  });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  assert.equal(made.data.start, "2026-10-26T13:00:00.000Z");
+  assert.equal(payload(made.data.id).timeZone, "America/New_York");
+  const listed = await runner.run(york, "studyos_list_events", { from: "2026-10-26T00:00", to: "2026-11-03T00:00" });
+  assert.deepEqual(listed.data.items.map((item) => [item.occurrenceDate, item.start]), [
+    ["2026-10-26", "2026-10-26T13:00:00.000Z"],
+    ["2026-11-02", "2026-11-02T14:00:00.000Z"]
+  ]);
+
+  // Solo il 9 novembre alle 10:00 (EST): riga del giorno, la serie resta alle 9:00.
+  const moved = await runner.run(york, "studyos_update_event", {
+    id: made.data.id, occurrenceDate: "2026-11-09", scope: "this", start: "2026-11-09T10:00", end: "2026-11-09T11:00"
+  });
+  assert.equal(moved.ok, true, JSON.stringify(moved));
+  const renamed = await runner.run(york, "studyos_update_event", { id: made.data.id, title: "Seminar B" });
+  assert.equal(renamed.ok, true, JSON.stringify(renamed));
+  assert.equal(payload(made.data.id).timeZone, "America/New_York");
+  const november = await runner.run(york, "studyos_list_events", { from: "2026-11-09T00:00", to: "2026-11-17T00:00" });
+  assert.deepEqual(november.data.items.map((item) => [item.occurrenceDate, item.start]), [
+    ["2026-11-09", "2026-11-09T15:00:00.000Z"],
+    ["2026-11-16", "2026-11-16T14:00:00.000Z"]
+  ]);
+});

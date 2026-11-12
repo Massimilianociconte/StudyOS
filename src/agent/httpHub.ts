@@ -18,7 +18,7 @@ import { toolSummary } from "./catalog";
 import { choosePoller, siteFromOrigin, type BridgeSite } from "./hubEndpoint";
 import { ResultLedger } from "./ledger";
 import { handleMcpRpc } from "./mcp";
-import { OauthServer, randomToken, timingSafeEqual, type CloudGrantRecord, type PersistedOauth } from "./oauth";
+import { OauthServer, REQUEST_TTL_MS, randomToken, timingSafeEqual, type CloudGrantRecord, type PersistedOauth } from "./oauth";
 import type { AgentActor, AgentCallResult } from "./types";
 import type { CloudRunner } from "./cloudRunner";
 import { isTimeZone } from "./zonedDate";
@@ -29,6 +29,9 @@ const PUBLISHED_FRESH_MS = 45_000;
 const STALE_CALL_MS = 120_000;
 /** Il lastSeen di un browser si salva al più una volta al giorno: serve solo a dimenticare i browser spariti. */
 const SEEN_SAVE_MS = 24 * 60 * 60_000;
+/** Collegamento del browser: 8 tentativi sbagliati negli ultimi 10 minuti bloccano /pair finché non escono dalla finestra. */
+const PAIR_WINDOW_MS = 10 * 60_000;
+const PAIR_MAX_FAILURES = 8;
 
 const isPendingResult = (result: AgentCallResult | undefined) => Boolean(result?.ok && result.data.status === "pending_approval");
 
@@ -115,8 +118,11 @@ export interface HubSnapshot {
   serviceToken: string;
   oauth: PersistedOauth;
   ledger: Array<{ id: string; at: number; result: AgentCallResult }>;
+  /** Errori negli ultimi 10 minuti e fine del blocco: scritti per gli stati di prima, letti solo se manca `pairFailureTimes`. */
   pairFailures: number;
   pairLockedUntil: number;
+  /** Istanti dei tentativi di collegamento sbagliati ancora nella finestra di 10 minuti. */
+  pairFailureTimes?: number[];
   /** Browser collegati con il nome del loro account (assente negli snapshot di prima). */
   browsers?: BridgeBrowser[];
 }
@@ -198,8 +204,8 @@ export class HttpHub {
   private readonly approvalPollMs: number;
   private pairCode = "";
   private pairExpires = 0;
-  private pairFailures = 0;
-  private pairLockedUntil = 0;
+  /** Tentativi sbagliati (al più gli ultimi `PAIR_MAX_FAILURES`): il blocco guarda solo gli ultimi 10 minuti. */
+  private pairFailureTimes: number[] = [];
   private readonly calls: CallJob[] = [];
   private readonly consents: ConsentJob[] = [];
   private readonly finishers = new Map<string, (result: AgentCallResult) => void>();
@@ -233,8 +239,9 @@ export class HttpHub {
       serviceToken: this.serviceToken,
       oauth: this.oauth.dump(),
       ledger: this.ledger.exportState(this.now()),
-      pairFailures: this.pairFailures,
-      pairLockedUntil: this.pairLockedUntil,
+      pairFailures: this.recentPairFailures().length,
+      pairLockedUntil: this.pairLockedUntil(),
+      pairFailureTimes: [...this.pairFailureTimes],
       browsers: [...this.browsers.values()].filter((browser) => !browser.legacy).map((browser) => ({ ...browser }))
     };
   }
@@ -246,8 +253,13 @@ export class HttpHub {
     }
     this.oauth.load(state.oauth ?? emptyOauth());
     this.ledger.importState(Array.isArray(state.ledger) ? state.ledger : []);
-    this.pairFailures = state.pairFailures || 0;
-    this.pairLockedUntil = state.pairLockedUntil || 0;
+    if (Array.isArray(state.pairFailureTimes)) {
+      this.pairFailureTimes = state.pairFailureTimes.filter((at): at is number => typeof at === "number" && Number.isFinite(at)).slice(-PAIR_MAX_FAILURES);
+    } else {
+      // Stato di prima: un blocco ancora attivo dura fino alla sua scadenza, il contatore vecchio no.
+      const lockedUntil = typeof state.pairLockedUntil === "number" ? state.pairLockedUntil : 0;
+      this.pairFailureTimes = lockedUntil > this.now() ? Array.from({ length: PAIR_MAX_FAILURES }, () => lockedUntil - PAIR_WINDOW_MS) : [];
+    }
     this.browsers.clear();
     this.savedSeen.clear();
     for (const raw of Array.isArray(state.browsers) ? state.browsers : []) {
@@ -269,6 +281,19 @@ export class HttpHub {
   armPairCode(code: string, expiresAt: number) {
     this.pairCode = code;
     this.pairExpires = expiresAt;
+  }
+
+  /** Tentativi sbagliati ancora nella finestra di 10 minuti (i più vecchi si dimenticano). */
+  private recentPairFailures() {
+    const since = this.now() - PAIR_WINDOW_MS;
+    this.pairFailureTimes = this.pairFailureTimes.filter((at) => at > since);
+    return this.pairFailureTimes;
+  }
+
+  /** Fine del blocco in corso, 0 se non c'è: quando il più vecchio degli errori esce dalla finestra. */
+  private pairLockedUntil() {
+    const recent = this.recentPairFailures();
+    return recent.length >= PAIR_MAX_FAILURES ? recent[recent.length - PAIR_MAX_FAILURES] + PAIR_WINDOW_MS : 0;
   }
 
   takeDirty() {
@@ -410,6 +435,8 @@ export class HttpHub {
     if (request.method === "GET" && url.pathname === "/authorize") {
       return this.exclusive(async () => {
         const begun = this.oauth.beginAuthorization(url.searchParams);
+        // Il consenso nuovo può aver preso il posto di uno vecchio dello stesso client: fuori dalla coda.
+        this.dropStaleConsents();
         if (!begun.ok) return this.html(400, this.messagePage(begun.description));
         const job: ConsentJob = { type: "consent", requestId: begun.requestId, clientName: begun.clientName, scopes: begun.scopes, redirectHost: begun.redirectHost };
         if (this.oauth.isCloudResource(begun.resource)) {
@@ -427,7 +454,7 @@ export class HttpHub {
         this.claim();
         const secure = this.options.secureCookies ? "; Secure" : "";
         return this.html(200, this.authorizePage(begun.clientName, job.accountName), {
-          "set-cookie": `studyos_oauth=${encodeURIComponent(begun.requestId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${secure}`
+          "set-cookie": `studyos_oauth=${encodeURIComponent(begun.requestId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(REQUEST_TTL_MS / 1000)}${secure}`
         });
       });
     }
@@ -465,10 +492,11 @@ export class HttpHub {
         const code = this.options.pairMode === "key"
           ? (body.code ?? "").trim()
           : (body.code ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-        if (this.now() < this.pairLockedUntil) return this.json(429, { error: "Troppi tentativi. Attendi qualche minuto." });
+        // Finestra scorrevole: 8 errori negli ultimi 10 minuti bloccano; i tentativi rifiutati
+        // durante il blocco non contano, così il blocco finisce da solo.
+        if (this.recentPairFailures().length >= PAIR_MAX_FAILURES) return this.json(429, { error: "Troppi tentativi. Attendi qualche minuto." });
         if (!this.pairAccepts(code)) {
-          this.pairFailures += 1;
-          if (this.pairFailures >= 8) this.pairLockedUntil = this.now() + 10 * 60_000;
+          this.pairFailureTimes = [...this.recentPairFailures(), this.now()].slice(-PAIR_MAX_FAILURES);
           await this.markDirty();
           const error = this.options.pairMode === "key"
             ? "Chiave non valida."
@@ -476,7 +504,7 @@ export class HttpHub {
           return this.json(401, { error });
         }
         if (this.options.pairMode === "code") this.pairCode = "";
-        this.pairFailures = 0;
+        this.pairFailureTimes = [];
         await this.markDirty();
         return this.json(200, { token: this.bridgeToken });
       });
@@ -535,6 +563,7 @@ export class HttpHub {
       if (url.pathname === "/oauth/revoke") {
         return this.exclusive(async () => {
           this.oauth.revokeAll();
+          this.dropStaleConsents();
           await this.markDirty();
           return this.json(200, { ok: true });
         });
@@ -725,10 +754,15 @@ export class HttpHub {
         error: "StudyOS non ha ricevuto l'azione entro 2 minuti e non l'ha eseguita. Chiedi alla persona di aprire StudyOS e riprova."
       });
     }
+    this.dropStaleConsents();
+    return dropped > 0;
+  }
+
+  /** Richieste di consenso scadute, sostituite o revocate: non vanno più consegnate. */
+  private dropStaleConsents() {
     for (let index = this.consents.length - 1; index >= 0; index -= 1) {
       if (!this.oauth.pendingConsent(this.consents[index].requestId)) this.consents.splice(index, 1);
     }
-    return dropped > 0;
   }
 
   private async poll(site: BridgeSite, account: string): Promise<Job | null> {

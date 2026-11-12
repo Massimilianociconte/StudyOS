@@ -279,3 +279,116 @@ test("hub: la conferma arriva con approval_status e le azioni mai ritirate scado
   assert.equal(dropped.code, "not_connected");
   clock.now = Date.now();
 });
+
+test("hub: /register e /authorize aperti a tutti non si riempiono per sempre", async () => {
+  const start = Date.parse("2026-11-12T10:00:00Z");
+  clock.now = start;
+  const minutes = (value) => value * 60_000;
+  const agent = hub();
+  const attacker = "https://attacker.example/cb";
+  const real = "https://claude.ai/api/mcp/auth_callback";
+  const register = async (callback = attacker, name = "x") => ask(agent, "/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: [callback], client_name: name })
+  });
+  const registerId = async (callback, name) => (await (await register(callback, name)).json()).client_id;
+  const authorize = (id, callback = attacker) => ask(agent, `/authorize?${new URLSearchParams({
+    client_id: id, redirect_uri: callback, response_type: "code", code_challenge: "x".repeat(43), code_challenge_method: "S256"
+  })}`);
+
+  // Chiunque riempie i 20 consensi aperti (4 client x 5): chi si collega davvero entra lo stesso,
+  // al posto del consenso più vecchio dell'attaccante (prima: 429, rinnovabile per sempre).
+  const attackers = [];
+  for (let index = 0; index < 4; index += 1) attackers.push(await registerId());
+  for (const id of attackers) for (let index = 0; index < 5; index += 1) assert.equal((await authorize(id)).status, 200);
+  const legit = await registerId(real, "Assistente vero");
+  const first = await authorize(legit, real);
+  assert.equal(first.status, 200);
+  assert.match(first.headers.get("set-cookie") ?? "", /Max-Age=300;/);
+
+  // Una pioggia di /authorize con lo stesso client: al massimo 5 suoi consensi in coda.
+  for (let index = 0; index < 30; index += 1) assert.equal((await authorize(attackers[0])).status, 200);
+  assert.ok(agent.consents.length <= 20, `consensi in coda: ${agent.consents.length}`);
+  assert.ok(agent.consents.filter((job) => job.clientName === "x").length <= 19);
+
+  // L'attaccante rinnova i suoi prima che scadano: chi riprova dopo entra comunque.
+  clock.now = start + minutes(4);
+  for (const id of attackers) for (let index = 0; index < 5; index += 1) await authorize(id);
+  clock.now = start + minutes(6);
+  assert.equal((await authorize(legit, real)).status, 200);
+
+  const token = await pairBrowser(agent);
+  const delivered = [];
+  for (;;) {
+    const job = await (await ask(agent, "/bridge/poll", { method: "POST", headers: site, body: JSON.stringify({ token }) })).json();
+    if (job.type !== "consent") break;
+    delivered.push(job);
+  }
+  assert.ok(delivered.length <= 20, `consensi consegnati: ${delivered.length}`);
+  assert.ok(delivered.some((job) => job.clientName === "Assistente vero"), "il consenso vero arriva all'app");
+
+  // Registrazioni: un client appena registrato non viene tolto mentre va verso /authorize.
+  clock.now = start + minutes(20);
+  const fresh = await registerId(real, "Appena registrato");
+  for (let index = 0; index < 50; index += 1) await register();
+  assert.equal(agent.exportState().oauth.clients.length, 50);
+  assert.equal((await authorize(fresh, real)).status, 200);
+  // Pieno di client giovani: si rifiuta per poco, poi chi è fermo da più di 2 minuti fa posto.
+  assert.equal((await register()).status, 400);
+  clock.now = start + minutes(22) + 1;
+  assert.equal((await register()).status, 201);
+  assert.equal(agent.exportState().oauth.clients.length, 50);
+  assert.ok(agent.exportState().oauth.clients.some((client) => client.clientId === fresh), "il client con un consenso aperto resta");
+
+  // «Revoca l'accesso agli assistenti» nell'app toglie anche i client registrati.
+  const revoked = await ask(agent, "/oauth/revoke", { method: "POST", headers: site, body: JSON.stringify({ token }) });
+  assert.equal(revoked.status, 200);
+  assert.equal(agent.exportState().oauth.clients.length, 0);
+  assert.equal((await register()).status, 201);
+});
+
+test("hub: il blocco dei tentativi di collegamento conta solo gli ultimi 10 minuti e passa da solo", async () => {
+  const start = Date.parse("2026-11-12T10:00:00Z");
+  clock.now = start;
+  const agent = hub();
+  const pair = (code) => ask(agent, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code }) });
+  const minutes = (value) => value * 60_000;
+
+  for (let index = 0; index < 8; index += 1) assert.equal((await pair(`sbagliata-${index}`)).status, 401);
+  assert.equal((await pair(key)).status, 429, "8 errori in 10 minuti: bloccato, anche con la chiave giusta");
+
+  // Scaduti gli errori, un solo tentativo sbagliato ogni 10 minuti non tiene il blocco per sempre.
+  clock.now = start + minutes(10) + 1;
+  assert.equal((await pair("ancora-sbagliata")).status, 401);
+  assert.equal((await pair(key)).status, 200);
+
+  // Finestra scorrevole: 7 errori, poi l'ottavo 9 minuti dopo blocca; quando i primi 7 escono
+  // dalla finestra si torna a collegarsi, senza aspettare altri 10 minuti dall'ultimo.
+  clock.now = start + minutes(30);
+  for (let index = 0; index < 7; index += 1) assert.equal((await pair(`errore-${index}`)).status, 401);
+  clock.now = start + minutes(39);
+  assert.equal((await pair("errore-8")).status, 401);
+  assert.equal((await pair(key)).status, 429);
+
+  // Lo stato salvato tiene il blocco anche dopo un riavvio dell'hub.
+  const saved = agent.exportState();
+  const restarted = hub();
+  restarted.importState(saved);
+  const pairAgain = (code) => ask(restarted, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code }) });
+  assert.equal((await pairAgain(key)).status, 429);
+  clock.now = start + minutes(40) + 1;
+  assert.equal((await pairAgain(key)).status, 200);
+
+  // Uno stato di prima (solo contatore e scadenza del blocco): il blocco dura fino alla scadenza scritta.
+  const legacy = hub();
+  legacy.importState({ ...saved, pairFailureTimes: undefined, pairFailures: 40, pairLockedUntil: clock.now + minutes(3) });
+  const pairLegacy = (code) => ask(legacy, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code }) });
+  assert.equal((await pairLegacy(key)).status, 429);
+  clock.now += minutes(3) + 1;
+  assert.equal((await pairLegacy(key)).status, 200);
+  const stale = hub();
+  stale.importState({ ...saved, pairFailureTimes: undefined, pairFailures: 40, pairLockedUntil: clock.now - 1 });
+  assert.equal((await ask(stale, "/pair", { method: "POST", headers: site, body: JSON.stringify({ code: key }) })).status, 200);
+  clock.now = Date.now();
+});

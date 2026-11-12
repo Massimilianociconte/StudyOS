@@ -48,8 +48,23 @@ const formatterFor = (timeZone: string) => {
 
 const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-/** Fuso del dispositivo (IANA), se il browser lo dice. */
+/**
+ * Fuso che fa le veci del dispositivo: lo imposta solo `withZonedDate` (src/agent/zonedDate.ts) sul
+ * connettore remoto, dove il runtime è in UTC ma i dati sono di una persona in un altro fuso.
+ * Nel browser resta sempre assente.
+ */
+let zoneOverride: string | undefined;
+
+/** Imposta (o toglie, con undefined) il fuso «del dispositivo»; restituisce quello di prima. */
+export const overrideDeviceTimeZone = (zone: string | undefined): string | undefined => {
+  const previous = zoneOverride;
+  zoneOverride = zone;
+  return previous;
+};
+
+/** Fuso del dispositivo (IANA), se il browser lo dice; sul connettore remoto quello della persona. */
 export const deviceTimeZone = (): string | undefined => {
+  if (zoneOverride) return zoneOverride;
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     return typeof zone === "string" && zone ? zone : undefined;

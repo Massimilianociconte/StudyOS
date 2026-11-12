@@ -456,6 +456,132 @@ test("OAuth: iss nel redirect, resource assente o radice, cursor://, loopback co
   assert.equal(refreshed.ok, false);
 });
 
+// /register è aperto a tutti (registrazione dinamica): 50 registrazioni non devono bloccare per
+// sempre i connettori nuovi, e /authorize non deve riempire StudyOS di richieste di consenso.
+const oauthHarness = async () => {
+  const clock = { now: 1_800_000_000_000 };
+  const oauth = new OauthServer("https://studyos-agent.esempio.workers.dev/mcp", () => clock.now);
+  const verifier = "c".repeat(50);
+  const challenge = await sha256Base64Url(verifier);
+  const redirect = "https://chatgpt.com/connector/oauth/callback";
+  const register = (name = "Spam") => {
+    const created = oauth.register({ client_name: name, redirect_uris: [redirect] });
+    assert.equal(created.ok, true, JSON.stringify(created));
+    clock.now += 1000;
+    return created.client.clientId;
+  };
+  const begin = (clientId) => oauth.beginAuthorization(new URLSearchParams({
+    client_id: clientId, redirect_uri: redirect, response_type: "code", code_challenge: challenge, code_challenge_method: "S256", scope: "studyos:read"
+  }));
+  const connect = async (clientId) => {
+    const begun = begin(clientId);
+    assert.equal(begun.ok, true, JSON.stringify(begun));
+    const code = new URL(oauth.decide(begun.requestId, true, ["studyos:read"]).redirectTo).searchParams.get("code");
+    const token = await oauth.exchange(new URLSearchParams({ grant_type: "authorization_code", client_id: clientId, redirect_uri: redirect, code, code_verifier: verifier }));
+    assert.equal(token.ok, true, JSON.stringify(token));
+    return token.body;
+  };
+  const registered = (clientId) => oauth.dump().clients.some((client) => client.clientId === clientId);
+  const pending = (begun) => begun.ok && oauth.pendingConsent(begun.requestId) !== null;
+  return { clock, oauth, register, begin, connect, registered, pending };
+};
+
+test("OAuth: registrazione piena, si fa posto togliendo i client senza token, dal più vecchio", async () => {
+  const { clock, oauth, register, begin, connect, registered } = await oauthHarness();
+  const live = register("ChatGPT");
+  const tokens = await connect(live);
+  const waiting = register("Claude");
+  const consent = begin(waiting);
+  assert.equal(consent.ok, true);
+  // Registrato, ma non ancora arrivato a /authorize (il client ci mette qualche secondo).
+  const fresh = register("Appena registrato");
+  const spam = Array.from({ length: 47 }, () => register());
+  assert.equal(oauth.dump().clients.length, 50);
+
+  // Nei primi 2 minuti dopo la registrazione nessun client si toglie: 50 registrazioni subito dopo
+  // non fanno perdere il client a chi sta per autorizzarlo.
+  assert.equal(oauth.register({ client_name: "Troppo presto", redirect_uris: ["https://attacker.example/cb"] }).ok, false);
+  assert.equal(registered(fresh), true);
+  const freshConsent = begin(fresh);
+  assert.equal(freshConsent.ok, true, JSON.stringify(freshConsent));
+
+  // Dopo 2 minuti si toglie il client senza token più vecchio; mai uno con token o con un consenso aperto.
+  clock.now += 2 * 60 * 1000;
+  const newcomer = register("Nuovo");
+  assert.equal(registered(newcomer), true);
+  assert.equal(registered(spam[0]), false);
+  assert.equal(registered(spam[1]), true);
+  for (let index = 0; index < 40; index += 1) register();
+  assert.equal(oauth.dump().clients.length, 50);
+  assert.equal(registered(live), true);
+  assert.equal(registered(waiting), true);
+  assert.equal(registered(fresh), true);
+  assert.ok(await oauth.authenticate(tokens.access_token));
+  assert.equal(oauth.decide(consent.requestId, true, ["studyos:read"]).ok, true);
+  assert.equal(oauth.decide(freshConsent.requestId, true, ["studyos:read"]).ok, true);
+  assert.equal(begin(spam[5]).ok, false, "un client tolto non apre più consensi");
+
+  // Una registrazione mai usata scade dopo 24 ore; un client con token resta.
+  const unused = register("Mai usato");
+  clock.now += 24 * 60 * 60 * 1000 + 1;
+  assert.equal(registered(unused), false);
+  assert.equal(registered(live), true);
+});
+
+test("OAuth: «Revoca gli accessi» toglie anche i client, e i consensi aperti sono pochi e brevi", async () => {
+  const { clock, oauth, register, begin, connect, registered, pending } = await oauthHarness();
+  const live = register("ChatGPT");
+  await connect(live);
+  const spammer = register("Spam");
+
+  // Al massimo 5 richieste aperte per client: la sesta prende il posto della più vecchia.
+  const asked = Array.from({ length: 6 }, () => begin(spammer));
+  assert.ok(asked.every((item) => item.ok));
+  assert.equal(oauth.pendingConsent(asked[0].requestId), null);
+  for (const item of asked.slice(1)) assert.ok(pending(item));
+
+  // In tutto al massimo 20 consensi in attesa, ma /authorize non risponde mai «troppe richieste»:
+  // il nuovo prende il posto del più vecchio, prima di tutto quelli di client mai usati.
+  const mine = begin(live);
+  const others = Array.from({ length: 4 }, () => register());
+  const flood = others.flatMap((clientId) => Array.from({ length: 5 }, () => begin(clientId)));
+  assert.ok(flood.every((item) => item.ok));
+  assert.ok(pending(mine), "il consenso di un client già usato resta");
+  for (const item of asked.slice(1)) assert.equal(pending(item), false);
+  assert.equal(pending(flood[0]), false);
+  assert.ok(flood.slice(1).every(pending));
+  const legit = begin(register("Claude"));
+  assert.ok(pending(legit), "chi si collega davvero non riceve mai 429");
+  assert.ok(pending(mine));
+  assert.equal(pending(flood[1]), false);
+
+  // Scadono dopo 5 minuti: poi si può chiedere di nuovo.
+  clock.now += 5 * 60 * 1000 + 1;
+  assert.equal(pending(asked[5]), false);
+  assert.equal(pending(legit), false);
+  // Se tutti i consensi in attesa sono di client già usati, si toglie il più vecchio in assoluto.
+  const used = [];
+  for (let index = 0; index < 5; index += 1) {
+    const clientId = register(`Usato ${index}`);
+    await connect(clientId);
+    used.push(clientId);
+  }
+  const waiting = used.slice(0, 4).flatMap((clientId) => Array.from({ length: 5 }, () => begin(clientId)));
+  assert.ok(waiting.every(pending));
+  const last = begin(used[4]);
+  assert.ok(pending(last));
+  assert.equal(pending(waiting[0]), false);
+  assert.ok(waiting.slice(1).every(pending));
+  const again = begin(live);
+  assert.equal(again.ok, true, JSON.stringify(again));
+
+  oauth.revokeAll();
+  assert.deepEqual(oauth.dump().clients, []);
+  assert.equal(registered(live), false);
+  assert.equal(oauth.pendingConsent(again.requestId), null);
+  assert.equal(register("Di nuovo") !== undefined, true);
+});
+
 const shareGrant = (over) => ({
   id: "s1",
   ownerId: "owner-uuid-1",
@@ -1126,4 +1252,34 @@ test("N8 (revisione finale). sessioni condivise: origine e argomento si vedono e
   assert.equal(saved.topicId, undefined);
   assert.equal((await executeAgentTool("studyos_update_shared_item", { id: sharedHandle(good), source: "altro" })).code, "invalid");
   assert.ok(/topicId/.test(findAgentTool("studyos_update_shared_item").description));
+});
+
+test("bacheca del gruppo: i link degli altri membri passano dagli stessi filtri dei dati condivisi", async () => {
+  seedApp();
+  const stamp = { createdAt: "2026-11-10T08:00:00.000Z", updatedAt: "2026-11-10T08:00:00.000Z", archived: false, tags: [] };
+  const resource = (id, url, kind = "link") => ({ ...stamp, id, groupId: "g1", kind, title: id, url, body: "", pinned: false, addedByUserId: "u2", addedByDisplayName: "Bea" });
+  useStudyStore.setState({
+    studyGroups: [{ ...stamp, id: "g1", name: "Biochimica", description: "", ownerDisplayName: "Bea", members: [] }],
+    groupResources: [
+      resource("ok", "https://unimi.it/dispense"),
+      resource("senza-schema", "www.esempio.it/appunti"),
+      resource("script", "javascript:alert(document.cookie)"),
+      resource("dati", "data:text/html;base64,PHNjcmlwdD4="),
+      resource("file", "file:///etc/passwd"),
+      resource("nota", undefined, "note")
+    ]
+  });
+  const board = await executeAgentTool("studyos_list_group_board", { groupId: "g1" });
+  assert.equal(board.ok, true, JSON.stringify(board));
+  const urls = Object.fromEntries(board.data.resources.map((item) => [item.id, item.url]));
+  assert.deepEqual(urls, {
+    ok: "https://unimi.it/dispense",
+    "senza-schema": "https://www.esempio.it/appunti",
+    script: undefined,
+    dati: undefined,
+    file: undefined,
+    nota: undefined
+  });
+  const packed = JSON.stringify(board);
+  for (const unsafe of ["javascript:", "data:", "file:"]) assert.equal(packed.includes(unsafe), false, unsafe);
 });

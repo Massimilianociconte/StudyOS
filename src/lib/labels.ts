@@ -615,7 +615,10 @@ export const agentAccountLabels = {
     "Questo StudyOS non ha ancora un nome. Scrivilo in Profilo e obiettivi: serve per sceglierlo in chat quando più persone usano lo stesso connettore.",
   toProfile: "Vai al profilo",
   help:
-    "Più persone possono usare lo stesso connettore in ChatGPT. Ognuna apre StudyOS nel suo browser, scrive il proprio nome nel profilo e collega il browser qui con la stessa chiave. In chat basta dire di chi è l'account, per esempio «nell'account di Camilla Rossi»: la modifica va in quello StudyOS, e la richiesta di conferma compare lì."
+    "Più persone possono usare lo stesso connettore in ChatGPT. Ognuna apre StudyOS nel suo browser, scrive il proprio nome nel profilo e collega il browser qui con la stessa chiave. In chat basta dire di chi è l'account, per esempio «nell'account di Camilla Rossi»: la modifica va in quello StudyOS, e la richiesta di conferma compare lì.",
+  /** Sotto «Revoca l'accesso agli assistenti»: la revoca toglie anche i client registrati. */
+  revokeHint:
+    "Gli assistenti autorizzati perdono subito l'accesso. Per ridarlo a un assistente (ChatGPT, Claude…), togli il connettore StudyOS nelle sue impostazioni e aggiungilo di nuovo. Questo browser resta collegato, perché serve solo a portarti le loro richieste."
 } as const;
 
 /** Connettore remoto di un account (`/u/<nome>/mcp`): ChatGPT lavora sui dati cloud con l'app chiusa. */

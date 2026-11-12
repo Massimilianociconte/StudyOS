@@ -27,7 +27,11 @@ Gli strumenti coprono lo stato, la panoramica, la ricerca e la gestione di
 materie, task, eventi, esami personali, sessioni, ripasso, materiali (solo
 link), note, obiettivi, preferenze di studio, notifiche, bacheca dei gruppi,
 libretto con medie e proiezione di laurea, insegnamenti e appelli BARB. Gli
-eventi ripetuti compaiono come singole occorrenze. Ogni risposta riporta il nome
+eventi ripetuti compaiono come singole occorrenze. «Tutta la serie» fa come «Tutti» nel
+calendario: eliminando una serie senza indicare il giorno spariscono anche le parti divise
+prima con «Questo e i successivi»; modificandola (senza giorno o con `scope=all`) quelle parti
+restano come sono e la risposta le elenca in `keptParts`. I link della bacheca dei gruppi
+arrivano all'agente solo se sono http, https o mailto. Ogni risposta riporta il nome
 della materia accanto all'id, e `studyos_status` e `studyos_overview` danno data,
 ora e fuso orario della persona. Le letture, di base, passano. Modifiche ed eliminazioni chiedono
 conferma nell'app. Si può consentire le sole modifiche per 15 minuti. Le
@@ -48,9 +52,12 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.4.0, che aggiunge il connettore remoto di un solo account (vedi sotto). Gli
-strumenti del connettore `/mcp` sono quelli della 1.3.0: se l'hai già ricreato per la
-1.3.0 non serve rifarlo, altrimenti ricrealo (vedi «Ripubblicare dopo una modifica»).
+versione 1.5.0 (`/health` la mostra dopo il deploy): rispetto alla 1.4.0, che ha aggiunto il
+connettore remoto di un solo account (vedi sotto), corregge fuso orario, serie ripetute,
+link della bacheca e limiti di `/register` e `/authorize`. Strumenti e parametri del
+connettore `/mcp` sono quelli della 1.3.0; cambiano solo le descrizioni di
+`studyos_update_event` e `studyos_delete_event`, quindi ricrea il connettore perché
+l'assistente le legga (vedi «Ripubblicare dopo una modifica»).
 
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,
 salvo una policy impostata da te su «Consenti».
@@ -80,7 +87,15 @@ L'accesso è OAuth 2.1 con PKCE e registrazione dinamica del client. Al primo
 collegamento la conferma compare in Impostazioni → Agenti del browser
 collegato. Sono accettati redirect https, loopback con qualsiasi porta
 (`http://127.0.0.1:…`, `http://localhost:…`) e schemi delle app native come
-`cursor://`. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
+`cursor://`. La registrazione è aperta a chiunque, quindi ha dei limiti: al massimo 50
+client; oltre, l'hub toglie quelli senza token, consensi o codici validi, dal più vecchio, ma
+mai uno registrato da meno di 2 minuti, e una registrazione mai usata scade dopo 24 ore. Una
+richiesta di consenso vale 5 minuti; ne restano aperte al massimo 5 per client (la nuova prende
+il posto della più vecchia) e 20 in tutto: oltre, la nuova prende il posto della più vecchia,
+prima tra quelle di client che non hanno mai ottenuto un accesso, così chi si collega davvero
+non resta fuori. «Revoca
+l'accesso agli assistenti» toglie token, consensi e client registrati: per riaverlo, scollega e
+ricollega il connettore nell'assistente. Il server risponde ai protocolli MCP dal 2024-11-05 al 2026-07-28
 (`initialize` per i client precedenti, `server/discover` per il 2026), sempre in
 JSON e mai in stream.
 
@@ -157,7 +172,8 @@ Collegamento, come per il primo connettore e senza password:
 Da quel momento StudyOS può restare chiuso. L'hub legge le righe dell'account con
 `studyos_agent_pull` e scrive con `studyos_agent_push`, con le stesse regole della
 sincronizzazione (vince la modifica più recente). Le date usano il fuso del browser che
-ha dato il consenso. L'app vede le modifiche alla sincronizzazione successiva.
+ha dato il consenso, anche il fuso che le serie nuove e le divisioni si portano dietro: una
+lezione alle 9 resta alle 9 dopo il cambio d'ora. L'app vede le modifiche alla sincronizzazione successiva.
 
 Differenze dal primo connettore:
 

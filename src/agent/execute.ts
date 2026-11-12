@@ -8,12 +8,13 @@ import { gradeStats, isValidGrade, librettoEntries, projectedStats } from "../li
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
 import { createId, nowIso } from "../lib/id";
 import { expandEvents, type EventOccurrence } from "../lib/recurrence";
-import { findOccurrence, occurrenceTarget } from "../lib/occurrenceLookup";
+import { findOccurrence, occurrenceTarget, startDayOf } from "../lib/occurrenceLookup";
 import { occurrenceEditCalls, scopeImpact, seriesMovePatch } from "../lib/occurrenceEdit";
-import { isOccurrenceRow, normalizeRepeat, sanitizeOccasion, sanitizeReminders, validateRepeat, type OccurrenceScope } from "../lib/repeat";
+import { isOccurrenceRow, laterParts, normalizeRepeat, planDelete, sanitizeOccasion, sanitizeReminders, validateRepeat, type OccurrenceScope } from "../lib/repeat";
+import { isCivilDate, isValidTimeZone } from "../lib/tz";
 import { safeCssColor } from "../lib/sharing";
 import { dueTopics } from "../lib/review";
-import { normalizeExternalUrl } from "../lib/safeUrl";
+import { normalizeExternalUrl, safeHref } from "../lib/safeUrl";
 import { studyMinutesThisWeek, studyStreak, upcomingExams, urgentTasks } from "../lib/selectors";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, timerElapsedSeconds, timerRemainingSeconds, timerUnsavedSeconds } from "../lib/studyTimer";
 import { SESSION_SOURCE_VALUES, editedSessionTimes } from "../lib/studySessions";
@@ -668,7 +669,8 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
     const ruleGiven = ["repeat", "recurrence", "recurrenceUntil"].some((key) => key in patch);
     if (range && !ruleGiven && !isOccurrenceRow(event)) Object.assign(changes, seriesMovePatch(event, range.start, range.end));
     await state().updateEvent(id, changes);
-    return ok({ id, start: changes.start ?? event.start, end: changes.end ?? event.end });
+    const kept = keptPartsAfter(id);
+    return ok({ id, start: changes.start ?? event.start, end: changes.end ?? event.end, ...(kept.length ? { keptParts: kept } : {}) });
   }
   // Come nel calendario: start ed end sono i nuovi orari di quel giorno, con le stesse chiamate
   // (la regola segue il giorno spostato; da un giorno già cambiato da solo, con «all», anche lui).
@@ -692,6 +694,7 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   const after = state().events;
   const part = scope === "following" ? after.find((item) => item.id === `${target.seriesId}~${target.date}`) : undefined;
   const holder = scope === "this" ? undefined : part ?? after.find((item) => item.id === target.seriesId);
+  const kept = scope === "all" ? keptPartsAfter(target.seriesId) : [];
   return ok({
     id: target.seriesId,
     occurrenceDate: target.date,
@@ -699,16 +702,51 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
     start: changes.start ?? occurrence.start,
     end: changes.end ?? occurrence.end,
     ...(holder ? { seriesStart: holder.start } : {}),
-    ...(gone.length ? { removedDates: gone.slice(0, REMOVED_DATES_SHOWN), ...(goneMore ? { removedDatesMore: true } : {}) } : {})
+    ...(gone.length ? { removedDates: gone.slice(0, REMOVED_DATES_SHOWN), ...(goneMore ? { removedDatesMore: true } : {}) } : {}),
+    ...(kept.length ? { keptParts: kept } : {})
   });
+};
+
+/** Primo giorno di una serie (nel suo fuso), o "" se l'evento non si ripete o è un giorno cambiato da solo. */
+const seriesFirstDay = (event: CalendarEvent) => {
+  if (isOccurrenceRow(event) || !normalizeRepeat(event)) return "";
+  return startDayOf(event.start, event.allDay, isValidTimeZone(event.timeZone) ? event.timeZone : undefined);
+};
+
+/**
+ * Parti nate da «Questo e i successivi» dopo la serie `id` che «Tutti» lascia come sono (nel
+ * calendario la scelta lo dice): l'agente le riceve in keptParts, dalla prima.
+ */
+const keptPartsAfter = (id: string) => {
+  const events = state().events;
+  const series = events.find((item) => item.id === id && !isOccurrenceRow(item));
+  const first = series ? seriesFirstDay(series) : "";
+  if (!first) return [];
+  return laterParts(events, id, first)
+    .filter((part) => !part.archived)
+    .map((part) => ({ id: part.id, from: isCivilDate(part.originalDate) ? part.originalDate : seriesFirstDay(part), title: part.title }))
+    .sort((a, b) => a.from.localeCompare(b.from));
 };
 
 const deleteEvent = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
-  if (!state().events.some((item) => item.id === id)) return fail("not_found", "Evento non trovato.");
+  const event = state().events.find((item) => item.id === id);
+  if (!event) return fail("not_found", "Evento non trovato.");
   const day = occurrenceArgs(id, args);
   if (isResult(day)) return day;
-  if (!day) return remove("events", id, "Evento non trovato.", () => state().deleteEvent(id));
+  if (!day) {
+    // Una serie senza occurrenceDate: come «Tutti» nel calendario, tutta la famiglia, comprese le
+    // parti nate da «Questo e i successivi» (anche partendo da una di loro) e i giorni cambiati.
+    const first = seriesFirstDay(event);
+    const plan = first ? planDelete(state().events, id, first, "all", { includeSplits: true }) : null;
+    if (plan?.deletes.length) {
+      const removed = new Set(plan.deletes);
+      const parts = state().events.filter((item) => removed.has(item.id) && !isOccurrenceRow(item)).length;
+      await state().deleteOccurrence(id, first, "all", { includeSplits: true });
+      return ok({ id, deleted: true, ...(parts > 1 ? { parts } : {}) });
+    }
+    return remove("events", id, "Evento non trovato.", () => state().deleteEvent(id));
+  }
   const { scope, target } = day;
   // «Tutti» da un giorno: tutta la serie, comprese le parti nate dividendola (come nel calendario).
   await state().deleteOccurrence(target.seriesId, target.date, scope, scope === "all" ? { includeSplits: true } : undefined);
@@ -1085,8 +1123,9 @@ const groupBoard = (args: Args): AgentCallResult => {
   const limit = Number(args.limit ?? 30);
   return ok({
     group: publicGroup(group),
+    // Link scritti da altri membri: solo http, https e mailto, come nell'app (safeHref); gli altri spariscono.
     resources: state().groupResources.filter((item) => item.groupId === groupId).slice(0, limit).map((item) => ({
-      id: item.id, kind: item.kind, title: item.title, url: item.url, body: item.body, pinned: item.pinned, addedByDisplayName: item.addedByDisplayName, updatedAt: item.updatedAt
+      id: item.id, kind: item.kind, title: item.title, url: safeHref(item.url), body: item.body, pinned: item.pinned, addedByDisplayName: item.addedByDisplayName, updatedAt: item.updatedAt
     })),
     activities: state().groupActivities.filter((item) => item.groupId === groupId).slice(0, limit).map((item) => ({
       id: item.id, actorDisplayName: item.actorDisplayName, text: item.text, createdAt: item.createdAt
