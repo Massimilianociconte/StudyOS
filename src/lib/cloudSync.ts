@@ -18,6 +18,7 @@ import { GROUP_COLLECTIONS, groupLookup, isServerBacked } from "./syncScope";
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import {
   LocalResetError,
+  OUTBOX_WRITER,
   isPersistenceHalted,
   localResetGuard,
   noteLocalReset,
@@ -25,7 +26,7 @@ import {
   requestPersist,
   subscribeLocalChanges
 } from "./persistence";
-import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
+import { chunkBySize, indexCollections, legacySnapshotToRows, newerCopy, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import { PERSONAL_COLLECTIONS, accountSwitchStep, personalRemovals, type AccountSwitchChoice } from "./accountSwitch";
 import {
   getSession,
@@ -342,6 +343,14 @@ const push = async (userId: string) => {
   assertStoreReady();
   const queued = await db.syncOutbox.orderBy("queuedAt").toArray();
   if (!queued.length) return 0;
+  // Senza Web Locks più schede sono attive insieme (activeTab.ts): per una voce accodata da un'altra
+  // pagina (o dalla sync stessa) la memoria di questa può essere indietro. Si legge anche la riga su
+  // disco e parte la più recente; prima partiva la copia vecchia, il server la accettava (stesso timbro,
+  // stesso contenuto) e la voce dell'altra scheda spariva (P15). Col vault su disco c'è solo lo
+  // snapshot cifrato: resta la copia in memoria (con il vault la guardia è la stessa, vedi docs).
+  const vault = useStudyStore.getState().settings.security.mode === "vault";
+  const foreign = vault ? [] : queued.filter((row) => !row.deleted && row.writer !== OUTBOX_WRITER);
+  const onDisk = foreign.length ? await readStoredRows(foreign) : new Map<string, unknown>();
   assertStoreReady();
   const index = indexCollections(pickCollections(useStudyStore.getState()));
   const encoder = new TextEncoder();
@@ -356,7 +365,8 @@ const push = async (userId: string) => {
   const outOfScope: SyncOutboxRow[] = [];
   const groupOf = groupLookup(pickCollections(useStudyStore.getState()).studyGroups);
   const prepared = queued.flatMap((row) => {
-    const entity = index[row.collection]?.get(row.entityId);
+    const inMemory = index[row.collection]?.get(row.entityId);
+    const entity = inMemory && onDisk.has(row.key) ? newerCopy(row.entityId, inMemory, onDisk.get(row.key)) : inMemory;
     // Una voce "put" senza entità in memoria non diventa MAI un'eliminazione cloud: le
     // eliminazioni reali arrivano dall'outbox con deleted=true.
     if (!row.deleted && !entity) {
@@ -373,7 +383,6 @@ const push = async (userId: string) => {
   if (orphans.length) {
     // Senza vault la riga può essere ancora su disco (scritta in un'altra scheda): si invia quella.
     // Si scartano solo le voci senza riga, e col vault (una sola scheda) come prima.
-    const vault = useStudyStore.getState().settings.security.mode === "vault";
     const stored = vault ? new Map<string, unknown>() : await readStoredRows(orphans);
     assertStoreReady();
     const { send, drop } = planOrphanPuts(orphans, stored, vault);

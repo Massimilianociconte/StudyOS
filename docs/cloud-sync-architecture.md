@@ -96,5 +96,10 @@ Correzioni di novembre 2026 (sync personale):
   la controlla subito prima di scrivere cursore, `merged`, `migrated`, schema
   e ultima sync: una prima sync in volo non riscrive più i segni appena tolti
   (il dispositivo restava vuoto). La passata si interrompe senza errore e
-  riparte da zero (P10).
+  riparte da zero (P10);
+- senza Web Locks (più schede attive insieme) una scheda rimasta indietro non
+  toglie più la voce accodata da un'altra: le voci portano chi le ha scritte
+  (`writer`) e, senza vault, per quelle di un'altra pagina si invia la copia
+  più recente tra memoria e disco. Col vault su disco c'è solo lo snapshot
+  cifrato: il limite resta e la guardia a scheda unica è l'unica protezione (P15).
 

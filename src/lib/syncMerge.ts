@@ -68,6 +68,14 @@ const keyOf = (collection: CollectionKey, id: string) => `${ENTITY_TYPES[collect
 const isEntity = (value: unknown, id: string): value is SyncableEntity =>
   Boolean(value) && typeof value === "object" && (value as SyncableEntity).id === id;
 
+/**
+ * Copia da inviare per una voce accodata da un'altra pagina (senza Web Locks, P15): quella su disco se
+ * è più recente di quella in memoria (la scheda che ha accodato l'ha salvata dopo), altrimenti quella
+ * in memoria. Una riga su disco non valida non sostituisce mai la memoria.
+ */
+export const newerCopy = (id: string, memory: SyncableEntity, stored: unknown): SyncableEntity =>
+  isEntity(stored, id) && timestampOf(stored.updatedAt) > timestampOf(memory.updatedAt) ? stored : memory;
+
 const remoteStamp = (row: RemoteRow) => {
   const payload = (row.payload ?? {}) as { updatedAt?: string; deletedAt?: string };
   const own = row.deleted ? payload.deletedAt ?? payload.updatedAt : payload.updatedAt;

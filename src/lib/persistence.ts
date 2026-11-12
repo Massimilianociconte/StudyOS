@@ -70,6 +70,14 @@ const nextQueuedAt = () => {
 
 export const outboxKey = (collection: CollectionKey, id: string) => `${ENTITY_TYPES[collection]}:${id}`;
 
+/**
+ * Identità di questa pagina (cambia a ogni caricamento) sulle voci che accoda il salvataggio. Senza
+ * Web Locks (activeTab.ts) due schede possono essere attive insieme: una scheda rimasta indietro
+ * inviava la sua copia vecchia per la voce accodata dall'altra e la toglieva (P15).
+ */
+export const OUTBOX_WRITER =
+  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `page-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 export interface PersistHostState {
   collections: CollectionsState;
   settings: UserSettings;
@@ -244,7 +252,8 @@ const buildOutbox = (diff: CollectionDiff, collections: CollectionsState): SyncO
         entityType: ENTITY_TYPES[key],
         entityId: item.id,
         deleted: false,
-        queuedAt: nextQueuedAt()
+        queuedAt: nextQueuedAt(),
+        writer: OUTBOX_WRITER
       });
     }
     for (const id of diff.deletes[key] ?? []) {
@@ -259,7 +268,8 @@ const buildOutbox = (diff: CollectionDiff, collections: CollectionsState): SyncO
         deleted: true,
         // Come per le modifiche: dopo l'ultimo timbro visto, anche con l'orologio indietro.
         deletedAt: laterStamp(previous?.updatedAt, now),
-        queuedAt: nextQueuedAt()
+        queuedAt: nextQueuedAt(),
+        writer: OUTBOX_WRITER
       });
     }
   }

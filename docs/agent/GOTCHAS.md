@@ -37,6 +37,10 @@
   richiesta in coda per il blocco.
 - Senza `navigator.locks` (browser vecchi; contesto non sicuro, es. dev su
   `http://<IP di rete>`) non c'è guardia: come prima, due schede possono sovrascriversi.
+  Riparo minimo per il cloud: ogni voce dell'outbox porta `writer` (`OUTBOX_WRITER`, uno per
+  caricamento di pagina) e, senza vault, `push` invia per le voci di un'altra pagina la copia
+  più recente tra memoria e disco (`newerCopy`), così una scheda rimasta indietro non toglie
+  la voce dell'altra inviando la sua copia vecchia. Col vault resta la copia in memoria.
   La guardia valuta comunque i moduli dell'app (import statico di `App`): niente effetti
   con scritture a livello di modulo; `init()` rilegge il timer dal disco perché quello
   letto all'apertura della guardia può essere vecchio.
