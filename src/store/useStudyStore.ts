@@ -1086,7 +1086,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
         return official ? [official] : [];
       });
       const current = get();
-      const batch = prepareBarbExamImport(selected, BARB_EXAM_COURSES, current.subjects, current.events);
+      // Tutti gli appelli: un appello già nel calendario con un'altra iscrizione non si aggiunge di nuovo.
+      const batch = prepareBarbExamImport(selected, BARB_EXAM_COURSES, current.subjects, current.events, BARB_EXAM_SESSIONS);
       if (!batch.events.length) return { added: 0, skipped: incoming.length };
       const now = nowIso();
       const created: CalendarEvent[] = batch.events.map((event) => ({
