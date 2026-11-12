@@ -8,7 +8,8 @@ import { linkedCounts } from "../lib/subjectLinks";
 import { groupNamesOf, useGroupExamStore } from "../store/useGroupExamStore";
 import type { Reminder } from "../types";
 import { agentMemberText } from "./project";
-import { fail, instant, ok, optional, page, state, text, type Args } from "./toolkit";
+import { CLOUD_UNAVAILABLE } from "./catalog";
+import { fail, instant, isRemoteRuntime, ok, optional, page, state, text, type Args } from "./toolkit";
 import type { AgentCallResult } from "./types";
 
 const NOTHING = "Niente da cambiare: indica almeno un campo.";
@@ -152,7 +153,15 @@ const catalogIds = async (): Promise<ConsistencyInput["catalog"]> => {
   }
 };
 
-const publicIssue = (issue: ConsistencyIssue) => ({ ...issue, title: agentMemberText(issue.title), detail: agentMemberText(issue.detail) });
+const FIX_IN_APP = "Questa correzione si fa nell'app StudyOS: il connettore remoto non ha lo strumento.";
+
+const publicIssue = (issue: ConsistencyIssue) => {
+  const { fix, ...rest } = issue;
+  const base = { ...rest, title: agentMemberText(issue.title), detail: agentMemberText(issue.detail) };
+  if (!fix) return base;
+  // Sul connettore remoto i suggerimenti con strumenti che non ci sono vanno fatti nell'app.
+  return isRemoteRuntime() && CLOUD_UNAVAILABLE.has(fix.tool) ? { ...base, fixInApp: FIX_IN_APP } : { ...base, fix };
+};
 
 export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult> => {
   const current = state();
@@ -187,7 +196,7 @@ export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult>
     checkedAt: report.checkedAt,
     groupsChecked: report.groupsChecked,
     groupExamsChecked: report.groupExamsChecked,
-    counts: report.counts,
+    counts: { error: issues.filter((i) => i.severity === "error").length, warning: issues.filter((i) => i.severity === "warning").length, info: issues.filter((i) => i.severity === "info").length },
     ...page(issues.map(publicIssue), args)
   });
 };

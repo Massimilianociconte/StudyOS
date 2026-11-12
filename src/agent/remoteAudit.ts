@@ -157,6 +157,16 @@ export const auditImage = (entityType: string, image: unknown): Record<string, u
     const members = Array.isArray(image.members) ? image.members.filter(isRecord) : [];
     return publicGroup({ ...(image as unknown as Parameters<typeof publicGroup>[0]), members: members as never }) as unknown as Record<string, unknown>;
   }
+  if (entityType === "examPlan") {
+    // Il piano d'esame tiene una copia dell'appello scritta dai membri (corso, aula, gruppo): agli agenti
+    // restano solo i dati senza testo libero.
+    const clean = scrub(image) as Record<string, unknown>;
+    const snapshot = isRecord(clean.snapshot) ? clean.snapshot : {};
+    return publicEntity({
+      ...clean,
+      snapshot: { groupId: snapshot.groupId, date: snapshot.date, kind: snapshot.kind, time: snapshot.time, version: snapshot.version }
+    });
+  }
   if (GROUP_TYPES.has(entityType)) {
     // Inviti, risorse e attività dei gruppi: il connettore non li scrive; se ce ne fossero, solo il nome.
     const clean = scrub(image) as Record<string, unknown>;

@@ -36,7 +36,7 @@ import { TIMER_KIND_LABEL, TIMER_MODE_LABEL } from "../lib/labels";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore, type PreferencesPatch } from "../store/useStudyStore";
 import type { Attachment, CalendarEvent, Exam, Goal, Note, StudySession, StudyTopic, Subject, Task } from "../types";
-import { DAY_RE, dateWindow, eventRange, fail, instant, nextEventRange, ok, optional, page, pick, state, text, toIso, type Args } from "./toolkit";
+import { DAY_RE, setRemoteRuntime, dateWindow, eventRange, fail, instant, nextEventRange, ok, optional, page, pick, state, text, toIso, type Args } from "./toolkit";
 
 const queryOf = (args: Args) => text(args.query).trim().toLocaleLowerCase("it");
 const includes = (query: string, ...parts: Array<string | undefined>) => !query || parts.some((part) => (part ?? "").toLocaleLowerCase("it").includes(query));
@@ -59,6 +59,7 @@ let runtime: { timeZone?: string; remote: boolean } = { remote: false };
 
 export const configureAgentRuntime = (next: { timeZone?: string; remote: boolean }) => {
   runtime = { ...next };
+  setRemoteRuntime(next.remote);
 };
 
 /** Ora locale della persona: senza questa un agente non sa che giorno è né in che fuso scrivere. */

@@ -44,8 +44,10 @@ const shown = (key: string, value: unknown): string | null => {
   if (typeof value !== "string" || !value.trim()) return null;
   if (key === "email") return agentTeacherEmail(value);
   if (key === "website" || key === "url") return agentLink(value);
-  if (key === "note") return agentMemberText(value);
-  return agentCatalogText(value);
+  // Solo i campi dedicati (email, valore del contatto, link) passano gli indirizzi @unimi.it; ogni altro
+  // testo, anche una etichetta o una nota, è scritto dai membri: tutti gli indirizzi oscurati.
+  if (key === "value") return agentCatalogText(value);
+  return agentMemberText(value);
 };
 
 const shownFields = (fields: Record<string, unknown>) => Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, shown(key, value)]));

@@ -9,6 +9,13 @@ import { civilAddDays, civilDaysBetween, civilFromParts, isValidTimeZone, utcToZ
 import { useStudyStore } from "../store/useStudyStore";
 import type { CalendarEvent } from "../types";
 
+/** true mentre gira il connettore remoto (impostato da configureAgentRuntime in execute.ts). */
+let remoteRuntime = false;
+export const setRemoteRuntime = (value: boolean) => {
+  remoteRuntime = value;
+};
+export const isRemoteRuntime = () => remoteRuntime;
+
 export type Args = Record<string, unknown>;
 
 export const text = (value: unknown) => (typeof value === "string" ? value : "");
