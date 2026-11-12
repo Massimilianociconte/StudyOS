@@ -482,7 +482,8 @@ const oauthHarness = async () => {
     return token.body;
   };
   const registered = (clientId) => oauth.dump().clients.some((client) => client.clientId === clientId);
-  return { clock, oauth, register, begin, connect, registered };
+  const pending = (begun) => begun.ok && oauth.pendingConsent(begun.requestId) !== null;
+  return { clock, oauth, register, begin, connect, registered, pending };
 };
 
 test("OAuth: registrazione piena, si fa posto togliendo i client senza token, dal più vecchio", async () => {
@@ -492,20 +493,32 @@ test("OAuth: registrazione piena, si fa posto togliendo i client senza token, da
   const waiting = register("Claude");
   const consent = begin(waiting);
   assert.equal(consent.ok, true);
-  const spam = Array.from({ length: 48 }, () => register());
+  // Registrato, ma non ancora arrivato a /authorize (il client ci mette qualche secondo).
+  const fresh = register("Appena registrato");
+  const spam = Array.from({ length: 47 }, () => register());
   assert.equal(oauth.dump().clients.length, 50);
 
-  // Al 51° si toglie il client senza token più vecchio; mai uno con token o con un consenso aperto.
+  // Nei primi 2 minuti dopo la registrazione nessun client si toglie: 50 registrazioni subito dopo
+  // non fanno perdere il client a chi sta per autorizzarlo.
+  assert.equal(oauth.register({ client_name: "Troppo presto", redirect_uris: ["https://attacker.example/cb"] }).ok, false);
+  assert.equal(registered(fresh), true);
+  const freshConsent = begin(fresh);
+  assert.equal(freshConsent.ok, true, JSON.stringify(freshConsent));
+
+  // Dopo 2 minuti si toglie il client senza token più vecchio; mai uno con token o con un consenso aperto.
+  clock.now += 2 * 60 * 1000;
   const newcomer = register("Nuovo");
   assert.equal(registered(newcomer), true);
   assert.equal(registered(spam[0]), false);
   assert.equal(registered(spam[1]), true);
-  for (let index = 0; index < 60; index += 1) register();
+  for (let index = 0; index < 40; index += 1) register();
   assert.equal(oauth.dump().clients.length, 50);
   assert.equal(registered(live), true);
   assert.equal(registered(waiting), true);
+  assert.equal(registered(fresh), true);
   assert.ok(await oauth.authenticate(tokens.access_token));
   assert.equal(oauth.decide(consent.requestId, true, ["studyos:read"]).ok, true);
+  assert.equal(oauth.decide(freshConsent.requestId, true, ["studyos:read"]).ok, true);
   assert.equal(begin(spam[5]).ok, false, "un client tolto non apre più consensi");
 
   // Una registrazione mai usata scade dopo 24 ore; un client con token resta.
@@ -516,7 +529,7 @@ test("OAuth: registrazione piena, si fa posto togliendo i client senza token, da
 });
 
 test("OAuth: «Revoca gli accessi» toglie anche i client, e i consensi aperti sono pochi e brevi", async () => {
-  const { clock, oauth, register, begin, connect, registered } = await oauthHarness();
+  const { clock, oauth, register, begin, connect, registered, pending } = await oauthHarness();
   const live = register("ChatGPT");
   await connect(live);
   const spammer = register("Spam");
@@ -525,17 +538,40 @@ test("OAuth: «Revoca gli accessi» toglie anche i client, e i consensi aperti s
   const asked = Array.from({ length: 6 }, () => begin(spammer));
   assert.ok(asked.every((item) => item.ok));
   assert.equal(oauth.pendingConsent(asked[0].requestId), null);
-  for (const item of asked.slice(1)) assert.ok(oauth.pendingConsent(item.requestId));
+  for (const item of asked.slice(1)) assert.ok(pending(item));
 
-  // In tutto al massimo 20 consensi in attesa: oltre, /authorize risponde «troppe richieste».
+  // In tutto al massimo 20 consensi in attesa, ma /authorize non risponde mai «troppe richieste»:
+  // il nuovo prende il posto del più vecchio, prima di tutto quelli di client mai usati.
+  const mine = begin(live);
   const others = Array.from({ length: 4 }, () => register());
-  for (const clientId of others) for (let index = 0; index < 5; index += 1) begin(clientId);
-  const full = begin(live);
-  assert.equal(full.ok, false);
-  assert.equal(full.status, 429);
-  // Scadono dopo qualche minuto: poi si può chiedere di nuovo.
+  const flood = others.flatMap((clientId) => Array.from({ length: 5 }, () => begin(clientId)));
+  assert.ok(flood.every((item) => item.ok));
+  assert.ok(pending(mine), "il consenso di un client già usato resta");
+  for (const item of asked.slice(1)) assert.equal(pending(item), false);
+  assert.equal(pending(flood[0]), false);
+  assert.ok(flood.slice(1).every(pending));
+  const legit = begin(register("Claude"));
+  assert.ok(pending(legit), "chi si collega davvero non riceve mai 429");
+  assert.ok(pending(mine));
+  assert.equal(pending(flood[1]), false);
+
+  // Scadono dopo 5 minuti: poi si può chiedere di nuovo.
   clock.now += 5 * 60 * 1000 + 1;
-  assert.equal(oauth.pendingConsent(asked[5].requestId), null);
+  assert.equal(pending(asked[5]), false);
+  assert.equal(pending(legit), false);
+  // Se tutti i consensi in attesa sono di client già usati, si toglie il più vecchio in assoluto.
+  const used = [];
+  for (let index = 0; index < 5; index += 1) {
+    const clientId = register(`Usato ${index}`);
+    await connect(clientId);
+    used.push(clientId);
+  }
+  const waiting = used.slice(0, 4).flatMap((clientId) => Array.from({ length: 5 }, () => begin(clientId)));
+  assert.ok(waiting.every(pending));
+  const last = begin(used[4]);
+  assert.ok(pending(last));
+  assert.equal(pending(waiting[0]), false);
+  assert.ok(waiting.slice(1).every(pending));
   const again = begin(live);
   assert.equal(again.ok, true, JSON.stringify(again));
 

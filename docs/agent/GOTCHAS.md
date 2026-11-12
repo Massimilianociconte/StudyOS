@@ -264,10 +264,13 @@
   legato al token OAuth); il database ne tiene l'hash. «Revoca l'accesso agli assistenti» revoca
   tutti i permessi dell'account (`studyos_revoke_agent_grants`), anche a browser scollegato.
 - OAuth dell'hub: `/register` e `/authorize` sono aperti a chiunque. `oauth.ts` tiene al massimo
-  50 client (al limite toglie quelli senza token, consensi o codici, dal più vecchio; una
-  registrazione mai usata scade dopo 24 ore) e 5 consensi aperti per client, 20 in tutto, per 5
-  minuti; `httpHub` toglie dalla coda i consensi sostituiti. `revokeAll` toglie anche i client.
-  Non togliere questi limiti: senza, 50 registrazioni bloccavano per sempre i connettori nuovi.
+  50 client (al limite toglie quelli senza token, consensi o codici, dal più vecchio, ma non nei
+  2 minuti dopo la registrazione; una registrazione mai usata scade dopo 24 ore) e 5 consensi
+  aperti per client, 20 in tutto, per 5 minuti. Oltre i 20 il nuovo prende il posto del più
+  vecchio, prima quelli dei client senza `usedAt`: mai un 429, che chiunque potrebbe rinnovare
+  per tenere fuori l'utente vero. `httpHub` toglie dalla coda i consensi sostituiti. `revokeAll`
+  toglie anche i client. Non togliere questi limiti: senza, 50 registrazioni bloccavano per
+  sempre i connettori nuovi.
   `/pair` si blocca con 8 tentativi sbagliati negli ultimi 10 minuti (finestra scorrevole,
   `pairFailureTimes` nello stato salvato; i tentativi rifiutati col blocco non contano): un
   contatore che non scende mai teneva il blocco per sempre con un tentativo ogni 10 minuti.

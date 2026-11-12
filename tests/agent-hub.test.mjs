@@ -281,37 +281,42 @@ test("hub: la conferma arriva con approval_status e le azioni mai ritirate scado
 });
 
 test("hub: /register e /authorize aperti a tutti non si riempiono per sempre", async () => {
-  clock.now = Date.now();
+  const start = Date.parse("2026-11-12T10:00:00Z");
+  clock.now = start;
+  const minutes = (value) => value * 60_000;
   const agent = hub();
-  const register = (name = "x") => ask(agent, "/register", {
+  const attacker = "https://attacker.example/cb";
+  const real = "https://claude.ai/api/mcp/auth_callback";
+  const register = async (callback = attacker, name = "x") => ask(agent, "/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ redirect_uris: ["https://attacker.example/cb"], client_name: name })
+    body: JSON.stringify({ redirect_uris: [callback], client_name: name })
   });
-  for (let index = 0; index < 50; index += 1) assert.equal((await register()).status, 201);
-  // Il 51° prende il posto del client fermo più vecchio (prima: 400 per sempre).
-  const extra = await register();
-  assert.equal(extra.status, 201);
-  assert.equal(agent.exportState().oauth.clients.length, 50);
-
-  // Una pioggia di /authorize con lo stesso client: al massimo 5 consensi in coda, mai di più.
-  const clientId = (await extra.json()).client_id;
-  const authorize = (id) => ask(agent, `/authorize?${new URLSearchParams({
-    client_id: id, redirect_uri: "https://attacker.example/cb", response_type: "code", code_challenge: "x".repeat(43), code_challenge_method: "S256"
+  const registerId = async (callback, name) => (await (await register(callback, name)).json()).client_id;
+  const authorize = (id, callback = attacker) => ask(agent, `/authorize?${new URLSearchParams({
+    client_id: id, redirect_uri: callback, response_type: "code", code_challenge: "x".repeat(43), code_challenge_method: "S256"
   })}`);
-  const first = await authorize(clientId);
+
+  // Chiunque riempie i 20 consensi aperti (4 client x 5): chi si collega davvero entra lo stesso,
+  // al posto del consenso più vecchio dell'attaccante (prima: 429, rinnovabile per sempre).
+  const attackers = [];
+  for (let index = 0; index < 4; index += 1) attackers.push(await registerId());
+  for (const id of attackers) for (let index = 0; index < 5; index += 1) assert.equal((await authorize(id)).status, 200);
+  const legit = await registerId(real, "Assistente vero");
+  const first = await authorize(legit, real);
   assert.equal(first.status, 200);
   assert.match(first.headers.get("set-cookie") ?? "", /Max-Age=300;/);
-  for (let index = 0; index < 30; index += 1) assert.equal((await authorize(clientId)).status, 200);
-  assert.ok(agent.consents.length <= 5, `consensi in coda: ${agent.consents.length}`);
 
-  // In tutto al massimo 20 consensi aperti: oltre, 429 finché i vecchi non scadono.
-  const others = [];
-  for (let index = 0; index < 4; index += 1) others.push((await (await register()).json()).client_id);
-  for (const id of others) for (let index = 0; index < 5; index += 1) await authorize(id);
-  const refused = await authorize((await (await register()).json()).client_id);
-  assert.equal(refused.status, 429);
-  assert.match(await refused.text(), /Troppe richieste di accesso/);
+  // Una pioggia di /authorize con lo stesso client: al massimo 5 suoi consensi in coda.
+  for (let index = 0; index < 30; index += 1) assert.equal((await authorize(attackers[0])).status, 200);
+  assert.ok(agent.consents.length <= 20, `consensi in coda: ${agent.consents.length}`);
+  assert.ok(agent.consents.filter((job) => job.clientName === "x").length <= 19);
+
+  // L'attaccante rinnova i suoi prima che scadano: chi riprova dopo entra comunque.
+  clock.now = start + minutes(4);
+  for (const id of attackers) for (let index = 0; index < 5; index += 1) await authorize(id);
+  clock.now = start + minutes(6);
+  assert.equal((await authorize(legit, real)).status, 200);
 
   const token = await pairBrowser(agent);
   const delivered = [];
@@ -320,7 +325,21 @@ test("hub: /register e /authorize aperti a tutti non si riempiono per sempre", a
     if (job.type !== "consent") break;
     delivered.push(job);
   }
-  assert.equal(delivered.length, 20);
+  assert.ok(delivered.length <= 20, `consensi consegnati: ${delivered.length}`);
+  assert.ok(delivered.some((job) => job.clientName === "Assistente vero"), "il consenso vero arriva all'app");
+
+  // Registrazioni: un client appena registrato non viene tolto mentre va verso /authorize.
+  clock.now = start + minutes(20);
+  const fresh = await registerId(real, "Appena registrato");
+  for (let index = 0; index < 50; index += 1) await register();
+  assert.equal(agent.exportState().oauth.clients.length, 50);
+  assert.equal((await authorize(fresh, real)).status, 200);
+  // Pieno di client giovani: si rifiuta per poco, poi chi è fermo da più di 2 minuti fa posto.
+  assert.equal((await register()).status, 400);
+  clock.now = start + minutes(22) + 1;
+  assert.equal((await register()).status, 201);
+  assert.equal(agent.exportState().oauth.clients.length, 50);
+  assert.ok(agent.exportState().oauth.clients.some((client) => client.clientId === fresh), "il client con un consenso aperto resta");
 
   // «Revoca l'accesso agli assistenti» nell'app toglie anche i client registrati.
   const revoked = await ask(agent, "/oauth/revoke", { method: "POST", headers: site, body: JSON.stringify({ token }) });

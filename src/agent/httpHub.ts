@@ -437,7 +437,7 @@ export class HttpHub {
         const begun = this.oauth.beginAuthorization(url.searchParams);
         // Il consenso nuovo può aver preso il posto di uno vecchio dello stesso client: fuori dalla coda.
         this.dropStaleConsents();
-        if (!begun.ok) return this.html(begun.status ?? 400, this.messagePage(begun.description));
+        if (!begun.ok) return this.html(400, this.messagePage(begun.description));
         const job: ConsentJob = { type: "consent", requestId: begun.requestId, clientName: begun.clientName, scopes: begun.scopes, redirectHost: begun.redirectHost };
         if (this.oauth.isCloudResource(begun.resource)) {
           // Connettore remoto: la richiesta va solo all'account scritto nell'indirizzo.

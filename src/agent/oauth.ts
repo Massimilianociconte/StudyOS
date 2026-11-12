@@ -63,12 +63,14 @@ const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const REQUEST_TTL_MS = 5 * 60 * 1000;
 /**
  * /register e /authorize sono aperti a chiunque: limiti perché non si riempiano per sempre.
- * - Client registrati: al limite si tolgono quelli senza token, consensi o codici, dal più vecchio;
- *   una registrazione mai usata scade dopo 24 ore.
+ * - Client registrati: al limite si tolgono quelli senza token, consensi o codici, dal più vecchio,
+ *   ma non nei 2 minuti dopo la registrazione; una registrazione mai usata scade dopo 24 ore.
  * - Consensi in attesa: 5 per client (il sesto prende il posto del più vecchio), 20 in tutto (oltre,
- *   /authorize risponde 429), così l'app non riceve una pioggia di richieste.
+ *   si toglie il più vecchio, prima quelli dei client mai usati; mai un 429), così l'app non riceve
+ *   una pioggia di richieste e chi si collega davvero non resta fuori.
  */
 const MAX_CLIENTS = 50;
+const REGISTRATION_GRACE_MS = 2 * 60 * 1000;
 const UNUSED_CLIENT_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_REQUESTS_PER_CLIENT = 5;
 const MAX_PENDING_REQUESTS = 20;
@@ -221,10 +223,11 @@ export class OauthServer {
   register(body: unknown, now = this.now()): { ok: true; client: OAuthClient } | { ok: false; error: string; status: number } {
     this.prune(now);
     if (this.clients.size >= MAX_CLIENTS) {
-      // Si fa posto con i client fermi (nessun token, consenso o codice), dal più vecchio.
+      // Si fa posto con i client fermi (nessun token, consenso o codice), dal più vecchio. Mai uno
+      // registrato da meno di 2 minuti: il suo /authorize sta arrivando.
       const busy = this.busyClients();
       const idle = [...this.clients.values()]
-        .filter((client) => !busy.has(client.clientId))
+        .filter((client) => !busy.has(client.clientId) && !(now - Date.parse(client.createdAt) < REGISTRATION_GRACE_MS))
         .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
       for (const client of idle) {
         if (this.clients.size < MAX_CLIENTS) break;
@@ -254,7 +257,7 @@ export class OauthServer {
     return { ok: true, client };
   }
 
-  beginAuthorization(query: URLSearchParams, now = this.now()): { ok: true; requestId: string; clientName: string; scopes: AgentScope[]; redirectHost: string; resource: string } | { ok: false; error: string; description: string; status?: number } {
+  beginAuthorization(query: URLSearchParams, now = this.now()): { ok: true; requestId: string; clientName: string; scopes: AgentScope[]; redirectHost: string; resource: string } | { ok: false; error: string; description: string } {
     this.prune(now);
     const client = this.clients.get(query.get("client_id") ?? "");
     if (!client) return { ok: false, error: "invalid_client", description: "Client non registrato o rimosso (per esempio dopo «Revoca l'accesso agli assistenti» in StudyOS): scollega e ricollega il connettore nell'assistente." };
@@ -268,12 +271,18 @@ export class OauthServer {
     const resource = this.resolveResource(query.get("resource"));
     if (!resource) return { ok: false, error: "invalid_target", description: "Il parametro resource non coincide con questo server." };
     const scopes = parseScopes(query.get("scope"));
-    // Pochi consensi aperti: per client il nuovo prende il posto del più vecchio (chi riprova vede
-    // l'ultimo), in tutto oltre il limite si rifiuta finché i vecchi non scadono.
+    // Pochi consensi aperti, ma mai un rifiuto: chiunque può aprirne (bastano /register e /authorize),
+    // e un rifiuto bloccherebbe chi si collega davvero. Per client il nuovo prende il posto del più
+    // vecchio (chi riprova vede l'ultimo); oltre il limite in tutto si toglie il più vecchio in attesa,
+    // prima tra quelli di client che non hanno mai completato un'autorizzazione.
     const own = [...this.requests.entries()].filter(([, item]) => item.clientId === client.clientId);
     for (const [id] of own.slice(0, Math.max(0, own.length - MAX_REQUESTS_PER_CLIENT + 1))) this.requests.delete(id);
-    if ([...this.requests.values()].filter((item) => !item.decision).length >= MAX_PENDING_REQUESTS) {
-      return { ok: false, error: "temporarily_unavailable", description: "Troppe richieste di accesso in attesa. Riprova tra qualche minuto.", status: 429 };
+    const waiting = [...this.requests.entries()].filter(([, item]) => !item.decision);
+    const excess = waiting.length - MAX_PENDING_REQUESTS + 1;
+    if (excess > 0) {
+      const neverUsed = (clientId: string) => !this.clients.get(clientId)?.usedAt;
+      const order = [...waiting.filter(([, item]) => neverUsed(item.clientId)), ...waiting.filter(([, item]) => !neverUsed(item.clientId))];
+      for (const [id] of order.slice(0, excess)) this.requests.delete(id);
     }
     const requestId = randomToken(18);
     this.requests.set(requestId, {
