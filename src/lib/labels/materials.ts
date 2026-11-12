@@ -13,7 +13,7 @@ export const MATERIALS_TEXT = {
   subjectFilter: "Filtra per materia",
   allSubjects: "Tutte le materie",
   emptyTitle: "Ancora nessun materiale",
-  emptyBody: "Qui ritrovi dispense, appunti e link. Es.: le slide di una lezione o il link a un video.",
+  emptyBody: "Carica un file o salva un link dalla barra qui sopra: qui ritrovi dispense, appunti e link. Es.: le slide di una lezione o il link a un video.",
   noneFoundTitle: "Nessun materiale trovato",
   noneFoundBody: "Nessun materiale corrisponde alla ricerca o ai filtri scelti.",
   showAll: "Mostra tutti i materiali"

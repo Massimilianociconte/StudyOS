@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { Exam, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { subjectColor, subjectName } from "../lib/selectors";
-import { MAX_GRADE, MIN_GRADE, formatAverage, formatGrade, gradeStats, isValidGrade, librettoEntries, projectedStats, type LibrettoEntry } from "../lib/grades";
+import { MAX_GRADE, MIN_GRADE, formatAverage, formatGrade, gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats, type LibrettoEntry } from "../lib/grades";
 import {
   BARB_THESIS_LEVELS,
   DEGREE_PROGRAMS,
@@ -44,9 +44,8 @@ export function CareerView() {
   const entries = useMemo(() => librettoEntries(exams, subjects), [exams, subjects]);
   const stats = gradeStats(entries);
   const withTargets = projectedStats(entries, exams, subjects);
-  const missing = exams
-    .filter((exam) => !exam.archived && exam.status === "done" && !exam.passFail && !isValidGrade(exam.grade))
-    .sort((a, b) => b.date.localeCompare(a.date));
+  // Una riga per materia, mai per una materia già nel libretto.
+  const missing = missingGrades(exams, entries);
 
   const openEditor = (exam: Exam | null) => {
     setNotice("");
@@ -89,7 +88,8 @@ export function CareerView() {
         />
         <Tile
           label="Voto di partenza"
-          value={formatAverage(stats.base110)}
+          // Stesso numero e stesso formato della riga «Voto di partenza» del pannello qui sotto.
+          value={stats.base110 === null ? "—" : points(stats.base110)}
           detail="Media × 110 / 30"
           help={CAREER_HELP.base}
         />
@@ -219,6 +219,8 @@ function GraduationPanel({
   const honors = entries.filter((entry) => entry.honors).length;
   const thesis = program === "scienze-biologiche" ? sbThesisGrade : barbThesisPoints;
   const projection = projectGraduation({ program, weightedAverage: average, honors, thesis, abroad });
+  // C'è una stima (voti registrati o voti obiettivo): solo allora le ipotesi e le fonti servono.
+  const hasEstimate = weighted !== null || targetsWeighted !== null;
 
   // Media necessaria per 110 con lo scenario scelto e, se ci sono esami in programma, voto
   // medio che serve in quegli esami.
@@ -307,6 +309,8 @@ function GraduationPanel({
         </p>
       )}
 
+      {/* Libretto vuoto e nessun voto obiettivo: niente ipotesi né fonti finché non c'è una stima. */}
+      {hasEstimate ? (
       <div className="mt-4 border-t border-[var(--border)] pt-3">
         <p className="mb-2 text-[11px] font-black uppercase text-[var(--faint)]">Le tue ipotesi</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -352,6 +356,7 @@ function GraduationPanel({
           </span>
         </label>
       </div>
+      ) : null}
 
       {projection ? (
         <ul className="mt-3 grid grid-cols-1 gap-1 text-xs font-bold text-[var(--muted)]">
@@ -368,6 +373,7 @@ function GraduationPanel({
         </ul>
       ) : null}
 
+      {hasEstimate ? (
       <div className="mt-4 border-t border-[var(--border)] pt-3">
         <p className="mb-1 text-[11px] font-black uppercase text-[var(--faint)]">Fonti ufficiali delle regole</p>
         <ul className="grid grid-cols-1 gap-1">
@@ -383,6 +389,7 @@ function GraduationPanel({
           ))}
         </ul>
       </div>
+      ) : null}
     </Panel>
   );
 }

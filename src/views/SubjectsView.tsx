@@ -2,8 +2,11 @@ import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "rea
 import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { shortDate, studyDaysUntil } from "../lib/selectors";
-import { readImageFile } from "../lib/files";
-import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatHours } from "../lib/labels";
+import { readCoverImage } from "../lib/files";
+import { isDateToDecide } from "../lib/examOutcome";
+import { librettoEntries } from "../lib/grades";
+import { GradeDrawer } from "../components/GradeDrawer";
+import { ATTACHMENT_KIND_ICON, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
 import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
 import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
 import { HelpField } from "../components/HelpField";
@@ -17,7 +20,7 @@ import { subjectSemester, SEMESTER_LABEL, SEMESTER_TONE, SEMESTER_IDS, type Seme
 import { TopicManager } from "../components/TopicManager";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
-import { cfuBySemester, isArchivedSubject, nextSubjectColor, semesterFilterOptions, subjectMenuItems, type SemesterFilter } from "../lib/subjectCards";
+import { cfuBySemester, isArchivedSubject, nextSubjectColor, otherStatuses, semesterFilterOptions, subjectMenuItems, type SemesterFilter } from "../lib/subjectCards";
 import { safeCssColor } from "../lib/sharing";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
@@ -112,6 +115,20 @@ export function SubjectsView() {
     setNoticeFocused(false);
   };
   const restoreSubject = (subject: Subject) => void updateSubject(subject.id, { status: "active", archived: false });
+  // «Superata»: prima il voto (o l'idoneità) nel libretto, poi la materia passa tra le Superate.
+  const [gradeFor, setGradeFor] = useState<string | null>(null);
+  const [gradeOpen, setGradeOpen] = useState(false);
+  const [gradeNotice, setGradeNotice] = useState("");
+  const completeSubject = (subject: Subject) => {
+    setGradeNotice("");
+    // Già nel libretto (voto registrato da Esami o dal Libretto): basta lo stato.
+    if (librettoEntries(exams, subjects).some((entry) => entry.subjectId === subject.id)) {
+      void updateSubject(subject.id, { status: "completed" });
+      return;
+    }
+    setGradeFor(subject.id);
+    setGradeOpen(true);
+  };
   // Archiviate: si eliminano per sempre, con una conferma che dice cosa si perde.
   const deleteText = (subject: Subject) => {
     const subjectExams = exams.filter((exam) => exam.subjectId === subject.id);
@@ -132,7 +149,6 @@ export function SubjectsView() {
   const totalCfu = active.reduce((sum, subject) => sum + (subject.cfu || 0), 0);
   const semesterOptions = semesterFilterOptions(active.map((subject) => subjectSemester(subject)), semester);
   const bySemester = cfuBySemester(active.map((subject) => ({ semester: subjectSemester(subject), cfu: subject.cfu })));
-  const focusNewSubject = () => document.getElementById("new-subject-name")?.focus();
 
   const card = (subject: Subject) => (
     <SubjectCard
@@ -141,6 +157,7 @@ export function SubjectsView() {
       stats={subjectStats(subject, state)}
       onOpen={() => setOpenId(subject.id)}
       onStatus={(status) => void updateSubject(subject.id, { status })}
+      onComplete={() => completeSubject(subject)}
       onArchive={() => archiveSubject(subject)}
       onRestore={() => restoreSubject(subject)}
       deleteText={isArchivedSubject(subject) ? deleteText(subject) : ""}
@@ -210,6 +227,9 @@ export function SubjectsView() {
             </Button>
           </div>
         ) : null}
+        {gradeNotice ? (
+          <p className="mb-4 rounded-[18px] border border-[var(--success-border)] bg-[var(--success-bg)] p-3 text-sm font-bold text-[var(--success-text)]">{gradeNotice}</p>
+        ) : null}
       </div>
 
       {active.length === 0 ? (
@@ -217,21 +237,14 @@ export function SubjectsView() {
           icon="BookOpen"
           title={SUBJECTS_TEXT.emptyTitle}
           body={showBarb ? SUBJECTS_TEXT.emptyBodyCourse : SUBJECTS_TEXT.emptyBody}
+          // Un'azione sola: il nome si scrive nella barra qui sopra («Aggiungi materia»), qui resta
+          // solo l'altro modo, il piano del corso.
           action={
             showBarb ? (
-              <>
-                <Button variant="primary" icon="Landmark" onClick={() => setActiveView("barb")}>
-                  {SUBJECTS_TEXT.chooseFromCourse}
-                </Button>
-                <Button variant="soft" icon="PenLine" onClick={focusNewSubject}>
-                  {SUBJECTS_TEXT.typeName}
-                </Button>
-              </>
-            ) : (
-              <Button variant="soft" icon="PenLine" onClick={focusNewSubject}>
-                {SUBJECTS_TEXT.typeName}
+              <Button variant="primary" icon="Landmark" onClick={() => setActiveView("barb")}>
+                {SUBJECTS_TEXT.chooseFromCourse}
               </Button>
-            )
+            ) : undefined
           }
         />
       ) : visible.length === 0 ? (
@@ -260,6 +273,17 @@ export function SubjectsView() {
           archiveSubject(subject);
         }}
         onRestore={restoreSubject}
+      />
+      <GradeDrawer
+        open={gradeOpen}
+        subjectId={gradeFor}
+        subjects={subjects}
+        exams={exams}
+        onClose={() => setGradeOpen(false)}
+        onSaved={(text) => {
+          setGradeOpen(false);
+          setGradeNotice(text);
+        }}
       />
     </div>
   );
@@ -297,6 +321,7 @@ function SubjectCard({
   stats,
   onOpen,
   onStatus,
+  onComplete,
   onArchive,
   onRestore,
   onDelete,
@@ -306,6 +331,8 @@ function SubjectCard({
   stats: ReturnType<typeof subjectStats>;
   onOpen: () => void;
   onStatus: (status: Subject["status"]) => void;
+  /** «Superata»: chiede il voto (la materia diventa superata quando l'esito è salvato). */
+  onComplete: () => void;
   /** Materie non archiviate: archivia subito (l'elenco offre «Annulla»). */
   onArchive: () => void;
   onRestore: () => void;
@@ -320,18 +347,44 @@ function SubjectCard({
   const [deleting, setDeleting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const exam = stats.exam;
-  const examPill = exam ? SUBJECTS_TEXT.examPill(shortDate(exam.date), studyDaysUntil(exam.date)) : "";
+  const examPill = exam ? (isDateToDecide(exam) ? SUBJECTS_TEXT.examPillToDecide : SUBJECTS_TEXT.examPill(shortDate(exam.date), studyDaysUntil(exam.date))) : "";
 
+  const [choosing, setChoosing] = useState(false);
+  const backToMenu = () => menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  const closeChooser = () => {
+    setChoosing(false);
+    // Il riquadro sparisce: il focus torna al menu da cui era partito.
+    backToMenu();
+  };
   const menu = subjectMenuItems(subject).map((item): PageAction => {
     switch (item.kind) {
       case "status":
         return { label: SUBJECTS_TEXT.markAs(SUBJECT_STATUS_LABEL[item.status]), icon: STATUS_ICON[item.status], onClick: () => onStatus(item.status) };
+      case "complete":
+        return { label: SUBJECTS_TEXT.markPassed, icon: STATUS_ICON.completed, onClick: onComplete };
+      case "other":
+        return {
+          label: SUBJECTS_TEXT.otherStatus,
+          icon: "MoreHorizontal",
+          onClick: () => {
+            setConfirming(false);
+            setChoosing(true);
+          }
+        };
       case "archive":
         return { label: SUBJECT_REMOVE_TEXT.archive, icon: "Archive", onClick: onArchive };
       case "restore":
         return { label: SUBJECTS_TEXT.restore, icon: "RotateCcw", onClick: onRestore };
       case "delete":
-        return { label: SUBJECT_REMOVE_TEXT.deleteForever, icon: "Trash2", danger: true, onClick: () => setConfirming(true) };
+        return {
+          label: SUBJECT_REMOVE_TEXT.deleteForever,
+          icon: "Trash2",
+          danger: true,
+          onClick: () => {
+            setChoosing(false);
+            setConfirming(true);
+          }
+        };
     }
   });
 
@@ -357,10 +410,12 @@ function SubjectCard({
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold text-[var(--muted)]">
         <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
-        <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag>
+        {/* Semestre sconosciuto: nessuna etichetta «Da definire» (si sceglie nel dettaglio). */}
+        {semester !== "non-definito" ? <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag> : null}
         <span>{subject.cfu} CFU</span>
         <span>{stats.openTasks.length} attività da fare</span>
-        <span>{formatHours(stats.studyMinutes)} h di studio</span>
+        {/* Come in Statistiche: «50 min», «1 h 15 min» (stesso formato, stessi numeri). */}
+        <span>{formatMinutes(stats.studyMinutes)} di studio</span>
         {stats.materials.length ? (
           <span className="inline-flex items-center gap-1" title={`${stats.materials.length} ${stats.materials.length === 1 ? "materiale" : "materiali"}`}>
             <Icon name="Paperclip" className="h-3 w-3" />
@@ -390,6 +445,40 @@ function SubjectCard({
             <span className="min-w-0 truncate">{examPill}</span>
             <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
           </button>
+        </div>
+      ) : null}
+
+      {choosing ? (
+        <div
+          role="group"
+          aria-label={SUBJECTS_TEXT.otherStatusTitle(subject.name)}
+          className="relative z-10 mt-3 rounded-[18px] bg-[var(--surface-soft)] p-3"
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            closeChooser();
+          }}
+        >
+          <p className="safe-text text-sm font-bold">{SUBJECTS_TEXT.otherStatusTitle(subject.name)}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {otherStatuses(subject).map((status, index) => (
+              <Button
+                key={status}
+                variant="soft"
+                icon={STATUS_ICON[status]}
+                autoFocus={index === 0}
+                onClick={() => {
+                  setChoosing(false);
+                  onStatus(status);
+                }}
+              >
+                {SUBJECT_STATUS_LABEL[status]}
+              </Button>
+            ))}
+            <Button variant="ghost" onClick={closeChooser}>
+              {SUBJECTS_TEXT.cancel}
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -430,6 +519,10 @@ function SubjectDrawer({
 }) {
   const { tasks, sessions, exams, attachments, subjects, updateSubject, addAttachment, updateAttachment, deleteAttachment } = useStudyStore();
   const [draft, setDraft] = useState({ name: "", teacher: "", cfu: "6", semester: "", targetGrade: "", color: SWATCHES[0], notes: "" });
+  // Dati come sono salvati: il confronto dice se chiudere perderebbe qualcosa.
+  const [saved, setSaved] = useState(draft);
+  // Chiusura (✕, Esc, tocco fuori, Archivia) in attesa della risposta a «Scartare le modifiche?».
+  const [pending, setPending] = useState<(() => void) | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
   const [editingAttachment, setEditingAttachment] = useState<Attachment | null>(null);
   const fail = (text: string) => setFeedback({ text, error: true });
@@ -437,7 +530,7 @@ function SubjectDrawer({
 
   useEffect(() => {
     if (!subject) return;
-    setDraft({
+    const next = {
       name: subject.name,
       teacher: subject.teacher,
       cfu: String(subject.cfu ?? 6),
@@ -445,10 +538,20 @@ function SubjectDrawer({
       targetGrade: subject.targetGrade ? String(subject.targetGrade) : "",
       color: subject.color,
       notes: subject.notes
-    });
+    };
+    setDraft(next);
+    setSaved(next);
+    setPending(null);
     setFeedback(null);
     setEditingAttachment(null);
   }, [subject?.id]);
+
+  // Copertina, file e argomenti si salvano subito; nome, CFU, colore e note solo con «Salva modifiche».
+  const dirty = Boolean(subject) && JSON.stringify(draft) !== JSON.stringify(saved);
+  const guard = (action: () => void) => {
+    if (dirty) setPending(() => action);
+    else action();
+  };
 
   const course = subject ? resolveBarbCourse(subject, BARB_DATASET.courses) : null;
   const stats = subject ? subjectStats(subject, { tasks, sessions, exams, attachments }) : null;
@@ -480,6 +583,10 @@ function SubjectDrawer({
       color: draft.color,
       notes: draft.notes
     });
+    const next = { ...draft, name: draft.name.trim(), teacher: draft.teacher.trim() };
+    setDraft(next);
+    setSaved(next);
+    setPending(null);
     ok("Modifiche salvate.");
   };
 
@@ -489,24 +596,47 @@ function SubjectDrawer({
   return (
     <Drawer
       open={Boolean(subject)}
-      onClose={onClose}
+      onClose={() => guard(onClose)}
       title={subject?.name ?? ""}
       eyebrow={
         subject ? (
           <>
             {course ? <span className="grid h-10 w-10 grid-cols-1 place-items-center rounded-xl" style={{ background: subjectColor(subject) }}><CourseIcon course={course} className="h-8 w-8 text-[#172333]" /></span> : <span className="h-3 w-3 rounded-full" style={{ background: subjectColor(subject) }} />}
-            <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag>
+            {subjectSemester(subject) !== "non-definito" ? <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag> : null}
             <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
             <Tag>{subject.cfu} CFU</Tag>
           </>
         ) : null
       }
       footer={
-        subject ? (
+        subject && pending ? (
+          // Stesso schema degli altri moduli: chiudere con dati cambiati chiede prima, sul posto.
+          <div role="group" aria-label={SUBJECTS_TEXT.unsavedTitle} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
+            <p className="text-sm font-black">{SUBJECTS_TEXT.unsavedTitle}</p>
+            <p className="text-sm font-bold text-[var(--muted)]">{SUBJECTS_TEXT.unsavedText}</p>
+            <div className="mt-2 flex flex-wrap justify-end gap-2">
+              <Button variant="soft" onClick={() => setPending(null)} autoFocus>
+                {SUBJECTS_TEXT.unsavedKeep}
+              </Button>
+              <Button
+                variant="danger"
+                icon="X"
+                onClick={() => {
+                  const action = pending;
+                  setDraft(saved);
+                  setPending(null);
+                  action();
+                }}
+              >
+                {SUBJECTS_TEXT.unsavedDiscard}
+              </Button>
+            </div>
+          </div>
+        ) : subject ? (
           <div className="flex flex-wrap items-center gap-2">
             {/* Come dalla scheda: archiviare è subito e si annulla dall'elenco, niente finestra di conferma. */}
             <span className="inline-flex items-center gap-1">
-              <Button variant="soft" icon={archived ? "RotateCcw" : "Archive"} onClick={() => (archived ? onRestore(subject) : onArchive(subject))}>
+              <Button variant="soft" icon={archived ? "RotateCcw" : "Archive"} onClick={() => (archived ? onRestore(subject) : guard(() => onArchive(subject)))}>
                 {archived ? SUBJECTS_TEXT.restoreSubject : SUBJECTS_TEXT.archiveSubject}
               </Button>
               <HelpTip {...SUBJECTS_HELP.archive} />
@@ -529,10 +659,12 @@ function SubjectDrawer({
           {/* I numeri che portano altrove sono pulsanti: "Da fare" → Attività della materia, "Esame tra" → l'esame. */}
           <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-3">
             <div className="col-span-2 min-w-0 min-[420px]:col-span-1">
-              <StatTile label="Ore di studio" value={`${formatHours(stats.studyMinutes)} h`} />
+              <StatTile label="Ore di studio" value={formatMinutes(stats.studyMinutes)} />
             </div>
             <StatTile label="Da fare" value={stats.openTasks.length} onClick={() => showTasks(subject.id)} />
-            {stats.exam ? (
+            {stats.exam && isDateToDecide(stats.exam) ? (
+              <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.examToDecide} onClick={() => openExam(stats.exam!.id)} />
+            ) : stats.exam ? (
               <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.days(studyDaysUntil(stats.exam.date))} hint={shortDate(stats.exam.date)} onClick={() => openExam(stats.exam!.id)} />
             ) : (
               <StatTile label={SUBJECTS_TEXT.examIn} value="—" />
@@ -637,7 +769,7 @@ function SubjectDrawer({
                     className="sr-only"
                     onChange={async (event) => {
                       try {
-                        const cover = await readImageFile(event.target.files?.[0]);
+                        const cover = await readCoverImage(event.target.files?.[0]);
                         if (cover) await updateSubject(subject.id, { cover });
                       } catch (error) {
                         fail(error instanceof Error ? error.message : "Immagine non valida: scegli un altro file.");

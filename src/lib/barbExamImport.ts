@@ -3,13 +3,19 @@ import type { BarbCourse } from './university/types';
 import type { BarbExamSession } from './university/examTypes';
 import { barbExamSourceUid, resolveBarbCourse } from './university/examSessions';
 import { isOfficialUnimiUrl } from './university/officialSources';
+import { courseSlotKey } from './barbExamSlots';
 
 export type ImportedExamEvent = Pick<CalendarEvent, 'title' | 'description' | 'category' | 'subjectId' | 'color' | 'priority' | 'start' | 'end' | 'allDay' | 'recurrence' | 'notes' | 'links' | 'sourceUid'>;
 
-/** Prepare date reminders, never an estimated exam duration. The store commits the whole batch. */
+/**
+ * Prepare date reminders, never an estimated exam duration. The store commits the whole batch.
+ * One event per exam slot (same course, day, type and time): a slot published with several
+ * registrations is imported once, and not again when another registration is already in the
+ * calendar (`allSessions` maps existing event UIDs back to their slot).
+ */
 export function prepareBarbExamImport(
   sessions: BarbExamSession[], courses: BarbCourse[], subjects: Subject[],
-  existingEvents: Pick<CalendarEvent, 'sourceUid'>[]
+  existingEvents: Pick<CalendarEvent, 'sourceUid'>[], allSessions: readonly BarbExamSession[] = sessions
 ): { events: ImportedExamEvent[]; skipped: number } {
   const byCourse = new Map<string, Subject>();
   for (const subject of subjects) {
@@ -18,12 +24,19 @@ export function prepareBarbExamImport(
     if (course && !byCourse.has(course.id)) byCourse.set(course.id, subject);
   }
   const seen = new Set(existingEvents.flatMap((event) => event.sourceUid ? [event.sourceUid] : []));
+  const slotOfUid = new Map([...allSessions, ...sessions].map((session) => [barbExamSourceUid(session), courseSlotKey(session)]));
+  const seenSlots = new Set([...seen].flatMap((uid) => slotOfUid.get(uid) ?? []));
   const events: ImportedExamEvent[] = [];
   let skipped = 0;
   for (const session of sessions) {
     const subject = byCourse.get(session.courseId);
     const course = courses.find((item) => item.id === session.courseId);
     const uid = barbExamSourceUid(session);
+    const slot = courseSlotKey(session);
+    if (seenSlots.has(slot)) {
+      skipped += 1;
+      continue;
+    }
     const start = new Date(`${session.date}T00:00:00`);
     const validDay = /^\d{4}-\d{2}-\d{2}$/.test(session.date) && !Number.isNaN(start.getTime()) &&
       start.getFullYear() === Number(session.date.slice(0, 4)) && start.getMonth() + 1 === Number(session.date.slice(5, 7)) && start.getDate() === Number(session.date.slice(8, 10));
@@ -32,6 +45,7 @@ export function prepareBarbExamImport(
       continue;
     }
     seen.add(uid);
+    seenSlots.add(slot);
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
     events.push({

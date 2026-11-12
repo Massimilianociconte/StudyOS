@@ -8,7 +8,8 @@ import { EXAM_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels
 import { EXAMS_HELP, EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
-import { readImageFile } from "../lib/files";
+import { readCoverImage } from "../lib/files";
+import { isDateToDecide, withoutDateToDecide } from "../lib/examOutcome";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
@@ -23,6 +24,7 @@ import { BarbExamImport } from "../components/BarbExamImport";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { useOnce } from "../hooks/useOnce";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
 
 // Pannello Condividi (e supabase-js) scaricato solo al tocco, come in ShareButton: qui è una voce
 // del menu "Altre azioni" e non un pulsante, quindi il caricamento differito sta nella vista.
@@ -98,8 +100,9 @@ export function ExamsView() {
     () => (hasExams ? "personal" : preferences.showBarb || preferences.degreeProgram === "barb" ? "barb" : "personal"),
     { validate: oneOf("barb", "personal") }
   );
-  // Esame aperto nel modulo: scritto anche da altre schermate (writeUiState + setActiveView).
-  const [editingId, setEditingId] = useUiState<string | null>(EXAMS_EDITING_KEY, null, { scope: "tab", validate: isNullableString });
+  // Esame aperto nel modulo: scritto anche da altre schermate (goToView) e dalla ricerca, anche
+  // mentre Esami è già aperta: in quel caso si apre lo stesso, senza rimontare la vista.
+  const [editingId, setEditingId] = useLinkedUiState<string | null>(EXAMS_EDITING_KEY, null, { scope: "tab", validate: isNullableString });
   const editing = resolveExamEditing(editingId, exams);
   // Esame del calendario da aggiungere (Home, Statistiche): apre «Aggiungi esame» già compilato, poi si cancella.
   const [prefill, setPrefill] = useUiState<CalendarExamRef | null>(EXAMS_NEW_KEY, null, { scope: "tab", validate: isNullableCalendarExamRef });
@@ -160,6 +163,14 @@ function PersonalExamsView({
   const [creating, setCreating] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [gradeOpen, setGradeOpen] = useState(false);
+  // «Registra l'esito» di un esame con la data passata: il modulo breve dell'esito, non quello completo.
+  // Resta impostato mentre il pannello si chiude (animazione); «Registra un voto» lo azzera.
+  const [gradeExam, setGradeExam] = useState<Exam | null>(null);
+  const openGrade = (exam: Exam | null) => {
+    setNotice("");
+    setGradeExam(exam);
+    setGradeOpen(true);
+  };
   const [importOpen, setImportOpen] = useState(false);
   const [share, setShare] = useState<"idle" | "loading" | "open" | "failed">("idle");
   const [message, setMessage] = useState("");
@@ -208,9 +219,13 @@ function PersonalExamsView({
   useDialogLayer(formOpen, { panelRef: dialogRef, areaRef, onEscape: () => closeForm() });
   const sorted = useMemo(() => [...exams].sort((a, b) => a.date.localeCompare(b.date)), [exams]);
   const today = startOfDay(new Date());
-  const upcoming = sorted.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today));
-  // Data passata ma esito non registrato: vanno chiusi con voto (o riprogrammati).
-  const toRecord = sorted.filter((exam) => exam.status !== "done" && isBefore(parseISO(exam.date), today)).reverse();
+  // In arrivo, poi i non superati con la nuova data ancora da decidere.
+  const upcoming = [
+    ...sorted.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today)),
+    ...sorted.filter((exam) => isDateToDecide(exam))
+  ];
+  // Data passata ma esito non registrato: vanno chiusi con l'esito (superato, idoneità, non superato).
+  const toRecord = sorted.filter((exam) => exam.status !== "done" && isBefore(parseISO(exam.date), today) && !isDateToDecide(exam)).reverse();
   const entries = useMemo(() => librettoEntries(exams, subjects), [exams, subjects]);
   const stats = gradeStats(entries);
   // Copertina come immagine solo se incorporata (data:image/…): un indirizzo esterno, anche scritto da
@@ -285,7 +300,10 @@ function PersonalExamsView({
       return fail(`Voto non valido: scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
     }
     const done = draft.status === "done";
+    // Data cambiata (o esito registrato): la «data da decidere» di un esame non superato non vale più.
+    const tags = editingExam && (done || date.toISOString() !== editingExam.date) ? { tags: withoutDateToDecide(editingExam.tags) } : {};
     const payload = {
+      ...tags,
       subjectId: draft.subjectId,
       date: date.toISOString(),
       preparation: done ? 100 : Math.max(0, Math.min(100, draft.preparation)),
@@ -328,7 +346,7 @@ function PersonalExamsView({
   // (nessuna materia o nessun esame in arrivo), quello in alto diventa secondario.
   const headerPrimary = subjects.length > 0 && upcoming.length > 0;
   const moreActions: PageAction[] = [
-    { label: EXAMS_TEXT.recordGrade, icon: "Award", onClick: () => setGradeOpen(true) },
+    { label: EXAMS_TEXT.recordGrade, icon: "Award", onClick: () => openGrade(null) },
     { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setImportOpen(true) },
     ...(cloudConfigured ? [{ label: EXAMS_TEXT.shareProgress, icon: "Share2", onClick: openShare }] : [])
   ];
@@ -431,8 +449,12 @@ function PersonalExamsView({
                       <span className="one-line-safe block text-sm font-extrabold">{subjectName(subjects, exam.subjectId)}</span>
                       <span className="block text-xs font-bold text-[var(--muted)]">{format(parseISO(exam.date), "d MMMM yyyy", { locale: it })} · com'è andata?</span>
                     </button>
-                    <Button variant="soft" icon="Award" onClick={() => openEdit(exam, { status: "done" })}>
-                      Registra l'esito
+                    <Button
+                      variant="soft"
+                      icon="Award"
+                      onClick={() => openGrade(exam)}
+                    >
+                      {EXAMS_TEXT.recordOutcome}
                     </Button>
                   </li>
                 ))}
@@ -446,6 +468,7 @@ function PersonalExamsView({
                 <ExamCard
                   key={exam.id}
                   exam={exam}
+                  dateToDecide={isDateToDecide(exam)}
                   color={subjectColor(subjects, exam.subjectId)}
                   name={subjectName(subjects, exam.subjectId)}
                   openTasks={tasks.filter((task) => task.subjectId === exam.subjectId && task.status !== "done" && task.status !== "archived").length}
@@ -485,12 +508,14 @@ function PersonalExamsView({
       {importOpen && <BarbExamImport onClose={() => setImportOpen(false)} />}
       <GradeDrawer
         open={gradeOpen}
+        exam={gradeExam}
         subjects={subjects}
         exams={exams}
         onClose={() => setGradeOpen(false)}
-        onSaved={(text) => {
+        onSaved={(text, outcome) => {
           setGradeOpen(false);
-          setNotice(`${text} Medie e voto di laurea sono in Libretto e laurea.`);
+          // Non superato: niente libretto, l'avviso dice che l'esame resta aperto.
+          setNotice(outcome === "failed" ? text : `${text} ${EXAMS_TEXT.librettoHint}`);
         }}
       />
 
@@ -605,7 +630,8 @@ function PersonalExamsView({
                       accept="image/*"
                       onChange={async (event) => {
                         try {
-                          const cover = await readImageFile(event.target.files?.[0]);
+                          // Ridotta come la foto del profilo: una foto da telefono va bene.
+                          const cover = await readCoverImage(event.target.files?.[0]);
                           if (cover) setDraft((value) => ({ ...value, cover }));
                         } catch (error) {
                           setMessage(error instanceof Error ? error.message : "Immagine non valida: scegli un altro file.");
@@ -668,6 +694,7 @@ function PersonalExamsView({
 
 function ExamCard({
   exam,
+  dateToDecide,
   color,
   name,
   openTasks,
@@ -679,6 +706,8 @@ function ExamCard({
   onLink
 }: {
   exam: Exam;
+  /** Non superato senza la nuova data: niente giorni che mancano né bollino di rischio. */
+  dateToDecide: boolean;
   color: string;
   name: string;
   openTasks: number;
@@ -690,7 +719,7 @@ function ExamCard({
   onLink: (target: ExamLinkTarget) => void;
 }) {
   const remaining = studyDaysUntil(exam.date);
-  const risk = examRisk(remaining, exam.preparation);
+  const risk = dateToDecide ? null : examRisk(remaining, exam.preparation);
   const riskHelp = risk === "alto" ? EXAMS_HELP.riskHigh : EXAMS_HELP.riskMedium;
   const program = exam.program.slice(0, 6);
   const cover = safeImageDataUrl(exam.cover);
@@ -699,6 +728,11 @@ function ExamCard({
       <div className="flex items-start gap-3">
         {cover ? (
           <img src={cover} alt="" className="h-14 w-14 shrink-0 rounded-[16px] object-cover" />
+        ) : dateToDecide ? (
+          <div className="grid grid-cols-1 h-14 w-14 shrink-0 place-items-center rounded-[16px] text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
+            <span className="text-sm font-black leading-none">{EXAMS_TEXT.dateToDecideShort}</span>
+            <span className="text-[10px] font-black uppercase text-[var(--muted)]">{EXAMS_TEXT.dateToDecideBox}</span>
+          </div>
         ) : (
           <div className="grid grid-cols-1 h-14 w-14 shrink-0 place-items-center rounded-[16px] text-center" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
             <span className="text-xl font-black leading-none tabular-nums">{remaining}</span>
@@ -708,8 +742,8 @@ function ExamCard({
         <button type="button" onClick={onEdit} className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-lg font-black leading-tight">{name}</h3>
           <p className="text-xs font-bold text-[var(--muted)]">
-            {capitalizeFirst(format(parseISO(exam.date), "EEEE d MMMM · HH:mm", { locale: it }))}
-            {cover ? ` · ${remaining} ${remaining === 1 ? "giorno" : "giorni"}` : ""}
+            {dateToDecide ? EXAMS_TEXT.dateToDecide : capitalizeFirst(format(parseISO(exam.date), "EEEE d MMMM · HH:mm", { locale: it }))}
+            {cover && !dateToDecide ? ` · ${remaining} ${remaining === 1 ? "giorno" : "giorni"}` : ""}
           </p>
         </button>
         <IconButton icon="PenLine" label={`Modifica esame di ${name}`} className="h-9 w-9" onClick={onEdit} />

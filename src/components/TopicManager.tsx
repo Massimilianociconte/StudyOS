@@ -3,7 +3,7 @@ import { differenceInCalendarDays, format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { StudyTopic, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
-import { subjectColor, subjectName } from "../lib/selectors";
+import { selectableSubjects, subjectColor, subjectName } from "../lib/selectors";
 import { TOPIC_FILTER_TEXT } from "../lib/labels/study";
 import { Field, IconButton, inputClass } from "./ui";
 import { Icon } from "./Icon";
@@ -40,17 +40,19 @@ export function TopicManager({
   const { topics, addTopics, updateTopic, deleteTopic } = useStudyStore();
   const [ownFilter, setOwnFilter] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const activeSubjects = subjects.filter((subject) => !subject.archived);
+  // Nuovi argomenti solo per le materie da studiare (niente archiviate o già superate), come gli altri menu.
+  const activeSubjects = selectableSubjects(subjects);
   const wanted = filterProp ?? ownFilter;
   const filter = wanted && subjects.some((subject) => subject.id === wanted) ? wanted : "";
   const setFilter = (next: string) => (onFilterChange ? onFilterChange(next) : setOwnFilter(next));
   const scope = subjectId ?? filter;
   const live = topics.filter((topic) => !topic.archived);
   const list = live.filter((topic) => !scope || topic.subjectId === scope).sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate));
-  // Una materia archiviata scelta da fuori resta tra le opzioni, così il filtro si vede.
-  const filterSubjects = activeSubjects.some((subject) => subject.id === filter)
-    ? activeSubjects
-    : [...activeSubjects, ...subjects.filter((subject) => subject.id === filter)];
+  // Nel filtro: le materie da studiare più quelle (superate o archiviate) che hanno ancora argomenti,
+  // e quella scelta da fuori, così il filtro si vede.
+  const filterSubjects = subjects.filter(
+    (subject) => activeSubjects.includes(subject) || subject.id === filter || live.some((topic) => topic.subjectId === subject.id)
+  );
   const countOf = (id: string) => live.filter((topic) => topic.subjectId === id).length;
 
   return (

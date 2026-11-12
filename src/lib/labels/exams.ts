@@ -23,6 +23,13 @@ export const EXAMS_TEXT = {
   /** «Annulla» quando l'evento era già cambiato altrove (sync, un'altra scheda): non si sovrascrive. */
   eventNotRestored: "Evento non rimesso: nel frattempo è cambiato. L'esame resta.",
   recordGrade: "Registra un voto",
+  /** Esame con la data passata: apre il modulo breve dell'esito (voto, idoneità, non superato). */
+  recordOutcome: "Registra l'esito",
+  librettoHint: "Medie e voto di laurea sono in Libretto e laurea.",
+  /** Esame non superato senza la nuova data. */
+  dateToDecide: "Non superato · nuova data da decidere",
+  dateToDecideShort: "Data",
+  dateToDecideBox: "da decidere",
   shareProgress: "Condividi i progressi",
   study: "Studia",
   readiness: "Quanto sei pronto",

@@ -5,6 +5,7 @@ import { it } from "date-fns/locale";
 import type { BarbCourse } from "../lib/university/types";
 import type { BarbExamSession } from "../lib/university/examTypes";
 import { BARB_EXAM_SESSIONS, getExamStatus } from "../lib/university/examSessions";
+import { examSlotKey } from "../lib/barbExamSlots";
 import { courseColor } from "../lib/barbCourseVisuals";
 import { safeHref } from "../lib/safeUrl";
 import { BARB_EXAM_TIMING_LABEL, BARB_EXAM_TYPE_LABEL, BARB_EXAM_TYPE_MISSING, EXAMS_HELP, EXAMS_TEXT } from "../lib/labels/exams";
@@ -15,9 +16,6 @@ import { Button, Drawer, EmptyState, HelpTip, Tag } from "./ui";
 export const barbToday = (now: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 export const barbSessionDate = (date: string) => format(parseISO(date), "d MMMM yyyy", { locale: it });
 export const barbSessionType = (type: string | null) => (type ? (BARB_EXAM_TYPE_LABEL[type] ?? type) : BARB_EXAM_TYPE_MISSING);
-
-const examSlotKey = (session: BarbExamSession): string =>
-  `${session.date}|${session.type ?? ""}|${session.time ?? ""}`;
 
 export function BarbExamAvailability({ course }: { course: BarbCourse }) {
   const count = new Set(BARB_EXAM_SESSIONS.filter(session => session.courseId === course.id).map(examSlotKey)).size;

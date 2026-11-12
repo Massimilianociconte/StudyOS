@@ -42,3 +42,21 @@ export const resizeImageFile = async (file: File | undefined, size = 256): Promi
   bitmap.close();
   return canvas.toDataURL("image/jpeg", 0.85);
 };
+
+export const COVER_TOO_BIG = "Immagine troppo grande anche dopo averla ridotta: scegline una più leggera.";
+
+/**
+ * Copertina di materia o esame: ridotta come la foto del profilo (quadrata, pochi KB) così una foto
+ * da telefono va bene. Solo se resta sopra il limite della sincronizzazione lo dice, senza
+ * consigliare link (una copertina è sempre un'immagine caricata qui).
+ */
+export const readCoverImage = async (file?: File, size = 320): Promise<string | undefined> => {
+  if (!file) return undefined;
+  if (!file.type.startsWith("image/")) throw new Error("Seleziona un file immagine.");
+  const canShrink = typeof createImageBitmap === "function" && typeof document !== "undefined";
+  if (!canShrink && file.size > MAX_EMBEDDED_FILE_BYTES) throw new Error(COVER_TOO_BIG);
+  const dataUrl = await resizeImageFile(file, size);
+  // Base64: 4 caratteri ogni 3 byte.
+  if (dataUrl && (dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75 > MAX_EMBEDDED_FILE_BYTES) throw new Error(COVER_TOO_BIG);
+  return dataUrl;
+};

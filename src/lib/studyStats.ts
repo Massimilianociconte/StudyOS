@@ -216,6 +216,25 @@ export function largestRemainderPercents(values: readonly number[]): number[] {
   return result;
 }
 
+/**
+ * Minuti interi delle righe (da mostrare con formatMinutes, come le schede delle materie) che sommano
+ * sempre al totale arrotondato: stessi resti più grandi delle percentuali. Es.: 50 e 25 → «50 min» e
+ * «25 min»; 49,5 e 25,5 → 50 e 25 (totale 75), non 50 e 26.
+ */
+export function minutesThatAddUp(minutes: readonly number[]): number[] {
+  const exact = minutes.map((value) => Math.max(0, value));
+  const target = Math.round(exact.reduce((sum, value) => sum + value, 0));
+  const result = exact.map(Math.floor);
+  let missing = target - result.reduce((sum, value) => sum + value, 0);
+  const order = exact.map((value, index) => ({ index, rest: value - Math.floor(value) })).sort((a, b) => b.rest - a.rest || a.index - b.index);
+  for (const { index } of order) {
+    if (missing <= 0) break;
+    result[index] += 1;
+    missing -= 1;
+  }
+  return result;
+}
+
 /** Sessioni completate di una materia, dalla più recente. */
 export function subjectSessions(sessions: StudySession[], subjectId: string): StudySession[] {
   return completed(sessions)

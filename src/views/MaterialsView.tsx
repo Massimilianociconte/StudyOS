@@ -6,7 +6,7 @@ import { ATTACHMENT_KIND_ICON, ATTACHMENT_KIND_LABEL, attachmentKind, capitalize
 import { MATERIALS_HELP, MATERIALS_TEXT } from "../lib/labels/materials";
 import { Button, EmptyState, Field, HelpTip, IconButton, SectionTitle, Segmented, Tag, inputClass, useDialogLayer } from "../components/ui";
 import { HelpField } from "../components/HelpField";
-import { goToView } from "../hooks/useLinkedUiState";
+import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
 import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
@@ -29,8 +29,15 @@ type KindFilter = "all" | AttachmentKind;
 
 const INVALID_LINK = "Link non valido: incolla l'indirizzo completo (Es. https://…).";
 
+/** Etichette mostrate: senza «link», che l'app aggiungeva da sola ai link salvati (quelle scritte da chi studia restano). */
+// Stessa regola di prima per `materials.query` (useUiState accettava solo stringhe).
+const isString = (value: unknown): value is string => typeof value === "string";
+
+const visibleTags = (attachment: Attachment) => attachment.tags.filter((tag) => !(attachment.externalUrl && tag === "link"));
+
 export function MaterialsView() {
-  const [query, setQuery] = useUiState("materials.query", "", { scope: "tab" });
+  // Scritta anche da Home e dalla ricerca: si applica pure se Materiali è già aperta.
+  const [query, setQuery] = useLinkedUiState("materials.query", "", { scope: "tab", validate: isString });
   const [kind, setKind] = useUiState<KindFilter>("materials.kind", "all", { validate: oneOf("all", "pdf", "image", "video", "doc", "link", "file") });
   const [savedSubjectFilter, setSubjectFilter] = useUiState("materials.subject", "");
   const [uploadError, setUploadError] = useState("");
@@ -62,7 +69,6 @@ export function MaterialsView() {
     return null;
   };
 
-  const fileInput = useRef<HTMLInputElement>(null);
   const editPanelRef = useRef<HTMLElement>(null);
   const editAreaRef = useRef<HTMLDivElement>(null);
   useDialogLayer(editingAttachment !== null, { panelRef: editPanelRef, areaRef: editAreaRef, onEscape: () => setEditingAttachment(null) });
@@ -148,19 +154,6 @@ export function MaterialsView() {
         action={<ShareButton scopes={["materials"]} />}
       />
 
-      {/* Il campo file dell'invito nello stato vuoto: il pulsante lo apre. */}
-      <input
-        ref={fileInput}
-        type="file"
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden="true"
-        onChange={async (event) => {
-          const file = event.target.files?.[0];
-          event.target.value = "";
-          if (file) await uploadFile(file);
-        }}
-      />
       <AddBar
         onFile={uploadFile}
         onLink={async (rawUrl, name) => {
@@ -232,7 +225,7 @@ export function MaterialsView() {
                     {ATTACHMENT_KIND_LABEL[attachmentType]}
                     {attachment.externalUrl ? ` · ${hostOf(attachment.externalUrl)}` : attachment.size ? ` · ${formatBytes(attachment.size)}` : ""} · {shortDate(attachment.addedAt)}
                   </p>
-                  {linked || attachment.tags.length ? (
+                  {linked || visibleTags(attachment).length ? (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {linked ? (
                         linkAction ? (
@@ -241,7 +234,7 @@ export function MaterialsView() {
                           <Tag color={color}>{linked}</Tag>
                         )
                       ) : null}
-                      {attachment.tags.slice(0, 3).map((tag) => (
+                      {visibleTags(attachment).slice(0, 3).map((tag) => (
                         <PillButton key={tag} label={`#${tag}`} aria={MATERIALS_TEXT.searchTag} onClick={() => setQuery(tag)} />
                       ))}
                     </div>
@@ -309,16 +302,8 @@ export function MaterialsView() {
             }
           />
         ) : (
-          <EmptyState
-            icon="Paperclip"
-            title={MATERIALS_TEXT.emptyTitle}
-            body={MATERIALS_TEXT.emptyBody}
-            action={
-              <Button variant="primary" icon="Upload" onClick={() => fileInput.current?.click()}>
-                {MATERIALS_TEXT.upload}
-              </Button>
-            }
-          />
+          // Un'azione sola: «Carica un file» e «Salva un link» sono già nella barra qui sopra.
+          <EmptyState icon="Paperclip" title={MATERIALS_TEXT.emptyTitle} body={MATERIALS_TEXT.emptyBody} />
         )
       )}
 
