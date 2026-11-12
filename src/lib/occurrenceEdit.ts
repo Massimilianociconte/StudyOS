@@ -217,9 +217,9 @@ const changesOpened = (item: Occurrence, changes: Partial<CalendarEvent>, series
 };
 
 /**
- * "Questo e i successivi" da un giorno cambiato da solo, senza regola nuova e senza cambiarne giorno né
- * orario (solo il titolo…): non è uno spostamento. La parte nuova tiene il programma della serie dalla
- * data del giorno e il giorno resta dov'è (nella parte nuova, con la modifica; vedi planSplit).
+ * "Questo e i successivi" o "Tutti" da un giorno cambiato da solo, senza regola nuova e senza cambiarne
+ * giorno né orario (solo il titolo…): non è uno spostamento. La serie (o la parte nuova, dalla data del
+ * giorno) tiene il suo programma e il giorno resta dov'è, con la modifica (vedi planSplit).
  */
 const staysPut = (item: Occurrence, series: CalendarEvent, changes: Partial<CalendarEvent>) =>
   occurrenceTarget(item).row && !userRuleChange({ item, series, changes }) && !changesOpened(item, changes, series);
@@ -269,7 +269,7 @@ export const occurrenceEditCalls = ({
   const own = chosen ? changes : withoutRepeat(changes);
   if (scope === "this") return { calls: [{ scope, patch: own }] };
   // Da un giorno spostato da solo, lasciato dov'è: nessuna regola che segue uno spostamento.
-  const stays = scope === "following" && staysPut(item, series, changes);
+  const stays = staysPut(item, series, changes);
   const followed = chosen || stays ? null : followedRule(series, target.date, picked);
   const moved = followed && ruleKey(followed) !== ruleKey(normalizeRepeat(series)) ? { ...own, repeat: followed } : own;
   // Più giorni della settimana spostati insieme: si dice nella scelta.
@@ -529,7 +529,7 @@ export const scopeImpact = (
   const series = events.find((event) => event.id === target.seriesId && !isOccurrenceRow(event)) ?? item;
   const picked = pickedDay(item, changes, series);
   // Da un giorno spostato da solo lasciato dov'è, la serie non si sposta (vedi staysPut).
-  const shift = isCivilDate(picked) && !(scope === "following" && staysPut(item, series, changes)) ? civilDaysBetween(target.date, picked) : 0;
+  const shift = isCivilDate(picked) && !(scope !== "this" && staysPut(item, series, changes)) ? civilDaysBetween(target.date, picked) : 0;
   const masters = after.events.filter((event) => !isOccurrenceRow(event));
   const inSeries = (date: string) => {
     const day = civilAddDays(date, shift);

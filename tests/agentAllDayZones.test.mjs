@@ -136,6 +136,16 @@ test("agente, tutto il giorno: «Questo e i successivi» da un giorno spostato d
   assert.deepEqual(normalizeRepeat(part).byWeekday, ["MO"]);
 });
 
+test("agente, tutto il giorno: «Tutti» da un giorno spostato da solo, solo il titolo: la serie resta di lunedì, il giorno resta spostato", async () => {
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "this", start: "2026-11-18" });
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "all", title: "X" });
+  assert.equal(grid(), "11-02 X | 11-09 X | 11-18 X | 11-23 X | 11-30 X");
+  assert.deepEqual(normalizeRepeat(byId("s")).byWeekday, ["MO"]);
+  await update({ id: "s", occurrenceDate: "2026-11-16", scope: "all", title: "Y", start: "2026-11-18" });
+  assert.equal(grid(), "11-02 Y | 11-09 Y | 11-18 Y | 11-23 Y | 11-30 Y");
+  assert.deepEqual(allDayDays(byId("s")), { first: "2026-11-02", last: "2026-11-02" });
+});
+
 test("agente, tutto il giorno: un evento singolo (e una vacanza di tre giorni) spostato tiene i suoi giorni a Roma", async () => {
   reset([romeAllDay("2026-12-08", "2026-12-08", { id: "e" }), romeAllDay("2026-12-08", "2026-12-10", { id: "v", title: "Mare", category: "vacation" })]);
   await update({ id: "e", start: "2026-12-09" });

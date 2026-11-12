@@ -253,6 +253,7 @@
   non dalla sua data (lunedì 16): senza cambiarne giorno né orario la serie tiene il suo programma e il
   giorno resta spostato nella parte nuova (`staysPut`, `movedAway` in planSplit); cambiandoli, la parte
   nuova parte dal giorno scelto; le date che spariscono sono quelle che si vedono (`shownDayOf`).
+  «Tutti» uguale: solo titolo o dettagli da un giorno spostato non sposta la serie (resta di lunedì).
 - «fino a» (`seriesSpan.until`) e «La serie ora finisce» (`ScopeImpact.endsOn`) dicono l'ultima data
   che c'è davvero (`lastShownDate`): non un giorno annullato, un giorno spostato dove sta ora.
 - Agenti MCP e condivisione: persone come `personId` (`person_` + 16 cifre esadecimali),

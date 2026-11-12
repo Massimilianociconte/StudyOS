@@ -1184,3 +1184,21 @@ test("Round 3 (3). Le date che spariscono sono quelle che si vedono: un giorno s
   assert.ok(!absorbed.impact.gone.includes("2026-12-07"), absorbed.impact.gone.join(" "));
   assert.ok(absorbed.impact.gone.includes("2026-11-16") && absorbed.impact.gone.includes("2026-11-30"), absorbed.impact.gone.join(" "));
 });
+
+test("Round 4. «Tutti» da un giorno spostato da solo, senza cambiarne giorno né orario: la serie resta di lunedì e il giorno resta spostato", () => {
+  const base = movedSixteen();
+  const row = findOccurrence(base, "s", "2026-11-16");
+  for (const changes of [{ title: "X" }, { title: "X", start: row.start, end: row.end }]) {
+    const label = JSON.stringify(Object.keys(changes));
+    const { calls } = occurrenceEditCalls({ item: row, series: seriesOf(base), scope: "all", changes, shown: row });
+    const after = simulateOccurrenceEdit(base, "s", "2026-11-16", calls, NOW).events;
+    assert.deepEqual(romeView(after), ["11-02 X", "11-09 X", "11-18 X", "11-23 X", "11-30 X", "12-07 X"], label);
+    assert.deepEqual(normalizeRepeat(seriesOf(after)).byWeekday, ["MO"], label);
+    assert.equal(startDayOf(seriesOf(after).start, false, "Europe/Rome"), "2026-11-02", label);
+    assert.equal(scopeImpact(base, row, "all", calls, NOW, changes).ownLost, false, label);
+  }
+  // Cambiando davvero il giorno (a giovedì 19): come prima, la serie segue il giorno.
+  const moved = draggedTimes(row, DAY);
+  const { calls } = occurrenceEditCalls({ item: row, series: seriesOf(base), scope: "all", changes: moved, shown: row });
+  assert.deepEqual(normalizeRepeat(seriesOf(simulateOccurrenceEdit(base, "s", "2026-11-16", calls, NOW).events)).byWeekday, ["TH"]);
+});
