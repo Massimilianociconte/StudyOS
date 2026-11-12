@@ -47,6 +47,19 @@ export const TASKS_TEXT = {
   close: "Chiudi senza salvare"
 } as const;
 
+/** Editor di un'attività (anche quello aperto dal calendario). */
+export const TASK_EDITOR_TEXT = {
+  steps: "Passaggi",
+  stepsCount: (done: number, total: number) => `${done} di ${total} fatti`,
+  stepsHint: "Dividi l'attività in piccoli passi da spuntare.",
+  stepText: (index: number) => `Passaggio ${index}`,
+  stepDone: (text: string) => `Fatto: ${text}`,
+  removeStep: (text: string) => `Togli il passaggio «${text}»`,
+  newStep: "Nuovo passaggio",
+  newStepPlaceholder: "Es. Esercizi da 1 a 5",
+  addStep: "Aggiungi"
+} as const;
+
 export const TASKS_HELP = {
   views: {
     title: "Come vedere le attività",

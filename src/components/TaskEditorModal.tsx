@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
@@ -8,10 +8,12 @@ import { HelpField } from "./HelpField";
 import { DurationField } from "./DurationField";
 import { durationToMinutes, minutesToDuration } from "../lib/duration";
 import { ENERGY_LABEL, PRIORITY_LABEL, TASK_STATUS_LABEL, formatMinutes } from "../lib/labels";
-import { TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
+import { TASK_EDITOR_TEXT, TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
 import { useNow } from "../hooks/useNow";
 import { editedMinutesPatch, formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds, taskMinutesFieldValue } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
+import { addStep, cleanSteps, removeStep, renameStep, stepsDone, toggleStep, type TaskStep } from "../lib/tasksUi";
+import { createId } from "../lib/id";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -56,7 +58,8 @@ export function TaskEditorModal({
     tags: task.tags.join(", "),
     notes: task.notes,
     difficulty: String(task.difficulty),
-    importance: String(task.importance)
+    importance: String(task.importance),
+    steps: task.subtasks
   });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -121,6 +124,7 @@ export function TaskEditorModal({
         energy: draft.energy,
         priority: draft.priority,
         subjectId: draft.subjectId || undefined,
+        subtasks: cleanSteps(draft.steps),
         tags: parseTags(draft.tags),
         notes: draft.notes.trim(),
         difficulty: Math.max(1, Math.min(5, difficulty)) as Task["difficulty"],
@@ -210,6 +214,8 @@ export function TaskEditorModal({
               <p className="mt-1 text-xs font-bold text-[var(--faint)]">{statusHint}</p>
             </div>
           </div>
+
+          <TaskStepsField steps={draft.steps} onChange={(steps) => setDraft((value) => ({ ...value, steps }))} />
 
           <Field label="Descrizione (facoltativa)">
             <textarea
@@ -317,5 +323,111 @@ export function TaskEditorModal({
     </div>
     ,
     document.body
+  );
+}
+
+/**
+ * Passaggi da spuntare. Invio nel campo nuovo aggiunge e resta lì; Invio su un passaggio porta al
+ * campo nuovo; Backspace su un passaggio vuoto lo toglie e torna al precedente.
+ */
+function TaskStepsField({ steps, onChange }: { steps: TaskStep[]; onChange: (steps: TaskStep[]) => void }) {
+  const [text, setText] = useState("");
+  const listRef = useRef<HTMLUListElement>(null);
+  const newRef = useRef<HTMLInputElement>(null);
+  const headingId = useId();
+  const count = stepsDone(steps);
+
+  const add = () => {
+    const next = addStep(steps, text, createId("subtask"));
+    if (next === steps) return;
+    onChange(next);
+    setText("");
+    newRef.current?.focus();
+  };
+
+  const focusStep = (index: number) => {
+    const inputs = listRef.current?.querySelectorAll<HTMLInputElement>("input[data-step]");
+    (inputs?.[index] ?? newRef.current)?.focus();
+  };
+
+  const onStepKey = (event: KeyboardEvent<HTMLInputElement>, step: TaskStep, index: number) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      newRef.current?.focus();
+    } else if (event.key === "Backspace" && step.text === "") {
+      event.preventDefault();
+      onChange(removeStep(steps, step.id));
+      requestAnimationFrame(() => focusStep(index - 1));
+    }
+  };
+
+  return (
+    <section aria-labelledby={headingId} className="grid grid-cols-1 gap-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 id={headingId} className="text-sm font-extrabold">
+          {TASK_EDITOR_TEXT.steps}
+        </h4>
+        {count.total ? <span className="text-xs font-bold text-[var(--muted)]">{TASK_EDITOR_TEXT.stepsCount(count.done, count.total)}</span> : null}
+      </div>
+      {steps.length ? (
+        <ul ref={listRef} className="grid grid-cols-1 gap-0.5">
+          {steps.map((step, index) => {
+            const name = step.text.trim() || TASK_EDITOR_TEXT.stepText(index + 1);
+            return (
+              <li key={step.id} className="flex min-w-0 items-center gap-1">
+                {/* Etichetta da 44 px attorno alla casella: il tocco vicino la spunta. */}
+                <label className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center">
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 cursor-pointer accent-[var(--accent)]"
+                    checked={step.done}
+                    onChange={() => onChange(toggleStep(steps, step.id))}
+                    aria-label={TASK_EDITOR_TEXT.stepDone(name)}
+                  />
+                </label>
+                <input
+                  data-step
+                  className={`${inputClass} min-w-0 flex-1 ${step.done ? "text-[var(--muted)] line-through" : ""}`}
+                  value={step.text}
+                  onChange={(event) => onChange(renameStep(steps, step.id, event.target.value))}
+                  onKeyDown={(event) => onStepKey(event, step, index)}
+                  aria-label={TASK_EDITOR_TEXT.stepText(index + 1)}
+                />
+                <IconButton
+                  icon="X"
+                  label={TASK_EDITOR_TEXT.removeStep(name)}
+                  className="bg-transparent text-[var(--muted)] hover:text-[var(--text)]"
+                  onClick={() => {
+                    onChange(removeStep(steps, step.id));
+                    newRef.current?.focus();
+                  }}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="text-xs font-bold text-[var(--faint)]">{TASK_EDITOR_TEXT.stepsHint}</p>
+      )}
+      <div className="flex min-w-0 items-center gap-2">
+        <input
+          ref={newRef}
+          className={`${inputClass} min-w-0 flex-1`}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            add();
+          }}
+          placeholder={TASK_EDITOR_TEXT.newStepPlaceholder}
+          aria-label={TASK_EDITOR_TEXT.newStep}
+          enterKeyHint="enter"
+        />
+        <Button variant="soft" icon="Plus" onClick={add} disabled={!text.trim()} className="shrink-0">
+          {TASK_EDITOR_TEXT.addStep}
+        </Button>
+      </div>
+    </section>
   );
 }
