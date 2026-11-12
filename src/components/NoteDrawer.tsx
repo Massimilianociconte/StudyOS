@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
@@ -228,16 +228,39 @@ export function LinkedNotes({ entityType, id }: { entityType: EntityType; id: st
   );
   const [openId, setOpenId] = useState<string | null>(null);
   const sorted = [...notes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const baseId = useId();
+  const buttonId = (noteId: string) => `${baseId}-note-${noteId}`;
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Sempre nel DOM (nascosto, niente spazio): da qui si ritrova il pannello che contiene l'elenco.
+  const anchorRef = useRef<HTMLSpanElement>(null);
+
+  // Dopo Elimina e «Annulla» il pulsante della nota è un altro (l'elenco si è svuotato e riempito): il
+  // Drawer rimetterebbe il focus su quello vecchio, staccato, e finirebbe sulla pagina. Dopo la sua
+  // chiusura il focus va al pulsante della nota; se non c'è più, al titolo dell'elenco o al pannello.
+  const close = () => {
+    const closed = openId;
+    setOpenId(null);
+    window.requestAnimationFrame(() => {
+      const target =
+        (closed ? document.getElementById(buttonId(closed)) : null) ??
+        headingRef.current ??
+        anchorRef.current?.closest<HTMLElement>('[tabindex="-1"]');
+      target?.focus({ preventScroll: true });
+    });
+  };
 
   return (
     <>
       {sorted.length ? (
         <section aria-label={NOTES_TEXT.listTitle(sorted.length)} className="grid grid-cols-1 gap-1.5">
-          <h4 className="text-xs font-black uppercase text-[var(--faint)]">{NOTES_TEXT.listTitle(sorted.length)}</h4>
+          <h4 ref={headingRef} tabIndex={-1} className="text-xs font-black uppercase text-[var(--faint)] outline-none">
+            {NOTES_TEXT.listTitle(sorted.length)}
+          </h4>
           <ul className="grid grid-cols-1 gap-1.5">
             {sorted.map((note) => (
               <li key={note.id}>
                 <button
+                  id={buttonId(note.id)}
                   type="button"
                   onClick={() => setOpenId(note.id)}
                   aria-haspopup="dialog"
@@ -256,7 +279,8 @@ export function LinkedNotes({ entityType, id }: { entityType: EntityType; id: st
           </ul>
         </section>
       ) : null}
-      <NoteDrawer noteId={openId} onClose={() => setOpenId(null)} context={{ type: entityType, id }} />
+      <span ref={anchorRef} hidden />
+      <NoteDrawer noteId={openId} onClose={close} context={{ type: entityType, id }} />
     </>
   );
 }
