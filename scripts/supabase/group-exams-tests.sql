@@ -244,6 +244,166 @@ end $$;
 select 'ok A2 segreto sbagliato rifiutato';
 reset role;
 
+-- ---------------------------------------------------------------------------------------------
+-- Giro di correzioni 1 (revisione R-I1)
+-- ---------------------------------------------------------------------------------------------
+-- Due gruppi senza Bea: Mallory è proprietaria di gy e semplice membro di gz (di Olga).
+insert into public.studyos_groups (id, name, owner_id, owner_display_name, invite_code)
+  values ('gy', 'Altro A', :'mallory', 'Mallory', 'GY-CODE-1'), ('gz', 'Altro B', :'olga', 'Olga', 'GZ-CODE-1');
+insert into public.studyos_group_members (group_id, user_id, display_name, role) values
+  ('gy', :'mallory', 'Mallory', 'owner'), ('gz', :'olga', 'Olga', 'owner'), ('gz', :'mallory', 'Mallory', 'member');
+
+-- Q1: lo snapshot di Bea non contiene i gruppi degli altri.
+set local role anon;
+select pg_temp.expect('Q1 isolamento tra gruppi', jsonb_array_length(s -> 'groups') = 1
+  and not exists (select 1 from jsonb_array_elements(s -> 'sessions') as e where e ->> 'group_id' <> 'gx'))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+
+-- M1: dopo la pulizia di un id, lo stesso id in un altro gruppo non si ripristina dalla cronologia vecchia.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'mallory', true) \g /dev/null
+select pg_temp.expect('M1 creo in gy', public.save_group_exam_session('gy', 'gexam_m1', null, jsonb_build_object(
+  'courseName', 'Chimica Generale', 'date', '2027-04-01', 'kind', 'appello')) ->> 'status' = 'ok');
+select pg_temp.expect('M1 elimino in gy', public.delete_group_exam_session('gexam_m1', 1) ->> 'status' = 'ok');
+select pg_temp.expect('M1 correzione in gy', public.save_group_catalog_override('gy', 'gover_m1', null, 'teacher',
+  'unimi-x', 'X', jsonb_build_object('office', 'Studio 1')) ->> 'status' = 'ok');
+select pg_temp.expect('M1 elimino la correzione in gy', public.delete_group_catalog_override('gover_m1', 1) ->> 'status' = 'ok');
+reset role;
+delete from public.studyos_group_exam_sessions where id = 'gexam_m1';
+delete from public.studyos_group_catalog_overrides where id = 'gover_m1';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'mallory', true) \g /dev/null
+select pg_temp.expect('M1 stesso id in gz', public.save_group_exam_session('gz', 'gexam_m1', null, jsonb_build_object(
+  'courseName', 'Biochimica', 'date', '2027-04-02', 'kind', 'appello', 'notes', 'privata di gz')) ->> 'status' = 'ok');
+select pg_temp.expect('M1 stesso id correzione in gz', public.save_group_catalog_override('gz', 'gover_m1', null, 'teacher',
+  'unimi-y', 'Y', jsonb_build_object('office', 'Studio gz')) ->> 'status' = 'ok');
+select pg_temp.expect('M1 ripristino da gy non tocca gz', public.restore_group_record(
+  (select id from public.studyos_group_history where group_id = 'gy' and record_id = 'gexam_m1' and action = 'delete'), 1) ->> 'status' = 'gone');
+select pg_temp.expect('M1 correzione: stessa cosa', public.restore_group_record(
+  (select id from public.studyos_group_history where group_id = 'gy' and record_id = 'gover_m1' and action = 'delete'), 1) ->> 'status' = 'gone');
+reset role;
+select pg_temp.expect('M1 la riga di gz è intatta', (select course_name = 'Biochimica' and notes = 'privata di gz' and version = 1
+  from public.studyos_group_exam_sessions where id = 'gexam_m1')
+  and (select fields ->> 'office' = 'Studio gz' and version = 1 from public.studyos_group_catalog_overrides where id = 'gover_m1'));
+select pg_temp.expect('M1 nessuna voce di ripristino', not exists (select 1 from public.studyos_group_history where action = 'restore'
+  and record_id in ('gexam_m1', 'gover_m1') and group_id in ('gy', 'gz')));
+
+-- L1b: una versione attesa nulla non salta il controllo di conflitto (elimina e ripristina).
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
+select pg_temp.expect('N1b creo', public.save_group_exam_session('gx', 'gexam_n1', null, jsonb_build_object(
+  'courseName', 'Immunologia', 'date', '2027-05-01', 'kind', 'appello')) ->> 'status' = 'ok');
+select pg_temp.expect('N1b modifico', public.save_group_exam_session('gx', 'gexam_n1', 1, jsonb_build_object(
+  'courseName', 'Immunologia', 'date', '2027-05-01', 'kind', 'appello', 'room', 'Aula 5')) ->> 'status' = 'ok');
+select pg_temp.expect('N1b elimina senza versione: conflict', public.delete_group_exam_session('gexam_n1', null) ->> 'status' = 'conflict');
+select pg_temp.expect('N1b ripristina senza versione: conflict', public.restore_group_record(
+  (select id from public.studyos_group_history where record_id = 'gexam_n1' and action = 'update'), null) ->> 'status' = 'conflict');
+select pg_temp.expect('N1b correzione senza versione: conflict', public.save_group_catalog_override('gx', 'gover_n1', null, 'teacher',
+  'unimi-n', 'N', jsonb_build_object('office', 'Studio 9')) ->> 'status' = 'ok'
+  and public.delete_group_catalog_override('gover_n1', null) ->> 'status' = 'conflict');
+select pg_temp.expect('N1b ancora viva', (select deleted_at is null and version = 2 from public.studyos_group_exam_sessions where id = 'gexam_n1'));
+
+-- L2: un ripristino che elimina di nuovo scrive una data di eliminazione nuova (non quella vecchia).
+select pg_temp.expect('N2 elimina', public.delete_group_exam_session('gexam_n1', 2) ->> 'status' = 'ok');
+select pg_temp.expect('N2 ripristina', public.restore_group_record(
+  (select id from public.studyos_group_history where record_id = 'gexam_n1' and action = 'delete'), 3) ->> 'status' = 'ok');
+reset role;
+update public.studyos_group_history set before = jsonb_set(before, '{deleted_at}', to_jsonb((now() - interval '200 days')::text))
+  where record_id = 'gexam_n1' and action = 'restore';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
+select pg_temp.expect('N2 annullo il ripristino: elimina con data nuova', r ->> 'status' = 'ok'
+  and (r -> 'row' ->> 'deleted_at')::timestamptz > now() - interval '1 day')
+from (select public.restore_group_record(
+  (select id from public.studyos_group_history where record_id = 'gexam_n1' and action = 'restore'), 4) as r) as t;
+
+-- L3: collegare un appello manuale al catalogo ufficiale (solo barbSessionId e source) si salva.
+select pg_temp.expect('N3 creo manuale con corso', public.save_group_exam_session('gx', 'gexam_n3', null, jsonb_build_object(
+  'courseId', 'chim-org', 'courseName', 'Chimica Organica', 'date', '2027-06-01', 'kind', 'appello')) ->> 'status' = 'ok');
+select pg_temp.expect('N3 collego al catalogo', r ->> 'status' = 'ok' and (r -> 'row' ->> 'version')::int = 2
+  and r -> 'row' ->> 'barb_session_id' = 'ufficiale-1' and r -> 'row' ->> 'source' = 'barb')
+from (select public.save_group_exam_session('gx', 'gexam_n3', 1, jsonb_build_object(
+  'courseId', 'chim-org', 'courseName', 'Chimica Organica', 'date', '2027-06-01', 'kind', 'appello',
+  'barbSessionId', 'ufficiale-1', 'source', 'barb')) as r) as t;
+select pg_temp.expect('N3 cronologia', changed_fields = array['course']) from public.studyos_group_history
+  where record_id = 'gexam_n3' and action = 'update';
+
+-- M2: l'etichetta della correzione segue la regola @unimi.it.
+select pg_temp.expect('E7 etichetta con email non istituzionale', r ->> 'status' = 'invalid' and r ->> 'field' = 'targetLabel'
+  and r ->> 'message' = 'Solo indirizzi istituzionali che finiscono con @unimi.it.')
+from (select public.save_group_catalog_override('gx', 'gover_e7', null, 'teacher', 'unimi-e7',
+  'Mario Rossi - mario.privato@gmail.com', jsonb_build_object('office', 'Studio 2')) as r) as t;
+select pg_temp.expect('E8 etichetta con email unimi', public.save_group_catalog_override('gx', 'gover_e8', null, 'teacher', 'unimi-e8',
+  'Mario Rossi - mario.rossi@unimi.it', jsonb_build_object('office', 'Studio 2')) ->> 'status' = 'ok');
+reset role;
+-- Una riga vecchia con etichetta sporca (scritta prima del giro): il ripristino la rifiuta.
+update public.studyos_group_catalog_overrides set target_label = 'Y - sporco@gmail.com' where id = 'gover_e8';
+insert into public.studyos_group_history (group_id, record_kind, record_id, action, version, before, after, actor_user_id, actor_name)
+  select 'gx', 'catalog_override', 'gover_e8', 'update', 1, to_jsonb(o), to_jsonb(o), :'bea', 'Bea'
+  from public.studyos_group_catalog_overrides as o where o.id = 'gover_e8';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
+select pg_temp.expect('E9 ripristino con etichetta sporca: invalid', r ->> 'status' = 'invalid')
+from (select public.restore_group_record((select max(id) from public.studyos_group_history where record_id = 'gover_e8'), 1) as r) as t;
+reset role;
+update public.studyos_group_catalog_overrides set target_label = 'Mario Rossi' where id = 'gover_e8';
+
+-- M2: lo snapshot non porta mai email non istituzionali, in nessun campo di testo.
+select set_config('request.jwt.claim.sub', '', true) \g /dev/null
+update public.studyos_group_members set display_name = 'bea.privata@gmail.com' where group_id = 'gx' and user_id = :'bea';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
+select pg_temp.expect('X0 appello con email nei testi', public.save_group_exam_session('gx', 'gexam_x2', null, jsonb_build_object(
+  'courseName', 'Genetica Umana', 'date', '2027-07-01', 'kind', 'appello', 'label', 'scrivi a ab@gmail.com',
+  'room', 'aula x@y.com', 'notes', 'ada99@hotmail.it, Mario@UNIMI.IT, z@studenti.unimi.it, q@unimi.it.evil.com'))
+  ->> 'status' = 'ok');
+reset role;
+set local role anon;
+select pg_temp.expect('X1 nessuna email non istituzionale nello snapshot',
+  s::text !~* 'gmail|hotmail|y\.com|studenti\.unimi|evil\.com'
+  and s::text ~ 'Mario@UNIMI\.IT' and s::text like '%[email nascosta]%'
+  and s::text !~* '@(?!unimi\.it(?![a-z0-9-]|\.[a-z0-9]))')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+select pg_temp.expect('X1b il segnaposto è lo stesso del client', public.studyos_hide_emails('a@b.it e c@unimi.it') = '[email nascosta] e c@unimi.it');
+
+-- L4: ogni funzione nuova ha i privilegi giusti.
+select pg_temp.expect('G5 scrittura chiusa ad anon e aperta ad authenticated', bool_and(
+    not has_function_privilege('anon', f, 'EXECUTE') and has_function_privilege('authenticated', f, 'EXECUTE')))
+from unnest(array['public.save_group_exam_session(text,text,integer,jsonb)', 'public.delete_group_exam_session(text,integer)',
+  'public.save_group_catalog_override(text,text,integer,text,text,text,jsonb)', 'public.delete_group_catalog_override(text,integer)',
+  'public.restore_group_record(bigint,integer)']) as f;
+select pg_temp.expect('G6 il redattore è chiuso ad authenticated', not has_function_privilege('authenticated', 'public.studyos_hide_emails(text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.studyos_hide_emails(text)', 'EXECUTE'));
+
+-- X1: il proprietario non può cambiare l'account di una riga di membro né iscrivere un altro account.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+update public.studyos_group_members set user_id = :'mallory', display_name = 'mallory@gmail.com'
+  where group_id = 'gx' and user_id = :'ada';
+select pg_temp.expect('X1 account e nome della riga restano', exists (select 1 from public.studyos_group_members
+    where group_id = 'gx' and user_id = :'ada' and display_name = 'Ada')
+  and not exists (select 1 from public.studyos_group_members where group_id = 'gx' and user_id = :'mallory'));
+update public.studyos_group_members set group_id = 'gz' where group_id = 'gx' and user_id = :'bea';
+select pg_temp.expect('X1 il gruppo della riga resta', exists (select 1 from public.studyos_group_members where group_id = 'gx' and user_id = :'bea'));
+do $$
+begin
+  insert into public.studyos_group_members (group_id, user_id, display_name, role)
+    values ('gx', 'fc0191e0-6663-4a43-b060-131e397f02cc', 'Forzata', 'member');
+  raise exception 'FALLITO: X1 iscrizione forzata accettata';
+exception when insufficient_privilege then
+  null;
+end $$;
+select 'ok X1 iscrizione forzata rifiutata';
+update public.studyos_group_members set role = 'admin' where group_id = 'gx' and user_id = :'ada';
+select pg_temp.expect('X1 il proprietario promuove ancora', exists (select 1 from public.studyos_group_members where group_id = 'gx' and user_id = :'ada' and role = 'admin'));
+select set_config('request.jwt.claim.sub', :'mallory', true) \g /dev/null
+select pg_temp.expect('X1 ingresso con il codice', public.join_group_by_code('GX-CODE-1', 'Mal') = 'gx');
+select pg_temp.expect('X1 chi è entrato è membro', exists (select 1 from public.studyos_group_members
+  where group_id = 'gx' and user_id = :'mallory' and display_name = 'Mal'));
+reset role;
+
 -- G1-G4: privilegi.
 select pg_temp.expect('G1 anon non scrive appelli', not has_function_privilege('anon', 'public.save_group_exam_session(text,text,integer,jsonb)', 'EXECUTE'));
 select pg_temp.expect('G2 authenticated scrive con la funzione', has_function_privilege('authenticated', 'public.save_group_exam_session(text,text,integer,jsonb)', 'EXECUTE'));

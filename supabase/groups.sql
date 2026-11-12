@@ -390,6 +390,32 @@ create trigger studyos_group_members_no_email
   before insert or update on public.studyos_group_members
   for each row execute function public.studyos_group_members_no_email();
 
+-- Una riga di membro non cambia account né gruppo: il proprietario può solo cambiare il ruolo (la
+-- policy di update lo lascia scrivere sulle righe degli altri). Senza questo poteva mettere nella riga
+-- di Ada l'account di Bea, che mai era entrata, e Bea si ritrovava membro (e leggeva tutto del gruppo).
+-- Il nome visibile lo cambia solo chi è quell'account (o lo script SQL, senza auth.uid()).
+create or replace function public.studyos_group_members_pin_identity()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  new.user_id := old.user_id;
+  new.group_id := old.group_id;
+  if auth.uid() is not null and auth.uid()::text <> old.user_id then
+    new.display_name := old.display_name;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.studyos_group_members_pin_identity() from public, anon, authenticated;
+
+drop trigger if exists studyos_group_members_pin_identity on public.studyos_group_members;
+create trigger studyos_group_members_pin_identity
+  before update on public.studyos_group_members
+  for each row execute function public.studyos_group_members_pin_identity();
+
 -- Email già salvate: via (idempotente, alla seconda esecuzione non trova righe).
 update public.studyos_group_members set email = null where email is not null;
 

@@ -66,11 +66,15 @@ Ordine esatto nel SQL Editor, una query alla volta:
 3. `sharing.sql`;
 4. `people.sql` (prima di `push-reminders.sql`, che ne usa le colonne `private` e `session_id`);
 5. `push-reminders.sql` (promemoria con l'app chiusa, opzionale, vedi sotto);
-6. `verify.sql`;
-7. `sharing-verify.sql`;
-8. `people-verify.sql` (le colonne `pg_net_ready` e `vault_ready` restano `false` finché non
+6. `group-exams.sql` (appelli condivisi dei gruppi, vedi «Appelli condivisi dei gruppi» in fondo;
+   dopo `groups.sql`, `sharing.sql` e `people.sql`, anche dopo `push-reminders.sql`);
+7. `verify.sql`;
+8. `sharing-verify.sql` (le cinque colonne `group_exams_*` restano `false` finché non hai eseguito
+   `group-exams.sql`; `group_exams_realtime_ready` dipende dalla pubblicazione `supabase_realtime`
+   e `group_exams_agent_ready` anche da `agent.sql`);
+9. `people-verify.sql` (le colonne `pg_net_ready` e `vault_ready` restano `false` finché non
    fai i passi delle notifiche push più sotto: l'app funziona lo stesso, senza push);
-9. `push-reminders-verify.sql` (`pg_net_ready`, `vault_ready` e `cron_ready` restano `false`
+10. `push-reminders-verify.sql` (`pg_net_ready`, `vault_ready` e `cron_ready` restano `false`
    finché non fai i passi delle push e di `pg_cron` più sotto).
 
 Per il connettore remoto degli agenti, dopo `schema.sql`: `agent.sql` e poi `agent-verify.sql`
@@ -170,8 +174,8 @@ revisione.
 `sharing.sql` (condivisione dei propri dati con altre persone, opzionale) va eseguito
 dopo `schema.sql` e `groups.sql`. Incollalo nel SQL Editor come **un unico script** (non ha
 una transazione che lo avvolge) e premi Run; si può rieseguire. Poi incolla
-[sharing-verify.sql](sharing-verify.sql) in una nuova query: tutte le 12 colonne `*_ready`
-devono essere `true` (compresi `recipient_values_ready`, la regola sui valori scritti da chi
+[sharing-verify.sql](sharing-verify.sql) in una nuova query: le colonne `*_ready` (14 di
+sharing, più le 5 `group_exams_*` dopo `group-exams.sql`) devono essere `true` (compresi `recipient_values_ready`, la regola sui valori scritti da chi
 riceve, `triggers_ready`, che controlla anche i trigger su condivisioni e membri dei
 gruppi, e `light_history_ready`: la cronologia tiene copertine e file solo nelle eliminazioni, anche nel trigger), `shared_item_policies` deve valere `3` e `own_item_policies` `4`. Sul progetto
 reale `sharing.sql` non è mai stato eseguito: non serve alcuna pulizia di valori vecchi.
@@ -437,7 +441,9 @@ npx wrangler deploy -c worker/keepalive.jsonc
 
 ## Appelli condivisi dei gruppi (12/11/2026)
 
-Esegui nel SQL Editor, in quest'ordine, dopo `schema.sql`, `groups.sql`, `sharing.sql` e `people.sql`:
+Esegui nel SQL Editor, in quest'ordine, dopo `schema.sql`, `groups.sql` (versione del 12/11 o
+successiva: la revisione di questo giro aggiunge un controllo sulle righe dei membri), `sharing.sql`,
+`people.sql` e, se lo usi, `push-reminders.sql` (l'ordine completo è nell'elenco numerato in cima):
 
 1. `group-exams.sql` — appelli del gruppo, correzioni al catalogo BARB e cronologia. Rieseguibile.
    Se manca `groups.sql` aggiornato si ferma con «Esegui prima groups.sql (versione del 12/11)».
