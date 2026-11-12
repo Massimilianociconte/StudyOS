@@ -137,6 +137,8 @@ test("layoutTimedDay: in una colonna stretta (Settimana sul tablet) la fascia di
   // Anche con il mouse: accanto al "+N" non resterebbero 56 px.
   assert.equal(render.layoutTimedDay(pieces, { hourHeight: 46, columnWidth: 74, pointer: "mouse" }).merged, true);
   assert.equal(CALENDAR_LAYOUT_TEXT.mergedAria(3), "3 eventi che si sovrappongono: apri l'elenco");
+  assert.equal(CALENDAR_LAYOUT_TEXT.moreAria(1), "Un altro evento in questa fascia: apri l'elenco");
+  assert.equal(CALENDAR_LAYOUT_TEXT.moreAria(2), "Altri 2 eventi in questa fascia: apri l'elenco");
 });
 
 test("layoutTimedDay: con il mouse il \"+N\" è largo 28 px e due eventi stanno affiancati in 118 px", () => {

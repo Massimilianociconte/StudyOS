@@ -68,7 +68,7 @@ export const CALENDAR_HELP = {
 /** Griglie del calendario: eventi nascosti su schermi stretti ("+N") ed eventi su più giorni. */
 export const CALENDAR_LAYOUT_TEXT = {
   more: (count: number) => `+${count}`,
-  moreAria: (count: number) => `Altri ${count} ${count === 1 ? "evento" : "eventi"} in questa fascia: apri l'elenco`,
+  moreAria: (count: number) => `${count === 1 ? "Un altro evento" : `Altri ${count} eventi`} in questa fascia: apri l'elenco`,
   /** Colonna troppo stretta (Settimana sul tablet): la fascia è un solo pulsante con tutti i suoi eventi. */
   merged: (count: number) => `${count} ${count === 1 ? "evento" : "eventi"}`,
   mergedAria: (count: number) => (count === 1 ? "1 evento sovrapposto: apri l'elenco" : `${count} eventi che si sovrappongono: apri l'elenco`),

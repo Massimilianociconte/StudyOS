@@ -502,7 +502,7 @@ const GONE_SHOWN = 6;
 /**
  * Righe della scelta SEMPRE VISIBILI (sotto la riga breve): dicono che qualcosa si perde, viene
  * sostituito, sparisce, raddoppia, si sposta o torna, o che la scelta tocca anche date fuori da quelle
- * scelte (materia, fuso, inizio della serie). Unico elenco: ogni riga nuova della scelta va messa qui o
+ * scelte (materia, inizio della serie). Unico elenco: ogni riga nuova della scelta va messa qui o
  * in SCOPE_DETAIL_KEYS (il tipo lo impone).
  */
 export const SCOPE_WARNING_KEYS = [
@@ -518,11 +518,10 @@ export const SCOPE_WARNING_KEYS = [
   "followingGone",
   "followingMovesSplits",
   "followingBoth",
-  "newStart",
-  "pinZone"
+  "newStart"
 ] as const satisfies readonly (keyof typeof SCOPE_TEXT)[];
 
-/** Righe solo in «Dettagli»: la scelta detta per intero, ciò che resta così, la fine della serie. */
+/** Righe solo in «Dettagli»: la scelta detta per intero, ciò che resta così, la fine della serie, il fuso (uguale per tutte le scelte). */
 export const SCOPE_DETAIL_KEYS = [
   "thisEdit",
   "thisMove",
@@ -541,7 +540,8 @@ export const SCOPE_DETAIL_KEYS = [
   "followingSplitsOwnDays",
   "followingSplitsOwnTime",
   "followingKeepsEnd",
-  "followingNewEnd"
+  "followingNewEnd",
+  "pinZone"
 ] as const satisfies readonly (keyof typeof SCOPE_TEXT)[];
 
 type ScopeLineKey = (typeof SCOPE_WARNING_KEYS)[number] | (typeof SCOPE_DETAIL_KEYS)[number];

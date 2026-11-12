@@ -349,16 +349,18 @@ test("scelta della portata: ciò che si perde, sparisce, raddoppia, si sposta o 
         impacts: { following: losing, all: { ...losing, ownLost: true } }
       }),
       expected: {
-        this: [SCOPE_TEXT.thisSubject, SCOPE_TEXT.pinZone("Europe/Rome")],
+        this: [SCOPE_TEXT.thisSubject],
         following: [
           SCOPE_TEXT.followingDaysShift("lun, mer", "mar, gio"), SCOPE_TEXT.followingTakesDay, SCOPE_TEXT.changedLost(2), SCOPE_TEXT.changedGone(1),
-          SCOPE_TEXT.cancelledBack(3), SCOPE_TEXT.pinZone("Europe/Rome")
+          SCOPE_TEXT.cancelledBack(3)
         ],
         all: [
           SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio"), SCOPE_TEXT.ownLost, SCOPE_TEXT.newStart("martedì 3 novembre"), SCOPE_TEXT.changedLost(2),
-          SCOPE_TEXT.changedGone(1), SCOPE_TEXT.cancelledBack(3), SCOPE_TEXT.pinZone("Europe/Rome")
+          SCOPE_TEXT.changedGone(1), SCOPE_TEXT.cancelledBack(3)
         ]
-      }
+      },
+      // Il fuso fissato è uguale per tutte le scelte: non aiuta a scegliere, sta nei dettagli.
+      details: SCOPE_TEXT.pinZone("Europe/Rome")
     },
     {
       options: scopeOptions({ action: "edit", date: "2026-11-24", ruleChanged: true, impacts: { following: impact({ absorbed: 1, gone: ["2026-12-04", "2026-12-11"] }) } }),
@@ -371,7 +373,7 @@ test("scelta della portata: ciò che si perde, sparisce, raddoppia, si sposta o 
     { options: scopeOptions({ action: "move", date: "2026-11-24", sharedOnly: true, daysShift: shift }), expected: { all: [SCOPE_TEXT.allDaysShift("lun, mer", "mar, gio")] } },
     { options: scopeOptions({ action: "delete", date: "2026-11-24", span: { start: "2026-11-02", parts: 2, past: true } }), expected: { this: [], following: [], all: [] } }
   ];
-  for (const { options, expected } of scenarios) {
+  for (const { options, expected, details } of scenarios) {
     assert.deepEqual(options.map((option) => option.id), Object.keys(expected));
     for (const option of options) {
       // Ogni avviso atteso è tra quelli sempre visibili, nello stesso ordine; i dettagli sono il resto.
@@ -379,6 +381,7 @@ test("scelta della portata: ciò che si perde, sparisce, raddoppia, si sposta o 
       const inDetails = option.details.filter((line) => !option.warnings.includes(line));
       for (const line of expected[option.id]) assert.ok(!inDetails.includes(line), `${option.id}: «${line}» non solo nei dettagli`);
       assert.ok(inDetails.length >= 1, "la scelta detta per intero resta nei dettagli");
+      if (details) assert.ok(inDetails.includes(details), `${option.id}: «${details}» nei dettagli`);
     }
   }
   // Le righe che non avvisano restano nei dettagli: la fine della serie, «restano così».
