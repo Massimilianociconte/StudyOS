@@ -9,11 +9,13 @@
 -- Gli id sono text (stesso spazio degli id locali) per non dover rimappare nulla.
 --
 -- Si può rieseguire: tabelle e righe esistenti restano, policy, trigger e funzioni si
--- aggiornano. Rieseguilo dopo la revisione del 10/11/2026 (accettare o rifiutare un invito
--- nominale richiede un'email presente, uguale e confermata); se usi la condivisione dei dati,
--- poi riesegui sharing.sql e sharing-verify.sql, in quest'ordine. Rieseguilo anche dopo la
--- revisione del 12/11/2026: timbri del server sui gruppi, una sola voce per ingresso, uscite e
--- rimozioni scritte dal server.
+-- aggiornano. Dalla revisione dell'11/11/2026 (conferma email spenta) un invito nominale vale
+-- solo per l'account destinatario (recipient_user_id): non si creano né si accettano più inviti
+-- per email. Le stesse policy e funzioni sono in people.sql, quindi rieseguire questo file non
+-- riapre l'accettazione per email. Rieseguilo anche dopo la revisione del 12/11/2026: timbri del
+-- server sui gruppi, una sola voce per ingresso, uscite e rimozioni scritte dal server. Se usi
+-- anche la condivisione dei dati e la ricerca persone, dopo questo file riesegui sharing.sql e
+-- people.sql, in quest'ordine.
 
 -- ─── Tabelle ────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,12 @@ create index if not exists studyos_group_invites_recipient_idx
   on public.studyos_group_invites (recipient_email, status);
 create index if not exists studyos_group_invites_code_idx
   on public.studyos_group_invites (code);
+
+-- Destinatario di un invito nominale: l'id dell'account (testo, come from_user_id). Gli inviti per
+-- sola email restano solo come storico: non si creano né si accettano più.
+alter table public.studyos_group_invites add column if not exists recipient_user_id text;
+create index if not exists studyos_group_invites_recipient_user_idx
+  on public.studyos_group_invites (recipient_user_id, status);
 
 create table if not exists public.studyos_group_resources (
   id text primary key,
@@ -185,21 +193,26 @@ create policy studyos_group_members_delete on public.studyos_group_members for d
     or (user_id = auth.uid()::text and role <> 'owner')
   );
 
--- Inviti: il destinatario legge i propri; i membri vedono gli inviti del gruppo;
--- la creazione è riservata a proprietario/amministratore.
+-- Inviti: il destinatario (per account, mai per email) legge i propri; i membri vedono gli inviti
+-- del gruppo; chi invita vede quelli che ha mandato.
 drop policy if exists studyos_group_invites_select on public.studyos_group_invites;
 create policy studyos_group_invites_select on public.studyos_group_invites for select to authenticated
   using (
-    (recipient_email is not null and lower(recipient_email) = lower(auth.jwt() ->> 'email'))
+    recipient_user_id = auth.uid()::text
     or public.studyos_is_group_member(group_id)
     or from_user_id = auth.uid()::text
   );
+-- Inserimento diretto (proprietario o amministratore) solo per gli inviti con codice, senza
+-- destinatario. L'invito a una persona passa da invite_person_to_group (people.sql), che controlla
+-- che sia trovabile e non già nel gruppo.
 drop policy if exists studyos_group_invites_insert on public.studyos_group_invites;
 create policy studyos_group_invites_insert on public.studyos_group_invites for insert to authenticated
   with check (
     public.studyos_group_role(group_id) in ('owner', 'admin')
     and from_user_id = auth.uid()::text
     and status = 'pending'
+    and recipient_email is null
+    and recipient_user_id is null
   );
 drop policy if exists studyos_group_invites_delete on public.studyos_group_invites;
 create policy studyos_group_invites_delete on public.studyos_group_invites for delete to authenticated
@@ -354,7 +367,9 @@ $$;
 drop function if exists public.accept_group_invite(text);
 drop function if exists public.join_group_by_code(text);
 
--- Accetta un invito nominale: solo il destinatario; aggiunge il membro e storicizza.
+-- Accetta un invito nominale: solo l'account destinatario (recipient_user_id). Con la conferma email
+-- spenta l'indirizzo non prova chi lo usa e non conta più. Prima si chiude l'invito, poi entra il
+-- membro: il trigger delle notifiche (people.sql) trova così chi aveva invitato.
 create or replace function public.accept_group_invite(p_invite_id text, p_display_name text default null)
 returns void
 language plpgsql
@@ -363,38 +378,31 @@ set search_path = public
 as $$
 declare
   v_invite public.studyos_group_invites%rowtype;
-  v_email text := lower(auth.jwt() ->> 'email');
   v_name text := public.studyos_member_name(p_display_name, lower(auth.jwt() ->> 'email'));
   v_added integer;
 begin
   if auth.uid() is null then
     raise exception 'Accesso richiesto';
   end if;
-  select * into v_invite from public.studyos_group_invites where id = p_invite_id;
+  select * into v_invite from public.studyos_group_invites where id = p_invite_id for update;
   if not found then
     raise exception 'Invito non trovato';
+  end if;
+  -- is distinct from: un invito senza destinatario (null) non si accetta mai da qui.
+  if v_invite.recipient_user_id is distinct from auth.uid()::text then
+    raise exception 'Invito destinato a un altro account';
   end if;
   if v_invite.status <> 'pending' then
     raise exception 'Invito già gestito';
   end if;
-  -- is distinct from: con il claim email mancante (null) non si passa mai. L'email deve essere anche
-  -- confermata (auth.users): il claim del JWT da solo non lo dice. Da qui si entra nel gruppo, e un
-  -- gruppo può ricevere condivisioni di dati personali.
-  if v_invite.recipient_email is null
-     or lower(v_invite.recipient_email) is distinct from v_email
-     or not exists (
-       select 1 from auth.users u
-       where u.id = auth.uid() and u.email_confirmed_at is not null and lower(u.email) = lower(v_invite.recipient_email)
-     ) then
-    raise exception 'Invito destinato a un altro account';
-  end if;
-  insert into public.studyos_group_members (group_id, user_id, email, display_name, role)
-  values (v_invite.group_id, auth.uid()::text, v_email, v_name, 'member')
-  on conflict (group_id, user_id) do nothing;
-  get diagnostics v_added = row_count;
   update public.studyos_group_invites
     set status = 'accepted', updated_at = now()
     where id = p_invite_id;
+  -- Senza email: chi accetta un invito per account non la mostra agli altri membri.
+  insert into public.studyos_group_members (group_id, user_id, email, display_name, role)
+  values (v_invite.group_id, auth.uid()::text, null, v_name, 'member')
+  on conflict (group_id, user_id) do nothing;
+  get diagnostics v_added = row_count;
   -- Solo se è entrato adesso: chi era già membro (entrato col link, poi accetta l'invito vecchio)
   -- scriveva un secondo «è entrato nel gruppo». Stesso schema di id di join_group_by_code.
   if v_added > 0 then
@@ -407,7 +415,7 @@ $$;
 revoke all on function public.accept_group_invite(text, text) from public;
 grant execute on function public.accept_group_invite(text, text) to authenticated;
 
--- Rifiuta un invito nominale: solo il destinatario.
+-- Rifiuta un invito nominale: solo l'account destinatario, come accept_group_invite.
 create or replace function public.decline_group_invite(p_invite_id text)
 returns void
 language plpgsql
@@ -420,21 +428,15 @@ begin
   if auth.uid() is null then
     raise exception 'Accesso richiesto';
   end if;
-  select * into v_invite from public.studyos_group_invites where id = p_invite_id;
+  select * into v_invite from public.studyos_group_invites where id = p_invite_id for update;
   if not found then
     raise exception 'Invito non trovato';
   end if;
+  if v_invite.recipient_user_id is distinct from auth.uid()::text then
+    raise exception 'Invito destinato a un altro account';
+  end if;
   if v_invite.status <> 'pending' then
     raise exception 'Invito già gestito';
-  end if;
-  -- Come accept_group_invite: email presente, uguale e confermata.
-  if v_invite.recipient_email is null
-     or lower(v_invite.recipient_email) is distinct from lower(auth.jwt() ->> 'email')
-     or not exists (
-       select 1 from auth.users u
-       where u.id = auth.uid() and u.email_confirmed_at is not null and lower(u.email) = lower(v_invite.recipient_email)
-     ) then
-    raise exception 'Invito destinato a un altro account';
   end if;
   update public.studyos_group_invites
     set status = 'declined', updated_at = now()

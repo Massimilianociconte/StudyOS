@@ -19,16 +19,18 @@ import {
   logSharedActivity,
   previewInvite,
   publishGroup,
-  publishInvite,
   pullSharedUpdates,
   regenerateInviteCode,
+  rememberInviteRecipient,
   type Actor,
   type InvitePreviewResult
 } from "../lib/groupSync";
-import { GROUP_SYNC_TEXT } from "../lib/labels/groups";
-import { Button, Drawer, Field, inputClass } from "./ui";
+import { peopleLabels } from "../lib/labels";
+import { peopleCauseText, personName, type FoundPerson } from "../lib/people";
+import { Button, Drawer } from "./ui";
 import { Icon } from "./Icon";
 import { CloudPanel } from "./CloudPanel";
+import { FindPerson } from "./FindPerson";
 import { InviteQr, qrPngBlob } from "./InviteQr";
 import { InlineConfirm } from "./InlineConfirm";
 
@@ -70,8 +72,7 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
   const loggedIn = Boolean(session);
   const myRole = group.members.find((member) => member.userId === actor.userId)?.role;
   const isOwner = group.ownerId === actor.userId;
-  const canInviteByEmail = myRole === "owner" || myRole === "admin";
-  const [email, setEmail] = useState("");
+  const canInvitePerson = myRole === "owner" || myRole === "admin";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -181,40 +182,26 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
     }
   };
 
-  const sendEmailInvite = async () => {
-    if (busy) return;
-    const recipient = email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-      setError("Controlla l'indirizzo email: sembra incompleto (es. nome@esempio.it).");
-      return;
-    }
+  /** Invito all'account trovato: lo crea il server, poi si scarica per vederlo tra gli inviti mandati. */
+  const invitePerson = async (person: FoundPerson): Promise<string | null> => {
     setError("");
+    setStatus("");
     setBusy(true);
     try {
-      const store = useStudyStore.getState();
-      const id = await store.createGroupInvite({
-        groupId: group.id,
-        groupName: group.name,
-        groupDescription: group.description || undefined,
-        fromUserId: actor.userId,
-        fromDisplayName: actor.displayName,
-        recipientEmail: recipient,
-        code
-      });
-      const created = useStudyStore.getState().groupInvites.find((invite) => invite.id === id);
-      // Se il server non risponde l'invito resta in coda e parte da solo: prima si diceva «inviato»
-      // e l'invitato non riceveva mai nulla.
-      const sent = created ? await publishInvite(created) : false;
-      setEmail("");
-      if (sent) {
-        await logSharedActivity(group.id, actor.displayName, `ha invitato ${recipient}`).catch(() => undefined);
-        onNotice(`Invito inviato a ${recipient}: lo trova nella campanella e in Gruppi al prossimo accesso.`);
-        setStatus(`Invito inviato a ${recipient}.`);
-      } else {
-        setStatus(GROUP_SYNC_TEXT.inviteQueued(recipient));
-      }
+      const people = await import("../lib/peopleSync");
+      const inviteId = await people.invitePersonToGroup(group.id, person.personId);
+      const name = personName(person);
+      // L'invito è già partito: da qui in poi un errore non lo annulla.
+      await pullSharedUpdates();
+      await rememberInviteRecipient(inviteId, name).catch(() => undefined);
+      // Nella cronologia del gruppo solo il nome visibile, mai il @nome cercato.
+      await logSharedActivity(group.id, actor.displayName, peopleLabels.groupActivity(person.displayName || peopleLabels.somebody)).catch(() => undefined);
+      const text = peopleLabels.groupInvited(name);
+      onNotice(text);
+      setStatus(text);
+      return null;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Non è stato possibile inviare l'invito. Riprova.");
+      return peopleCauseText(cause);
     } finally {
       setBusy(false);
     }
@@ -337,36 +324,21 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
           <p className="mt-1 text-xs text-[var(--muted)]">Chi lo riceve lo inserisce in Gruppi → Entra con un codice.</p>
         </section>
 
-        <section aria-labelledby="invite-email-title">
-          <h3 id="invite-email-title" className="text-sm font-black">Invita per email</h3>
-          {canInviteByEmail ? (
+        <section aria-labelledby="invite-person-title">
+          <h3 id="invite-person-title" className="text-sm font-black">{peopleLabels.groupSectionTitle}</h3>
+          {canInvitePerson ? (
             <>
-              <p className="mt-0.5 text-xs text-[var(--muted)]">Per chi ha già un account StudyOS: l'invito gli compare nell'app (nella campanella e in Gruppi) e può accettarlo con un tocco.</p>
-              <Field label="Email del tuo compagno" className="mt-2">
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
-                    className={inputClass}
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    // Invio come il pulsante (stesse condizioni: con l'accesso e non durante un invio).
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-                      event.preventDefault();
-                      if (loggedIn && !busy) void sendEmailInvite();
-                    }}
-                    placeholder="Es. nome@esempio.it"
-                    inputMode="email"
-                    autoComplete="off"
-                  />
-                  <Button variant="soft" icon="Send" onClick={() => void sendEmailInvite()} disabled={busy || !loggedIn} title={loggedIn ? undefined : "Accedi al tuo account per invitare per email"}>
-                    {busy ? "Invio…" : "Invia invito"}
-                  </Button>
-                </div>
-              </Field>
+              <p className="mt-0.5 text-xs text-[var(--muted)]">{peopleLabels.groupSectionHint}</p>
+              <div className="mt-2">
+                <FindPerson
+                  onInvite={invitePerson}
+                  disabled={!loggedIn || !group.sharedAt}
+                  disabledHint={!loggedIn ? peopleLabels.needsLogin : peopleLabels.groupNotOnline}
+                />
+              </div>
             </>
           ) : (
-            <p className="mt-0.5 text-xs text-[var(--muted)]">Solo il proprietario e gli amministratori possono invitare per email. Tu puoi mandare il link, il QR o il codice.</p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{peopleLabels.groupNotAllowed}</p>
           )}
         </section>
 

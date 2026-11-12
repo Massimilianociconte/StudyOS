@@ -6,6 +6,10 @@ import {
   groupInviteLink,
   groupInviteMessage,
   inviteNotificationId,
+  invitesToNotify,
+  isCodeOnlyInvite,
+  isLegacyEmailInvite,
+  isReceivedInvite,
   isInviteCodeShape,
   makeGroupInviteCode,
   mergeSharedSnapshot,
@@ -148,7 +152,7 @@ test("merge condiviso: confronto per istante, non per stringa (+00:00 e microsec
 });
 
 test("merge condiviso: inviti nuovi segnalati una volta sola", () => {
-  const invite = { ...base, id: "i1", updatedAt: "2026-10-06T10:00:00.000Z", groupId: "g1", groupName: "Fisio", fromUserId: "alice", fromDisplayName: "Alice", recipientEmail: "bob@example.com", code: "GRP-AB12-CD34", status: "pending" };
+  const invite = { ...base, id: "i1", updatedAt: "2026-10-06T10:00:00.000Z", groupId: "g1", groupName: "Fisio", fromUserId: "alice", fromDisplayName: "Alice", recipientUserId: "bob", code: "GRP-AB12-CD34", status: "pending" };
   const first = mergeSharedSnapshot(empty, { ...empty, invites: [invite] }, "bob");
   assert.equal(first.freshInvites.length, 1);
   const again = mergeSharedSnapshot(first, { ...empty, invites: [invite] }, "bob");
@@ -212,18 +216,18 @@ const invite = (id, extra = {}) => ({
   groupName: "Fisio",
   fromUserId: "alice",
   fromDisplayName: "Alice",
-  recipientEmail: "bob@example.com",
+  recipientUserId: "bob",
   code: "GRP-AB12-CD34",
   status: "pending",
   ...extra
 });
 
 test("merge condiviso: un invito ricevuto in attesa che il server non ha più sparisce (ritirato o gruppo eliminato)", () => {
-  const local = { ...empty, invites: [invite("i1"), invite("i2"), invite("i3", { status: "accepted" }), invite("mine", { fromUserId: "bob", recipientEmail: "carla@example.com" })] };
+  const local = { ...empty, invites: [invite("i1"), invite("i2"), invite("i3", { status: "accepted" }), invite("mine", { fromUserId: "bob", recipientUserId: "carla" })] };
   // Il server restituisce solo i2: i1 è stato cancellato (gruppo eliminato), i3 è storia, «mine» l'ho mandato io.
-  const merged = mergeSharedSnapshot(local, { ...empty, invites: [invite("i2")] }, "bob", [], { receivedEmail: "Bob@Example.com" });
+  const merged = mergeSharedSnapshot(local, { ...empty, invites: [invite("i2")] }, "bob", [], { receivedComplete: true });
   assert.deepEqual(merged.invites.map((item) => item.id).sort(), ["i2", "i3", "mine"]);
-  // Senza la lettura completa degli inviti ricevuti (niente email) non si toglie nulla.
+  // Senza la lettura completa degli inviti ricevuti non si toglie nulla.
   const partial = mergeSharedSnapshot(local, { ...empty, invites: [invite("i2")] }, "bob");
   assert.equal(partial.invites.length, 4);
 });
@@ -231,15 +235,15 @@ test("merge condiviso: un invito ricevuto in attesa che il server non ha più sp
 test("merge condiviso: un invito accettato da un altro dispositivo arriva come accettato", () => {
   const local = { ...empty, invites: [invite("i1")] };
   const server = { ...empty, invites: [invite("i1", { status: "accepted", updatedAt: "2026-10-07T09:00:00.123456+00:00" })] };
-  const merged = mergeSharedSnapshot(local, server, "bob", [], { receivedEmail: "bob@example.com" });
+  const merged = mergeSharedSnapshot(local, server, "bob", [], { receivedComplete: true });
   assert.equal(merged.invites[0].status, "accepted");
   assert.equal(merged.freshInvites.length, 0);
 });
 
 test("merge condiviso: gli inviti di un gruppo sparito se ne vanno, salvo quelli che il server ha ancora", () => {
   const shared = { ...group([member("alice", "owner"), member("bob")]), sharedAt: "2026-10-06T10:00:00.000Z" };
-  const local = { ...empty, groups: [shared], invites: [invite("old", { fromUserId: "bob", recipientEmail: "carla@example.com" }), invite("still")] };
-  const merged = mergeSharedSnapshot(local, { ...empty, invites: [invite("still")] }, "bob", ["g1"], { receivedEmail: "bob@example.com" });
+  const local = { ...empty, groups: [shared], invites: [invite("old", { fromUserId: "bob", recipientUserId: "carla" }), invite("still")] };
+  const merged = mergeSharedSnapshot(local, { ...empty, invites: [invite("still")] }, "bob", ["g1"], { receivedComplete: true });
   assert.deepEqual(merged.groups, []);
   assert.deepEqual(merged.invites.map((item) => item.id), ["still"]);
 });
@@ -253,12 +257,12 @@ test("notifiche degli inviti: lette quando nessun invito ricevuto per quel grupp
     notification("n3", "g3", { readAt: "2026-10-07T10:00:00.000Z" }),
     { id: "n4", kind: "group", linkGroupId: "g2", updatedAt: "2026-10-06T10:00:00.000Z" }
   ];
-  const invites = [invite("i1", { groupId: "g1" }), invite("i2", { groupId: "g2", status: "accepted" }), invite("sent", { groupId: "g2", fromUserId: "bob", recipientEmail: "x@example.com" })];
-  const settled = settleInviteNotifications(notifications, invites, "bob@example.com", now);
+  const invites = [invite("i1", { groupId: "g1" }), invite("i2", { groupId: "g2", status: "accepted" }), invite("sent", { groupId: "g2", fromUserId: "bob", recipientUserId: "x" })];
+  const settled = settleInviteNotifications(notifications, invites, "bob", now);
   assert.deepEqual(settled.filter((item) => item.readAt === now).map((item) => item.id), ["n2"]);
   assert.equal(settled[0], notifications[0]);
-  // Niente da cambiare (o senza email): stesso array, così lo store non riscrive.
-  assert.equal(settleInviteNotifications(settled, invites, "bob@example.com", now), settled);
+  // Niente da cambiare (o senza account): stesso array, così lo store non riscrive.
+  assert.equal(settleInviteNotifications(settled, invites, "bob", now), settled);
   assert.equal(settleInviteNotifications(notifications, invites, "", now), notifications);
   assert.equal(inviteNotificationId("i1"), "notif-group-invite-i1");
 });
@@ -268,7 +272,7 @@ test("notifiche degli inviti con id stabile: si chiudono per il loro invito, anc
   const stable = (inviteId) => ({ id: inviteNotificationId(inviteId), kind: "invite", linkGroupId: "g1", updatedAt: "2026-10-06T10:00:00.000Z" });
   const notifications = [stable("withdrawn"), stable("open")];
   // «withdrawn» non c'è più sul server, «open» è ancora in attesa nello stesso gruppo.
-  const settled = settleInviteNotifications(notifications, [invite("open")], "bob@example.com", now);
+  const settled = settleInviteNotifications(notifications, [invite("open")], "bob", now);
   assert.deepEqual(settled.map((item) => Boolean(item.readAt)), [true, false]);
 });
 
@@ -319,4 +323,81 @@ test("SQL dei gruppi: timbri, ingressi e uscite li scrive il server", () => {
   const view = readFileSync(new URL("../src/views/GroupsView.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(view, /logSharedActivity\([^)]*"ha lasciato il gruppo"/);
   assert.doesNotMatch(view, /removedMemberActivity/);
+});
+
+test("notifiche inviti: solo quelli ricevuti e ancora in attesa, mai quelli che ho mandato io", () => {
+  const base = { groupId: "g1", groupName: "Fisio", groupDescription: "", fromDisplayName: "Alice", code: "", updatedAt: "2026-01-01T00:00:00.000Z" };
+  const sent = { ...base, id: "i1", fromUserId: "me", recipientUserId: "bob", status: "pending" };
+  const received = { ...base, id: "i2", fromUserId: "alice", recipientUserId: "me", status: "pending" };
+  const answered = { ...base, id: "i3", fromUserId: "alice", recipientUserId: "me", status: "accepted" };
+  assert.deepEqual(invitesToNotify([sent], "me"), []);
+  assert.deepEqual(invitesToNotify([sent, received, answered], "me").map((invite) => invite.id), ["i2"]);
+});
+
+// ——— Un solo percorso per gli inviti ricevuti: per account (recipient_user_id), mai per email ———
+
+test("inviti ricevuti: solo quelli legati al mio account, non per email né con codice", () => {
+  assert.equal(isReceivedInvite(invite("a"), "bob"), true);
+  // Stessa email di un tempo ma nessun legame all'account: non è un invito ricevuto.
+  assert.equal(isReceivedInvite(invite("b", { recipientUserId: undefined, recipientEmail: "bob@example.com" }), "bob"), false);
+  assert.equal(isReceivedInvite(invite("c", { recipientUserId: "carla" }), "bob"), false);
+  // Mandato da me a me stesso (non dovrebbe esistere): non si notifica.
+  assert.equal(isReceivedInvite(invite("d", { fromUserId: "bob" }), "bob"), false);
+  // Senza account (disconnesso) nessun invito è «mio».
+  assert.equal(isReceivedInvite(invite("e", { recipientUserId: "" }), ""), false);
+});
+
+test("notifiche inviti: niente per gli inviti di altri membri, con codice o per email", () => {
+  const forCarla = invite("carla", { recipientUserId: "carla" });
+  const codeOnly = invite("code", { recipientUserId: undefined });
+  const byEmail = invite("email", { recipientUserId: undefined, recipientEmail: "bob@example.com" });
+  assert.deepEqual(invitesToNotify([forCarla, codeOnly, byEmail, invite("mine")], "bob").map((item) => item.id), ["mine"]);
+});
+
+test("merge condiviso: la copia locale di un vecchio invito per email mai legato sparisce", () => {
+  const legacy = invite("legacy", { recipientUserId: undefined, recipientEmail: "bob@example.com" });
+  const answered = invite("old", { recipientUserId: undefined, recipientEmail: "bob@example.com", status: "declined" });
+  const sentByMe = invite("sent", { fromUserId: "bob", recipientUserId: undefined, recipientEmail: "carla@example.com" });
+  const local = { ...empty, invites: [legacy, answered, sentByMe] };
+  const merged = mergeSharedSnapshot(local, { ...empty, invites: [sentByMe] }, "bob", [], { receivedComplete: true });
+  // Il vecchio invito in attesa non si può più accettare: via. La storia e quelli mandati da me restano.
+  assert.deepEqual(merged.invites.map((item) => item.id).sort(), ["old", "sent"]);
+  assert.equal(isLegacyEmailInvite(legacy, "bob"), true);
+  assert.equal(isLegacyEmailInvite(sentByMe, "bob"), false);
+  assert.equal(isLegacyEmailInvite(invite("bound", { recipientEmail: "bob@example.com" }), "bob"), false);
+});
+
+test("merge condiviso: la migrazione lega l'invito all'account anche se la copia locale sembra più nuova", () => {
+  // Orologio del telefono avanti: la copia locale (solo email) ha un timbro più nuovo di quello del server.
+  const local = { ...empty, invites: [invite("i1", { recipientUserId: undefined, recipientEmail: "bob@example.com", updatedAt: "2026-12-01T00:00:00.000Z" })] };
+  const server = { ...empty, invites: [invite("i1", { recipientEmail: "bob@example.com" })] };
+  const merged = mergeSharedSnapshot(local, server, "bob", [], { receivedComplete: true });
+  assert.equal(merged.invites.length, 1);
+  assert.equal(merged.invites[0].recipientUserId, "bob");
+  // Senza novità dal server: stesso array, niente riscritture.
+  const again = mergeSharedSnapshot(merged, server, "bob", [], { receivedComplete: true });
+  assert.equal(again.invites[0], merged.invites[0]);
+});
+
+test("inviti pubblicabili dal client: solo con codice, senza destinatario", () => {
+  assert.equal(isCodeOnlyInvite(invite("code", { recipientUserId: undefined })), true);
+  assert.equal(isCodeOnlyInvite(invite("person")), false);
+  assert.equal(isCodeOnlyInvite(invite("email", { recipientUserId: undefined, recipientEmail: "bob@example.com" })), false);
+});
+
+test("cassetta degli inviti: letture, realtime e notifiche per account, mai per email", () => {
+  const source = readFileSync(new URL("../src/lib/groupSync.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /\.eq\("recipient_email"/);
+  assert.doesNotMatch(source, /recipient_email=eq\./);
+  assert.doesNotMatch(source, /receivedEmail/);
+  assert.match(source, /\.eq\("recipient_user_id", me\)/);
+  assert.match(source, /filter: `recipient_user_id=eq\.\$\{userId\}`/);
+  assert.match(source, /settleInviteNotifications\(state\.notifications, merged\.invites, me,/);
+  // Gli inviti a una persona li crea il server: il client non pubblica (né rimette in coda) quelli con un destinatario.
+  assert.match(source, /if \(!isCodeOnlyInvite\(invite\)\) return false;/);
+  const view = readFileSync(new URL("../src/views/GroupsView.tsx", import.meta.url), "utf8");
+  assert.match(view, /isReceivedInvite\(invite, myAccountId\)/);
+  assert.doesNotMatch(view, /myEmail/);
+  const sheet = readFileSync(new URL("../src/components/GroupInvite.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(sheet, /recipientEmail/);
 });

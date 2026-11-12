@@ -6,6 +6,11 @@
 -- Una sola copia dei dati: chi riceve una condivisione legge (e con "edit" scrive) le righe
 -- originali del proprietario in studyos_items. Le policy del proprietario restano identiche;
 -- quelle nuove si aggiungono e consultano studyos_shares. Vedi docs/groups-sync.md.
+--
+-- Dalla revisione dell'11/11/2026 (conferma email spenta) un invito nominale vale solo per
+-- l'account destinatario (recipient_user_id, inviti creati da people.sql) e create_share_invite
+-- non crea più inviti per email. Le stesse funzioni e policy sono in people.sql: rieseguire
+-- questo file non riapre l'accettazione per email. Dopo questo file riesegui people.sql.
 
 do $$
 begin
@@ -83,6 +88,13 @@ create unique index if not exists studyos_share_invites_token_key on public.stud
 create index if not exists studyos_share_invites_owner_idx on public.studyos_share_invites (owner_id, status);
 create index if not exists studyos_share_invites_recipient_idx
   on public.studyos_share_invites (recipient_email, status) where recipient_email is not null;
+
+-- Destinatario di un invito all'account (invite_person_to_share in people.sql). Gli inviti per sola
+-- email restano solo come storico: non si creano né si accettano più.
+alter table public.studyos_share_invites
+  add column if not exists recipient_user_id uuid references auth.users (id) on delete cascade;
+create index if not exists studyos_share_invites_recipient_user_idx
+  on public.studyos_share_invites (recipient_user_id, status);
 
 create table if not exists public.studyos_item_revisions (
   id bigint generated always as identity primary key,
@@ -667,7 +679,7 @@ revoke all on table public.studyos_item_revisions from authenticated;
 revoke all on table public.studyos_shares from authenticated;
 grant select, insert, update, delete on table public.studyos_shares to authenticated;
 -- token_hash resta fuori dalle colonne leggibili.
-grant select (id, owner_id, owner_name, offers, requests, recipient_email, status, accepted_by, expires_at, created_at)
+grant select (id, owner_id, owner_name, offers, requests, recipient_email, recipient_user_id, status, accepted_by, expires_at, created_at)
   on table public.studyos_share_invites to authenticated;
 grant delete on table public.studyos_share_invites to authenticated;
 grant select, delete on table public.studyos_item_revisions to authenticated;
@@ -752,11 +764,7 @@ create policy studyos_share_invites_select on public.studyos_share_invites
 for select to authenticated
 using (
   owner_id = (select auth.uid())
-  or (
-    status = 'pending'
-    and recipient_email is not null
-    and recipient_email = (select public.studyos_account_email())
-  )
+  or (status = 'pending' and recipient_user_id = (select auth.uid()))
 );
 
 drop policy if exists studyos_share_invites_delete on public.studyos_share_invites;
@@ -843,6 +851,9 @@ as $$
   select left(coalesce(nullif(btrim(p_display_name), ''), 'Studente'), 80)
 $$;
 
+-- Invito via link (token). Gli inviti per email non si creano più: con la conferma email spenta un
+-- indirizzo non prova chi lo usa. Per un account c'è invite_person_to_share (people.sql).
+-- p_recipient_email resta nella firma per i client vecchi: se non è vuoto la richiesta è rifiutata.
 create or replace function public.create_share_invite(
   p_owner_name text,
   p_offers jsonb,
@@ -856,36 +867,28 @@ set search_path = public
 as $$
 declare
   v_token text := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
-  v_email text := nullif(lower(btrim(coalesce(p_recipient_email, ''))), '');
   v_id uuid;
 begin
   if auth.uid() is null then
     raise exception 'Accesso richiesto';
   end if;
+  if nullif(btrim(coalesce(p_recipient_email, '')), '') is not null then
+    raise exception 'Gli inviti per email non ci sono più: cerca la persona';
+  end if;
   perform public.studyos_validate_share_items(p_offers, true);
   perform public.studyos_validate_share_items(coalesce(p_requests, '[]'::jsonb), false);
-  if v_email is not null and v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
-    raise exception 'Email non valida';
-  end if;
-  -- Confronto sull'email dell'account (anche non confermata) con exists: un valore mancante non salta il controllo.
-  if v_email is not null and exists (
-    select 1 from auth.users u where u.id = auth.uid() and lower(u.email) = v_email
-  ) then
-    raise exception 'Non puoi invitare te stesso';
-  end if;
   if (
     select count(*) from public.studyos_share_invites
     where owner_id = auth.uid() and status = 'pending' and expires_at > now()
   ) >= 50 then
     raise exception 'Troppi inviti in attesa: annullane qualcuno';
   end if;
-  insert into public.studyos_share_invites (owner_id, owner_name, offers, requests, recipient_email, token_hash)
+  insert into public.studyos_share_invites (owner_id, owner_name, offers, requests, token_hash)
   values (
     auth.uid(),
     public.studyos_share_name(p_owner_name),
     p_offers,
     coalesce(p_requests, '[]'::jsonb),
-    v_email,
     sha256(convert_to(v_token, 'UTF8'))
   )
   returning id into v_id;
@@ -893,6 +896,8 @@ begin
 end;
 $$;
 
+-- Anteprima di un invito via link. Un vecchio invito per sola email che la migrazione non ha legato
+-- a un account risulta scaduto; for_other_account vale per gli inviti legati a un altro account.
 create or replace function public.preview_share_invite(p_token text)
 returns table (
   invite_id uuid,
@@ -915,8 +920,13 @@ as $$
     i.offers,
     i.requests,
     i.expires_at,
-    case when i.status = 'pending' and i.expires_at <= now() then 'expired' else i.status end,
-    i.recipient_email is not null and i.recipient_email is distinct from public.studyos_account_email(),
+    case
+      when i.status = 'pending'
+        and (i.expires_at <= now() or (i.recipient_user_id is null and i.recipient_email is not null))
+        then 'expired'
+      else i.status
+    end,
+    i.recipient_user_id is not null and i.recipient_user_id is distinct from auth.uid(),
     i.owner_id = auth.uid()
   from public.studyos_share_invites i
   where auth.uid() is not null
@@ -924,7 +934,9 @@ as $$
     and i.token_hash = sha256(convert_to(p_token, 'UTF8'))
 $$;
 
--- Verifica l'invito per chi lo apre: email destinataria, oppure token per gli inviti via link.
+-- Verifica l'invito per chi lo apre. Invito all'account (recipient_user_id): vale solo per quell'account
+-- e il token da solo non basta. Vecchio invito per sola email non legato a un account: non si accetta
+-- più. Invito via link: serve il token.
 create or replace function public.studyos_claim_share_invite(p_invite_id uuid, p_token text)
 returns public.studyos_share_invites
 language plpgsql
@@ -950,11 +962,12 @@ begin
   if v_invite.expires_at <= now() then
     raise exception 'Invito scaduto: chiedine uno nuovo';
   end if;
-  if v_invite.recipient_email is not null then
-    -- is distinct from: con email mancante o non confermata non si passa mai (null <> x non solleva nulla).
-    if v_invite.recipient_email is distinct from public.studyos_account_email() then
+  if v_invite.recipient_user_id is not null then
+    if v_invite.recipient_user_id is distinct from auth.uid() then
       raise exception 'Invito destinato a un altro account';
     end if;
+  elsif v_invite.recipient_email is not null then
+    raise exception 'Invito scaduto: chiedine uno nuovo';
   elsif p_token is null or v_invite.token_hash <> sha256(convert_to(p_token, 'UTF8')) then
     raise exception 'Link di invito non valido';
   end if;
@@ -996,7 +1009,7 @@ begin
       coalesce(v_item->>'permission', 'view'),
       auth.uid(),
       v_name,
-      v_email
+      case when v_invite.recipient_user_id is not null then null else v_email end
     )
     on conflict (owner_id, scope, (coalesce('u:' || grantee_user_id::text, 'g:' || grantee_group_id))) do update set
       permission = excluded.permission,

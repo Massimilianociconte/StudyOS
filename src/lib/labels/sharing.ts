@@ -44,7 +44,7 @@ export const SHARED_ITEM_TEXT = {
 export const SHARE_INVITE_BLOCKED: Record<InviteBlock, string> = {
   invalid: "Link non valido, oppure l'invito è stato annullato.",
   own: "È un tuo invito: mandalo a un'altra persona.",
-  otherAccount: "Questo invito è per un altro indirizzo email: accedi con quell'account e riapri il link.",
+  otherAccount: "Questo invito è per un altro account: accedi con quello giusto e riapri il link.",
   accepted: "Invito già usato.",
   declined: "Invito rifiutato.",
   expired: "Invito scaduto: chiedine uno nuovo."

@@ -31,6 +31,9 @@ import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { GROUP_FORM_TEXT, GROUP_SYNC_TEXT } from "../lib/labels/groups";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
+import { peopleLabels } from "../lib/labels";
+import { groupInviteRecipient, isExpiredEmailInvite } from "../lib/people";
+import { isReceivedInvite } from "../lib/groups";
 
 type DetailTab = "bacheca" | "membri" | "attivita";
 
@@ -100,12 +103,14 @@ export function GroupsView() {
   }, []);
 
   const myId = actor?.userId;
-  // Ricevuti = indirizzati alla mia email. Con «diverso da me» comparivano, da disconnessi (id del
-  // dispositivo), gli inviti che avevo MANDATO io, con «Accetta» e «Rifiuta» funzionanti.
-  const myEmail = session ? actor?.email?.toLowerCase() : undefined;
-  const received = myEmail
+  // Ricevuti = indirizzati al mio account (recipient_user_id, supabase/people.sql). Con «diverso da me»
+  // comparivano, da disconnessi (id del dispositivo), gli inviti che avevo MANDATO io, con «Accetta» e
+  // «Rifiuta» funzionanti. Un vecchio invito per email mai legato a un account non si può accettare:
+  // non si mostra (e il pull lo toglie).
+  const myAccountId = session ? myId : undefined;
+  const received = myAccountId
     ? groupInvites
-        .filter((invite) => invite.status === "pending" && invite.fromUserId !== myId && invite.recipientEmail?.toLowerCase() === myEmail)
+        .filter((invite) => invite.status === "pending" && isReceivedInvite(invite, myAccountId))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     : [];
   const open = openId ? studyGroups.find((group) => group.id === openId) ?? null : null;
@@ -578,21 +583,28 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
             <summary className="cursor-pointer text-sm font-extrabold">Cosa può fare ogni ruolo?</summary>
             <ul className="mt-2 grid grid-cols-1 gap-1.5 text-xs text-[var(--muted)]">
               <li><strong>Proprietario</strong>: ha creato il gruppo. Sceglie i ruoli, può togliere persone e contenuti dalla bacheca ed eliminare il gruppo.</li>
-              <li><strong>Amministratore</strong>: come un membro, ma può anche invitare persone per email.</li>
+              <li><strong>Amministratore</strong>: {peopleLabels.adminRoleHint}</li>
               <li><strong>Membro</strong>: aggiunge link, note e file in bacheca e invita altri con link, QR o codice.</li>
             </ul>
           </details>
           {sentInvites.length ? (
             <div className="mt-4">
-              <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">Inviti in attesa di risposta · {sentInvites.length}</h4>
+              <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">{peopleLabels.sentInvitesTitle(sentInvites.length)}</h4>
               <ul className="grid grid-cols-1 gap-1.5">
-                {sentInvites.map((invite) => (
-                  <li key={invite.id} className="flex min-w-0 items-center gap-2 rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-xs">
-                    <Icon name="Mail" className="h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
-                    <span className="one-line-safe min-w-0 flex-1 font-bold">{invite.recipientEmail ?? `Codice ${invite.code}`}</span>
-                    <span className="shrink-0 font-black text-[var(--muted)]">in attesa</span>
-                  </li>
-                ))}
+                {sentInvites.map((invite) => {
+                  // Invito per email di prima, non legato a nessun account: non si può più accettare.
+                  const expired = isExpiredEmailInvite(invite);
+                  return (
+                    <li key={invite.id} className="flex min-w-0 items-start gap-2 rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-xs">
+                      <Icon name={expired ? "AlertTriangle" : "Mail"} className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--faint)]" />
+                      <span className="min-w-0 flex-1">
+                        <span className="one-line-safe block font-bold">{groupInviteRecipient(invite)}</span>
+                        {expired ? <span className="block text-[var(--muted)]">{peopleLabels.expiredEmailInvite}</span> : null}
+                      </span>
+                      <span className="shrink-0 font-black text-[var(--muted)]">{expired ? peopleLabels.expired : peopleLabels.waiting}</span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ) : null}

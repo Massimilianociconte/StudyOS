@@ -17,8 +17,11 @@ import { GlobalSearch } from "./GlobalSearch";
 import { TaskTimerReminder } from "./TaskTimerReminder";
 import { AgentDock } from "./AgentDesk";
 import { StudyTimerWatcher } from "./StudyTimerWatcher";
+import { PeopleNotice } from "./PeopleNotice";
 import { requestSettingsSection } from "../lib/settingsJump";
 import { QUICK_ADD_EVENT } from "../lib/quickAdd";
+import { OPEN_NOTIFICATIONS_EVENT } from "../lib/openLink";
+import { PushPrompt } from "./PushPrompt";
 
 // `short`: etichetta per la barra compatta dei tablet e per la barra in basso su telefono.
 // `hint`: cosa si trova nella sezione, in parole semplici (tooltip e foglio "Altro" su telefono).
@@ -87,6 +90,13 @@ export function AppShell({ children }: PropsWithChildren) {
     };
     window.addEventListener(QUICK_ADD_EVENT, onRequest);
     return () => window.removeEventListener(QUICK_ADD_EVENT, onRequest);
+  }, []);
+
+  // ?apri=notifiche (notifica push toccata): il cassetto Notifiche vive qui, lo apre un evento.
+  useEffect(() => {
+    const onOpen = () => setNotificationsOpen(true);
+    window.addEventListener(OPEN_NOTIFICATIONS_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_NOTIFICATIONS_EVENT, onOpen);
   }, []);
 
   const openQuickAdd = () => {
@@ -326,6 +336,11 @@ export function AppShell({ children }: PropsWithChildren) {
             ) : null}
           </div>
 
+          {/* Avviso una tantum della ricerca persone (trovabili di default): solo con l'account. */}
+          <div className="mx-auto max-w-[1380px]">
+            <PeopleNotice onOpenProfile={() => openSettings("profilo")} />
+          </div>
+
           <div className="mx-auto max-w-[1380px]">{children}</div>
 
           <footer className="mx-auto mt-12 max-w-[1380px] border-t border-[var(--border)] py-6 text-center text-xs font-bold text-[var(--muted)]">
@@ -474,6 +489,7 @@ export function AppShell({ children }: PropsWithChildren) {
         ) : null}
       </div>
       {notificationsOpen ? <NotificationsPanel onClose={() => setNotificationsOpen(false)} /> : null}
+      <PushPrompt />
     </main>
   );
 }

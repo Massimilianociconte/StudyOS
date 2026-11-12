@@ -7,11 +7,12 @@ import { AppShell } from "./components/AppShell";
 import { LockScreen } from "./components/LockScreen";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { whenPersisted } from "./lib/persistence";
-import { cloudConfigured } from "./lib/cloudSyncState";
+import { cloudConfigured, subscribeCloudSync } from "./lib/cloudSyncState";
 import { useViewMemory } from "./lib/uiState";
 import { startAgentLink } from "./lib/agentLink";
 import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
 import { useShareInviteLinks } from "./hooks/useShareInviteLinks";
+import { useOpenLink } from "./hooks/useOpenLink";
 import type { AppView } from "./types";
 
 const CHUNK_RELOAD_KEY = "studyos-chunk-reload";
@@ -100,14 +101,32 @@ export default function App() {
   useGroupInviteLinks(!loading && !locked && !error);
   // Link/QR di condivisione: apre Condivisione sulla scheda dell'invito.
   useShareInviteLinks(!loading && !locked && !error);
+  // Notifica push toccata: ?apri=notifiche|condivisione|gruppi apre la pagina giusta.
+  useOpenLink(!loading && !locked && !error);
 
   useEffect(() => {
     init().then(() => {
       // Motore di sync + supabase-js caricati in differita: fuori dal bundle iniziale.
       if (cloudConfigured) void import("./lib/cloudSync").then((module) => module.initCloudSync());
       if (cloudConfigured) void import("./lib/shareSync").then((module) => module.initShareSync());
+      // Nome del profilo online (ricerca persone): stesso caricamento in differita.
+      if (cloudConfigured) void import("./lib/peopleSync").then((module) => module.initPeopleSync());
     });
   }, [init]);
+
+  // Notifiche push: se questo dispositivo le aveva già attivate, si riallinea l'iscrizione all'avvio
+  // e dopo ogni accesso. Il codice push si carica solo con il permesso già concesso.
+  useEffect(() => {
+    if (loading || !cloudConfigured) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    let lastUserId: string | null = null;
+    return subscribeCloudSync((state) => {
+      const userId = state.session?.user.id ?? null;
+      if (!userId || userId === lastUserId) return;
+      lastUserId = userId;
+      void import("./lib/push").then((module) => module.syncPushSubscription()).catch(() => undefined);
+    });
+  }, [loading]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;

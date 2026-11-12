@@ -23,7 +23,7 @@ export const GROUP_SYNC_TEXT = {
   alreadyAnswered: "Hai già risposto a questo invito da un altro dispositivo.",
   alreadyMember: (group: string) => `Sei già nel gruppo "${group}".`,
   inviteGone: "Questo invito non esiste più: il gruppo è stato eliminato o l'invito ritirato.",
-  otherAccount: "Questo invito è per un altro indirizzo email. Accedi con quell'account per accettarlo.",
+  otherAccount: "Questo invito è per un altro account. Se è un vecchio invito per email, chiedine uno nuovo.",
   offlineAnswer: "Il server dei gruppi non risponde: l'invito resta in attesa. Controlla la connessione e riprova.",
   needsAccount: "Accedi al tuo account per rispondere all'invito.",
   offlineAction: "Non riuscito: il server dei gruppi non risponde. Controlla la connessione e riprova.",
@@ -34,7 +34,5 @@ export const GROUP_SYNC_TEXT = {
   leaveFailed: "Uscita non riuscita: sei ancora nel gruppo. Controlla la connessione e riprova.",
   deleteGroupFailed: "Il gruppo non è stato eliminato: controlla la connessione e riprova.",
   removedMember: (name: string) => `${name} non fa più parte del gruppo.`,
-  notPublished: "Non ancora condiviso: partirà appena il server risponde.",
-  inviteQueued: (recipient: string) =>
-    `Il server dei gruppi non risponde: l'invito a ${recipient} è salvato e partirà da solo appena torna la connessione.`
+  notPublished: "Non ancora condiviso: partirà appena il server risponde."
 } as const;

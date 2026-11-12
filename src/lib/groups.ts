@@ -1,6 +1,7 @@
 /** Logica pura dei gruppi: codici di invito, normalizzazione, link condivisibili, merge col server. */
 
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
+import { bindInviteRecipients } from "./people";
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
@@ -92,7 +93,7 @@ const newerWins = <T extends Dated>(current: T[], incoming: T[]) => {
  * Esito di una RPC dei gruppi (accept/decline/join) letto dal messaggio dell'errore (supabase/groups.sql):
  * - "handled": l'invito ha già una risposta (da un altro dispositivo dello stesso account);
  * - "not-found": invito o gruppo non esistono più;
- * - "other-account": l'invito è per un'altra email;
+ * - "other-account": l'invito è per un altro account (o un vecchio invito per email mai legato a uno);
  * - "invalid-code": codice inesistente o disattivato;
  * - "unavailable": rete, sessione o server. Solo questo è da riprovare: l'invito resta in attesa.
  */
@@ -121,11 +122,11 @@ interface InviteNotification {
 /**
  * Notifiche «accetta o rifiuta» di inviti che non sono più in attesa (accettati o rifiutati da un altro
  * dispositivo, ritirati, gruppo eliminato): diventano lette. Stesso array se non cambia nulla.
- * `invites` deve essere l'elenco già unito con il server, `email` quella dell'account (minuscole).
+ * `invites` deve essere l'elenco già unito con il server, `me` l'id dell'account.
  */
-export const settleInviteNotifications = <N extends InviteNotification>(notifications: N[], invites: GroupInvite[], email: string, now: string): N[] => {
-  if (!email) return notifications;
-  const pending = invites.filter((invite) => invite.status === "pending" && invite.recipientEmail?.toLowerCase() === email);
+export const settleInviteNotifications = <N extends InviteNotification>(notifications: N[], invites: GroupInvite[], me: string, now: string): N[] => {
+  if (!me) return notifications;
+  const pending = invites.filter((invite) => invite.status === "pending" && isReceivedInvite(invite, me));
   const pendingIds = new Set(pending.map((invite) => invite.id));
   const pendingGroups = new Set(pending.map((invite) => invite.groupId));
   let changed = false;
@@ -164,12 +165,40 @@ export const withServerStamp = <T extends { id: string; updatedAt: string }>(ite
   return items.map((entry) => (entry.id === id ? { ...entry, updatedAt: stamp } : entry));
 };
 
+// ——— Inviti ricevuti: un solo percorso, per account ———
+// Da supabase/people.sql un invito nominale vale solo per l'account destinatario (recipient_user_id):
+// il client legge, notifica e chiude gli inviti ricevuti solo per id utente, mai per email. L'email
+// resta su un invito solo come storia di prima della migrazione: quelli che la migrazione ha legato
+// arrivano dal server con recipientUserId; gli altri non si possono più accettare.
+
+/** Invito ricevuto dal mio account (lo ha mandato un altro). */
+export const isReceivedInvite = (invite: Pick<GroupInvite, "fromUserId" | "recipientUserId">, me: string) =>
+  Boolean(me) && invite.fromUserId !== me && invite.recipientUserId === me;
+
+/**
+ * Copia locale di un invito ricevuto per email prima della migrazione e mai legato a un account: il
+ * server non la restituisce più (si legge per account) e non si può accettare. Serve solo a toglierla.
+ */
+export const isLegacyEmailInvite = (invite: Pick<GroupInvite, "fromUserId" | "recipientUserId" | "recipientEmail">, me: string) =>
+  invite.fromUserId !== me && !invite.recipientUserId && Boolean(invite.recipientEmail);
+
+/** Invito che il client può pubblicare da sé: solo con codice, senza destinatario (la policy rifiuta gli altri). */
+export const isCodeOnlyInvite = (invite: Pick<GroupInvite, "recipientUserId" | "recipientEmail">) => !invite.recipientUserId && !invite.recipientEmail;
+
+/**
+ * Inviti nuovi da segnalare con una notifica: solo quelli ricevuti dal mio account e ancora in attesa.
+ * Quelli che ho mandato io tornano dal server (creati lì da invite_person_to_group) e non vanno
+ * notificati a me, come quelli con codice o di altri membri.
+ */
+export const invitesToNotify = (fresh: GroupInvite[], me: string): GroupInvite[] =>
+  fresh.filter((invite) => invite.status === "pending" && isReceivedInvite(invite, me));
+
 export interface MergeSharedOptions {
   /**
-   * Email dell'account quando la lettura degli inviti ricevuti è completa (tutti quelli in attesa):
-   * un invito ricevuto in attesa qui ma non più sul server è stato ritirato o il gruppo eliminato.
+   * La lettura degli inviti ricevuti dal mio account è completa (tutti quelli in attesa): un invito
+   * ricevuto in attesa qui ma non più sul server è stato ritirato o il gruppo eliminato.
    */
-  receivedEmail?: string;
+  receivedComplete?: boolean;
 }
 
 /**
@@ -209,18 +238,20 @@ export const mergeSharedSnapshot = (
 
   const invites = newerWins(current.invites, incoming.invites);
   const serverInvites = new Set(incoming.invites.map((invite) => invite.id));
-  const received = options.receivedEmail?.toLowerCase() ?? "";
+  // La migrazione di people.sql lega gli inviti per email all'account (e ne aggiorna updated_at): il
+  // legame resta anche se la copia locale sembra più recente (newerWins la terrebbe).
+  const boundInvites = bindInviteRecipients(invites.next, incoming.invites);
   // Un invito ricevuto in attesa che il server non ha più restava qui per sempre (con la scheda
   // «Accetta» che finiva in «Invito non trovato»): si toglie. Quelli già risposti restano come storia.
+  // Anche la copia di un invito per email mai legato a un account: il server non la manda più.
   const withdrawn = (invite: GroupInvite) =>
-    Boolean(received) &&
+    Boolean(options.receivedComplete) &&
     invite.status === "pending" &&
-    invite.fromUserId !== me &&
-    invite.recipientEmail?.toLowerCase() === received &&
+    (isReceivedInvite(invite, me) || isLegacyEmailInvite(invite, me)) &&
     !serverInvites.has(invite.id);
   // Gruppo sparito: i suoi inviti locali vanno con lui; quelli che il server restituisce ancora sono veri
   // (es. un invito nominale in attesa per chi è stato tolto dal gruppo).
-  const nextInvites = invites.next.filter(
+  const nextInvites = boundInvites.filter(
     (invite) => !(gone.has(invite.groupId) && !serverInvites.has(invite.id)) && !withdrawn(invite)
   );
 

@@ -684,20 +684,25 @@ const main = async () => {
   check("Uscita dal gruppo: la condivisione di Carla verso il gruppo è sparita", carlaSharesBefore.length === 1 && carlaSharesAfter.length === 0,
     `prima ${carlaSharesBefore.length}, dopo ${carlaSharesAfter.length}`);
 
-  // Invito per email: vale solo per l'account indicato, anche senza token.
-  const { data: emailInvite, error: emailInviteError } = await alice.client.rpc("create_share_invite", {
-    p_owner_name: "Alice", p_offers: [{ scope: "goals", permission: "view" }], p_requests: [], p_recipient_email: carla.email.toUpperCase()
+  // Gli inviti per email non ci sono più (conferma email spenta): il server li rifiuta. Gli inviti
+  // all'account li prova scripts/supabase/people-check.mjs; qui Carla entra con un invito via link.
+  const { error: emailInviteError } = await alice.client.rpc("create_share_invite", {
+    p_owner_name: "Alice", p_offers: [{ scope: "goals", permission: "view" }], p_requests: [], p_recipient_email: carla.email
   });
-  need("Alice crea un invito per email", !emailInviteError && Boolean(emailInvite?.id), emailInviteError?.message ?? "risposta senza id");
-  const { data: carlaInbox } = await carla.client.from("studyos_share_invites").select("id, owner_name, offers").eq("status", "pending");
-  check("Carla vede l'invito per email", carlaInbox?.some((item) => item.id === emailInvite.id));
-  await rejects("Bob non accetta un invito per Carla", bob.client.rpc("accept_share_invite", {
-    p_invite_id: emailInvite.id, p_token: emailInvite.token, p_display_name: "Bob", p_reciprocal: []
+  check("Invito per email rifiutato", emailInviteError?.message === "Gli inviti per email non ci sono più: cerca la persona",
+    emailInviteError?.message ?? "nessun errore");
+  const { data: goalsInvite, error: goalsInviteError } = await alice.client.rpc("create_share_invite", {
+    p_owner_name: "Alice", p_offers: [{ scope: "goals", permission: "view" }], p_requests: [], p_recipient_email: null
+  });
+  need("Alice crea un invito via link per Carla", !goalsInviteError && Boolean(goalsInvite?.id) && /^[0-9a-f]{64}$/.test(goalsInvite?.token ?? ""),
+    goalsInviteError?.message ?? "risposta senza id o token");
+  await rejects("Carla senza token non accetta un invito via link", carla.client.rpc("accept_share_invite", {
+    p_invite_id: goalsInvite.id, p_token: null, p_display_name: "Carla", p_reciprocal: []
   }));
   const { error: carlaAcceptError } = await carla.client.rpc("accept_share_invite", {
-    p_invite_id: emailInvite.id, p_token: null, p_display_name: "Carla", p_reciprocal: []
+    p_invite_id: goalsInvite.id, p_token: goalsInvite.token, p_display_name: "Carla", p_reciprocal: []
   });
-  check("Carla accetta senza token", !carlaAcceptError, carlaAcceptError?.message);
+  check("Carla accetta con il link", !carlaAcceptError, carlaAcceptError?.message);
   check("Carla vede l'obiettivo di Alice", liveIds(await items(carla, alice, "goal")) === G1.id);
   const { error: barbError } = await alice.client.from("studyos_shares").insert({
     owner_id: alice.id, owner_name: "Alice", scope: "barb_exams", permission: "view", grantee_user_id: carla.id, grantee_name: "Carla"

@@ -439,3 +439,46 @@
   contatore che non scende mai teneva il blocco per sempre con un tentativo ogni 10 minuti.
 - Locale: la porta 8787 può essere occupata da un'altra app. Per `wrangler dev` usa
   `--port 8797` e controlla con `lsof -iTCP:8787` prima di mandare richieste a 8787.
+- Inviti di gruppo ricevuti: un solo percorso, per account. `pullSharedUpdates` legge
+  `recipient_user_id = me`, il canale Realtime filtra `recipient_user_id=eq.<id>`, e notifiche,
+  chiusura delle notifiche (`settleInviteNotifications`) e ritiro (`mergeSharedSnapshot` con
+  `receivedComplete`) usano `isReceivedInvite` di `src/lib/groups.ts`. Mai filtrare per
+  `recipient_email`: l'email resta solo sui vecchi inviti, e le copie locali di quelli mai legati a
+  un account si tolgono (`isLegacyEmailInvite`). Il client pubblica solo inviti con codice
+  (`isCodeOnlyInvite`); quelli a una persona li crea `invite_person_to_group`.
+- Conferma email spenta sul progetto reale dall'11/11/2026 (Authentication → Sign In /
+  Providers → Email): un account nuovo ha `email_confirmed_at` già impostato, quindi l'email non
+  prova l'identità e chiunque può registrarsi con l'indirizzo di un altro. Mai basare un accesso
+  o l'accettazione di un invito sull'email: gli inviti in app hanno `recipient_user_id` e solo
+  `auth.uid()` li accetta (`groups.sql`, `sharing.sql` e `people.sql` contengono le stesse
+  funzioni: una modifica va fatta in tutti e tre). La ricerca per email può quindi trovare chi
+  ha registrato l'indirizzo di un altro: la scheda mostra nome e `@nome` da controllare.
+- `find_person`: solo corrispondenza esatta, mai l'email nel risultato, stessa risposta per
+  inesistente e non trovabile, 30 ricerche al minuto per account e 60 per IP. Gli account si
+  creano senza conferma, per questo il limite per IP serve.
+- Push: DB → `pg_net` → Worker `POST /push` → servizio push. Nessuna `service_role`: il database
+  passa nel corpo le iscrizioni dei destinatari, il Worker si fida solo di
+  `x-studyos-push-secret` (stesso valore di `studyos_push_secret` in Vault) e chiama
+  `push_gone` con la chiave publishable. Senza `pg_net`, segreti o Worker non c'è push ma ogni
+  altra cosa funziona: `studyos_push_notify` non deve mai far fallire la scrittura che l'ha
+  chiamata. Il contenuto è cifrato fino al dispositivo; mai registrare endpoint o testi.
+- Push, tetti: `studyos_push_notify` manda al massimo 30 notifiche all'ora per chi agisce
+  (`studyos_push_sends`; oltre salta la push in silenzio e le notifiche in app arrivano lo
+  stesso). Il database manda lotti di al massimo 40 iscrizioni; il Worker ne accetta al massimo
+  49 per richiesta (49 push più una `push_gone` = 50 sottorichieste sul piano Free).
+- Supabase: `net.http_request_queue` e `net._http_response` sono leggibili da `anon` e `authenticated`; restano irraggiungibili solo finché `net` NON è tra gli schemi esposti dell'API (Dashboard → Settings → API). Controllalo dopo aver abilitato `pg_net`.
+- `src/lib/push.ts` e `supabase` solo con `import()`. Il permesso del browser si chiede solo
+  dentro un tocco (`enablePush` aspetta come prima cosa `Notification.requestPermission`: non
+  mettere un `await` prima). Il service worker c'è solo nella build: per provare le push in
+  locale serve `vite build` + `vite preview`, non `npm run dev`.
+- iPhone e iPad: le push esistono solo con StudyOS nella schermata Home
+  (`pushSupport()` = `ios-install` altrimenti). Un cambio della chiave VAPID
+  (`src/lib/pushKeys.ts`) invalida le iscrizioni: `syncPushSubscription` rifà quelle di chi le
+  aveva attivate, e l'uscita dall'account le toglie (`CloudPanel` chiama `disablePush` prima di
+  `signOut`, sia «Esci» sia «Esci e togli i dati», con un'attesa massima di 5 s), altrimenti il dispositivo continuerebbe a ricevere le notifiche del vecchio account.
+  Dispositivo condiviso: quando l'app si avvia con una sessione, `syncPushSubscription` toglie
+  dal browser l'iscrizione se appartiene a un altro account, così le notifiche di un altro account non continuano ad arrivare.
+- `public/sw.js`: l'indirizzo della notifica (`data.url`, es. `?apri=notifiche`) si risolve
+  sempre contro `self.registration.scope` e fuori dall'app ripiega sulla pagina iniziale. Il
+  cassetto Notifiche non è una sezione: lo apre l'evento `studyos:open-notifications`.
+  I test di `sw.js` (`tests/swPush.test.mjs`) lo eseguono in un contesto `node:vm`.

@@ -4,6 +4,8 @@ import { getMeta, setMeta } from "./db";
 import {
   classifyGroupRpcError,
   inviteNotificationId,
+  invitesToNotify,
+  isCodeOnlyInvite,
   makeGroupInviteCode,
   mergeSharedSnapshot,
   normalizeInviteCode,
@@ -151,6 +153,7 @@ const toInvite = (row: Record<string, unknown>): GroupInvite => ({
   fromUserId: String(row.from_user_id ?? ""),
   fromDisplayName: String(row.from_display_name ?? ""),
   recipientEmail: (row.recipient_email as string | null) ?? undefined,
+  recipientUserId: (row.recipient_user_id as string | null) ?? undefined,
   code: String(row.code ?? ""),
   status: (row.status as GroupInvite["status"]) ?? "pending"
 });
@@ -195,14 +198,16 @@ const applyShared = async (patch: SharedPatch) => {
   await useStudyStore.getState().retryPersist();
 };
 
-const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds: string[], email: string) => {
+const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds: string[]) => {
   const state = useStudyStore.getState();
+  // La lettura degli inviti ricevuti (recipient_user_id = me) è sempre completa: quelli spariti dal
+  // server sono stati ritirati. Il legame all'account dato dalla migrazione resta (mergeSharedSnapshot).
   const merged = mergeSharedSnapshot(
     { groups: state.studyGroups, invites: state.groupInvites, resources: state.groupResources, activities: state.groupActivities },
     snapshot,
     me,
     queriedGroupIds,
-    { receivedEmail: email || undefined }
+    { receivedComplete: true }
   );
   await applyShared({
     studyGroups: merged.groups,
@@ -210,7 +215,7 @@ const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds
     groupResources: merged.resources,
     groupActivities: merged.activities,
     // Inviti risposti altrove o ritirati: la loro notifica «accetta o rifiuta» non resta da leggere.
-    notifications: settleInviteNotifications(state.notifications, merged.invites, email, new Date().toISOString())
+    notifications: settleInviteNotifications(state.notifications, merged.invites, me, new Date().toISOString())
   });
   return { freshInvites: merged.freshInvites, freshGroups: merged.freshGroups };
 };
@@ -229,12 +234,9 @@ const notifyInvite = (invite: GroupInvite) =>
     })
     .catch(() => undefined);
 
-const notifyFreshInvites = async (fresh: GroupInvite[], me: string, email: string) => {
-  for (const invite of fresh) {
-    // Solo quelli ricevuti: anche gli inviti mandati da me arrivano dal server come «nuovi».
-    if (invite.status !== "pending" || invite.fromUserId === me || invite.recipientEmail?.toLowerCase() !== email) continue;
-    await notifyInvite(invite);
-  }
+const notifyFreshInvites = async (fresh: GroupInvite[], me: string) => {
+  // Solo quelli ricevuti dal mio account: anche gli inviti mandati da me arrivano dal server come «nuovi».
+  for (const invite of invitesToNotify(fresh, me)) await notifyInvite(invite);
 };
 
 /** L'account è ancora quello della passata? (uscita o cambio account durante le letture) */
@@ -255,7 +257,7 @@ let pullRunning: Promise<boolean> | null = null;
 let pullQueued: Promise<boolean> | null = null;
 
 /**
- * Scarica le novità condivise: inviti nominali, risposte ai miei inviti,
+ * Scarica le novità condivise: inviti al mio account, risposte ai miei inviti,
  * membri/risorse/attività dei miei gruppi. Ritorna false se non applicabile.
  * Una passata alla volta: chi chiama durante una passata aspetta quella dopo (una sola, che vede
  * anche ciò che è cambiato nel frattempo), così due passate non si sovrascrivono a vicenda.
@@ -291,23 +293,24 @@ const pullOnce = async (): Promise<boolean> => {
   }
   if (!session?.user) return false;
   const me = session.user.id;
+  // Solo per ripubblicare la mia riga da proprietario (repairOwnership): gli inviti ricevuti si
+  // leggono per account (recipient_user_id, supabase/people.sql), l'email non vale come prova.
   const email = (session.user.email ?? "").toLowerCase();
   try {
     const snapshot: SharedSnapshot = { groups: [], invites: [], resources: [], activities: [] };
     /** Gruppi miei sul server in cui la mia riga da proprietario manca. */
     const ownerless: StudyGroup[] = [];
-    if (email) {
-      // Tutti quelli in attesa e quelli risposti di recente: un invito accettato o rifiutato da un altro
-      // dispositivo (o ritirato) restava «in attesa» qui per sempre, con la sua notifica da leggere.
-      const since = new Date(Date.now() - RECEIVED_HISTORY_MS).toISOString();
-      const { data, error } = await supabase
-        .from("studyos_group_invites")
-        .select("*")
-        .eq("recipient_email", email)
-        .or(`status.eq.pending,updated_at.gte."${since}"`);
-      if (error) throw error;
-      snapshot.invites.push(...(data ?? []).map(toInvite));
-    }
+    // Inviti al mio account: tutti quelli in attesa e quelli risposti di recente. Un invito accettato o
+    // rifiutato da un altro dispositivo (o ritirato) restava «in attesa» qui per sempre, con la sua
+    // notifica da leggere.
+    const since = new Date(Date.now() - RECEIVED_HISTORY_MS).toISOString();
+    const { data, error } = await supabase
+      .from("studyos_group_invites")
+      .select("*")
+      .eq("recipient_user_id", me)
+      .or(`status.eq.pending,updated_at.gte."${since}"`);
+    if (error) throw error;
+    snapshot.invites.push(...(data ?? []).map(toInvite));
     const { data: sent, error: sentError } = await supabase.from("studyos_group_invites").select("*").eq("from_user_id", me);
     if (sentError) throw sentError;
     snapshot.invites.push(...(sent ?? []).map(toInvite));
@@ -372,9 +375,9 @@ const pullOnce = async (): Promise<boolean> => {
     // Uscita («Esci e togli i dati») o cambio account durante le letture: i dati di prima non devono
     // finire nel profilo svuotato (e da lì nel cloud del prossimo account).
     if (!(await stillSignedInAs(me))) return false;
-    const { freshInvites } = await mergeShared(snapshot, me, myGroupIds, email);
+    const { freshInvites } = await mergeShared(snapshot, me, myGroupIds);
     if (!(await stillSignedInAs(me))) return false;
-    await notifyFreshInvites(freshInvites, me, email);
+    await notifyFreshInvites(freshInvites, me);
     lastGroupPullAt = Date.now();
     watchedMe = me;
     await repairOwnership(ownerless, me, email);
@@ -475,7 +478,8 @@ export const publishResource = async (resource: GroupResource): Promise<boolean>
 
 export const publishInvite = async (invite: GroupInvite): Promise<boolean> => {
   const ok = await pushSharedInvite(invite);
-  await rememberPublish("invite", invite.id, ok);
+  // Un invito a una persona (o per email, di prima) non si pubblica dal client: niente da riprovare.
+  await rememberPublish("invite", invite.id, ok || !isCodeOnlyInvite(invite));
   return ok;
 };
 
@@ -500,7 +504,8 @@ const flushPublishQueue = async (me: string) => {
       } else {
         const invite = state.groupInvites.find((item) => item.id === entry.id);
         const group = invite ? state.studyGroups.find((item) => item.id === invite.groupId) : undefined;
-        if (!invite || !group || invite.status !== "pending") await done();
+        // Inviti per email rimasti in coda da prima: il server non li accetta più, si tolgono.
+        if (!invite || !group || invite.status !== "pending" || !isCodeOnlyInvite(invite)) await done();
         else if (group.sharedAt) await publishInvite(invite);
       }
     }
@@ -635,7 +640,12 @@ export const deleteSharedGroup = (groupId: string) => deleteRow("studyos_groups"
 
 export const deleteSharedResource = (resourceId: string) => deleteRow("studyos_group_resources", resourceId);
 
+/**
+ * Solo inviti con codice, senza destinatario (la policy di inserimento rifiuta gli altri): quelli a
+ * una persona li crea il server con invite_person_to_group, quelli per email non esistono più.
+ */
 export const pushSharedInvite = async (invite: GroupInvite) => {
+  if (!isCodeOnlyInvite(invite)) return false;
   const ok = await pushRow("studyos_group_invites", {
     id: invite.id,
     group_id: invite.groupId,
@@ -643,13 +653,20 @@ export const pushSharedInvite = async (invite: GroupInvite) => {
     group_description: invite.groupDescription ?? null,
     from_user_id: invite.fromUserId,
     from_display_name: invite.fromDisplayName,
-    recipient_email: invite.recipientEmail ?? null,
+    recipient_email: null,
     code: invite.code,
     status: invite.status,
     updated_at: invite.updatedAt
   });
   if (ok) await adoptServerStamp("groupInvites", invite.id, ok.stamp, invite.updatedAt);
   return Boolean(ok);
+};
+
+/** Nome della persona appena invitata, solo per l'elenco di chi invita (il server non lo conserva). */
+export const rememberInviteRecipient = async (inviteId: string, name: string) => {
+  const state = useStudyStore.getState();
+  if (!state.groupInvites.some((invite) => invite.id === inviteId && invite.recipientName !== name)) return;
+  await applyShared({ groupInvites: state.groupInvites.map((invite) => (invite.id === inviteId ? { ...invite, recipientName: name } : invite)) });
 };
 
 export const pushSharedResource = async (resource: GroupResource) => {
@@ -906,32 +923,32 @@ export const regenerateInviteCode = async (groupId: string): Promise<string> => 
 };
 
 let inviteChannel: RealtimeChannel | null = null;
-let inviteSubscribedEmail = "";
+let inviteSubscribedUser = "";
 
 const stopInviteSubscription = () => {
   if (inviteChannel && supabase) {
     void supabase.removeChannel(inviteChannel).catch(() => undefined);
   }
   inviteChannel = null;
-  inviteSubscribedEmail = "";
+  inviteSubscribedUser = "";
 };
 
-const startInviteSubscription = (email: string) => {
-  if (!supabase || inviteSubscribedEmail === email) return;
+const startInviteSubscription = (userId: string) => {
+  if (!supabase || inviteSubscribedUser === userId) return;
   stopInviteSubscription();
-  inviteSubscribedEmail = email;
+  inviteSubscribedUser = userId;
   inviteChannel = supabase
-    .channel(`studyos-invites:${email}`)
+    .channel(`studyos-invites:${userId}`)
     .on(
       "postgres_changes",
-      { event: "INSERT", schema: "public", table: "studyos_group_invites", filter: `recipient_email=eq.${email}` },
+      { event: "INSERT", schema: "public", table: "studyos_group_invites", filter: `recipient_user_id=eq.${userId}` },
       (payload) => {
         const invite = toInvite((payload.new ?? {}) as Record<string, unknown>);
         if (!invite.id) return;
         const state = useStudyStore.getState();
         if (state.groupInvites.some((item) => item.id === invite.id)) return;
         void applyShared({ groupInvites: [invite, ...state.groupInvites] });
-        if (invite.status === "pending") void notifyInvite(invite);
+        for (const received of invitesToNotify([invite], userId)) void notifyInvite(received);
       }
     )
     .subscribe();
@@ -1066,7 +1083,7 @@ const stopGroupWatch = () => {
 };
 
 /**
- * Cassetta postale condivisa: pull iniziale + realtime sugli inviti nominali e sui miei gruppi
+ * Cassetta postale condivisa: pull iniziale + realtime sugli inviti al mio account e sui miei gruppi
  * (bacheca, cronologia, nome). Silenziosa quando non applicabile (ospite, offline, migrazione assente).
  */
 export const ensureSharedMailbox = async (): Promise<boolean> => {
@@ -1081,8 +1098,7 @@ export const ensureSharedMailbox = async (): Promise<boolean> => {
   mailboxOn = true;
   startGroupWatchdog();
   const ok = await pullSharedUpdates();
-  const email = (session.user.email ?? "").toLowerCase();
-  if (ok && email && supabase) startInviteSubscription(email);
+  if (ok && supabase) startInviteSubscription(session.user.id);
   return ok;
 };
 
