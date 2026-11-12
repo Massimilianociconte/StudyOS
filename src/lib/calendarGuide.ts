@@ -100,30 +100,40 @@ const exportGuide = (device: GuideDevice, app: GuideApp): Guide => {
   if (app === "samsung" && device !== "samsung") return redirect(CALENDAR_GUIDE_REDIRECT.samsungOnlySamsung, "samsung", "samsung");
   const toComputer = step("downloadToComputer", "Download", "transfer", "download");
   const download = step("download", "Download", "download", "download");
+  // Ultimo passo di ogni esportazione: come ripartire puliti, e perché (una nuova importazione non toglie).
+  const startClean = step("startClean", "RotateCcw");
   if (app === "google") {
     const import_ = step("googleImport", "Upload", "webPanel");
     const onPhone = step("googleOnPhone", "Check");
-    if (phone) return steps(true, toComputer, step("googleOnComputer", "Globe", "webSettings"), import_, onPhone);
-    return steps(false, download, step("googleOwnCalendar", "CalendarPlus"), step("googleSettings", "Settings", "webSettings"), import_, onPhone);
+    const ownCalendar = step("googleOwnCalendar", "CalendarPlus");
+    if (phone) return steps(true, toComputer, ownCalendar, step("googleOnComputer", "Globe", "webSettings"), import_, onPhone, startClean);
+    return steps(false, download, ownCalendar, step("googleSettings", "Settings", "webSettings"), import_, onPhone, startClean);
   }
   if (app === "outlook") {
-    if (phone) return steps(true, toComputer, step("outlookOnComputer", "Globe", "webPanel"), step("outlookOnPhone", "Check"));
+    if (phone) return steps(true, toComputer, step("outlookOnComputer", "Globe", "webPanel"), step("outlookOnPhone", "Check"), startClean);
     if (device === "windows")
-      return steps(false, download, step("outlookClassicImport", "FileText", "desktopMenu"), step("outlookWebImport", "Globe", "webPanel"));
-    return steps(false, download, step("outlookWebImport", "Globe", "webPanel"), step("outlookOnPhone", "Check"));
+      return steps(false, download, step("outlookClassicImport", "FileText", "desktopMenu"), step("outlookWebImport", "Globe", "webPanel"), startClean);
+    return steps(false, download, step("outlookWebImport", "Globe", "webPanel"), step("outlookOnPhone", "Check"), startClean);
   }
   if (app === "apple") {
     if (device === "ios")
-      return steps(false, step("downloadIos", "Download", "download", "download"), step("iosOpenFile", "FileText", "phoneFiles"), step("iosAddAll", "CalendarPlus", "phonePreview"));
-    return steps(false, download, step("macOpen", "FileText", "desktopMenu"), step("macPick", "CalendarPlus", "desktopPreview"));
+      return steps(
+        false,
+        step("downloadIos", "Download", "download", "download"),
+        step("iosOpenFile", "FileText", "phoneFiles"),
+        step("iosAddAll", "CalendarPlus", "phonePreview"),
+        startClean
+      );
+    return steps(false, download, step("macOpen", "FileText", "desktopMenu"), step("macPick", "CalendarPlus", "desktopPreview"), startClean);
   }
-  // Calendario Samsung, dal telefono Samsung.
+  // Calendario Samsung, dal telefono Samsung: solo strade verificate (aprire il file da «Archivio», o Google).
   return steps(
     false,
     step("downloadPhone", "Download", "download", "download"),
     step("samsungOpenFile", "FileText", "phoneFiles"),
     step("samsungSave", "CalendarPlus", "phonePreview"),
-    step("samsungMenu", "Menu", "phoneMenu")
+    step("samsungViaGoogle", "Globe"),
+    startClean
   );
 };
 
@@ -136,10 +146,9 @@ const importGuide = (device: GuideDevice, app: GuideApp): Guide => {
       return steps(false, step("macSelect", "CalendarDays", "desktopPreview"), step("macExport", "Download", "desktopMenu"), step("chooseFile", "Import", "choose", "chooseFile"));
     return redirect(device === "ios" ? CALENDAR_GUIDE_REDIRECT.appleIosNoFile : CALENDAR_GUIDE_REDIRECT.appleOnlyMac, "macos", "apple");
   }
-  if (app === "samsung") {
-    if (device !== "samsung") return redirect(CALENDAR_GUIDE_REDIRECT.samsungOnlySamsung, "samsung", "samsung");
-    return steps(false, step("samsungExport", "Menu", "phoneMenu"), step("samsungGoogle", "Globe"), step("chooseFilePhone", "Import", "choose", "chooseFile"));
-  }
+  // Il Calendario Samsung non salva file (nessuna voce verificabile): gli eventi di un account Google
+  // collegato al telefono si esportano da Google, sul dispositivo scelto.
+  if (app === "samsung") return redirect(CALENDAR_GUIDE_REDIRECT.samsungNoFile, device, "google");
   if (app === "outlook") {
     if (device !== "windows") return redirect(CALENDAR_GUIDE_REDIRECT.outlookOnlyWindows, "windows", "outlook");
     return steps(false, step("outlookSave", "Download", "desktopMenu"), step("outlookNoFile", "Info"), step("chooseFile", "Import", "choose", "chooseFile"));

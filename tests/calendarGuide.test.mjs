@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GUIDE_APPS, GUIDE_DEVICES, appsFor, detectDevice, guideFor } from "../src/lib/calendarGuide.ts";
+import { CALENDAR_GUIDE_STEPS, CALENDAR_GUIDE_TEXT } from "../src/lib/labels/calendarGuide.ts";
 
 const UA = {
   samsungInternet:
@@ -96,7 +97,6 @@ test("i passi che chiedono un computer lo dicono; quelli fattibili qui no", () =
   }
   assert.equal(guideFor("export", "ios", "apple").needsComputer, false);
   assert.equal(guideFor("export", "samsung", "samsung").needsComputer, false);
-  assert.equal(guideFor("import", "samsung", "samsung").needsComputer, false);
   // Google: sempre calendar.google.com.
   assert.ok(guideFor("export", "android", "google").steps.some((step) => step.text.includes("calendar.google.com")));
   assert.ok(guideFor("import", "windows", "google").steps.some((step) => step.text.includes("calendar.google.com")));
@@ -108,7 +108,45 @@ test("rimandi: da iPhone il Calendario di Apple non esporta (serve un Mac); app 
   assert.deepEqual(ios.to, { device: "macos", app: "apple" });
   assert.match(ios.reason, /Mac/);
   assert.deepEqual(guideFor("export", "windows", "apple").to, { device: "ios", app: "apple" });
-  assert.deepEqual(guideFor("import", "android", "samsung").to, { device: "samsung", app: "samsung" });
+  // Il Calendario Samsung non salva file: si passa da Google, sul dispositivo scelto.
+  assert.deepEqual(guideFor("import", "android", "samsung").to, { device: "android", app: "google" });
+  const samsung = guideFor("import", "samsung", "samsung");
+  assert.equal(samsung.kind, "redirect");
+  assert.deepEqual(samsung.to, { device: "samsung", app: "google" });
+  assert.match(samsung.reason, /calendar\.google\.com/);
   assert.deepEqual(guideFor("import", "macos", "outlook").to, { device: "windows", app: "outlook" });
   assert.deepEqual(guideFor("import", "android", "outlook").to, { device: "windows", app: "outlook" });
+});
+
+test("testi onesti: copia e non collegamento, eventi eliminati, e come ripartire puliti in ogni app che lo permette", () => {
+  assert.match(CALENDAR_GUIDE_TEXT.honesty, /copia/);
+  assert.match(CALENDAR_GUIDE_TEXT.honesty, /non un collegamento/);
+  assert.match(CALENDAR_GUIDE_TEXT.honesty, /eliminato nell'altra app resta in StudyOS/);
+  // Ogni esportazione che arriva a dei passi finisce con lo stesso consiglio, con il perché.
+  for (const device of GUIDE_DEVICES)
+    for (const app of GUIDE_APPS) {
+      const guide = guideFor("export", device, app);
+      if (guide.kind !== "steps") continue;
+      assert.equal(guide.steps.at(-1).text, CALENDAR_GUIDE_STEPS.startClean, `${device} ${app}`);
+    }
+  assert.match(CALENDAR_GUIDE_STEPS.startClean, /non toglie quelli che hai eliminato in StudyOS/);
+  // Il file troppo grande: Google e Apple non esportano un periodo, si esporta un calendario alla volta.
+  assert.match(CALENDAR_GUIDE_TEXT.tooBig, /un calendario alla volta/);
+  assert.doesNotMatch(CALENDAR_GUIDE_TEXT.tooBig, /periodo più breve dal tuo calendario/);
+});
+
+test("menu verificati: Google «Importazione ed esportazione»; Samsung solo strade che esistono", () => {
+  const texts = (direction, device, app) => {
+    const guide = guideFor(direction, device, app);
+    return guide.kind === "steps" ? guide.steps.map((step) => step.text).join("\n") : guide.reason;
+  };
+  assert.match(texts("export", "windows", "google"), /«Importazione ed esportazione»/);
+  assert.match(texts("import", "windows", "google"), /«Importazione ed esportazione»/);
+  assert.doesNotMatch(Object.values(CALENDAR_GUIDE_STEPS).join("\n"), /«Importa ed esporta»/);
+  const samsung = texts("export", "samsung", "samsung");
+  assert.match(samsung, /«Archivio»/);
+  assert.match(samsung, /calendar\.google\.com/);
+  // Niente voci «Importa» o «Esporta» nelle impostazioni del Calendario Samsung: non si sono potute verificare.
+  assert.doesNotMatch(samsung, /impostazioni/);
+  assert.doesNotMatch(texts("import", "samsung", "samsung"), /«Esporta»/);
 });
