@@ -5,6 +5,8 @@ import type { CatalogOverride, CatalogTargetKind, CleanResult } from "./groupExa
 import { CATALOG_OVERRIDE_FIELDS, normalizeCourseName, safeOverrideValue } from "./groupExams";
 import { institutionalEmail, onlyInstitutionalEmails } from "./institutionalEmail";
 import { GROUP_EXAM_FIELD_ERROR } from "./labels";
+import { GROUP_EXAM_TEXT } from "./labels/groupExams";
+import type { GroupHistoryEntry } from "./groupExams";
 
 export { CATALOG_OVERRIDE_FIELDS };
 
@@ -75,4 +77,20 @@ export const withOverride = <T extends Record<string, unknown>>(official: T, ove
     value[key] = safe;
   }
   return { value: value as T, changed, override };
+};
+
+const historyFields = (row: Record<string, unknown> | null): Record<string, string> =>
+  row && row.fields && typeof row.fields === "object" ? (row.fields as Record<string, string>) : {};
+
+/** «Ricevimento: — → mar 10-12» per ogni campo cambiato; «Correzione tolta.» / «Ripristinato.». */
+export const describeOverrideEntry = (entry: GroupHistoryEntry): string[] => {
+  const before = historyFields(entry.before);
+  const after = historyFields(entry.after);
+  const lines = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((field) => before[field] !== after[field])
+    .map((field) => `${GROUP_EXAM_TEXT.overrideField[field] ?? field}: ${before[field] || "—"} → ${after[field] || "—"}`);
+  const wasDeleted = Boolean(entry.before?.deleted_at);
+  const isDeleted = Boolean(entry.after?.deleted_at);
+  if (wasDeleted !== isDeleted) lines.push(isDeleted ? GROUP_EXAM_TEXT.correctionRemoved : GROUP_EXAM_TEXT.restored);
+  return lines;
 };

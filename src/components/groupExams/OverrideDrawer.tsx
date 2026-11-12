@@ -5,27 +5,11 @@ import { Button, Drawer, Field, inputClass } from "../ui";
 import { InlineConfirm } from "../InlineConfirm";
 import { HistoryList } from "./HistoryList";
 import { GROUP_EXAM_TEXT as T } from "../../lib/labels/groupExams";
-import { CATALOG_OVERRIDE_FIELDS, cleanOverrideFields, overridesOf } from "../../lib/catalogOverrides";
-import { newGroupRecordId, type CatalogTargetKind, type GroupHistoryEntry } from "../../lib/groupExams";
+import { CATALOG_OVERRIDE_FIELDS, cleanOverrideFields, describeOverrideEntry, overridesOf } from "../../lib/catalogOverrides";
+import { newGroupRecordId, type CatalogTargetKind } from "../../lib/groupExams";
 import { useGroupExamStore } from "../../store/useGroupExamStore";
 
 const LONG = new Set(["note", "officeHours", "lessonTimes"]);
-
-const fieldsOf = (row: Record<string, unknown> | null): Record<string, string> =>
-  row && row.fields && typeof row.fields === "object" ? (row.fields as Record<string, string>) : {};
-
-/** «Ricevimento: — → mar 10-12» per ogni campo cambiato; «Eliminata» / «Ripristinata». */
-const describeOverride = (entry: GroupHistoryEntry): string[] => {
-  const before = fieldsOf(entry.before);
-  const after = fieldsOf(entry.after);
-  const lines = [...new Set([...Object.keys(before), ...Object.keys(after)])]
-    .filter((field) => before[field] !== after[field])
-    .map((field) => `${T.overrideField[field] ?? field}: ${before[field] || "—"} → ${after[field] || "—"}`);
-  const wasDeleted = Boolean(entry.before?.deleted_at);
-  const isDeleted = Boolean(entry.after?.deleted_at);
-  if (wasDeleted !== isDeleted) lines.push(isDeleted ? T.correctionRemoved : T.restored);
-  return lines;
-};
 
 export function OverrideDrawer({
   groupId,
@@ -152,7 +136,7 @@ export function OverrideDrawer({
               recordKind="catalog_override"
               recordId={existing.id}
               version={existing.version}
-              describe={describeOverride}
+              describe={describeOverrideEntry}
               confirmText={T.restoreOverrideConfirm}
               onMessage={setMessage}
             />

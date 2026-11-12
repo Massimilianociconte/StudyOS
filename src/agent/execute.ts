@@ -289,6 +289,22 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
         return sharedCall((tools) => tools.updateOwnShare(args));
       case "studyos_revoke_share":
         return sharedCall((tools) => tools.revokeOwnShare(text(args.id)));
+      case "studyos_list_group_exam_sessions":
+        return groupExamCall((tools) => tools.listGroupExamSessions(args));
+      case "studyos_create_group_exam_session":
+        return groupExamCall((tools) => tools.createGroupExamSession(args));
+      case "studyos_update_group_exam_session":
+        return groupExamCall((tools) => tools.updateGroupExamSession(args));
+      case "studyos_delete_group_exam_session":
+        return groupExamCall((tools) => tools.deleteGroupExamSession(args));
+      case "studyos_list_group_history":
+        return groupExamCall((tools) => tools.listGroupHistory(args));
+      case "studyos_restore_group_change":
+        return groupExamCall((tools) => tools.restoreGroupChange(args));
+      case "studyos_plan_exam":
+        return groupExamCall((tools) => tools.planExamTool(args));
+      case "studyos_list_exam_plan":
+        return groupExamCall((tools) => tools.listExamPlan(args));
       case "studyos_list_barb_exams":
         return listBarb(args);
       case "studyos_import_barb_exams":
@@ -1489,6 +1505,19 @@ const remove = async (key: "tasks" | "events" | "exams" | "sessions" | "topics" 
   }
   await run();
   return ok({ id, deleted: true });
+};
+
+// --- Appelli dei gruppi e piano d'esame: groupExamTools.ts, caricato solo quando serve. ---
+
+type GroupExamTools = typeof import("./groupExamTools");
+
+/** Come sharedCall: un guasto imprevisto (anche il modulo che non si carica) non arriva all'agente come testo tecnico. */
+const groupExamCall = async (run: (tools: GroupExamTools) => AgentCallResult | Promise<AgentCallResult>): Promise<AgentCallResult> => {
+  try {
+    return await run(await import("./groupExamTools"));
+  } catch {
+    return fail("failed", "Operazione sugli appelli del gruppo non riuscita. Riprova tra poco.");
+  }
 };
 
 // --- Dati di altre persone: gli strumenti stanno in sharedTools.ts, caricato solo quando serve. ---
