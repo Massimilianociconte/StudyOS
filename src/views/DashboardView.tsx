@@ -57,7 +57,7 @@ function TextLink({ children, onClick }: { children: ReactNode; onClick: () => v
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+      className="relative inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] hover:underline"
     >
       {children} <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0" />
     </button>
@@ -721,7 +721,7 @@ function GettingStarted({
             Puoi farli nell'ordine che preferisci.
           </p>
         </div>
-        <Button variant="ghost" icon="EyeOff" className="min-h-9 px-3 text-xs" onClick={hide} title="Nasconde questa guida su questo dispositivo">
+        <Button variant="ghost" icon="EyeOff" className="relative min-h-9 px-3 text-xs after:absolute after:-inset-1 after:content-['']" onClick={hide} title="Nasconde questa guida su questo dispositivo">
           Nascondi la guida
         </Button>
       </div>

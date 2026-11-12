@@ -70,6 +70,11 @@ const pillClass = (active: boolean) =>
   }`;
 
 const linkClass = "font-black text-[var(--accent-ink)] underline-offset-2 hover:underline";
+/** Collegamento nel testo (riga da 16 px): l'area di tocco arriva a 44 px senza allargare la riga. */
+const linkHit = `${linkClass} relative after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']`;
+/** Righe "… · Cambia" una sotto l'altra: aree estese si sovrapporrebbero, quindi pulsante alto 44 px nella riga. */
+const linkBox = `${linkClass} inline-flex min-h-11 items-center px-1`;
+const linkRow = "flex flex-wrap items-center gap-x-1 text-xs font-bold text-[var(--muted)]";
 
 /** Icona di ogni modalità (selettore, anello, elenco delle sessioni). */
 const KIND_ICON: Record<TimerKind, string> = { pomodoro: "Timer", timer: "Hourglass", stopwatch: "Clock" };
@@ -201,7 +206,7 @@ export function StudyView() {
             </div>
             <button
               type="button"
-              className={`mt-2 text-xs ${linkClass}`}
+              className={`mt-2 text-xs ${linkHit}`}
               onClick={() => {
                 requestSettingsSection("profilo");
                 setActiveView("settings");
@@ -214,7 +219,11 @@ export function StudyView() {
           <Panel>
             <div className="mb-3 flex items-center justify-between gap-2">
               <h3 className="text-lg font-black">{STUDY_SIDE_TEXT.upcoming}</h3>
-              <button type="button" onClick={() => openTopics()} className="text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
+              <button
+                type="button"
+                onClick={() => openTopics()}
+                className="relative text-xs font-black text-[var(--muted)] after:absolute after:-inset-x-2 after:-inset-y-3.5 after:content-[''] hover:text-[var(--text)]"
+              >
                 {STUDY_SIDE_TEXT.seeAll}
               </button>
             </div>
@@ -619,7 +628,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           {!selectableSubjects(subjects).length ? (
             <p className="mt-1 text-xs font-bold text-[var(--muted)]">
               {TIMER_TEXT.noSubjectsYet}{" "}
-              <button type="button" className={linkClass} onClick={() => setActiveView("subjects")}>
+              <button type="button" className={linkHit} onClick={() => setActiveView("subjects")}>
                 {TIMER_TEXT.addSubjects}
               </button>
             </p>
@@ -658,9 +667,9 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
       </div>
 
       {stopwatch ? (
-        <p className="mt-3 text-xs font-bold text-[var(--muted)]">
-          {durations.stopwatchTargetMinutes ? TIMER_TEXT.target(formatMinutes(durations.stopwatchTargetMinutes)) : TIMER_TEXT.noTarget} ·{" "}
-          <button type="button" className={linkClass} onClick={() => setSettingsOpen(true)}>
+        <p className={`mt-3 ${linkRow}`}>
+          <span className="safe-text min-w-0">{durations.stopwatchTargetMinutes ? TIMER_TEXT.target(formatMinutes(durations.stopwatchTargetMinutes)) : TIMER_TEXT.noTarget} ·</span>
+          <button type="button" className={linkBox} onClick={() => setSettingsOpen(true)}>
             {TIMER_TEXT.change}
           </button>
         </p>
@@ -732,18 +741,18 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
               {customFocus ? TIMER_TEXT.minutes(durations.focusMinutes) : TIMER_TEXT.otherDuration}
             </button>
           </div>
-          <p className="mt-1.5 text-xs font-bold text-[var(--muted)]">
-            {TIMER_TEXT.breaksSummary(durations.shortBreakMinutes, durations.longBreakMinutes, durations.longBreakEvery)} ·{" "}
-            <button type="button" className={linkClass} onClick={() => setSettingsOpen(true)}>
+          <p className={`mt-0.5 ${linkRow}`}>
+            <span className="safe-text min-w-0">{TIMER_TEXT.breaksSummary(durations.shortBreakMinutes, durations.longBreakMinutes, durations.longBreakEvery)} ·</span>
+            <button type="button" className={linkBox} onClick={() => setSettingsOpen(true)}>
               {TIMER_TEXT.change}
             </button>
           </p>
         </div>
       )}
 
-      <p className="mt-2 text-xs font-bold text-[var(--muted)]">
-        {TIMER_TEXT.templateLine(SESSION_TEMPLATE_LABEL[template])} ·{" "}
-        <button type="button" className={linkClass} onClick={() => setTemplateOpen(true)}>
+      <p className={linkRow}>
+        <span className="safe-text min-w-0">{TIMER_TEXT.templateLine(SESSION_TEMPLATE_LABEL[template])} ·</span>
+        <button type="button" className={linkBox} onClick={() => setTemplateOpen(true)}>
           {TIMER_TEXT.change}
         </button>
       </p>
