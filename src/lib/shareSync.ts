@@ -49,6 +49,7 @@ import {
   sharedPushBatches,
   sharingProbeOutcome,
   ShareUserError,
+  withoutUnreadEdits,
   type ItemRevision,
   type RestoreVersion,
   type RemoteSharedRow,
@@ -393,8 +394,9 @@ const fetchRows = async (ownerId: string, entries: readonly SharedOutboxEntry[],
  * Prima dell'invio (S4): le modifiche in coda partite da una versione del server si riallineano sulla
  * riga di adesso. Senza questo, una modifica fatta offline sopra una versione vecchia veniva accettata
  * (timbro più recente) e riscriveva i campi che il proprietario aveva cambiato nel frattempo. Le righe
- * uguali alla base non cambiano nulla; un errore qui non ferma l'invio (un rifiuto "stale" si riallinea
- * dopo). Resta una finestra di millisecondi tra questa lettura e l'invio.
+ * uguali alla base non cambiano nulla. Rilettura non riuscita per un proprietario: le sue modifiche con
+ * una base restano in coda per la passata dopo (`owners`, mai inviate alla cieca), il resto parte e
+ * l'errore (`failure`) si mostra a fine invio. Resta una finestra di millisecondi tra lettura e invio.
  */
 const rebaseBeforePush = async (gen: number) => {
   const byOwner = new Map<string, SharedOutboxEntry[]>();
@@ -402,6 +404,8 @@ const rebaseBeforePush = async (gen: number) => {
     if (entry.deleted || !entry.base) continue;
     byOwner.set(entry.ownerId, [...(byOwner.get(entry.ownerId) ?? []), entry]);
   }
+  const owners = new Set<string>();
+  let failure: unknown = undefined;
   for (const [ownerId, entries] of byOwner) {
     try {
       const rows = await fetchRows(ownerId, entries, gen);
@@ -409,8 +413,11 @@ const rebaseBeforePush = async (gen: number) => {
       if (rows.length) await useSharedStore.getState().applyRows(ownerId, rows);
     } catch (error) {
       if (error instanceof ViewerChanged || gen !== viewers.generation) throw error;
+      owners.add(ownerId);
+      if (failure === undefined) failure = error;
     }
   }
+  return { owners, failure };
 };
 
 const pushBatch = async (batch: SharedPushBatch, gen: number) => {
@@ -454,10 +461,10 @@ let failedLastPass = new Set<string>();
 
 /** Invia la coda, un lotto alla volta: un lotto che fallisce (troppo grande, errore del server) non ferma gli altri. */
 const pushOutbox = async (gen: number) => {
-  await rebaseBeforePush(gen);
+  const unread = await rebaseBeforePush(gen);
   still(gen);
   const store = useSharedStore.getState();
-  const { batches, orphans } = sharedPushBatches(store.outbox, store.items);
+  const { batches, orphans } = sharedPushBatches(withoutUnreadEdits(store.outbox, unread.owners), store.items);
   if (orphans.length) await store.settleOutbox(orphans);
   const failedNow = new Set<string>();
   try {
@@ -477,6 +484,8 @@ const pushOutbox = async (gen: number) => {
   } finally {
     failedLastPass = failedNow;
   }
+  // Modifiche tenute in coda (rilettura non riuscita): l'errore si mostra e la passata dopo riprova.
+  if (unread.failure !== undefined) throw unread.failure;
 };
 
 // ——— Notifiche ———

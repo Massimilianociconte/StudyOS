@@ -30,6 +30,26 @@ export const accountSwitchStep = (input: {
   return input.choice ?? "ask";
 };
 
+/**
+ * Cosa ferma il collegamento a un altro account. "pending": modifiche in coda per l'account di prima
+ * quando la domanda non era aperta: vanno prima mandate a lui. "stuck": elementi troppo grandi, mai
+ * arrivati all'account di prima (P12). Con la domanda aperta (`asked`) le modifiche in coda sono fatte
+ * mentre la persona sceglieva: prima bloccavano entrambi i pulsanti. Con «aggiungi» la prima unione le
+ * porta nel nuovo account; con «mostra solo» si toglierebbero da qui senza arrivare da nessuna parte
+ * ("editedWhileAsked": si dice perché e quale pulsante le tiene). Senza scelta la domanda resta.
+ */
+export const accountSwitchBlock = (input: {
+  pending: number;
+  stuck: number;
+  asked: boolean;
+  choice?: AccountSwitchChoice | null;
+}): "pending" | "stuck" | "editedWhileAsked" | null => {
+  if (input.pending > 0 && !input.asked) return "pending";
+  if (input.stuck > 0) return "stuck";
+  if (input.pending > 0 && input.choice === "separate") return "editedWhileAsked";
+  return null;
+};
+
 export interface PersonalRemoval {
   collection: CollectionKey;
   id: string;

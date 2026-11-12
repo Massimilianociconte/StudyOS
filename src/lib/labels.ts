@@ -78,7 +78,19 @@ export const QUICK_ADD_TEXT = {
 export const SHELL_TEXT = {
   lock: "Blocca StudyOS",
   lockAria: "Blocca StudyOS (servirà la password per riaprirlo)",
-  lockTitle: "Chiude StudyOS: per riaprirlo servirà la password"
+  lockTitle: "Chiude StudyOS: per riaprirlo servirà la password",
+  lockBusy: "Attendi: StudyOS sta cambiando la password"
+} as const;
+
+/**
+ * Password dell'app messa o tolta (useStudyStore): durante il cambio «Blocca» e un secondo cambio sono
+ * rifiutati (barra laterale, foglio «Altro», Impostazioni › Privacy).
+ */
+export const VAULT_BUSY_TEXT = {
+  lock: "Attendi un momento: StudyOS sta cambiando la password. Potrai bloccarlo appena ha finito.",
+  switching: "Attendi: StudyOS sta già cambiando la password o si sta bloccando.",
+  alreadyOn: "La password è già attiva su questo dispositivo.",
+  interrupted: "StudyOS si è bloccato prima della fine: non è cambiato nulla. Sbloccalo e riprova."
 } as const;
 
 /**

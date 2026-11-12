@@ -46,7 +46,7 @@ import { createId, nowIso } from "../lib/id";
 import { isReminderNotificationId } from "../lib/reminderIds";
 import { makeGroupInviteCode } from "../lib/groups";
 import { ShareUserError, isRestorableEntity, restoredPayload, restoredUpdatedAt, type RestoreVersion } from "../lib/sharing";
-import { FILE_TEXT, RESTORE_TEXT } from "../lib/labels";
+import { FILE_TEXT, RESTORE_TEXT, VAULT_BUSY_TEXT } from "../lib/labels";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { checkNewFile, withStoredFile } from "../lib/attachments";
@@ -67,6 +67,7 @@ import {
 import {
   clearAllLocalData,
   configurePersistence,
+  hasVaultKey,
   isPersisted,
   markRemoteApplied,
   persistedCollections,
@@ -159,6 +160,8 @@ interface StudyState {
   error?: string;
   /** Ultimo errore di salvataggio su IndexedDB (undefined = tutto salvato). */
   persistError?: string;
+  /** Password dell'app messa, tolta o blocco in corso: «Blocca» e un secondo cambio sono fermi. */
+  vaultBusy: boolean;
   init: () => Promise<void>;
   unlockVault: (passphrase: string) => Promise<void>;
   lockVault: () => Promise<void>;
@@ -579,9 +582,96 @@ export const useStudyStore = create<StudyState>((set, get) => {
     return session;
   };
 
+  /**
+   * Password dell'app messa o tolta, o blocco: uno alla volta. Un blocco arrivato mentre «Togli la
+   * password» decifrava i file svuotava memoria e stato salvato, e la riscrittura copiava tabelle vuote
+   * togliendo il vault: dati persi (revisione A6). Ora il secondo passo è rifiutato con un messaggio.
+   */
+  let vaultOp = false;
+  const vaultStep = async <T,>(busyMessage: string, run: () => Promise<T>): Promise<T> => {
+    if (vaultOp) throw new Error(busyMessage);
+    vaultOp = true;
+    set({ vaultBusy: true });
+    try {
+      return await run();
+    } finally {
+      vaultOp = false;
+      set({ vaultBusy: false });
+    }
+  };
+
+  /** «Togli la password»: i dati tornano in chiaro su questo dispositivo (dentro vaultStep). */
+  const removeVault = async (passphrase?: string) => {
+    const currentPassphrase = sessionPassphrase ?? passphrase;
+    if (!currentPassphrase) throw new Error("Serve la passphrase per disattivare il vault.");
+
+    await commit();
+    // Bloccato: la memoria è vuota e la copia vera è quella cifrata. Sbloccato: si copia ciò che è su
+    // disco al momento della riscrittura (persistedCollections, dentro runExclusive), mai uno stato
+    // preso prima dell'attesa e poi rimesso in memoria (P8).
+    let unlocked: CollectionsState | null = null;
+    // La chiave serve anche per i file dei materiali: se la sessione non ce l'ha, si ricava.
+    let fileKey = vaultSession().key;
+    if (get().locked || !fileKey) {
+      const vault = await db.vault.get("main");
+      if (!vault) throw new Error("Vault locale non trovato.");
+      const key = await deriveVaultKey(currentPassphrase, vault.salt, vault.iterations);
+      try {
+        const snapshot = applySnapshot(JSON.parse(await decryptWithKey(vault, key)) as StudySnapshot);
+        if (get().locked) unlocked = snapshot;
+      } catch {
+        throw new Error("Passphrase non valida.");
+      }
+      fileKey = key;
+    }
+    // Prima di togliere il vault: i file dei materiali tornano in chiaro con la sua chiave. Dopo,
+    // senza il record del vault (il suo salt), non si potrebbero più decifrare.
+    await unsealLocalFiles(fileKey);
+
+    const settings: UserSettings = {
+      ...get().settings,
+      security: {
+        mode: "standard",
+        backupEncryptionDefault: true
+      },
+      updatedAt: nowIso()
+    };
+    await runExclusive(async () => {
+      // Bloccato durante l'attesa (file, salvataggio): memoria e stato salvato sono vuoti e la sola
+      // copia è quella cifrata. Si rifiuta prima di scrivere: il vault resta, i file si ricifrano allo
+      // sblocco (sealLocalFiles).
+      if (!unlocked && (get().locked || !hasVaultKey())) throw new Error(VAULT_BUSY_TEXT.interrupted);
+      const collections = unlocked ?? persistedCollections();
+      await db.transaction("rw", [db.settings, db.vault, ...dataTables], async () => {
+        await db.settings.put(settings);
+        for (const key of COLLECTIONS) {
+          const table = collectionTable(key);
+          await table.clear();
+          const items = collections[key] as unknown as SyncableEntity[];
+          if (items.length) await table.bulkPut(items);
+        }
+        await db.vault.clear();
+      });
+      // Nello stesso passo, prima di qualunque salvataggio in coda: da qui si scrive in chiaro.
+      sessionPassphrase = undefined;
+      setVaultSession(false, null);
+      if (unlocked) {
+        resetBaseline(unlocked, settings);
+        setPersistenceSuspended(false);
+        set({ settings, locked: false, ...unlocked });
+      } else {
+        // Le modifiche arrivate durante la riscrittura restano in memoria e nello stato da salvare:
+        // il salvataggio qui sotto le scrive in chiaro, in coda per il cloud se sono di qui.
+        set({ settings, locked: false });
+      }
+    });
+    await commit();
+  };
+
   return {
     loading: true,
     locked: false,
+    vaultBusy: false,
     activeView: "dashboard",
     settings: defaultSettings(),
     ...applySnapshot(createEmptySnapshot()),
@@ -672,115 +762,62 @@ export const useStudyStore = create<StudyState>((set, get) => {
       }
     },
 
-    lockVault: async () => {
-      // Salva prima eventuali modifiche in coda: dopo il lock lo stato in memoria viene svuotato.
-      await requestPersist();
-      setPersistenceSuspended(true);
-      setVaultSession(true, null);
-      sessionPassphrase = undefined;
-      const empty = applySnapshot(createEmptySnapshot());
-      resetBaseline(empty, get().settings);
-      set({ locked: true, ...empty, activeView: "dashboard" });
-    },
-
-    enableVault: async (passphrase, hint) => {
-      await commit();
-      const verifier = await makePassphraseVerifier(passphrase);
-      const settings: UserSettings = {
-        ...get().settings,
-        security: {
-          ...get().settings.security,
-          mode: "vault",
-          backupEncryptionDefault: true,
-          passphraseHint: hint,
-          verifierSalt: verifier.salt,
-          verifierHash: verifier.hash
-        },
-        updatedAt: nowIso()
-      };
-      const key = await deriveVaultKey(passphrase);
-      await runExclusive(async () => {
-        // Ciò che è su disco ora (nessun salvataggio a metà): le modifiche arrivate durante la
-        // derivazione della chiave o la scrittura restano differenze e le cifra il salvataggio dopo.
-        const collections = persistedCollections();
-        const record = await encryptWithKey(JSON.stringify(snapshotFromState(collections)), key);
-        await db.transaction("rw", [db.settings, db.vault, ...COLLECTIONS.map((c) => db[c])], async () => {
-          await db.settings.put(settings);
-          await db.vault.put(record);
-          await Promise.all(COLLECTIONS.map((c) => db[c].clear()));
-        });
-        // Nello stesso passo, prima di qualunque salvataggio in coda: da qui si scrive cifrato.
-        sessionPassphrase = passphrase;
-        setVaultSession(true, key);
-        set({ settings, locked: false });
-      });
-      await commit();
-      // Anche i file dei materiali su questo dispositivo: se si interrompe, lo sblocco finisce il lavoro.
-      await sealLocalFiles(key).catch(() => undefined);
-    },
-
-    disableVault: async (passphrase) => {
-      const currentPassphrase = sessionPassphrase ?? passphrase;
-      if (!currentPassphrase) throw new Error("Serve la passphrase per disattivare il vault.");
-
-      await commit();
-      // Bloccato: la memoria è vuota e la copia vera è quella cifrata. Sbloccato: si copia ciò che è su
-      // disco al momento della riscrittura (persistedCollections, dentro runExclusive), mai uno stato
-      // preso prima dell'attesa e poi rimesso in memoria (P8).
-      let unlocked: CollectionsState | null = null;
-      // La chiave serve anche per i file dei materiali: se la sessione non ce l'ha, si ricava.
-      let fileKey = vaultSession().key;
-      if (get().locked || !fileKey) {
-        const vault = await db.vault.get("main");
-        if (!vault) throw new Error("Vault locale non trovato.");
-        const key = await deriveVaultKey(currentPassphrase, vault.salt, vault.iterations);
-        try {
-          const snapshot = applySnapshot(JSON.parse(await decryptWithKey(vault, key)) as StudySnapshot);
-          if (get().locked) unlocked = snapshot;
-        } catch {
-          throw new Error("Passphrase non valida.");
-        }
-        fileKey = key;
-      }
-      // Prima di togliere il vault: i file dei materiali tornano in chiaro con la sua chiave. Dopo,
-      // senza il record del vault (il suo salt), non si potrebbero più decifrare.
-      await unsealLocalFiles(fileKey);
-
-      const settings: UserSettings = {
-        ...get().settings,
-        security: {
-          mode: "standard",
-          backupEncryptionDefault: true
-        },
-        updatedAt: nowIso()
-      };
-      await runExclusive(async () => {
-        const collections = unlocked ?? persistedCollections();
-        await db.transaction("rw", [db.settings, db.vault, ...dataTables], async () => {
-          await db.settings.put(settings);
-          for (const key of COLLECTIONS) {
-            const table = collectionTable(key);
-            await table.clear();
-            const items = collections[key] as unknown as SyncableEntity[];
-            if (items.length) await table.bulkPut(items);
-          }
-          await db.vault.clear();
-        });
-        // Nello stesso passo, prima di qualunque salvataggio in coda: da qui si scrive in chiaro.
+    lockVault: () =>
+      vaultStep(VAULT_BUSY_TEXT.lock, async () => {
+        // Salva prima eventuali modifiche in coda: dopo il lock lo stato in memoria viene svuotato.
+        await requestPersist();
+        setPersistenceSuspended(true);
+        setVaultSession(true, null);
         sessionPassphrase = undefined;
-        setVaultSession(false, null);
-        if (unlocked) {
-          resetBaseline(unlocked, settings);
-          setPersistenceSuspended(false);
-          set({ settings, locked: false, ...unlocked });
-        } else {
-          // Le modifiche arrivate durante la riscrittura restano in memoria e nello stato da salvare:
-          // il salvataggio qui sotto le scrive in chiaro, in coda per il cloud se sono di qui.
+        const empty = applySnapshot(createEmptySnapshot());
+        resetBaseline(empty, get().settings);
+        set({ locked: true, ...empty, activeView: "dashboard" });
+      }),
+
+    enableVault: (passphrase, hint) =>
+      vaultStep(VAULT_BUSY_TEXT.switching, async () => {
+        // Già attiva: una seconda chiave lascerebbe i file dei materiali cifrati con la prima, persa.
+        if (get().settings.security.mode === "vault") throw new Error(VAULT_BUSY_TEXT.alreadyOn);
+        if (get().locked) throw new Error(VAULT_BUSY_TEXT.interrupted);
+        await commit();
+        const verifier = await makePassphraseVerifier(passphrase);
+        const settings: UserSettings = {
+          ...get().settings,
+          security: {
+            ...get().settings.security,
+            mode: "vault",
+            backupEncryptionDefault: true,
+            passphraseHint: hint,
+            verifierSalt: verifier.salt,
+            verifierHash: verifier.hash
+          },
+          updatedAt: nowIso()
+        };
+        const key = await deriveVaultKey(passphrase);
+        await runExclusive(async () => {
+          // Bloccato nel frattempo: memoria e stato salvato sono vuoti, cifrarli cancellerebbe tutto.
+          if (get().locked) throw new Error(VAULT_BUSY_TEXT.interrupted);
+          // Ciò che è su disco ora (nessun salvataggio a metà): le modifiche arrivate durante la
+          // derivazione della chiave o la scrittura restano differenze e le cifra il salvataggio dopo.
+          const collections = persistedCollections();
+          const record = await encryptWithKey(JSON.stringify(snapshotFromState(collections)), key);
+          await db.transaction("rw", [db.settings, db.vault, ...COLLECTIONS.map((c) => db[c])], async () => {
+            await db.settings.put(settings);
+            await db.vault.put(record);
+            await Promise.all(COLLECTIONS.map((c) => db[c].clear()));
+          });
+          // Nello stesso passo, prima di qualunque salvataggio in coda: da qui si scrive cifrato.
+          sessionPassphrase = passphrase;
+          setVaultSession(true, key);
           set({ settings, locked: false });
-        }
-      });
-      await commit();
-    },
+        });
+        await commit();
+        // Anche i file dei materiali su questo dispositivo: se si interrompe, lo sblocco finisce il lavoro.
+        await sealLocalFiles(key).catch(() => undefined);
+      }),
+
+    disableVault: (passphrase) =>
+      vaultStep(VAULT_BUSY_TEXT.switching, () => removeVault(passphrase)),
 
     setActiveView: (view) => set({ activeView: view }),
 

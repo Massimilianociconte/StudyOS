@@ -1261,10 +1261,42 @@ const SHARED_EDIT_GROUPS: Record<string, readonly (readonly string[])[]> = {
   calendarEvent: CALENDAR_EVENT_FIELD_GROUPS
 };
 
+/**
+ * Voci da tenere in coda in questa passata: le modifiche con una base (S4) dei proprietari la cui
+ * rilettura prima dell'invio non è riuscita. Inviate senza riallinearle, con il timbro più recente
+ * riscriverebbero ciò che il proprietario ha cambiato nel frattempo. Partono alla passata dopo.
+ */
+export const withoutUnreadEdits = <T extends Pick<SharedOutboxEntry, "ownerId" | "deleted" | "base">>(
+  outbox: readonly T[],
+  owners: ReadonlySet<string>
+): readonly T[] => (owners.size ? outbox.filter((entry) => entry.deleted || !entry.base || !owners.has(entry.ownerId)) : outbox);
+
 /** Campi che non si uniscono: identità e timbri (il timbro della versione unita lo decide chi unisce). */
 const REBASE_SKIP = new Set(["id", "updatedAt", "deletedAt"]);
 
 const sameUnit = (a: Payload, b: Payload, unit: readonly string[]) => unit.every((key) => JSON.stringify(a[key]) === JSON.stringify(b[key]));
+
+/**
+ * Stato e cronometro di un'attività: nel riallineamento vanno insieme. Uniti campo per campo, lo stato
+ * «fatta» di qui finiva accanto al cronometro acceso del proprietario. Solo qui, non in sharedEditResult:
+ * lì il cambio di stato si ricalcola già sull'ultima versione (taskStatusTransitionPatch).
+ */
+const TASK_STATUS_FIELDS = ["status", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt", "actualMinutes", "completedAt"] as const;
+
+const REBASE_GROUPS: Record<string, readonly (readonly string[])[]> = { ...SHARED_EDIT_GROUPS, task: [TASK_STATUS_FIELDS] };
+
+/**
+ * Stato e cronometro cambiati da entrambi, qui più recente. Stato cambiato qui e diverso da quello del
+ * proprietario: lo stesso passaggio fatto sulla sua versione, all'ora della modifica di qui (cronometro
+ * chiuso, tempo già contato salvato). Stesso stato: la versione di qui, intera. Qui solo il cronometro e
+ * lo stato cambiato lassù: resta quella del proprietario (null).
+ */
+const rebasedTaskStatus = (base: Payload, local: Payload, remote: Payload): Payload | null => {
+  if (local.status === remote.status) return local;
+  if (local.status === base.status || typeof local.status !== "string") return null;
+  const at = new Date(timestampOf(str(local.updatedAt)));
+  return { ...remote, ...taskStatusTransitionPatch(remote as unknown as Task, local.status as Task["status"], at) };
+};
 
 /**
  * Unione a tre vie di una modifica in coda (`local`, partita da `base`) con la versione nuova del server
@@ -1274,7 +1306,7 @@ const sameUnit = (a: Payload, b: Payload, unit: readonly string[]) => unit.every
  * `differs`: la versione unita ha ancora qualcosa di qui da inviare.
  */
 export const rebaseSharedEdit = (entityType: string, base: Payload, local: Payload, remote: Payload) => {
-  const groups = Object.hasOwn(SHARED_EDIT_GROUPS, entityType) ? SHARED_EDIT_GROUPS[entityType] : [];
+  const groups = Object.hasOwn(REBASE_GROUPS, entityType) ? REBASE_GROUPS[entityType] : [];
   const grouped = new Set(groups.flat());
   const keys = new Set(
     [...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)].filter((key) => !REBASE_SKIP.has(key) && !PROTECTED_KEY.test(key))
@@ -1286,12 +1318,15 @@ export const rebaseSharedEdit = (entityType: string, base: Payload, local: Paylo
   let differs = false;
   for (const unit of units) {
     if (sameUnit(base, local, unit) || sameUnit(local, remote, unit)) continue;
+    let source: Payload | null = local;
     if (!sameUnit(base, remote, unit)) {
       conflicts.push(...unit);
       if (!localNewer) continue;
+      if (unit === TASK_STATUS_FIELDS) source = rebasedTaskStatus(base, local, remote);
     }
+    if (!source || sameUnit(source, remote, unit)) continue;
     for (const key of unit) {
-      if (Object.hasOwn(local, key)) merged[key] = local[key];
+      if (Object.hasOwn(source, key) && source[key] !== undefined) merged[key] = source[key];
       else delete merged[key];
     }
     differs = true;

@@ -67,3 +67,16 @@ test("P15: push legge dal disco le voci non scritte da questa pagina (senza vaul
   assert.match(push, /await readStoredRows\(/);
   assert.match(push, /newerCopy\(row\.entityId, /);
 });
+
+test("P15 (revisione): la lettura dal disco serve solo senza Web Locks, e legge a blocchi", () => {
+  // Con Web Locks una sola scheda è attiva: le voci di un'altra pagina vengono da prima del
+  // ricaricamento e la memoria le ha già lette dal disco. Prima: una get per voce a ogni invio
+  // (migliaia alla prima sync di un account grande).
+  const source = readFileSync(new URL("../src/lib/cloudSync.ts", import.meta.url), "utf8");
+  const push = source.slice(source.indexOf("const push = async"), source.indexOf("const firstSync"));
+  assert.match(push, /const foreign = vault \|\| singleActiveTab\(\) \? \[\] : queued\.filter/);
+  assert.match(source, /const singleActiveTab = \(\) => typeof navigator !== "undefined" && typeof navigator\.locks\?\.request === "function";/);
+  const read = source.slice(source.indexOf("const readStoredRows"), source.indexOf("const breakTie"));
+  assert.match(read, /\.bulkGet\(/);
+  assert.doesNotMatch(read, /Promise\.all/);
+});

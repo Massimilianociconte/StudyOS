@@ -16,6 +16,7 @@ import { turnOffPushHere } from "../lib/pushDevice";
 import { resizeImageFile } from "../lib/files";
 import { SETTINGS_JUMP_EVENT, settingsSectionFromEvent, takeSettingsSection, type SettingsSection } from "../lib/settingsJump";
 import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
+import { SHELL_TEXT } from "../lib/labels";
 import { SETTINGS_TEXT } from "../lib/labels/settings";
 import { GETTING_STARTED_HIDDEN_KEY } from "../lib/deviceStorage";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -102,6 +103,7 @@ export function SettingsView() {
     enableVault,
     disableVault,
     lockVault,
+    vaultBusy,
     replaceAllData,
     mergeData,
     resetAllData,
@@ -688,20 +690,21 @@ export function SettingsView() {
           )}
           <div className="flex flex-wrap gap-2">
             {!vaultOn ? (
-              <Button icon="Lock" variant="primary" type="submit">
+              <Button icon="Lock" variant="primary" type="submit" disabled={vaultBusy}>
                 Proteggi con una password
               </Button>
             ) : (
               <>
-                <Button icon="Lock" variant="soft" onClick={() => void lockNow()}>
+                <Button icon="Lock" variant="soft" disabled={vaultBusy} onClick={() => void lockNow()}>
                   Blocca ora
                 </Button>
-                <Button icon="Shield" variant="danger" type="submit">
+                <Button icon="Shield" variant="danger" type="submit" disabled={vaultBusy}>
                   Togli la password
                 </Button>
               </>
             )}
           </div>
+          {vaultBusy ? <p className="text-sm font-bold text-[var(--muted)]">{SHELL_TEXT.lockBusy}…</p> : null}
         </form>
       </Panel>
     ),

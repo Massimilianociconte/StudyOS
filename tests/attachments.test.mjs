@@ -321,10 +321,10 @@ test("Dexie v7: copie locali separate (metadati, byte, eliminazioni in coda)", (
 
 test("vault: i byte locali si cifrano e, prima di togliere il vault, si decifrano", () => {
   const store = read("src/store/useStudyStore.ts");
-  const disable = store.slice(store.indexOf("disableVault: async"));
+  const disable = store.slice(store.indexOf("const removeVault = async"));
   assert.ok(disable.indexOf("unsealLocalFiles(") > 0, "decifrati");
   assert.ok(disable.indexOf("unsealLocalFiles(") < disable.indexOf("db.vault.clear()"), "prima di togliere il vault");
-  assert.match(store.slice(store.indexOf("enableVault: async")), /sealLocalFiles\(/);
+  assert.match(store.slice(store.indexOf("enableVault: (")), /sealLocalFiles\(/);
   assert.match(store.slice(store.indexOf("unlockVault: async")), /sealLocalFiles\(/);
   const files = read("src/lib/attachmentFiles.ts");
   assert.match(files, /encryptBytesWithKey/);

@@ -103,16 +103,31 @@ Correzioni di novembre 2026 (sync personale):
 - senza Web Locks (più schede attive insieme) una scheda rimasta indietro non
   toglie più la voce accodata da un'altra: le voci portano chi le ha scritte
   (`writer`) e, senza vault, per quelle di un'altra pagina si invia la copia
-  più recente tra memoria e disco. Col vault su disco c'è solo lo snapshot
+  più recente tra memoria e disco (solo senza Web Locks, un `bulkGet` per
+  collezione: con la guardia la memoria le ha già). Col vault su disco c'è solo lo snapshot
   cifrato: il limite resta e la guardia a scheda unica è l'unica protezione (P15);
 - le voci che non partiranno mai così come sono (elemento oltre il limite di
   un invio, 900 KB) vengono segnate come ferme (`parked: "too-large"`,
   `src/lib/stuckOutbox.ts`): non contano tra le modifiche da inviare
   (`stuckCount` a parte, badge «N elementi non sincronizzabili») e il pannello
   Account le elenca con titolo e dimensione. Si può scaricarne una copia
-  (backup parziale `scope: "items"`, unito all'importazione) o toglierle dalla
+  (backup parziale `scope: "items"`, unito all'importazione; protetta da
+  password con la stessa cifratura della copia di sicurezza, opzione già
+  attiva se c'è la password dell'app, altrimenti il pannello dice che è in
+  chiaro) o toglierle dalla
   coda dopo una conferma: restano solo su questo dispositivo. Finché ci sono,
   il cambio di account e «Esci e togli i dati da qui» restano fermi con un
   messaggio che le nomina, perché toglierle da qui le perderebbe. Una modifica
-  locale riaccoda la voce senza segno e la rimette in gioco (P12).
+  locale riaccoda la voce senza segno e la rimette in gioco (P12);
+- la domanda sul cambio di account (dati di un altro account su questo
+  dispositivo) si ricorda su disco per la coppia di account
+  (`cloud:switchAsked`, anche dopo un ricaricamento). Le modifiche in coda per
+  l'account di prima bloccano il cambio solo se c'erano prima della domanda;
+  quelle fatte mentre la persona sceglie (o salvate dal Pomodoro) non bloccano
+  più entrambi i pulsanti: «Aggiungi» le porta nel nuovo account con la prima
+  unione, «Mostra solo» si ferma con un messaggio che dice quale pulsante le
+  tiene (`accountSwitchBlock`, P6). Togliere o mettere la password, e
+  bloccare, vanno uno alla volta: durante un cambio «Blocca» è disattivato e
+  rifiutato, e la riscrittura rifiuta prima di scrivere se il workspace è
+  bloccato e non ha la chiave (revisione di P8).
 

@@ -1,7 +1,7 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { rebaseSharedEdit, sharedKey, sharedPushBatches } from "../src/lib/sharing.ts";
+import { rebaseSharedEdit, sharedKey, sharedPushBatches, withoutUnreadEdits } from "../src/lib/sharing.ts";
 import { useSharedStore } from "../src/store/useSharedStore.ts";
 import { SHARE_NOTICE_TEXT } from "../src/lib/labels.ts";
 
@@ -171,11 +171,59 @@ test("S4: prima dell'invio le modifiche con una base si riallineano sulla riga d
   // Proprietario che rinomina mentre chi riceve è offline: senza questa lettura l'invio (timbro più
   // recente) veniva accettato e riscriveva il vecchio titolo.
   const outbox = source.slice(source.indexOf("const pushOutbox"));
-  assert.match(outbox, /await rebaseBeforePush\(gen\);[\s\S]*?sharedPushBatches\(/);
+  assert.match(outbox, /const unread = await rebaseBeforePush\(gen\);[\s\S]*?sharedPushBatches\(withoutUnreadEdits\(store\.outbox, unread\.owners\), store\.items\)/);
   const before = source.slice(source.indexOf("const rebaseBeforePush"), source.indexOf("const pushBatch"));
   assert.match(before, /entry\.deleted \|\| !entry\.base/);
   assert.match(before, /await fetchRows\(ownerId, entries, gen\)/);
   assert.match(before, /applyRows\(ownerId, rows\)/);
-  // Un errore di rete qui non ferma l'invio; un cambio di chi guarda sì.
-  assert.match(before, /if \(error instanceof ViewerChanged \|\| gen !== viewers\.generation\) throw error;/);
+  // Un cambio di chi guarda ferma tutto; un errore di rete tiene ferme solo le voci di quel proprietario.
+  assert.match(before, /if \(error instanceof ViewerChanged \|\| gen !== viewers\.generation\) throw error;\s*owners\.add\(ownerId\);/);
+});
+
+test("S4 (revisione): rilettura fallita prima dell'invio, le modifiche con una base restano in coda", () => {
+  // Inviate senza rilettura, con il timbro più recente riscrivevano ciò che il proprietario aveva
+  // cambiato nel frattempo. Restano per la passata dopo; il resto parte.
+  const entry = (key, ownerId, extra = {}) => ({ key, ownerId, entityType: "task", entityId: key, queuedAt: "2026-11-12T10:00:00.000Z", ...extra });
+  const outbox = [
+    entry("a1", "alice", { base: { id: "a1" }, baseAt: "2026-11-12T09:00:00.000Z" }),
+    entry("a2", "alice"),
+    entry("a3", "alice", { deleted: true, base: { id: "a3" } }),
+    entry("c1", "carla", { base: { id: "c1" }, baseAt: "2026-11-12T09:00:00.000Z" })
+  ];
+  assert.deepEqual(withoutUnreadEdits(outbox, new Set(["alice"])).map((e) => e.key), ["a2", "a3", "c1"]);
+  assert.equal(withoutUnreadEdits(outbox, new Set()), outbox, "nessuna rilettura fallita: la coda è quella");
+  const source = readFileSync(new URL("../src/lib/shareSync.ts", import.meta.url), "utf8");
+  const push = source.slice(source.indexOf("const pushOutbox"), source.indexOf("// ——— Notifiche"));
+  // Dopo gli invii riusciti, l'errore della rilettura si mostra e la passata dopo riprova.
+  assert.match(push, /if \(unread\.failure !== undefined\) throw unread\.failure;/);
+});
+
+test("S4 (revisione): stato e cronometro di un'attività si uniscono insieme (mai «fatta» con il cronometro acceso)", () => {
+  // Il proprietario avvia il cronometro (in corso) mentre chi riceve, offline, segna fatta dalla base.
+  const base = { id: "t", title: "T", status: "todo", updatedAt: "2026-11-12T09:00:00.000Z" };
+  const remote = { ...base, status: "doing", timerStartedAt: "2026-11-12T10:00:00.000Z", timerAccumulatedSeconds: 0,
+    timerLastReminderAt: "2026-11-12T10:00:00.000Z", updatedAt: "2026-11-12T10:00:00.000Z" };
+  const local = { ...base, status: "done", completedAt: "2026-11-12T10:05:00.000Z", updatedAt: "2026-11-12T10:05:00.000Z" };
+  const { merged, conflicts } = rebaseSharedEdit("task", base, local, remote);
+  assert.equal(merged.status, "done");
+  assert.equal(merged.timerStartedAt, undefined, "cronometro chiuso");
+  assert.equal(merged.timerLastReminderAt, undefined);
+  assert.equal(merged.actualMinutes, 5, "i 5 minuti contati dal proprietario restano");
+  assert.ok(merged.completedAt);
+  assert.ok(conflicts.includes("status"));
+
+  // Il proprietario più recente: tutto il gruppo resta il suo.
+  const later = { ...remote, updatedAt: "2026-11-12T10:10:00.000Z" };
+  const second = rebaseSharedEdit("task", base, local, later).merged;
+  assert.equal(second.status, "doing");
+  assert.equal(second.completedAt, undefined);
+  assert.equal(second.timerStartedAt, later.timerStartedAt);
+
+  // Solo chi riceve cambia lo stato, il proprietario il titolo: si uniscono.
+  const renamed = { ...base, title: "Nuovo", updatedAt: "2026-11-12T10:00:00.000Z" };
+  const third = rebaseSharedEdit("task", base, local, renamed);
+  assert.equal(third.merged.title, "Nuovo");
+  assert.equal(third.merged.status, "done");
+  assert.equal(third.merged.completedAt, local.completedAt);
+  assert.deepEqual(third.conflicts, []);
 });

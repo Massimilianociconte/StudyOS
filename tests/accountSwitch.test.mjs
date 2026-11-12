@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { PERSONAL_COLLECTIONS, accountSwitchStep, personalRemovals } from "../src/lib/accountSwitch.ts";
+import { PERSONAL_COLLECTIONS, accountSwitchBlock, accountSwitchStep, personalRemovals } from "../src/lib/accountSwitch.ts";
 import { ACCOUNT_TEXT } from "../src/lib/labels/account.ts";
 
 const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -67,6 +67,31 @@ test("cambio di account: senza preferenze salvate non si toglie nulla", () => {
 
 test("cambio di account: solo le preferenze sono della persona", () => {
   assert.deepEqual([...PERSONAL_COLLECTIONS], ["preferences"]);
+});
+
+test("P6 (revisione): una modifica fatta mentre la domanda è aperta non blocca entrambi i pulsanti", () => {
+  // Prima: la modifica (o la sessione salvata dal Pomodoro) metteva una voce in coda per l'account di
+  // prima e ogni pulsante finiva in «modifiche cloud in attesa»; l'unica uscita era tornare all'altro account.
+  const asked = { pending: 1, stuck: 0, asked: true };
+  assert.equal(accountSwitchBlock({ ...asked, choice: null }), null, "la domanda resta aperta");
+  assert.equal(accountSwitchBlock({ ...asked, choice: "merge" }), null, "«Aggiungi» porta anche la modifica nel nuovo account");
+  assert.equal(accountSwitchBlock({ ...asked, choice: "separate" }), "editedWhileAsked", "«Mostra solo» la perderebbe: si dice perché");
+  // Modifiche in coda prima della domanda: la regola di prima (vanno mandate all'account di prima).
+  assert.equal(accountSwitchBlock({ pending: 2, stuck: 0, asked: false, choice: "merge" }), "pending");
+  assert.equal(accountSwitchBlock({ pending: 0, stuck: 1, asked: true, choice: "merge" }), "stuck");
+  assert.equal(accountSwitchBlock({ pending: 0, stuck: 0, asked: false }), null);
+  assert.match(ACCOUNT_TEXT.switchEditedWhileAsked(1), /Mentre sceglievi hai cambiato 1 elemento/);
+  assert.match(ACCOUNT_TEXT.switchEditedWhileAsked(1), /«Aggiungi i dati di prima a questo account»/);
+  assert.match(ACCOUNT_TEXT.switchEditedWhileAsked(3), /3 elementi/);
+
+  const sync = source("src/lib/cloudSync.ts");
+  const bind = sync.slice(sync.indexOf("const bindUser"), sync.indexOf("const syncOnce"));
+  // La domanda aperta si ricorda (anche dopo un ricaricamento) per la coppia di account.
+  assert.match(bind, /await setMeta\(metaKeys\.switchAsked, askedPair\);\s*throw new AccountChoiceNeededError\(\);/);
+  assert.match(bind, /accountSwitchBlock\(\{ pending, stuck, asked: \(await getMeta<string>\(metaKeys\.switchAsked\)\) === askedPair, choice \}\)/);
+  assert.match(bind, /await deleteMeta\(metaKeys\.switchAsked\);\s*await setMeta\(metaKeys\.boundUser, userId\);/);
+  // Il blocco «pending» viene prima della domanda: accountChoice non resta acceso accanto all'errore.
+  assert.ok(bind.indexOf('block === "pending"') < bind.indexOf("setState({ accountChoice: true })"));
 });
 
 test("uscita: le modifiche non inviate si contano al singolare e al plurale", () => {

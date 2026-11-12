@@ -245,7 +245,12 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   riallinea sulla versione nuova campo per campo (`rebaseSharedEdit`, `rebasePendingEdits`): i
   campi cambiati solo da una parte si uniscono; se entrambi cambiano la stessa unità (un campo,
   o un gruppo come orari o ripetizione) resta il timbro più recente e compare l'avviso
-  «avete cambiato la stessa informazione». La versione unita ha un timbro oltre l'ora del
+  «avete cambiato la stessa informazione». Stato e cronometro di un'attività sono un'unità
+  sola: se vince lo stato di chi riceve, si rifà il passaggio sulla versione del proprietario
+  (cronometro chiuso, tempo già contato salvato), mai «fatta» con il cronometro acceso. Se la
+  rilettura prima dell'invio non riesce, le modifiche con una base di quel proprietario restano
+  in coda per la passata dopo (`withoutUnreadEdits`), mai inviate alla cieca; il resto parte.
+  La versione unita ha un timbro oltre l'ora del
   server della riga, così il server la accetta. Limiti: resta una finestra di millisecondi tra
   la lettura e l'invio; elementi creati da chi riceve e voci di versioni precedenti seguono la
   regola di prima; dal lato del proprietario una sua modifica offline contro una modifica di
