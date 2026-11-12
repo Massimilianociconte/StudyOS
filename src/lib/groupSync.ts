@@ -113,6 +113,17 @@ export const isSharedAvailable = async (): Promise<boolean> => {
   }
 };
 
+// Appelli dei gruppi (lib/groupExamSync): caricati solo quando la cassetta parte, fermati con lei.
+let groupExamSync: typeof import("./groupExamSync") | null = null;
+const startGroupExams = () =>
+  import("./groupExamSync")
+    .then((module) => {
+      groupExamSync = module;
+      return module.startGroupExamSync();
+    })
+    .catch(() => undefined);
+const stopGroupExams = () => groupExamSync?.stopGroupExamSync();
+
 /** Da chiamare dopo login/logout o applicazione della migrazione. */
 export const resetSharedCache = async () => {
   sharedCache = null;
@@ -124,6 +135,7 @@ export const resetSharedCache = async () => {
   stopInviteSubscription();
   // Account cambiato o uscito: niente più segnali dei gruppi dell'account di prima.
   stopGroupWatch();
+  stopGroupExams();
 };
 
 const toGroup = (row: Record<string, unknown>): StudyGroup => ({
@@ -1105,10 +1117,12 @@ export const ensureSharedMailbox = async (): Promise<boolean> => {
   startGroupWatchdog();
   const ok = await pullSharedUpdates();
   if (ok && supabase) startInviteSubscription(session.user.id);
+  if (ok) void startGroupExams();
   return ok;
 };
 
 export const stopSharedMailbox = () => {
   stopInviteSubscription();
   stopGroupWatch();
+  stopGroupExams();
 };
