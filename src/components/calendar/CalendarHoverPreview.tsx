@@ -92,14 +92,18 @@ export function CalendarHoverPreview({ preview, subjects }: { preview: CalendarP
             <Tag color={PRIORITY_TONE[preview.task.priority]}>{PRIORITY_LABEL[preview.task.priority]}</Tag>
             <Tag>{TASK_STATUS_LABEL[preview.task.status]}</Tag>
             <Tag>{ENERGY_LABEL[preview.task.energy]}</Tag>
-            <Tag>
-              {CALENDAR_VIEW_TEXT.estimated(formatMinutes(preview.task.estimatedMinutes))}
-              {taskTimerRunning
-                ? ` · ⏱ ${formatElapsedSeconds(taskElapsed)}`
-                : preview.task.actualMinutes !== undefined
-                  ? ` · ${CALENDAR_VIEW_TEXT.actual(preview.task.actualMinutes)}`
-                  : ""}
-            </Tag>
+            {(() => {
+              // Senza stima (0, es. aggiunta rapida) niente «0 min previsti»: solo il tempo fatto, se c'è.
+              const parts = [
+                preview.task.estimatedMinutes > 0 ? CALENDAR_VIEW_TEXT.estimated(formatMinutes(preview.task.estimatedMinutes)) : "",
+                taskTimerRunning
+                  ? `⏱ ${formatElapsedSeconds(taskElapsed)}`
+                  : preview.task.actualMinutes !== undefined
+                    ? CALENDAR_VIEW_TEXT.actual(preview.task.actualMinutes)
+                    : ""
+              ].filter(Boolean);
+              return parts.length ? <Tag>{parts.join(" · ")}</Tag> : null;
+            })()}
             {taskCompletedLate ? <Tag className="text-[var(--warning-text)]">{CALENDAR_VIEW_TEXT.completedLate}</Tag> : null}
           </div>
           {preview.task.description || preview.task.notes ? (

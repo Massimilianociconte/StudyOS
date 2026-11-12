@@ -7,6 +7,7 @@ import type { Exam, Task } from "../../types";
 import { Icon } from "../Icon";
 import { SharedMark } from "../SharedMark";
 import { Tag } from "../ui";
+import { capitalizeFirst } from "../../lib/labels";
 import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { isAllDayEvent, timeLabel } from "../../lib/selectors";
 import { todayYmd } from "../../lib/datePicker";
@@ -74,10 +75,12 @@ export function DayList({
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       {perDay.map(({ day, dayEvents, dayTasks, dayExams, dayHolidays, empty }) => {
+        // «Lunedì 9 novembre», come la Home: maiuscola solo all'inizio, il mese resta minuscolo.
+        const dayLabel = capitalizeFirst(format(day, "EEEE d MMMM", { locale: it }));
         return (
-          <section key={day.toISOString()} aria-label={format(day, "EEEE d MMMM", { locale: it })}>
+          <section key={day.toISOString()} aria-label={dayLabel}>
             <div className="mb-1.5 flex items-center justify-between gap-2">
-              <h3 className={`text-sm font-black capitalize ${isSameDay(day, new Date()) ? "text-[var(--accent-ink)]" : ""}`}>{format(day, "EEEE d MMMM", { locale: it })}</h3>
+              <h3 className={`text-sm font-black ${isSameDay(day, new Date()) ? "text-[var(--accent-ink)]" : ""}`}>{dayLabel}</h3>
               <button
                 type="button"
                 onClick={() => handlers.onCreate(defaultStartFor(day))}
@@ -101,7 +104,7 @@ export function DayList({
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
                 {dayExams.map((exam) => (
                   <li key={exam.id}>
-                    <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
+                    <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} roomy />
                   </li>
                 ))}
                 {dayEvents.map((item) => (

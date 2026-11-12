@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { addDays, format, isBefore, parseISO, startOfDay } from "date-fns";
+import { addDays, format, isBefore, isSameDay, parseISO, startOfDay } from "date-fns";
 import { it } from "date-fns/locale";
 import { useShallow } from "zustand/react/shallow";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -34,6 +34,10 @@ import { CalendarExamsHint } from "../components/CalendarExamsHint";
 import { calendarExamEvents } from "../lib/calendarExams";
 
 const tooltipStyle = { background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, color: "var(--text)" };
+// recharts colora le righe del fumetto con il colore della serie (accento, colori pastello delle materie):
+// sul tema chiaro non si leggerebbero. Testo e titolo con i colori del testo.
+const tooltipItemStyle = { color: "var(--text)" };
+const tooltipLabelStyle = { color: "var(--muted)" };
 
 const SOURCE_LABEL: Record<SessionSourceKey, string> = { ...SESSION_SOURCE_LABEL, unknown: STATS_TEXT.sourceUnknown };
 const SOURCE_COLOR: Record<SessionSourceKey, string> = {
@@ -122,6 +126,8 @@ export function StatsView() {
     range
   );
   const streak = studyStreak(sessions);
+  // Stessa regola di studyStreak: senza studio oggi la serie conta fino a ieri.
+  const studiedToday = sessions.some((session) => session.status === "completed" && session.actualMinutes > 0 && isSameDay(parseISO(session.start), new Date()));
   const reviewedTopics = countInRange(
     topics.map((topic) => topic.lastReviewedAt),
     range
@@ -197,7 +203,7 @@ export function StatsView() {
           onClick={() => goTo(setActiveView, "study")}
         />
         <WithHelp help={<HelpTip title={STATS_TEXT.streakHelp.title} text={STATS_TEXT.streakHelp.text} example={STATS_TEXT.streakHelp.example} />}>
-          <StatTile label={STATS_TEXT.streak} value={`${streak}`} hint={STATS_TEXT.streakHint(streak)} icon="Flame" onClick={() => goTo(setActiveView, "study")} />
+          <StatTile label={STATS_TEXT.streak} value={`${streak}`} hint={STATS_TEXT.streakHint(streak, studiedToday)} icon="Flame" onClick={() => goTo(setActiveView, "study")} />
         </WithHelp>
         <WithHelp help={<HelpTip title={STATS_TEXT.tasksHelp.title} text={STATS_TEXT.tasksHelp.text} />}>
           <StatTile
@@ -238,6 +244,8 @@ export function StatsView() {
                   <YAxis stroke="var(--muted)" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip
                     contentStyle={tooltipStyle}
+                    itemStyle={tooltipItemStyle}
+                    labelStyle={tooltipLabelStyle}
                     cursor={{ fill: "var(--surface-soft)" }}
                     labelFormatter={(_label, payload) => String(payload?.[0]?.payload?.full ?? "")}
                     formatter={(value) => [`${String(value).replace(".", ",")} h`, STATS_TEXT.trendTooltip]}
@@ -264,7 +272,7 @@ export function StatsView() {
                         <Cell key={entry.id ?? "none"} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [formatMinutes(Number(value)), String(name)]} />
+                    <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} labelStyle={tooltipLabelStyle} formatter={(value, name) => [formatMinutes(Number(value)), String(name)]} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -285,13 +293,13 @@ export function StatsView() {
                           type="button"
                           aria-label={STATS_TEXT.openSubject(entry.name)}
                           onClick={() => goTo(setActiveView, "subjects", ["subjects.open", entry.id, "tab"])}
-                          className="flex min-h-9 w-full min-w-0 items-center gap-2 rounded-[12px] px-2 text-left text-sm hover:bg-[var(--surface-soft)]"
+                          className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[12px] px-2 text-left text-sm hover:bg-[var(--surface-soft)]"
                         >
                           {row}
                           <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
                         </button>
                       ) : (
-                        <div className="flex min-h-9 min-w-0 items-center gap-2 px-2 text-sm">
+                        <div className="flex min-h-11 min-w-0 items-center gap-2 px-2 text-sm">
                           {row}
                           <span className="h-3.5 w-3.5 shrink-0" />
                         </div>

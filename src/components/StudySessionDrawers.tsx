@@ -17,6 +17,7 @@ import {
   draftFromSession,
   matchTopic,
   parseSessionMinutes,
+  plannedDonePatch,
   readSessionDraft,
   sessionDraftChanged,
   sessionDraftEnd,
@@ -32,6 +33,8 @@ import { finishedSession, timerUnsavedSeconds, type TimerState } from "../lib/st
 import { createId } from "../lib/id";
 import { useOnce } from "../hooks/useOnce";
 import { Button, Drawer, Field, inputClass } from "./ui";
+import { LinkedNotes } from "./NoteDrawer";
+import { SESSION_LIST_TEXT } from "../lib/labels/study";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
 
@@ -519,6 +522,7 @@ export function SessionEditorDrawer({
             minutesHint={endHint(draft, session)}
           />
           <FormError error={error} />
+          <LinkedNotes entityType="studySession" id={session.id} />
         </div>
       ) : null}
     </Drawer>
@@ -694,21 +698,39 @@ export function UndoNotice({ text, onUndo, onDone }: { text: string; onUndo: () 
 
 type EditorNotice =
   | { kind: "deleted"; session: StudySession; links: SessionLinks }
-  | { kind: "updated"; id: string; undo: Partial<StudySession> };
+  | { kind: "updated"; id: string; undo: Partial<StudySession>; text?: string };
 
 /**
  * Modifica di una sessione da un elenco: `edit(id)` apre il Drawer; dopo Salva o Elimina compare
- * "Annulla" in `undoNotice` (da mettere sotto l'elenco).
+ * "Annulla" in `undoNotice` (da mettere sotto l'elenco). Per le sessioni in programma, che il modulo
+ * non salva (inizio nel futuro), `markDone` e `remove` agiscono subito, con lo stesso "Annulla".
  */
-export function useSessionEditor(): { edit: (id: string) => void; drawer: ReactNode; undoNotice: ReactNode } {
+export function useSessionEditor(): {
+  edit: (id: string) => void;
+  markDone: (session: StudySession) => void;
+  remove: (session: StudySession) => void;
+  drawer: ReactNode;
+  undoNotice: ReactNode;
+} {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<EditorNotice | null>(null);
   const restoreSession = useStudyStore((state) => state.restoreSession);
   const updateSession = useStudyStore((state) => state.updateSession);
+  const deleteSession = useStudyStore((state) => state.deleteSession);
   return {
     edit: (id: string) => {
       setNotice(null);
       setEditingId(id);
+    },
+    markDone: (session: StudySession) => {
+      const patch = plannedDonePatch(session, Date.now());
+      setNotice({ kind: "updated", id: session.id, undo: sessionUndoPatch(session, patch), text: SESSION_LIST_TEXT.markedDone(session.title, formatMinutes(patch.actualMinutes)) });
+      void updateSession(session.id, patch);
+    },
+    remove: (session: StudySession) => {
+      setNotice(null);
+      // I collegamenti tolti tornano con "Annulla", come dal modulo.
+      void deleteSession(session.id).then((links) => setNotice({ kind: "deleted", session, links }));
     },
     drawer: (
       <SessionEditorDrawer
@@ -720,7 +742,7 @@ export function useSessionEditor(): { edit: (id: string) => void; drawer: ReactN
     ),
     undoNotice: notice ? (
       <UndoNotice
-        text={notice.kind === "deleted" ? SESSION_FORM_TEXT.deleted(notice.session.title) : SESSION_FORM_TEXT.updated}
+        text={notice.kind === "deleted" ? SESSION_FORM_TEXT.deleted(notice.session.title) : (notice.text ?? SESSION_FORM_TEXT.updated)}
         onUndo={() => void (notice.kind === "deleted" ? restoreSession(notice.session, notice.links) : updateSession(notice.id, notice.undo))}
         onDone={() => setNotice(null)}
       />

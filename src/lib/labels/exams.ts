@@ -8,6 +8,8 @@ export const OFFICIAL_EXAMS_ADD_LABEL = "Aggiungi appelli ufficiali";
 export const EXAMS_TEXT = {
   title: "Esami",
   subtitle: "Le date dei tuoi esami, quanto sei pronto e le date ufficiali degli appelli. Voti e medie sono in Libretto e laurea.",
+  /** Senza «Corso di laurea» (Impostazioni): niente date ufficiali. */
+  subtitlePersonal: "Le date dei tuoi esami e quanto sei pronto. Voti e medie sono in Libretto e laurea.",
   tabsLabel: "Quali esami vedere",
   tabPersonal: "I miei esami",
   tabOfficial: "Date ufficiali",
@@ -84,7 +86,26 @@ export const EXAMS_TEXT = {
   seeDetails: "Vedi dettagli",
   shownDetails: "Dettagli qui sotto",
   timeNotPublished: "Orario non pubblicato",
-  officialEyebrow: "Appello ufficiale"
+  officialEyebrow: "Appello ufficiale",
+  /** Appello già passato nella scelta degli appelli da aggiungere: si vede, non si sceglie. */
+  pastSuffix: " · Passato",
+  noFutureSessions: "Nessun appello futuro da aggiungere",
+  // Dettaglio di un appello ufficiale: lo si aggiunge al calendario da qui.
+  addSessionToCalendar: "Aggiungi al calendario",
+  addingSession: "Aggiunta in corso…",
+  sessionAdded: "Fatto: l'appello è nel calendario, come promemoria di tutta la giornata.",
+  sessionInCalendar: "Già nel calendario.",
+  sessionPast: "Appello passato: non si aggiunge al calendario.",
+  sessionNotYours: "Per aggiungerlo al calendario, l'insegnamento deve essere tra le tue materie attive.",
+  sessionNotAdded: "Non è stato aggiunto: è già nel calendario o non è più valido.",
+  sessionAddFailed: "Non è stato possibile aggiungerlo. Riprova tra qualche secondo.",
+  // Fonti: la pagina degli appelli si legge; il feed JSON è il dato tecnico da cui vengono le date.
+  openBarbExamsPage: "Apri la pagina degli appelli BARB",
+  openOfficialSource: "Apri la fonte ufficiale UNIMI",
+  officialSource: "Fonte ufficiale UNIMI",
+  technicalData: "Dati ufficiali UNIMI (formato tecnico)",
+  referenceSource: (code: string | number, technical: boolean) => (technical ? `Dati ${code} (formato tecnico)` : `Fonte ${code}`),
+  verifiedOn: (day: string, page?: string | number | null) => `Verificata il ${day}${page ? ` · pagina ${page}` : ""}. Date e iscrizioni possono cambiare: controlla la fonte prima di iscriverti.`
 } as const;
 
 /** Tipo di prova e momento degli appelli ufficiali. */

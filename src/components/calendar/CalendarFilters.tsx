@@ -1,5 +1,5 @@
 // Riga dei filtri sopra il calendario: una materia sola (la sua pillola accesa, con ✕) o tutte, le
-// festività accese o spente e, in Giorno e Agenda, le Attività senza data.
+// festività accese o spente e, in ogni vista, le Attività senza data.
 import { useEffect, useRef } from "react";
 import { Icon } from "../Icon";
 import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT, HOLIDAYS_TOGGLE_LABEL } from "../../lib/labels/calendar";
@@ -41,6 +41,7 @@ export function CalendarFilterRow({
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
   const options = selectableSubjects(subjects, active?.id);
+  const hasOptions = options.length > 0;
   // La pillola attiva resta in vista anche quando la riga scorre (telefono).
   useEffect(() => {
     const row = rowRef.current;
@@ -51,6 +52,23 @@ export function CalendarFilterRow({
     if (start < row.scrollLeft) row.scrollTo({ left: Math.max(0, start - 12) });
     else if (end > row.scrollLeft + row.clientWidth) row.scrollTo({ left: end - row.clientWidth + 12 });
   }, [active?.id]);
+  // Con il mouse la rotella (su e giù) scorre la riga di lato, finché c'è da scorrere: senza trackpad
+  // le materie oltre il bordo non si raggiungevano. Ai bordi la rotella torna alla pagina.
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const max = row.scrollWidth - row.clientWidth;
+      if (max <= 0) return;
+      const next = Math.min(max, Math.max(0, row.scrollLeft + event.deltaY));
+      if (next === row.scrollLeft) return;
+      event.preventDefault();
+      row.scrollLeft = next;
+    };
+    row.addEventListener("wheel", onWheel, { passive: false });
+    return () => row.removeEventListener("wheel", onWheel);
+  }, [hasOptions]);
   return (
     <div className="mb-4 flex min-w-0 flex-wrap items-center gap-2">
       {options.length ? (
@@ -58,7 +76,7 @@ export function CalendarFilterRow({
           ref={rowRef}
           role="group"
           aria-label={CALENDAR_TEXT.filterLabel}
-          className="no-scrollbar flex min-w-0 flex-1 basis-[60%] gap-1.5 overflow-x-auto py-0.5"
+          className="scroll-strip flex min-w-0 flex-1 basis-[60%] gap-1.5 overflow-x-auto py-0.5"
         >
           <button type="button" aria-pressed={!active} onClick={() => onChange(null)} className={pill(!active)}>
             {CALENDAR_TEXT.allSubjects}

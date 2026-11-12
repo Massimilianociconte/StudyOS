@@ -1,12 +1,15 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { differenceInCalendarDays, format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { StudyTopic, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, subjectColor, subjectName } from "../lib/selectors";
-import { TOPIC_FILTER_TEXT } from "../lib/labels/study";
-import { Field, IconButton, inputClass } from "./ui";
+import { TOPIC_FILTER_TEXT, TOPIC_TEXT } from "../lib/labels/study";
+import { subjectPause } from "../lib/review";
+import { Field, IconButton, Tag, inputClass } from "./ui";
 import { Icon } from "./Icon";
+import { InlineConfirm } from "./InlineConfirm";
+import { UnsavedPrompt } from "./UnsavedPrompt";
 
 /** "oggi", "domani", "tra 5 giorni", "in ritardo di 2 giorni". */
 export const reviewDueLabel = (iso: string, now: Date = new Date()) => {
@@ -25,21 +28,26 @@ export const reviewDueLabel = (iso: string, now: Date = new Date()) => {
  * argomenti di quella materia (dettaglio materia), altrimenti tutti con filtro per materia.
  * Il filtro può arrivare da fuori (`filter` + `onFilterChange`, es. Studio aperto dalla scheda
  * d'esame): "" sono tutte le materie, una materia che non c'è più vale come "tutte".
+ * Gli argomenti di una materia superata o archiviata restano in fondo, «in pausa»: non tornano nei ripassi.
+ * `onDirtyChange` dice se un argomento in modifica ha cambi non salvati (chi lo contiene chiede prima di chiudere).
  */
 export function TopicManager({
   subjects,
   subjectId,
   filter: filterProp,
-  onFilterChange
+  onFilterChange,
+  onDirtyChange
 }: {
   subjects: Subject[];
   subjectId?: string;
   filter?: string;
   onFilterChange?: (subjectId: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { topics, addTopics, updateTopic, deleteTopic } = useStudyStore();
   const [ownFilter, setOwnFilter] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   // Nuovi argomenti solo per le materie da studiare (niente archiviate o già superate), come gli altri menu.
   const activeSubjects = selectableSubjects(subjects);
   const wanted = filterProp ?? ownFilter;
@@ -47,7 +55,13 @@ export function TopicManager({
   const setFilter = (next: string) => (onFilterChange ? onFilterChange(next) : setOwnFilter(next));
   const scope = subjectId ?? filter;
   const live = topics.filter((topic) => !topic.archived);
-  const list = live.filter((topic) => !scope || topic.subjectId === scope).sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate));
+  const pauses = new Map(subjects.map((subject) => [subject.id, subjectPause(subject)]));
+  const pauseOf = (topic: StudyTopic) => pauses.get(topic.subjectId) ?? null;
+  // Prima quelli da ripassare (dal più urgente), poi quelli in pausa.
+  const list = live
+    .filter((topic) => !scope || topic.subjectId === scope)
+    .sort((a, b) => Number(Boolean(pauseOf(a))) - Number(Boolean(pauseOf(b))) || a.nextReviewDate.localeCompare(b.nextReviewDate));
+  const deleteButtonId = (id: string) => `topic-delete-${id}`;
   // Nel filtro: le materie da studiare più quelle (superate o archiviate) che hanno ancora argomenti,
   // e quella scelta da fuori, così il filtro si vede.
   const filterSubjects = subjects.filter(
@@ -84,11 +98,13 @@ export function TopicManager({
 
       {list.length ? (
         <ul className="grid grid-cols-1 gap-1">
-          {list.map((topic) =>
-            editingId === topic.id ? (
+          {list.map((topic) => {
+            const pause = pauseOf(topic);
+            return editingId === topic.id ? (
               <TopicEditor
                 key={topic.id}
                 topic={topic}
+                onDirtyChange={onDirtyChange}
                 onCancel={() => setEditingId(null)}
                 onSave={async (patch) => {
                   await updateTopic(topic.id, patch);
@@ -96,28 +112,51 @@ export function TopicManager({
                 }}
               />
             ) : (
-              <li key={topic.id} className="group flex min-w-0 items-center gap-3 rounded-[16px] px-2 py-2 hover:bg-[var(--surface-soft)]">
-                <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: subjectColor(subjects, topic.subjectId) }} />
-                <button type="button" onClick={() => setEditingId(topic.id)} title="Modifica argomento e domande guida" className="min-w-0 flex-1 text-left">
-                  <span className="one-line-safe block text-sm font-extrabold">{topic.title}</span>
-                  <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
-                    {subjectId ? "" : `${subjectName(subjects, topic.subjectId)} · `}
-                    ripasso {reviewDueLabel(topic.nextReviewDate)}
-                    {topic.completedReviews ? ` · ${topic.completedReviews} ${topic.completedReviews === 1 ? "ripasso fatto" : "ripassi fatti"}` : " · mai ripassato"}
-                    {topic.questions.length ? ` · ${topic.questions.length} ${topic.questions.length === 1 ? "domanda guida" : "domande guida"}` : ""}
-                  </span>
-                </button>
-                <IconButton
-                  icon="Trash2"
-                  label={`Elimina l'argomento "${topic.title}"`}
-                  className="h-8 w-8 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
-                  onClick={() => {
-                    if (window.confirm(`Eliminare l'argomento "${topic.title}"? Perderai anche i ripassi fatti e le domande guida. L'operazione non si può annullare.`)) void deleteTopic(topic.id);
-                  }}
-                />
+              <li key={topic.id} className="grid grid-cols-1 gap-1.5">
+                <div className="group flex min-w-0 items-center gap-3 rounded-[16px] px-2 py-1 hover:bg-[var(--surface-soft)]">
+                  <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: subjectColor(subjects, topic.subjectId) }} />
+                  <button type="button" onClick={() => setEditingId(topic.id)} title="Modifica argomento e domande guida" className="min-h-11 min-w-0 flex-1 text-left">
+                    <span className="one-line-safe block text-sm font-extrabold">{topic.title}</span>
+                    <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
+                      {[
+                        subjectId ? "" : subjectName(subjects, topic.subjectId),
+                        pause ? "" : `ripasso ${reviewDueLabel(topic.nextReviewDate)}`,
+                        topic.completedReviews ? `${topic.completedReviews} ${topic.completedReviews === 1 ? "ripasso fatto" : "ripassi fatti"}` : "mai ripassato",
+                        topic.questions.length ? `${topic.questions.length} ${topic.questions.length === 1 ? "domanda guida" : "domande guida"}` : ""
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                    {pause ? <Tag className="mt-1">{TOPIC_TEXT.paused[pause]}</Tag> : null}
+                  </button>
+                  <IconButton
+                    id={deleteButtonId(topic.id)}
+                    icon="Trash2"
+                    label={TOPIC_TEXT.removeAria(topic.title)}
+                    aria-expanded={confirmingId === topic.id}
+                    className="bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+                    onClick={() => setConfirmingId(topic.id)}
+                  />
+                </div>
+                {confirmingId === topic.id ? (
+                  <InlineConfirm
+                    text={TOPIC_TEXT.removeConfirm(topic.title)}
+                    confirmLabel={TOPIC_TEXT.remove}
+                    icon="Trash2"
+                    onCancel={() => {
+                      setConfirmingId(null);
+                      // La conferma sparisce: il focus torna sul cestino da cui era partita.
+                      window.requestAnimationFrame(() => document.getElementById(deleteButtonId(topic.id))?.focus());
+                    }}
+                    onConfirm={() => {
+                      setConfirmingId(null);
+                      void deleteTopic(topic.id);
+                    }}
+                  />
+                ) : null}
               </li>
-            )
-          )}
+            );
+          })}
         </ul>
       ) : (
         <p className="rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
@@ -192,10 +231,33 @@ function NewTopicForm({
   );
 }
 
-function TopicEditor({ topic, onSave, onCancel }: { topic: StudyTopic; onSave: (patch: Partial<StudyTopic>) => Promise<void>; onCancel: () => void }) {
-  const [title, setTitle] = useState(topic.title);
-  const [questions, setQuestions] = useState(topic.questions.join("\n"));
-  const [notes, setNotes] = useState(topic.notes);
+function TopicEditor({
+  topic,
+  onSave,
+  onCancel,
+  onDirtyChange
+}: {
+  topic: StudyTopic;
+  onSave: (patch: Partial<StudyTopic>) => Promise<void>;
+  onCancel: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
+  // I campi com'erano all'apertura: una sync nel frattempo non rende «cambiato» l'argomento.
+  const [initial] = useState(() => ({ title: topic.title, questions: topic.questions.join("\n"), notes: topic.notes }));
+  const [title, setTitle] = useState(initial.title);
+  const [questions, setQuestions] = useState(initial.questions);
+  const [notes, setNotes] = useState(initial.notes);
+  const [asking, setAsking] = useState(false);
+  const dirty = title !== initial.title || questions !== initial.questions || notes !== initial.notes;
+  const report = useRef(onDirtyChange);
+  useEffect(() => {
+    report.current = onDirtyChange;
+  });
+  useEffect(() => {
+    report.current?.(dirty);
+  }, [dirty]);
+  // Chiuso (salvato, annullato o riquadro chiuso): niente più da perdere.
+  useEffect(() => () => report.current?.(false), []);
   return (
     <li className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3">
       <Field label="Argomento">
@@ -212,28 +274,40 @@ function TopicEditor({ topic, onSave, onCancel }: { topic: StudyTopic; onSave: (
       <Field label="Note (facoltative)">
         <textarea className={`${inputClass} min-h-16 py-2.5`} value={notes} onChange={(event) => setNotes(event.target.value)} />
       </Field>
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="min-h-10 rounded-full px-4 text-sm font-extrabold hover:bg-[var(--surface)]">
-          Annulla
-        </button>
-        <button
-          type="button"
-          disabled={!title.trim()}
-          onClick={() =>
-            void onSave({
-              title: title.trim(),
-              questions: questions
-                .split("\n")
-                .map((line) => line.trim())
-                .filter(Boolean),
-              notes
-            })
-          }
-          className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[var(--accent)] px-4 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
-        >
-          <Icon name="Check" className="h-4 w-4" /> Salva modifiche
-        </button>
-      </div>
+      {asking && dirty ? (
+        <UnsavedPrompt
+          className="bg-[var(--surface)]"
+          title={TOPIC_TEXT.unsavedTitle}
+          text={TOPIC_TEXT.unsavedText}
+          keep={TOPIC_TEXT.unsavedKeep}
+          discard={TOPIC_TEXT.unsavedDiscard}
+          onKeep={() => setAsking(false)}
+          onDiscard={onCancel}
+        />
+      ) : (
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={() => (dirty ? setAsking(true) : onCancel())} className="min-h-11 rounded-full px-4 text-sm font-extrabold hover:bg-[var(--surface)]">
+            {TOPIC_TEXT.cancel}
+          </button>
+          <button
+            type="button"
+            disabled={!title.trim()}
+            onClick={() =>
+              void onSave({
+                title: title.trim(),
+                questions: questions
+                  .split("\n")
+                  .map((line) => line.trim())
+                  .filter(Boolean),
+                notes
+              })
+            }
+            className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--accent)] px-4 text-sm font-extrabold text-[#10131d] disabled:opacity-50"
+          >
+            <Icon name="Check" className="h-4 w-4" /> {TOPIC_TEXT.save}
+          </button>
+        </div>
+      )}
     </li>
   );
 }

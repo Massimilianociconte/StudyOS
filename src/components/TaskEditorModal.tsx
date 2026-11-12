@@ -12,7 +12,7 @@ import { useNow } from "../hooks/useNow";
 import { editedMinutesPatch, formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds, taskMinutesFieldValue } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
 import { LinkedNotes } from "./NoteDrawer";
-import { addStep, cleanSteps, draftChanged, editorCloseRequest, removeStep, renameStep, stepsDone, toggleStep, type TaskStep } from "../lib/tasksUi";
+import { addStep, draftChanged, editorCloseRequest, removeStep, renameStep, stepsDone, stepsToSave, toggleStep, type TaskStep } from "../lib/tasksUi";
 import { createId } from "../lib/id";
 
 const toDatetimeLocal = (date?: string) => {
@@ -59,7 +59,9 @@ export function TaskEditorModal({
     notes: task.notes,
     difficulty: String(task.difficulty),
     importance: String(task.importance),
-    steps: task.subtasks
+    steps: task.subtasks,
+    // Testo di «Nuovo passaggio» non ancora aggiunto: nella bozza, così si salva e chiudere chiede prima.
+    newStep: ""
   }));
   const [draft, setDraft] = useState(initialDraft);
   const [error, setError] = useState("");
@@ -144,7 +146,7 @@ export function TaskEditorModal({
         energy: draft.energy,
         priority: draft.priority,
         subjectId: draft.subjectId || undefined,
-        subtasks: cleanSteps(draft.steps),
+        subtasks: stepsToSave(draft.steps, draft.newStep, createId("subtask")),
         tags: parseTags(draft.tags),
         notes: draft.notes.trim(),
         difficulty: Math.max(1, Math.min(5, difficulty)) as Task["difficulty"],
@@ -195,8 +197,9 @@ export function TaskEditorModal({
       </div>
     </div>
   ) : (
-    <div key="edit" ref={footerRef} className="flex items-center justify-between gap-2">
-      {/* Solo icona sul telefono, così i tre pulsanti stanno in una riga. */}
+    // A 320 px i tre pulsanti non stanno in una riga: «Annulla» e «Salva modifiche» vanno a capo, a destra.
+    <div key="edit" ref={footerRef} className="flex flex-wrap items-center justify-between gap-2">
+      {/* Solo icona sul telefono: lascia spazio agli altri due pulsanti. */}
       <Button
         variant="danger"
         icon="Trash2"
@@ -208,7 +211,7 @@ export function TaskEditorModal({
       >
         <span className="hidden sm:inline">{TASK_EDITOR_TEXT.remove}</span>
       </Button>
-      <div className="flex min-w-0 justify-end gap-2">
+      <div className="ml-auto flex min-w-0 flex-wrap justify-end gap-2">
         <Button variant="soft" onClick={requestClose} disabled={saving}>
           {TASK_EDITOR_TEXT.cancel}
         </Button>
@@ -276,7 +279,12 @@ export function TaskEditorModal({
             </div>
           </div>
 
-          <TaskStepsField steps={draft.steps} onChange={(steps) => setDraft((value) => ({ ...value, steps }))} />
+          <TaskStepsField
+            steps={draft.steps}
+            onChange={(steps) => setDraft((value) => ({ ...value, steps }))}
+            text={draft.newStep}
+            onText={(newStep) => setDraft((value) => ({ ...value, newStep }))}
+          />
 
           <Field label="Descrizione (facoltativa)">
             <textarea
@@ -366,8 +374,18 @@ export function TaskEditorModal({
  * Passaggi da spuntare. Invio nel campo nuovo aggiunge e resta lì; Invio su un passaggio porta al
  * campo nuovo; Backspace su un passaggio vuoto lo toglie e torna al precedente.
  */
-function TaskStepsField({ steps, onChange }: { steps: TaskStep[]; onChange: (steps: TaskStep[]) => void }) {
-  const [text, setText] = useState("");
+function TaskStepsField({
+  steps,
+  onChange,
+  text,
+  onText
+}: {
+  steps: TaskStep[];
+  onChange: (steps: TaskStep[]) => void;
+  /** Testo di «Nuovo passaggio»: sta nella bozza dell'editor (si salva e conta come modifica). */
+  text: string;
+  onText: (text: string) => void;
+}) {
   const listRef = useRef<HTMLUListElement>(null);
   const newRef = useRef<HTMLInputElement>(null);
   const headingId = useId();
@@ -377,7 +395,7 @@ function TaskStepsField({ steps, onChange }: { steps: TaskStep[]; onChange: (ste
     const next = addStep(steps, text, createId("subtask"));
     if (next === steps) return;
     onChange(next);
-    setText("");
+    onText("");
     newRef.current?.focus();
   };
 
@@ -412,7 +430,7 @@ function TaskStepsField({ steps, onChange }: { steps: TaskStep[]; onChange: (ste
             return (
               <li key={step.id} className="flex min-w-0 items-center gap-1">
                 {/* Etichetta da 44 px attorno alla casella: il tocco vicino la spunta. */}
-                <label className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center">
+                <label className="grid h-11 w-11 shrink-0 cursor-pointer grid-cols-1 place-items-center">
                   <input
                     type="checkbox"
                     className="h-5 w-5 cursor-pointer accent-[var(--accent)]"
@@ -450,7 +468,7 @@ function TaskStepsField({ steps, onChange }: { steps: TaskStep[]; onChange: (ste
           ref={newRef}
           className={`${inputClass} min-w-0 flex-1`}
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => onText(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== "Enter") return;
             event.preventDefault();

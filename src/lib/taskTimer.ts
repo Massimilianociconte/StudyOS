@@ -55,6 +55,25 @@ export const taskReminderDue = (task: Task, now: Date = new Date()) => {
   return now.getTime() - lastReminder >= taskReminderIntervalMinutes(task) * 60_000;
 };
 
+/**
+ * Timer dimenticato acceso (es. tutta la notte): dall'ultima conferma («Sì, continuo», o la partenza)
+ * è passato più del doppio dell'intervallo dei promemoria. Si offre di contare solo fino a quella
+ * conferma più un intervallo: `at` è quell'ora, `patch` ferma il timer con i minuti fatti fino a lì.
+ * Porta `timerAccumulatedSeconds`: così normalizeTaskPatch tiene quei minuti invece del tempo trascorso.
+ */
+export const forgottenTimerCutoff = (task: Task, now: Date = new Date()): { at: Date; patch: Partial<Task> } | null => {
+  if (!isTaskTimerRunning(task)) return null;
+  const startedAt = safeDateMs(task.timerStartedAt);
+  const last = safeDateMs(task.timerLastReminderAt ?? task.timerStartedAt);
+  if (startedAt === undefined || last === undefined) return null;
+  const interval = taskReminderIntervalMinutes(task) * 60_000;
+  if (now.getTime() - last <= 2 * interval) return null;
+  // Mai prima della partenza: i minuti già fatti prima (pause, correzioni) restano tutti.
+  const at = new Date(Math.max(last + interval, startedAt));
+  const minutes = secondsToTaskMinutes(taskElapsedSeconds(task, at));
+  return { at, patch: { status: "todo", actualMinutes: minutes, timerAccumulatedSeconds: minutes * 60 } };
+};
+
 export const isTaskCompletedLate = (task: Task) => {
   const dueDay = localDayMs(task.dueDate);
   const completedDay = localDayMs(task.completedAt);

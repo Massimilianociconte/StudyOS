@@ -29,8 +29,12 @@ export const TASKS_TEXT = {
   noSubject: "Nessuna materia",
   priority: "Priorità",
   dueOptional: "Scadenza (facoltativa)",
+  /** Dopo l'aggiunta rapida: sempre, perché la nuova attività può finire fuori dalla parte visibile. */
+  added: (title: string) => `Aggiunta «${title}».`,
   /** Dopo l'aggiunta rapida con un filtro attivo: l'attività può non comparire nell'elenco filtrato. */
   addedFiltered: (title: string) => `Aggiunta «${title}». Se non la vedi, togli i filtri.`,
+  /** Stato cambiato in «In corso» dal menu di una riga o di una scheda (o trascinando): parte il timer. */
+  timerStarted: (title: string) => `Timer avviato per «${title}».`,
   views: "Come vedere le attività",
   sortBy: "Ordina per",
   emptyTitle: "Ancora nessuna attività",
@@ -60,6 +64,8 @@ export const TASK_EDITOR_TEXT = {
   remove: "Elimina attività",
   discardTitle: "Scartare le modifiche?",
   discardText: "Quello che hai cambiato non è ancora salvato.",
+  /** «Nuova attività» chiusa con qualcosa di scritto. */
+  discardNewText: "Quello che hai scritto non è ancora salvato.",
   keepEditing: "Continua a modificare",
   // Stesse parole di Materie, Obiettivi, Note, Studio ed Eventi.
   discard: "Scarta le modifiche",
@@ -98,7 +104,7 @@ export const TASKS_LIST_TEXT = {
 export const TASKS_HELP = {
   views: {
     title: "Come vedere le attività",
-    text: "Lista: tutte, divise per scadenza. Piano di oggi: le 6 più urgenti. Per materia: divise per materia. Per stato: colonne Da fare, In corso, Completata… tra cui spostarle. Urgenza e importanza: quattro riquadri per decidere cosa fare prima."
+    text: "Lista: tutte, divise per scadenza. Piano di oggi: le 6 più urgenti. Per materia: divise per materia. Per stato: colonne Da fare, In corso, Completata… tra cui spostarle; «In corso» fa partire un timer. Urgenza e importanza: quattro riquadri per decidere cosa fare prima."
   },
   focus: { title: "Piano di oggi", text: "Le 6 attività da fare più urgenti, in ordine di scadenza e priorità." },
   matrix: {

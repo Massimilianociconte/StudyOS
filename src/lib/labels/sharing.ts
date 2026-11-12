@@ -32,7 +32,12 @@ export const SHARED_ITEM_TEXT = {
   invalidField: (label: string) => `Controlla «${label}»: serve un valore valido.`,
   readOnlyIntro: (who: string) => `Di ${who}: puoi solo vedere.`,
   editIntro: (who: string) => `Di ${who}: le modifiche arrivano subito anche a ${who}, che può ripristinarle dalla cronologia.`,
-  deleteConfirm: (title: string, who: string) => `Eliminare «${title}» dai dati di ${who}? Resta nella sua cronologia e può ripristinarlo.`
+  deleteConfirm: (title: string, who: string) => `Eliminare «${title}» dai dati di ${who}? Resta nella sua cronologia e può ripristinarlo.`,
+  // Chiudere (✕, Esc, tocco fuori, Indietro, «Annulla») con campi cambiati: la domanda sul posto dei pulsanti.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: (who: string) => `Hai cambiato questo elemento di ${who} senza salvarlo.`,
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche"
 } as const;
 
 /** Perché un invito aperto da link non si può accettare (il link salvato su questo dispositivo si toglie). */

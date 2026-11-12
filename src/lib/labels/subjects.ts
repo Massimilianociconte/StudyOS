@@ -54,6 +54,8 @@ export const SUBJECTS_TEXT = {
   /** Dettaglio chiuso con dati della materia cambiati e non salvati. */
   unsavedTitle: "Scartare le modifiche?",
   unsavedText: "Hai cambiato i dati della materia (nome, CFU, colore…) senza salvarli.",
+  /** Solo un argomento o un materiale in modifica nel dettaglio, non salvato. */
+  unsavedItemText: "Hai cambiato un argomento o un materiale senza salvarlo.",
   unsavedKeep: "Continua a modificare",
   unsavedDiscard: "Scarta le modifiche",
   restore: "Ripristina",
@@ -75,7 +77,19 @@ export const SUBJECTS_TEXT = {
   examInValue: (count: number) => (count < 0 ? "Esito da registrare" : count === 0 ? "Oggi" : daysText(count)),
   openTask: (title: string) => `Apri l'attività «${title}»`,
   allTasks: "Vedi le attività della materia",
-  noTasks: "Nessuna attività da fare per questa materia."
+  noTasks: "Nessuna attività da fare per questa materia.",
+  cfuMissing: "Scrivi i CFU: un numero da 0 a 60.",
+  cfuInvalid: "CFU non validi: scrivi un numero da 0 a 60.",
+  // Materiali nel dettaglio della materia.
+  seeInMaterials: "Vedi in Materiali",
+  openMaterial: (name: string) => `Apri il link ${name}`,
+  downloadMaterial: (name: string) => `Scarica ${name}`,
+  editMaterial: (name: string) => `Modifica ${name}`,
+  removeMaterial: (name: string) => `Elimina ${name}`,
+  removeMaterialConfirm: (name: string) => `Eliminare «${name}»? Il materiale viene tolto dall'app e non si può recuperare.`,
+  removeMaterialYes: "Elimina materiale",
+  materialUnsavedText: "Hai cambiato il materiale senza salvarlo.",
+  saveChanges: "Salva modifiche"
 } as const;
 
 export const SUBJECTS_HELP = {

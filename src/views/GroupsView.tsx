@@ -27,6 +27,9 @@ import {
 } from "../lib/groupSync";
 import { safeHref } from "../lib/safeUrl";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
+import { GROUP_FORM_TEXT } from "../lib/labels/groups";
+import { UnsavedPrompt } from "../components/UnsavedPrompt";
 
 type DetailTab = "bacheca" | "membri" | "attivita";
 
@@ -53,7 +56,8 @@ const ROLE_LABEL: Record<GroupMember["role"], string> = {
 export function GroupsView() {
   const { studyGroups, groupInvites, groupResources, groupActivities } = useStudyStore();
   const [actor, setActor] = useState<Actor | null>(null);
-  const [openId, setOpenId] = useUiState<string | null>("groups.open", null, { scope: "tab", validate: isNullableString });
+  // Collegata: «Apri» di una notifica («Sei entrato in …») apre il gruppo anche con Gruppi già aperto.
+  const [openId, setOpenId] = useLinkedUiState<string | null>("groups.open", null, { scope: "tab", validate: isNullableString });
   const [createOpen, setCreateOpen] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
@@ -381,9 +385,18 @@ function CreateGroupModal({ actor, needsAccount, onLogin, onClose, onCreated }: 
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Chiusura in attesa della risposta a «Scartare le modifiche?».
+  const [asking, setAsking] = useState(false);
+  const dirty = Boolean(name.trim() || description.trim());
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) setAsking(true);
+    else onClose();
+  };
 
   const save = async () => {
     if (busy) return;
+    setAsking(false);
     if (!name.trim()) {
       setError("Dai un nome al gruppo per continuare.");
       return;
@@ -407,39 +420,56 @@ function CreateGroupModal({ actor, needsAccount, onLogin, onClose, onCreated }: 
     }
   };
 
+  // Drawer (portal, pila, focus trap, Indietro) come Invita: niente finestra fatta a mano.
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true" aria-label="Crea un gruppo"
-      onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
-      onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
-      <section className="soft-panel w-full max-w-lg p-4 sm:p-5">
-        <p className="text-xs font-black uppercase text-[var(--faint)]">Nuovo gruppo</p>
-        <h3 className="text-2xl font-black">Con chi studi?</h3>
-        <div className="mt-4 grid grid-cols-1 gap-3">
-          {/* Un gruppo creato senza account non si potrà mai condividere: lo si dice prima. */}
-          {needsAccount ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
-              <p className="min-w-0 flex-1 text-sm font-bold text-[var(--muted)]">
-                Non hai fatto l'accesso: potrai usare il gruppo solo tu e non potrai invitare nessuno, nemmeno accedendo dopo.
-              </p>
-              <Button variant="soft" icon="LogIn" onClick={onLogin} disabled={busy}>
-                Accedi prima
-              </Button>
-            </div>
-          ) : null}
-          <Field label="Nome del gruppo">
-            <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Es. Fisiologia — sessione estiva" autoFocus />
-          </Field>
-          <Field label="Descrizione (facoltativa)">
-            <textarea className={`${inputClass} min-h-20 py-3`} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Es. Corso, obiettivi, regole del gruppo" />
-          </Field>
-          {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+    <Drawer
+      open
+      onClose={requestClose}
+      eyebrow={<span className="text-xs font-black uppercase text-[var(--faint)]">{GROUP_FORM_TEXT.createEyebrow}</span>}
+      title={GROUP_FORM_TEXT.createTitle}
+      width="max-w-[560px]"
+      footer={
+        asking ? (
+          <UnsavedPrompt
+            title={GROUP_FORM_TEXT.unsavedTitle}
+            text={GROUP_FORM_TEXT.unsavedCreateText}
+            keep={GROUP_FORM_TEXT.unsavedKeep}
+            discard={GROUP_FORM_TEXT.unsavedDiscard}
+            onKeep={() => setAsking(false)}
+            onDiscard={() => {
+              setAsking(false);
+              onClose();
+            }}
+          />
+        ) : (
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="soft" onClick={onClose} disabled={busy}>Annulla</Button>
             <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>{busy ? "Creazione…" : "Crea gruppo"}</Button>
           </div>
-        </div>
-      </section>
-    </div>
+        )
+      }
+    >
+      <div className="grid grid-cols-1 gap-3">
+        {/* Un gruppo creato senza account non si potrà mai condividere: lo si dice prima. */}
+        {needsAccount ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+            <p className="min-w-0 flex-1 text-sm font-bold text-[var(--muted)]">
+              Non hai fatto l'accesso: potrai usare il gruppo solo tu e non potrai invitare nessuno, nemmeno accedendo dopo.
+            </p>
+            <Button variant="soft" icon="LogIn" onClick={onLogin} disabled={busy}>
+              Accedi prima
+            </Button>
+          </div>
+        ) : null}
+        <Field label="Nome del gruppo">
+          <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="Es. Fisiologia — sessione estiva" data-autofocus />
+        </Field>
+        <Field label="Descrizione (facoltativa)">
+          <textarea className={`${inputClass} min-h-20 py-3`} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Es. Corso, obiettivi, regole del gruppo" />
+        </Field>
+        {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+      </div>
+    </Drawer>
   );
 }
 
@@ -590,12 +620,13 @@ function ResourceRow({ resource, canManage }: { resource: GroupResource; canMana
           <p className="mt-1 text-[11px] font-bold text-[var(--faint)]">{RESOURCE_LABEL[resource.kind]} · aggiunto da {resource.addedByDisplayName}</p>
         </div>
         {canManage ? (
-          <span className="flex shrink-0 gap-1">
+          // Cerchi da 32 px con area di tocco da 44 (after:-inset-1.5); gap-3 = le due aree non si sovrappongono.
+          <span className="flex shrink-0 gap-3">
             <button type="button" onClick={() => void store.toggleResourcePin(resource.id).then(() => pushSharedResourcePin({ ...resource, pinned: !resource.pinned, updatedAt: new Date().toISOString() }))} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
-              className={`grid h-8 w-8 place-items-center rounded-full ${resource.pinned ? "bg-[var(--accent)] text-[#10131d]" : "hover:bg-[var(--surface-strong)]"}`}>
+              className={`relative grid h-8 w-8 grid-cols-1 place-items-center rounded-full after:absolute after:-inset-1.5 after:content-[''] ${resource.pinned ? "bg-[var(--accent)] text-[#10131d]" : "hover:bg-[var(--surface-strong)]"}`}>
               <Icon name="Pin" className="h-4 w-4" />
             </button>
-            <button type="button" onClick={() => setConfirmDelete(true)} aria-label={`Elimina "${resource.title}" dalla bacheca`} title="Elimina dalla bacheca" className="grid h-8 w-8 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
+            <button type="button" onClick={() => setConfirmDelete(true)} aria-label={`Elimina "${resource.title}" dalla bacheca`} title="Elimina dalla bacheca" className="relative grid h-8 w-8 grid-cols-1 place-items-center rounded-full text-[var(--danger-text)] after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--danger-bg)]">
               <Icon name="Trash2" className="h-4 w-4" />
             </button>
           </span>
@@ -683,7 +714,7 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
         </span>
         {isOwner && !isSelf ? (
           <select
-            className="min-h-8 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-xs font-black"
+            className="min-h-11 shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-2 text-xs font-black"
             value={member.role}
             onChange={(event) => void changeRole(event.target.value as GroupMember["role"])}
             aria-label={`Ruolo di ${member.displayName}`}
@@ -694,12 +725,12 @@ function MemberRow({ group, member, isOwner, myId, onClose, onNotice }: { group:
           </select>
         ) : null}
         {canRemove ? (
-          <button type="button" onClick={() => setConfirm("remove")} aria-label={`Togli ${member.displayName} dal gruppo`} title="Togli dal gruppo" className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--danger-text)] hover:bg-[var(--danger-bg)]">
+          <button type="button" onClick={() => setConfirm("remove")} aria-label={`Togli ${member.displayName} dal gruppo`} title="Togli dal gruppo" className="relative grid h-8 w-8 shrink-0 grid-cols-1 place-items-center rounded-full text-[var(--danger-text)] after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--danger-bg)]">
             <Icon name="X" className="h-4 w-4" />
           </button>
         ) : null}
         {isSelf && !isOwner ? (
-          <button type="button" onClick={askLeave} className="shrink-0 rounded-full px-3 text-xs font-black text-[var(--muted)] hover:text-[var(--danger-text)]">
+          <button type="button" onClick={askLeave} className="min-h-11 shrink-0 rounded-full px-3 text-xs font-black text-[var(--muted)] hover:text-[var(--danger-text)]">
             Esci
           </button>
         ) : null}
@@ -817,9 +848,18 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Chiusura in attesa della risposta a «Scartare le modifiche?».
+  const [asking, setAsking] = useState(false);
+  const dirty = Boolean(title.trim() || url.trim() || body.trim() || fileName);
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) setAsking(true);
+    else onClose();
+  };
 
   const save = async () => {
     if (busy) return;
+    setAsking(false);
     if (!title.trim()) {
       setError("Scrivi un titolo per continuare.");
       return;
@@ -858,48 +898,66 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
     task: { label: "Dettagli (facoltativi)", placeholder: "Es. Ripassare il capitolo 4 entro venerdì" }
   };
 
+  // Drawer sopra il dettaglio del gruppo (pila): Esc e Indietro chiudono solo questo, non tutto il gruppo,
+  // e il portal su body evita che il pannello sotto (backdrop-filter, overflow) lo ritagli.
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center" role="dialog" aria-modal="true" aria-label="Aggiungi alla bacheca"
-      onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
-      onKeyDown={(event) => { if (event.key === "Escape" && !busy) onClose(); }}>
-      <section className="soft-panel w-full max-w-lg p-4 sm:p-5">
-        <p className="text-xs font-black uppercase text-[var(--faint)]">Bacheca · {group.name}</p>
-        <h3 className="text-2xl font-black">Cosa vuoi condividere?</h3>
-        <div className="mt-3">
-          <Segmented label="Cosa aggiungi" size="sm" value={kind} onChange={setKind}
-            options={[{ id: "link", label: "Link", icon: "Globe" }, { id: "note", label: "Nota", icon: "FileText" }, { id: "file", label: "File", icon: "Paperclip" }, { id: "task", label: "Attività", icon: "Check" }]} />
-        </div>
-        <div className="mt-3 grid grid-cols-1 gap-3">
-          <Field label="Titolo">
-            <input className={inputClass} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Es. Appunti capitolo 4" autoFocus />
-          </Field>
-          {kind === "link" ? (
-            <Field label="Link">
-              <input className={inputClass} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Es. https://drive.google.com/…" inputMode="url" />
-            </Field>
-          ) : null}
-          {kind === "file" ? (
-            <Field label="File">
-              <input className={inputClass} type="file" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? "")} />
-              <p className="mt-1 text-xs text-[var(--faint)]">Gli altri vedranno solo il nome del file, che resta sul tuo dispositivo. Per farlo scaricare, aggiungi invece un link (es. Google Drive).</p>
-            </Field>
-          ) : null}
-          {kind !== "link" ? (
-            <Field label={bodyField[kind].label}>
-              <textarea className={`${inputClass} min-h-20 py-3`} value={body} onChange={(event) => setBody(event.target.value)} placeholder={bodyField[kind].placeholder} />
-            </Field>
-          ) : null}
-          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
-            <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={pinned} onChange={(event) => setPinned(event.target.checked)} />
-            <span className="min-w-0 flex-1">Fissa in alto nella bacheca</span>
-          </label>
-          {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+    <Drawer
+      open
+      onClose={requestClose}
+      eyebrow={<span className="safe-text text-xs font-black uppercase text-[var(--faint)]">{GROUP_FORM_TEXT.resourceEyebrow(group.name)}</span>}
+      title={GROUP_FORM_TEXT.resourceTitle}
+      width="max-w-[560px]"
+      footer={
+        asking ? (
+          <UnsavedPrompt
+            title={GROUP_FORM_TEXT.unsavedTitle}
+            text={GROUP_FORM_TEXT.unsavedResourceText}
+            keep={GROUP_FORM_TEXT.unsavedKeep}
+            discard={GROUP_FORM_TEXT.unsavedDiscard}
+            onKeep={() => setAsking(false)}
+            onDiscard={() => {
+              setAsking(false);
+              onClose();
+            }}
+          />
+        ) : (
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="soft" onClick={onClose} disabled={busy}>Annulla</Button>
             <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>{busy ? "Aggiungo…" : "Aggiungi alla bacheca"}</Button>
           </div>
-        </div>
-      </section>
-    </div>
+        )
+      }
+    >
+      <div>
+        <Segmented label="Cosa aggiungi" size="sm" value={kind} onChange={setKind}
+          options={[{ id: "link", label: "Link", icon: "Globe" }, { id: "note", label: "Nota", icon: "FileText" }, { id: "file", label: "File", icon: "Paperclip" }, { id: "task", label: "Attività", icon: "Check" }]} />
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3">
+        <Field label="Titolo">
+          <input className={inputClass} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Es. Appunti capitolo 4" data-autofocus />
+        </Field>
+        {kind === "link" ? (
+          <Field label="Link">
+            <input className={inputClass} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Es. https://drive.google.com/…" inputMode="url" />
+          </Field>
+        ) : null}
+        {kind === "file" ? (
+          <Field label="File">
+            <input className={inputClass} type="file" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? "")} />
+            <p className="mt-1 text-xs text-[var(--faint)]">Gli altri vedranno solo il nome del file, che resta sul tuo dispositivo. Per farlo scaricare, aggiungi invece un link (es. Google Drive).</p>
+          </Field>
+        ) : null}
+        {kind !== "link" ? (
+          <Field label={bodyField[kind].label}>
+            <textarea className={`${inputClass} min-h-20 py-3`} value={body} onChange={(event) => setBody(event.target.value)} placeholder={bodyField[kind].placeholder} />
+          </Field>
+        ) : null}
+        <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
+          <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={pinned} onChange={(event) => setPinned(event.target.checked)} />
+          <span className="min-w-0 flex-1">Fissa in alto nella bacheca</span>
+        </label>
+        {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
+      </div>
+    </Drawer>
   );
 }

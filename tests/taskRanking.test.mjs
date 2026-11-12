@@ -55,6 +55,19 @@ test("più urgenti: le completate e le archiviate non ci sono, e conta il limite
   assert.ok(!ranked.includes("done-late") && !ranked.includes("archived-late"));
 });
 
+test("più urgenti: bloccate e rimandate vanno dopo tutte le altre, ma restano se non c'è altro", () => {
+  const list = [
+    task("blocked-urgent-late", -10, "urgent", { status: "blocked", importance: 5 }),
+    task("postponed-high-today", 0, "high", { status: "postponed" }),
+    task("low-nodue", undefined, "low", { importance: 1 }),
+    task("doing-medium", 3, "medium", { status: "doing" })
+  ];
+  assert.deepEqual(ids(urgentTasks(list, 4, NOW)), ["doing-medium", "low-nodue", "blocked-urgent-late", "postponed-high-today"]);
+  assert.deepEqual(ids(urgentTasks(list, 1, NOW)), ["doing-medium"], "in cima a «Cosa fare adesso» una che si può fare");
+  const onHold = list.filter((item) => item.status === "blocked" || item.status === "postponed");
+  assert.deepEqual(ids(urgentTasks(onHold, 4, NOW)), ["blocked-urgent-late", "postponed-high-today"], "tra loro conta il solito punteggio");
+});
+
 test("ordina per priorità: prima la priorità, e dentro la stessa priorità le in ritardo in alto", () => {
   const sorted = ids(sortByPriority(LIST));
   assert.deepEqual(sorted, ["high-nodue", "overdue-15", "overdue-3", "due+3", "due+15", "nodue", "low-overdue-30"]);

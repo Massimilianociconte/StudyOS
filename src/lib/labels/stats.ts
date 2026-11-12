@@ -24,7 +24,8 @@ export const STATS_TEXT = {
   sessionsHint: (average: string) => `in media ${average} l'una`,
   noSessionsHint: "Nessuna in questo periodo",
   streak: "Giorni di fila",
-  streakHint: (streak: number) => (streak ? "fino a oggi" : "Studia oggi per iniziare"),
+  /** Senza studio oggi la serie conta fino a ieri (resta viva fino a stasera). */
+  streakHint: (streak: number, studiedToday: boolean) => (!streak ? "Studia oggi per iniziare" : studiedToday ? "fino a oggi" : "fino a ieri · studia oggi per continuare"),
   streakHelp: {
     title: "Giorni di fila",
     text: "Giorni consecutivi con almeno una sessione di studio salvata.",

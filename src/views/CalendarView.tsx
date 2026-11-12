@@ -70,7 +70,7 @@ import { applyRepeatFields, familyLastDate, isOccurrenceRow, normalizeRepeat, ty
 import { civilDateOf, deviceTimeZone, isCivilDate, isValidTimeZone, parseCivil } from "../lib/tz";
 import { daysUntil, shortDate, subjectColor, subjectName } from "../lib/selectors";
 import { expandEvents } from "../lib/recurrence";
-import { EXAM_STATUS_LABEL, REPEAT_PICKER_TEXT } from "../lib/labels";
+import { EXAM_STATUS_LABEL, REPEAT_PICKER_TEXT, capitalizeFirst } from "../lib/labels";
 import {
   CALENDAR_HELP,
   CALENDAR_TEXT,
@@ -84,10 +84,12 @@ import {
 } from "../lib/labels/calendar";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
-import { useLinkedUiState } from "../hooks/useLinkedUiState";
+import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
 import { CourseIcon } from "../components/CourseIcon";
 import { BarbExamImport } from "../components/BarbExamImport";
-import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
+import { EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
+import { EXAMS_NEW_KEY, calendarExamRefFor, examPrefillFromEvent, examTimeLabel, hasExamOn } from "../lib/calendarExams";
+import { isDateToDecide } from "../lib/examOutcome";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
 import { cloudConfigured } from "../lib/cloudSyncState";
@@ -292,6 +294,8 @@ export function CalendarView() {
   } = useStudyStore();
   // "Colori delle tipologie" (preferenza sincronizzata: ripulita prima dell'uso).
   const typeOverrides = useMemo(() => sanitizeTypeColorOverrides(selectPreferences({ preferences }).eventTypeColors), [preferences]);
+  // Appelli ufficiali UNIMI di BARB: solo con «Corso di laurea» acceso in Impostazioni.
+  const showBarb = selectPreferences({ preferences }).showBarb;
   // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
   // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
   const [storedSubject, setStoredSubject] = useLinkedUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
@@ -305,6 +309,20 @@ export function CalendarView() {
   const openExam = (id: string) => {
     writeUiState("exams.editing", id, "tab");
     setActiveView("exams");
+  };
+  /**
+   * «Segui come esame» per un mio evento «Esame» (anche un appello importato): apre «Aggiungi esame»
+   * in Esami già compilato (chiave `exams.new`, come dalla Home). Niente se quella materia ha già un
+   * esame in quel giorno.
+   */
+  const trackExamFor = (item: CalendarEvent & { occurrenceDate?: string }) => {
+    if (item.category !== "exam" || hasExamOn(exams, examPrefillFromEvent(item, subjects))) return undefined;
+    return () => {
+      const ref = calendarExamRefFor(useStudyStore.getState().events, item);
+      if (!ref) return;
+      closeEventEditor();
+      goToView("exams", [[EXAMS_NEW_KEY, ref, "tab"]]);
+    };
   };
   const openShare = () => {
     if (sharePhase !== "idle") return;
@@ -389,7 +407,7 @@ export function CalendarView() {
     scope: "device",
     validate: (value) => typeof value === "boolean"
   });
-  // Attività senza data ("Senza data · N" in Giorno e Agenda), con lo stesso filtro per materia.
+  // Attività senza data ("Senza data · N", in ogni vista), con lo stesso filtro per materia.
   const [undatedOpen, setUndatedOpen] = useState(false);
   const undated = useMemo(() => filterCalendarItems({ tasks: undatedTasks(tasks) }, subjectFilter).tasks, [tasks, subjectFilter]);
   const placeUndated = (taskId: string, day: string) => {
@@ -473,7 +491,8 @@ export function CalendarView() {
     });
   };
 
-  const periodLabel =
+  // Maiuscola solo all'inizio («Lunedì 9 novembre 2026», «9 nov – 15 nov 2026»): i mesi restano minuscoli.
+  const periodLabel = capitalizeFirst(
     mode === "month"
       ? format(cursor, "MMMM yyyy", { locale: it })
       : mode === "week"
@@ -482,7 +501,8 @@ export function CalendarView() {
           ? `${format(range.from, "d MMM", { locale: it })} – ${format(addDays(range.to, -1), "d MMM", { locale: it })}`
           : mode === "day"
             ? format(cursor, "EEEE d MMMM yyyy", { locale: it })
-            : "";
+            : ""
+  );
   const summary = isCalendarSummary(mode);
 
   /** La serie di un mio evento che si ripete (non la riga di un giorno) e il fuso che la modifica le fisserà. */
@@ -691,7 +711,7 @@ export function CalendarView() {
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
               // Una voce sola per gli appelli ufficiali: apre subito la scelta delle date da aggiungere
               // (due tocchi); l'elenco completo resta in Esami → «Date ufficiali».
-              { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "Landmark", onClick: () => setBarbImportOpen(true) },
+              ...(showBarb ? [{ label: OFFICIAL_EXAMS_ADD_LABEL, icon: "Landmark", onClick: () => setBarbImportOpen(true) } satisfies PageAction] : []),
               { label: CALENDAR_TEXT.subjectSummary, icon: "BookOpen", onClick: () => openSummary("semester") },
               { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") },
               { label: TYPE_COLORS_TEXT.menu, icon: "Palette", onClick: () => setTypeColorsOpen(true) }
@@ -700,7 +720,7 @@ export function CalendarView() {
         }
       />
       <CalendarTransfer ref={transfer} />
-      {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
+      {barbImportOpen && showBarb ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
       {typeColorsOpen ? (
         <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
       ) : null}
@@ -739,7 +759,7 @@ export function CalendarView() {
               </button>
             ) : null}
             <div className="flex min-w-0 items-center gap-1.5 sm:ml-auto">
-              <p className="mr-1 min-w-0 truncate text-sm font-black capitalize">{periodLabel}</p>
+              <p className="mr-1 min-w-0 truncate text-sm font-black">{periodLabel}</p>
               <IconButton icon="ChevronLeft" label="Periodo precedente" onClick={() => navigate(-1)} />
               <button
                 type="button"
@@ -758,7 +778,8 @@ export function CalendarView() {
             showHolidays={showHolidays}
             onToggleHolidays={narrow ? undefined : () => setShowHolidays((value) => !value)}
             undatedCount={undated.length}
-            onOpenUndated={mode === "day" || mode === "agenda" ? () => setUndatedOpen(true) : undefined}
+            // In ogni vista (anche Settimana, quella di partenza, e Mese): le attività senza data non spariscono.
+            onOpenUndated={() => setUndatedOpen(true)}
           />
         </>
       )}
@@ -926,6 +947,7 @@ export function CalendarView() {
           occurrenceDate={occurrenceTarget(editingOccurrence).date}
           subjects={subjects}
           repeatNote={REPEAT_PICKER_TEXT.onlyForSeries}
+          onTrackExam={trackExamFor(editingOccurrence)}
           onClose={closeEventEditor}
           onSubmit={async ({ changes, patch }) => {
             const item = editingOccurrence;
@@ -1058,6 +1080,7 @@ export function CalendarView() {
           event={editingEvent}
           subjects={subjects}
           deleteConfirmText={(normalizeRepeat(editingEvent) ? EVENT_EDITOR_TEXT.deleteSeriesConfirm : EVENT_EDITOR_TEXT.deleteConfirm)(shortTitle(editingEvent.title))}
+          onTrackExam={trackExamFor(editingEvent)}
           onClose={closeEventEditor}
           onSubmit={async ({ changes }) => {
             await updateEvent(editingEvent.id, changes);
@@ -1240,7 +1263,11 @@ function ExamSession({
   onOpenExam: (id: string) => void;
 }) {
   const today = startOfDay(new Date());
-  const upcoming = exams.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today)).sort((a, b) => a.date.localeCompare(b.date));
+  // In arrivo, poi i non superati con la nuova data da decidere (aperti, non «già sostenuti»), come in Esami.
+  const upcoming = [
+    ...exams.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today) && !isDateToDecide(exam)).sort((a, b) => a.date.localeCompare(b.date)),
+    ...exams.filter((exam) => isDateToDecide(exam)).sort((a, b) => a.date.localeCompare(b.date))
+  ];
   const past = exams.filter((exam) => !upcoming.includes(exam)).sort((a, b) => b.date.localeCompare(a.date));
   if (!exams.length)
     return (
@@ -1261,7 +1288,11 @@ function ExamSession({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {upcoming.map((exam) => {
           const color = subjectColor(subjects, exam.subjectId);
-          const days = daysUntil(exam.date);
+          const dateToDecide = isDateToDecide(exam);
+          // «Oggi», «Domani», «12 giorni»: mai «0 giorni all'esame».
+          const days = Math.max(0, daysUntil(exam.date));
+          const time = examTimeLabel(exam.date);
+          const when = `${format(parseISO(exam.date), "EEEE d MMMM", { locale: it })}${time ? ` · ${time}` : ""}`;
           const name = subjectName(subjects, exam.subjectId);
           const preparation = Math.max(0, Math.min(100, exam.preparation));
           // Tutta la scheda è un pulsante che apre l'esame (solo testo e span dentro).
@@ -1276,12 +1307,14 @@ function ExamSession({
               style={{ boxShadow: `inset 0 3px 0 ${color}` }}
             >
               <span className="flex items-baseline justify-between gap-2">
-                <span className="text-3xl font-black tabular-nums">{days}</span>
+                {dateToDecide ? (
+                  <Tag color="var(--warning-text)">{CALENDAR_TEXT.examDateToDecide}</Tag>
+                ) : (
+                  <span className={`font-black tabular-nums ${days > 1 ? "text-3xl" : "text-2xl"}`}>{CALENDAR_TEXT.examCountdown(days)}</span>
+                )}
                 <Tag>{EXAM_STATUS_LABEL[exam.status]}</Tag>
               </span>
-              <span className="block text-xs font-bold text-[var(--muted)]">
-                {days === 1 ? "giorno" : "giorni"} all'esame · {format(parseISO(exam.date), "EEEE d MMMM", { locale: it })}
-              </span>
+              <span className="block text-xs font-bold text-[var(--muted)]">{dateToDecide ? EXAMS_TEXT.dateToDecide : CALENDAR_TEXT.examWhen(days, when)}</span>
               <span className="mt-2 flex items-center gap-1 font-black">
                 <span className="two-line-safe min-w-0">{name}</span>
                 <Icon name="ChevronRight" className="motion-safe h-4 w-4 shrink-0 text-[var(--muted)] group-hover:translate-x-0.5 group-hover:text-[var(--accent-ink)]" />

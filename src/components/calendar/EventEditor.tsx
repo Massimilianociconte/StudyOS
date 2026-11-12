@@ -81,7 +81,8 @@ export function EventEditor({
   onClose,
   onSubmit,
   onDelete,
-  onDirtyChange
+  onDirtyChange,
+  onTrackExam
 }: {
   heading: string;
   initial: EventDraft;
@@ -112,6 +113,8 @@ export function EventEditor({
   onSubmit: (submit: EditorSubmit) => Promise<string | void>;
   onDelete?: () => Promise<string | void>;
   onDirtyChange?: (dirty: boolean) => void;
+  /** Evento «Esame» mio senza un esame per quella materia e quel giorno: «Segui come esame» apre Esami già compilato. */
+  onTrackExam?: () => void;
 }) {
   const creating = createKind !== undefined;
   const readOnly = Boolean(sharedFrom && !sharedFrom.canEdit);
@@ -126,6 +129,8 @@ export function EventEditor({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<"unsaved" | "delete" | null>(null);
+  // «Segui come esame» con modifiche non salvate: dopo «Scarta le modifiche» si va in Esami, non si chiude e basta.
+  const [discardThen, setDiscardThen] = useState<"close" | "trackExam">("close");
   const [linkText, setLinkText] = useState("");
   const [linkError, setLinkError] = useState("");
 
@@ -167,8 +172,16 @@ export function EventEditor({
 
   const requestClose = () => {
     if (busy) return;
+    setDiscardThen("close");
     if (dirty) setConfirm("unsaved");
     else onClose();
+  };
+
+  const trackExam = () => {
+    if (busy || !onTrackExam) return;
+    setDiscardThen("trackExam");
+    if (dirty) setConfirm("unsaved");
+    else onTrackExam();
   };
 
   const update = (change: (value: EventDraft) => EventDraft) => {
@@ -286,7 +299,7 @@ export function EventEditor({
             <Button variant="soft" onClick={() => setConfirm(null)} autoFocus>
               {EVENT_EDITOR_TEXT.unsavedKeep}
             </Button>
-            <Button variant="danger" icon="X" onClick={onClose}>
+            <Button variant="danger" icon="X" onClick={discardThen === "trackExam" && onTrackExam ? onTrackExam : onClose}>
               {EVENT_EDITOR_TEXT.unsavedDiscard}
             </Button>
           </div>
@@ -409,6 +422,15 @@ export function EventEditor({
             })}
             {sharedFrom ? null : <p className="mt-2 text-xs text-[var(--muted)]">{EVENT_EDITOR_TEXT.importedHint}</p>}
           </Panel>
+        ) : null}
+        {onTrackExam && !readOnly ? (
+          // L'evento resta un promemoria: in Esami si contano i giorni e si segna quanto si è pronti.
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+            <p className="min-w-0 flex-1 basis-48 text-sm font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.trackExamHint}</p>
+            <Button variant="soft" icon="GraduationCap" onClick={trackExam} disabled={busy}>
+              {EVENT_EDITOR_TEXT.trackExam}
+            </Button>
+          </div>
         ) : null}
 
         <fieldset disabled={readOnly} className={`m-0 grid min-w-0 grid-cols-1 gap-5 border-0 p-0 ${DIMMED_DISABLED_FIELDS}`}>

@@ -284,3 +284,78 @@ test("removeCalendarExam: toglie quell'occorrenza dal negozio e Annulla la rimet
   store.setState({ events: [SERIES] });
   assert.equal(await removeCalendarExam(store, calendarExamRef(SINGLE)), null);
 });
+
+/* ------------------------------------------------------------------ */
+/* «Segui come esame» dal calendario                                   */
+/* ------------------------------------------------------------------ */
+
+test("examPrefillFromEvent: un appello importato prende l'orario ufficiale scritto nei dettagli", async () => {
+  const { officialTimeOf } = await import("../src/lib/calendarExams.ts");
+  const appello = (description) => event({ title: "Appello · Fisiologia", allDay: true, start: "2026-11-25T00:00:00", end: "2026-11-26T00:00:00", description });
+  assert.equal(examPrefillFromEvent(appello("Prova: Orale\nOrario ufficiale: 14:00\nSede ufficiale: Aula B8"), []).date, "2026-11-25T14:00");
+  // Testo degli import di prima, con il fuso tra parentesi.
+  assert.equal(examPrefillFromEvent(appello("Orario ufficiale: 9:30 (Europe/Rome)"), []).date, "2026-11-25T09:30");
+  // Orario non pubblicato: le 9 come prima.
+  assert.equal(examPrefillFromEvent(appello("Orario non pubblicato"), []).date, "2026-11-25T09:00");
+  assert.equal(officialTimeOf("Orario ufficiale: 25:00"), null);
+  assert.equal(officialTimeOf(undefined), null);
+  // Un evento con l'ora non cambia: vale il suo inizio.
+  const timed = event({ title: "Esame", start: iso(2026, 11, 20, 10), end: iso(2026, 11, 20, 12), description: "Orario ufficiale: 14:00" });
+  assert.equal(examPrefillFromEvent(timed, []).date, iso(2026, 11, 20, 10));
+});
+
+test("calendarExamRefFor: l'evento aperto si ritrova come lo cerca il modulo (anche tutto il giorno)", async () => {
+  const { calendarExamRefFor } = await import("../src/lib/calendarExams.ts");
+  const appello = event({ id: "barb", allDay: true, start: "2026-11-25T00:00:00", end: "2026-11-26T00:00:00" });
+  const timed = event({ id: "t", start: iso(2026, 11, 20, 10), end: iso(2026, 11, 20, 12) });
+  const events = [appello, timed];
+  for (const item of events) {
+    const ref = calendarExamRefFor(events, item);
+    assert.ok(ref);
+    assert.equal(findCalendarExam(events, ref)?.id, item.id);
+  }
+  // Un giorno di una serie (già un'occorrenza): id e inizio suoi.
+  const [monday] = expandEvents([SERIES], local(2026, 11, 9), local(2026, 11, 10));
+  assert.deepEqual(calendarExamRefFor([SERIES], monday), calendarExamRef(monday));
+  assert.ok(findCalendarExam([SERIES], calendarExamRefFor([SERIES], monday)));
+  // Evento non più nel negozio o con inizio illeggibile: niente.
+  assert.equal(calendarExamRefFor([], appello), null);
+  assert.equal(calendarExamRefFor(events, { ...timed, start: "domani" }), null);
+});
+
+test("hasExamOn: esame della stessa materia lo stesso giorno (non archiviato)", async () => {
+  const { hasExamOn } = await import("../src/lib/calendarExams.ts");
+  const exams = [{ subjectId: "chim", date: iso(2026, 11, 25, 9), archived: false }];
+  assert.equal(hasExamOn(exams, { subjectId: "chim", date: "2026-11-25T14:00" }), true);
+  assert.equal(hasExamOn(exams, { subjectId: "chim", date: "2026-11-26T09:00" }), false);
+  assert.equal(hasExamOn(exams, { subjectId: "fisio", date: "2026-11-25T14:00" }), false);
+  assert.equal(hasExamOn([{ ...exams[0], archived: true }], { subjectId: "chim", date: "2026-11-25T14:00" }), false);
+  // Materia non riconosciuta: si propone (la si sceglie nel modulo).
+  assert.equal(hasExamOn(exams, { subjectId: "", date: "2026-11-25T14:00" }), false);
+  // Esame salvato con la sola data: è quel giorno in ogni fuso.
+  assert.equal(hasExamOn([{ subjectId: "chim", date: "2026-11-25", archived: false }], { subjectId: "chim", date: "2026-11-25T14:00" }), true);
+});
+
+test("examTimeLabel: l'ora dell'esame, niente a mezzanotte (esame con la sola data)", async () => {
+  const { examTimeLabel } = await import("../src/lib/calendarExams.ts");
+  assert.equal(examTimeLabel(iso(2026, 11, 25, 14, 30)), "14:30");
+  assert.equal(examTimeLabel(iso(2026, 11, 25, 9, 5)), "09:05");
+  assert.equal(examTimeLabel(iso(2026, 11, 25, 0, 0)), "");
+  assert.equal(examTimeLabel(iso(2026, 11, 25, 0, 30)), "00:30");
+  assert.equal(examTimeLabel("non una data"), "");
+  // Sola data (agente, dati vecchi): mezzanotte locale, quindi nessuna ora (non «01:00» a Roma).
+  assert.equal(examTimeLabel("2026-11-25"), "");
+});
+
+test("«Togli dal calendario» parte spuntata solo se l'evento non ha nulla da perdere", async () => {
+  const { replaceEventByDefault } = await import("../src/lib/calendarExams.ts");
+  assert.equal(replaceEventByDefault({ description: "", notes: "", links: [] }), true);
+  assert.equal(replaceEventByDefault({ description: "   ", notes: " ", links: [" "] }), true);
+  // Appello importato: aula e iscrizione stanno nei dettagli, e un nuovo import lo ricreerebbe.
+  assert.equal(replaceEventByDefault({ sourceUid: "barb-123", description: "" }), false);
+  assert.equal(replaceEventByDefault({ description: "Aula 4, iscrizione entro il 20" }), false);
+  assert.equal(replaceEventByDefault({ notes: "portare il libretto" }), false);
+  assert.equal(replaceEventByDefault({ links: ["https://example.org"] }), false);
+  // Dati altrui strani: niente errori.
+  assert.equal(replaceEventByDefault({ description: 5, links: "x" }), true);
+});

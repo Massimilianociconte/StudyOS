@@ -3,6 +3,7 @@ import { it } from "date-fns/locale";
 import type { AppNotification } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { writeUiState } from "../lib/uiState";
+import { notificationJump } from "../lib/notificationJump";
 import { NOTIFICATIONS_TEXT } from "../lib/labels/notifications";
 import { Button, Drawer, EmptyState } from "./ui";
 import { Icon } from "./Icon";
@@ -31,8 +32,10 @@ export function NotificationsPanel({ onClose }: { onClose: () => void }) {
 
   const openLinked = async (item: AppNotification) => {
     if (!item.readAt) await markNotificationRead(item.id);
-    if (item.linkGroupId) writeUiState("groups.open", item.linkGroupId, "tab");
-    if (item.linkView) setActiveView(item.linkView);
+    // Gruppo da aprire, scheda di Condivisione, giorno del promemoria: chiavi scritte prima del cambio di sezione.
+    const jump = notificationJump(item);
+    for (const [key, value, scope] of jump.writes) writeUiState(key, value, scope);
+    if (jump.view) setActiveView(jump.view);
     onClose();
   };
 

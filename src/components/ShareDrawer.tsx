@@ -213,7 +213,7 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
               </p>
               <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
                 {activeSubjects.map((subject) => (
-                  <label key={subject.id} className="flex min-h-10 cursor-pointer items-center gap-2 text-sm font-bold">
+                  <label key={subject.id} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-bold">
                     <input
                       type="checkbox"
                       className="h-4 w-4 shrink-0 accent-[var(--accent)]"

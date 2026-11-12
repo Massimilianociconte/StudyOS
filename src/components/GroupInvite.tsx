@@ -341,7 +341,21 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
               <p className="mt-0.5 text-xs text-[var(--muted)]">Per chi ha già un account StudyOS: l'invito gli compare nell'app (nella campanella e in Gruppi) e può accettarlo con un tocco.</p>
               <Field label="Email del tuo compagno" className="mt-2">
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Es. nome@esempio.it" inputMode="email" autoComplete="off" />
+                  <input
+                    className={inputClass}
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    // Invio come il pulsante (stesse condizioni: con l'accesso e non durante un invio).
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                      event.preventDefault();
+                      if (loggedIn && !busy) void sendEmailInvite();
+                    }}
+                    placeholder="Es. nome@esempio.it"
+                    inputMode="email"
+                    autoComplete="off"
+                  />
                   <Button variant="soft" icon="Send" onClick={() => void sendEmailInvite()} disabled={busy || !loggedIn} title={loggedIn ? undefined : "Accedi al tuo account per invitare per email"}>
                     {busy ? "Invio…" : "Invia invito"}
                   </Button>

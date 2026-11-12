@@ -19,7 +19,7 @@ import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, sortByPriority, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
-import { chipFocusAfterRemove, priorityText, quickTaskChips, type QuickTaskChip } from "../lib/tasksUi";
+import { chipFocusAfterRemove, defaultImportance, priorityText, quickTaskChips, type QuickTaskChip } from "../lib/tasksUi";
 
 type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
 type SortMode = "deadline" | "priority" | "recent";
@@ -76,6 +76,8 @@ export function TasksView() {
   const [filter, setFilter] = useLinkedUiState<TaskFilter>("tasks.filter", "all", { validate: isTaskFilter });
   const [subjectId, setSubjectId] = useLinkedUiState<string | null>("tasks.subject", null, { validate: isNullableString });
   const [createOpen, setCreateOpen] = useState(false);
+  // Messaggio sotto l'aggiunta rapida (attività aggiunta, timer avviato): si toglie da solo.
+  const [notice, setNotice] = useState("");
   const { tasks, subjects, addTask, updateTask, toggleTask, deleteTask, setActiveView } = useStudyStore();
   const share = useShareAction(["tasks"]);
   const editingTask = editingTaskId ? tasks.find((task) => task.id === editingTaskId) ?? null : null;
@@ -91,6 +93,12 @@ export function TasksView() {
   useEffect(() => {
     if (editingTaskId && !editingTask) setEditingTaskId(null);
   }, [editingTaskId, editingTask, setEditingTaskId]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const visible = useMemo(() => tasks.filter((task) => task.status !== "archived"), [tasks]);
   const ofSubject = useMemo(() => filterTasks(visible, "all", subjectFilter?.id ?? null), [visible, subjectFilter?.id]);
@@ -120,7 +128,12 @@ export function TasksView() {
   const rowActions: RowActions = {
     subjects,
     onToggle: (id) => void toggleTask(id),
-    onStatus: (id, status) => void updateTask(id, { status }),
+    onStatus: (id, status) => {
+      const task = tasks.find((item) => item.id === id);
+      void updateTask(id, { status });
+      // «In corso» fa partire il timer (taskStatusTransitionPatch): da un menu non si vedeva, ora si dice.
+      if (task && status === "doing" && task.status !== "doing") setNotice(TASKS_TEXT.timerStarted(task.title));
+    },
     onEdit: setEditingTaskId,
     onDelete: (task) => void confirmDelete(task)
   };
@@ -202,7 +215,19 @@ export function TasksView() {
             </div>
           ) : null}
 
-          <QuickTaskBar subjects={subjects} onAdd={addTask} defaultSubjectId={subjectFilter?.id ?? ""} filtered={filtered} />
+          <QuickTaskBar
+            subjects={subjects}
+            onAdd={addTask}
+            defaultSubjectId={subjectFilter?.id ?? ""}
+            filtered={filtered}
+            notice={notice}
+            onNotice={setNotice}
+            onAdded={(id) => {
+              if (mode !== "list") return;
+              // Nella lista la nuova riga può finire sotto la piega («Senza scadenza»): si porta in vista.
+              requestAnimationFrame(() => document.querySelector(`[data-task-row="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" }));
+            }}
+          />
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             {/* Telefono: riga intera con i nomi brevi; il "?" passa alla riga sotto, accanto all'ordine. */}
@@ -243,7 +268,7 @@ export function TasksView() {
               {!open.length && filtered ? emptyFiltered : <RowList tasks={urgentTasks(open, 6)} actions={rowActions} empty="Niente di urgente: goditi la giornata." />}
             </Panel>
           ) : null}
-          {mode === "kanban" ? <Kanban tasks={shown} actions={rowActions} updateTask={updateTask} /> : null}
+          {mode === "kanban" ? <Kanban tasks={shown} actions={rowActions} /> : null}
           {mode === "matrix" ? (open.length ? <Matrix tasks={open} actions={rowActions} /> : filtered ? emptyFiltered : backToList) : null}
           {mode === "subject" ? (open.length ? <BySubject tasks={shown} actions={rowActions} /> : filtered ? emptyFiltered : backToList) : null}
         </>
@@ -323,42 +348,49 @@ function QuickTaskBar({
   subjects,
   onAdd,
   defaultSubjectId,
-  filtered
+  filtered,
+  notice,
+  onNotice,
+  onAdded
 }: {
   subjects: Subjects;
   onAdd: ReturnType<typeof useStudyStore.getState>["addTask"];
   defaultSubjectId: string;
   filtered: boolean;
+  /** Messaggio della sezione (attività aggiunta, timer avviato), letto dal lettore di schermo. */
+  notice: string;
+  onNotice: (text: string) => void;
+  /** Id della nuova attività, appena è nell'elenco. */
+  onAdded: (id: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [subjectId, setSubjectId] = useState(defaultSubjectId);
   const [priority, setPriority] = useState<Task["priority"]>("medium");
   const [dueDate, setDueDate] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [added, setAdded] = useState("");
 
   useEffect(() => setSubjectId(defaultSubjectId), [defaultSubjectId]);
-
-  useEffect(() => {
-    if (!added) return;
-    const timer = window.setTimeout(() => setAdded(""), 6000);
-    return () => window.clearTimeout(timer);
-  }, [added]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const text = title.trim();
     if (!text) return;
     const due = dueDate ? new Date(`${dueDate}T18:00`) : undefined;
+    const known = new Set(useStudyStore.getState().tasks.map((task) => task.id));
     await onAdd({
       title: text,
       subjectId: subjectId || undefined,
       priority,
-      importance: priority === "urgent" ? 5 : 3,
+      importance: defaultImportance(priority),
+      // Nessuna stima inventata: senza, lo store metteva 45 min e il riepilogo sommava ore mai scritte.
+      estimatedMinutes: 0,
       dueDate: due && !Number.isNaN(due.getTime()) ? due.toISOString() : undefined
     });
     setTitle("");
-    setAdded(filtered ? TASKS_TEXT.addedFiltered(text) : "");
+    // Sempre: la nuova attività può finire fuori dalla parte visibile (Piano di oggi, «Senza scadenza»).
+    onNotice(filtered ? TASKS_TEXT.addedFiltered(text) : TASKS_TEXT.added(text));
+    const created = useStudyStore.getState().tasks.find((task) => !known.has(task.id) && task.title === text);
+    if (created) onAdded(created.id);
   };
 
   const selectClass = "min-h-11 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--text)]";
@@ -451,7 +483,7 @@ function QuickTaskBar({
       ) : null}
       {/* Sempre presente: il lettore di schermo annuncia il testo appena compare. */}
       <div role="status" aria-live="polite">
-        {added ? <p className="mt-1.5 px-2 text-xs font-bold text-[var(--muted)]">{added}</p> : null}
+        {notice ? <p className="mt-1.5 px-2 text-xs font-bold text-[var(--muted)]">{notice}</p> : null}
       </div>
     </form>
   );
@@ -477,13 +509,15 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
   const elapsedSeconds = taskElapsedSeconds(task, now);
 
   return (
-    <li data-task-row={task.id} className={`group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)] ${done || archivedRow ? "opacity-60" : ""}`}>
+    // Fatte e archiviate: attenuato solo il titolo (col colore). L'opacità sulla riga portava date e
+    // «Completata in ritardo» sotto il contrasto AA.
+    <li data-task-row={task.id} className="group flex min-w-0 items-center gap-3 rounded-[18px] px-2.5 py-2 hover:bg-[var(--surface-soft)]">
       <button
         type="button"
         aria-label={done ? `Segna «${task.title}» come da fare` : `Segna «${task.title}» come fatta`}
         title={done ? "Segna come da fare" : "Segna come fatta"}
         onClick={() => actions.onToggle(task.id)}
-        className={`motion-safe relative grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-2.5 after:content-[""] ${
+        className={`motion-safe relative grid h-6 w-6 shrink-0 grid-cols-1 place-items-center rounded-full border-2 after:absolute after:-inset-2.5 after:content-[""] ${
           done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
         }`}
         style={!done && task.subjectId ? { borderColor: subjectColor(actions.subjects, task.subjectId) } : undefined}
@@ -492,7 +526,7 @@ function TaskRow({ task, actions, compact }: { task: Task; actions: RowActions; 
       </button>
 
       <button type="button" data-row-open onClick={() => actions.onEdit(task.id)} className="min-w-0 flex-1 text-left">
-        <span className={`one-line-safe block text-sm font-extrabold ${done ? "line-through" : ""}`} title={task.title}>
+        <span className={`one-line-safe block text-sm font-extrabold ${done ? "text-[var(--muted)] line-through" : archivedRow ? "text-[var(--muted)]" : ""}`} title={task.title}>
           {task.title}
         </span>
         <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs font-bold text-[var(--muted)]">
@@ -731,22 +765,15 @@ function ShowMoreToggle({
   );
 }
 
-function Kanban({
-  tasks,
-  actions,
-  updateTask
-}: {
-  tasks: Task[];
-  actions: RowActions;
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>;
-}) {
+function Kanban({ tasks, actions }: { tasks: Task[]; actions: RowActions }) {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [overStatus, setOverStatus] = useState<Task["status"] | null>(null);
 
-  const moveTask = async (taskId: string, status: Task["status"]) => {
+  // Come il menu della scheda: in «In corso» dice anche che è partito il timer.
+  const moveTask = (taskId: string, status: Task["status"]) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status === status) return;
-    await updateTask(taskId, { status });
+    actions.onStatus(taskId, status);
   };
 
   return (
@@ -765,10 +792,10 @@ function Kanban({
                 setOverStatus(status.id);
               }}
               onDragLeave={() => setOverStatus((value) => (value === status.id ? null : value))}
-              onDrop={async (event) => {
+              onDrop={(event) => {
                 event.preventDefault();
                 const taskId = event.dataTransfer.getData("text/plain") || draggedTaskId;
-                if (taskId) await moveTask(taskId, status.id);
+                if (taskId) moveTask(taskId, status.id);
                 setDraggedTaskId(null);
                 setOverStatus(null);
               }}
@@ -847,7 +874,7 @@ function KanbanTaskCard({
           aria-label={done ? `Segna «${task.title}» come da fare` : `Segna «${task.title}» come fatta`}
           title={done ? "Segna come da fare" : "Segna come fatta"}
           onClick={() => actions.onToggle(task.id)}
-          className={`relative mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 after:absolute after:-inset-3 after:content-[""] ${
+          className={`relative mt-0.5 grid h-5 w-5 shrink-0 grid-cols-1 place-items-center rounded-full border-2 after:absolute after:-inset-3 after:content-[""] ${
             done ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--faint)] hover:border-[var(--accent)]"
           }`}
         >

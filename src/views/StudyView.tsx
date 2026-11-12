@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { m } from "framer-motion";
 import { useShallow } from "zustand/react/shallow";
 import { format, isSameDay, parseISO } from "date-fns";
@@ -16,17 +16,19 @@ import {
   formatHours,
   formatMinutes
 } from "../lib/labels";
-import { STUDY_SIDE_TEXT, TIMER_SETTINGS_TEXT } from "../lib/labels/study";
-import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, type ReviewRating } from "../lib/review";
+import { REVIEW_TEXT, SESSION_LIST_TEXT, STUDY_SIDE_TEXT, TIMER_SETTINGS_TEXT, TOPIC_TEXT } from "../lib/labels/study";
+import { REVIEW_RATINGS, REVIEW_RATING_LABEL, dueTopics, previewInterval, reviewUndoPatch, reviewableTopics, type ReviewRating } from "../lib/review";
 import { Button, Drawer, Field, HelpTip, IconButton, Panel, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { TopicManager, reviewDueLabel } from "../components/TopicManager";
-import { ManualSessionDrawer, useSessionEditor } from "../components/StudySessionDrawers";
+import { ManualSessionDrawer, UndoNotice, useSessionEditor } from "../components/StudySessionDrawers";
+import { UnsavedPrompt } from "../components/UnsavedPrompt";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
 import { useToday } from "../hooks/useToday";
 import { isNullableString, oneOf, readUiState, useUiState } from "../lib/uiState";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { requestSettingsSection } from "../lib/settingsJump";
 import {
   TIMER_KINDS,
@@ -52,7 +54,7 @@ import {
   splitMinutes,
   type TimerSettingKey
 } from "../lib/timerPrefs";
-import { UNDO_MS, matchTopic, sessionSourceLabel, topicsOfSubject } from "../lib/studySessions";
+import { UNDO_MS, defaultSessionTitle, matchTopic, plannedSessions, sessionSourceLabel, topicsOfSubject } from "../lib/studySessions";
 import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import {
   TIMER_SOUND_KEY,
@@ -78,19 +80,32 @@ const linkHit = `${linkClass} relative after:absolute after:-inset-x-1 after:-in
 const linkBox = `${linkClass} inline-flex min-h-11 items-center px-1`;
 const linkRow = "flex flex-wrap items-center gap-x-1 text-xs font-bold text-[var(--muted)]";
 
+/** Sessioni recenti e in programma visibili prima di «Mostra tutte». */
+const FIRST_SESSIONS = 8;
+const FIRST_PLANNED = 5;
+
+const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+
+/** "Lun 9 nov · 15:00", o niente se la data non è valida (dati di un agente o condivisi). */
+const sessionWhen = (iso: string) => {
+  const date = parseISO(iso);
+  return Number.isNaN(date.getTime()) ? "" : capitalizeFirst(format(date, "EEE d MMM · HH:mm", { locale: it }));
+};
+
 /** Icona di ogni modalità (selettore, anello, elenco delle sessioni). */
 const KIND_ICON: Record<TimerKind, string> = { pomodoro: "Timer", timer: "Hourglass", stopwatch: "Clock" };
 
 export function StudyView() {
   const store = useStudyStore();
-  const { sessions, topics, subjects, reviewTopic, setActiveView } = store;
+  const { sessions, topics, subjects, reviewTopic, updateTopic, setActiveView } = store;
   // 0 o mancante (dati vecchi, agente): niente percentuale né "su 0 h".
   const weeklyTarget = weeklyTargetOf(selectPreferences(store).weeklyTargetMinutes);
-  const [topicsOpen, setTopicsOpen] = useUiState("study.topicsOpen", false, { scope: "tab" });
+  // Collegate: la ricerca (o un altro punto dell'app) apre gli argomenti anche con Studio già aperto.
+  const [topicsOpen, setTopicsOpen] = useLinkedUiState("study.topicsOpen", false, { scope: "tab", validate: isBoolean });
   // Materia degli argomenti nel riquadro: "" tutte. null quando lo apre un collegamento da un'altra
   // sezione (es. "argomenti" della scheda d'esame): vale la materia scritta in "study.subject",
   // letta qui prima che un timer già avviato la sostituisca con la sua.
-  const [topicsFilter, setTopicsFilter] = useUiState<string | null>("study.topicsFilter", null, { scope: "tab", validate: isNullableString });
+  const [topicsFilter, setTopicsFilter] = useLinkedUiState<string | null>("study.topicsFilter", null, { scope: "tab", validate: isNullableString });
   const [linkedSubject] = useState(() => {
     const value = readUiState("study.subject", "device");
     return typeof value === "string" ? value : "";
@@ -102,29 +117,62 @@ export function StudyView() {
     setTopicsFilter(subjectId);
     setTopicsOpen(true);
   };
+  // Un argomento in modifica e non salvato: chiudere il riquadro chiede prima.
+  const [topicsDirty, setTopicsDirty] = useState(false);
+  const [topicsAsking, setTopicsAsking] = useState(false);
   const closeTopics = () => {
+    setTopicsAsking(false);
     setTopicsOpen(false);
     setTopicsFilter(null);
   };
+  const requestCloseTopics = () => (topicsDirty ? setTopicsAsking(true) : closeTopics());
   const [logOpen, setLogOpen] = useUiState("study.logOpen", false, { scope: "tab" });
   const [notice, setNotice] = useState("");
   const sessionEditor = useSessionEditor();
+  const [showAllSessions, setShowAllSessions] = useState(false);
+  const [showAllPlanned, setShowAllPlanned] = useState(false);
+  // Sessione da aprire scritta dalla ricerca o da una nota: si apre (o, se è in programma, si mostra) e si dimentica.
+  const [openSessionId, setOpenSessionId] = useLinkedUiState<string | null>("study.openSession", null, { scope: "tab", validate: isNullableString });
+  // `seq` cambia a ogni salto: la stessa sessione aperta due volte torna in vista e prende il focus.
+  const [highlight, setHighlight] = useState<{ id: string; seq: number } | null>(null);
+  const highlightId = highlight?.id ?? null;
+  useEffect(() => {
+    if (!openSessionId) return;
+    setOpenSessionId(null);
+    const session = sessions.find((item) => item.id === openSessionId);
+    if (!session) return;
+    if (session.status !== "planned") {
+      sessionEditor.edit(session.id);
+      return;
+    }
+    // In programma (il modulo non salva un inizio nel futuro): la riga in «In programma», con «Fatta» ed «Elimina».
+    setShowAllPlanned(true);
+    setHighlight((value) => ({ id: session.id, seq: (value?.seq ?? 0) + 1 }));
+  }, [openSessionId, sessions, sessionEditor, setOpenSessionId]);
+  useEffect(() => {
+    if (!highlight) return;
+    const row = document.getElementById(`planned-session-${highlight.id}`);
+    row?.scrollIntoView({ block: "center" });
+    row?.querySelector("button")?.focus({ preventScroll: true });
+  }, [highlight]);
 
   // Settimana, oggi e ripassi da fare si aggiornano a mezzanotte anche con la pagina aperta.
   useToday();
   const today = new Date();
-  const dueReviews = dueTopics(topics, today);
+  // Argomenti di materie superate o archiviate: in pausa, restano solo nell'elenco degli argomenti.
+  const reviewable = reviewableTopics(topics, subjects);
+  const dueReviews = dueTopics(reviewable, today);
   const dueIds = new Set(dueReviews.map((topic) => topic.id));
-  const upcomingReviews = topics
-    .filter((topic) => !topic.archived && !dueIds.has(topic.id))
+  const upcomingReviews = reviewable
+    .filter((topic) => !dueIds.has(topic.id))
     .sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate))
     .slice(0, 5);
   const weeklyMinutes = studyMinutesThisWeek(sessions);
   const streak = studyStreak(sessions);
-  const history = useMemo(
-    () => sessions.filter((session) => session.status === "completed").sort((a, b) => b.start.localeCompare(a.start)).slice(0, 8),
-    [sessions]
-  );
+  const completed = useMemo(() => sessions.filter((session) => session.status === "completed").sort((a, b) => b.start.localeCompare(a.start)), [sessions]);
+  const history = showAllSessions ? completed : completed.slice(0, FIRST_SESSIONS);
+  const planned = useMemo(() => plannedSessions(sessions), [sessions]);
+  const plannedShown = showAllPlanned ? planned : planned.slice(0, FIRST_PLANNED);
   const todayMinutes = sessions
     .filter((session) => session.status === "completed" && isSameDay(parseISO(session.start), today))
     .reduce((sum, session) => sum + session.actualMinutes, 0);
@@ -145,14 +193,16 @@ export function StudyView() {
           <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
             <ReviewPanel
               due={dueReviews}
-              totalTopics={topics.filter((topic) => !topic.archived).length}
+              totalTopics={reviewable.length}
               subjects={subjects}
               onRate={(id, rating) => void reviewTopic(id, rating)}
+              onUndo={(id, previous) => void updateTopic(id, previous)}
               onManage={() => openTopics()}
             />
 
             <Panel>
-              <div className="mb-3 flex items-center justify-between gap-2">
+              {/* Sul telefono il pulsante va a capo invece di spezzare il titolo. */}
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
                   <h3 className="text-lg font-black">Sessioni recenti</h3>
                   <p className="text-xs font-bold text-[var(--muted)]">{todayMinutes ? `Oggi hai studiato ${formatMinutes(todayMinutes)}` : "Oggi non hai ancora studiato"}</p>
@@ -161,6 +211,58 @@ export function StudyView() {
                   Aggiungi studio fatto
                 </Button>
               </div>
+              {planned.length ? (
+                <section aria-labelledby="study-planned-title" className="mb-3 rounded-[18px] border border-[var(--border)] p-2">
+                  <h4 id="study-planned-title" className="px-1 text-xs font-black uppercase text-[var(--faint)]">
+                    {SESSION_LIST_TEXT.planned} · {planned.length}
+                  </h4>
+                  <p className="safe-text px-1 text-xs font-bold text-[var(--muted)]">{SESSION_LIST_TEXT.plannedHint}</p>
+                  <ul className="mt-1 grid grid-cols-1 gap-1">
+                    {plannedShown.map((session) => {
+                      const title = session.title || defaultSessionTitle(session.template, subjects.find((item) => item.id === session.subjectId)?.name);
+                      const details = [sessionWhen(session.start), session.plannedMinutes > 0 ? formatMinutes(session.plannedMinutes) : "", session.subjectId ? subjectName(subjects, session.subjectId) : ""].filter(Boolean);
+                      return (
+                        <li
+                          key={session.id}
+                          id={`planned-session-${session.id}`}
+                          className={`flex min-w-0 items-center gap-1.5 rounded-[14px] px-1 ${highlightId === session.id ? "bg-[var(--surface-soft)] ring-2 ring-[var(--accent-ink)]" : ""}`}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="one-line-safe block text-sm font-extrabold">{title}</span>
+                            <span className="safe-text block text-xs font-bold text-[var(--muted)]">{details.join(" · ")}</span>
+                          </span>
+                          <Button
+                            variant="soft"
+                            icon="Check"
+                            className="shrink-0 px-3"
+                            aria-label={SESSION_LIST_TEXT.doneAria(title)}
+                            onClick={() => {
+                              setHighlight(null);
+                              sessionEditor.markDone(session);
+                            }}
+                          >
+                            {SESSION_LIST_TEXT.done}
+                          </Button>
+                          <IconButton
+                            icon="Trash2"
+                            label={SESSION_LIST_TEXT.removeAria(title)}
+                            className="bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+                            onClick={() => {
+                              setHighlight(null);
+                              sessionEditor.remove(session);
+                            }}
+                          />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {planned.length > FIRST_PLANNED ? (
+                    <button type="button" onClick={() => setShowAllPlanned((value) => !value)} className={`${linkBox} text-xs`}>
+                      {showAllPlanned ? SESSION_LIST_TEXT.showLess : SESSION_LIST_TEXT.showAll(planned.length)}
+                    </button>
+                  ) : null}
+                </section>
+              ) : null}
               {history.length ? (
                 <ul className="grid grid-cols-1 gap-1">
                   {history.map((session) => (
@@ -189,9 +291,14 @@ export function StudyView() {
                 </ul>
               ) : (
                 <p className="rounded-[16px] border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
-                  Ancora nessuna sessione. Qui trovi lo studio salvato con il timer o aggiunto con «Aggiungi studio fatto».
+                  Ancora nessuno studio fatto. Qui trovi lo studio salvato con il timer o aggiunto con «Aggiungi studio fatto».
                 </p>
               )}
+              {completed.length > FIRST_SESSIONS ? (
+                <button type="button" onClick={() => setShowAllSessions((value) => !value)} className={`${linkBox} mt-1 text-xs`}>
+                  {showAllSessions ? SESSION_LIST_TEXT.showLess : SESSION_LIST_TEXT.showAll(completed.length)}
+                </button>
+              ) : null}
               {sessionEditor.undoNotice ? <div className="mt-2 px-2">{sessionEditor.undoNotice}</div> : null}
             </Panel>
           </div>
@@ -251,15 +358,39 @@ export function StudyView() {
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-[var(--muted)]">{topics.some((topic) => !topic.archived) ? STUDY_SIDE_TEXT.noUpcoming : STUDY_SIDE_TEXT.upcomingEmpty}</p>
+              <p className="text-sm text-[var(--muted)]">{reviewable.length ? STUDY_SIDE_TEXT.noUpcoming : STUDY_SIDE_TEXT.upcomingEmpty}</p>
             )}
           </Panel>
         </aside>
       </div>
 
-      <Drawer open={topicsOpen} onClose={closeTopics} eyebrow="Ripasso" title="Argomenti da ripassare" width="max-w-[560px]">
+      <Drawer
+        open={topicsOpen}
+        onClose={requestCloseTopics}
+        eyebrow="Ripasso"
+        title="Argomenti da ripassare"
+        width="max-w-[560px]"
+        footer={
+          topicsAsking && topicsDirty ? (
+            <UnsavedPrompt
+              title={TOPIC_TEXT.unsavedTitle}
+              text={TOPIC_TEXT.unsavedText}
+              keep={TOPIC_TEXT.unsavedKeep}
+              discard={TOPIC_TEXT.unsavedDiscard}
+              onKeep={() => setTopicsAsking(false)}
+              onDiscard={closeTopics}
+            />
+          ) : undefined
+        }
+      >
         <p className="mb-3 text-sm text-[var(--muted)]">Ti ricordiamo quando ripassare ogni argomento: all'inizio spesso, poi sempre più di rado man mano che lo ricordi.</p>
-        <TopicManager subjects={subjects} filter={topicsFilter ?? linkedSubject} onFilterChange={setTopicsFilter} />
+        <TopicManager subjects={subjects} filter={topicsFilter ?? linkedSubject} onFilterChange={setTopicsFilter}
+          onDirtyChange={(dirty) => {
+            setTopicsDirty(dirty);
+            // Modifica salvata o annullata nella riga: la domanda «Scartare?» non torna da sola alla prossima.
+            if (!dirty) setTopicsAsking(false);
+          }}
+        />
       </Drawer>
 
       <ManualSessionDrawer
@@ -626,7 +757,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         )}
         {/* Pomodoro: salva subito (come i blocchi). Timer e Cronometro: prima il riepilogo. */}
         {!idle && !ended && studying && timer.kind === "pomodoro" ? (
-          <div className="grid gap-1">
+          <div className="grid grid-cols-1 gap-1">
             <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
               {TIMER_TEXT.finish}
             </Button>
@@ -634,7 +765,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           </div>
         ) : null}
         {!idle && !ended && timer.kind !== "pomodoro" ? (
-          <div className="grid gap-1">
+          <div className="grid grid-cols-1 gap-1">
             <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
               {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
             </Button>
@@ -1038,18 +1169,40 @@ function ReviewPanel({
   totalTopics,
   subjects,
   onRate,
+  onUndo,
   onManage
 }: {
   due: StudyTopic[];
   totalTopics: number;
   subjects: Subject[];
   onRate: (id: string, rating: ReviewRating) => void;
+  /** «Annulla» dopo una valutazione: rimette i valori di prima del ripasso. */
+  onUndo: (id: string, previous: ReturnType<typeof reviewUndoPatch>) => void;
   onManage: () => void;
 }) {
   const [focusId, setFocusId] = useUiState<string | null>("study.reviewFocus", null, { scope: "tab", validate: isNullableString });
   const [revealed, setRevealed] = useUiState("study.reviewRevealed", false, { scope: "tab" });
+  // Ultimo ripasso valutato: un tocco sbagliato (es. «Non ricordavo») si annulla per qualche secondo.
+  const [undo, setUndo] = useState<{ id: string; text: string; previous: ReturnType<typeof reviewUndoPatch> } | null>(null);
   const current = due.find((topic) => topic.id === focusId) ?? due[0];
   const rest = due.filter((topic) => topic.id !== current?.id);
+  const notes = current?.notes?.trim() ?? "";
+  let undoNotice: ReactNode = null;
+  if (undo) {
+    undoNotice = (
+      <div className="mt-2 px-2">
+        <UndoNotice
+          text={undo.text}
+          onUndo={() => {
+            onUndo(undo.id, undo.previous);
+            setRevealed(false);
+            setFocusId(undo.id);
+          }}
+          onDone={() => setUndo(null)}
+        />
+      </div>
+    );
+  }
 
   return (
     <Panel>
@@ -1082,21 +1235,33 @@ function ReviewPanel({
             </div>
           </div>
 
-          {current.questions.length ? (
-            revealed ? (
-              <ol className="mt-3 grid grid-cols-1 gap-1 pl-4 text-sm font-bold text-[var(--muted)] [list-style:decimal]">
-                {current.questions.map((question) => (
-                  <li key={question}>{question}</li>
-                ))}
-              </ol>
-            ) : (
-              <button type="button" onClick={() => setRevealed(true)} className="mt-3 text-xs font-black text-[var(--accent-ink)]">
-                Mostra le {current.questions.length} domande guida
-              </button>
-            )
-          ) : (
+          {current.questions.length ? null : (
             <p className="mt-3 text-xs font-bold text-[var(--muted)]">Ripeti l'argomento a voce o per iscritto, senza guardare gli appunti.</p>
           )}
+          {/* Domande guida e note dell'argomento si scoprono dopo aver provato a ricordare. */}
+          {current.questions.length || notes ? (
+            revealed ? (
+              <div className="mt-3 grid grid-cols-1 gap-2">
+                {current.questions.length ? (
+                  <ol className="grid grid-cols-1 gap-1 pl-4 text-sm font-bold text-[var(--muted)] [list-style:decimal]">
+                    {current.questions.map((question) => (
+                      <li key={question}>{question}</li>
+                    ))}
+                  </ol>
+                ) : null}
+                {notes ? (
+                  <div className="rounded-[14px] bg-[var(--surface)] p-2.5">
+                    <p className="text-[11px] font-black uppercase text-[var(--faint)]">{REVIEW_TEXT.notes}</p>
+                    <p className="safe-text whitespace-pre-wrap text-sm font-bold text-[var(--muted)]">{notes}</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <button type="button" onClick={() => setRevealed(true)} className="mt-1 inline-flex min-h-11 items-center text-xs font-black text-[var(--accent-ink)]">
+                {current.questions.length ? REVIEW_TEXT.showQuestions(current.questions.length) : REVIEW_TEXT.showNotes}
+              </button>
+            )
+          ) : null}
 
           <p className="mt-3 text-xs font-black text-[var(--text)]">Quanto ricordavi? Da questo dipende il prossimo ripasso.</p>
           <div className="mt-1.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4" role="group" aria-label="Quanto ricordavi">
@@ -1105,11 +1270,12 @@ function ReviewPanel({
                 key={rating}
                 type="button"
                 onClick={() => {
+                  setUndo({ id: current.id, text: REVIEW_TEXT.rated(current.title, previewInterval(current, rating)), previous: reviewUndoPatch(current) });
                   setRevealed(false);
                   setFocusId(null);
                   onRate(current.id, rating);
                 }}
-                className={`grid min-h-12 place-items-center rounded-[16px] px-2 text-center text-xs font-black ${
+                className={`grid min-h-12 grid-cols-1 place-items-center rounded-[16px] px-2 text-center text-xs font-black ${
                   rating === "good" ? "bg-[var(--accent)] text-[#10131d]" : rating === "again" ? "bg-[var(--danger-bg)] text-[var(--danger-text)]" : "bg-[var(--surface-strong)]"
                 }`}
               >
@@ -1137,17 +1303,19 @@ function ReviewPanel({
                   setRevealed(false);
                   setFocusId(topic.id);
                 }}
-                className="flex w-full min-w-0 items-center gap-2 rounded-[14px] px-2 py-1.5 text-left hover:bg-[var(--surface-soft)]"
+                className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[14px] px-2 text-left hover:bg-[var(--surface-soft)]"
               >
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: subjectColor(subjects, topic.subjectId) }} />
                 <span className="one-line-safe min-w-0 flex-1 text-sm font-bold">{topic.title}</span>
-                <span className="shrink-0 text-[11px] font-bold text-[var(--muted)]">{subjectName(subjects, topic.subjectId).split(" ")[0]}</span>
+                {/* Nome intero (due materie possono iniziare con la stessa parola), tagliato se troppo lungo. */}
+                <span className="max-w-[45%] shrink-0 truncate text-[11px] font-bold text-[var(--muted)]">{subjectName(subjects, topic.subjectId)}</span>
               </button>
             </li>
           ))}
           {rest.length > 6 ? <li className="px-2 text-xs font-bold text-[var(--faint)]">E altri {rest.length - 6}</li> : null}
         </ul>
       ) : null}
+      {undoNotice}
     </Panel>
   );
 }

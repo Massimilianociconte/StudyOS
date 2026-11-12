@@ -141,3 +141,65 @@ test("Chiudere il modulo chiede prima solo se qualcosa è cambiato dall'apertura
   const { cover: _cover, ...withoutCover } = examDraft;
   assert.equal(O.examDraftChanged(withoutCover, examDraft), false);
 });
+
+test("Modulo dell'esame: l'ora salvata resta (anche 00:xx); senza data, tra una settimana alle 9", () => {
+  // Ore locali: vale in qualsiasi fuso di chi esegue i test.
+  const midnight = new Date(2026, 10, 20, 0, 15).toISOString();
+  assert.equal(O.examFormDate(midnight), "2026-11-20T00:15");
+  assert.equal(O.examFormDate(new Date(2026, 10, 20, 0, 0).toISOString()), "2026-11-20T00:00");
+  assert.equal(O.examFormDate(new Date(2026, 10, 20, 14, 30, 45).toISOString()), "2026-11-20T14:30");
+  // Solo la data (agente, dati vecchi): mezzanotte di quel giorno, non l'ora UTC spostata nel fuso.
+  assert.equal(O.examFormDate("2026-12-15"), "2026-12-15T00:00");
+  assert.equal(O.examFormDate("2026-12-15T10:30"), "2026-12-15T10:30");
+  assert.equal(O.sameExamMinute("2026-12-15T00:00", "2026-12-15"), true);
+  // Esame nuovo (o data illeggibile): una settimana da oggi alle 9, mai «adesso».
+  const now = new Date(2026, 10, 12, 16, 47);
+  assert.equal(O.examFormDate(undefined, now), "2026-11-19T09:00");
+  assert.equal(O.examFormDate("", now), "2026-11-19T09:00");
+  assert.equal(O.examFormDate("non una data", now), "2026-11-19T09:00");
+  // Fine mese: il giorno va avanti col calendario.
+  assert.equal(O.examFormDate(undefined, new Date(2026, 11, 28, 8)), "2027-01-04T09:00");
+});
+
+test("Modulo dell'esame: data non toccata = stesso minuto, anche con secondi o formato diversi", () => {
+  const saved = new Date(2026, 9, 10, 9, 0, 30).toISOString();
+  // Salvato senza toccare la data: il modulo ha il minuto, la data salvata i secondi.
+  assert.equal(O.sameExamMinute(O.examFormDate(saved), saved), true);
+  assert.equal(O.sameExamMinute("2026-10-10T09:01", saved), false);
+  assert.equal(O.sameExamMinute(undefined, saved), false);
+  assert.equal(O.sameExamMinute("non una data", "non una data"), false);
+  // Un esame non superato con la data da decidere: salvando senza toccare la data, la data resta
+  // quella salvata (non quella riscritta dal modulo) e la «data da decidere» vale ancora.
+  const failed = { ...exam({ status: "ready", date: saved }), ...O.failedExamPatch(exam({ status: "ready", date: saved })) };
+  assert.equal(O.isDateToDecide(failed), true);
+  const form = O.examFormDate(failed.date);
+  const rewritten = new Date(form).toISOString();
+  assert.equal(O.isDateToDecide({ ...failed, date: rewritten }), false);
+  assert.equal(O.isDateToDecide({ ...failed, date: O.sameExamMinute(form, failed.date) ? failed.date : rewritten }), true);
+});
+
+test("Superato: «Sostenuto» con voto valido o idoneità; la materia diventa superata una volta sola", async () => {
+  assert.equal(O.isPassingResult(exam({ status: "done", grade: 28 })), true);
+  assert.equal(O.isPassingResult(exam({ status: "done", passFail: true })), true);
+  assert.equal(O.isPassingResult(exam({ status: "done" })), false);
+  assert.equal(O.isPassingResult(exam({ status: "done", grade: 17 })), false);
+  assert.equal(O.isPassingResult(exam({ status: "ready", grade: 28 })), false);
+
+  const calls = [];
+  const store = (status) => ({
+    getState: () => ({
+      subjects: [{ id: "fisio", status }],
+      updateSubject: async (id, patch) => {
+        calls.push([id, patch]);
+      }
+    })
+  });
+  assert.equal(await O.markSubjectPassed(store("active"), "fisio"), true);
+  assert.deepEqual(calls, [["fisio", { status: "completed" }]]);
+  calls.length = 0;
+  // Già superata, archiviata o sparita: niente da fare.
+  assert.equal(await O.markSubjectPassed(store("completed"), "fisio"), false);
+  assert.equal(await O.markSubjectPassed(store("archived"), "fisio"), false);
+  assert.equal(await O.markSubjectPassed(store("active"), "altra"), false);
+  assert.deepEqual(calls, []);
+});

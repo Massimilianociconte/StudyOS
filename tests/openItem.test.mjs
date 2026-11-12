@@ -90,7 +90,7 @@ test("apri elemento: un materiale si ritrova per nome, senza filtri di tipo o ma
   });
 });
 
-test("apri elemento: un argomento apre gli argomenti della sua materia; una sessione porta a Studio", () => {
+test("apri elemento: un argomento apre gli argomenti della sua materia; una sessione si apre in Studio", () => {
   assert.deepEqual(openItemPlan("studyTopic", "p1", data), {
     view: "study",
     writes: [
@@ -98,7 +98,7 @@ test("apri elemento: un argomento apre gli argomenti della sua materia; una sess
       ["study.topicsOpen", true, "tab"]
     ]
   });
-  assert.deepEqual(openItemPlan("studySession", "n1", data), { view: "study", writes: [] });
+  assert.deepEqual(openItemPlan("studySession", "n1", data), { view: "study", writes: [["study.openSession", "n1", "tab"]] });
 });
 
 test("apri elemento: un elemento che non c'è più, un tipo sconosciuto o un id che è di un altro tipo non portano da nessuna parte", () => {

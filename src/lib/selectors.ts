@@ -102,6 +102,8 @@ export const nextOccurrences = (events: CalendarEvent[], now: Date = new Date(),
  * tetto di CPU per richiesta). Il sort è stabile: a parità di punteggio resta l'ordine di partenza.
  * Scadenza: oggi 10, poi uno in meno per ogni giorno che manca; una scadenza passata vale di più
  * (11 dopo un giorno, fino a 20): prima, con il valore assoluto, 15 giorni di ritardo valevano 0.
+ * «Bloccata» e «Rimandata» vanno dopo tutte le altre (−100, più del punteggio massimo): restano in
+ * elenco solo quando non c'è altro da fare, invece di finire in cima a «Cosa fare adesso».
  */
 export const urgentTasks = (tasks: Task[], count = 5, now: Date = new Date()) => {
   const deadline = (dueDate: string) => {
@@ -111,7 +113,8 @@ export const urgentTasks = (tasks: Task[], count = 5, now: Date = new Date()) =>
   const score = (task: Task) => {
     const due = task.dueDate ? deadline(task.dueDate) : 0;
     const priority = { urgent: 24, high: 16, medium: 8, low: 2 }[task.priority];
-    return due + priority + task.importance * 2;
+    const onHold = task.status === "blocked" || task.status === "postponed" ? 100 : 0;
+    return due + priority + task.importance * 2 - onHold;
   };
   return tasks
     .filter((task) => task.status !== "done" && task.status !== "archived")

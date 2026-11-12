@@ -1,15 +1,28 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects } from "../lib/selectors";
 import { PRIORITY_LABEL } from "../lib/labels";
-import { Button, Field, inputClass, useDialogLayer } from "./ui";
+import { TASK_EDITOR_TEXT } from "../lib/labels/tasks";
+import { defaultImportance, draftChanged, editorCloseRequest } from "../lib/tasksUi";
+import { Button, Field, inputClass, useBackCloses, useDialogLayer } from "./ui";
 import { DateField } from "./DatePicker";
 import { DurationField, type DurationUnit } from "./DurationField";
 import { durationToMinutes } from "../lib/duration";
 
 export type NewTaskDraft = Partial<Task> & Pick<Task, "title">;
+
+/** Campi come all'apertura: se sono cambiati, chiudere chiede prima «Scartare le modifiche?». */
+const INITIAL_FIELDS = {
+  title: "",
+  subjectId: "",
+  description: "",
+  priority: "medium" as Task["priority"],
+  dueDate: "",
+  durationValue: "45",
+  durationUnit: "minutes" as DurationUnit
+};
 
 /**
  * Creazione guidata di un'attività: un solo ingresso ("Nuova attività"), un solo
@@ -24,19 +37,49 @@ export function TaskModal({
   onCreate: (draft: NewTaskDraft) => Promise<void>;
 }) {
   const subjects = useStudyStore((state) => state.subjects);
-  const [title, setTitle] = useState("");
-  const [subjectId, setSubjectId] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<Task["priority"]>("medium");
-  const [dueDate, setDueDate] = useState("");
-  const [durationValue, setDurationValue] = useState("45");
-  const [durationUnit, setDurationUnit] = useState<DurationUnit>("minutes");
+  const [title, setTitle] = useState(INITIAL_FIELDS.title);
+  const [subjectId, setSubjectId] = useState(INITIAL_FIELDS.subjectId);
+  const [description, setDescription] = useState(INITIAL_FIELDS.description);
+  const [priority, setPriority] = useState<Task["priority"]>(INITIAL_FIELDS.priority);
+  const [dueDate, setDueDate] = useState(INITIAL_FIELDS.dueDate);
+  const [durationValue, setDurationValue] = useState(INITIAL_FIELDS.durationValue);
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>(INITIAL_FIELDS.durationUnit);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // «Scartare le modifiche?» sul posto, come nell'editor: tocco fuori, Esc, Indietro o «Annulla» non perdono il testo.
+  const [asking, setAsking] = useState(false);
+  const footerRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDetailsElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
-  useDialogLayer(true, { panelRef, areaRef, onEscape: () => { if (!busy) onClose(); } });
+  const changed = draftChanged(INITIAL_FIELDS, { title, subjectId, description, priority, dueDate, durationValue, durationUnit });
+
+  const keepEditing = () => {
+    setAsking(false);
+    requestAnimationFrame(() => footerRef.current?.querySelector<HTMLElement>("[data-save]")?.focus());
+  };
+
+  const requestClose = () => {
+    if (busy) return;
+    const next = editorCloseRequest(changed, asking);
+    if (next === "close") onClose();
+    else if (next === "ask") setAsking(true);
+    else keepEditing();
+  };
+
+  useDialogLayer(true, { panelRef, areaRef, onEscape: requestClose });
+  // Indietro (browser, Android, gesto di iOS) come Esc; se resta aperta, la voce della cronologia torna.
+  useBackCloses(true, () => {
+    requestClose();
+    return true;
+  });
+
+  // La domanda prende il focus sulla scelta sicura (Invio o Esc tornano a scrivere).
+  useEffect(() => {
+    if (!asking) return;
+    const frame = requestAnimationFrame(() => footerRef.current?.querySelector<HTMLElement>("[data-keep]")?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [asking]);
 
   const save = async () => {
     if (busy) return;
@@ -63,7 +106,7 @@ export function TaskModal({
         subjectId: subjectId || undefined,
         description: description.trim(),
         priority,
-        importance: priority === "urgent" ? 5 : 3,
+        importance: defaultImportance(priority),
         dueDate: due?.toISOString(),
         estimatedMinutes: durationToMinutes(parsed, durationUnit)
       });
@@ -79,12 +122,15 @@ export function TaskModal({
   return createPortal(
     <div
       ref={areaRef}
-      className="fixed inset-0 z-50 grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
+      className="fixed inset-0 z-50 grid grid-cols-1 place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center"
       role="dialog"
       aria-modal="true"
       aria-label="Nuova attività"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose();
+        if (event.target !== event.currentTarget) return;
+        // Il focus resta dov'è: se la finestra non si chiude (domanda) non finisce sul body.
+        event.preventDefault();
+        requestClose();
       }}
     >
       <section ref={panelRef} tabIndex={-1} className="soft-panel scrollbar-soft max-h-[88dvh] w-full max-w-2xl overflow-y-auto p-4 outline-none sm:p-5">
@@ -157,14 +203,31 @@ export function TaskModal({
             </p>
           ) : null}
 
-          <div className="mt-2 flex flex-wrap justify-end gap-2">
-            <Button variant="soft" onClick={onClose} disabled={busy}>
-              Annulla
-            </Button>
-            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>
-              {busy ? "Creazione…" : "Crea attività"}
-            </Button>
-          </div>
+          {asking ? (
+            <div key="ask" ref={footerRef} role="group" aria-label={TASK_EDITOR_TEXT.discardTitle} className="mt-2 grid grid-cols-1 gap-2">
+              <div>
+                <p className="text-sm font-black">{TASK_EDITOR_TEXT.discardTitle}</p>
+                <p className="text-xs font-bold text-[var(--muted)]">{TASK_EDITOR_TEXT.discardNewText}</p>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button data-keep variant="soft" onClick={keepEditing}>
+                  {TASK_EDITOR_TEXT.keepEditing}
+                </Button>
+                <Button variant="danger" icon="X" onClick={onClose}>
+                  {TASK_EDITOR_TEXT.discard}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div key="edit" ref={footerRef} className="mt-2 flex flex-wrap justify-end gap-2">
+              <Button variant="soft" onClick={requestClose} disabled={busy}>
+                Annulla
+              </Button>
+              <Button data-save variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>
+                {busy ? "Creazione…" : "Crea attività"}
+              </Button>
+            </div>
+          )}
         </div>
       </section>
     </div>

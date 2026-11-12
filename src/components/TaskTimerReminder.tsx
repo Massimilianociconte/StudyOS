@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../store/useStudyStore";
-import { formatElapsedSeconds, taskElapsedSeconds, taskReminderDue, taskReminderIntervalMinutes } from "../lib/taskTimer";
+import { forgottenTimerCutoff, formatElapsedSeconds, taskElapsedSeconds, taskReminderDue, taskReminderIntervalMinutes } from "../lib/taskTimer";
 import { useNow } from "../hooks/useNow";
 import { formatMinutes } from "../lib/labels";
+import { TASK_TIMER_TEXT } from "../lib/labels/taskTimer";
 import { Button, Pill } from "./ui";
 import { Icon } from "./Icon";
 
@@ -23,6 +24,8 @@ export function TaskTimerReminder() {
 
   const elapsedSeconds = taskElapsedSeconds(task, now);
   const interval = taskReminderIntervalMinutes(task);
+  // Acceso da molto più di un intervallo senza risposta (es. tutta la notte): si può contare solo fino a lì.
+  const cutoff = forgottenTimerCutoff(task, now);
 
   return (
     <aside
@@ -50,6 +53,11 @@ export function TaskTimerReminder() {
       </div>
 
       <div className="flex flex-wrap justify-end gap-2">
+        {cutoff ? (
+          <Button variant="soft" icon="Clock" onClick={() => updateTask(task.id, cutoff.patch)} title={TASK_TIMER_TEXT.countUntilTitle}>
+            {TASK_TIMER_TEXT.countUntil(cutoff.at, now)}
+          </Button>
+        ) : null}
         <Button variant="ghost" icon="Pause" onClick={() => updateTask(task.id, { status: "todo" })} title="Ferma il timer: il tempo fatto resta salvato">
           Metti in pausa
         </Button>

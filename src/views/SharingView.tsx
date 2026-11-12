@@ -9,7 +9,9 @@ import { useCloudSession } from "../hooks/useCloudSession";
 import { usePendingShare } from "../hooks/useShareInviteLinks";
 import { clearPendingShare } from "../lib/shareInvite";
 import { cloudConfigured } from "../lib/cloudSyncState";
-import { oneOf, useUiState } from "../lib/uiState";
+import { oneOf } from "../lib/uiState";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
+import { shareInviteNotificationId } from "../lib/notificationJump";
 import { SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary } from "../lib/labels";
 import { SHARE_INVITE_BLOCKED, SHARE_INVITE_STATUS_LABEL, SHARING_TAB_LABEL } from "../lib/labels/sharing";
 import {
@@ -56,6 +58,15 @@ const shortDate = (iso: string) => {
   return iso && isValid(date) ? format(date, "d MMM", { locale: it }) : "";
 };
 
+/** Invito accettato o rifiutato qui: la sua notifica («… ti invita a condividere») non resta da leggere. */
+const markShareInviteRead = (inviteId: string) => {
+  const id = shareInviteNotificationId(inviteId);
+  void useStudyStore
+    .getState()
+    .markNotificationsReadWhere((item) => item.id === id)
+    .catch(() => undefined);
+};
+
 const infoClass = "flex items-start gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]";
 const errorClass = "text-sm font-bold text-[var(--danger-text)]";
 const alertClass = `flex items-start gap-2 rounded-[18px] bg-[var(--danger-bg)] p-3 ${errorClass}`;
@@ -92,7 +103,8 @@ export function SharingView() {
     }))
   );
   const { subjects, studyGroups } = useStudyStore(useShallow((state) => ({ subjects: state.subjects, studyGroups: state.studyGroups })));
-  const [tab, setTab] = useUiState<SharingTab>("sharing.tab", pending ? "invites" : "mine", { scope: "tab", validate: oneOf(...SHARING_TABS) });
+  // Collegata: «Apri» di una notifica sceglie la scheda (Inviti, Condivisi con me) anche con la sezione già aperta.
+  const [tab, setTab] = useLinkedUiState<SharingTab>("sharing.tab", pending ? "invites" : "mine", { scope: "tab", validate: oneOf(...SHARING_TABS) });
   const [login, setLogin] = useState<LoginReason | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState<Message>(null);
@@ -166,7 +178,10 @@ export function SharingView() {
     const failure = await perform(accept ? "accept" : "decline", (sync) =>
       accept ? sync.acceptShareInvite(invite.id, null, reciprocal) : sync.declineShareInvite(invite.id, null)
     );
-    if (!failure) say(accept ? `Fatto: ora vedi ${scopesSummary(invite.offers)} di ${invite.ownerName || "questa persona"}.` : "Invito rifiutato.");
+    if (!failure) {
+      say(accept ? `Fatto: ora vedi ${scopesSummary(invite.offers)} di ${invite.ownerName || "questa persona"}.` : "Invito rifiutato.");
+      markShareInviteRead(invite.id);
+    }
     return failure;
   };
 
@@ -509,7 +524,7 @@ function EditShareDrawer({
             <p className="mb-2 text-xs font-semibold text-[var(--muted)]">Nessuna scelta = tutte le materie.</p>
             <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
               {active.map((subject) => (
-                <label key={subject.id} className="flex min-h-10 cursor-pointer items-center gap-2 text-sm font-bold">
+                <label key={subject.id} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-bold">
                   <input
                     type="checkbox"
                     className="h-4 w-4 shrink-0 accent-[var(--accent)]"
@@ -856,6 +871,7 @@ function PendingShareCard({
     );
     if (failure) return failure;
     clearPendingShare();
+    markShareInviteRead(preview.inviteId);
     onDone(accept ? `Fatto: ora vedi ${scopesSummary(preview.offers)} di ${preview.ownerName || "questa persona"}.` : "Invito rifiutato.", accept);
     return null;
   };

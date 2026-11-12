@@ -5,7 +5,9 @@ import { prepareBarbExamImport } from '../src/lib/barbExamImport.ts';
 const course = { id: 'stem', name: 'Cellule staminali', semester: 'primo' };
 const subject = { id: 's1', name: course.name, universityCourseId: course.id, status: 'active', archived: false, color: '#123456' };
 const session = { id: 'stem-2027-01-18', courseId: course.id, date: '2027-01-18', type: 'Orale', time: null, location: null, notes: null, registrationOpens: null, registrationCloses: null, provenance: { sourceUrl: 'https://work.unimi.it/foProssimiEsami/pdf/FBG', retrievedAt: '2026-10-05T10:00:00Z', lastVerifiedAt: '2026-10-05T10:00:00Z', sourcePage: 1 } };
-const prepare = (sessions = [session], subjects = [subject], events = []) => prepareBarbExamImport(sessions, [course], subjects, events);
+// «Oggi» fisso: i test non dipendono dal giorno in cui girano.
+const TODAY = '2026-10-05';
+const prepare = (sessions = [session], subjects = [subject], events = []) => prepareBarbExamImport(sessions, [course], subjects, events, sessions, TODAY);
 
 test('Import: data senza orario diventa promemoria giornaliero senza aula o durata inventata', () => {
   const { events, skipped } = prepare();
@@ -46,7 +48,11 @@ test('Import: mantiene orari e sede ufficiali nei dettagli senza inventare una f
   assert.match(event.description, /14:30/);
   assert.match(event.description, /Aula B8/);
   assert.match(event.description, /Portare documento/);
-  assert.match(event.notes, /2027-01-14/);
+  // Date leggibili, niente ISO grezzo né «(Europe/Rome)».
+  assert.match(event.notes, /Chiusura iscrizioni: 14 gennaio 2027/);
+  assert.doesNotMatch(event.description, /Europe\/Rome/);
+  assert.match(event.notes, /Verificato il 5 ottobre 2026/);
+  assert.doesNotMatch(event.notes, /T10:00:00Z/);
 });
 
 test('Import: impedisce date impossibili e origini non ufficiali', () => {
@@ -100,4 +106,43 @@ test('Import ICS ed editing: un appello resta date-only dopo il salvataggio e ca
   } finally {
     if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous;
   }
+});
+
+test('Import: un appello già passato non si aggiunge (neanche da agenti o MCP); quello di oggi sì', () => {
+  const past = { ...session, id: 'stem-2026-07-01', date: '2026-07-01' };
+  const today = { ...session, id: 'stem-2026-10-05', date: TODAY };
+  const { events, skipped } = prepare([past, today]);
+  assert.equal(skipped, 1);
+  assert.deepEqual(events.map((event) => event.start.slice(0, 10)), [TODAY]);
+});
+
+test('Import: senza «oggi» esplicito vale il giorno di Roma (un appello del 2020 è passato)', async () => {
+  const { barbTodayKey } = await import('../src/lib/barbExamImport.ts');
+  // Le 23:30 UTC del 9 sono già il 10 a Roma.
+  assert.equal(barbTodayKey(new Date('2026-11-09T23:30:00Z')), '2026-11-10');
+  const old = { ...session, id: 'stem-2020-01-10', date: '2020-01-10' };
+  assert.equal(prepareBarbExamImport([old], [course], [subject], []).events.length, 0);
+});
+
+test('Import: dal feed JSON il link va alla pagina degli appelli BARB; il feed resta come dato tecnico', async () => {
+  const { BARB_EXAMS_PAGE_URL, BARB_EXAM_DATA } = await import('../src/lib/university/examSessions.ts');
+  const feed = 'https://work.unimi.it/foProssimiEsami/json/FBG';
+  const event = prepare([{ ...session, time: '14:00', provenance: { ...session.provenance, sourceUrl: feed } }]).events[0];
+  assert.deepEqual(event.links, [BARB_EXAMS_PAGE_URL]);
+  assert.match(event.notes, /Dati ufficiali UNIMI \(formato tecnico\): https:\/\/work\.unimi\.it\/foProssimiEsami\/json\/FBG/);
+  assert.match(event.description, /Orario ufficiale: 14:00$/m);
+  // La pagina non è inventata: è tra le fonti verificate del dataset.
+  assert.ok(BARB_EXAM_DATA.sources.some((source) => source.url === BARB_EXAMS_PAGE_URL && source.status === 'verificato'));
+});
+
+test('Fonti: la nota del feed dice il giorno della verifica, non un timestamp', async () => {
+  const { BARB_EXAM_DATA, barbCheckedDay, isTechnicalFeedUrl } = await import('../src/lib/university/examSessions.ts');
+  const note = BARB_EXAM_DATA.sources.find((source) => source.url.endsWith('/json/FBG'))?.note ?? '';
+  assert.doesNotMatch(note, /\d{4}-\d{2}-\d{2}T/);
+  assert.equal(barbCheckedDay('2026-11-09T17:09:19.598Z'), '9 novembre 2026');
+  // Le 23:30 UTC del 9 sono già il 10 a Roma.
+  assert.equal(barbCheckedDay('2026-11-09T23:30:00.000Z'), '10 novembre 2026');
+  assert.equal(isTechnicalFeedUrl('https://work.unimi.it/foProssimiEsami/json/F92'), true);
+  assert.equal(isTechnicalFeedUrl('https://work.unimi.it/foProssimiEsami/pdf/F92'), false);
+  assert.equal(isTechnicalFeedUrl('non un url'), false);
 });

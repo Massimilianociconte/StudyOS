@@ -10,13 +10,13 @@ import { EXAMS_HELP, EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
 import { readCoverImage } from "../lib/files";
-import { examDraftChanged, isDateToDecide, withoutDateToDecide } from "../lib/examOutcome";
+import { examDraftChanged, examFormDate, isDateToDecide, isPassingResult, markSubjectPassed, sameExamMinute, withoutDateToDecide } from "../lib/examOutcome";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
-import { EXAMS_NEW_KEY, examPrefillFromEvent, findCalendarExam, isNullableCalendarExamRef, removeCalendarExam, type CalendarExamRef } from "../lib/calendarExams";
+import { EXAMS_NEW_KEY, examPrefillFromEvent, findCalendarExam, isNullableCalendarExamRef, examTimeLabel, removeCalendarExam, replaceEventByDefault, type CalendarExamRef } from "../lib/calendarExams";
 import { UndoNotice } from "../components/StudySessionDrawers";
-import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useDialogLayer } from "../components/ui";
+import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useBackCloses, useDialogLayer } from "../components/ui";
 import { DateTimeField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
@@ -48,15 +48,10 @@ type ExamDraft = {
   passFail: boolean;
 };
 
-const toDatetimeLocal = (date?: string) => {
-  const value = date ? new Date(date) : new Date();
-  value.setHours(value.getHours() || 9, value.getMinutes(), 0, 0);
-  return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-};
-
 const emptyDraft = (subjectId = ""): ExamDraft => ({
   subjectId,
-  date: toDatetimeLocal(),
+  // Esame nuovo: tra una settimana alle 9 (mai «adesso»).
+  date: examFormDate(),
   preparation: 0,
   targetGrade: 28,
   status: "planning",
@@ -70,7 +65,7 @@ const emptyDraft = (subjectId = ""): ExamDraft => ({
 
 const draftFromExam = (exam: Exam): ExamDraft => ({
   subjectId: exam.subjectId,
-  date: toDatetimeLocal(exam.date),
+  date: examFormDate(exam.date),
   preparation: exam.preparation,
   targetGrade: exam.targetGrade,
   status: exam.status,
@@ -107,27 +102,32 @@ export function ExamsView() {
   const editing = resolveExamEditing(editingId, exams);
   // Esame del calendario da aggiungere (Home, Statistiche): apre «Aggiungi esame» già compilato, poi si cancella.
   const [prefill, setPrefill] = useUiState<CalendarExamRef | null>(EXAMS_NEW_KEY, null, { scope: "tab", validate: isNullableCalendarExamRef });
-  const activeTab = editing.exam || prefill ? "personal" : tab;
+  // «Date ufficiali» sono gli appelli UNIMI di BARB: con «Corso di laurea» spento in Impostazioni la
+  // scheda non c'è e si resta su «I miei esami» (la chiave salvata non cambia nome).
+  const showBarb = preferences.showBarb;
+  const activeTab = editing.exam || prefill || !showBarb ? "personal" : tab;
 
   useEffect(() => {
     // Id di un esame che non c'è più: si ignora e si cancella. Altrimenti si passa a "I miei esami".
     if (editing.clear) setEditingId(null);
-    else if ((editing.exam || prefill) && tab !== "personal") setTab("personal");
-  }, [editing.clear, editing.exam, prefill, tab, setEditingId, setTab]);
+    else if ((editing.exam || prefill || !showBarb) && tab !== "personal") setTab("personal");
+  }, [editing.clear, editing.exam, prefill, showBarb, tab, setEditingId, setTab]);
 
   const header: ExamsHeader = (actions) => (
     <>
-      <SectionTitle title={EXAMS_TEXT.title} subtitle={EXAMS_TEXT.subtitle} action={actions} />
-      <Segmented
-        value={activeTab}
-        onChange={setTab}
-        label={EXAMS_TEXT.tabsLabel}
-        options={[
-          { id: "personal", label: EXAMS_TEXT.tabPersonal, icon: "GraduationCap" },
-          { id: "barb", label: EXAMS_TEXT.tabOfficial, icon: "CalendarDays" }
-        ]}
-        className="mb-5"
-      />
+      <SectionTitle title={EXAMS_TEXT.title} subtitle={showBarb ? EXAMS_TEXT.subtitle : EXAMS_TEXT.subtitlePersonal} action={actions} />
+      {showBarb ? (
+        <Segmented
+          value={activeTab}
+          onChange={setTab}
+          label={EXAMS_TEXT.tabsLabel}
+          options={[
+            { id: "personal", label: EXAMS_TEXT.tabPersonal, icon: "GraduationCap" },
+            { id: "barb", label: EXAMS_TEXT.tabOfficial, icon: "CalendarDays" }
+          ]}
+          className="mb-5"
+        />
+      ) : null}
     </>
   );
 
@@ -214,11 +214,12 @@ function PersonalExamsView({
     // Modulo che si riapre: "Salva esame" torna usabile (come openCreate / openEdit).
     once.release();
     onEditingChange(null);
-    startDraft(start ? { ...emptyDraft(start.subjectId), date: toDatetimeLocal(start.date) } : emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
+    startDraft(start ? { ...emptyDraft(start.subjectId), date: examFormDate(start.date) } : emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
     setMoreOpen(false);
     setCreating(true);
     setFromCalendar(start ? { ref: prefill, title: start.title } : null);
-    setReplaceEvent(true);
+    // Appello importato o evento con dettagli: resta nel calendario, salvo scelta contraria.
+    setReplaceEvent(item ? replaceEventByDefault(item) : true);
     onPrefillUsed?.();
     // Solo quando arriva un esame dal calendario: le altre dipendenze non devono riaprire il modulo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -228,11 +229,22 @@ function PersonalExamsView({
 
   // Pagina sotto bloccata, focus nel modulo (anche se aperto da un'altra schermata) e restituito alla chiusura.
   useDialogLayer(formOpen, { panelRef: dialogRef, areaRef, onEscape: () => requestClose() });
+  // Indietro (gesto di Android, PWA) come Esc: con dati cambiati il modulo resta aperto e chiede
+  // «Scartare le modifiche?» (false = la voce della cronologia torna), altrimenti si chiude.
+  useBackCloses(formOpen, () => {
+    if (examDraftChanged(draft, pristine)) {
+      requestClose();
+      return false;
+    }
+    closeForm();
+    return true;
+  });
   const sorted = useMemo(() => [...exams].sort((a, b) => a.date.localeCompare(b.date)), [exams]);
   const today = startOfDay(new Date());
   // In arrivo, poi i non superati con la nuova data ancora da decidere.
   const upcoming = [
-    ...sorted.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today)),
+    // Non superato oggi senza nuova data: è già tra i «da decidere», non due volte.
+    ...sorted.filter((exam) => exam.status !== "done" && !isBefore(parseISO(exam.date), today) && !isDateToDecide(exam)),
     ...sorted.filter((exam) => isDateToDecide(exam))
   ];
   // Data passata ma esito non registrato: vanno chiusi con l'esito (superato, idoneità, non superato).
@@ -329,12 +341,14 @@ function PersonalExamsView({
       return fail(`Voto non valido: scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
     }
     const done = draft.status === "done";
+    // Data non toccata (stesso minuto): resta quella salvata, così la «data da decidere» che la cita vale ancora.
+    const sameDate = Boolean(editingExam && sameExamMinute(draft.date, editingExam.date));
     // Data cambiata (o esito registrato): la «data da decidere» di un esame non superato non vale più.
-    const tags = editingExam && (done || date.toISOString() !== editingExam.date) ? { tags: withoutDateToDecide(editingExam.tags) } : {};
+    const tags = editingExam && (done || !sameDate) ? { tags: withoutDateToDecide(editingExam.tags) } : {};
     const payload = {
       ...tags,
       subjectId: draft.subjectId,
-      date: date.toISOString(),
+      date: sameDate && editingExam ? editingExam.date : date.toISOString(),
       preparation: done ? 100 : Math.max(0, Math.min(100, draft.preparation)),
       targetGrade: Math.max(18, Math.min(30, draft.targetGrade)),
       status: draft.status,
@@ -351,6 +365,10 @@ function PersonalExamsView({
     } else {
       await addExam(payload);
     }
+    // «Sostenuto» con voto o idoneità: la materia diventa superata, come con «Registra il voto». Solo
+    // se prima l'esame (di quella materia) non era già superato: una materia riaperta a mano resta aperta.
+    const wasPassed = Boolean(editingExam && isPassingResult(editingExam) && editingExam.subjectId === payload.subjectId);
+    if (isPassingResult(payload) && !wasPassed) await markSubjectPassed(useStudyStore, payload.subjectId);
     const replacing = !editingExam && fromCalendar && replaceEvent ? fromCalendar : null;
     closeForm();
     if (!replacing) return;
@@ -376,7 +394,7 @@ function PersonalExamsView({
   const headerPrimary = subjects.length > 0 && upcoming.length > 0;
   const moreActions: PageAction[] = [
     { label: EXAMS_TEXT.recordGrade, icon: "Award", onClick: () => openGrade(null) },
-    { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setImportOpen(true) },
+    ...(showBarb ? [{ label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setImportOpen(true) }] : []),
     ...(cloudConfigured ? [{ label: EXAMS_TEXT.shareProgress, icon: "Share2", onClick: openShare }] : [])
   ];
 
@@ -796,7 +814,10 @@ function ExamCard({
         <button type="button" onClick={onEdit} className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-lg font-black leading-tight">{name}</h3>
           <p className="text-xs font-bold text-[var(--muted)]">
-            {dateToDecide ? EXAMS_TEXT.dateToDecide : capitalizeFirst(format(parseISO(exam.date), "EEEE d MMMM · HH:mm", { locale: it }))}
+            {/* A mezzanotte (esame con la sola data) niente «· 00:00», come nel calendario. */}
+            {dateToDecide
+              ? EXAMS_TEXT.dateToDecide
+              : [capitalizeFirst(format(parseISO(exam.date), "EEEE d MMMM", { locale: it })), examTimeLabel(exam.date)].filter(Boolean).join(" · ")}
             {cover && !dateToDecide ? ` · ${EXAMS_TEXT.countdownInline(remaining)}` : ""}
           </p>
         </button>
@@ -828,11 +849,11 @@ function ExamCard({
             <HelpTip title={EXAMS_HELP.readiness.title} text={EXAMS_HELP.readiness.text} example={EXAMS_HELP.readiness.example} />
           </span>
           <span className="flex items-center gap-1">
-            <button type="button" aria-label={`Abbassa la preparazione per ${name} del 5%`} onClick={() => onPrep(-5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
+            <button type="button" aria-label={`Abbassa la preparazione per ${name} del 5%`} onClick={() => onPrep(-5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2.5 after:content-[''] hover:bg-[var(--surface)]">
               −
             </button>
             <span className="w-10 text-center tabular-nums">{exam.preparation}%</span>
-            <button type="button" aria-label={`Alza la preparazione per ${name} del 5%`} onClick={() => onPrep(5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--surface)]">
+            <button type="button" aria-label={`Alza la preparazione per ${name} del 5%`} onClick={() => onPrep(5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2.5 after:content-[''] hover:bg-[var(--surface)]">
               +
             </button>
           </span>
@@ -862,13 +883,13 @@ function ExamCard({
 
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
         {exam.program.length ? (
-          <button type="button" onClick={onImportProgram} title="Aggiunge ogni argomento del programma agli argomenti da ripassare" className="inline-flex min-h-8 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
+          <button type="button" onClick={onImportProgram} title="Aggiunge ogni argomento del programma agli argomenti da ripassare" className="inline-flex min-h-11 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
             <Icon name="Brain" className="h-3.5 w-3.5" /> Aggiungi il programma al ripasso
           </button>
         ) : (
           <span />
         )}
-        <button type="button" onClick={() => onLink("study")} aria-label={EXAMS_TEXT.studyAria(name)} className="inline-flex min-h-8 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
+        <button type="button" onClick={() => onLink("study")} aria-label={EXAMS_TEXT.studyAria(name)} className="inline-flex min-h-11 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
           <Icon name="Timer" className="h-3.5 w-3.5" /> {EXAMS_TEXT.study}
         </button>
       </div>

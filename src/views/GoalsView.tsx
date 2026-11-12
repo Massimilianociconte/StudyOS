@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { differenceInCalendarDays, format, parseISO } from "date-fns";
-import { it } from "date-fns/locale";
 import type { Goal } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL } from "../lib/labels";
@@ -12,7 +10,7 @@ import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, useUiState } from "../lib/uiState";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
-import { GOAL_STEP, goalDraftChanged, goalDraftOf, goalDraftWith, goalMove, goalStep, statusForProgress, type GoalDraft } from "../lib/goalProgress";
+import { GOAL_STEP, goalDeadlineLabel, goalDraftChanged, goalDraftOf, goalDraftWith, goalMove, goalStep, statusForProgress, type GoalDraft } from "../lib/goalProgress";
 
 const EMPTY_GOAL_DRAFT: GoalDraft = { title: "", description: "", category: "study", deadline: "", progress: 0, status: "active", notes: "" };
 
@@ -28,17 +26,6 @@ const CATEGORY_ICON: Record<Goal["category"], string> = {
 };
 
 const categories = Object.keys(GOAL_CATEGORY_LABEL) as Goal["category"][];
-
-const deadlineLabel = (deadline?: string) => {
-  if (!deadline) return null;
-  const date = parseISO(deadline);
-  if (Number.isNaN(date.getTime())) return null;
-  const days = differenceInCalendarDays(date, new Date());
-  if (days < 0) return { text: `Scaduto il ${format(date, "d MMM", { locale: it })}`, late: true };
-  if (days === 0) return { text: "Scade oggi", late: false };
-  if (days === 1) return { text: "Scade domani", late: false };
-  return { text: `Scade tra ${days} giorni · ${format(date, "d MMM", { locale: it })}`, late: false };
-};
 
 /** Avviso sotto il campo: l'obiettivo ha cambiato gruppo o è stato eliminato, con «Annulla». */
 type GoalNotice =
@@ -117,12 +104,13 @@ export function GoalsView() {
       {/* Solo il titolo: la categoria parte da «Studio» e si cambia nel dettaglio. */}
       <NewGoalBar onAdd={(title) => addGoal({ title, category: "study", progress: 0, metric: "%" })} />
 
-      {/* Sempre presente: il lettore di schermo annuncia l'avviso appena compare il testo. */}
-      <div role="status" aria-live="polite">
+      {/* Sempre presente: il lettore di schermo annuncia l'avviso appena compare il testo. Sul telefono
+          è fisso in basso, sopra il «+» e la barra: in cima alla pagina, scorrendo le schede, non si vedeva. */}
+      <div role="status" aria-live="polite" className="fixed inset-x-3 bottom-[calc(11rem+env(safe-area-inset-bottom))] z-40 sm:static">
         {notice ? (
           <div
             ref={noticeRef}
-            className="soft-panel mb-4 flex flex-wrap items-center gap-2 p-2.5"
+            className="soft-panel mx-auto flex max-w-[560px] flex-wrap items-center gap-2 p-2.5 sm:mb-4 sm:max-w-none"
             onFocus={() => setNoticeFocused(true)}
             onBlur={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setNoticeFocused(false);
@@ -173,7 +161,8 @@ export function GoalsView() {
             Raggiunti e archiviati · {closed.length}
           </button>
           {showClosed ? (
-            <div className="grid grid-cols-1 gap-3 opacity-75 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
+            // Niente opacità (testi sotto il contrasto AA): lo stato si legge dal Tag e dalla barra verde.
+            <div className="grid grid-cols-1 gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
               {closed.map((goal) => (
                 <GoalCard key={goal.id} goal={goal} onOpen={() => setOpenId(goal.id)} onStep={(delta) => void change(goal, goalStep(goal, delta))} />
               ))}
@@ -221,7 +210,7 @@ function NewGoalBar({ onAdd }: { onAdd: (title: string) => Promise<void> }) {
 }
 
 function GoalCard({ goal, onOpen, onStep }: { goal: Goal; onOpen: () => void; onStep: (delta: number) => void }) {
-  const deadline = deadlineLabel(goal.deadline);
+  const deadline = goalDeadlineLabel(goal.deadline, goal.status);
   return (
     <article className="quiet-panel flex min-w-0 flex-col p-3.5">
       <div className="flex items-start gap-3">

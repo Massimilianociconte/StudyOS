@@ -126,8 +126,8 @@ export function openItemPlan(type: string | undefined, id: string | undefined, d
         : null;
     }
     case "studySession":
-      // Studio non ha ancora una chiave per aprire una sessione: si arriva alla sezione.
-      return byId(data.sessions, id) ? { view: "study", writes: [] } : null;
+      // Studio apre la sessione (modifica) o, se è in programma, la mostra in «In programma».
+      return byId(data.sessions, id) ? { view: "study", writes: [["study.openSession", id, "tab"]] } : null;
     default:
       return null;
   }

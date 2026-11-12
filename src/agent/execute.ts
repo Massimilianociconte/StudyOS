@@ -14,7 +14,7 @@ import { occurrenceEditCalls, scopeImpact, seriesMovePatch } from "../lib/occurr
 import { isOccurrenceRow, laterParts, normalizeRepeat, planDelete, sanitizeOccasion, sanitizeReminders, validateRepeat, type OccurrenceScope } from "../lib/repeat";
 import { isCivilDate, isValidTimeZone } from "../lib/tz";
 import { safeCssColor } from "../lib/sharing";
-import { dueTopics } from "../lib/review";
+import { dueTopics, reviewableTopics } from "../lib/review";
 import { normalizeExternalUrl, safeHref } from "../lib/safeUrl";
 import { studyMinutesThisWeek, studyStreak, upcomingExams, urgentTasks } from "../lib/selectors";
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES, timerElapsedSeconds, timerRemainingSeconds, timerUnsavedSeconds } from "../lib/studyTimer";
@@ -357,7 +357,8 @@ const overviewResult = async (): Promise<AgentCallResult> => {
   const names = subjectNames();
   const now = new Date();
   const today = expandEvents(current.events, startOfDay(now), addDays(startOfDay(now), 1));
-  const due = dueTopics(current.topics, now);
+  // Come in Studio: gli argomenti di materie superate o archiviate sono in pausa.
+  const due = dueTopics(reviewableTopics(current.topics, current.subjects), now);
   return ok({
     displayName: preferences.displayName,
     ...clock(now),
@@ -949,7 +950,7 @@ const updateSession = async (args: Args): Promise<AgentCallResult> => {
 
 const listTopics = (args: Args): AgentCallResult => {
   const query = queryOf(args);
-  const source = args.dueOnly === true ? dueTopics(state().topics) : [...state().topics].sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate));
+  const source = args.dueOnly === true ? dueTopics(reviewableTopics(state().topics, state().subjects)) : [...state().topics].sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate));
   const items = source.filter((item) => {
     if (typeof args.subjectId === "string" && item.subjectId !== args.subjectId) return false;
     return includes(query, item.title, item.notes);

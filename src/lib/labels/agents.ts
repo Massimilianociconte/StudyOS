@@ -28,6 +28,9 @@ export const AGENT_DESK_TEXT = {
   copy: "Copia",
   copied: "Indirizzo copiato.",
   copyFailed: "Copia non riuscita: tieni premuto sull'indirizzo e copialo a mano.",
+  /** Detto a voce quando compare la richiesta (anche con un pannello aperto, dove il focus resta). */
+  dockAskCall: (summary: string) => `Un agente chiede conferma: ${summary}`,
+  dockAskConsent: (client: string) => `Un assistente chiede di collegarsi: ${client}`,
 
   remote: {
     title: "Connettore remoto (app chiusa)",

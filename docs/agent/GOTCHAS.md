@@ -139,6 +139,21 @@
   ultima sezione). Ogni valore salvato passa da un validatore (`oneOf`, `isNullableString`)
   e gli id di entità sparite vanno ignorati nella vista. Una nuova vista va aggiunta anche
   ad `APP_VIEWS` nello store. Il reset dei dati locali svuota lo stato UI.
+  `useUiState` legge una volta sola: una vista già aperta che deve seguire un salto (notifica,
+  ricerca, «Apri») usa `useLinkedUiState` con la stessa chiave e un validatore equivalente
+  (oggi `groups.open`, `sharing.tab`, `calendar.cursor`, `study.topicsOpen`, `study.topicsFilter`,
+  `materials.kind`, `materials.subject`). I salti delle notifiche stanno in `lib/notificationJump.ts`:
+  un promemoria porta al giorno dell'evento letto dal suo id, non al giorno in cui è scattato.
+- Date degli esami: un esame può avere la sola data ("2026-12-15", da un agente o da dati vecchi).
+  Leggerla con `parseISO` (mezzanotte locale), mai con `new Date`, che la prende in UTC (01:00 a
+  Roma, il giorno prima in America). Mezzanotte = «ora non indicata»: `examTimeLabel` dà "".
+- Argomenti da ripassare: ripassi, «da ripassare oggi» e agenti partono da `reviewableTopics`
+  (fuori le materie superate o archiviate, che restano «in pausa» nell'elenco).
+- «Segui come esame» / esame dal calendario: la casella «Togli dal calendario» parte spuntata solo
+  se l'evento non ha niente da perdere (`replaceEventByDefault`): un appello importato (`sourceUid`)
+  o con dettagli, note o link resta, perché l'esame non li copia e un nuovo import lo ricreerebbe.
+  Gli appelli già passati non si importano mai; il link per le persone è `BARB_EXAMS_PAGE_URL`, il
+  feed tecnico (`isTechnicalFeedUrl`) non si mostra.
 - Agenti MCP: `npm run agent` ascolta solo `127.0.0.1:47321` ed è per lo sviluppo
   e per lo stdio. Il sito pubblicato parla con l'hub Cloudflare
   (`VITE_AGENT_HUB_ORIGIN`), mai col loopback. La CSP deve elencare l'origine

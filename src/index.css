@@ -301,6 +301,33 @@ summary:focus-visible,
   display: none;
 }
 
+/* Striscia scorrevole: senza barra al tocco; con il mouse una barra sottile, unico modo di
+   scorrere di lato senza trackpad (la rotella muove solo la pagina). */
+.scroll-strip {
+  scrollbar-width: none;
+}
+
+.scroll-strip::-webkit-scrollbar {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .scroll-strip {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text) 28%, transparent) transparent;
+  }
+
+  .scroll-strip::-webkit-scrollbar {
+    display: block;
+    height: 6px;
+  }
+
+  .scroll-strip::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 28%, transparent);
+  }
+}
+
 .motion-safe {
   transition:
     transform 180ms ease,

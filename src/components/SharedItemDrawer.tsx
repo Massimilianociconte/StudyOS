@@ -18,6 +18,7 @@ import { useSharedStore } from "../store/useSharedStore";
 import { Button, DIMMED_DISABLED_FIELDS, Drawer, Field, Tag, inputClass } from "./ui";
 import { InlineConfirm } from "./InlineConfirm";
 import { SharedMark } from "./SharedMark";
+import { UnsavedPrompt } from "./UnsavedPrompt";
 
 interface FieldSpec extends SharedFieldRule {
   key: string;
@@ -93,7 +94,16 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Chiusura in attesa della risposta a «Scartare le modifiche?».
+  const [asking, setAsking] = useState(false);
   const readOnly = !origin.canEdit;
+  // Come negli editor dei propri dati: Esc, tocco fuori, Indietro, ✕ o «Annulla» con campi cambiati chiedono prima.
+  const dirty = !readOnly && fields.some((field) => (draft[field.key] ?? "") !== opened.draft[field.key]);
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) setAsking(true);
+    else onClose();
+  };
   const who = actorInSentence(origin.ownerName);
   const entity = entry.entity;
   const externalUrl = safeHref(typeof entity.externalUrl === "string" ? entity.externalUrl : null);
@@ -159,6 +169,18 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
             Chiudi
           </Button>
         </div>
+      ) : asking ? (
+        <UnsavedPrompt
+          title={SHARED_ITEM_TEXT.unsavedTitle}
+          text={SHARED_ITEM_TEXT.unsavedText(who)}
+          keep={SHARED_ITEM_TEXT.unsavedKeep}
+          discard={SHARED_ITEM_TEXT.unsavedDiscard}
+          onKeep={() => setAsking(false)}
+          onDiscard={() => {
+            setAsking(false);
+            onClose();
+          }}
+        />
       ) : confirmDelete ? (
         <InlineConfirm
           text={SHARED_ITEM_TEXT.deleteConfirm(title, who)}
@@ -174,7 +196,7 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
             Elimina
           </Button>
           <span className="flex-1" />
-          <Button variant="soft" onClick={onClose} disabled={busy}>
+          <Button variant="soft" onClick={requestClose} disabled={busy}>
             Annulla
           </Button>
           <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>
@@ -188,9 +210,7 @@ export function SharedItemDrawer({ entry, origin, title, onClose }: { entry: Sha
   return (
     <Drawer
       open
-      onClose={() => {
-        if (!busy) onClose();
-      }}
+      onClose={requestClose}
       eyebrow={<SharedMark origin={origin} />}
       title={title}
       width="max-w-[560px]"

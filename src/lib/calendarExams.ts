@@ -2,7 +2,8 @@
 // Statistiche li propongono quando l'elenco degli esami è vuoto, e il modulo «Aggiungi esame» si apre
 // già compilato con la chiave `exams.new` (schema `writeUiState` + `setActiveView`). Salvando, l'esame
 // può prendere il posto dell'evento: si toglie quella sola occorrenza, con Annulla. Testato.
-import type { Attachment, CalendarEvent, Note, Subject } from "../types";
+import { isValid, parseISO } from "date-fns";
+import type { Attachment, CalendarEvent, Exam, Note, Subject } from "../types";
 import type { RestoreVersion } from "./sharing";
 import { ENTITY_TYPES } from "./collections";
 import { daySpanOf } from "./calendarRender";
@@ -204,12 +205,22 @@ export const calendarExamEvents = <T extends CalendarEvent>(events: readonly T[]
 };
 
 /**
+ * Ora scritta nei dettagli di un appello importato («Orario ufficiale: 14:00», anche col vecchio
+ * « (Europe/Rome)» dopo), come "HH:mm"; null se non c'è.
+ */
+export const officialTimeOf = (description: unknown): string | null => {
+  if (typeof description !== "string") return null;
+  const match = /Orario ufficiale:\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/.exec(description);
+  return match ? `${match[1].padStart(2, "0")}:${match[2]}` : null;
+};
+
+/**
  * Modulo dell'esame dall'evento: la materia dell'evento se esiste ancora, altrimenti quella (non
- * archiviata) il cui nome compare nel titolo, il più lungo; giorno e ora dell'evento (tutto il giorno:
- * alle 9 di quel giorno, in ora locale).
+ * archiviata) il cui nome compare nel titolo, il più lungo; giorno e ora dell'evento. Tutto il giorno:
+ * l'orario ufficiale scritto nei dettagli (appelli importati), altrimenti le 9 di quel giorno, in ora locale.
  */
 export const examPrefillFromEvent = (
-  event: Pick<CalendarEvent, "title" | "start" | "end" | "allDay" | "subjectId">,
+  event: Pick<CalendarEvent, "title" | "start" | "end" | "allDay" | "subjectId"> & { description?: string },
   subjects: ReadonlyArray<Pick<Subject, "id" | "name" | "archived" | "status">>
 ): ExamPrefill => {
   const own = event.subjectId ? subjects.find((subject) => subject.id === event.subjectId) : undefined;
@@ -221,5 +232,67 @@ export const examPrefillFromEvent = (
         .filter((subject) => !subject.archived && subject.status !== "archived" && subject.name.trim() && lower.includes(subject.name.trim().toLocaleLowerCase("it")))
         .sort((a, b) => b.name.trim().length - a.name.trim().length)[0];
   const day = event.allDay === true ? daySpanOf(event)?.startDay : undefined;
-  return { subjectId: (own ?? byName)?.id ?? "", date: day ? `${day}T09:00` : event.start, title };
+  return { subjectId: (own ?? byName)?.id ?? "", date: day ? `${day}T${officialTimeOf(event.description) ?? "09:00"}` : event.start, title };
+};
+
+/**
+ * La casella «Togli dal calendario» parte spuntata solo per un evento senza nulla da perdere. Un evento
+ * importato (un appello: aula, iscrizione; un nuovo import lo ricreerebbe) o con dettagli, note o link
+ * resta: l'esame non li copia.
+ */
+export const replaceEventByDefault = (event: Partial<Pick<CalendarEvent, "sourceUid" | "description" | "notes" | "links">>) =>
+  !event.sourceUid &&
+  !(typeof event.description === "string" && event.description.trim()) &&
+  !(typeof event.notes === "string" && event.notes.trim()) &&
+  !(Array.isArray(event.links) && event.links.some((link) => typeof link === "string" && link.trim()));
+
+/**
+ * Riferimento `exams.new` per l'evento aperto nel calendario, come lo ritrova `findCalendarExam`: un
+ * giorno di una serie (ha `occurrenceDate`) è già l'occorrenza; un evento singolo si espande attorno al
+ * suo inizio (un tutto il giorno salvato come data senza fuso ha un altro inizio una volta espanso).
+ */
+export const calendarExamRefFor = (
+  events: readonly CalendarEvent[],
+  item: CalendarEvent & { occurrenceDate?: string }
+): CalendarExamRef | null => {
+  if (item.occurrenceDate) return calendarExamRef(item);
+  const start = new Date(item.start);
+  if (Number.isNaN(start.getTime())) return null;
+  const from = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 2);
+  const to = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 3);
+  const found = expandEvents(
+    events.filter((event) => !event.archived),
+    from,
+    to
+  ).find((occurrence) => occurrence.id === item.id);
+  return found ? calendarExamRef(found) : null;
+};
+
+/** Giorno locale (yyyy-MM-dd) di una data salvata, o "" se non si legge. */
+/** Data dell'esame in ora locale: la sola data ("2026-12-15", da un agente) è la mezzanotte di quel giorno, non UTC. */
+const examInstant = (value: string) => {
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : new Date(value);
+};
+
+const localDayOf = (value: string) => {
+  const date = examInstant(value);
+  return Number.isNaN(date.getTime()) ? "" : todayYmd(date);
+};
+
+/**
+ * C'è già un esame (non archiviato) di quella materia in quel giorno: «Segui come esame» non serve.
+ * Senza materia riconosciuta non si sa: si propone (la si sceglie nel modulo).
+ */
+export const hasExamOn = (exams: ReadonlyArray<Pick<Exam, "subjectId" | "date" | "archived">>, prefill: Pick<ExamPrefill, "subjectId" | "date">) => {
+  if (!prefill.subjectId) return false;
+  const day = localDayOf(prefill.date);
+  return Boolean(day) && exams.some((exam) => !exam.archived && exam.subjectId === prefill.subjectId && localDayOf(exam.date) === day);
+};
+
+/** Ora dell'esame per le voci del calendario ("14:30"); "" a mezzanotte (esame con la sola data) o data illeggibile. */
+export const examTimeLabel = (date: string) => {
+  const value = examInstant(date);
+  if (Number.isNaN(value.getTime()) || (value.getHours() === 0 && value.getMinutes() === 0)) return "";
+  return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
 };

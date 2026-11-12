@@ -16,6 +16,7 @@ import { resizeImageFile } from "../lib/files";
 import { SETTINGS_JUMP_EVENT, settingsSectionFromEvent, takeSettingsSection, type SettingsSection } from "../lib/settingsJump";
 import { DEGREE_PROGRAMS, DEGREE_PROGRAM_IDS, isDegreeProgramId, type DegreeProgramId } from "../lib/graduation";
 import { SETTINGS_TEXT } from "../lib/labels/settings";
+import { GETTING_STARTED_HIDDEN_KEY } from "../lib/deviceStorage";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { Button, Field, Panel, PasswordInput, Pill, SectionTitle, fileInputClass, inputClass, useBackCloses } from "../components/ui";
 import { Icon } from "../components/Icon";
@@ -73,6 +74,14 @@ const plainError = (error: unknown, fallback: string) => {
   if (/json valido|backup studyos non valido/i.test(text)) return "Questo file non è una copia di StudyOS. Scegli il file .json scaricato da qui.";
   if (/backup cifrato incompleto|backup senza dati/i.test(text)) return "Il file della copia è incompleto o danneggiato.";
   return text || fallback;
+};
+
+const readGuideHidden = () => {
+  try {
+    return localStorage.getItem(GETTING_STARTED_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
 };
 
 const formatDay = (iso: string) => {
@@ -382,6 +391,22 @@ export function SettingsView() {
   const degreeId: DegreeProgramId = isDegreeProgramId(preferences.degreeProgram) ? preferences.degreeProgram : "barb";
   const displayName = preferences.displayName.trim();
 
+  // «Nascondi la guida» della Home vale su questo dispositivo (localStorage, come la scrive la Home).
+  // Si propone di rimostrarla solo se la Home la mostrerebbe: con tutti i passi fatti resta nascosta comunque.
+  const [guideHidden, setGuideHidden] = useState(readGuideHidden);
+  const guideHasSteps = !(subjects.length && events.length && tasks.length && displayName);
+  const showGuideAgain = () => {
+    try {
+      localStorage.removeItem(GETTING_STARTED_HIDDEN_KEY);
+    } catch {
+      // storage non disponibile: la Home non l'aveva salvata, la guida è già in vista
+    }
+    setGuideHidden(false);
+    setMessage(SETTINGS_TEXT.appearance.guideShown);
+    // Il pulsante sparisce: il focus va sulla scelta accanto, non sul body.
+    focusInDetail("[data-start-view]");
+  };
+
   // Com'è impostata adesso ogni categoria: si legge nell'elenco senza aprirla.
   const summaries: Record<SettingsSection, string> = {
     profilo: `${displayName || SETTINGS_TEXT.summaries.noName} · ${DEGREE_PROGRAMS[degreeId].name}`,
@@ -557,7 +582,7 @@ export function SettingsView() {
                 </select>
               </Field>
               <Field label="Sezione all'apertura">
-                <select className={inputClass} value={settings.initialView} onChange={(event) => updateSettings({ initialView: event.target.value as UserSettings["initialView"] })}>
+                <select data-start-view className={inputClass} value={settings.initialView} onChange={(event) => updateSettings({ initialView: event.target.value as UserSettings["initialView"] })}>
                   <option value="dashboard">Home</option>
                   <option value="calendar">Calendario</option>
                   <option value="tasks">Attività</option>
@@ -566,6 +591,14 @@ export function SettingsView() {
                 </select>
               </Field>
             </div>
+            {guideHidden && guideHasSteps ? (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+                <p className="min-w-0 flex-1 text-sm font-bold text-[var(--muted)]">{SETTINGS_TEXT.appearance.guideHint}</p>
+                <Button variant="soft" icon="Eye" onClick={showGuideAgain}>
+                  {SETTINGS_TEXT.appearance.guideShow}
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
       </Panel>
@@ -573,7 +606,14 @@ export function SettingsView() {
 
     privacy: (
       <Panel>
-        <div className="grid grid-cols-1 gap-3">
+        {/* Modulo: Invio nel campo della password fa come il pulsante principale (proteggi o togli la password). */}
+        <form
+          className="grid grid-cols-1 gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void (vaultOn ? deactivateVault() : activateVault());
+          }}
+        >
           <div className="quiet-panel flex items-center gap-3 p-4">
             <span className="grid grid-cols-1 h-12 w-12 shrink-0 place-items-center rounded-super bg-[var(--accent)] text-[#10131d]">
               <Icon name={vaultOn ? "Lock" : "Shield"} className="h-5 w-5" />
@@ -620,7 +660,7 @@ export function SettingsView() {
           )}
           <div className="flex flex-wrap gap-2">
             {!vaultOn ? (
-              <Button icon="Lock" variant="primary" onClick={activateVault}>
+              <Button icon="Lock" variant="primary" type="submit">
                 Proteggi con una password
               </Button>
             ) : (
@@ -628,13 +668,13 @@ export function SettingsView() {
                 <Button icon="Lock" variant="soft" onClick={() => void lockNow()}>
                   Blocca ora
                 </Button>
-                <Button icon="Shield" variant="danger" onClick={deactivateVault}>
+                <Button icon="Shield" variant="danger" type="submit">
                   Togli la password
                 </Button>
               </>
             )}
           </div>
-        </div>
+        </form>
       </Panel>
     ),
 

@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { VIEW_ERROR_TEXT } from "../lib/labels";
 
 interface Props {
   children: ReactNode;
@@ -27,17 +28,15 @@ export class ViewErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
     return (
       <div role="alert" className="soft-panel border border-[var(--danger-border)] p-6">
-        <h2 className="text-2xl font-black">Questa sezione non si è caricata</h2>
-        <p className="mt-2 text-sm text-[var(--muted)]">
-          I tuoi dati sono al sicuro. Ricarica la pagina; se succede ancora, scarica una copia di sicurezza da Impostazioni → Backup.
-        </p>
+        <h2 className="text-2xl font-black">{VIEW_ERROR_TEXT.title}</h2>
+        <p className="mt-2 text-sm text-[var(--muted)]">{VIEW_ERROR_TEXT.body}</p>
         <p className="mt-2 break-words font-mono text-xs text-[var(--danger-text)]">{this.state.error.message}</p>
         <button
           type="button"
           onClick={() => window.location.reload()}
           className="mt-4 inline-flex min-h-11 items-center rounded-full bg-[var(--accent)] px-4 text-sm font-extrabold text-[#10131d]"
         >
-          Ricarica la pagina
+          {VIEW_ERROR_TEXT.reload}
         </button>
       </div>
     );

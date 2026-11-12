@@ -49,7 +49,12 @@ export const SETTINGS_TEXT = {
     studyTitle: "Corso e obiettivi"
   },
   appearance: {
-    comfortTitle: "Spazio e avvio"
+    comfortTitle: "Spazio e avvio",
+    /** Solo se la guida «Per iniziare» della Home è stata nascosta e ha ancora passi da fare. */
+    guideHint: "Hai nascosto la guida «Per iniziare» della Home.",
+    /** Corto: sui telefoni il pulsante sta su una riga (la frase sopra dice già «della Home»). */
+    guideShow: "Mostra di nuovo la guida",
+    guideShown: "Fatto: la guida «Per iniziare» è di nuovo nella Home."
   },
   backup: {
     downloadTitle: "Scarica una copia",

@@ -328,3 +328,28 @@ export const draftFromSession = (
     time: valid ? `${pad(start.getHours())}:${pad(start.getMinutes())}` : ""
   };
 };
+
+/** Sessioni «In programma» (pianificate, es. da un agente): dalla più vicina. */
+export const plannedSessions = <T extends Pick<StudySession, "status" | "start">>(sessions: readonly T[]): T[] =>
+  sessions.filter((session) => session.status === "planned").sort((a, b) => a.start.localeCompare(b.start));
+
+/** Minuti di una sessione in programma quando si segna «Fatta»: quelli previsti, poi quelli scritti, poi un'ora. */
+const plannedMinutesOf = (session: Pick<StudySession, "plannedMinutes" | "actualMinutes">) => {
+  const minutes = [session.plannedMinutes, session.actualMinutes].find((value) => Number.isFinite(value) && value >= 1) ?? 60;
+  return Math.min(SESSION_MINUTES_MAX, Math.round(minutes));
+};
+
+/**
+ * «Fatta» su una sessione in programma: diventa una sessione fatta con i minuti previsti. Resta all'ora
+ * prevista se a quest'ora sarebbe già finita; altrimenti (prevista più tardi, o ancora in corso) finisce
+ * adesso, perché una sessione fatta non finisce nel futuro. Da salvare con `updateSession`.
+ */
+export const plannedDonePatch = (
+  session: Pick<StudySession, "start" | "plannedMinutes" | "actualMinutes">,
+  now: number
+): Pick<StudySession, "status" | "actualMinutes" | "start" | "end"> => {
+  const minutes = plannedMinutesOf(session);
+  const planned = Date.parse(session.start);
+  const start = Number.isFinite(planned) && !sessionEndsInFuture(planned + minutes * MINUTE, now) ? planned : now - minutes * MINUTE;
+  return { status: "completed", actualMinutes: minutes, start: new Date(start).toISOString(), end: new Date(start + minutes * MINUTE).toISOString() };
+};

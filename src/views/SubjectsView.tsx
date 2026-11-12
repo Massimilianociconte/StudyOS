@@ -11,6 +11,8 @@ import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels
 import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
 import { HelpField } from "../components/HelpField";
 import { InlineConfirm } from "../components/InlineConfirm";
+import { UnsavedPrompt } from "../components/UnsavedPrompt";
+import { LinkedNotes } from "../components/NoteDrawer";
 import { Icon } from "../components/Icon";
 import { CourseIcon } from "../components/CourseIcon";
 import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
@@ -22,6 +24,8 @@ import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
 import { cfuBySemester, isArchivedSubject, nextSubjectColor, otherStatuses, semesterFilterOptions, subjectMenuItems, type SemesterFilter } from "../lib/subjectCards";
 import { safeCssColor } from "../lib/sharing";
+import { safeDataUrl, safeHref } from "../lib/safeUrl";
+import { DARK_INK, inkOn } from "../lib/subjectInk";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
 // Nomi leggibili dei colori per i lettori di schermo (i codici esadecimali non dicono nulla).
@@ -46,6 +50,9 @@ const STATUS_ICON: Record<Subject["status"], string> = {
   archived: "Archive"
 };
 const subjectColor = (subject: Subject) => safeCssColor(subject.color) || "var(--accent)";
+/** Inchiostro dell'icona sul colore della materia (anche un colore scuro scelto a mano); le icone del corso hanno il loro blu scuro. */
+const COURSE_INK = "#172333";
+const iconInk = (subject: Subject, course: boolean) => inkOn(subject.color, course ? COURSE_INK : DARK_INK);
 // Studio della materia (grafico con recharts): si carica solo aprendo il dettaglio.
 const SubjectStudyStats = lazy(() => import("../components/SubjectStudyStats"));
 
@@ -173,7 +180,7 @@ export function SubjectsView() {
             type="button"
             onClick={toggle}
             aria-expanded={expanded}
-            className="flex min-h-8 items-center gap-2 text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
+            className="flex min-h-11 items-center gap-2 text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
           >
             <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
             {label} · {items.length}
@@ -391,8 +398,8 @@ function SubjectCard({
   return (
     <article className="quiet-panel motion-safe relative flex min-w-0 flex-col p-3.5 hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--border))]">
       <div className="flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center overflow-hidden rounded-super" style={{ background: color }}>
-          {subject.cover ? <img src={subject.cover} alt="" className="h-full w-full object-cover" /> : course ? <CourseIcon course={course} className="h-9 w-9 text-[#172333]" /> : <Icon name={subject.icon} className="h-5 w-5 text-[#10131d]" />}
+        <span className="grid h-11 w-11 shrink-0 grid-cols-1 place-items-center overflow-hidden rounded-super" style={{ background: color, color: iconInk(subject, Boolean(course)) }}>
+          {subject.cover ? <img src={subject.cover} alt="" className="h-full w-full object-cover" /> : course ? <CourseIcon course={course} className="h-9 w-9" /> : <Icon name={subject.icon} className="h-5 w-5" />}
         </span>
         <button
           type="button"
@@ -439,7 +446,7 @@ function SubjectCard({
             type="button"
             onClick={() => openExam(exam.id)}
             aria-label={`${examPill}: ${SUBJECTS_TEXT.openExam(subject.name)}`}
-            className="motion-safe relative z-10 inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full bg-[var(--surface-soft)] px-3 text-xs font-black hover:bg-[var(--surface)]"
+            className="motion-safe relative z-10 inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full bg-[var(--surface-soft)] px-3 text-xs font-black hover:bg-[var(--surface)]"
           >
             <Icon name="GraduationCap" className="h-3.5 w-3.5 shrink-0 text-[var(--accent-ink)]" />
             <span className="min-w-0 truncate">{examPill}</span>
@@ -525,6 +532,10 @@ function SubjectDrawer({
   const [pending, setPending] = useState<(() => void) | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
   const [editingAttachment, setEditingAttachment] = useState<Attachment | null>(null);
+  const [confirmingMaterial, setConfirmingMaterial] = useState<string | null>(null);
+  // Argomento o materiale in modifica (salvati a parte) con cambi non salvati: anche loro chiedono prima di chiudere.
+  const [topicDirty, setTopicDirty] = useState(false);
+  const [materialDirty, setMaterialDirty] = useState(false);
   const fail = (text: string) => setFeedback({ text, error: true });
   const ok = (text: string) => setFeedback({ text, error: false });
 
@@ -544,10 +555,12 @@ function SubjectDrawer({
     setPending(null);
     setFeedback(null);
     setEditingAttachment(null);
+    setConfirmingMaterial(null);
   }, [subject?.id]);
 
   // Copertina, file e argomenti si salvano subito; nome, CFU, colore e note solo con «Salva modifiche».
-  const dirty = Boolean(subject) && JSON.stringify(draft) !== JSON.stringify(saved);
+  const draftDirty = Boolean(subject) && JSON.stringify(draft) !== JSON.stringify(saved);
+  const dirty = draftDirty || (Boolean(subject) && (topicDirty || materialDirty));
   const guard = (action: () => void) => {
     if (dirty) setPending(() => action);
     else action();
@@ -562,10 +575,15 @@ function SubjectDrawer({
       fail("Scrivi il nome della materia.");
       return;
     }
+    // Campo vuoto (o testo che il campo numerico non accetta): non vale 0, che cambierebbe le medie del libretto.
+    if (!draft.cfu.trim()) {
+      fail(SUBJECTS_TEXT.cfuMissing);
+      return;
+    }
     const cfu = Number(draft.cfu);
     const targetGrade = draft.targetGrade.trim() ? Number(draft.targetGrade) : undefined;
     if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) {
-      fail("CFU non validi: scrivi un numero da 0 a 60.");
+      fail(SUBJECTS_TEXT.cfuInvalid);
       return;
     }
     if (targetGrade !== undefined && (!Number.isFinite(targetGrade) || targetGrade < 18 || targetGrade > 31)) {
@@ -591,7 +609,11 @@ function SubjectDrawer({
   };
 
   const archived = subject ? isArchivedSubject(subject) : false;
-  const showTasks = (id: string) => goToView("tasks", [["tasks.subject", id, "tab"], ["tasks.filter", "all", "tab"]]);
+  // Andare in un'altra sezione chiude il dettaglio: con modifiche non salvate prima si chiede.
+  const showTasks = (id: string) => guard(() => goToView("tasks", [["tasks.subject", id, "tab"], ["tasks.filter", "all", "tab"]]));
+  const showExam = (examId: string) => guard(() => openExam(examId));
+  const showMaterials = (id: string) =>
+    guard(() => goToView("materials", [["materials.subject", id, "device"], ["materials.kind", "all", "device"], ["materials.query", "", "tab"]]));
 
   return (
     <Drawer
@@ -601,7 +623,7 @@ function SubjectDrawer({
       eyebrow={
         subject ? (
           <>
-            {course ? <span className="grid h-10 w-10 grid-cols-1 place-items-center rounded-xl" style={{ background: subjectColor(subject) }}><CourseIcon course={course} className="h-8 w-8 text-[#172333]" /></span> : <span className="h-3 w-3 rounded-full" style={{ background: subjectColor(subject) }} />}
+            {course ? <span className="grid h-10 w-10 grid-cols-1 place-items-center rounded-xl" style={{ background: subjectColor(subject), color: iconInk(subject, true) }}><CourseIcon course={course} className="h-8 w-8" /></span> : <span className="h-3 w-3 rounded-full" style={{ background: subjectColor(subject) }} />}
             {subjectSemester(subject) !== "non-definito" ? <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag> : null}
             <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
             <Tag>{subject.cfu} CFU</Tag>
@@ -613,7 +635,7 @@ function SubjectDrawer({
           // Stesso schema degli altri moduli: chiudere con dati cambiati chiede prima, sul posto.
           <div role="group" aria-label={SUBJECTS_TEXT.unsavedTitle} className="rounded-[18px] bg-[var(--surface-soft)] p-3">
             <p className="text-sm font-black">{SUBJECTS_TEXT.unsavedTitle}</p>
-            <p className="text-sm font-bold text-[var(--muted)]">{SUBJECTS_TEXT.unsavedText}</p>
+            <p className="text-sm font-bold text-[var(--muted)]">{draftDirty ? SUBJECTS_TEXT.unsavedText : SUBJECTS_TEXT.unsavedItemText}</p>
             <div className="mt-2 flex flex-wrap justify-end gap-2">
               <Button variant="soft" onClick={() => setPending(null)} autoFocus>
                 {SUBJECTS_TEXT.unsavedKeep}
@@ -663,13 +685,13 @@ function SubjectDrawer({
             </div>
             <StatTile label="Da fare" value={stats.openTasks.length} onClick={() => showTasks(subject.id)} />
             {stats.exam && isDateToDecide(stats.exam) ? (
-              <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.examToDecide} onClick={() => openExam(stats.exam!.id)} />
+              <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.examToDecide} onClick={() => showExam(stats.exam!.id)} />
             ) : stats.exam ? (
               <StatTile
                 label={daysUntil(stats.exam.date) < 0 ? SUBJECTS_TEXT.examPast : SUBJECTS_TEXT.examIn}
                 value={SUBJECTS_TEXT.examInValue(daysUntil(stats.exam.date))}
                 hint={shortDate(stats.exam.date)}
-                onClick={() => openExam(stats.exam!.id)}
+                onClick={() => showExam(stats.exam!.id)}
               />
             ) : (
               <StatTile label={SUBJECTS_TEXT.examIn} value="—" />
@@ -717,25 +739,30 @@ function SubjectDrawer({
             {/* fieldset e non label: dentro un label il primo colore diventerebbe "il" campo e un tocco sulla scritta lo sceglierebbe. */}
             <fieldset className="min-w-0">
               <legend className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">Colore</legend>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {SWATCHES.map((swatch) => (
-                  <button
-                    key={swatch}
-                    type="button"
-                    aria-label={swatchLabel(swatch)}
-                    title={swatchLabel(swatch)}
-                    aria-pressed={draft.color.toLowerCase() === swatch.toLowerCase()}
-                    onClick={() => setDraft((value) => ({ ...value, color: swatch }))}
-                    className={`h-8 w-8 rounded-full border-2 ${draft.color.toLowerCase() === swatch.toLowerCase() ? "border-[var(--text)]" : "border-transparent"}`}
-                    style={{ background: swatch }}
-                  />
-                ))}
+              {/* Pulsanti da 44 px con il cerchio colorato da 32 dentro: si toccano bene senza sembrare più grandi. */}
+              <div className="flex flex-wrap items-center gap-0.5">
+                {SWATCHES.map((swatch) => {
+                  const chosen = draft.color.toLowerCase() === swatch.toLowerCase();
+                  return (
+                    <button
+                      key={swatch}
+                      type="button"
+                      aria-label={swatchLabel(swatch)}
+                      title={swatchLabel(swatch)}
+                      aria-pressed={chosen}
+                      onClick={() => setDraft((value) => ({ ...value, color: swatch }))}
+                      className="grid h-11 w-11 grid-cols-1 place-items-center rounded-full"
+                    >
+                      <span className={`h-8 w-8 rounded-full border-2 ${chosen ? "border-[var(--text)]" : "border-transparent"}`} style={{ background: swatch }} />
+                    </button>
+                  );
+                })}
                 <input
                   type="color"
                   aria-label="Colore personalizzato"
                   value={draft.color.startsWith("#") ? draft.color : "#7CF7C8"}
                   onChange={(event) => setDraft((value) => ({ ...value, color: event.target.value }))}
-                  className="h-8 w-10 rounded-full border border-[var(--border)] bg-transparent p-0.5"
+                  className="h-11 w-11 rounded-full border border-[var(--border)] bg-transparent p-1"
                 />
               </div>
             </fieldset>
@@ -748,7 +775,7 @@ function SubjectDrawer({
             <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-xs font-black uppercase text-[var(--faint)]">Materiali · {stats.materials.length}</h4>
               <div className="flex flex-wrap justify-end gap-1.5">
-                <label className="motion-safe inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]">
+                <label className="motion-safe inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]">
                   <Icon name="Upload" className="h-3.5 w-3.5" /> Carica un file
                   <input
                     type="file"
@@ -766,7 +793,7 @@ function SubjectDrawer({
                     }}
                   />
                 </label>
-                <label className="motion-safe inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]">
+                <label className="motion-safe inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full bg-[var(--surface-strong)] px-3 text-xs font-black hover:bg-[var(--surface)]">
                   <Icon name="Image" className="h-3.5 w-3.5" /> {subject.cover ? "Cambia copertina" : "Copertina"}
                   <input
                     type="file"
@@ -788,7 +815,7 @@ function SubjectDrawer({
                   <button
                     type="button"
                     onClick={() => void updateSubject(subject.id, { cover: undefined })}
-                    className="min-h-8 rounded-full px-3 text-xs font-black text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+                    className="min-h-11 rounded-full px-3 text-xs font-black text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
                   >
                     Rimuovi copertina
                   </button>
@@ -797,39 +824,83 @@ function SubjectDrawer({
             </div>
             {stats.materials.length ? (
               <ul className="grid grid-cols-1 gap-1">
-                {stats.materials.map((attachment) =>
-                  editingAttachment?.id === attachment.id ? (
-                    <li key={attachment.id}>
-                      <AttachmentInlineEditor
-                        attachment={attachment}
-                        onCancel={() => setEditingAttachment(null)}
-                        onSave={async (patch) => {
-                          await updateAttachment(attachment.id, patch);
-                          setEditingAttachment(null);
-                        }}
-                      />
+                {stats.materials.map((attachment) => {
+                  if (editingAttachment?.id === attachment.id) {
+                    return (
+                      <li key={attachment.id}>
+                        <AttachmentInlineEditor
+                          attachment={attachment}
+                          onDirtyChange={setMaterialDirty}
+                          onCancel={() => setEditingAttachment(null)}
+                          onSave={async (patch) => {
+                            await updateAttachment(attachment.id, patch);
+                            setEditingAttachment(null);
+                          }}
+                        />
+                      </li>
+                    );
+                  }
+                  // Come in Materiali: un link si apre in un'altra scheda, un file si scarica.
+                  const href = attachment.externalUrl ? safeHref(attachment.externalUrl) : undefined;
+                  const download = !href ? safeDataUrl(attachment.dataUrl) : undefined;
+                  const deleteId = `subject-material-delete-${attachment.id}`;
+                  return (
+                    <li key={attachment.id} className="grid grid-cols-1 gap-1.5">
+                      <div className="group flex min-w-0 items-center gap-1 rounded-[14px] pl-2 hover:bg-[var(--surface-soft)]">
+                        <Icon name={ATTACHMENT_KIND_ICON[attachmentKind(attachment)]} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+                        {href || download ? (
+                          <a
+                            href={href ?? download}
+                            {...(href ? { target: "_blank", rel: "noreferrer" } : { download: attachment.name })}
+                            aria-label={href ? SUBJECTS_TEXT.openMaterial(attachment.name) : SUBJECTS_TEXT.downloadMaterial(attachment.name)}
+                            className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 px-1 text-sm font-bold underline-offset-2 hover:underline"
+                          >
+                            <span className="one-line-safe min-w-0">{attachment.name}</span>
+                            <Icon name={href ? "ExternalLink" : "Download"} className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+                          </a>
+                        ) : (
+                          <span className="one-line-safe min-w-0 flex-1 px-1 text-sm font-bold">{attachment.name}</span>
+                        )}
+                        <IconButton icon="PenLine" label={SUBJECTS_TEXT.editMaterial(attachment.name)} className="bg-transparent" onClick={() => setEditingAttachment(attachment)} />
+                        <IconButton
+                          id={deleteId}
+                          icon="Trash2"
+                          label={SUBJECTS_TEXT.removeMaterial(attachment.name)}
+                          aria-expanded={confirmingMaterial === attachment.id}
+                          className="bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
+                          onClick={() => setConfirmingMaterial(attachment.id)}
+                        />
+                      </div>
+                      {confirmingMaterial === attachment.id ? (
+                        <InlineConfirm
+                          text={SUBJECTS_TEXT.removeMaterialConfirm(attachment.name.length > 80 ? `${attachment.name.slice(0, 79)}…` : attachment.name)}
+                          confirmLabel={SUBJECTS_TEXT.removeMaterialYes}
+                          icon="Trash2"
+                          onCancel={() => {
+                            setConfirmingMaterial(null);
+                            window.requestAnimationFrame(() => document.getElementById(deleteId)?.focus());
+                          }}
+                          onConfirm={() => {
+                            setConfirmingMaterial(null);
+                            void deleteAttachment(attachment.id);
+                          }}
+                        />
+                      ) : null}
                     </li>
-                  ) : (
-                    <li key={attachment.id} className="group flex min-w-0 items-center gap-2 rounded-[14px] px-2 py-1.5 hover:bg-[var(--surface-soft)]">
-                      <Icon name={ATTACHMENT_KIND_ICON[attachmentKind(attachment)]} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
-                      <span className="one-line-safe min-w-0 flex-1 text-sm font-bold">{attachment.name}</span>
-                      <IconButton icon="PenLine" label={`Modifica ${attachment.name}`} className="h-8 w-8 bg-transparent" onClick={() => setEditingAttachment(attachment)} />
-                      <IconButton
-                        icon="Trash2"
-                        label={`Elimina ${attachment.name}`}
-                        className="h-8 w-8 bg-transparent text-[var(--danger-text)] hover:bg-[var(--danger-bg)]"
-                        onClick={() => {
-                          const label = attachment.name.length > 80 ? `${attachment.name.slice(0, 79)}…` : attachment.name;
-                          if (window.confirm(`Eliminare "${label}"? Il materiale viene tolto dall'app e non si può recuperare.`)) void deleteAttachment(attachment.id);
-                        }}
-                      />
-                    </li>
-                  )
-                )}
+                  );
+                })}
               </ul>
             ) : (
               <p className="rounded-[14px] border border-dashed border-[var(--border)] p-3 text-sm text-[var(--muted)]">Ancora nessun materiale: carica qui dispense, appunti o slide di questa materia.</p>
             )}
+            <button
+              type="button"
+              onClick={() => showMaterials(subject.id)}
+              className="mt-1 inline-flex min-h-11 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+            >
+              {SUBJECTS_TEXT.seeInMaterials}
+              <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+            </button>
           </section>
 
           <section>
@@ -838,7 +909,7 @@ function SubjectDrawer({
               <button
                 type="button"
                 onClick={() => showTasks(subject.id)}
-                className="inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+                className="inline-flex min-h-11 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
               >
                 {SUBJECTS_TEXT.allTasks}
                 <Icon name="ChevronRight" className="h-3.5 w-3.5" />
@@ -851,9 +922,9 @@ function SubjectDrawer({
                     {/* Ogni attività si apre in Attività (la sezione legge `tasks.editing`). */}
                     <button
                       type="button"
-                      onClick={() => goToView("tasks", [["tasks.editing", task.id, "tab"]])}
+                      onClick={() => guard(() => goToView("tasks", [["tasks.editing", task.id, "tab"]]))}
                       aria-label={SUBJECTS_TEXT.openTask(task.title)}
-                      className="motion-safe flex min-h-10 w-full min-w-0 items-center gap-2 rounded-[12px] px-2 text-left text-sm hover:bg-[var(--surface-soft)]"
+                      className="motion-safe flex min-h-11 w-full min-w-0 items-center gap-2 rounded-[12px] px-2 text-left text-sm hover:bg-[var(--surface-soft)]"
                     >
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: subjectColor(subject) }} />
                       <span className="one-line-safe min-w-0 flex-1 font-bold">{task.title}</span>
@@ -868,9 +939,12 @@ function SubjectDrawer({
             )}
           </section>
 
+          {/* Note collegate alla materia (create da un agente): niente se non ce ne sono. */}
+          <LinkedNotes entityType="subject" id={subject.id} />
+
           <section>
             <h4 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">Argomenti da ripassare</h4>
-            <TopicManager subjects={subjects} subjectId={subject.id} />
+            <TopicManager subjects={subjects} subjectId={subject.id} onDirtyChange={setTopicDirty} />
           </section>
         </div>
       ) : null}
@@ -881,43 +955,69 @@ function SubjectDrawer({
 function AttachmentInlineEditor({
   attachment,
   onCancel,
-  onSave
+  onSave,
+  onDirtyChange
 }: {
   attachment: Attachment;
   onCancel: () => void;
   onSave: (patch: Partial<Attachment>) => Promise<void>;
+  /** Cambi non salvati: il dettaglio della materia chiede prima di chiudere. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
-  const [name, setName] = useState(attachment.name);
-  const [description, setDescription] = useState(attachment.description);
-  const [tags, setTags] = useState(attachment.tags.join(", "));
+  // I campi com'erano all'apertura: una sync nel frattempo non rende «cambiato» il materiale.
+  const [initial] = useState(() => ({ name: attachment.name, description: attachment.description, tags: attachment.tags.join(", ") }));
+  const [name, setName] = useState(initial.name);
+  const [description, setDescription] = useState(initial.description);
+  const [tags, setTags] = useState(initial.tags);
+  const [asking, setAsking] = useState(false);
+  const dirty = name !== initial.name || description !== initial.description || tags !== initial.tags;
+  const report = useRef(onDirtyChange);
+  useEffect(() => {
+    report.current = onDirtyChange;
+  });
+  useEffect(() => {
+    report.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => report.current?.(false), []);
   return (
     <div className="grid grid-cols-1 gap-2 rounded-[16px] bg-[var(--surface-soft)] p-3">
       <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} aria-label="Nome del materiale" />
       <input className={inputClass} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Descrizione (facoltativa)" aria-label="Descrizione (facoltativa)" />
       <input className={inputClass} value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Etichette separate da virgola (Es. appunti, esame)" aria-label="Etichette separate da virgola (facoltative)" />
-      <div className="flex justify-end gap-2">
-        <Button variant="soft" onClick={onCancel} className="min-h-9">
-          Annulla
-        </Button>
-        <Button
-          variant="primary"
-          icon="Check"
-          className="min-h-9"
-          disabled={!name.trim()}
-          onClick={() =>
-            void onSave({
-              name: name.trim(),
-              description: description.trim(),
-              tags: tags
-                .split(",")
-                .map((tag) => tag.trim())
-                .filter(Boolean)
-            })
-          }
-        >
-          Salva modifiche
-        </Button>
-      </div>
+      {asking && dirty ? (
+        <UnsavedPrompt
+          className="bg-[var(--surface)]"
+          title={SUBJECTS_TEXT.unsavedTitle}
+          text={SUBJECTS_TEXT.materialUnsavedText}
+          keep={SUBJECTS_TEXT.unsavedKeep}
+          discard={SUBJECTS_TEXT.unsavedDiscard}
+          onKeep={() => setAsking(false)}
+          onDiscard={onCancel}
+        />
+      ) : (
+        <div className="flex justify-end gap-2">
+          <Button variant="soft" onClick={() => (dirty ? setAsking(true) : onCancel())}>
+            {SUBJECTS_TEXT.cancel}
+          </Button>
+          <Button
+            variant="primary"
+            icon="Check"
+            disabled={!name.trim()}
+            onClick={() =>
+              void onSave({
+                name: name.trim(),
+                description: description.trim(),
+                tags: tags
+                  .split(",")
+                  .map((tag) => tag.trim())
+                  .filter(Boolean)
+              })
+            }
+          >
+            {SUBJECTS_TEXT.saveChanges}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { PRIORITY_TONE } from "../../lib/labels";
 import { CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
 import { subjectColor, subjectName } from "../../lib/selectors";
+import { examTimeLabel } from "../../lib/calendarExams";
 import { EVENT_TYPE_COLORS, eventColorStyle, eventTypeIcon } from "../../lib/eventColors";
 import { safeCssColor } from "../../lib/sharing";
 import { useEventTheme } from "./bars";
@@ -60,14 +61,21 @@ export function TaskChip({ task, handlers, roomy = false }: { task: Task; handle
   );
 }
 
-export function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Subjects; onOpen: (id: string) => void }) {
+/**
+ * Esame come voce: con l'ora davanti, se ne ha una (un esame con la sola data è a mezzanotte e non la
+ * mostra). Negli elenchi (telefono, Agenda) `roomy`: riga di 44 px come le attività.
+ */
+export function ExamChip({ exam, subjects, onOpen, roomy = false }: { exam: Exam; subjects: Subjects; onOpen: (id: string) => void; roomy?: boolean }) {
   // Stile della tipologia Esame (come gli eventi d'esame), con il pallino della materia.
   const style = eventColorStyle(EVENT_TYPE_COLORS.exam, useEventTheme());
   const name = subjectName(subjects, exam.subjectId);
+  const time = examTimeLabel(exam.date);
   return (
     <button
       type="button"
-      className="flex w-full min-w-0 items-center gap-1.5 rounded-[10px] px-1.5 py-1 text-left text-[11px] font-black hover:brightness-110"
+      className={`flex w-full min-w-0 items-center text-left font-black hover:brightness-110 ${
+        roomy ? "min-h-11 gap-2 rounded-[12px] px-3 py-1 text-xs" : "gap-1.5 rounded-[10px] px-1.5 py-1 text-[11px]"
+      }`}
       style={{ background: style.background, color: style.text, boxShadow: `inset 3px 0 0 ${style.border}` }}
       title={CALENDAR_VIEW_TEXT.examTitle(name, exam.preparation)}
       onClick={(event) => {
@@ -76,9 +84,10 @@ export function ExamChip({ exam, subjects, onOpen }: { exam: Exam; subjects: Sub
         onOpen(exam.id);
       }}
     >
-      <Icon name={eventTypeIcon("exam")} className="h-3 w-3 shrink-0" />
+      <Icon name={eventTypeIcon("exam")} className={`${roomy ? "h-3.5 w-3.5" : "h-3 w-3"} shrink-0`} />
       <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: safeCssColor(subjectColor(subjects, exam.subjectId)) || "var(--accent)" }} />
-      {/* Nome accessibile = testo visibile ("Esame · Analisi"), poi l'azione detta solo a voce. */}
+      {/* Nome accessibile = testo visibile ("14:30 Esame · Analisi"), poi l'azione detta solo a voce. */}
+      {time ? <span className="shrink-0 tabular-nums">{time}</span> : null}
       <span className="min-w-0 truncate">{CALENDAR_VIEW_TEXT.exam(name)}</span>
       <span className="sr-only">, {CALENDAR_VIEW_TEXT.openAction}</span>
     </button>

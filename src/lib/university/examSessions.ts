@@ -42,13 +42,37 @@ const currentFbgSessions: BarbExamSession[] = updatedFbg.groups.flatMap((group) 
   })
 );
 const previousExamData = examJson as unknown as BarbExamDataset;
+
+/** Giorno di una verifica ("9 novembre 2026"), in ora di Roma come le date ufficiali; il testo grezzo se non si legge. */
+export const barbCheckedDay = (iso: string): string => {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? iso
+    : new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", day: "numeric", month: "long", year: "numeric" }).format(date);
+};
+
+/**
+ * Pagina pubblica degli appelli BARB (tra le fonti verificate in `sources`, vedi docs/barb-exams.md):
+ * calendario leggibile e prenotazione su Unimia. È il link per chi studia; il feed JSON resta la provenienza.
+ */
+export const BARB_EXAMS_PAGE_URL = "https://barb.cdl.unimi.it/it/studiare/appelli-esame";
+
+/** Feed tecnico degli appelli (`/foProssimiEsami/json/<codice>`): dati per l'app, non una pagina da leggere. */
+export const isTechnicalFeedUrl = (url: string) => {
+  try {
+    return /\/foProssimiEsami\/json\//i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+};
+
 export const BARB_EXAM_DATA: BarbExamDataset = {
   ...previousExamData, checkedAt: updatedFbg.checkedAt,
   // FBG is refreshed as a complete feed; retain independently verified legacy F92 courses.
   sessions: [...currentFbgSessions, ...previousExamData.sessions.filter(session => session.courseId.startsWith("f92-"))]
     .sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "") || a.courseId.localeCompare(b.courseId)),
   sources: previousExamData.sources.map(source => source.url === updatedFbg.sourceUrl
-    ? { ...source, status: "verificato" as const, note: `Feed FBG completo, aggiornato il ${updatedFbg.checkedAt}.` }
+    ? { ...source, status: "verificato" as const, note: `Feed FBG completo, aggiornato il ${barbCheckedDay(updatedFbg.checkedAt)}.` }
     : source),
 };
 export const BARB_EXAM_SESSIONS = BARB_EXAM_DATA.sessions;

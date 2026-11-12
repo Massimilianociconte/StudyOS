@@ -6,6 +6,7 @@ import { it } from "date-fns/locale";
 import type { Exam, Task } from "../../types";
 import { Button, EmptyState } from "../ui";
 import { daysUntil } from "../../lib/selectors";
+import { capitalizeFirst } from "../../lib/labels";
 import { todayYmd } from "../../lib/datePicker";
 import type { Holiday } from "../../lib/holidays";
 import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT } from "../../lib/labels/calendar";
@@ -79,7 +80,8 @@ export function Agenda({
   const dayTitle = (day: Date) => {
     const diff = daysUntil(day);
     const base = format(day, "EEEE d MMMM", { locale: it });
-    return diff === 0 ? CALENDAR_VIEW_TEXT.todayTitle(base) : diff === 1 ? CALENDAR_VIEW_TEXT.tomorrowTitle(base) : base;
+    // «Oggi · giovedì 12 novembre», «Lunedì 16 novembre»: maiuscola solo all'inizio, come la Home.
+    return diff === 0 ? CALENDAR_VIEW_TEXT.todayTitle(base) : diff === 1 ? CALENDAR_VIEW_TEXT.tomorrowTitle(base) : capitalizeFirst(base);
   };
 
   return (
@@ -104,7 +106,7 @@ export function Agenda({
             aria-label={dayTitle(section.day)}
             className="grid grid-cols-[minmax(0,1fr)] gap-1 md:grid-cols-[180px_minmax(0,1fr)] md:gap-4"
           >
-            <h3 className={`pt-2 text-sm font-black capitalize ${isSameDay(section.day, new Date()) ? "text-[var(--accent-ink)]" : ""}`}>{dayTitle(section.day)}</h3>
+            <h3 className={`pt-2 text-sm font-black ${isSameDay(section.day, new Date()) ? "text-[var(--accent-ink)]" : ""}`}>{dayTitle(section.day)}</h3>
             <ul className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
               {section.holidays.length ? (
                 <li className="flex flex-wrap gap-1 px-2.5 py-1">
@@ -115,7 +117,7 @@ export function Agenda({
               ) : null}
               {section.exams.map((exam) => (
                 <li key={exam.id} className="px-2.5 py-1">
-                  <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} />
+                  <ExamChip exam={exam} subjects={handlers.subjects} onOpen={handlers.onOpenExam} roomy />
                 </li>
               ))}
               {section.events.map((item) => (

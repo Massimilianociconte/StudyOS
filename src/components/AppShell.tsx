@@ -6,7 +6,7 @@ import type { AppView } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 // Già nel bundle iniziale (lo importa useStudyStore): solo lo stato, mai shareSync o supabase.
 import { useSharedStore } from "../store/useSharedStore";
-import { SHARE_NOTICE_TEXT } from "../lib/labels";
+import { SHARE_NOTICE_TEXT, SHELL_TEXT } from "../lib/labels";
 import { Icon } from "./Icon";
 import { Button, Drawer, IconButton } from "./ui";
 import { NotificationsBell } from "./NotificationsBell";
@@ -61,11 +61,22 @@ const settingsItem: NavItem = { view: "settings", label: "Impostazioni", short: 
 const MOBILE_PRIMARY: AppView[] = ["dashboard", "calendar", "tasks", "study"];
 const mobileItems = navGroups[0].items.filter((item) => MOBILE_PRIMARY.includes(item.view));
 
+/** Per quanto resta in vista la conferma dell'aggiunta rapida. */
+const QUICK_ADD_DONE_MS = 5000;
+
 export function AppShell({ children }: PropsWithChildren) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddMode, setQuickAddMode] = useState<QuickAddMode>("task");
   const [moreOpen, setMoreOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  // Conferma dell'aggiunta rapida (cosa si è creato e dove). Oggetto, non testo: la stessa frase detta
+  // di nuovo riparte da capo.
+  const [quickAddDone, setQuickAddDone] = useState<{ text: string } | null>(null);
+  useEffect(() => {
+    if (!quickAddDone) return;
+    const timer = window.setTimeout(() => setQuickAddDone(null), QUICK_ADD_DONE_MS);
+    return () => window.clearTimeout(timer);
+  }, [quickAddDone]);
 
   // Le viste (es. i primi passi della Home) aprono l'aggiunta rapida già sul tipo giusto.
   useEffect(() => {
@@ -182,7 +193,7 @@ export function AppShell({ children }: PropsWithChildren) {
             </nav>
             <div className="mt-2 flex shrink-0 flex-col items-center gap-2">
               {settings.security.mode === "vault" ? (
-                <IconButton icon="Lock" label="Blocca StudyOS (servirà la password per riaprirlo)" onClick={() => void lockVault().catch(() => undefined)} />
+                <IconButton icon="Lock" label={SHELL_TEXT.lockAria} onClick={() => void lockVault().catch(() => undefined)} />
               ) : null}
               <CloudStatusBadge compact onClick={() => openSettings("account")} />
             </div>
@@ -234,10 +245,10 @@ export function AppShell({ children }: PropsWithChildren) {
                   icon="Lock"
                   variant="soft"
                   className="mt-3 w-full"
-                  title="Chiude StudyOS: per riaprirlo servirà la password"
+                  title={SHELL_TEXT.lockTitle}
                   onClick={() => void lockVault().catch(() => undefined)}
                 >
-                  Blocca StudyOS
+                  {SHELL_TEXT.lock}
                 </Button>
               ) : null}
               <CloudStatusBadge onClick={() => openSettings("account")} />
@@ -255,10 +266,12 @@ export function AppShell({ children }: PropsWithChildren) {
                 <p className="text-xs font-black uppercase text-[var(--faint)]">Oggi</p>
                 <p className="text-sm font-extrabold capitalize">{todayLabel}</p>
               </div>
+              {/* Sui telefoni lo spazio va alla ricerca: il tema resta in Impostazioni → Aspetto e avvio. */}
               <IconButton
                 icon={settings.themeMode === "light" ? "Sun" : "Moon"}
                 label={settings.themeMode === "light" ? "Passa al tema scuro" : "Passa al tema chiaro"}
                 onClick={() => updateSettings({ themeMode: settings.themeMode === "light" ? "dark" : "light" })}
+                className="hidden sm:grid"
               />
               <NotificationsBell onOpen={() => setNotificationsOpen(true)} />
               <button
@@ -322,7 +335,8 @@ export function AppShell({ children }: PropsWithChildren) {
                 href="https://webnovis.com"
                 target="_blank"
                 rel="nofollow noopener noreferrer"
-                className="font-extrabold text-[var(--text)] underline decoration-[var(--accent)] underline-offset-2 transition-colors hover:opacity-80"
+                // Aspetto invariato; l'area di tocco arriva a 44 px di altezza (il testo ne è alto ~15).
+                className="relative font-extrabold text-[var(--text)] underline decoration-[var(--accent)] underline-offset-2 transition-colors after:absolute after:inset-x-[-8px] after:inset-y-[-15px] after:content-[''] hover:opacity-80"
               >
                 WebNovis
               </a>
@@ -343,7 +357,8 @@ export function AppShell({ children }: PropsWithChildren) {
 
       <nav
         style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
-        className="fixed left-3 right-3 z-40 mx-auto grid max-w-[560px] grid-cols-5 gap-1 rounded-[30px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_78%,transparent)] p-2 backdrop-blur-2xl sm:hidden"
+        // Sotto i 360 px meno margini e testo appena più piccolo, così «Calendario» si legge intero.
+        className="fixed left-3 right-3 z-40 mx-auto grid max-w-[560px] grid-cols-5 gap-1 rounded-[30px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_78%,transparent)] p-2 backdrop-blur-2xl max-[359px]:left-2 max-[359px]:right-2 max-[359px]:gap-0.5 max-[359px]:p-1.5 sm:hidden"
         aria-label="Navigazione mobile"
       >
         {mobileItems.map((item) => {
@@ -354,7 +369,7 @@ export function AppShell({ children }: PropsWithChildren) {
               type="button"
               onClick={() => setActiveView(item.view)}
               aria-current={active ? "page" : undefined}
-              className={`grid min-h-14 min-w-0 place-items-center rounded-[22px] text-[10.5px] font-black tracking-tight ${
+              className={`grid min-h-14 min-w-0 place-items-center rounded-[22px] text-[10.5px] font-black tracking-tight max-[359px]:text-[10px] ${
                 active ? "bg-[var(--accent)] text-[#10131d]" : "text-[var(--muted)]"
               }`}
             >
@@ -368,7 +383,7 @@ export function AppShell({ children }: PropsWithChildren) {
           onClick={() => setMoreOpen(true)}
           aria-haspopup="dialog"
           aria-label="Altre sezioni"
-          className={`grid min-h-14 min-w-0 place-items-center rounded-[22px] text-[10.5px] font-black tracking-tight ${
+          className={`grid min-h-14 min-w-0 place-items-center rounded-[22px] text-[10.5px] font-black tracking-tight max-[359px]:text-[10px] ${
             MOBILE_PRIMARY.includes(activeView) ? "text-[var(--muted)]" : "bg-[var(--accent)] text-[#10131d]"
           }`}
         >
@@ -418,12 +433,46 @@ export function AppShell({ children }: PropsWithChildren) {
             }}
           />
         </div>
+        {/* Sui telefoni la barra laterale non c'è: il blocco con la password dell'app sta qui. */}
+        {settings.security.mode === "vault" ? (
+          <Button
+            icon="Lock"
+            variant="soft"
+            className="mt-3 w-full"
+            title={SHELL_TEXT.lockTitle}
+            onClick={() => {
+              setMoreOpen(false);
+              void lockVault().catch(() => undefined);
+            }}
+          >
+            {SHELL_TEXT.lock}
+          </Button>
+        ) : null}
       </Drawer>
 
       <TaskTimerReminder />
       <AgentDock />
       <StudyTimerWatcher />
-      <QuickAddModal open={quickAddOpen} initialMode={quickAddMode} onClose={() => setQuickAddOpen(false)} />
+      <QuickAddModal
+        open={quickAddOpen}
+        initialMode={quickAddMode}
+        onClose={() => setQuickAddOpen(false)}
+        onSaved={(text) => setQuickAddDone({ text })}
+      />
+      {/* Conferma dell'aggiunta rapida, in alto e sopra la pagina (in basso ci sono barra, «+» e avvisi).
+          Non si tocca (i tocchi passano sotto) e sparisce da sola; la regione resta montata per gli screen reader. */}
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none fixed inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))] z-40 mx-auto max-w-md"
+      >
+        {quickAddDone ? (
+          <p className="safe-text flex items-start gap-2 rounded-[22px] border border-[var(--success-border)] bg-[var(--bg-2)] p-3 text-sm font-bold text-[var(--success-text)] shadow-soft">
+            <Icon name="Check" className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1">{quickAddDone.text}</span>
+          </p>
+        ) : null}
+      </div>
       {notificationsOpen ? <NotificationsPanel onClose={() => setNotificationsOpen(false)} /> : null}
     </main>
   );

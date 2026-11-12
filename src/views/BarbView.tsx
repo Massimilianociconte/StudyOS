@@ -119,7 +119,7 @@ function FilterChip({ active, color, onClick, children }: { active: boolean; col
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`motion-safe inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-full border px-3 text-xs font-extrabold ${
+      className={`motion-safe inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border px-3 text-xs font-extrabold ${
         active ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
       }`}
     >
@@ -367,12 +367,12 @@ function CoursesTab({
             onChange={setSemester}
             options={semesterOptions}
           />
-          <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
+          <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
             <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={myPlanOnly} onChange={(event) => setMyPlanOnly(event.target.checked)} />
             Solo le mie materie ({inSubjects.size})
           </label>
           {notOffered.length ? (
-            <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
+            <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full px-2 text-xs font-black text-[var(--muted)]">
               <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={hideNotOffered} onChange={(e) => setHideNotOffered(e.target.checked)} />
               Nascondi i non attivi quest'anno ({notOffered.length})
             </label>
@@ -596,7 +596,7 @@ function TextSection({ title, value }: { title: string; value: string | null | u
         <>
           <p className={`whitespace-pre-line text-sm leading-relaxed ${long && !expanded ? "line-clamp-[7]" : ""}`}>{value}</p>
           {long ? (
-            <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-1 text-sm font-black text-[var(--accent-ink)]">
+            <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-1 inline-flex min-h-11 items-center text-sm font-black text-[var(--accent-ink)]">
               {expanded ? "Mostra meno" : "Mostra tutto"}
             </button>
           ) : null}

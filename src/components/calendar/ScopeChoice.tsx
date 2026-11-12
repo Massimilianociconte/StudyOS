@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button, IconButton, useDialogLayer } from "../ui";
+import { Button, IconButton, useBackCloses, useDialogLayer } from "../ui";
 import { Icon } from "../Icon";
 import type { OccurrenceScope } from "../../lib/repeat";
 import type { ScopeOption } from "../../lib/eventEditor";
@@ -34,6 +34,11 @@ export function ScopeChoice({
   const panelRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   useDialogLayer(true, { panelRef, areaRef: backdropRef, onEscape: onCancel });
+  // Indietro come Esc e Annulla: niente scelta, il modulo sotto resta aperto con le sue modifiche.
+  useBackCloses(true, () => {
+    onCancel();
+    return true;
+  });
 
   return createPortal(
     <div

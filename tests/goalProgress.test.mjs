@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { goalDraftChanged, goalDraftOf, goalDraftWith, goalMove, goalStep, statusForProgress } from "../src/lib/goalProgress.ts";
+import { goalDeadlineLabel, goalDraftChanged, goalDraftOf, goalDraftWith, goalMove, goalStep, statusForProgress } from "../src/lib/goalProgress.ts";
 
 test("obiettivi: lo stato segue il progresso (100 → raggiunto, sotto 100 un raggiunto torna attivo)", () => {
   assert.equal(statusForProgress("active", 100), "done");
@@ -45,6 +45,20 @@ test("obiettivi: cambia gruppo solo passando tra «in corso» e «raggiunti e ar
   assert.equal(goalMove("archived", "paused"), "reopened");
   assert.equal(goalMove("active", "paused"), null);
   assert.equal(goalMove("done", "done"), null);
+});
+
+test("obiettivi: scadenza passata in rosso solo se l'obiettivo è ancora da raggiungere", () => {
+  // Mezzogiorno locale e scadenze come le salva il dettaglio (giorno civile): niente dipendenza dal fuso.
+  const now = new Date(2026, 10, 12, 12, 0, 0);
+  assert.deepEqual(goalDeadlineLabel("2026-11-03", "active", now), { text: "Scaduto il 3 nov", late: true });
+  assert.deepEqual(goalDeadlineLabel("2026-11-03", "paused", now), { text: "Scaduto il 3 nov", late: true });
+  assert.deepEqual(goalDeadlineLabel("2026-11-03", "done", now), { text: "Scadenza 3 nov", late: false });
+  assert.deepEqual(goalDeadlineLabel("2026-11-03", "archived", now), { text: "Scadenza 3 nov", late: false });
+  assert.deepEqual(goalDeadlineLabel("2026-11-12", "active", now), { text: "Scade oggi", late: false });
+  assert.deepEqual(goalDeadlineLabel("2026-11-13", "active", now), { text: "Scade domani", late: false });
+  assert.deepEqual(goalDeadlineLabel("2026-11-20", "active", now), { text: "Scade tra 8 giorni · 20 nov", late: false });
+  assert.equal(goalDeadlineLabel(undefined, "active", now), null);
+  assert.equal(goalDeadlineLabel("non una data", "active", now), null);
 });
 
 test("obiettivi: il dettaglio sa se chiudere perderebbe modifiche", () => {

@@ -21,6 +21,9 @@ import { useSessionEditor } from "./StudySessionDrawers";
 import { useToday } from "../hooks/useToday";
 
 const tooltipStyle = { background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, color: "var(--text)" };
+// recharts colora la riga del fumetto con il colore della barra (quello della materia): testo leggibile in ogni tema.
+const tooltipItemStyle = { color: "var(--text)" };
+const tooltipLabelStyle = { color: "var(--muted)" };
 /** Sessioni visibili prima di "Mostra tutte". */
 const FIRST_SESSIONS = 6;
 
@@ -90,6 +93,8 @@ export default function SubjectStudyStats({ subject }: { subject: Subject }) {
                   <YAxis stroke="var(--muted)" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip
                     contentStyle={tooltipStyle}
+                    itemStyle={tooltipItemStyle}
+                    labelStyle={tooltipLabelStyle}
                     cursor={{ fill: "var(--surface-soft)" }}
                     labelFormatter={(_label, payload) => String(payload?.[0]?.payload?.full ?? "")}
                     formatter={(value) => [`${String(value).replace(".", ",")} h`, SUBJECT_STUDY_TEXT.trendTooltip]}

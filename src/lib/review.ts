@@ -2,7 +2,7 @@
 // Dopo ogni ripasso lo studente valuta quanto ricordava: l'intervallo fino al prossimo
 // ripasso cresce con la facilità dell'argomento e si azzera quando non ricordava.
 import { addDays, endOfDay, parseISO, startOfDay } from "date-fns";
-import type { StudyTopic } from "../types";
+import type { StudyTopic, Subject } from "../types";
 
 export type ReviewRating = "again" | "hard" | "good" | "easy";
 
@@ -80,6 +80,38 @@ export const dueTopics = <T extends Pick<StudyTopic, "nextReviewDate" | "archive
     })
     .sort((a, b) => a.nextReviewDate.localeCompare(b.nextReviewDate));
 };
+
+type SubjectState = Pick<Subject, "status" | "archived">;
+
+/**
+ * Perché gli argomenti di una materia non si ripassano più: materia archiviata o superata (la stessa
+ * regola dei menu di scelta, `selectableSubjects`). null = si ripassano.
+ */
+export const subjectPause = (subject: SubjectState): "archived" | "completed" | null =>
+  subject.archived || subject.status === "archived" ? "archived" : subject.status === "completed" ? "completed" : null;
+
+/**
+ * Argomenti che si ripassano: non archiviati e di una materia né superata né archiviata (quelli delle
+ * altre restano nell'elenco degli argomenti, «in pausa»). Un argomento di una materia che qui non c'è
+ * resta: meglio un ripasso in più che uno nascosto. Da usare prima di `dueTopics` e dei prossimi ripassi.
+ */
+export const reviewableTopics = <T extends Pick<StudyTopic, "subjectId" | "archived">>(
+  topics: readonly T[],
+  subjects: ReadonlyArray<SubjectState & Pick<Subject, "id">>
+): T[] => {
+  const paused = new Set(subjects.filter((subject) => subjectPause(subject)).map((subject) => subject.id));
+  return topics.filter((topic) => !topic.archived && !paused.has(topic.subjectId));
+};
+
+/** Campi che una valutazione cambia: i valori di prima, da rimettere con `updateTopic` per «Annulla». */
+export const reviewUndoPatch = (topic: Pick<StudyTopic, keyof ReviewOutcome>): Pick<StudyTopic, keyof ReviewOutcome> => ({
+  intervalDays: topic.intervalDays,
+  ease: topic.ease,
+  completedReviews: topic.completedReviews,
+  memorization: topic.memorization,
+  nextReviewDate: topic.nextReviewDate,
+  lastReviewedAt: topic.lastReviewedAt
+});
 
 /** Anteprima dell'intervallo per il pulsante di valutazione (es. "3 g"). */
 export const previewInterval = (topic: ReviewInput, rating: ReviewRating) => {

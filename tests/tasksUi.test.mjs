@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addStep, chipFocusAfterRemove, cleanSteps, draftChanged, editorCloseRequest, priorityText, quickTaskChips, removeStep, renameStep, stepsDone, toggleStep } from "../src/lib/tasksUi.ts";
+import { addStep, chipFocusAfterRemove, cleanSteps, defaultImportance, draftChanged, editorCloseRequest, priorityText, quickTaskChips, removeStep, renameStep, stepsDone, stepsToSave, toggleStep } from "../src/lib/tasksUi.ts";
 
 const STEPS = [
   { id: "s1", text: "Leggere il capitolo", done: true },
@@ -97,4 +97,31 @@ test("editor: chiudere senza modifiche chiude; con modifiche chiede; chiudere di
   assert.equal(editorCloseRequest(false, false), "close");
   assert.equal(editorCloseRequest(true, false), "ask");
   assert.equal(editorCloseRequest(true, true), "keep");
+});
+
+test("editor: un passaggio scritto ma non ancora aggiunto si salva con gli altri", () => {
+  assert.deepEqual(stepsToSave(STEPS, "  Esercizi 6-10 ", "s3"), [...STEPS, { id: "s3", text: "Esercizi 6-10", done: false }]);
+  assert.deepEqual(stepsToSave(STEPS, "   ", "s3"), STEPS, "campo vuoto: nessun passaggio in più");
+  const withBlank = [...STEPS, { id: "b", text: "  ", done: false }];
+  assert.deepEqual(stepsToSave(withBlank, "", "s3"), STEPS, "i passaggi svuotati spariscono come prima");
+});
+
+test("editor: il testo in «Nuovo passaggio» conta come modifica, quindi chiudere chiede prima", () => {
+  const draft = { ...DRAFT, newStep: "" };
+  const typed = { ...draft, newStep: "Esercizi 6-10" };
+  assert.equal(draftChanged(draft, typed), true);
+  assert.equal(editorCloseRequest(draftChanged(draft, typed), false), "ask");
+});
+
+test("nuova attività: chiudere con qualcosa di scritto chiede prima, senza nulla chiude", () => {
+  const initial = { title: "", subjectId: "", description: "", priority: "medium", dueDate: "", durationValue: "45", durationUnit: "minutes" };
+  assert.equal(editorCloseRequest(draftChanged(initial, { ...initial }), false), "close");
+  assert.equal(editorCloseRequest(draftChanged(initial, { ...initial, description: "Pagina 52" }), false), "ask");
+});
+
+test("importanza di partenza: urgente 5, alta 4, le altre 3 (uguale da ogni ingresso)", () => {
+  assert.equal(defaultImportance("urgent"), 5);
+  assert.equal(defaultImportance("high"), 4);
+  assert.equal(defaultImportance("medium"), 3);
+  assert.equal(defaultImportance("low"), 3);
 });

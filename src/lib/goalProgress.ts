@@ -1,6 +1,8 @@
 // Obiettivi: lo stato segue il progresso (logica pura, testata con node --test). Al 100% un obiettivo
 // in corso o in pausa è raggiunto; sotto il 100% un raggiunto torna in corso. Archiviato resta tale:
 // è una scelta esplicita, non un effetto del progresso.
+import { differenceInCalendarDays, format, parseISO } from "date-fns";
+import { it } from "date-fns/locale";
 import type { Goal } from "../types";
 
 type Status = Goal["status"];
@@ -49,6 +51,23 @@ export const goalDraftChanged = (draft: GoalDraft, saved: GoalDraft) =>
   (Object.keys(saved) as (keyof GoalDraft)[]).some((key) => draft[key] !== saved[key]);
 
 const isClosed = (status: Status) => status === "done" || status === "archived";
+
+/**
+ * Scadenza sulla scheda. Raggiunti e archiviati non sono «Scaduti» in rosso: un obiettivo raggiunto
+ * in tempo, dopo la data, mostra solo la scadenza che aveva.
+ */
+export const goalDeadlineLabel = (deadline: string | undefined, status: Status, now: Date = new Date()) => {
+  if (!deadline) return null;
+  const date = parseISO(deadline);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = format(date, "d MMM", { locale: it });
+  if (isClosed(status)) return { text: `Scadenza ${day}`, late: false };
+  const days = differenceInCalendarDays(date, now);
+  if (days < 0) return { text: `Scaduto il ${day}`, late: true };
+  if (days === 0) return { text: "Scade oggi", late: false };
+  if (days === 1) return { text: "Scade domani", late: false };
+  return { text: `Scade tra ${days} giorni · ${day}`, late: false };
+};
 
 /** Passaggio tra «in corso» (attivi e in pausa) e «Raggiunti e archiviati»: la scheda cambia gruppo. */
 export const goalMove = (before: Status, after: Status): "reached" | "archived" | "reopened" | null => {

@@ -3,12 +3,13 @@ import { selectableSubjects } from "../lib/selectors";
 import { addHours } from "date-fns";
 import { AnimatePresence, m } from "framer-motion";
 import { useStudyStore } from "../store/useStudyStore";
-import { Button, Field, IconButton, Pill, fileInputClass, inputClass, useDialogLayer } from "./ui";
+import { Button, Field, IconButton, Pill, fileInputClass, inputClass, useBackCloses, useDialogLayer } from "./ui";
 import { Icon } from "./Icon";
+import { UnsavedPrompt } from "./UnsavedPrompt";
 import { DateTimeField } from "./DatePicker";
 import { fromDatetimeLocal } from "../lib/dates";
 import { quickAddDefaults, quickAddTaskDates, type QuickAddTaskCreate } from "../lib/quickAdd";
-import { REPEAT_PICKER_TEXT, UI_TEXT } from "../lib/labels";
+import { QUICK_ADD_TEXT, REPEAT_PICKER_TEXT, UI_TEXT, type QuickAddSaved } from "../lib/labels";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import { deviceTimeZone, isCivilDate } from "../lib/tz";
 import { repeatPresets, type RepeatPresetId } from "../lib/repeatPresets";
@@ -45,7 +46,18 @@ const titleField: Record<Mode, { label: string; placeholder: string }> = {
   material: { label: "Nome (facoltativo)", placeholder: "Es. Slide lezione 4" }
 };
 
-export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: boolean; onClose: () => void; initialMode?: Mode }) {
+export function QuickAddModal({
+  open,
+  onClose,
+  onSaved,
+  initialMode = "task"
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** Dopo un salvataggio riuscito: la frase che dice cosa si è creato e dove (la mostra chi apre il modale). */
+  onSaved?: (text: string) => void;
+  initialMode?: Mode;
+}) {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [title, setTitle] = useState("");
   const [subjectId, setSubjectId] = useState("");
@@ -60,10 +72,25 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
   const [repeatId, setRepeatId] = useState<RepeatPresetId>("none");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Chiusura in attesa della risposta a «Scartare le modifiche?».
+  const [asking, setAsking] = useState(false);
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  // Esc, tocco fuori e Indietro con un nome o un link scritti chiedono prima di perderli; ✕ e «Annulla» chiudono e basta.
+  const dirty = Boolean(title.trim() || url.trim());
+  const requestClose = () => {
+    if (busy) return false;
+    if (dirty) {
+      setAsking(true);
+      return false;
+    }
+    onClose();
+    return true;
+  };
   // Pagina bloccata sotto, Tab che resta qui, Esc solo se è la finestra in cima, focus che torna a chi l'ha aperta.
-  useDialogLayer(open, { panelRef, onEscape: onClose });
+  useDialogLayer(open, { panelRef, onEscape: requestClose });
+  // Indietro (Android, gesto di iOS, browser) chiude il modale come un Drawer, invece di uscire dall'app.
+  useBackCloses(open, requestClose);
   const repeats = useMemo(() => quickRepeats(date), [date]);
   const { subjects, addTask, addEvent, addSubject, addAttachment, addExternalAttachment } = useStudyStore();
 
@@ -78,6 +105,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
       setMode(initialMode);
       setRepeatId("none");
       setError("");
+      setAsking(false);
     }
   }, [open, initialMode]);
 
@@ -123,6 +151,18 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
     const repeat = mode === "event" || mode === "session" ? quickRepeats(date).find((preset) => preset.id === repeatId)?.rule ?? null : null;
     setBusy(true);
     setError("");
+    setAsking(false);
+    const saved: QuickAddSaved =
+      mode === "task"
+        ? taskCreateMode === "timer"
+          ? "taskTimer"
+          : taskCreateMode === "completed"
+            ? "taskDone"
+            : "task"
+        : mode === "material"
+          ? "link"
+          : mode;
+    const savedTitle = mode === "material" ? title.trim() || "Link rapido" : title.trim();
     try {
       if (mode === "task") {
         const now = new Date().toISOString();
@@ -179,6 +219,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
       }
       reset();
       onClose();
+      onSaved?.(QUICK_ADD_TEXT.saved(saved, savedTitle));
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Non è stato possibile salvare. Riprova tra un momento.");
     } finally {
@@ -197,6 +238,12 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
+          // Tocco sullo sfondo come nei Drawer; il focus resta dov'è se si chiede «Scartare le modifiche?».
+          onMouseDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            event.preventDefault();
+            requestClose();
+          }}
         >
           <m.div
             ref={panelRef}
@@ -214,9 +261,17 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
               <IconButton icon="X" label="Chiudi senza salvare" onClick={onClose} />
             </div>
 
-            <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Tipo di elemento da aggiungere">
+            {/* Pulsanti alti 44 px (tocco comodo) con la pillola compatta dentro: tra le righe niente spazio in più. */}
+            <div className="mb-2 flex flex-wrap gap-x-2" role="group" aria-label="Tipo di elemento da aggiungere">
               {modes.map((item) => (
-                <button key={item.id} type="button" onClick={() => setMode(item.id)} aria-pressed={mode === item.id} title={item.hint}>
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setMode(item.id)}
+                  aria-pressed={mode === item.id}
+                  title={item.hint}
+                  className="inline-flex min-h-11 max-w-full items-center rounded-full"
+                >
                   <Pill active={mode === item.id}>
                     <Icon name={item.icon} className="mr-1.5 h-3.5 w-3.5 shrink-0" />
                     {item.label}
@@ -267,10 +322,14 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
 
               {mode === "material" ? (
                 <Field label="Indirizzo del link">
+                  {/* type="text": un link senza «https://» lo completa normalizeExternalUrl, senza il fumetto del browser. */}
                   <input
                     className={inputClass}
-                    type="url"
+                    type="text"
                     inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     data-autofocus={mode === "material" ? true : undefined}
                     value={url}
                     onChange={(event) => setUrl(event.target.value)}
@@ -376,6 +435,7 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
                           await addAttachment(file);
                           reset();
                           onClose();
+                          onSaved?.(QUICK_ADD_TEXT.saved("file", file.name));
                         } catch (fileError) {
                           setError(fileError instanceof Error ? fileError.message : "Non è stato possibile caricare il file. Riprova o scegline un altro.");
                         } finally {
@@ -393,12 +453,28 @@ export function QuickAddModal({ open, onClose, initialMode = "task" }: { open: b
                 </p>
               ) : null}
 
-              <div className="mt-2 flex justify-end gap-2">
-                <Button onClick={onClose}>Annulla</Button>
-                <Button variant="primary" icon="Plus" type="submit" disabled={!canSubmit}>
-                  {submitLabel}
-                </Button>
-              </div>
+              {asking ? (
+                // Come nei Drawer di modifica: la domanda sul posto, al posto dei pulsanti.
+                <UnsavedPrompt
+                  title={QUICK_ADD_TEXT.unsavedTitle}
+                  text={QUICK_ADD_TEXT.unsavedText}
+                  keep={QUICK_ADD_TEXT.unsavedKeep}
+                  discard={QUICK_ADD_TEXT.unsavedDiscard}
+                  className="mt-2 bg-[var(--surface-soft)]"
+                  onKeep={() => setAsking(false)}
+                  onDiscard={() => {
+                    setAsking(false);
+                    onClose();
+                  }}
+                />
+              ) : (
+                <div className="mt-2 flex justify-end gap-2">
+                  <Button onClick={onClose}>Annulla</Button>
+                  <Button variant="primary" icon="Plus" type="submit" disabled={!canSubmit}>
+                    {submitLabel}
+                  </Button>
+                </div>
+              )}
             </form>
           </m.div>
         </m.div>

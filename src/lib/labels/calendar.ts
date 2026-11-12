@@ -47,7 +47,12 @@ export const CALENDAR_TEXT = {
   summaryEmptyTitle: "Ancora nessuna materia",
   summaryEmptyBody: "Aggiungi le tue materie: qui vedrai quanti impegni hai in calendario per ognuna e potrai mostrarne una sola.",
   goSubjects: "Vai a Materie",
-  openExamAria: (name: string) => `Apri l'esame di ${name}`
+  openExamAria: (name: string) => `Apri l'esame di ${name}`,
+  /** «Riepilogo esami»: il numero grande, come in Esami e Home: «Oggi», «Domani», poi i giorni. */
+  examCountdown: (days: number) => (days <= 0 ? "Oggi" : days === 1 ? "Domani" : String(days)),
+  /** Riga sotto il numero: con i giorni dice «giorni all'esame», con Oggi e Domani solo il giorno. */
+  examWhen: (days: number, day: string) => (days > 1 ? `giorni all'esame · ${day}` : day),
+  examDateToDecide: "Data da decidere"
 } as const;
 
 /** Aiuto "?" del Calendario (HelpTip): testi ed esempi. */
@@ -155,6 +160,9 @@ export const EVENT_EDITOR_TEXT = {
   importedTitle: "Appello ufficiale aggiunto al tuo calendario",
   importedTitleShared: "Appello ufficiale",
   importedHint: "Qui modifichi solo il tuo promemoria: la data ufficiale resta visibile in Esami › Date ufficiali.",
+  /** Evento «Esame» senza un esame in Esami: lo si aggiunge già compilato (materia, giorno, ora). */
+  trackExam: "Segui come esame",
+  trackExamHint: "Aggiungilo in Esami: vedi i giorni che mancano e segni quanto sei pronto.",
   sharedReadOnly: "Puoi solo vedere questo evento.",
   sharedEditable: (name: string) => `Le modifiche arrivano subito a ${name}, che le vede nella cronologia e può ripristinarle.`,
   sharedSeries: "Si ripete: le modifiche valgono per tutte le sue date.",

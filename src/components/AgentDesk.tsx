@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { isLocalPage, normalizePublicHub } from "../agent/hubEndpoint";
 import { trustedWritesActive } from "../agent/policy";
 import type { AgentRisk, PolicyChoice } from "../agent/policy";
@@ -83,69 +84,81 @@ export function AgentDock() {
     setWrite(consent?.scopes.includes("studyos:write") ?? true);
   }, [consent?.requestId, consent?.scopes]);
 
-  if (!pending && !consent && !(link.paired && link.hub === "down")) return null;
+  const visible = Boolean(pending || consent || (link.paired && link.hub === "down"));
+  // Detto subito a voce: con un Drawer aperto il focus resta lì dentro e la richiesta non si vedrebbe.
+  const announce = pending ? AGENT_DESK_TEXT.dockAskCall(pending.summary) : consent ? AGENT_DESK_TEXT.dockAskConsent(consent.clientName) : "";
 
-  return (
-    <div
-      className="fixed left-3 z-50 w-[min(24rem,calc(100vw-7.75rem))] bottom-[calc(6.75rem+env(safe-area-inset-bottom))] sm:bottom-6 sm:left-auto sm:right-6 sm:w-[min(26rem,calc(100vw-2rem))]"
-    >
-      {pending ? (
-        <section role="dialog" aria-labelledby="agent-call-title" className="soft-panel border border-[var(--border)] p-4 shadow-soft">
-          <p className="text-xs font-black uppercase text-[var(--faint)]">
-            {pending.actorName} · {RISK_LABEL[pending.risk]}{link.queuedCalls ? ` · altre ${link.queuedCalls} in attesa` : ""}
-          </p>
-          <h2 id="agent-call-title" className="mt-1 text-xl font-black">{pending.summary}</h2>
-          <p className="mt-1 text-sm font-bold text-[var(--muted)]">{pending.title}</p>
-          {previewArgs(pending.args) ? (
-            <pre className="mt-3 max-h-40 overflow-auto rounded-[16px] bg-[var(--surface-soft)] p-3 text-xs font-bold text-[var(--muted)]">{previewArgs(pending.args)}</pre>
-          ) : null}
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button variant={pending.risk === "destructive" ? "danger" : "primary"} icon="Check" onClick={() => approvePendingCall()}>
-              {pending.risk === "destructive" ? "Elimina" : "Approva"}
-            </Button>
-            <Button variant="soft" onClick={() => denyPendingCall()}>Rifiuta</Button>
-          </div>
-        </section>
-      ) : null}
-
-      {consent ? (
-        <section role="dialog" aria-labelledby="agent-consent-title" className="soft-panel border border-[var(--border)] p-4 shadow-soft">
-          <p className="text-xs font-black uppercase text-[var(--faint)]">
-            {consent.cloud ? agentCloudLabels.consentKicker : "Nuovo collegamento"}{consent.redirectHost ? ` · ${consent.redirectHost}` : ""}
-          </p>
-          <h2 id="agent-consent-title" className="mt-1 text-xl font-black">{consent.clientName}</h2>
-          <p className="mt-1 text-sm font-bold text-[var(--muted)]">
-            {consent.cloud
-              ? agentCloudLabels.consentBody(consent.accountName ?? "")
-              : "Vuole accedere ai tuoi dati di studio. Modifiche ed eliminazioni seguiranno i permessi scelti in Impostazioni › Agenti AI."}
-          </p>
-          {consent.cloud && !signedIn ? <p className="mt-2 text-sm font-bold text-[var(--danger-text)]">{agentCloudLabels.signInHint}</p> : null}
-          <label className="mt-3 flex min-h-11 items-center gap-2 text-sm font-bold">
-            <input type="checkbox" checked disabled />
-            Leggere materie, attività, esami e il resto dei tuoi dati
-          </label>
-          <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
-            <input type="checkbox" checked={write} onChange={(event) => setWrite(event.target.checked)} />
-            Anche creare, modificare ed eliminare
-          </label>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button variant="primary" icon="Check" onClick={() => decideAgentConsent(true, write ? ["studyos:write"] : [])}>Consenti</Button>
-            <Button variant="soft" onClick={() => decideAgentConsent(false, [])}>Rifiuta</Button>
-          </div>
-        </section>
-      ) : null}
-
-      {!pending && !consent && link.paired && link.hub === "down" ? (
-        <button
-          type="button"
-          className="soft-panel flex w-full items-center gap-2 p-3 text-left text-sm font-black"
-          onClick={() => openSettingsAt("agenti")}
+  // Portal su body sopra Drawer (z-50) e menu (z-60): una richiesta di conferma non resta sotto un
+  // pannello aperto, dove non si potrebbe toccare. La regione per gli screen reader resta montata.
+  return createPortal(
+    <>
+      <span aria-live="assertive" aria-atomic="true" className="sr-only">
+        {announce}
+      </span>
+      {visible ? (
+        <div
+          className="fixed left-3 z-[70] w-[min(24rem,calc(100vw-7.75rem))] bottom-[calc(6.75rem+env(safe-area-inset-bottom))] sm:bottom-6 sm:left-auto sm:right-6 sm:w-[min(26rem,calc(100vw-2rem))]"
         >
-          <Icon name="AlertTriangle" className="h-4 w-4 shrink-0 text-[var(--danger-text)]" />
-          <span>{window.location.hostname === "massimilianociconte.github.io" ? "Agenti AI: riapri StudyOS per ricollegarli" : "Agenti AI: il programma sul computer non risponde"}</span>
-        </button>
+          {pending ? (
+            <section role="dialog" aria-labelledby="agent-call-title" className="soft-panel border border-[var(--border)] p-4 shadow-soft">
+              <p className="text-xs font-black uppercase text-[var(--faint)]">
+                {pending.actorName} · {RISK_LABEL[pending.risk]}{link.queuedCalls ? ` · altre ${link.queuedCalls} in attesa` : ""}
+              </p>
+              <h2 id="agent-call-title" className="mt-1 text-xl font-black">{pending.summary}</h2>
+              <p className="mt-1 text-sm font-bold text-[var(--muted)]">{pending.title}</p>
+              {previewArgs(pending.args) ? (
+                <pre className="mt-3 max-h-40 overflow-auto rounded-[16px] bg-[var(--surface-soft)] p-3 text-xs font-bold text-[var(--muted)]">{previewArgs(pending.args)}</pre>
+              ) : null}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button variant={pending.risk === "destructive" ? "danger" : "primary"} icon="Check" onClick={() => approvePendingCall()}>
+                  {pending.risk === "destructive" ? "Elimina" : "Approva"}
+                </Button>
+                <Button variant="soft" onClick={() => denyPendingCall()}>Rifiuta</Button>
+              </div>
+            </section>
+          ) : null}
+
+          {consent ? (
+            <section role="dialog" aria-labelledby="agent-consent-title" className="soft-panel border border-[var(--border)] p-4 shadow-soft">
+              <p className="text-xs font-black uppercase text-[var(--faint)]">
+                {consent.cloud ? agentCloudLabels.consentKicker : "Nuovo collegamento"}{consent.redirectHost ? ` · ${consent.redirectHost}` : ""}
+              </p>
+              <h2 id="agent-consent-title" className="mt-1 text-xl font-black">{consent.clientName}</h2>
+              <p className="mt-1 text-sm font-bold text-[var(--muted)]">
+                {consent.cloud
+                  ? agentCloudLabels.consentBody(consent.accountName ?? "")
+                  : "Vuole accedere ai tuoi dati di studio. Modifiche ed eliminazioni seguiranno i permessi scelti in Impostazioni › Agenti AI."}
+              </p>
+              {consent.cloud && !signedIn ? <p className="mt-2 text-sm font-bold text-[var(--danger-text)]">{agentCloudLabels.signInHint}</p> : null}
+              <label className="mt-3 flex min-h-11 items-center gap-2 text-sm font-bold">
+                <input type="checkbox" checked disabled />
+                Leggere materie, attività, esami e il resto dei tuoi dati
+              </label>
+              <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
+                <input type="checkbox" checked={write} onChange={(event) => setWrite(event.target.checked)} />
+                Anche creare, modificare ed eliminare
+              </label>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button variant="primary" icon="Check" onClick={() => decideAgentConsent(true, write ? ["studyos:write"] : [])}>Consenti</Button>
+                <Button variant="soft" onClick={() => decideAgentConsent(false, [])}>Rifiuta</Button>
+              </div>
+            </section>
+          ) : null}
+
+          {!pending && !consent && link.paired && link.hub === "down" ? (
+            <button
+              type="button"
+              className="soft-panel flex w-full items-center gap-2 p-3 text-left text-sm font-black"
+              onClick={() => openSettingsAt("agenti")}
+            >
+              <Icon name="AlertTriangle" className="h-4 w-4 shrink-0 text-[var(--danger-text)]" />
+              <span>{window.location.hostname === "massimilianociconte.github.io" ? "Agenti AI: riapri StudyOS per ricollegarli" : "Agenti AI: il programma sul computer non risponde"}</span>
+            </button>
+          ) : null}
+        </div>
       ) : null}
-    </div>
+    </>,
+    document.body
   );
 }
 

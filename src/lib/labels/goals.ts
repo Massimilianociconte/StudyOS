@@ -7,7 +7,8 @@ export const GOALS_TEXT = {
   newPlaceholder: "Es. Finire il programma di Patologia",
   create: "Crea obiettivo",
   emptyTitle: "Ancora nessun obiettivo",
-  emptyBody: "Un traguardo da raggiungere, come finire un programma o studiare un tot di ore a settimana: scrivilo nel campo qui sopra e tocca «Crea obiettivo».",
+  // Esempi da segnare a mano con + e −: il progresso non si collega (ancora) ad attività o ore di studio.
+  emptyBody: "Un traguardo da raggiungere, come finire il programma di un esame o rifare tutti gli esercizi del corso: scrivilo nel campo qui sopra e tocca «Crea obiettivo». Poi segni tu a che punto sei.",
   noneActiveTitle: "Nessun obiettivo in corso",
   noneActiveBody: "Quelli raggiunti o archiviati sono qui sotto. Puoi crearne uno nuovo dal campo qui sopra quando vuoi.",
   // Avviso dopo che un obiettivo cambia gruppo o viene eliminato, con «Annulla».

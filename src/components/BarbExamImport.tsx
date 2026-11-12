@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BARB_EXAM_COURSES, BARB_EXAM_SESSIONS, barbExamSourceUid, resolveBarbCourse } from "../lib/university/examSessions";
-import { useStudyStore } from "../store/useStudyStore";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { courseColor } from "../lib/barbCourseVisuals";
+import { useNow } from "../hooks/useNow";
 import { CourseIcon } from "./CourseIcon";
-import { barbSessionDate, barbSessionType } from "./BarbExamSessions";
+import { barbSessionDate, barbSessionType, barbToday } from "./BarbExamSessions";
 import { Button, Drawer, EmptyState, inputClass } from "./ui";
 import { EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { groupExamSlots, slotDifference, slotTwins, type BarbExamSlot } from "../lib/barbExamSlots";
@@ -23,7 +24,11 @@ function CourseCheckbox({ checked, mixed, disabled, onChange, label }: { checked
 }
 
 export function BarbExamImport({ onClose }: { onClose: () => void }) {
-  const { subjects, events, importBarbExamSessions, setActiveView } = useStudyStore();
+  const { subjects, events, importBarbExamSessions, setActiveView, preferences } = useStudyStore();
+  // Corso di laurea spento in Impostazioni: la sezione non è nel menu, quindi niente link che ci porta.
+  const showBarb = selectPreferences({ preferences }).showBarb;
+  // Il giorno di Roma, come le date ufficiali: un appello di ieri non si aggiunge più.
+  const today = barbToday(useNow(60_000));
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -38,7 +43,7 @@ export function BarbExamImport({ onClose }: { onClose: () => void }) {
     for (const slot of groupExamSlots(BARB_EXAM_SESSIONS, imported, barbExamSourceUid)) map.set(slot.courseId, [...(map.get(slot.courseId) ?? []), slot]);
     return map;
   }, [imported]);
-  const eligibleSlots = [...slotsByCourse.values()].flat().filter((slot) => eligibleIds.has(slot.courseId) && !slot.imported);
+  const eligibleSlots = [...slotsByCourse.values()].flat().filter((slot) => eligibleIds.has(slot.courseId) && !slot.imported && slot.session.date >= today);
   const eligibleSlotKeys = new Set(eligibleSlots.map((slot) => slot.key));
   const selectedSessions = eligibleSlots.filter((slot) => selected.has(slot.key)).map((slot) => slot.session);
   const courses = BARB_EXAM_COURSES.filter((course) => eligibleIds.has(course.id) || slotsByCourse.has(course.id)).filter((course) => !query || course.name.toLocaleLowerCase("it").includes(query.toLocaleLowerCase("it"))).sort((a, b) => Number(eligibleIds.has(b.id)) - Number(eligibleIds.has(a.id)) || a.name.localeCompare(b.name, "it"));
@@ -73,7 +78,7 @@ export function BarbExamImport({ onClose }: { onClose: () => void }) {
       <Button variant="soft" icon="Check" className="w-full py-2 [&>span]:whitespace-normal [&>span]:overflow-visible" disabled={busy || !eligibleSlots.length} onClick={() => setSelected(new Set(eligibleSlots.map((slot) => slot.key)))}>Seleziona tutti gli appelli delle mie materie</Button>
       <div className="flex items-center justify-between gap-2"><span className="text-xs text-[var(--muted)]">{eligibleIds.size === 1 ? "1 materia collegata" : `${eligibleIds.size} materie collegate`} · {eligibleSlots.length === 1 ? "1 appello da aggiungere" : `${eligibleSlots.length} appelli da aggiungere`}</span><Button disabled={busy || !selected.size} onClick={() => setSelected(new Set())}>Deseleziona tutto</Button></div>
       <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} className={inputClass} aria-label="Cerca un insegnamento" placeholder="Cerca un insegnamento (es. Patologia)" />
-      {!eligibleIds.size && <EmptyState icon="BookOpen" title="Nessuna materia collegata" body="Puoi aggiungere gli appelli solo delle materie attive scelte dal Corso di laurea (non archiviate né già superate)." action={<Button variant="primary" icon="BookOpen" onClick={goToDegree}>Scegli le materie dal Corso di laurea</Button>} />}
+      {!eligibleIds.size && <EmptyState icon="BookOpen" title="Nessuna materia collegata" body="Puoi aggiungere gli appelli solo delle materie attive scelte dal Corso di laurea (non archiviate né già superate)." action={showBarb ? <Button variant="primary" icon="BookOpen" onClick={goToDegree}>Scegli le materie dal Corso di laurea</Button> : undefined} />}
       {!courses.length && <p className="text-sm text-[var(--muted)]">{query ? `Nessun insegnamento trovato per «${query}». Prova con un'altra parola.` : "Nessun appello ufficiale disponibile al momento."}</p>}
       <div className="space-y-2">{courses.map((course) => {
         const slots = slotsByCourse.get(course.id) ?? [];
@@ -81,12 +86,15 @@ export function BarbExamImport({ onClose }: { onClose: () => void }) {
         const count = available.filter((id) => selected.has(id)).length;
         const eligible = eligibleIds.has(course.id);
         return <section key={course.id} className="quiet-panel overflow-hidden">
-          <label className="flex min-h-12 cursor-pointer items-start gap-3 p-3"><span className="mt-1"><CourseCheckbox checked={available.length > 0 && count === available.length} mixed={count > 0 && count < available.length} disabled={busy || !available.length} onChange={() => toggleSessions(available)} label={`Seleziona tutti gli appelli di ${course.name}`} /></span><span className="mt-0.5 shrink-0" style={{ color: courseColor(course) }}><CourseIcon course={course} className="h-5 w-5" /></span><span className="min-w-0"><span className="safe-text block text-sm font-extrabold">{course.name}</span><span className="block text-xs text-[var(--muted)]">{!eligible ? "Non è tra le tue materie attive" : !available.length ? (slots.length ? "Tutti gli appelli sono già nel calendario" : "Nessun appello pubblicato") : `${count} di ${available.length} selezionati`}</span></span></label>
+          <label className="flex min-h-12 cursor-pointer items-start gap-3 p-3"><span className="mt-1"><CourseCheckbox checked={available.length > 0 && count === available.length} mixed={count > 0 && count < available.length} disabled={busy || !available.length} onChange={() => toggleSessions(available)} label={`Seleziona tutti gli appelli di ${course.name}`} /></span><span className="mt-0.5 shrink-0" style={{ color: courseColor(course) }}><CourseIcon course={course} className="h-5 w-5" /></span><span className="min-w-0"><span className="safe-text block text-sm font-extrabold">{course.name}</span><span className="block text-xs text-[var(--muted)]">{!eligible ? "Non è tra le tue materie attive" : !available.length ? (!slots.length ? "Nessun appello pubblicato" : slots.every((slot) => slot.imported) ? "Tutti gli appelli sono già nel calendario" : EXAMS_TEXT.noFutureSessions) : `${count} di ${available.length} selezionati`}</span></span></label>
           {slots.length ? <ul className="border-t border-[var(--border)]">{slots.map((slot) => {
             const { session } = slot;
             const already = slot.imported;
+            // Appello già passato: resta in elenco (si vede cosa c'è stato), ma non si sceglie.
+            const past = !already && session.date < today;
+            const open = eligible && !already && !past;
             const distinct = twinHint(slot, slots);
-            return <li key={slot.key}><label className={`flex min-h-11 items-center gap-3 px-3 py-2 ${eligible && !already ? "cursor-pointer hover:bg-[var(--surface)]" : "opacity-60"}`}><input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" disabled={busy || !eligible || already} checked={eligible && !already && selected.has(slot.key)} onChange={() => toggleSessions([slot.key])} aria-label={`${course.name}, ${barbSessionDate(session.date)}, ${barbSessionType(session.type)}${distinct ? `, ${distinct}` : ""}`} /><span className="min-w-0 flex-1 text-xs"><span className="font-extrabold">{barbSessionDate(session.date)}</span><span className="safe-text block text-[var(--muted)]">{barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}{slot.sessions.length > 1 ? ` · ${EXAMS_TEXT.registrationsCount(slot.sessions.length)}` : ""}{distinct ? ` · ${distinct}` : ""}{already ? " · Già nel calendario" : ""}</span></span></label></li>;
+            return <li key={slot.key}><label className={`flex min-h-11 items-center gap-3 px-3 py-2 ${open ? "cursor-pointer hover:bg-[var(--surface)]" : "opacity-60"}`}><input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" disabled={busy || !open} checked={open && selected.has(slot.key)} onChange={() => toggleSessions([slot.key])} aria-label={`${course.name}, ${barbSessionDate(session.date)}, ${barbSessionType(session.type)}${distinct ? `, ${distinct}` : ""}${past ? ", passato" : ""}`} /><span className="min-w-0 flex-1 text-xs"><span className="font-extrabold">{barbSessionDate(session.date)}</span><span className="safe-text block text-[var(--muted)]">{barbSessionType(session.type)} · {session.time ?? "Orario non pubblicato"}{slot.sessions.length > 1 ? ` · ${EXAMS_TEXT.registrationsCount(slot.sessions.length)}` : ""}{distinct ? ` · ${distinct}` : ""}{already ? " · Già nel calendario" : past ? EXAMS_TEXT.pastSuffix : ""}</span></span></label></li>;
           })}</ul> : <p className="px-3 pb-3 text-xs text-[var(--muted)]">Nessuna data ufficiale pubblicata per ora.</p>}
         </section>;
       })}</div>

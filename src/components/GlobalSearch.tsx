@@ -22,6 +22,7 @@ import {
   hostOf
 } from "../lib/labels";
 import { safeCssColor } from "../lib/sharing";
+import { isDateToDecide } from "../lib/examOutcome";
 import { allDayFirstDate, searchHits } from "../lib/repeat";
 import { nextSearchIndex, searchOptionId, searchPanelBox } from "../lib/searchUi";
 import { openItemPlan, searchKindEntity, type OccurrenceAt, type SearchKind } from "../lib/openItem";
@@ -212,7 +213,10 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
           id: exam.id,
           kind: "exam",
           title: subject?.name ?? "Esame",
-          subtitle: `${format(parseISO(exam.date), "d MMM yyyy", { locale: it })} · ${exam.preparation}% preparazione · ${EXAM_STATUS_LABEL[exam.status] ?? exam.status}`,
+          // Non superato senza nuova data: la data passata e lo stato di prima lo farebbero sembrare in arrivo.
+          subtitle: isDateToDecide(exam)
+            ? SEARCH_TEXT.examDateToDecide
+            : `${format(parseISO(exam.date), "d MMM yyyy", { locale: it })} · ${exam.preparation}% preparazione · ${EXAM_STATUS_LABEL[exam.status] ?? exam.status}`,
           view: "exams",
           icon: kindIcon.exam,
           score: s,
@@ -341,8 +345,17 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
     const onClick = (event: MouseEvent) => {
       if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
     };
+    // Tab (o altro) che porta il focus fuori dalla ricerca chiude i risultati. focusin e non blur del
+    // campo: un clic nel pannello (scorrimento, intestazione) non sposta il focus su un altro elemento.
+    const onFocusIn = (event: FocusEvent) => {
+      if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
+    };
     document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("focusin", onFocusIn);
+    };
   }, [open]);
 
   // Nota aperta dalla ricerca: si legge sul posto, in un Drawer (non ha una sezione sua).
@@ -422,7 +435,8 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={handleKey}
-        className={`${inputClass} pl-10 pr-10`}
+        // Lo spazio a destra serve solo alla ✕ (con del testo): a 320 px il campo è stretto.
+        className={`${inputClass} pl-10 ${query ? "pr-10" : "pr-3"}`}
         placeholder={wide ? SEARCH_TEXT.placeholderWide : SEARCH_TEXT.placeholder}
         role="combobox"
         aria-label={SEARCH_TEXT.aria}

@@ -6,7 +6,7 @@ import type { BarbCourse } from "../lib/university/types";
 import { openQuickAdd } from "../lib/quickAdd";
 import { requestSettingsSection } from "../lib/settingsJump";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
-import { dueTopics } from "../lib/review";
+import { dueTopics, reviewableTopics } from "../lib/review";
 import {
   completionRate,
   daysUntil,
@@ -33,6 +33,7 @@ import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
   SUBJECT_STATUS_LABEL,
+  TASK_STATUS_LABEL,
   attachmentKind,
   capitalizeFirst,
   formatHours,
@@ -110,6 +111,12 @@ const openExam = (id: string) => goToView("exams", [["exams.editing", id, "tab"]
 const openEvent = (id: string) => goToView("calendar", [["calendar.editingEvent", id, "tab"]]);
 const openSubject = (id: string) => goToView("subjects", [["subjects.open", id, "tab"]]);
 const openGoal = (id: string) => goToView("goals", [["goals.open", id, "tab"]]);
+// «Crea un obiettivo»: Obiettivi si carica a parte, quindi il campo del titolo arriva dopo qualche istante.
+const focusWhenReady = (id: string, tries = 40) => {
+  const element = document.getElementById(id);
+  if (element) element.focus();
+  else if (tries > 0) window.setTimeout(() => focusWhenReady(id, tries - 1), 50);
+};
 // Il materiale si ritrova cercandolo per nome, con tipo e materia azzerati (altrimenti un filtro lo nasconderebbe).
 const findMaterial = (name: string) =>
   goToView("materials", [
@@ -215,7 +222,8 @@ export function DashboardView() {
   const displayName = preferences.displayName.trim();
   const welcomeName = displayName ? displayName.split(/[ @]/).filter(Boolean)[0] : "";
   const recentAttachments = [...attachments].sort((a, b) => b.addedAt.localeCompare(a.addedAt)).slice(0, 4);
-  const reviewsDue = dueTopics(topics, now);
+  // Come in Studio: gli argomenti di materie superate o archiviate non sono da ripassare.
+  const reviewsDue = dueTopics(reviewableTopics(topics, subjects), now);
   const barb = useBarbLookup(activeSubjects.length > 0);
   // Compleanni e anniversari dei prossimi dodici mesi: la prossima volta di ciascuno, al massimo tre.
   const occasions = nextOccurrences(events, now).slice(0, 3);
@@ -247,7 +255,8 @@ export function DashboardView() {
   });
   const stats = [
     {
-      label: "Studio della settimana",
+      // Breve: a 320 px l'etichetta ha circa 80 px e va su due righe al massimo.
+      label: "Studio settimanale",
       value: `${formatHours(weeklyMinutes)} h`,
       detail: weeklyTarget ? HOME_TEXT.weekTarget(formatHours(weeklyTarget)) : HOME_TEXT.weekNoTarget,
       progress: weeklyProgress(weeklyMinutes, weeklyTarget),
@@ -286,11 +295,13 @@ export function DashboardView() {
     }
   ];
 
-  const todayCount = today.length + todayTasks.length;
+  // Le fatte restano nel riquadro «Oggi», ma non sono più «in scadenza».
+  const todayDue = todayTasks.filter((task) => task.status !== "done").length;
+  const todayCount = today.length + todayDue;
   const todaySummary = todayCount
     ? `oggi hai ${[
         today.length ? `${today.length} ${today.length === 1 ? "impegno" : "impegni"}` : "",
-        todayTasks.length ? `${todayTasks.length} attività in scadenza` : ""
+        todayDue ? `${todayDue} attività in scadenza` : ""
       ]
         .filter(Boolean)
         .join(" e ")}`
@@ -328,13 +339,14 @@ export function DashboardView() {
               <span className="grid grid-cols-1 h-5 w-5 place-items-center rounded-full" style={{ background: `color-mix(in srgb, ${stat.tone} 28%, transparent)` }}>
                 <Icon name={stat.icon} className="h-3 w-3 text-[var(--text)]" />
               </span>
-              <span className="truncate">{stat.label}</span>
-              <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 shrink-0 transition-transform group-hover:translate-x-0.5" />
+              {/* Su due righe invece di troncarsi; la freccia solo da tablet: sul telefono serve lo spazio. */}
+              <span className="two-line-safe">{stat.label}</span>
+              <Icon name="ChevronRight" className="ml-auto hidden h-3.5 w-3.5 shrink-0 transition-transform group-hover:translate-x-0.5 sm:block" />
             </div>
-            <p className="mt-1 truncate text-2xl font-black">
+            <p className="two-line-safe mt-1 text-lg font-black leading-tight min-[360px]:text-xl sm:text-2xl">
               {stat.value}
             </p>
-            <p className="truncate text-xs font-bold text-[var(--muted)]">{stat.detail}</p>
+            <p className="two-line-safe text-xs font-bold text-[var(--muted)]">{stat.detail}</p>
             {stat.progress !== undefined ? (
               <div className="mt-2">
                 <ProgressBar value={stat.progress} color={stat.tone} />
@@ -353,21 +365,18 @@ export function DashboardView() {
                 <ul className="grid grid-cols-[minmax(0,1fr)] gap-1">
                   {today.map((event) => (
                     <li key={event.occurrenceKey}>
-                      <button
-                        type="button"
-                        onClick={() => openEvent(event.id)}
-                        className={`${ROW} ${parseISO(event.end) < now ? "opacity-55" : ""}`}
-                      >
+                      {/* Già finito: ora e titolo attenuati col colore (non con l'opacità, sotto il contrasto AA). */}
+                      <button type="button" onClick={() => openEvent(event.id)} className={ROW}>
                         {isAllDayEvent(event) ? (
                           <span className="w-11 shrink-0 text-center text-xs font-black text-[var(--faint)]" title={ALL_DAY_LABEL} aria-hidden="true">
                             —
                           </span>
                         ) : (
-                          <span className="w-11 shrink-0 text-xs font-black tabular-nums">{timeLabel(event.start)}</span>
+                          <span className={`w-11 shrink-0 text-xs font-black tabular-nums ${parseISO(event.end) < now ? "text-[var(--muted)]" : ""}`}>{timeLabel(event.start)}</span>
                         )}
                         <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: safeCssColor(event.color) || subjectColor(subjects, event.subjectId) }} />
                         <span className="min-w-0 flex-1">
-                          <span className="one-line-safe block text-sm font-extrabold">{event.title}</span>
+                          <span className={`one-line-safe block text-sm font-extrabold ${parseISO(event.end) < now ? "text-[var(--muted)]" : ""}`}>{event.title}</span>
                           <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
                             {isAllDayEvent(event) ? ALL_DAY_LABEL : `${timeLabel(event.start)}–${timeLabel(event.end)}`} ·{" "}
                             {event.subjectId ? subjectName(subjects, event.subjectId) : EVENT_CATEGORY_LABEL[event.category]}
@@ -449,6 +458,8 @@ export function DashboardView() {
                     <Icon name="ChevronRight" className="mt-1 h-4 w-4 shrink-0 text-[var(--faint)]" />
                   </button>
                   <div className="mt-2 flex flex-wrap gap-1.5">
+                    {/* «In corso», «Bloccata», «Rimandata»: in cima solo se non c'è altro, e allora si dice. */}
+                    {nextTask.status !== "todo" ? <Tag>{TASK_STATUS_LABEL[nextTask.status]}</Tag> : null}
                     <Tag color={PRIORITY_TONE[nextTask.priority]}>{PRIORITY_LABEL[nextTask.priority]}</Tag>
                     {nextTask.dueDate ? (
                       // «!»: il Tag ha già il suo colore attenuato, che altrimenti vincerebbe sul rosso.
@@ -459,7 +470,9 @@ export function DashboardView() {
                     {nextTask.subjectId ? <Tag color={subjectColor(subjects, nextTask.subjectId)}>{subjectName(subjects, nextTask.subjectId)}</Tag> : null}
                   </div>
                   <p className="mt-2 flex flex-wrap items-center gap-x-1 text-xs font-bold text-[var(--muted)]">
-                    {formatMinutes(nextTask.estimatedMinutes)} · {ENERGY_LABEL[nextTask.energy]} · {HOME_TEXT.importance(nextTask.importance)}
+                    {/* Senza stima (0, aggiunta rapida) niente «0 min». */}
+                    {nextTask.estimatedMinutes ? `${formatMinutes(nextTask.estimatedMinutes)} · ` : ""}
+                    {ENERGY_LABEL[nextTask.energy]} · {HOME_TEXT.importance(nextTask.importance)}
                     <span className="-my-1 inline-flex">
                       <HelpTip {...HOME_HELP.effort} />
                     </span>
@@ -568,7 +581,7 @@ export function DashboardView() {
                 })}
               </ul>
             ) : (
-              <EmptyLine text={HOME_TEXT.emptySubjects} action={HOME_TEXT.addSubject} onAction={() => setActiveView("subjects")} />
+              <EmptyLine text={HOME_TEXT.emptySubjects} action={HOME_TEXT.addSubject} onAction={() => openQuickAdd("subject")} />
             )}
           </Panel>
         </div>
@@ -662,7 +675,14 @@ export function DashboardView() {
                   ))}
               </ul>
             ) : (
-              <EmptyLine text={HOME_TEXT.emptyGoals} action={HOME_TEXT.addGoal} onAction={() => setActiveView("goals")} />
+              <EmptyLine
+                text={HOME_TEXT.emptyGoals}
+                action={HOME_TEXT.addGoal}
+                onAction={() => {
+                  setActiveView("goals");
+                  focusWhenReady("new-goal-title");
+                }}
+              />
             )}
           </Panel>
 
@@ -681,7 +701,7 @@ export function DashboardView() {
                 ))}
               </ul>
             ) : (
-              <EmptyLine text={HOME_TEXT.emptyMaterials} action={HOME_TEXT.addMaterial} onAction={() => setActiveView("materials")} />
+              <EmptyLine text={HOME_TEXT.emptyMaterials} action={HOME_TEXT.addMaterial} onAction={() => openQuickAdd("material")} />
             )}
           </Panel>
         </aside>

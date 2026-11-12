@@ -4,7 +4,7 @@ import { it } from "date-fns/locale";
 import type { Exam, Subject } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { MAX_GRADE, MIN_GRADE, examToRecord, isValidGrade } from "../lib/grades";
-import { examDraftChanged, failedExamPatch, outcomeOf, recordDateFor, recordInstantFor, withoutDateToDecide, type ExamOutcome } from "../lib/examOutcome";
+import { examDraftChanged, failedExamPatch, markSubjectPassed, outcomeOf, recordDateFor, recordInstantFor, withoutDateToDecide, type ExamOutcome } from "../lib/examOutcome";
 import { DateField, DateTimeField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
 import { CAREER_HELP, GRADE_TEXT } from "../lib/labels/career";
@@ -46,7 +46,7 @@ export function GradeDrawer({
   onClose: () => void;
   onSaved: (message: string, outcome: ExamOutcome) => void;
 }) {
-  const { addExam, updateExam, deleteExam, addSubject, updateSubject } = useStudyStore();
+  const { addExam, updateExam, deleteExam, addSubject } = useStudyStore();
   const passedSubjects = new Set(
     exams.filter((item) => item.status === "done" && (item.passFail || isValidGrade(item.grade)) && item.id !== exam?.id).map((item) => item.subjectId)
   );
@@ -105,10 +105,8 @@ export function GradeDrawer({
   ];
   const todayStart = `${format(new Date(), "yyyy-MM-dd")}T00:00`;
 
-  const markPassed = async (subjectId: string) => {
-    const subject = useStudyStore.getState().subjects.find((item) => item.id === subjectId);
-    if (subject && subject.status !== "completed" && subject.status !== "archived") await updateSubject(subjectId, { status: "completed" });
-  };
+  // Stessa regola del modulo dell'esame («Sostenuto» con voto): vedi markSubjectPassed.
+  const markPassed = (subjectId: string) => markSubjectPassed(useStudyStore, subjectId);
 
   const save = async () => {
     if (!once.take()) return;

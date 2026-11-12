@@ -68,6 +68,44 @@ export const TOPIC_FILTER_TEXT = {
   emptyFiltered: "Nessun argomento per questa materia. Scrivine uno qui sopra oppure importa il programma dell'esame dalla sezione Esami."
 } as const;
 
+/** Elenco degli argomenti: argomenti in pausa, eliminazione, modifica. */
+export const TOPIC_TEXT = {
+  /** Materia superata o archiviata: l'argomento resta nell'elenco ma non torna nei ripassi. */
+  paused: { completed: "In pausa: materia superata", archived: "In pausa: materia archiviata" },
+  removeAria: (title: string) => `Elimina l'argomento «${title}»`,
+  removeConfirm: (title: string) => `Eliminare l'argomento «${title}»? Perderai anche i ripassi fatti e le domande guida. Non si può annullare.`,
+  remove: "Elimina argomento",
+  cancel: "Annulla",
+  save: "Salva modifiche",
+  // «Annulla» o chiusura del riquadro con un argomento cambiato e non salvato.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: "Hai cambiato l'argomento senza salvarlo.",
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche"
+} as const;
+
+/** Riquadro «Ripasso» di Studio. */
+export const REVIEW_TEXT = {
+  showQuestions: (count: number) => `Mostra le ${count} domande guida`,
+  showNotes: "Mostra le note",
+  notes: "Note",
+  /** «Annulla» dopo la valutazione: torna com'era prima del ripasso. */
+  rated: (title: string, next: string) => `Ripasso di «${title}» salvato · prossimo tra ${next}`
+} as const;
+
+/** «Sessioni recenti» e «In programma» di Studio. */
+export const SESSION_LIST_TEXT = {
+  showAll: (count: number) => `Mostra tutte (${count})`,
+  showLess: "Mostra meno",
+  planned: "In programma",
+  plannedHint: "Pianificate, anche da un assistente: tocca «Fatta» quando hai studiato.",
+  done: "Fatta",
+  doneAria: (title: string) => `Segna come fatta «${title}»`,
+  remove: "Elimina",
+  removeAria: (title: string) => `Elimina la sessione in programma «${title}»`,
+  markedDone: (title: string, minutes: string) => `«${title}» segnata come fatta: ${minutes}.`
+} as const;
+
 /** Colonna laterale di Studio: i numeri portano dove servono. */
 export const STUDY_SIDE_TEXT = {
   week: "Questa settimana",

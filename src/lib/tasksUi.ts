@@ -9,6 +9,13 @@ import { QUICK_TASK_TEXT, TASKS_TEXT } from "./labels/tasks";
 export const priorityText = (priority: Task["priority"]) =>
   priority === "urgent" ? PRIORITY_LABEL.urgent : `Priorità ${PRIORITY_LABEL[priority].toLowerCase()}`;
 
+/**
+ * Importanza di partenza di una nuova attività, uguale da ogni ingresso (aggiunta rapida, «Nuova
+ * attività», calendario): con «Alta» l'attività è importante (4) e va in «Fai ora» nella griglia.
+ */
+export const defaultImportance = (priority: Task["priority"]): Task["importance"] =>
+  priority === "urgent" ? 5 : priority === "high" ? 4 : 3;
+
 export type QuickTaskChoice = { subjectId: string; priority: Task["priority"]; dueDate: string };
 export type QuickTaskChip = { id: "subject" | "priority" | "due"; label: string; color?: string };
 
@@ -61,6 +68,12 @@ export const removeStep = (steps: TaskStep[], id: string): TaskStep[] => steps.f
 /** Al salvataggio: testi senza spazi ai lati; un passaggio svuotato sparisce. */
 export const cleanSteps = (steps: TaskStep[]): TaskStep[] =>
   steps.map((step) => ({ ...step, text: step.text.trim() })).filter((step) => step.text);
+
+/**
+ * Passaggi da salvare: anche quello scritto in «Nuovo passaggio» e non ancora aggiunto con Invio o
+ * «Aggiungi» (prima, toccando «Salva modifiche», si perdeva).
+ */
+export const stepsToSave = (steps: TaskStep[], pending: string, id: string): TaskStep[] => cleanSteps(addStep(steps, pending, id));
 
 export const stepsDone = (steps: TaskStep[]) => ({ done: steps.filter((step) => step.done).length, total: steps.length });
 
