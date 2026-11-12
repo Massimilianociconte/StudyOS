@@ -63,6 +63,8 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
   const restoreEntities = useStudyStore((state) => state.restoreEntities);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ title: "", body: "" });
+  // Il testo all'inizio della modifica: una sync o un agente che cambia la nota nel frattempo non la rende "cambiata".
+  const [startedFrom, setStartedFrom] = useState({ title: "", body: "" });
   const [removed, setRemoved] = useState<Note | null>(null);
   const [busy, setBusy] = useState(false);
   // Chiusura in attesa della risposta a «Scartare le modifiche?».
@@ -83,7 +85,7 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
   const shown = note ?? (removed && removed.id === noteId ? removed : null);
   const open = Boolean(noteId && shown);
   // Mentre si modifica, chiudere con titolo o testo cambiati non perde nulla senza chiedere.
-  const dirty = editing && Boolean(note) && (draft.title !== note?.title || draft.body !== note?.body);
+  const dirty = editing && Boolean(note) && (draft.title !== startedFrom.title || draft.body !== startedFrom.body);
   const close = () => {
     if (dirty) setAsking(true);
     else onClose();
@@ -92,6 +94,7 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
   const startEdit = () => {
     if (!note) return;
     setDraft({ title: note.title, body: note.body });
+    setStartedFrom({ title: note.title, body: note.body });
     setAsking(false);
     setEditing(true);
   };
