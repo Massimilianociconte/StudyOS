@@ -4,7 +4,7 @@ import test from "node:test";
 import { sessionFromRow, sessionToFields } from "../src/lib/groupExams.ts";
 import { applyPlanPatch, newExamPlan } from "../src/lib/examPlans.ts";
 import { groupExamEvents } from "../src/lib/groupExamCalendar.ts";
-import { fieldText, resolveConflict, saveSession, sessionDraftFromEvent, draftFromBarb, courseFromSubject, sessionInputField, fieldsFromDraft, emptyDraft } from "../src/lib/groupExamForm.ts";
+import { fieldText, resolveConflict, saveSession, sessionDraftFromEvent, draftFromBarb, courseFromSubject, sessionInputField, fieldsFromDraft, emptyDraft, draftFromBarbForSubject } from "../src/lib/groupExamForm.ts";
 import { overrideInputField } from "../src/lib/catalogOverrides.ts";
 import { registrationText } from "../src/lib/groupExamUi.ts";
 
@@ -30,7 +30,7 @@ test("M1: un mio evento d'esame o un mio esame dello stesso giorno non si ripete
   assert.equal(groupExamEvents({ ...base, exams: [myExam] }).length, 0, "esame personale uguale");
   const dismissed = applyPlanPatch(newExamPlan(session(), "Farmaco", NOW), { dismissMatch: "event:e1" }, session(), "Farmaco", NOW);
   assert.equal(groupExamEvents({ ...base, events: [myEvent], plans: [dismissed] }).length, 1, "«Tienili separati» li mostra entrambi");
-  const linkedExam = applyPlanPatch(newExamPlan(session(), "Farmaco", NOW), { selected: true, examId: "x1" }, session(), "Farmaco", NOW);
+  const linkedExam = applyPlanPatch(newExamPlan(session(), "Farmaco", NOW), { examId: "x1" }, session(), "Farmaco", NOW);
   assert.equal(groupExamEvents({ ...base, exams: [{ ...myExam, date: "2027-02-01T08:00:00.000Z" }], plans: [linkedExam] }).length, 0, "piano collegato a un esame");
   assert.equal(groupExamEvents({ ...base, events: [{ ...myEvent, start: "2027-01-13T00:00:00" }] }).length, 1, "altro giorno");
 });
@@ -110,11 +110,29 @@ test("L10: condividere un mio evento non copia le sue note nell'appello del grup
   assert.equal(draft.time, "10:15");
 });
 
-test("L9: da una materia nota la bozza BARB sceglie la materia", () => {
-  const draft = { ...draftFromBarb({ id: "x", courseId: "farm-spec", date: "2027-01-12", type: "written", time: null, location: null, notes: null, registrationOpens: null, registrationCloses: null }, "Farmacologia"), ...courseFromSubject(subject) };
-  assert.equal(draft.subjectId, "sub_farm");
-  const view = source("src/views/SubjectsView.tsx");
-  assert.match(view, /\{ \.\.\.draftFromBarb\(session, course\.name\), \.\.\.courseFromSubject\(subject\) \}/);
+test("L9 e N1: da una materia nota la bozza BARB sceglie la materia e non perde il corso ufficiale", () => {
+  const barb = { id: "farm-spec:2027-01-12:written", courseId: "farm-spec", date: "2027-01-12", type: "written", time: null, location: null, notes: null, registrationOpens: null, registrationCloses: null };
+  // Materia trovata per nome: nessun universityCourseId. Il corso BARB resta, l'appello resta «barb».
+  const byName = draftFromBarbForSubject(barb, "Farmacologia Speciale", subject);
+  assert.equal(byName.subjectId, "sub_farm");
+  assert.equal(byName.courseId, "farm-spec");
+  assert.equal(byName.source, "barb");
+  assert.equal(fieldsFromDraft(byName).ok, true);
+  const linked = draftFromBarbForSubject(barb, "Farmacologia Speciale", { ...subject, universityCourseId: "farm-spec" });
+  assert.equal(linked.courseId, "farm-spec");
+  assert.match(source("src/views/SubjectsView.tsx"), /draftFromBarbForSubject\(session, course\.name, subject\)/);
+});
+
+test("M1: un appello che ho scelto resta nel calendario anche se un mio esame o evento coincide", () => {
+  const myEvent = { id: "e1", title: "Appello · Farmacologia Speciale", category: "exam", start: "2027-01-12T00:00:00", end: "2027-01-13T00:00:00", allDay: true, recurrence: "none", archived: false, subjectId: "sub_farm" };
+  const myExam = { id: "x1", subjectId: "sub_farm", date: "2027-01-12T08:00:00.000Z", archived: false };
+  const base = { sessions: [session()], groupNames, subjects: [subject], events: [myEvent], exams: [myExam], mode: "off" };
+  const chosen = applyPlanPatch(newExamPlan(session(), "Farmaco", NOW), { selected: true }, session(), "Farmaco", NOW);
+  assert.equal(groupExamEvents({ ...base, plans: [chosen] }).length, 1, "scelto: mai nascosto");
+  const unchosen = { ...chosen, selected: false };
+  assert.equal(groupExamEvents({ ...base, plans: [unchosen], mode: "all" }).length, 0, "non scelto: il doppione si nasconde");
+  const linkedChosen = { ...chosen, linkedEventId: "e1" };
+  assert.equal(groupExamEvents({ ...base, plans: [linkedChosen] }).length, 0, "collegato a un mio evento: lo mostra l'evento");
 });
 
 test("L8: i testi delle iscrizioni stanno nelle etichette", () => {

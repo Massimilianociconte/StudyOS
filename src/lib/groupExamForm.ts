@@ -80,6 +80,15 @@ export const draftFromSession = (session: GroupExamSession, subjects: readonly S
   source: session.source
 });
 
+/**
+ * Bozza da un appello BARB aperta dalla pagina di una materia: sceglie la materia e non toglie mai il
+ * corso ufficiale (una materia trovata per nome non ha `universityCourseId`).
+ */
+export const draftFromBarbForSubject = (session: BarbExamSession, courseName: string, subject: SubjectLike): SessionDraft => {
+  const draft = draftFromBarb(session, courseName);
+  return { ...draft, subjectId: subject.id, ...(subject.universityCourseId ? { courseId: subject.universityCourseId } : {}) };
+};
+
 /** Tipi BARB (lib/university) → tipi dell'appello del gruppo. */
 const BARB_KIND: Record<string, GroupExamKind> = {
   written: "scritto",

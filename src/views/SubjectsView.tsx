@@ -17,7 +17,7 @@ import { Icon } from "../components/Icon";
 import { CourseIcon } from "../components/CourseIcon";
 import { BarbExamAvailability, BarbExamSessions } from "../components/BarbExamSessions";
 import { SubjectGroupExams } from "../components/groupExams/SubjectGroupExams";
-import { courseFromSubject, draftFromBarb, type SessionDraft } from "../lib/groupExamForm";
+import { draftFromBarbForSubject, type SessionDraft } from "../lib/groupExamForm";
 import { useGroupExamStore } from "../store/useGroupExamStore";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
@@ -712,7 +712,7 @@ function SubjectDrawer({
             )}
           </div>
 
-          {course ? <BarbExamSessions course={course} onAddToGroup={hasExamGroups ? (session) => setGroupDraft({ ...draftFromBarb(session, course.name), ...courseFromSubject(subject) }) : undefined} /> : null}
+          {course ? <BarbExamSessions course={course} onAddToGroup={hasExamGroups ? (session) => setGroupDraft(draftFromBarbForSubject(session, course.name, subject)) : undefined} /> : null}
           <SubjectGroupExams subject={subject} draft={groupDraft} onDraftUsed={() => setGroupDraft(null)} />
 
           <Suspense fallback={null}>
