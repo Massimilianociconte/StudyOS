@@ -18,8 +18,7 @@ import { GROUP_COLLECTIONS, groupLookup, isServerBacked } from "./syncScope";
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
-import { PERSONAL_COLLECTIONS, personalRemovals } from "./accountSwitch";
-import { ACCOUNT_TEXT } from "./labels/account";
+import { PERSONAL_COLLECTIONS, accountSwitchStep, personalRemovals, type AccountSwitchChoice } from "./accountSwitch";
 import {
   getSession,
   isCloudConfigured,
@@ -114,6 +113,17 @@ class SessionChangedError extends Error {
     this.name = "SessionChangedError";
   }
 }
+
+/** Dati di un altro account su questo dispositivo e nessuna scelta ancora: la sync aspetta (vedi bindUser). */
+class AccountChoiceNeededError extends Error {
+  constructor() {
+    super("Scegli quali dati tenere su questo dispositivo.");
+    this.name = "AccountChoiceNeededError";
+  }
+}
+
+/** Scelta fatta nel pannello Account, valida solo per l'account per cui è stata fatta (solo in memoria). */
+let switchChoice: { userId: string; choice: AccountSwitchChoice } | null = null;
 
 const assertSameSession = (userId: string) => {
   if (currentSession()?.user.id !== userId) throw new SessionChangedError();
@@ -457,8 +467,9 @@ const firstSync = async (userId: string) => {
 };
 
 /**
- * Collega il dispositivo all'account. Se i dati locali appartengono a un altro account
- * chiede se unirli o sostituirli (prima venivano sempre sovrascritti o mescolati).
+ * Collega il dispositivo all'account. Se i dati locali appartengono a un altro account la
+ * sincronizzazione aspetta la scelta nel pannello Account (prima venivano sempre sovrascritti o
+ * mescolati, poi un confirm() senza risposta li univa).
  */
 const bindUser = async (userId: string) => {
   const bound = await getMeta<string>(metaKeys.boundUser);
@@ -468,18 +479,23 @@ const bindUser = async (userId: string) => {
   }
   const store = useStudyStore.getState();
   const hasData = countEntities(pickCollections(store)) > 0;
-  if (bound && bound !== userId && hasData) {
-    // OK = solo il nuovo account: i dati di prima sono già tutti nel loro account (coda vuota, vedi
-    // sopra), quindi si tolgono solo da qui. Unire due persone diverse era la scelta di OK e
-    // portava nel nuovo account materie, eventi e (prima della correzione) nome e foto dell'altro.
-    const merge = typeof window === "undefined" || !window.confirm(ACCOUNT_TEXT.switchConfirm);
-    if (!merge) await store.resetAllData({ propagate: false });
-    else {
-      // Nome, foto e preferenze sono della persona: si tolgono qui (senza invio) e la prima
-      // sincronizzazione porta quelli del nuovo account. Prima restavano e finivano nel nuovo account.
-      const removals = personalRemovals(pickCollections(store));
-      if (removals.length) await store.applyRemoteChanges(removals);
-    }
+  const step = accountSwitchStep({ bound, userId, hasData, choice: switchChoice?.userId === userId ? switchChoice.choice : null });
+  if (step === "ask") {
+    // Nessuna risposta = nessuna unione: si resta fermi finché la persona non sceglie.
+    setState({ accountChoice: true });
+    throw new AccountChoiceNeededError();
+  }
+  switchChoice = null;
+  if (getCloudSyncState().accountChoice) setState({ accountChoice: false });
+  if (step === "separate") {
+    // Solo il nuovo account: i dati di prima sono già tutti nel loro account (coda vuota, vedi sopra),
+    // quindi si tolgono solo da qui.
+    await store.resetAllData({ propagate: false });
+  } else if (step === "merge") {
+    // Nome, foto e preferenze sono della persona: si tolgono qui (senza invio) e la prima
+    // sincronizzazione porta quelli del nuovo account. Prima restavano e finivano nel nuovo account.
+    const removals = personalRemovals(pickCollections(store));
+    if (removals.length) await store.applyRemoteChanges(removals);
   }
   // Solo un account precedente noto consente di scartare una coda già vuota.
   // Al primo collegamento i tombstone creati offline devono restare in coda.
@@ -532,6 +548,11 @@ const syncOnce = async () => {
   } catch (error) {
     // Uscita o cambio di account a metà passata: chi ha cambiato la sessione ha già aggiornato lo stato.
     if (error instanceof SessionChangedError) return;
+    // Aspetta la scelta nel pannello Account (chooseAccountSwitch): niente errore né nuovi tentativi.
+    if (error instanceof AccountChoiceNeededError) {
+      setState({ status: "idle", error: undefined });
+      return;
+    }
     if (error instanceof SyncSuspendedError || !storeReady()) {
       // Riprende da sola allo sblocco del vault (subscription in initCloudSync).
       setState({ status: "idle" });
@@ -607,6 +628,11 @@ const handleSession = (session: Session | null) => {
 };
 
 const applySession = async (session: Session | null) => {
+  // La scelta tra tenere separati gli account e unire vale solo per l'accesso in cui è stata chiesta.
+  if (!session || currentSession()?.user.id !== session.user.id) {
+    switchChoice = null;
+    if (getCloudSyncState().accountChoice) setState({ accountChoice: false });
+  }
   if (!session) {
     // Una richiesta di riscaricare tutto vale per l'account che l'ha chiesta, non per il prossimo.
     forceNextPull = false;
@@ -701,6 +727,19 @@ export const forcePullNow = async () => {
 };
 
 export const isSignedIn = () => Boolean(currentSession());
+
+/**
+ * Risposta alla domanda del pannello Account (dati di un altro account su questo dispositivo):
+ * "separate" mostra solo i dati dell'account collegato, "merge" aggiunge quelli di prima. Vale per
+ * l'account collegato adesso; la sincronizzazione riparte subito.
+ */
+export const chooseAccountSwitch = async (choice: AccountSwitchChoice) => {
+  const userId = currentSession()?.user.id;
+  if (!userId) return;
+  switchChoice = { userId, choice };
+  retryAttempt = 0;
+  await requestSync();
+};
 
 /**
  * «Cancella anche dall'account»: il server segna come eliminato ogni dato personale dell'account, anche

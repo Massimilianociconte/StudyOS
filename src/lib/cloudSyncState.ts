@@ -15,6 +15,11 @@ export interface CloudSyncState {
   realtime: boolean;
   /** Problema non bloccante (es. elementi troppo grandi per il cloud). */
   warning?: string;
+  /**
+   * L'account appena collegato non è quello dei dati su questo dispositivo: la sincronizzazione aspetta
+   * la scelta nel pannello Account (cloudSync `chooseAccountSwitch`).
+   */
+  accountChoice?: boolean;
 }
 
 /** Stessa condizione di creazione del client in supabase.ts (variabili pubbliche di build). */

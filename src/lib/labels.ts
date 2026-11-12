@@ -81,6 +81,15 @@ export const SHELL_TEXT = {
   lockTitle: "Chiude StudyOS: per riaprirlo servirà la password"
 } as const;
 
+/**
+ * Stato della sincronizzazione mentre aspetta la scelta tra i dati di due account (badge nella barra e
+ * pannello Account).
+ */
+export const ACCOUNT_CHOICE_TEXT = {
+  label: "Scegli quali dati tenere",
+  hint: "Su questo dispositivo ci sono i dati di un altro account"
+} as const;
+
 /** Riquadro mostrato quando una sezione non si carica (ViewErrorBoundary, nel bundle iniziale). */
 export const VIEW_ERROR_TEXT = {
   title: "Questa sezione non si è caricata",

@@ -4,6 +4,7 @@ import { whenPersisted } from "../lib/persistence";
 import { signOutThisDevice } from "../lib/deviceSignOut";
 import { setCloudSyncState } from "../lib/cloudSyncState";
 import { ACCOUNT_TEXT } from "../lib/labels/account";
+import { ACCOUNT_CHOICE_TEXT } from "../lib/labels";
 import { SHARED_PENDING_TEXT } from "../lib/labels/sharing";
 import { clearPendingShare } from "../lib/shareInvite";
 import { useStudyStore } from "../store/useStudyStore";
@@ -16,6 +17,7 @@ import {
   signUp
 } from "../lib/supabase";
 import {
+  chooseAccountSwitch,
   forcePullNow,
   forcePushNow,
   getCloudSyncState,
@@ -42,6 +44,7 @@ const formatRelative = (iso: string | null) => {
 
 const statusLabel = (sync: CloudSyncState) => {
   if (!sync.session) return sync.status === "off" ? "Non disponibile" : "Non connesso";
+  if (sync.accountChoice) return ACCOUNT_CHOICE_TEXT.label;
   if (sync.status === "offline") return "Senza connessione";
   if (sync.status === "syncing") return "Sincronizzazione…";
   if (sync.status === "error") return "Da controllare";
@@ -274,6 +277,17 @@ export function CloudPanel() {
     }
   };
 
+  // Risposta alla domanda «dati di un altro account»: solo da un pulsante, mai per mancata risposta.
+  const chooseSwitch = async (choice: "separate" | "merge") => {
+    setBusy(true);
+    setInfo(null);
+    try {
+      await chooseAccountSwitch(choice);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleForcePush = async () => {
     setBusy(true);
     setInfo(null);
@@ -336,6 +350,31 @@ export function CloudPanel() {
               Modifiche da inviare: {sync.pendingCount} · Aggiornamento in tempo reale: {sync.realtime ? "attivo" : "no, controllo ogni tanto"}
             </p>
           </div>
+
+          {sync.accountChoice ? (
+            // Dati di un altro account su questo dispositivo: la sincronizzazione aspetta questa scelta.
+            // Il fuoco va sulla scelta sicura; unire richiede il suo pulsante (mai «nessuna risposta»).
+            <div
+              role="group"
+              aria-labelledby="account-switch-title"
+              className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-4"
+            >
+              <p id="account-switch-title" className="text-sm font-black text-[var(--warning-text)]">
+                {ACCOUNT_TEXT.switchTitle}
+              </p>
+              <p className="text-sm font-bold text-[var(--warning-text)]">{ACCOUNT_TEXT.switchText}</p>
+              <p className="text-sm text-[var(--warning-text)]">{ACCOUNT_TEXT.switchSeparateHint}</p>
+              <p className="text-sm text-[var(--warning-text)]">{ACCOUNT_TEXT.switchMergeHint}</p>
+              <div className="mt-1 flex flex-wrap gap-2">
+                <Button icon="Check" variant="primary" onClick={() => void chooseSwitch("separate")} disabled={busy} autoFocus>
+                  {ACCOUNT_TEXT.switchSeparate}
+                </Button>
+                <Button icon="Upload" variant="soft" onClick={() => void chooseSwitch("merge")} disabled={busy}>
+                  {ACCOUNT_TEXT.switchMerge}
+                </Button>
+              </div>
+            </div>
+          ) : null}
 
           {sync.warning ? (
             <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">

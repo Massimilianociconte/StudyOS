@@ -79,8 +79,11 @@
 - Preferenze personali (nome, foto, ore settimanali, CFU del corso, BARB visibile): entità
   sincronizzata `preferences` con id `main`, letta con `selectPreferences` (oggetto stabile).
   Non rimettere dati personali in `settings`, che restano del dispositivo. L'id `main` è lo stesso
-  in ogni account. Cambiando account (bindUser) OK = solo i dati del nuovo account, Annulla =
-  unisci; anche con «unisci» le preferenze di prima si tolgono
+  in ogni account. Cambiando account (bindUser) con dati sul dispositivo la sync si ferma
+  (`accountChoice` nello stato, badge «Scegli quali dati tenere») finché nel pannello Account non si
+  preme «Mostra solo i dati di questo account» (fuoco iniziale) o «Aggiungi i dati di prima»
+  (`chooseAccountSwitch`, vale solo per quell'accesso). Mai `confirm()`: senza risposta (finestre
+  bloccate, Esc, app dentro un'altra app) valeva «unisci» (`accountSwitchStep`, P6). Anche con «unisci» le preferenze di prima si tolgono
   (`accountSwitch.ts` → `personalRemovals`), altrimenti l'ultima scrittura vince e nome e foto
   passano al nuovo account. Una nuova collezione «della persona» va in `PERSONAL_COLLECTIONS`.
   Alla prima sync di un account su un dispositivo (`firstSync`, anche dopo «Togli i dati da qui»

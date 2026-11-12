@@ -17,9 +17,13 @@ export const ACCOUNT_TEXT = {
   leftOffline: "Server non raggiungibile: sei uscito solo su questo dispositivo. Ricarico la pagina…",
   leaveFailed: "Uscita non riuscita. Riprova.",
   /**
-   * Accesso con un altro account su un dispositivo con dati: OK = solo i dati del nuovo account
-   * (la scelta sicura: quelli di prima sono già nel loro account), Annulla = unisci.
+   * Accesso con un altro account su un dispositivo con dati: domanda nel pannello, non una finestra del
+   * browser. Finché non si sceglie la sincronizzazione aspetta; unire richiede il suo pulsante.
    */
-  switchConfirm:
-    "I dati su questo dispositivo sono di un altro account.\n\nOK = mostra solo i dati del nuovo account (consigliato: quelli di prima restano nel loro account)\nAnnulla = aggiungi i dati di prima al nuovo account (nome, foto e preferenze restano quelli del nuovo account)"
+  switchTitle: "Su questo dispositivo ci sono i dati di un altro account",
+  switchText: "Scegli cosa fare. Finché non scegli, la sincronizzazione aspetta e niente passa da un account all'altro.",
+  switchSeparate: "Mostra solo i dati di questo account",
+  switchSeparateHint: "Consigliato. I dati di prima restano nel loro account: li ritrovi accedendo di nuovo con quello.",
+  switchMerge: "Aggiungi i dati di prima a questo account",
+  switchMergeHint: "Materie, eventi, attività e note di prima vanno anche in questo account. Nome, foto e preferenze restano quelli di questo account."
 } as const;

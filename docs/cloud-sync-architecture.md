@@ -22,7 +22,9 @@ così le altre modifiche continuano a partire. I nuovi file incorporati hanno
 un limite di 600 KiB; per file più grandi usa un link esterno.
 
 Al primo collegamento e quando cambia account viene eseguito un pull completo.
-Il cambio account chiede se unire o sostituire i dati locali. Il vault bloccato
+Il cambio account con dati sul dispositivo ferma la sync finché nel pannello
+Account non si sceglie «Mostra solo i dati di questo account» (consigliato) o
+«Aggiungi i dati di prima»: senza una scelta esplicita non si unisce mai. Il vault bloccato
 sospende la sync; prima di bloccarlo le modifiche devono essere salvate.
 Un cambio account con modifiche ancora in coda viene fermato finché l'account
 precedente non completa la sincronizzazione, per non perdere i tombstone.
