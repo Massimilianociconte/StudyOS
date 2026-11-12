@@ -395,7 +395,7 @@ export function CalendarTransfer({ ref }: { ref?: Ref<CalendarTransferHandle> } 
           {downloaded ? (
             <p role="status" className="flex items-start gap-1.5 text-xs font-bold text-[var(--success-text)]">
               <Icon name="Check" className="mt-px h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 break-words">{T.downloaded(downloaded)}</span>
+              <span className="min-w-0 break-words">{T.downloadedShortcut(downloaded)}</span>
             </p>
           ) : null}
           {error ? <Alert>{error}</Alert> : null}

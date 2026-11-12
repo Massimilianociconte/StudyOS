@@ -246,15 +246,19 @@ export function EventEditor({
   const sharedRow = Boolean(sharedFrom && event && isOccurrenceRow(event));
   // Una lezione di solito si ripete: la scelta sta in vista, non sotto «Altre opzioni».
   const repeatUpFront = draft.category === "lesson";
+  const sectionHint = othersEvent
+    ? imported || inOtherCalendar
+      ? EVENT_EDITOR_TEXT.sectionMoreHintOtherNoLinks
+      : EVENT_EDITOR_TEXT.sectionMoreHintOther
+    : imported
+      ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks
+      : EVENT_EDITOR_TEXT.sectionMoreHint;
+  // Con la ripetizione già in vista il riassunto di «Altre opzioni» non la promette.
   const moreHint = draft.repeat && !repeatUpFront
     ? ruleSentence(draft.repeat, ruleDay)
-    : othersEvent
-      ? imported || inOtherCalendar
-        ? EVENT_EDITOR_TEXT.sectionMoreHintOtherNoLinks
-        : EVENT_EDITOR_TEXT.sectionMoreHintOther
-      : imported
-        ? EVENT_EDITOR_TEXT.sectionMoreHintNoLinks
-        : EVENT_EDITOR_TEXT.sectionMoreHint;
+    : repeatUpFront
+      ? EVENT_EDITOR_TEXT.withoutRepeat(sectionHint)
+      : sectionHint;
 
   const repeatPicker = (
     <RepeatPicker

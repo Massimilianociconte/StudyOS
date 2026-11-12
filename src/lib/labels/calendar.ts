@@ -9,8 +9,6 @@ export const CALENDAR_TEXT = {
   importFile: "Importa da un altro calendario",
   exportFile: "Esporta il calendario",
   share: "Condividi",
-  /** Una voce per le date ufficiali e per aggiungerle al calendario (scheda «Date ufficiali» di Esami, con «Aggiungi appelli ufficiali»). */
-  officialDates: "Appelli ufficiali",
   subjectSummary: "Riepilogo per materia",
   examSummary: "Riepilogo esami",
   backToCalendar: "Torna al calendario",
@@ -101,6 +99,8 @@ export const EVENT_EDITOR_TEXT = {
   /** Evento di un'altra persona: i promemoria sono personali e la sezione non li ha. */
   sectionMoreHintOther: "ripetizione, descrizione, luogo, collegamenti",
   sectionMoreHintOtherNoLinks: "ripetizione, descrizione, luogo",
+  /** Lezione: la ripetizione è già in vista, il riassunto di «Altre opzioni» non la elenca. */
+  withoutRepeat: (hint: string) => hint.replace(/^ripetizione, /, ""),
   remindersPersonal: "I promemoria sono personali: negli eventi di un'altra persona non si impostano.",
   /** Giorno di una serie altrui cambiato da solo: la ripetizione è della serie. */
   repeatSharedRow: "Questo giorno è stato cambiato da solo: per cambiare la ripetizione apri un altro giorno della serie.",

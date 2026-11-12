@@ -85,6 +85,8 @@ import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { CourseIcon } from "../components/CourseIcon";
+import { BarbExamImport } from "../components/BarbExamImport";
+import { OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
 import { cloudConfigured } from "../lib/cloudSyncState";
@@ -247,6 +249,7 @@ export function CalendarView() {
     setScopeRequest(null);
   };
   const [editingTaskId, setEditingTaskId] = useLinkedUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
+  const [barbImportOpen, setBarbImportOpen] = useState(false);
   // `draft` / `occasion`: dal modulo semplice ("Modulo completo"), con ciò che si era già scritto.
   const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string; draft?: EventDraft; occasion?: EventOccasion } | null>(null);
   // Percorsi semplici nuovi: ricorrenza (compleanno, anniversario…) o vacanza.
@@ -676,15 +679,9 @@ export function CalendarView() {
               { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
               transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
-              // Date ufficiali e «Aggiungi appelli ufficiali» nello stesso posto: la scheda degli appelli ufficiali.
-              {
-                label: CALENDAR_TEXT.officialDates,
-                icon: "Landmark",
-                onClick: () => {
-                  writeUiState("exams.tab", "barb", "device");
-                  setActiveView("exams");
-                }
-              },
+              // Una voce sola per gli appelli ufficiali: apre subito la scelta delle date da aggiungere
+              // (due tocchi); l'elenco completo resta in Esami → «Date ufficiali».
+              { label: OFFICIAL_EXAMS_ADD_LABEL, icon: "Landmark", onClick: () => setBarbImportOpen(true) },
               { label: CALENDAR_TEXT.subjectSummary, icon: "BookOpen", onClick: () => openSummary("semester") },
               { label: CALENDAR_TEXT.examSummary, icon: "GraduationCap", onClick: () => openSummary("exam") },
               { label: TYPE_COLORS_TEXT.menu, icon: "Palette", onClick: () => setTypeColorsOpen(true) }
@@ -693,6 +690,7 @@ export function CalendarView() {
         }
       />
       <CalendarTransfer ref={transfer} />
+      {barbImportOpen ? <BarbExamImport onClose={() => setBarbImportOpen(false)} /> : null}
       {typeColorsOpen ? (
         <TypeColorsDrawer overrides={typeOverrides} onSave={(next) => updatePreferences({ eventTypeColors: next })} onClose={() => setTypeColorsOpen(false)} />
       ) : null}

@@ -46,6 +46,9 @@ export const CALENDAR_GUIDE_TEXT = {
   download: "Scarica il file",
   share: "Condividi il file",
   downloaded: (fileName: string) => `Scaricato: ${fileName}. Ora segui i passi qui sotto.`,
+  /** Scorciatoia del primo passo: sotto non ci sono passi da seguire. */
+  downloadedShortcut: (fileName: string) =>
+    `Scaricato: ${fileName}. Aprilo con il tuo calendario, oppure scegli dove portarlo per vedere i passi.`,
   loading: "Un momento…",
   chooseFile: "Scegli il file",
   tooBig:
