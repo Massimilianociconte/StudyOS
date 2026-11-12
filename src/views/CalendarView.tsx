@@ -112,7 +112,7 @@ import { todayYmd } from "../lib/datePicker";
 import { DayList } from "../components/calendar/DayList";
 import { MonthGrid } from "../components/calendar/MonthGrid";
 import { TimeGrid } from "../components/calendar/TimeGrid";
-import { NARROW_QUERY, defaultStartFor, useMediaQuery } from "../components/calendar/shared";
+import { NARROW_QUERY, PHONE_QUERY, defaultStartFor, useMediaQuery } from "../components/calendar/shared";
 import type {
   CalendarOccurrence,
   CalendarPreviewState,
@@ -202,9 +202,10 @@ export function CalendarView() {
   const [storedMode, setMode] = useUiState<StoredCalendarMode>("calendar.mode", "week", { validate: oneOf(...STORED_CALENDAR_MODES) });
   const [storedDayFocus, setDayFocus] = useUiState<boolean>("calendar.dayFocus", false, { validate: (value) => typeof value === "boolean" });
   const { mode, dayFocus } = resolveCalendarMode(storedMode, storedDayFocus);
-  // Telefono (< 768 px): si crea solo dal + in basso (o da «Aggiungi»); "Solo 8–19" e "Festività"
-  // vanno in «Altre azioni». Stesse preferenze salvate; sul computer non cambia nulla.
+  // Sotto 768 px "Solo 8–19" e "Festività" vanno in «Altre azioni»; sotto 640 px (dove c'è il + fisso
+  // in basso) si crea solo da lì. Stesse preferenze salvate; sul computer non cambia nulla.
   const narrow = useMediaQuery(NARROW_QUERY);
+  const phone = useMediaQuery(PHONE_QUERY);
   useEffect(() => {
     if (storedMode !== "focus") return;
     setDayFocus(true);
@@ -643,7 +644,7 @@ export function CalendarView() {
           // Una sola azione primaria; il resto, che si usa di rado, nel menu "Altre azioni".
           <PageActions
             primary={
-              narrow ? undefined : (
+              phone ? undefined : (
                 <Button icon="Plus" variant="primary" onClick={() => openCreator(defaultStartFor(new Date()))}>
                   {CALENDAR_TEXT.newEvent}
                 </Button>
