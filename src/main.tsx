@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { LazyMotion, domAnimation } from "framer-motion";
+import { LazyMotion, MotionConfig, domAnimation } from "framer-motion";
 import App from "./App";
 import { TabGuard } from "./components/TabGuard";
 import {
@@ -27,7 +27,10 @@ const activeTab = startActiveTab(
         <React.StrictMode>
           {/* Solo le animazioni usate (ingresso/uscita, niente layout): bundle iniziale più leggero. */}
           <LazyMotion features={domAnimation} strict>
-            <App />
+            {/* Chi chiede al sistema meno movimento non vede scivolamenti (framer di base: "never"). */}
+            <MotionConfig reducedMotion="user">
+              <App />
+            </MotionConfig>
           </LazyMotion>
         </React.StrictMode>
       );
