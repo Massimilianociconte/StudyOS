@@ -39,7 +39,10 @@ import {
   formatMinutes,
   occasionAgeText
 } from "../lib/labels";
-import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
+import { HOME_GUIDE_TEXT, HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
+import { currentDegree, degreeOptionLabel, degreePatch, homeLinks } from "../lib/homeFirstRun";
+import { GETTING_STARTED_HIDDEN_KEY } from "../lib/deviceStorage";
+import { DEGREE_PROGRAM_IDS, type DegreeProgramId } from "../lib/graduation";
 import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import { useToday } from "../hooks/useToday";
 import { homeTimerSummary } from "../lib/homeTimer";
@@ -81,11 +84,11 @@ function PanelHeader({ title, action, onAction, help }: { title: string; action?
   );
 }
 
-/** Riquadro senza dati: una riga e un solo collegamento per aggiungere. */
-function EmptyLine({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
+/** Riquadro senza dati: una riga e al massimo un collegamento per aggiungere (niente doppioni con la guida). */
+function EmptyLine({ text, action, onAction }: { text: string; action?: string; onAction: () => void }) {
   return (
-    <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-[var(--muted)]">
-      {text} <TextLink onClick={onAction}>{action}</TextLink>
+    <p className="flex min-h-8 flex-wrap items-center gap-x-1.5 text-sm text-[var(--muted)]">
+      {text} {action ? <TextLink onClick={onAction}>{action}</TextLink> : null}
     </p>
   );
 }
@@ -169,16 +172,16 @@ function StudyAction({ onGo }: { onGo: () => void }) {
       onClick={onGo}
       aria-label={HOME_TIMER_TEXT.aria(summary.text)}
       title={HOME_TIMER_TEXT.title}
-      className="motion-safe inline-flex min-h-11 max-w-full items-center gap-2 sm:max-w-xs rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] pl-3 pr-2.5 text-sm font-extrabold text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)]"
+      className="motion-safe inline-flex min-h-11 max-w-full items-center gap-2 rounded-[22px] border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] py-1.5 pl-3 pr-2.5 text-left text-sm font-extrabold text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)] sm:max-w-md"
     >
       <span className="relative grid h-2.5 w-2.5 shrink-0 grid-cols-1 place-items-center" aria-hidden="true">
         {summary.state === "running" ? <span className="absolute inset-0 rounded-full bg-[var(--accent)] opacity-60 motion-safe:animate-ping" /> : null}
         <span className={`h-2.5 w-2.5 rounded-full ${summary.state === "running" ? "bg-[var(--accent)]" : "bg-[var(--faint)]"}`} />
       </span>
       <Icon name={summary.icon} className="h-4 w-4 shrink-0" />
-      <span className="flex min-w-0 items-center gap-1">
-        <span className="min-w-0 truncate">{summary.lead}</span>
-        <span className="shrink-0 tabular-nums">· {summary.tail}</span>
+      {/* La materia va a capo invece di troncarsi; il tempo segue sulla stessa riga e resta intero. */}
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        {summary.lead} <span className="whitespace-nowrap tabular-nums">· {summary.tail}</span>
       </span>
       <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
     </button>
@@ -187,7 +190,7 @@ function StudyAction({ onGo }: { onGo: () => void }) {
 
 export function DashboardView() {
   const store = useStudyStore();
-  const { events, tasks, subjects, exams, sessions, attachments, goals, topics, setActiveView, toggleTask } = store;
+  const { events, tasks, subjects, exams, sessions, attachments, goals, topics, setActiveView, toggleTask, updatePreferences } = store;
   // Oggi e settimana si aggiornano a mezzanotte anche con la Home aperta.
   useToday();
   const today = todayEvents(events);
@@ -222,6 +225,24 @@ export function DashboardView() {
   const hasNextExams = nextExams.length > 0;
   const calendarExams = useMemo(() => (hasNextExams ? [] : calendarExamEvents(events, new Date())), [events, hasNextExams]);
   const nextExamDays = nextExams[0] ? studyDaysUntil(nextExams[0].date) : 0;
+  const activeGoals = goals.filter((goal) => goal.status === "active");
+
+  // Guida «Per iniziare»: finché è in vista, la Home non ripete le sue azioni (vedi homeLinks).
+  const [guideHidden, hideGuide] = useGuideHidden();
+  const guideDone = { subjects: subjects.length > 0, calendar: events.length > 0, tasks: tasks.length > 0, profile: Boolean(displayName) };
+  const guideVisible = !guideHidden && !Object.values(guideDone).every(Boolean);
+  const links = homeLinks({
+    guideVisible,
+    guideTaskPending: !guideDone.tasks,
+    empty: {
+      today: !(today.length || todayTasks.length || reviewsDue.length),
+      next: !nextTask,
+      exams: !nextExams.length && !calendarExams.length,
+      subjects: !activeSubjects.length,
+      goals: !activeGoals.length,
+      materials: !recentAttachments.length
+    }
+  });
   const stats = [
     {
       label: "Studio della settimana",
@@ -281,11 +302,16 @@ export function DashboardView() {
         action={<StudyAction onGo={() => setActiveView("study")} />}
       />
 
-      <GettingStarted
-        showBarb={preferences.showBarb}
-        done={{ subjects: subjects.length > 0, calendar: events.length > 0, tasks: tasks.length > 0, profile: Boolean(displayName) }}
-        onGo={setActiveView}
-      />
+      {guideVisible ? (
+        <GettingStarted
+          showBarb={preferences.showBarb}
+          degree={currentDegree(preferences.degreeProgram)}
+          onDegree={(id) => void updatePreferences(degreePatch(id))}
+          done={guideDone}
+          onGo={setActiveView}
+          onHide={hideGuide}
+        />
+      ) : null}
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {stats.map((stat) => (
@@ -403,12 +429,12 @@ export function DashboardView() {
                   ) : null}
                 </ul>
               ) : (
-                <EmptyLine text={HOME_TEXT.emptyToday} action={HOME_TEXT.addEvent} onAction={() => openQuickAdd("event")} />
+                <EmptyLine text={HOME_TEXT.emptyToday} action={links.todayAdd ? HOME_TEXT.addEvent : undefined} onAction={() => openQuickAdd("event")} />
               )}
             </Panel>
 
             <Panel>
-              <PanelHeader title="Cosa fare adesso" action={HOME_TEXT.allTasks} onAction={() => setActiveView("tasks")} help={HOME_HELP.next} />
+              <PanelHeader title="Cosa fare adesso" action={links.allTasks ? HOME_TEXT.allTasks : undefined} onAction={() => setActiveView("tasks")} help={HOME_HELP.next} />
               {nextTask ? (
                 <div>
                   <button
@@ -451,13 +477,13 @@ export function DashboardView() {
                   ) : null}
                 </div>
               ) : (
-                <EmptyLine text={HOME_TEXT.emptyNext} action={HOME_TEXT.addTask} onAction={() => openQuickAdd("task")} />
+                <EmptyLine text={HOME_TEXT.emptyNext} action={links.nextAdd ? HOME_TEXT.addTask : undefined} onAction={() => openQuickAdd("task")} />
               )}
             </Panel>
           </div>
 
           <Panel>
-            <PanelHeader title="Esami in arrivo" action={HOME_TEXT.allExams} onAction={() => setActiveView("exams")} help={HOME_HELP.preparation} />
+            <PanelHeader title="Esami in arrivo" action={links.allExams ? HOME_TEXT.allExams : undefined} onAction={() => setActiveView("exams")} help={HOME_HELP.preparation} />
             {nextExams.length ? (
               <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {nextExams.map((exam) => {
@@ -497,7 +523,11 @@ export function DashboardView() {
           </Panel>
 
           <Panel>
-            <PanelHeader title={activeSubjects.length ? `Le tue materie · ${activeSubjects.length}` : "Le tue materie"} action={HOME_TEXT.allSubjects} onAction={() => setActiveView("subjects")} />
+            <PanelHeader
+              title={activeSubjects.length ? `Le tue materie · ${activeSubjects.length}` : "Le tue materie"}
+              action={links.allSubjects ? HOME_TEXT.allSubjects : undefined}
+              onAction={() => setActiveView("subjects")}
+            />
             {activeSubjects.length ? (
               <ul className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
                 {activeSubjects.map((subject) => {
@@ -556,7 +586,7 @@ export function DashboardView() {
                 ))}
               </ul>
             ) : (
-              <EmptyLine text={HOME_TEXT.emptyUpcoming} action={HOME_TEXT.addEvent} onAction={() => openQuickAdd("event")} />
+              <EmptyLine text={HOME_TEXT.emptyUpcoming} action={links.upcomingAdd ? HOME_TEXT.addEvent : undefined} onAction={() => openQuickAdd("event")} />
             )}
           </Panel>
 
@@ -600,11 +630,10 @@ export function DashboardView() {
           ) : null}
 
           <Panel>
-            <PanelHeader title="Obiettivi" action={HOME_TEXT.allGoals} onAction={() => setActiveView("goals")} />
-            {goals.filter((goal) => goal.status === "active").length ? (
+            <PanelHeader title="Obiettivi" action={links.allGoals ? HOME_TEXT.allGoals : undefined} onAction={() => setActiveView("goals")} />
+            {activeGoals.length ? (
               <ul className="grid grid-cols-1 gap-0.5">
-                {goals
-                  .filter((goal) => goal.status === "active")
+                {activeGoals
                   .slice(0, 3)
                   .map((goal) => (
                     <li key={goal.id}>
@@ -627,7 +656,7 @@ export function DashboardView() {
           </Panel>
 
           <Panel>
-            <PanelHeader title="Ultimi materiali" action={HOME_TEXT.allMaterials} onAction={() => setActiveView("materials")} />
+            <PanelHeader title="Ultimi materiali" action={links.allMaterials ? HOME_TEXT.allMaterials : undefined} onAction={() => setActiveView("materials")} />
             {recentAttachments.length ? (
               <ul className="grid grid-cols-1 gap-1">
                 {recentAttachments.map((attachment) => (
@@ -650,8 +679,6 @@ export function DashboardView() {
   );
 }
 
-const GETTING_STARTED_HIDDEN_KEY = "studyos-getting-started-hidden";
-
 const readHidden = () => {
   try {
     return localStorage.getItem(GETTING_STARTED_HIDDEN_KEY) === "1";
@@ -660,20 +687,40 @@ const readHidden = () => {
   }
 };
 
+/** «Nascondi la guida» vale su questo dispositivo. La Home lo legge per sapere se la guida è in vista. */
+function useGuideHidden(): [boolean, () => void] {
+  const [hidden, setHidden] = useState(readHidden);
+  const hide = () => {
+    try {
+      localStorage.setItem(GETTING_STARTED_HIDDEN_KEY, "1");
+    } catch {
+      // senza storage la guida si nasconde solo fino al prossimo caricamento
+    }
+    setHidden(true);
+  };
+  return [hidden, hide];
+}
+
 /**
  * Guida dei primi passi: resta in Home finché i quattro passi non sono fatti (o finché non la
  * si nasconde su questo dispositivo). Ogni passo si spunta da solo quando i dati ci sono.
  */
 function GettingStarted({
   showBarb,
+  degree,
+  onDegree,
   done,
-  onGo
+  onGo,
+  onHide
 }: {
   showBarb: boolean;
+  /** Corso di laurea: si sceglie nel primo passo, prima di aprire il catalogo dei corsi. */
+  degree: DegreeProgramId;
+  onDegree: (id: DegreeProgramId) => void;
   done: { subjects: boolean; calendar: boolean; tasks: boolean; profile: boolean };
   onGo: (view: AppView) => void;
+  onHide: () => void;
 }) {
-  const [hidden, setHidden] = useState(readHidden);
   const steps: { key: keyof typeof done; icon: string; title: string; body: string; action: string; run: () => void }[] = [
     {
       key: "subjects",
@@ -714,17 +761,7 @@ function GettingStarted({
     }
   ];
   const completed = steps.filter((step) => done[step.key]).length;
-  if (hidden || completed === steps.length) return null;
   const nextKey = steps.find((step) => !done[step.key])?.key;
-
-  const hide = () => {
-    try {
-      localStorage.setItem(GETTING_STARTED_HIDDEN_KEY, "1");
-    } catch {
-      // senza storage la guida si nasconde solo fino al prossimo caricamento
-    }
-    setHidden(true);
-  };
 
   return (
     <section className="soft-panel mb-4 p-4" aria-labelledby="getting-started-title">
@@ -738,7 +775,7 @@ function GettingStarted({
             Puoi farli nell'ordine che preferisci.
           </p>
         </div>
-        <Button variant="ghost" icon="EyeOff" className="relative min-h-9 px-3 text-xs after:absolute after:-inset-1 after:content-['']" onClick={hide} title="Nasconde questa guida su questo dispositivo">
+        <Button variant="ghost" icon="EyeOff" className="relative min-h-9 px-3 text-xs after:absolute after:-inset-1 after:content-['']" onClick={onHide} title="Nasconde questa guida su questo dispositivo">
           Nascondi la guida
         </Button>
       </div>
@@ -746,30 +783,71 @@ function GettingStarted({
         {steps.map((step, index) => {
           const isDone = done[step.key];
           const isNext = step.key === nextKey;
+          const label = `${isDone ? "Fatto: " : `Passo ${index + 1}: `}${step.title}. ${step.action}`;
+          const heading = (
+            <span className="flex items-center gap-2 text-sm font-black">
+              <span
+                className={`grid h-7 w-7 shrink-0 grid-cols-1 place-items-center rounded-full text-xs ${
+                  isNext ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-strong)] text-[var(--text)]"
+                }`}
+              >
+                {isDone ? <Icon name="Check" className="h-3.5 w-3.5" /> : index + 1}
+              </span>
+              {step.title}
+            </span>
+          );
+          const action = (
+            <>
+              <Icon name={step.icon} className="h-3.5 w-3.5 shrink-0" /> {step.action} →
+            </>
+          );
+          // Il corso decide il primo passo (catalogo del corso o materia a mano): si sceglie qui, prima
+          // dell'azione. Due corsi: un elenco, così il nome intero si legge anche a 375 px.
+          if (step.key === "subjects" && !isDone) {
+            return (
+              <li key={step.key} className="flex min-w-0 flex-col items-start gap-1 rounded-[20px] bg-[var(--surface-soft)] p-3">
+                {heading}
+                <span className="text-xs font-bold text-[var(--muted)]">{step.body}</span>
+                <fieldset className="mt-1 w-full min-w-0">
+                  <legend className="mb-1 text-xs font-bold text-[var(--muted)]">{HOME_GUIDE_TEXT.degreeLabel}</legend>
+                  <div className="grid grid-cols-1 gap-1">
+                    {DEGREE_PROGRAM_IDS.map((id) => (
+                      <label key={id} className="flex min-h-11 min-w-0 cursor-pointer items-center gap-2.5 rounded-[14px] bg-[var(--surface)] px-3 py-2 text-xs font-bold">
+                        <input
+                          type="radio"
+                          name="home-degree"
+                          value={id}
+                          checked={degree === id}
+                          onChange={() => onDegree(id)}
+                          className="h-4 w-4 shrink-0 accent-[var(--accent)]"
+                        />
+                        <span className="min-w-0">{degreeOptionLabel(id)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <button
+                  type="button"
+                  onClick={step.run}
+                  aria-label={label}
+                  className="mt-auto inline-flex min-h-11 items-center gap-1 rounded-full pr-2 text-left text-xs font-black text-[var(--accent-ink)] hover:underline"
+                >
+                  {action}
+                </button>
+              </li>
+            );
+          }
           return (
-            <li key={step.key}>
+            <li key={step.key} className={`flex min-w-0 flex-col rounded-[20px] bg-[var(--surface-soft)] ${isDone ? "opacity-60" : ""}`}>
               <button
                 type="button"
                 onClick={step.run}
-                aria-label={`${isDone ? "Fatto: " : `Passo ${index + 1}: `}${step.title}. ${step.action}`}
-                className={`flex h-full w-full min-w-0 flex-col items-start gap-1 rounded-[20px] bg-[var(--surface-soft)] p-3 text-left hover:bg-[var(--surface)] ${isDone ? "opacity-60" : ""}`}
+                aria-label={label}
+                className="flex w-full min-w-0 flex-1 flex-col items-start gap-1 rounded-[20px] p-3 text-left hover:bg-[var(--surface)]"
               >
-                <span className="flex items-center gap-2 text-sm font-black">
-                  <span
-                    className={`grid h-7 w-7 shrink-0 grid-cols-1 place-items-center rounded-full text-xs ${
-                      isNext ? "bg-[var(--accent)] text-[#10131d]" : "bg-[var(--surface-strong)] text-[var(--text)]"
-                    }`}
-                  >
-                    {isDone ? <Icon name="Check" className="h-3.5 w-3.5" /> : index + 1}
-                  </span>
-                  {step.title}
-                </span>
+                {heading}
                 <span className="text-xs font-bold text-[var(--muted)]">{isDone ? "Fatto." : step.body}</span>
-                {isDone ? null : (
-                  <span className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-black text-[var(--accent-ink)]">
-                    <Icon name={step.icon} className="h-3.5 w-3.5" /> {step.action} →
-                  </span>
-                )}
+                {isDone ? null : <span className="mt-auto inline-flex items-center gap-1 pt-1 text-xs font-black text-[var(--accent-ink)]">{action}</span>}
               </button>
             </li>
           );

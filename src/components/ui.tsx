@@ -17,6 +17,7 @@ import { Icon } from "./Icon";
 import { UI_TEXT } from "../lib/labels";
 import { menuIndexForKey, placeFloating, type FloatingAlign, type FloatingPosition } from "../lib/uiPieces";
 import { applyStyles, canScrollToward, createLayerStack, createScrollLock, lockStyles, scrollbarWidthOf } from "../lib/scrollLock";
+import { createDrawerHistory, DRAWER_STATE_KEY } from "../lib/drawerHistory";
 
 export function Button({
   children,
@@ -487,9 +488,47 @@ export function useDialogLayer(
   }, [open, panelRef, returnFocusRef]);
 }
 
+// Indietro (browser, Android, gesto di iOS) chiude il drawer in cima: una voce nella cronologia per
+// drawer aperto, stesso indirizzo, nessun effetto sulla sezione mostrata. Logica in lib/drawerHistory.
+const drawerHistory =
+  typeof window === "undefined"
+    ? null
+    : createDrawerHistory({
+        push: (id) => window.history.pushState({ [DRAWER_STATE_KEY]: id }, ""),
+        replace: (id) => window.history.replaceState({ [DRAWER_STATE_KEY]: id }, ""),
+        go: (delta) => window.history.go(delta),
+        current: () => {
+          const state: unknown = window.history.state;
+          const id = state && typeof state === "object" ? (state as Record<string, unknown>)[DRAWER_STATE_KEY] : null;
+          return typeof id === "string" ? id : null;
+        },
+        schedule: (fn, ms) => void window.setTimeout(fn, ms)
+      });
+if (drawerHistory) window.addEventListener("popstate", (event) => drawerHistory.popstate(event.state));
+
+/** Collega il drawer aperto a Indietro. `onBack` restituisce false se il drawer resta aperto. */
+function useBackCloses(open: boolean, onBack: () => boolean) {
+  const backRef = useRef(onBack);
+  backRef.current = onBack;
+  const tokenRef = useRef<symbol | null>(null);
+  useEffect(() => {
+    if (!open || !drawerHistory) return;
+    const token = drawerHistory.open(() => backRef.current());
+    tokenRef.current = token;
+    return () => {
+      tokenRef.current = null;
+      drawerHistory.close(token);
+    };
+  }, [open]);
+  // Dopo ogni disegno con il drawer ancora aperto: se un Indietro non l'ha chiuso, la sua voce torna.
+  useEffect(() => {
+    if (tokenRef.current) drawerHistory?.settle(tokenRef.current);
+  });
+}
+
 /**
  * Pannello laterale per i dettagli: a destra su desktop, foglio dal basso su mobile.
- * Esc o click fuori chiudono; lo scroll della pagina resta bloccato finché è aperto.
+ * Esc, click fuori o Indietro chiudono; lo scroll della pagina resta bloccato finché è aperto.
  */
 export function Drawer({
   open,
@@ -519,8 +558,14 @@ export function Drawer({
   closeRef.current = onClose;
   const outsideRef = useRef(dismissOutside);
   outsideRef.current = dismissOutside;
-  // Su mobile è un foglio che sale dal basso, su desktop un pannello che entra da destra.
-  const offset = typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches ? { x: 40 } : { y: 60 };
+  const reduceMotion = useReducedMotion();
+  // Su mobile è un foglio che sale dal basso, su desktop un pannello che entra da destra; con
+  // "riduci movimento" compare solo in dissolvenza.
+  const offset = reduceMotion
+    ? {}
+    : typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches
+      ? { x: 40 }
+      : { y: 60 };
 
   // Lo sfondo è l'area dove si scorre al tocco: contiene anche fumetti e selettori aperti nel pannello.
   useDialogLayer(open, {
@@ -529,6 +574,12 @@ export function Drawer({
     onEscape: () => {
       if (outsideRef.current) closeRef.current();
     }
+  });
+  // Indietro come Esc: dove Esc non chiude (contenuto che non si può rivedere) il drawer resta aperto.
+  useBackCloses(open, () => {
+    if (!outsideRef.current) return false;
+    closeRef.current();
+    return true;
   });
 
   // Portal su body: un drawer aperto dentro un altro non resta confinato nel pannello sotto.
@@ -909,7 +960,7 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
                     close(true);
                     item.onClick();
                   }}
-                  className={`motion-safe flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-[14px] px-3 text-left text-sm font-extrabold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${
+                  className={`motion-safe flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-[14px] px-3 text-left text-sm font-extrabold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] ${
                     item.danger
                       ? "text-[var(--danger-text)] hover:bg-[var(--danger-bg)] focus:bg-[var(--danger-bg)]"
                       : "text-[var(--text)] hover:bg-[var(--surface)] focus:bg-[var(--surface)]"

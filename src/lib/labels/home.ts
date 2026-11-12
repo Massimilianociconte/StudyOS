@@ -55,6 +55,12 @@ export const HOME_HELP = {
   }
 } as const;
 
+/** Home: guida «Per iniziare». */
+export const HOME_GUIDE_TEXT = {
+  /** Menu del corso nel primo passo: decide se le materie arrivano dal catalogo del corso. */
+  degreeLabel: "Il tuo corso di laurea"
+} as const;
+
 /** Home: riquadro delle prossime ricorrenze (compleanni, anniversari). */
 export const HOME_OCCASIONS_TEXT = {
   title: "Prossime ricorrenze",

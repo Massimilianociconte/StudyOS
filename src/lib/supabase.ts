@@ -99,10 +99,11 @@ export const signIn = async (email: string, password: string) => {
  * Ritorna `{ localOnly: true }` quando il server non era raggiungibile: supabase-js in quel caso
  * NON rimuove la sessione (nemmeno con scope "local", che contatta comunque il server), quindi
  * la si elimina dallo storage del dispositivo e il chiamante ricarica l'app.
+ * `scope: "local"` esce solo da questo dispositivo; il predefinito "global" da tutti.
  */
-export const signOut = async (): Promise<{ localOnly: boolean }> => {
+export const signOut = async (scope: "global" | "local" = "global"): Promise<{ localOnly: boolean }> => {
   if (!supabase) return { localOnly: false };
-  const { error } = await supabase.auth.signOut();
+  const { error } = await supabase.auth.signOut({ scope });
   if (!error) return { localOnly: false };
   if (isAuthApiError(error)) throw error;
   for (const suffix of ["", "-code-verifier", "-user"]) {
