@@ -1,6 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Field, Panel, Pill, inputClass } from "./ui";
 import { whenPersisted } from "../lib/persistence";
+import { signOutThisDevice } from "../lib/deviceSignOut";
+import { setCloudSyncState } from "../lib/cloudSyncState";
+import { ACCOUNT_TEXT } from "../lib/labels/account";
+import { useStudyStore } from "../store/useStudyStore";
 import {
   isCloudConfigured,
   resendConfirmation,
@@ -51,6 +55,9 @@ export function CloudPanel() {
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<{ kind: "ok" | "err" | "pending"; text: string } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // «Esci dall'account» chiede sul posto: tenere i dati qui o toglierli (dispositivo non tuo).
+  const [leaving, setLeaving] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const [pendingEmail, setPendingEmail] = useState<string | null>(() =>
     typeof window !== "undefined" ? localStorage.getItem(PENDING_EMAIL_KEY) : null
   );
@@ -60,6 +67,11 @@ export function CloudPanel() {
     if (!configured) return;
     return subscribeCloudSync(setSync);
   }, [configured]);
+
+  // Uscito altrove (altra scheda, sessione scaduta): la domanda non resta pronta per il prossimo accesso.
+  useEffect(() => {
+    if (!sync.session) setLeaving(false);
+  }, [sync.session]);
 
   useEffect(() => {
     if (sync.session && pendingEmail) {
@@ -175,22 +187,58 @@ export function CloudPanel() {
     setInfo(null);
   };
 
-  const handleSignOut = async () => {
-    if (!window.confirm("Uscire dall'account?\n\nI dati restano su questo dispositivo, ma le nuove modifiche non arriveranno più agli altri dispositivi.")) return;
+  const cancelLeave = () => {
+    setLeaving(false);
+    // Il focus torna su «Esci dall'account», non sul body.
+    window.setTimeout(() => actionsRef.current?.querySelector<HTMLElement>("[data-leave]")?.focus(), 0);
+  };
+
+  // Solo da questo dispositivo («local»): prima l'uscita era da tutti i dispositivi, anche dal tablet
+  // di chi aveva fatto l'accesso qui solo per un momento.
+  const leaveKeepingData = async () => {
     setBusy(true);
     setInfo(null);
     try {
-      const result = await signOut();
+      const result = await signOut("local");
+      setLeaving(false);
       if (result.localOnly) {
-        setInfo({ kind: "pending", text: "Server non raggiungibile: sei uscito solo su questo dispositivo. Ricarico la pagina…" });
+        setInfo({ kind: "pending", text: ACCOUNT_TEXT.leftOffline });
         await whenPersisted().catch(() => undefined);
         window.location.reload();
         return;
       }
-      setInfo({ kind: "ok", text: "Sei uscito dall'account. I dati restano su questo dispositivo." });
+      setInfo({ kind: "ok", text: ACCOUNT_TEXT.leftKeep });
     } catch (error) {
-      setInfo({ kind: "err", text: error instanceof Error ? error.message : "Uscita non riuscita. Riprova." });
+      setInfo({ kind: "err", text: error instanceof Error ? error.message : ACCOUNT_TEXT.leaveFailed });
     } finally {
+      setBusy(false);
+    }
+  };
+
+  // Come «Ho dimenticato la password» (LockScreen): prima l'uscita solo da qui, poi i dati del
+  // dispositivo si cancellano (nome, foto, materie…). Nell'account resta tutto.
+  const leaveRemovingData = async () => {
+    if (sync.pendingCount > 0) return;
+    setBusy(true);
+    setInfo(null);
+    try {
+      const signedOut = await signOutThisDevice({
+        configured: true,
+        signOut: () => signOut("local"),
+        removeItem: (key) => window.localStorage.removeItem(key),
+        dropSession: () => setCloudSyncState({ session: null, lastSync: null, status: "idle", error: undefined }),
+        schedule: (fn, ms) => void window.setTimeout(fn, ms)
+      });
+      // Profilo vuoto: si riparte da Home («Per iniziare»), non da Impostazioni.
+      useStudyStore.getState().setActiveView("dashboard");
+      await useStudyStore.getState().resetAllData({ propagate: false });
+      // Sessione tolta solo dallo storage: supabase-js può averne una copia in memoria, si riparte puliti.
+      if (signedOut === "removed-here") window.location.reload();
+      // Pannello ancora aperto (es. in un invito di gruppo): torna al modulo di accesso.
+      setLeaving(false);
+      setBusy(false);
+    } catch (error) {
+      setInfo({ kind: "err", text: error instanceof Error ? error.message : ACCOUNT_TEXT.leaveFailed });
       setBusy(false);
     }
   };
@@ -282,17 +330,54 @@ export function CloudPanel() {
             </p>
           ) : null}
 
-          <div className="flex flex-wrap gap-2">
-            <Button icon="Sparkles" variant="soft" onClick={handleSyncNow} disabled={busy || sync.status === "syncing"}>
-              Sincronizza ora
-            </Button>
-            <Button icon="LogOut" variant="danger" onClick={handleSignOut} disabled={busy}>
-              Esci dall'account
-            </Button>
-            <Button icon="Settings" variant="ghost" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>
-              {showAdvanced ? "Nascondi altre opzioni" : "Altre opzioni"}
-            </Button>
-          </div>
+          {leaving ? (
+            // Stesso schema delle domande sul posto (Scartare le modifiche?): niente finestra del browser.
+            <div role="group" aria-labelledby="account-leave-title" className="quiet-panel grid grid-cols-1 gap-2 p-4">
+              <p id="account-leave-title" className="text-sm font-black">
+                {ACCOUNT_TEXT.leaveTitle}
+              </p>
+              <p className="text-sm font-bold text-[var(--muted)]">{ACCOUNT_TEXT.leaveText}</p>
+              <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveKeepHint}</p>
+              <p className="text-sm text-[var(--muted)]">{ACCOUNT_TEXT.leaveRemoveHint}</p>
+              {sync.pendingCount > 0 ? (
+                <p className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">
+                  {ACCOUNT_TEXT.leavePending(sync.pendingCount)}
+                </p>
+              ) : null}
+              <div className="mt-1 flex flex-wrap justify-end gap-2">
+                <Button variant="soft" onClick={cancelLeave} disabled={busy} autoFocus>
+                  {ACCOUNT_TEXT.leaveCancel}
+                </Button>
+                <Button icon="LogOut" variant="soft" onClick={() => void leaveKeepingData()} disabled={busy}>
+                  {ACCOUNT_TEXT.leaveKeep}
+                </Button>
+                <Button icon="Trash2" variant="danger" onClick={() => void leaveRemovingData()} disabled={busy || sync.pendingCount > 0}>
+                  {ACCOUNT_TEXT.leaveRemove}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div ref={actionsRef} className="flex flex-wrap gap-2">
+              <Button icon="Sparkles" variant="soft" onClick={handleSyncNow} disabled={busy || sync.status === "syncing"}>
+                Sincronizza ora
+              </Button>
+              <Button
+                icon="LogOut"
+                variant="danger"
+                data-leave=""
+                onClick={() => {
+                  setInfo(null);
+                  setLeaving(true);
+                }}
+                disabled={busy}
+              >
+                Esci dall'account
+              </Button>
+              <Button icon="Settings" variant="ghost" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>
+                {showAdvanced ? "Nascondi altre opzioni" : "Altre opzioni"}
+              </Button>
+            </div>
+          )}
 
           {showAdvanced ? (
             <div className="quiet-panel grid grid-cols-1 gap-2 p-4">
@@ -398,7 +483,9 @@ export function CloudPanel() {
       )}
 
       {info ? (
-        <p className={`mt-4 rounded-[18px] border p-3 text-sm font-bold ${tone}`}>{info.text}</p>
+        <p role="status" className={`mt-4 rounded-[18px] border p-3 text-sm font-bold ${tone}`}>
+          {info.text}
+        </p>
       ) : null}
     </Panel>
   );

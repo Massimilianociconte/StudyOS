@@ -78,7 +78,13 @@
   `hover:`, altrimenti su tablet touch resta invisibile. Altezze: `dvh`, non `vh`.
 - Preferenze personali (nome, foto, ore settimanali, CFU del corso, BARB visibile): entità
   sincronizzata `preferences` con id `main`, letta con `selectPreferences` (oggetto stabile).
-  Non rimettere dati personali in `settings`, che restano del dispositivo.
+  Non rimettere dati personali in `settings`, che restano del dispositivo. L'id `main` è lo stesso
+  in ogni account: cambiando account con «unisci» le preferenze di prima si tolgono
+  (`accountSwitch.ts` → `personalRemovals`), altrimenti l'ultima scrittura vince e nome e foto
+  passano al nuovo account. Una nuova collezione «della persona» va in `PERSONAL_COLLECTIONS`.
+- «Esci dall'account» esce solo da questo dispositivo (`signOut("local")`): con `global` si
+  chiudevano anche gli altri dispositivi dell'account. «Togli i dati da qui» riusa il flusso di
+  «Ho dimenticato la password» (`signOutThisDevice` poi `resetAllData({ propagate: false })`).
 - Aggiungendo una collezione sincronizzata: registrarla in `collections.ts`, nuova versione
   Dexie in `db.ts`, backup parziali in SettingsView e incrementare `SYNC_SCHEMA`.
 - I menu di scelta della materia usano `selectableSubjects` (niente materie archiviate o già

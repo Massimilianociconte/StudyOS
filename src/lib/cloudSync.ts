@@ -16,6 +16,8 @@ import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type Collect
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, type PendingOutbox, type RemoteRow } from "./syncMerge";
+import { personalRemovals } from "./accountSwitch";
+import { ACCOUNT_TEXT } from "./labels/account";
 import {
   getSession,
   isCloudConfigured,
@@ -367,12 +369,14 @@ const bindUser = async (userId: string) => {
   const store = useStudyStore.getState();
   const hasData = countEntities(pickCollections(store)) > 0;
   if (bound && bound !== userId && hasData) {
-    const merge =
-      typeof window === "undefined" ||
-      window.confirm(
-        "I dati su questo dispositivo provengono da un altro account.\n\nOK = uniscili al nuovo account\nAnnulla = sostituiscili con i dati del nuovo account"
-      );
+    const merge = typeof window === "undefined" || window.confirm(ACCOUNT_TEXT.switchConfirm);
     if (!merge) await store.resetAllData({ propagate: false });
+    else {
+      // Nome, foto e preferenze sono della persona: si tolgono qui (senza invio) e la prima
+      // sincronizzazione porta quelli del nuovo account. Prima restavano e finivano nel nuovo account.
+      const removals = personalRemovals(pickCollections(store));
+      if (removals.length) await store.applyRemoteChanges(removals);
+    }
   }
   // Solo un account precedente noto consente di scartare una coda già vuota.
   // Al primo collegamento i tombstone creati offline devono restare in coda.
