@@ -1120,7 +1120,8 @@ export const buildIcs = ({ events, exams, tasks, subjects, categoryLabel, now = 
     if (color) lines.push(cssColorName(color) ? `COLOR:${cssColorName(color)}` : `X-STUDYOS-COLOR:${color}`);
     const categories = [event.category ? label(event.category) : "", subjectName(event.subjectId) ?? ""].filter(Boolean);
     if (categories.length) lines.push(`CATEGORIES:${categories.map((value) => escapeText(String(value))).join(",")}`);
-    if (event.status === "skipped") lines.push("STATUS:CANCELLED");
+    // Saltato non è annullato: l'evento resta (anche nelle altre app), StudyOS rilegge lo stato.
+    if (event.status === "skipped") lines.push("X-STUDYOS-STATUS:skipped");
     // Compleanni e anniversari: tipo, anno e persona solo per StudyOS (le altre app ignorano le X-).
     const occasion = sanitizeOccasion(event.occasion);
     if (occasion) {
@@ -1316,6 +1317,11 @@ export interface IcsImportedEvent {
   reminders?: EventReminder[];
   /** Occorrenza annullata (RECURRENCE-ID con STATUS:CANCELLED). */
   cancelled?: true;
+  /**
+   * Saltato (X-STUDYOS-STATUS:skipped, o STATUS:CANCELLED nei vecchi file di StudyOS): true. false = un file
+   * di StudyOS dice che non lo è; assente = il file non lo sa (le altre app): lo stato resta quello di qui.
+   */
+  skipped?: boolean;
   /** Compleanno o anniversario esportato da StudyOS (X-STUDYOS-OCCASION). */
   occasion?: EventOccasion;
   /** RELATED-TO;RELTYPE=PARENT: UID della serie madre (figlia di una divisione fatta in StudyOS). */
@@ -1394,6 +1400,9 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
       return validZone(clean) ?? validZone(WINDOWS_ZONES[clean]);
     };
     const calendarZone = plainZone(propOf(calendar, "X-WR-TIMEZONE")?.value);
+    // File scritto da StudyOS: dice per ogni evento se è saltato (prima con STATUS:CANCELLED, che StudyOS
+    // non ha mai usato per un annullamento vero: quelli sono EXDATE o eventi tolti dal file).
+    const fromStudyOs = /StudyOS/i.test(propOf(calendar, "PRODID")?.value ?? "");
     const defaultZone = calendarZone ?? fallbackZone;
     const resolved = new Map<string, string>();
 
@@ -1462,7 +1471,10 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         continue;
       }
       const ridProp = propOf(vevent, "RECURRENCE-ID");
-      const cancelled = propOf(vevent, "STATUS")?.value.trim().toUpperCase() === "CANCELLED";
+      const statusCancelled = propOf(vevent, "STATUS")?.value.trim().toUpperCase() === "CANCELLED";
+      const cancelled = statusCancelled && !fromStudyOs;
+      const skippedStatus =
+        propOf(vevent, "X-STUDYOS-STATUS")?.value.trim().toLowerCase() === "skipped" || (statusCancelled && fromStudyOs) ? true : fromStudyOs ? false : undefined;
       if (cancelled && !ridProp) continue;
       const rrules = ridProp ? [] : propsOf(vevent, "RRULE");
       const recurring = rrules.length > 0;
@@ -1560,6 +1572,7 @@ export const parseIcs = (text: string, options: IcsParseOptions = {}): IcsParseR
         allDay,
         ...(allDay ? {} : { timeZone: zone }),
         ...(occasion ? { occasion } : {}),
+        ...(skippedStatus !== undefined ? { skipped: skippedStatus } : {}),
         ...(parentUid && !ridProp ? { parentUid } : {}),
         ...(parentFrom ? { parentFrom } : {}),
         recurrence: "none"
@@ -1700,6 +1713,8 @@ export interface IcsImportItem {
   exdates?: string[];
   reminders?: EventReminder[];
   cancelled?: true;
+  /** Saltato secondo il file (vedi `IcsImportedEvent.skipped`): assente = lo stato resta quello di qui. */
+  skipped?: boolean;
   category?: EventCategory;
   subjectId?: string;
   color?: string;
@@ -1754,6 +1769,7 @@ export const icsImportItems = (events: readonly IcsImportedEvent[], options: Ics
       ...(event.exdates?.length ? { exdates: event.exdates } : {}),
       ...(event.reminders ? { reminders: event.reminders } : {}),
       ...(event.cancelled ? { cancelled: true as const } : {}),
+      ...(event.skipped !== undefined ? { skipped: event.skipped } : {}),
       ...(event.occasion ? { occasion: event.occasion } : {}),
       ...(event.parentUid ? { parentUid: event.parentUid } : {}),
       ...(event.parentUid && event.parentFrom ? { parentFrom: event.parentFrom } : {}),
@@ -1856,6 +1872,16 @@ const withLocation = <T extends CalendarEvent>(event: T, location: string | unde
   const copy = { ...event };
   delete copy.location;
   return copy;
+};
+
+/**
+ * Stato dopo il file: saltato se il file lo dice; un file di StudyOS che dice «non saltato» toglie solo
+ * «saltato» (fatto, in corso restano); un file che non lo sa lascia lo stato di qui.
+ */
+const statusFrom = (skipped: boolean | undefined, current: CalendarEvent["status"] | undefined): CalendarEvent["status"] => {
+  if (skipped === true) return "skipped";
+  if (skipped === false && current === "skipped") return "planned";
+  return current ?? "planned";
 };
 
 /** Colore scelto a mano nel file: vale sopra quello della tipologia o della materia. */
@@ -1971,7 +1997,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       allDay: item.allDay,
       ...(item.timeZone ? { timeZone: item.timeZone } : {}),
       recurrence: "none",
-      status: "planned",
+      status: statusFrom(item.skipped, "planned"),
       checklist: [],
       attachmentIds: [],
       notes: "",
@@ -1999,9 +2025,11 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     let current = options.rule ? normalizeRepeat(existing) : null;
     if (current && timing && cut !== undefined && cut > timing.startDate) current = truncatedRule(current, timing.startDate, cut);
     const zoneChanged = Boolean(rule && item.timeZone && validZone(existing.timeZone) && item.timeZone !== existing.timeZone);
+    const status = statusFrom(item.skipped, existing.status);
     const same =
       !options.adopt &&
       !existing.archived &&
+      status === existing.status &&
       String(existing.title ?? "").trim() === item.title.trim() &&
       sameDescription(existing, item.description) &&
       locationOf(existing) === (item.location ?? "") &&
@@ -2023,6 +2051,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
         ...(item.reminders !== undefined ? { reminders: item.reminders } : {}),
         ...(customColor(item) ? { color: customColor(item), colorCustom: true } : {}),
         ...(options.adopt ? { sourceUid: options.adopt } : {}),
+        status,
         archived: false,
         updatedAt: now
       },
@@ -2055,9 +2084,12 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
       sourceRecurrenceId: rid
     };
     if (!change) return { ...row, cancelled: true as const, archived: true };
+    // Stato del giorno: quello del file se lo sa (StudyOS), altrimenti quello che aveva già qui.
+    const kept = previous && !previous.cancelled ? previous.status : row.status;
     return withLocation(
       {
         ...row,
+        status: change.skipped === undefined ? kept ?? "planned" : statusFrom(change.skipped, row.status),
         title: change.title,
         description: change.description,
         start: change.start,
@@ -2081,6 +2113,7 @@ export const mergeIcsImport = (input: IcsMergeInput): IcsMergePlan => {
     if (desired.cancelled) return Boolean(current.archived);
     return (
       !current.archived &&
+      current.status === desired.status &&
       String(current.title ?? "").trim() === String(desired.title ?? "").trim() &&
       sameDescription(current, String(desired.description ?? "")) &&
       locationOf(current) === locationOf(desired) &&
