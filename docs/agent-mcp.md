@@ -60,13 +60,18 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.6.0 (`/health` la mostra dopo il deploy): rispetto alla 1.5.0 la revoca in
+versione 1.7.0 (`/health` la mostra dopo il deploy): negli elenchi di attività, eventi,
+sessioni, argomenti e obiettivi descrizioni e note oltre 300 caratteri arrivano accorciate con
+«…» e il campo compare in `truncated`; `fullText: true` (o il dettaglio, es. `studyos_get_task`)
+le dà intere. Una modifica che riscrive il testo partendo dalla copia accorciata viene
+rifiutata (`invalid`, niente salvato): cancellerebbe la parte dopo il taglio. Prima l'agente
+non sapeva del taglio e contava le pagine scritte in fondo alla descrizione su metà testo.
+Dalla 1.6.0 la revoca in
 Impostazioni → Agenti toglie solo gli accessi approvati da quel browser (vedi «Revocare gli
 accessi»). La 1.5.0 aveva corretto fuso orario, serie ripetute, link della bacheca e limiti di
 `/register` e `/authorize`; la 1.4.0 aveva aggiunto il connettore remoto di un solo account
-(vedi sotto). Strumenti e parametri del
-connettore `/mcp` sono quelli della 1.3.0; cambiano solo le descrizioni di
-`studyos_update_event` e `studyos_delete_event`, quindi ricrea il connettore perché
+(vedi sotto). La 1.7.0 aggiunge il parametro `fullText` agli elenchi e cambia le descrizioni
+di elenchi e modifiche di attività, eventi e obiettivi: ricrea il connettore perché
 l'assistente le legga (vedi «Ripubblicare dopo una modifica»).
 
 Ogni eliminazione deve arrivare con `confirm: true` e va comunque approvata,

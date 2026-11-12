@@ -2,7 +2,17 @@ import { addDays, differenceInCalendarDays, format, isValid, parseISO, startOfDa
 import { it } from "date-fns/locale";
 import type { AgentCallResult } from "./types";
 import { WEEKLY_TARGET_MAX, WEEKLY_TARGET_MIN, toolSummary } from "./catalog";
-import { publicAttachment, publicEntity, publicGroup, publicPreferences, publicSubject } from "./project";
+import {
+  MATERIAL_DESCRIPTION_MAX,
+  SUBJECT_NOTES_PREVIEW,
+  briefText,
+  publicAttachment,
+  publicEntity,
+  publicGroup,
+  publicPreferences,
+  publicSubject,
+  rebuiltFromClip
+} from "./project";
 import { readAudit, readStoredPolicy } from "../lib/agentLocal";
 import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats } from "../lib/grades";
 import { examDateOut } from "../lib/examOutcome";
@@ -80,11 +90,25 @@ const nameOf = (names: Map<string, string>, id: string | undefined) => (id ? nam
 const taskOut = (task: Task, names: Map<string, string>, full = false) =>
   publicEntity(task, { subjectName: nameOf(names, task.subjectId) }, full ? [] : ["description", "notes"]);
 
+/** Elenchi con i testi interi (`fullText: true`) invece che accorciati a BRIEF_MAX. */
+const fullTextOf = (args: Args) => args.fullText === true;
+
+/**
+ * Un testo ricostruito dalla copia accorciata di un elenco (vedi `rebuiltFromClip`) non si salva: avrebbe
+ * cancellato tutto ciò che stava dopo il taglio. `readWith` dice all'agente dove leggere il testo intero.
+ */
+const clippedRewrite = (args: Args, checks: ReadonlyArray<{ field: string; stored: string | undefined; max?: number }>, readWith: string) => {
+  const hit = checks.find((check) => rebuiltFromClip(check.stored, args[check.field], check.max));
+  return hit
+    ? fail("invalid", `${hit.field} contiene il testo accorciato di un elenco (fino a «…»): salvarlo cancellerebbe il resto. ${readWith} Niente è stato salvato.`)
+    : null;
+};
+
 /**
  * Evento o occorrenza. Un giorno di una serie si indica con l'id della serie e occurrenceDate: l'id di
  * un giorno modificato ("serie@giorno") non è un id valido per gli strumenti. La regola è quella della serie.
  */
-const eventOut = (event: CalendarEvent | EventOccurrence, names: Map<string, string>, events: readonly CalendarEvent[] = state().events) => {
+const eventOut = (event: CalendarEvent | EventOccurrence, names: Map<string, string>, events: readonly CalendarEvent[] = state().events, full = false) => {
   const recurring = "recurring" in event ? event.recurring : (event.recurrence ?? "none") !== "none";
   const target = recurring && "occurrenceDate" in event ? occurrenceTarget(event) : null;
   const series = target?.row ? events.find((item) => item.id === target.seriesId) : event;
@@ -110,7 +134,7 @@ const eventOut = (event: CalendarEvent | EventOccurrence, names: Map<string, str
     ...(occasion ? { occasion } : {}),
     ...(reminders.length ? { reminders } : {}),
     ...(typeof event.location === "string" && event.location ? { location: event.location } : {}),
-    description: event.description.length > 300 ? `${event.description.slice(0, 300)}…` : event.description
+    ...(full ? { description: event.description } : briefText(event.description, "description"))
   };
 };
 
@@ -421,7 +445,14 @@ const createSubject = async (args: Args): Promise<AgentCallResult> => {
 
 const updateSubject = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
-  if (!state().subjects.some((item) => item.id === id)) return fail("not_found", "Materia non trovata.");
+  const subject = state().subjects.find((item) => item.id === id);
+  if (!subject) return fail("not_found", "Materia non trovata.");
+  const clippedSubject = clippedRewrite(
+    args,
+    [{ field: "notes", stored: subject.notes, max: SUBJECT_NOTES_PREVIEW }],
+    "notesPreview è solo un'anteprima: leggi le note intere con studyos_get_subject e manda quelle, modificate."
+  );
+  if (clippedSubject) return clippedSubject;
   const patch = blankToUndefined(pick(args, ["name", "teacher", "cfu", "semester", "status", "targetGrade", "notes", "color", "archived", "semesterOverride"]), ["color"]);
   await state().updateSubject(id, patch);
   return ok({ id });
@@ -447,7 +478,7 @@ const listTasks = (args: Args): AgentCallResult => {
   };
   const sorted = [...items].sort((a, b) => closed(a) - closed(b) || due(a) - due(b) || PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]);
   const names = subjectNames();
-  return ok(page(sorted.map((task) => taskOut(task, names)), args));
+  return ok(page(sorted.map((task) => taskOut(task, names, fullTextOf(args))), args));
 };
 
 const requireSubject = (id: unknown) => {
@@ -487,6 +518,12 @@ const updateTask = async (args: Args): Promise<AgentCallResult> => {
   const task = state().tasks.find((item) => item.id === id);
   if (!task) return fail("not_found", "Task non trovata.");
   if (args.subjectId && requireSubject(args.subjectId) === false) return fail("not_found", "Materia non trovata.");
+  const clippedTask = clippedRewrite(
+    args,
+    [{ field: "description", stored: task.description }, { field: "notes", stored: task.notes }],
+    "Leggi il testo intero con studyos_get_task (o studyos_list_tasks con fullText=true) e manda quello, modificato."
+  );
+  if (clippedTask) return clippedTask;
   const patch = blankToUndefined(pick(args, ["title", "description", "priority", "dueDate", "subjectId", "status", "notes", "estimatedMinutes", "energy", "difficulty", "importance"]), ["dueDate", "subjectId"]);
   if (typeof patch.dueDate === "string") {
     const dueDate = toIso(patch.dueDate, true);
@@ -518,7 +555,7 @@ const listEvents = (args: Args): AgentCallResult => {
     if (typeof args.subjectId === "string" && item.subjectId !== args.subjectId) return false;
     return includes(query, item.title, item.description);
   });
-  return ok({ from: from.toISOString(), to: to.toISOString(), ...page(occurrences.map((event) => eventOut(event, names, all)), args) });
+  return ok({ from: from.toISOString(), to: to.toISOString(), ...page(occurrences.map((event) => eventOut(event, names, all, fullTextOf(args))), args) });
 };
 
 // --- Eventi: campi nuovi, giornate intere su più giorni, giorni di una serie. ---
@@ -634,6 +671,15 @@ const updateEvent = async (args: Args): Promise<AgentCallResult> => {
   const event = state().events.find((item) => item.id === id);
   if (!event) return fail("not_found", "Evento non trovato.");
   if (args.subjectId && requireSubject(args.subjectId) === false) return fail("not_found", "Materia non trovata.");
+  // Anche i giorni cambiati da soli ("serie@giorno") hanno una descrizione loro, accorciata allo stesso modo.
+  const clippedEvent = clippedRewrite(
+    args,
+    state().events
+      .filter((item) => item.id === id || item.id.startsWith(`${id}@`))
+      .map((item) => ({ field: "description", stored: item.description })),
+    "Leggi il testo intero con studyos_get_event (o studyos_list_events con fullText=true) e manda quello, modificato."
+  );
+  if (clippedEvent) return clippedEvent;
   const patch = blankToUndefined(pick(args, ["title", "category", "description", "notes", "subjectId", "allDay", "priority", "status", "recurrence", "recurrenceUntil"]), ["subjectId", "recurrenceUntil"]);
   if (typeof patch.recurrenceUntil === "string" && !validDay(patch.recurrenceUntil)) return fail("invalid", "recurrenceUntil deve essere un giorno YYYY-MM-DD.");
   const extra = eventExtras(args);
@@ -844,7 +890,7 @@ const listSessions = (args: Args): AgentCallResult => {
     return includes(query, item.title, item.notes);
   }).sort((a, b) => b.start.localeCompare(a.start));
   const names = subjectNames();
-  return ok(page(items.map((session) => publicEntity(session, { subjectName: nameOf(names, session.subjectId) }, ["notes"])), args));
+  return ok(page(items.map((session) => publicEntity(session, { subjectName: nameOf(names, session.subjectId) }, fullTextOf(args) ? [] : ["notes"])), args));
 };
 
 const isOneOf = <T extends string>(values: readonly T[], value: unknown): value is T => typeof value === "string" && (values as readonly string[]).includes(value);
@@ -901,6 +947,8 @@ const updateSession = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
   const session = state().sessions.find((item) => item.id === id);
   if (!session) return fail("not_found", "Sessione non trovata.");
+  const clippedSession = clippedRewrite(args, [{ field: "notes", stored: session.notes }], "Leggi il testo intero con studyos_list_sessions e fullText=true e manda quello, modificato.");
+  if (clippedSession) return clippedSession;
   const patch: Partial<StudySession> = pick(args, ["title", "actualMinutes", "plannedMinutes", "status", "notes", "perceivedDifficulty", "focusLevel", "topics"]);
   // Materia: stringa vuota scollega; l'argomento di un'altra materia si toglie.
   let subjectId = session.subjectId;
@@ -956,7 +1004,7 @@ const listTopics = (args: Args): AgentCallResult => {
     return includes(query, item.title, item.notes);
   });
   const names = subjectNames();
-  return ok(page(items.map((topic) => publicEntity(topic, { subjectName: nameOf(names, topic.subjectId) }, ["notes"])), args));
+  return ok(page(items.map((topic) => publicEntity(topic, { subjectName: nameOf(names, topic.subjectId) }, fullTextOf(args) ? [] : ["notes"])), args));
 };
 
 const addTopics = async (args: Args): Promise<AgentCallResult> => {
@@ -978,7 +1026,10 @@ const reviewTopic = async (args: Args): Promise<AgentCallResult> => {
 
 const updateTopic = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
-  if (!state().topics.some((item) => item.id === id)) return fail("not_found", "Argomento non trovato.");
+  const topic = state().topics.find((item) => item.id === id);
+  if (!topic) return fail("not_found", "Argomento non trovato.");
+  const clippedTopic = clippedRewrite(args, [{ field: "notes", stored: topic.notes }], "Leggi il testo intero con studyos_list_topics e fullText=true e manda quello, modificato.");
+  if (clippedTopic) return clippedTopic;
   const patch = pick(args, ["title", "notes", "difficulty", "comprehension"]);
   await state().updateTopic(id, patch as Partial<StudyTopic>);
   return ok({ id });
@@ -1015,7 +1066,14 @@ const addLink = async (args: Args): Promise<AgentCallResult> => {
 
 const updateMaterial = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
-  if (!state().attachments.some((item) => item.id === id)) return fail("not_found", "Materiale non trovato.");
+  const material = state().attachments.find((item) => item.id === id);
+  if (!material) return fail("not_found", "Materiale non trovato.");
+  const clippedMaterial = clippedRewrite(
+    args,
+    [{ field: "description", stored: material.description, max: MATERIAL_DESCRIPTION_MAX }],
+    "La descrizione intera di un materiale non arriva agli agenti: manda solo il testo nuovo, completo e senza «…»."
+  );
+  if (clippedMaterial) return clippedMaterial;
   await state().updateAttachment(id, pick(args, ["name", "description"]));
   return ok({ id });
 };
@@ -1073,7 +1131,7 @@ const listGoals = (args: Args): AgentCallResult => {
     if (typeof args.status === "string" && item.status !== args.status) return false;
     return includes(query, item.title, item.description);
   });
-  return ok(page(items.map((goal) => publicEntity(goal, {}, ["description", "notes"])), args));
+  return ok(page(items.map((goal) => publicEntity(goal, {}, fullTextOf(args) ? [] : ["description", "notes"])), args));
 };
 
 const createGoal = async (args: Args): Promise<AgentCallResult> => {
@@ -1091,7 +1149,14 @@ const createGoal = async (args: Args): Promise<AgentCallResult> => {
 
 const updateGoal = async (args: Args): Promise<AgentCallResult> => {
   const id = text(args.id);
-  if (!state().goals.some((item) => item.id === id)) return fail("not_found", "Obiettivo non trovato.");
+  const goal = state().goals.find((item) => item.id === id);
+  if (!goal) return fail("not_found", "Obiettivo non trovato.");
+  const clippedGoal = clippedRewrite(
+    args,
+    [{ field: "description", stored: goal.description }, { field: "notes", stored: goal.notes }],
+    "Leggi il testo intero con studyos_list_goals e fullText=true e manda quello, modificato."
+  );
+  if (clippedGoal) return clippedGoal;
   const patch = blankToUndefined(pick(args, ["title", "description", "progress", "status", "deadline", "notes", "metric"]), ["deadline"]);
   // La sezione Obiettivi salva la scadenza come giorno, non come istante.
   if (typeof patch.deadline === "string" && !validDay(patch.deadline)) return fail("invalid", "deadline deve essere un giorno YYYY-MM-DD.");

@@ -7,7 +7,7 @@ import { ResultLedger } from "../src/agent/ledger.ts";
 import { OauthServer, sha256Base64Url } from "../src/agent/oauth.ts";
 import { choosePoller, hubCandidates, normalizePublicHub, siteFromOrigin } from "../src/agent/hubEndpoint.ts";
 import { decideAgentAction, decideToolAction, normalizeAgentPolicy } from "../src/agent/policy.ts";
-import { publicAttachment, publicGroup, publicPreferences } from "../src/agent/project.ts";
+import { BRIEF_MAX, publicAttachment, publicGroup, publicPreferences, rebuiltFromClip } from "../src/agent/project.ts";
 import { parseToolArgs } from "../src/agent/schema.ts";
 import { SHARE_SCOPES, ShareUserError } from "../src/lib/sharing.ts";
 import {
@@ -1325,4 +1325,67 @@ test("bacheca del gruppo: i link degli altri membri passano dagli stessi filtri 
   });
   const packed = JSON.stringify(board);
   for (const unsafe of ["javascript:", "data:", "file:"]) assert.equal(packed.includes(unsafe), false, unsafe);
+});
+
+// ---------------------------------------------------------------------------------------
+// Pagine contate male: gli elenchi accorciano descrizioni e note a BRIEF_MAX con «…». L'agente non lo
+// sapeva, contava le pagine su metà testo e riscriveva la descrizione dalla copia accorciata, cancellando
+// la coda. Ora l'elenco lo dice in `truncated`, fullText dà il testo intero e la riscrittura si rifiuta.
+// ---------------------------------------------------------------------------------------
+
+test("pagine: elenchi con truncated e fullText, riscrittura dalla copia accorciata rifiutata", async () => {
+  seedApp();
+  const head = "Capitolo 3, enzimi. ".repeat(20);
+  const description = `${head}NON assegnare pp. 14–20 (già fatte). Restano pp. 21–48: 28 pagine.`;
+  assert.ok(description.length > BRIEF_MAX && head.length >= BRIEF_MAX);
+  const created = await executeAgentTool("studyos_create_task", { title: "Biochimica cap. 3", description, notes: "breve" });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const id = created.data.id;
+
+  const listed = await executeAgentTool("studyos_list_tasks", {});
+  const brief = listed.data.items.find((item) => item.id === id);
+  assert.equal(brief.description, `${description.slice(0, BRIEF_MAX)}…`);
+  assert.deepEqual(brief.truncated, ["description"]);
+  assert.equal(brief.notes, "breve");
+
+  const whole = await executeAgentTool("studyos_list_tasks", { fullText: true });
+  const full = whole.data.items.find((item) => item.id === id);
+  assert.equal(full.description, description);
+  assert.equal("truncated" in full, false);
+  assert.equal((await executeAgentTool("studyos_get_task", { id })).data.item.description, description);
+
+  // Riscritta dalla copia dell'elenco: rifiutata, niente salvato.
+  const rebuilt = await executeAgentTool("studyos_update_task", { id, description: `${brief.description}\nFatte pp. 21–30.` });
+  assert.equal(rebuilt.ok, false);
+  assert.equal(rebuilt.code, "invalid");
+  assert.ok(/studyos_get_task/.test(rebuilt.error));
+  assert.equal(useStudyStore.getState().tasks.find((item) => item.id === id).description, description);
+
+  // Dal testo intero: salvata, con la coda.
+  const edited = `${description}\nFatte pp. 21–30.`;
+  const saved = await executeAgentTool("studyos_update_task", { id, description: edited });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+  assert.equal(useStudyStore.getState().tasks.find((item) => item.id === id).description, edited);
+  // Un testo nuovo che non parte dalla copia accorciata passa (si può sostituire tutto, volendo).
+  assert.equal((await executeAgentTool("studyos_update_task", { id, description: "Solo pp. 31–48." })).ok, true);
+});
+
+test("pagine: eventi e regola rebuiltFromClip", async () => {
+  seedApp();
+  const description = `${"Ripasso glicolisi. ".repeat(20)}Pagine 112–140 del Nelson.`;
+  const created = await executeAgentTool("studyos_create_event", { title: "Studio", start: "2026-11-20T09:00:00.000Z", end: "2026-11-20T11:00:00.000Z", description });
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const span = { from: "2026-11-19T00:00:00.000Z", to: "2026-11-22T00:00:00.000Z" };
+  const brief = (await executeAgentTool("studyos_list_events", span)).data.items.find((item) => item.id === created.data.id);
+  assert.deepEqual(brief.truncated, ["description"]);
+  assert.equal((await executeAgentTool("studyos_list_events", { ...span, fullText: true })).data.items[0].description, description);
+  const rebuilt = await executeAgentTool("studyos_update_event", { id: created.data.id, description: brief.description });
+  assert.equal(rebuilt.code, "invalid");
+  assert.equal(useStudyStore.getState().events.find((item) => item.id === created.data.id).description, description);
+
+  // Testi corti (mai accorciati) e argomenti assenti non fanno scattare il controllo.
+  assert.equal(rebuiltFromClip("corto", "corto…"), false);
+  assert.equal(rebuiltFromClip(description, undefined), false);
+  assert.equal(rebuiltFromClip(description, description), false);
+  assert.equal(rebuiltFromClip(description, `${description.slice(0, BRIEF_MAX)}…`), true);
 });

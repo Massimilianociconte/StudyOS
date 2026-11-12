@@ -115,6 +115,17 @@ const scopeWords = (value: unknown) =>
 
 const page = { limit: LIMIT, offset: OFFSET, query: QUERY };
 
+/** Elenchi con descrizioni e note lunghe: accorciate di default, intere con fullText. */
+const FULL_TEXT = {
+  type: "boolean",
+  default: false,
+  description: "true = descrizioni e note intere. Senza, i testi oltre 300 caratteri finiscono con «…» e il loro nome è in truncated."
+} as const satisfies JsonSchema;
+const BRIEF_NOTE =
+  " Negli elenchi descrizioni e note lunghe sono accorciate (campo truncated): prima di modificarle o di contare ciò che scrivono (pagine, capitoli, esercizi) leggile intere con fullText=true o con il dettaglio. Un testo accorciato rimandato in un aggiornamento viene rifiutato.";
+/** Aggiornamenti dei testi: sostituiscono il testo intero. */
+const REPLACES_TEXT = " description e notes sostituiscono il testo intero: partire da quello intero, mai dalla copia accorciata di un elenco.";
+
 const objectSchema = (properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema => ({
   type: "object",
   additionalProperties: false,
@@ -235,11 +246,12 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_tasks",
     title: "Elenco task",
-    description: "Elenca le task con filtri su stato, materia, scadenza e testo, dalla scadenza più vicina; le chiuse vanno in fondo. Non include le archiviate salvo includeArchived=true." + MINE,
+    description: "Elenca le task con filtri su stato, materia, scadenza e testo, dalla scadenza più vicina; le chiuse vanno in fondo. Non include le archiviate salvo includeArchived=true." + BRIEF_NOTE + MINE,
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
       ...page,
+      fullText: FULL_TEXT,
       status: { type: "string", enum: ["todo", "doing", "blocked", "done", "postponed", "archived"] },
       subjectId: ID,
       dueBefore: { type: "string", format: "date-time", description: `Solo task con scadenza entro questo istante. ${WHEN}` },
@@ -250,7 +262,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_get_task",
     title: "Dettaglio task",
-    description: "Legge una task, sottotask incluse.",
+    description: "Legge una task, sottotask incluse, con descrizione e note intere.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ id: ID }, ["id"]),
@@ -281,7 +293,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_update_task",
     title: "Aggiorna task",
-    description: "Aggiorna i campi indicati. Cambiare status in doing o done aggiorna anche il timer interno della task, come nell'app. dueDate vuota toglie la scadenza. subtasks, se presente, sostituisce l'elenco.",
+    description: "Aggiorna i campi indicati. Cambiare status in doing o done aggiorna anche il timer interno della task, come nell'app. dueDate vuota toglie la scadenza. subtasks, se presente, sostituisce l'elenco." + REPLACES_TEXT,
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
@@ -322,11 +334,13 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     title: "Elenco eventi",
     description:
       "Elenca gli eventi del calendario personale tra from e to, in ordine di inizio. Senza from parte da oggi; senza to copre 60 giorni (massimo 400). Gli eventi ripetuti compaiono una volta per occorrenza con recurring=true, la regola (repeat) e occurrenceDate: l'id è quello della serie. Per cambiare o eliminare solo alcuni giorni passa id, occurrenceDate e scope a studyos_update_event o studyos_delete_event; senza occurrenceDate la modifica vale per tutta la serie." +
+      BRIEF_NOTE +
       MINE,
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
       ...page,
+      fullText: FULL_TEXT,
       from: { type: "string", format: "date-time", description: `Inizio intervallo. ${WHEN}` },
       to: { type: "string", format: "date-time", description: `Fine intervallo. ${WHEN}` },
       subjectId: ID
@@ -336,7 +350,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_get_event",
     title: "Dettaglio evento",
-    description: "Legge un evento del calendario personale.",
+    description: "Legge un evento del calendario personale, con la descrizione intera.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ id: ID }, ["id"]),
@@ -370,7 +384,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
     name: "studyos_update_event",
     title: "Aggiorna evento",
     description:
-      "Aggiorna un evento. Se cambi solo start, la durata resta la stessa. Su una serie, senza occurrenceDate, vale come all. Con occurrenceDate (un giorno della serie) start ed end sono i nuovi orari di quel giorno e scope dice cosa cambia: this = solo quel giorno (non la regola); following = quel giorno e i successivi (la serie si divide in due); all = tutta la serie (predefinito), spostata dello stesso scarto. All è «Tutti» del calendario: le parti divise prima con following («Questo e i successivi») che vengono dopo questa serie restano come sono, con titolo, orario e dettagli propri, e il risultato le elenca in keptParts (id, from = primo giorno, title); per cambiarle passa il loro id. Spostando a un altro giorno della settimana, i giorni scritti nella regola si spostano tutti dello stesso scarto (lun–ven un giorno dopo diventa mar–sab), salvo una repeat data qui. Con following o all il risultato ha anche seriesStart: il primo inizio della serie dopo la modifica (con following, della parte nuova). Con following, le parti già divise dopo quel giorno (un following di prima, anche di una parte precedente) prendono i campi cambiati; se cambi solo giorno od orario, si spostano allo stesso modo quelle che avevano la stessa ripetizione e lo stesso orario, le altre restano dove sono e non sparisce nulla. Se cambia la ripetizione (frequenza, intervallo, giorni, schema del mese o fine), quella nuova vale fino alla fine dell'intera serie (una repeat senza end; end.type=never per non finire mai; o fino alla fine data qui), sostituisce tutte quelle parti, che perdono titolo, orario e dettagli propri, e il risultato elenca in removedDates le date che spariscono (nell'anno dopo quel giorno; removedDatesMore se sono di più).",
+      "Aggiorna un evento. Se cambi solo start, la durata resta la stessa. Su una serie, senza occurrenceDate, vale come all. Con occurrenceDate (un giorno della serie) start ed end sono i nuovi orari di quel giorno e scope dice cosa cambia: this = solo quel giorno (non la regola); following = quel giorno e i successivi (la serie si divide in due); all = tutta la serie (predefinito), spostata dello stesso scarto. All è «Tutti» del calendario: le parti divise prima con following («Questo e i successivi») che vengono dopo questa serie restano come sono, con titolo, orario e dettagli propri, e il risultato le elenca in keptParts (id, from = primo giorno, title); per cambiarle passa il loro id. Spostando a un altro giorno della settimana, i giorni scritti nella regola si spostano tutti dello stesso scarto (lun–ven un giorno dopo diventa mar–sab), salvo una repeat data qui. Con following o all il risultato ha anche seriesStart: il primo inizio della serie dopo la modifica (con following, della parte nuova). Con following, le parti già divise dopo quel giorno (un following di prima, anche di una parte precedente) prendono i campi cambiati; se cambi solo giorno od orario, si spostano allo stesso modo quelle che avevano la stessa ripetizione e lo stesso orario, le altre restano dove sono e non sparisce nulla. Se cambia la ripetizione (frequenza, intervallo, giorni, schema del mese o fine), quella nuova vale fino alla fine dell'intera serie (una repeat senza end; end.type=never per non finire mai; o fino alla fine data qui), sostituisce tutte quelle parti, che perdono titolo, orario e dettagli propri, e il risultato elenca in removedDates le date che spariscono (nell'anno dopo quel giorno; removedDatesMore se sono di più)." + REPLACES_TEXT,
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
@@ -498,11 +512,12 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_sessions",
     title: "Sessioni di studio",
-    description: "Elenca le sessioni di studio registrate o pianificate, dalla più recente. from e to filtrano per inizio (per esempio la settimana in corso)." + MINE,
+    description: "Elenca le sessioni di studio registrate o pianificate, dalla più recente. from e to filtrano per inizio (per esempio la settimana in corso)." + BRIEF_NOTE + MINE,
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({
       ...page,
+      fullText: FULL_TEXT,
       subjectId: ID,
       status: { type: "string", enum: ["planned", "running", "completed", "skipped"] },
       from: { type: "string", format: "date-time", description: WHEN },
@@ -569,10 +584,10 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_topics",
     title: "Argomenti di ripasso",
-    description: "Elenca gli argomenti del ripasso attivo. dueOnly=true restituisce solo quelli con nextReviewDate oggi o nel passato." + MINE,
+    description: "Elenca gli argomenti del ripasso attivo. dueOnly=true restituisce solo quelli con nextReviewDate oggi o nel passato." + BRIEF_NOTE + MINE,
     risk: "read",
     idempotent: true,
-    inputSchema: objectSchema({ ...page, subjectId: ID, dueOnly: { type: "boolean", default: false, description: "Solo gli argomenti da ripassare ora." } }),
+    inputSchema: objectSchema({ ...page, fullText: FULL_TEXT, subjectId: ID, dueOnly: { type: "boolean", default: false, description: "Solo gli argomenti da ripassare ora." } }),
     summary: () => "Leggere gli argomenti di ripasso"
   }),
   tool({
@@ -737,10 +752,10 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_goals",
     title: "Elenco obiettivi",
-    description: "Elenca gli obiettivi personali." + MINE,
+    description: "Elenca gli obiettivi personali." + BRIEF_NOTE + MINE,
     risk: "read",
     idempotent: true,
-    inputSchema: objectSchema({ ...page, status: { type: "string", enum: ["active", "paused", "done", "archived"] } }),
+    inputSchema: objectSchema({ ...page, fullText: FULL_TEXT, status: { type: "string", enum: ["active", "paused", "done", "archived"] } }),
     summary: () => "Leggere gli obiettivi"
   }),
   tool({
@@ -764,7 +779,7 @@ export const AGENT_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_update_goal",
     title: "Aggiorna obiettivo",
-    description: "Aggiorna progresso, stato, scadenza o note di un obiettivo.",
+    description: "Aggiorna progresso, stato, scadenza o note di un obiettivo." + REPLACES_TEXT,
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({

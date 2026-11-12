@@ -1,23 +1,54 @@
 /** Proiezioni verso gli agenti: niente file, foto, email, codici di invito o segreti del vault. */
 
-const clip = (value: string | undefined, max: number) => (value && value.length > max ? `${value.slice(0, max)}…` : value ?? "");
+/** Lunghezza dei testi lunghi (descrizioni, note) negli elenchi. */
+export const BRIEF_MAX = 300;
+
+/** Anteprima delle note di una materia negli elenchi (il dettaglio le dà intere). */
+export const SUBJECT_NOTES_PREVIEW = 180;
+
+/** Descrizione di un materiale: sempre accorciata, non c'è un dettaglio che la dia intera. */
+export const MATERIAL_DESCRIPTION_MAX = 500;
+
+const clipped = (value: string, max: number) => `${value.slice(0, max)}…`;
+
+const clip = (value: string | undefined, max: number) => (value && value.length > max ? clipped(value, max) : value ?? "");
+
+/**
+ * Testo inviato da un agente che contiene la copia accorciata di quello salvato (i primi `max` caratteri
+ * seguiti da «…», come negli elenchi): l'agente l'ha ricostruito dall'elenco e salvarlo cancellerebbe tutto
+ * ciò che stava dopo il taglio. Succedeva con le task di studio: le pagine scritte in fondo alla
+ * descrizione sparivano o venivano ricontate su metà del testo.
+ */
+export const rebuiltFromClip = (stored: string | undefined, incoming: unknown, max = BRIEF_MAX) =>
+  typeof incoming === "string" && typeof stored === "string" && stored.length > max && incoming.includes(clipped(stored, max));
 
 /** Campi mai inviati: copertine e file incorporati, stato interno del timer, UID e impronte degli import. */
 const HIDDEN_FIELDS = new Set(["cover", "dataUrl", "avatarDataUrl", "timerStartedAt", "timerAccumulatedSeconds", "timerLastReminderAt", "sourceUid", "sourceStamp"]);
 
 /**
  * Copia di un'entità senza i campi nascosti e senza stringhe data: (foto, file).
- * `brief` accorcia i testi lunghi negli elenchi; il dettaglio li restituisce interi.
+ * `brief` accorcia i testi lunghi negli elenchi; il dettaglio li restituisce interi. I campi accorciati
+ * finiscono in `truncated`, così l'agente sa che il testo continua (prima vedeva solo «…»).
  */
 export const publicEntity = (item: object, extra: Record<string, unknown> = {}, brief: readonly string[] = []) => {
   const output: Record<string, unknown> = {};
+  const truncated: string[] = [];
   for (const [key, value] of Object.entries(item)) {
     if (HIDDEN_FIELDS.has(key)) continue;
     if (typeof value === "string" && value.startsWith("data:")) continue;
-    output[key] = brief.includes(key) && typeof value === "string" ? clip(value, 300) : value;
+    if (brief.includes(key) && typeof value === "string" && value.length > BRIEF_MAX) {
+      output[key] = clipped(value, BRIEF_MAX);
+      truncated.push(key);
+    } else {
+      output[key] = value;
+    }
   }
-  return { ...output, ...extra };
+  return { ...output, ...extra, ...(truncated.length ? { truncated } : {}) };
 };
+
+/** `description` di un evento negli elenchi: accorciata come le altre, con `truncated`. */
+export const briefText = (value: string, field: string) =>
+  value.length > BRIEF_MAX ? { [field]: clipped(value, BRIEF_MAX), truncated: [field] } : { [field]: value };
 
 export const publicSubject = (item: {
   id: string;
@@ -46,7 +77,9 @@ export const publicSubject = (item: {
   color: item.color,
   archived: item.archived,
   updatedAt: item.updatedAt,
-  ...(withNotes ? { notes: clip(item.notes, 8000) } : { notesPreview: clip(item.notes, 180) })
+  ...(withNotes
+    ? { notes: clip(item.notes, 8000) }
+    : { notesPreview: clip(item.notes, SUBJECT_NOTES_PREVIEW), ...(item.notes.length > SUBJECT_NOTES_PREVIEW ? { truncated: ["notesPreview"] } : {}) })
 });
 
 export const publicAttachment = (item: {
@@ -68,7 +101,8 @@ export const publicAttachment = (item: {
   addedAt: item.addedAt,
   linkedEntityType: item.linkedEntityType,
   linkedEntityId: item.linkedEntityId,
-  description: clip(item.description, 500),
+  description: clip(item.description, MATERIAL_DESCRIPTION_MAX),
+  ...(item.description.length > MATERIAL_DESCRIPTION_MAX ? { truncated: ["description"] } : {}),
   externalUrl: item.externalUrl,
   updatedAt: item.updatedAt
 });
