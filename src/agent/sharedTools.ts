@@ -296,7 +296,7 @@ export const shareWithTarget = async (args: Args): Promise<AgentCallResult> => {
     return shareFailure("share", cause);
   }
   return ok({
-    sharedWith: target.name,
+    sharedWith: agentMemberText(target.name),
     shares: offers.map((offer) => ({ scope: offer.scope, permission: offer.permission, subjects: offer.subjectNames }))
   });
 };

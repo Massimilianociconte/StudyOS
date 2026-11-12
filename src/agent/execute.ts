@@ -10,6 +10,7 @@ import {
   publicEntity,
   publicGroup,
   agentMemberText,
+  agentUrl,
   publicPreferences,
   publicSubject,
   rebuiltFromClip
@@ -383,7 +384,8 @@ const listLocalAudit = (args: Args): AgentCallResult => {
     if (until && !(at < until.getTime())) return false;
     return true;
   });
-  return ok({ source: "browser", ...page(entries, args) });
+  // Voci vecchie possono avere in chiaro titoli scritti da altri membri: la frase esce sempre oscurata.
+  return ok({ source: "browser", ...page(entries.map((entry) => ({ ...entry, summary: agentMemberText(entry.summary) })), args) });
 };
 
 /**
@@ -1306,7 +1308,7 @@ const groupBoard = (args: Args): AgentCallResult => {
     group: publicGroup(group),
     // Link scritti da altri membri: solo http, https e mailto, come nell'app (safeHref); gli altri spariscono.
     resources: state().groupResources.filter((item) => item.groupId === groupId).slice(0, limit).map((item) => ({
-      id: item.id, kind: item.kind, title: agentMemberText(item.title), url: safeHref(item.url), body: agentMemberText(item.body), pinned: item.pinned, addedByDisplayName: agentMemberText(item.addedByDisplayName), updatedAt: item.updatedAt
+      id: item.id, kind: item.kind, title: agentMemberText(item.title), url: agentUrl(item.url, safeHref), body: agentMemberText(item.body), pinned: item.pinned, addedByDisplayName: agentMemberText(item.addedByDisplayName), updatedAt: item.updatedAt
     })),
     activities: state().groupActivities.filter((item) => item.groupId === groupId).slice(0, limit).map((item) => ({
       id: item.id, actorDisplayName: agentMemberText(item.actorDisplayName), text: agentMemberText(item.text), createdAt: item.createdAt

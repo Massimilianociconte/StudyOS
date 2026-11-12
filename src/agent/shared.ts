@@ -1,6 +1,7 @@
 // Dati di altre persone per gli agenti MCP: id opachi, proiezioni senza email né id di account e
 // controlli di permesso puri (gli stessi di push_shared_rows). Niente store: i test girano senza IndexedDB.
 
+import { agentMemberText } from "./project";
 import {
   EVENT_STATUS_LABEL,
   EXAM_STATUS_LABEL,
@@ -81,13 +82,13 @@ export const publicShareGrant = (grant: ShareGrant, side: "given" | "received", 
   subjects: grant.subjectIds.map((id) => ({ id, name: subjectName(grant.ownerId, id) ?? "Materia senza nome" })),
   ...(side === "given"
     ? {
-        sharedWith: grant.granteeName || (grant.granteeGroupId ? "Gruppo" : "Persona"),
+        sharedWith: agentMemberText(grant.granteeName) || (grant.granteeGroupId ? "Gruppo" : "Persona"),
         ...(grant.granteeGroupId
           ? { groupId: grant.granteeGroupId }
           : { personId: grant.granteeUserId ? personHandle(grant.granteeUserId) : undefined })
       }
     : {
-        owner: grant.ownerName || "Un'altra persona",
+        owner: agentMemberText(grant.ownerName) || "Un'altra persona",
         personId: personHandle(grant.ownerId),
         via: grant.granteeGroupId ? "group" : "direct"
       }),

@@ -166,10 +166,31 @@ const safeCourseKey = (key: string, sessions: ReadonlyArray<{ courseKey: string;
   return hit ? `nome:${normalizeCourseName(agentMemberText(hit.courseName))}` : "nome:";
 };
 
-const publicIssue = (issue: ConsistencyIssue, sessions: ReadonlyArray<{ courseKey: string; courseName: string }>) => {
+/** 6 caratteri esadecimali di SHA-256: distinguono due chiavi che oscurate sono uguali, senza rivelarle. */
+const shortHash = async (value: string) => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest).slice(0, 3)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+/** Chiave sicura per ogni chiave grezza degli esiti; con due chiavi che coincidono si aggiunge un suffisso. */
+const safeKeyMap = async (issues: readonly ConsistencyIssue[], sessions: ReadonlyArray<{ courseKey: string; courseName: string }>) => {
+  const rawKeys = [...new Set(issues.flatMap((issue) => (issue.refs.courseKey ? [issue.refs.courseKey] : [])))];
+  const byText = new Map<string, string[]>();
+  for (const raw of rawKeys) {
+    const safe = safeCourseKey(raw, sessions);
+    byText.set(safe, [...(byText.get(safe) ?? []), raw]);
+  }
+  const map = new Map<string, string>();
+  for (const [safe, raws] of byText) {
+    for (const raw of raws) map.set(raw, raws.length > 1 ? `${safe}~${await shortHash(raw)}` : safe);
+  }
+  return map;
+};
+
+const publicIssue = (issue: ConsistencyIssue, keys: ReadonlyMap<string, string>) => {
   const { fix, ...raw } = issue;
   const rawKey = raw.refs.courseKey;
-  const safeKey = rawKey ? safeCourseKey(rawKey, sessions) : undefined;
+  const safeKey = rawKey ? keys.get(rawKey) : undefined;
   const rest = rawKey && safeKey !== undefined ? { ...raw, id: raw.id.split(rawKey).join(safeKey), refs: { ...raw.refs, courseKey: safeKey } } : raw;
   const base = { ...rest, title: agentMemberText(issue.title), detail: agentMemberText(issue.detail) };
   if (!fix) return base;
@@ -182,7 +203,7 @@ export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult>
   const groups = useGroupExamStore.getState();
   const ids = (items: ReadonlyArray<{ id: string }>) => new Set(items.map((item) => item.id));
   const read = groups.ready && groups.available && Boolean(groups.viewerId);
-  const report = checkConsistency({
+  const input = {
     now: new Date(),
     subjects: current.subjects,
     exams: current.exams,
@@ -202,15 +223,29 @@ export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult>
     },
     groupExams: { ready: read, groupIds: groups.groups.map((group) => group.id), groupNames: groupNamesOf(groups.groups), sessions: groups.sessions, overrides: groups.overrides },
     catalog: read && groups.overrides.length ? await catalogIds() : null
-  });
+  } satisfies ConsistencyInput;
+  const report = checkConsistency(input);
+  // Corrispondenze con i dati personali (doppioni, esame superato): sul nome oscurato, così un agente non
+  // conferma un nome grezzo. duplicate_session resta sui nomi veri (due corsi diversi non si fondono).
+  const redacted = groups.sessions.map((session) =>
+    !session.courseId && agentMemberText(session.courseName) !== session.courseName ? { ...session, courseName: agentMemberText(session.courseName) } : session
+  );
+  const matchedByName = new Set(["unlinked_personal_duplicate", "passed_but_selected_future"]);
+  const rawIssues = report.issues;
+  const reportIssues = redacted.some((session, index) => session !== groups.sessions[index])
+    ? [...rawIssues.filter((issue) => !matchedByName.has(issue.code)), ...checkConsistency({ ...input, groupExams: { ...input.groupExams, sessions: redacted } }).issues.filter((issue) => matchedByName.has(issue.code))].sort(
+        (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.code.localeCompare(b.code) || a.id.localeCompare(b.id)
+      )
+    : rawIssues;
   const scope = text(args.scope) || "all";
   const min = SEVERITY_RANK[(text(args.minSeverity) || "info") as IssueSeverity] ?? 2;
-  const issues = report.issues.filter((issue) => SEVERITY_RANK[issue.severity] <= min && (scope === "all" || (scope === "groups") === GROUP_CODES.has(issue.code)));
+  const issues = reportIssues.filter((issue) => SEVERITY_RANK[issue.severity] <= min && (scope === "all" || (scope === "groups") === GROUP_CODES.has(issue.code)));
+  const keys = await safeKeyMap(issues, groups.sessions);
   return ok({
     checkedAt: report.checkedAt,
     groupsChecked: report.groupsChecked,
     groupExamsChecked: report.groupExamsChecked,
     counts: { error: issues.filter((i) => i.severity === "error").length, warning: issues.filter((i) => i.severity === "warning").length, info: issues.filter((i) => i.severity === "info").length },
-    ...page(issues.map((issue) => publicIssue(issue, groups.sessions)), args)
+    ...page(issues.map((issue) => publicIssue(issue, keys)), args)
   });
 };

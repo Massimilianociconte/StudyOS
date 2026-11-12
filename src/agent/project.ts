@@ -170,3 +170,22 @@ export const agentCatalogText = (text: string | null | undefined, allow = instit
 
 /** Testo scritto dai membri (note, aule, nomi, cronologia): tutti gli indirizzi oscurati, sempre. */
 export const agentMemberText = (text: string | null | undefined) => redactEmails(text ?? "", false);
+
+/**
+ * Indirizzo scritto da un membro (risorsa di un gruppo): solo http(s), mai mailto, e solo se nemmeno la
+ * forma decodificata (%40) contiene un indirizzo o un @nome. Altrimenti null (undefined se lo schema non è sicuro).
+ */
+export const agentUrl = (value: string | null | undefined, safe: (value: string) => string | null | undefined): string | null | undefined => {
+  if (!value) return undefined;
+  const href = safe(value);
+  // Schema non sicuro: come prima, nessun valore. Indirizzi dei membri: null.
+  if (!href) return undefined;
+  if (/^mailto:/i.test(href)) return null;
+  let decoded = href;
+  try {
+    decoded = decodeURIComponent(href);
+  } catch {
+    // Percentuali non valide: si controlla la forma scritta.
+  }
+  return agentMemberText(href) !== href || agentMemberText(decoded) !== decoded ? null : href;
+};
