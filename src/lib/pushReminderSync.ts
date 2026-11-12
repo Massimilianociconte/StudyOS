@@ -4,6 +4,8 @@
 // con le notifiche attive. Si carica solo con import() (dal watcher dei promemoria); supabase-js
 // arriva solo quando serve. Senza account (ospite) non fa nulla.
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
+import { useGroupExamStore } from "../store/useGroupExamStore";
+import { reminderSourceEvents } from "./reminderSources";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { PUSH_CHANGED_EVENT } from "./pushDevice";
 import {
@@ -78,7 +80,8 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
   if (store.loading || store.locked) return "waiting";
 
   const now = new Date();
-  const events = store.events;
+  // Stesse sorgenti del watcher in app: eventi, appelli scelti, promemoria autonomi.
+  const events = reminderSourceEvents({ events: store.events, examPlans: store.examPlans, reminders: store.reminders, groupSessions: useGroupExamStore.getState().sessions });
   const zone = rowZoneOf(deviceTimeZone());
   const wanted = pushRemindersWanted(selectPreferences(store));
   const rows = wanted ? pushReminderRows(events, now) : [];
@@ -217,7 +220,17 @@ export const startPushReminderSync = (): (() => void) => {
       }, delay);
     };
     const unsubscribeStore = useStudyStore.subscribe((state, previous) => {
-      if (state.events !== previous.events || state.preferences !== previous.preferences || state.locked !== previous.locked) schedule();
+      if (
+        state.events !== previous.events ||
+        state.examPlans !== previous.examPlans ||
+        state.reminders !== previous.reminders ||
+        state.preferences !== previous.preferences ||
+        state.locked !== previous.locked
+      )
+        schedule();
+    });
+    const unsubscribeGroupExams = useGroupExamStore.subscribe((state, previous) => {
+      if (state.sessions !== previous.sessions) schedule();
     });
     let cloudKey = "";
     const unsubscribeCloud = subscribeCloudSync((state) => {
@@ -243,6 +256,7 @@ export const startPushReminderSync = (): (() => void) => {
       clearInterval(interval);
       window.removeEventListener(PUSH_CHANGED_EVENT, onPushChanged);
       unsubscribeStore();
+      unsubscribeGroupExams();
       unsubscribeCloud();
     };
   }
