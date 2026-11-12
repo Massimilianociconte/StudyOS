@@ -70,6 +70,14 @@ const nextQueuedAt = () => {
 
 export const outboxKey = (collection: CollectionKey, id: string) => `${ENTITY_TYPES[collection]}:${id}`;
 
+/**
+ * Identità di questa pagina (cambia a ogni caricamento) sulle voci che accoda il salvataggio. Senza
+ * Web Locks (activeTab.ts) due schede possono essere attive insieme: una scheda rimasta indietro
+ * inviava la sua copia vecchia per la voce accodata dall'altra e la toglieva (P15).
+ */
+export const OUTBOX_WRITER =
+  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `page-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 export interface PersistHostState {
   collections: CollectionsState;
   settings: UserSettings;
@@ -111,6 +119,18 @@ export class PersistenceHaltedError extends Error {
   }
 }
 
+/**
+ * Il salvataggio chiesto non è avvenuto: il vault si è bloccato con modifiche ancora in memoria (lo
+ * stato è stato svuotato senza scriverle). Chi aspettava il salvataggio per andare avanti (il pull,
+ * prima di avanzare il cursore) deve fermarsi: le ritroverà al prossimo pull dopo lo sblocco (P9).
+ */
+export class PersistenceDiscardedError extends Error {
+  constructor() {
+    super("Workspace bloccato prima del salvataggio: modifiche non salvate.");
+    this.name = "PersistenceDiscardedError";
+  }
+}
+
 export const isPersistenceHalted = () => halted;
 
 /** Blocco preso da un'altra scheda: smette subito di scrivere, senza salvare nulla. */
@@ -144,10 +164,25 @@ export const hasVaultKey = () => vaultKey !== null;
 /** Vault attivo e chiave della sessione (null se bloccato): cifra anche i file locali dei materiali. */
 export const vaultSession = () => ({ mode: vaultMode, key: vaultKey });
 
+// Quante volte la sospensione ha lasciato in memoria modifiche mai scritte (vedi requestPersist).
+let discarded = 0;
+
 /** Durante il lock del vault lo stato in memoria è vuoto: non va mai persistito né diffato. */
 export const setPersistenceSuspended = (value: boolean) => {
+  // Il chiamante svuota lo stato subito dopo: ciò che non è ancora su disco qui si perde (P9).
+  if (value && !suspended && pendingWrites()?.any) discarded += 1;
   suspended = value;
 };
+
+/**
+ * Le entità come sono su disco adesso (l'ultimo stato salvato). Una riscrittura completa (password
+ * dell'app messa o tolta) copia queste dentro `runExclusive`, dove nessun salvataggio è a metà: le
+ * modifiche arrivate dopo restano differenze dallo stato salvato e le scrive il salvataggio dopo, nel
+ * formato nuovo e con la loro voce in coda. Prima si copiava lo stato preso prima dell'attesa e lo si
+ * rimetteva in memoria: un pull o una sessione salvata nel frattempo sparivano (P8).
+ */
+export const persistedCollections = (): CollectionsState =>
+  Object.fromEntries(COLLECTIONS.map((key) => [key, [...baseline[key].values()]])) as unknown as CollectionsState;
 
 /**
  * true se l'entità è ancora su disco (ultimo stato salvato). Chi non la trova in memoria capisce
@@ -220,7 +255,8 @@ const buildOutbox = (diff: CollectionDiff, collections: CollectionsState): SyncO
         entityType: ENTITY_TYPES[key],
         entityId: item.id,
         deleted: false,
-        queuedAt: nextQueuedAt()
+        queuedAt: nextQueuedAt(),
+        writer: OUTBOX_WRITER
       });
     }
     for (const id of diff.deletes[key] ?? []) {
@@ -235,7 +271,8 @@ const buildOutbox = (diff: CollectionDiff, collections: CollectionsState): SyncO
         deleted: true,
         // Come per le modifiche: dopo l'ultimo timbro visto, anche con l'orologio indietro.
         deletedAt: laterStamp(previous?.updatedAt, now),
-        queuedAt: nextQueuedAt()
+        queuedAt: nextQueuedAt(),
+        writer: OUTBOX_WRITER
       });
     }
   }
@@ -341,7 +378,7 @@ const flush = async () => {
 // vengono raccolte in un'unica scrittura.
 const VAULT_COALESCE_MS = 250;
 
-export const requestPersist = (): Promise<void> => {
+const scheduleFlush = (): Promise<void> => {
   if (pending) return pending;
   const run = chain.then(async () => {
     if (vaultMode) await new Promise((resolve) => setTimeout(resolve, VAULT_COALESCE_MS));
@@ -351,6 +388,18 @@ export const requestPersist = (): Promise<void> => {
   pending = run;
   chain = run.catch(() => undefined);
   return run;
+};
+
+/**
+ * Rifiutata con PersistenceDiscardedError se, tra la richiesta e la fine del salvataggio, il vault si
+ * è bloccato con modifiche ancora in memoria: il salvataggio sospeso non scrive nulla e prima
+ * «riusciva», così il pull avanzava il cursore oltre righe mai salvate (P9).
+ */
+export const requestPersist = (): Promise<void> => {
+  const since = discarded;
+  return scheduleFlush().then(() => {
+    if (discarded !== since) throw new PersistenceDiscardedError();
+  });
 };
 
 /** Esegue un'operazione esclusiva (es. riscrittura completa) in coda ai flush. */
@@ -376,7 +425,36 @@ export const handOffPersistence = () =>
     halted = true;
   });
 
+/**
+ * Il dispositivo è stato svuotato (o sta per esserlo): una sync in volo non deve più scrivere cursore,
+ * migrazione o ultima sync, che descrivono i dati di prima. Prima una prima sync in volo li riscriveva
+ * dopo «Svuota dispositivo» e il dispositivo restava vuoto (P10).
+ */
+export class LocalResetError extends Error {
+  constructor() {
+    super("Dispositivo svuotato durante la sincronizzazione: si riparte da capo.");
+    this.name = "LocalResetError";
+  }
+}
+
+let localResets = 0;
+
+/** Segna uno svuotamento del dispositivo (vedi localResetGuard). */
+export const noteLocalReset = () => {
+  localResets += 1;
+};
+
+/** Controllo da chiamare subito prima di scrivere un segno della sync: lancia se nel frattempo il dispositivo è stato svuotato. */
+export const localResetGuard = () => {
+  const since = localResets;
+  return () => {
+    if (localResets !== since) throw new LocalResetError();
+  };
+};
+
 export const clearAllLocalData = async () => {
+  // Prima di aprire la transazione: un controllo passato prima di qui scrive prima della cancellazione.
+  noteLocalReset();
   await db.transaction("rw", [db.vault, db.syncOutbox, db.meta, db.sharedItems, db.sharedOutbox, ...dataTables], async () => {
     await Promise.all(dataTables.map((table) => table.clear()));
     await db.vault.clear();

@@ -25,7 +25,9 @@ non sono caricati; la riga porta solo `storedFile`. Vedi
 [superpowers/specs/2026-11-12-attachments-storage-design.md](superpowers/specs/2026-11-12-attachments-storage-design.md).
 
 Al primo collegamento e quando cambia account viene eseguito un pull completo.
-Il cambio account chiede se unire o sostituire i dati locali. Il vault bloccato
+Il cambio account con dati sul dispositivo ferma la sync finché nel pannello
+Account non si sceglie «Mostra solo i dati di questo account» (consigliato) o
+«Aggiungi i dati di prima»: senza una scelta esplicita non si unisce mai. Il vault bloccato
 sospende la sync; prima di bloccarlo le modifiche devono essere salvate.
 Un cambio account con modifiche ancora in coda viene fermato finché l'account
 precedente non completa la sincronizzazione, per non perdere i tombstone.
@@ -77,4 +79,40 @@ voti del libretto, intervalli di ripasso ed eventi importati da .ics arrivano
 all'altro dispositivo; le modifiche remote arrivano in realtime; un evento
 reimportato con lo stesso UID viene aggiornato, non duplicato; con
 `cloud:schema` riportato a 1 il client recupera un'entità mancante.
+
+Correzioni di novembre 2026 (sync personale):
+
+- attivare o togliere la password del dispositivo riscrive le tabelle con ciò
+  che è già su disco (`persistedCollections()`), dentro la stessa operazione
+  esclusiva che cambia modalità. Le modifiche arrivate nel frattempo (pull dal
+  cloud, sessione del Pomodoro) restano in memoria e le salva il passo dopo,
+  già nella nuova modalità; prima venivano sovrascritte da una copia presa
+  prima dell'attesa e il cursore cloud le saltava (P8);
+- bloccare il vault a metà pull non fa più avanzare il cursore: se il blocco
+  svuota la memoria con modifiche non ancora scritte, `requestPersist()`
+  rifiuta con `PersistenceDiscardedError` invece di «riuscire» senza scrivere.
+  Il merge ricontrolla il workspace dopo la lettura della coda e dopo aver
+  applicato le righe, e prima di scrivere cursore e `merged`; anche le
+  scritture dell'outbox si annullano con il vault bloccato (P9);
+- «Svuota dispositivo» segna uno svuotamento (`noteLocalReset`, anche dentro
+  `clearAllLocalData`). Ogni passata prende la sua guardia dopo `bindUser` e
+  la controlla subito prima di scrivere cursore, `merged`, `migrated`, schema
+  e ultima sync: una prima sync in volo non riscrive più i segni appena tolti
+  (il dispositivo restava vuoto). La passata si interrompe senza errore e
+  riparte da zero (P10);
+- senza Web Locks (più schede attive insieme) una scheda rimasta indietro non
+  toglie più la voce accodata da un'altra: le voci portano chi le ha scritte
+  (`writer`) e, senza vault, per quelle di un'altra pagina si invia la copia
+  più recente tra memoria e disco. Col vault su disco c'è solo lo snapshot
+  cifrato: il limite resta e la guardia a scheda unica è l'unica protezione (P15);
+- le voci che non partiranno mai così come sono (elemento oltre il limite di
+  un invio, 900 KB) vengono segnate come ferme (`parked: "too-large"`,
+  `src/lib/stuckOutbox.ts`): non contano tra le modifiche da inviare
+  (`stuckCount` a parte, badge «N elementi non sincronizzabili») e il pannello
+  Account le elenca con titolo e dimensione. Si può scaricarne una copia
+  (backup parziale `scope: "items"`, unito all'importazione) o toglierle dalla
+  coda dopo una conferma: restano solo su questo dispositivo. Finché ci sono,
+  il cambio di account e «Esci e togli i dati da qui» restano fermi con un
+  messaggio che le nomina, perché toglierle da qui le perderebbe. Una modifica
+  locale riaccoda la voce senza segno e la rimette in gioco (P12).
 

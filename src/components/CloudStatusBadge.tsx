@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync, type CloudSyncState } from "../lib/cloudSyncState";
+import { ACCOUNT_CHOICE_TEXT, CLOUD_STUCK_TEXT } from "../lib/labels";
 
 export function CloudStatusBadge({ onClick, compact = false }: { onClick?: () => void; compact?: boolean }) {
   const configured = cloudConfigured;
@@ -14,16 +15,22 @@ export function CloudStatusBadge({ onClick, compact = false }: { onClick?: () =>
   if (!configured) return null;
 
   const session = sync.session;
+  // Dati di un altro account su questo dispositivo: la sync aspetta la scelta nel pannello Account.
+  const choice = Boolean(session && sync.accountChoice);
+  // Elementi troppo grandi per l'account (stuckOutbox.ts): restano solo qui, l'elenco è nel pannello Account.
+  const stuck = session ? sync.stuckCount ?? 0 : 0;
   const tone = session
     ? sync.status === "error"
       ? "border-[var(--danger-border)] text-[var(--danger-text)] bg-[var(--danger-bg)]"
-      : sync.status === "syncing" || sync.status === "offline" || sync.pendingChanges
+      : choice || sync.status === "syncing" || sync.status === "offline" || sync.pendingChanges || stuck > 0
       ? "border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]"
       : "border-[var(--success-border)] text-[var(--success-text)] bg-[var(--success-bg)]"
     : "border-[var(--warning-border)] text-[var(--warning-text)] bg-[var(--warning-bg)]";
 
   const label = !session
     ? "Salvato solo qui"
+    : choice
+    ? ACCOUNT_CHOICE_TEXT.label
     : sync.status === "syncing"
     ? "Sincronizzazione…"
     : sync.status === "offline"
@@ -32,10 +39,16 @@ export function CloudStatusBadge({ onClick, compact = false }: { onClick?: () =>
     ? "Sincronizzazione non riuscita"
     : sync.pendingChanges
     ? `${sync.pendingCount} ${sync.pendingCount === 1 ? "modifica da inviare" : "modifiche da inviare"}`
+    : stuck > 0
+    ? CLOUD_STUCK_TEXT.label(stuck)
     : "Sincronizzato";
 
   const subtitle = !session
     ? "Accedi per sincronizzare"
+    : choice
+    ? ACCOUNT_CHOICE_TEXT.hint
+    : stuck > 0 && sync.status === "idle" && !sync.pendingChanges
+    ? CLOUD_STUCK_TEXT.hint
     : sync.status === "error"
     ? sync.error ?? "Riprovo tra poco da solo"
     : sync.status === "offline"

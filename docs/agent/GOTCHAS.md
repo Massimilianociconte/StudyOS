@@ -45,6 +45,10 @@
   richiesta in coda per il blocco.
 - Senza `navigator.locks` (browser vecchi; contesto non sicuro, es. dev su
   `http://<IP di rete>`) non c'è guardia: come prima, due schede possono sovrascriversi.
+  Riparo minimo per il cloud: ogni voce dell'outbox porta `writer` (`OUTBOX_WRITER`, uno per
+  caricamento di pagina) e, senza vault, `push` invia per le voci di un'altra pagina la copia
+  più recente tra memoria e disco (`newerCopy`), così una scheda rimasta indietro non toglie
+  la voce dell'altra inviando la sua copia vecchia. Col vault resta la copia in memoria.
   La guardia valuta comunque i moduli dell'app (import statico di `App`): niente effetti
   con scritture a livello di modulo; `init()` rilegge il timer dal disco perché quello
   letto all'apertura della guardia può essere vecchio.
@@ -87,8 +91,11 @@
 - Preferenze personali (nome, foto, ore settimanali, CFU del corso, BARB visibile): entità
   sincronizzata `preferences` con id `main`, letta con `selectPreferences` (oggetto stabile).
   Non rimettere dati personali in `settings`, che restano del dispositivo. L'id `main` è lo stesso
-  in ogni account. Cambiando account (bindUser) OK = solo i dati del nuovo account, Annulla =
-  unisci; anche con «unisci» le preferenze di prima si tolgono
+  in ogni account. Cambiando account (bindUser) con dati sul dispositivo la sync si ferma
+  (`accountChoice` nello stato, badge «Scegli quali dati tenere») finché nel pannello Account non si
+  preme «Mostra solo i dati di questo account» (fuoco iniziale) o «Aggiungi i dati di prima»
+  (`chooseAccountSwitch`, vale solo per quell'accesso). Mai `confirm()`: senza risposta (finestre
+  bloccate, Esc, app dentro un'altra app) valeva «unisci» (`accountSwitchStep`, P6). Anche con «unisci» le preferenze di prima si tolgono
   (`accountSwitch.ts` → `personalRemovals`), altrimenti l'ultima scrittura vince e nome e foto
   passano al nuovo account. Una nuova collezione «della persona» va in `PERSONAL_COLLECTIONS`.
   Alla prima sync di un account su un dispositivo (`firstSync`, anche dopo «Togli i dati da qui»

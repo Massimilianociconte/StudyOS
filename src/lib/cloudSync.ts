@@ -16,9 +16,19 @@ import type { StudyGroup } from "../types";
 import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey, type CollectionsState } from "./collections";
 import { GROUP_COLLECTIONS, groupLookup, isServerBacked } from "./syncScope";
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
-import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
-import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
-import { PERSONAL_COLLECTIONS, personalRemovals } from "./accountSwitch";
+import {
+  LocalResetError,
+  OUTBOX_WRITER,
+  isPersistenceHalted,
+  localResetGuard,
+  noteLocalReset,
+  outboxKey,
+  requestPersist,
+  subscribeLocalChanges
+} from "./persistence";
+import { chunkBySize, indexCollections, legacySnapshotToRows, newerCopy, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
+import { PERSONAL_COLLECTIONS, accountSwitchStep, personalRemovals, type AccountSwitchChoice } from "./accountSwitch";
+import { countOutbox, discardable, parkedRow, stuckItems, type StuckItem } from "./stuckOutbox";
 import { ACCOUNT_TEXT } from "./labels/account";
 import {
   getSession,
@@ -88,10 +98,12 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryAttempt = 0;
 const cleanups: Array<() => void> = [];
 
+// Le voci ferme (troppo grandi, stuckOutbox.ts) non sono «modifiche da inviare»: non partiranno mai
+// così come sono. Si contano a parte e il pannello Account le elenca (P12).
 const refreshPendingCount = async () => {
-  const count = await db.syncOutbox.count();
-  setState({ pendingCount: count, pendingChanges: count > 0 });
-  return count;
+  const { pending, stuck } = countOutbox(await db.syncOutbox.toArray());
+  setState({ pendingCount: pending, pendingChanges: pending > 0, stuckCount: stuck });
+  return pending;
 };
 
 const storeReady = () => {
@@ -115,9 +127,27 @@ class SessionChangedError extends Error {
   }
 }
 
+/** Dati di un altro account su questo dispositivo e nessuna scelta ancora: la sync aspetta (vedi bindUser). */
+class AccountChoiceNeededError extends Error {
+  constructor() {
+    super("Scegli quali dati tenere su questo dispositivo.");
+    this.name = "AccountChoiceNeededError";
+  }
+}
+
+/** Scelta fatta nel pannello Account, valida solo per l'account per cui è stata fatta (solo in memoria). */
+let switchChoice: { userId: string; choice: AccountSwitchChoice } | null = null;
+
 const assertSameSession = (userId: string) => {
   if (currentSession()?.user.id !== userId) throw new SessionChangedError();
 };
+
+/**
+ * Presa all'inizio di ogni passata (dopo bindUser): se intanto il dispositivo viene svuotato,
+ * cursore, migrazione e ultima sync di questa passata non si scrivono più (P10).
+ */
+let passGuard: () => void = () => undefined;
+const assertNoLocalReset = () => passGuard();
 
 /**
  * Con il vault bloccato (o durante il caricamento) lo stato in memoria è vuoto: leggere lo
@@ -135,7 +165,8 @@ const assertStoreReady = () => {
  */
 const outboxTransaction = <T,>(work: () => Promise<T>) =>
   db.transaction("rw", db.syncOutbox, async () => {
-    if (isPersistenceHalted()) throw new SyncSuspendedError();
+    // Anche vault bloccato: la voce da togliere o rimettere è stata decisa sullo stato di prima (P9).
+    if (!storeReady()) throw new SyncSuspendedError();
     return work();
   });
 
@@ -234,6 +265,8 @@ const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean, acco
   await requestPersist();
   assertStoreReady();
   const outbox = await db.syncOutbox.toArray();
+  // Vault bloccato durante la lettura: lo stato è vuoto e il merge scarterebbe le voci in coda (P9).
+  assertStoreReady();
   // Uscita dall'account (o cambio) mentre la richiesta era in volo, es. «Togli i dati da qui»:
   // le righe arrivate tardi non devono riempire di nuovo il dispositivo appena svuotato.
   assertSameSession(userId);
@@ -244,6 +277,7 @@ const mergeRows = async (userId: string, rows: RemoteRow[], force: boolean, acco
     await useStudyStore
       .getState()
       .applyRemoteChanges(plan.changes.map((change) => ({ ...change, force: force || change.force === true })));
+    assertStoreReady();
   }
   if (plan.dropOutbox.length) {
     await outboxTransaction(async () => {
@@ -275,7 +309,10 @@ const pull = async (userId: string, force = false) => {
     const last = rows[rows.length - 1];
     after = { updated_at: last.updated_at, id: last.id };
   }
+  // Il cursore va avanti solo con le righe salvate: mai con il workspace bloccato a metà (P9).
+  assertStoreReady();
   assertSameSession(userId);
+  assertNoLocalReset();
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
   return applied;
 };
@@ -310,6 +347,14 @@ const push = async (userId: string) => {
   assertStoreReady();
   const queued = await db.syncOutbox.orderBy("queuedAt").toArray();
   if (!queued.length) return 0;
+  // Senza Web Locks più schede sono attive insieme (activeTab.ts): per una voce accodata da un'altra
+  // pagina (o dalla sync stessa) la memoria di questa può essere indietro. Si legge anche la riga su
+  // disco e parte la più recente; prima partiva la copia vecchia, il server la accettava (stesso timbro,
+  // stesso contenuto) e la voce dell'altra scheda spariva (P15). Col vault su disco c'è solo lo
+  // snapshot cifrato: resta la copia in memoria (con il vault la guardia è la stessa, vedi docs).
+  const vault = useStudyStore.getState().settings.security.mode === "vault";
+  const foreign = vault ? [] : queued.filter((row) => !row.deleted && row.writer !== OUTBOX_WRITER);
+  const onDisk = foreign.length ? await readStoredRows(foreign) : new Map<string, unknown>();
   assertStoreReady();
   const index = indexCollections(pickCollections(useStudyStore.getState()));
   const encoder = new TextEncoder();
@@ -324,7 +369,8 @@ const push = async (userId: string) => {
   const outOfScope: SyncOutboxRow[] = [];
   const groupOf = groupLookup(pickCollections(useStudyStore.getState()).studyGroups);
   const prepared = queued.flatMap((row) => {
-    const entity = index[row.collection]?.get(row.entityId);
+    const inMemory = index[row.collection]?.get(row.entityId);
+    const entity = inMemory && onDisk.has(row.key) ? newerCopy(row.entityId, inMemory, onDisk.get(row.key)) : inMemory;
     // Una voce "put" senza entità in memoria non diventa MAI un'eliminazione cloud: le
     // eliminazioni reali arrivano dall'outbox con deleted=true.
     if (!row.deleted && !entity) {
@@ -341,7 +387,6 @@ const push = async (userId: string) => {
   if (orphans.length) {
     // Senza vault la riga può essere ancora su disco (scritta in un'altra scheda): si invia quella.
     // Si scartano solo le voci senza riga, e col vault (una sola scheda) come prima.
-    const vault = useStudyStore.getState().settings.security.mode === "vault";
     const stored = vault ? new Map<string, unknown>() : await readStoredRows(orphans);
     assertStoreReady();
     const { send, drop } = planOrphanPuts(orphans, stored, vault);
@@ -372,12 +417,12 @@ const push = async (userId: string) => {
   let sent = 0;
   let tieBroken = false;
   const failed: string[] = [];
-  const oversizedKeys: string[] = [];
+  const oversized: Array<{ row: SyncOutboxRow; size: number }> = [];
   for (const batch of chunkBySize(prepared, (item) => item.size, PUSH_MAX_BYTES, PUSH_MAX_ROWS)) {
-    const oversized = batch.find((item) => item.size > PUSH_MAX_BYTES);
-    if (oversized) {
-      // Non blocca il resto della coda: resta in outbox e viene segnalato come avviso.
-      oversizedKeys.push(oversized.row.key);
+    const tooLarge = batch.find((item) => item.size > PUSH_MAX_BYTES);
+    if (tooLarge) {
+      // Non blocca il resto della coda: resta in outbox, segnata come ferma (sotto).
+      oversized.push({ row: tooLarge.row, size: tooLarge.size });
       continue;
     }
     assertStoreReady();
@@ -410,11 +455,17 @@ const push = async (userId: string) => {
       failed.push(errorMessage(error));
     }
   }
-  setState({
-    warning: oversizedKeys.length
-      ? `${oversizedKeys.length} elementi troppo grandi per il cloud (limite ${Math.round(PUSH_MAX_BYTES / 1024)} KB): restano solo su questo dispositivo. Sostituisci gli allegati grandi con un link.`
-      : undefined
-  });
+  if (oversized.length) {
+    // Voci che non partiranno mai così come sono: segnate come ferme, fuori dal conteggio delle
+    // modifiche da inviare e nell'elenco del pannello Account (scarica una copia / togli dalla coda).
+    // Una modifica locale le riaccoda senza segno e le rimette in gioco (P12).
+    await outboxTransaction(async () => {
+      for (const { row, size } of oversized) {
+        const next = parkedRow(await db.syncOutbox.get(row.key), row, size);
+        if (next) await db.syncOutbox.put(next);
+      }
+    });
+  }
   // Le copie con il timbro nuovo partono subito, in un'altra passata (vedi requestSync).
   if (tieBroken) rerun = true;
   if (failed.length) throw new Error(failed.join(" · "));
@@ -443,7 +494,9 @@ const firstSync = async (userId: string) => {
   } else {
     await mergeRows(userId, rows, false, accountWins);
   }
+  assertStoreReady();
   assertSameSession(userId);
+  assertNoLocalReset();
   await setMeta(metaKeys.merged(userId), new Date().toISOString());
   const maxSeen = rows.reduce<string | null>((max, row) => (!max || row.updated_at > max ? row.updated_at : max), null);
   // Senza stato locale disponibile non si può accodare nulla: il flag "migrated" non va scritto.
@@ -452,34 +505,48 @@ const firstSync = async (userId: string) => {
   await push(userId);
   assertStoreReady();
   assertSameSession(userId);
+  assertNoLocalReset();
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
+  assertNoLocalReset();
   await setMeta(metaKeys.migrated(userId), new Date().toISOString());
 };
 
 /**
- * Collega il dispositivo all'account. Se i dati locali appartengono a un altro account
- * chiede se unirli o sostituirli (prima venivano sempre sovrascritti o mescolati).
+ * Collega il dispositivo all'account. Se i dati locali appartengono a un altro account la
+ * sincronizzazione aspetta la scelta nel pannello Account (prima venivano sempre sovrascritti o
+ * mescolati, poi un confirm() senza risposta li univa).
  */
 const bindUser = async (userId: string) => {
   const bound = await getMeta<string>(metaKeys.boundUser);
   if (bound === userId) return true;
-  if (bound && bound !== userId && (await db.syncOutbox.count()) > 0) {
-    throw new Error("L'account precedente ha modifiche cloud in attesa. Ricollegalo e completa la sincronizzazione prima di cambiare account.");
+  if (bound && bound !== userId) {
+    const { pending, stuck } = countOutbox(await db.syncOutbox.toArray());
+    if (pending > 0) {
+      throw new Error("L'account precedente ha modifiche cloud in attesa. Ricollegalo e completa la sincronizzazione prima di cambiare account.");
+    }
+    // Elementi mai arrivati all'account di prima (troppo grandi): cambiando account si perderebbero.
+    // La persona li vede nel pannello Account e sceglie: copia o via dalla coda (P12).
+    if (stuck > 0) throw new Error(ACCOUNT_TEXT.switchStuck(stuck));
   }
   const store = useStudyStore.getState();
   const hasData = countEntities(pickCollections(store)) > 0;
-  if (bound && bound !== userId && hasData) {
-    // OK = solo il nuovo account: i dati di prima sono già tutti nel loro account (coda vuota, vedi
-    // sopra), quindi si tolgono solo da qui. Unire due persone diverse era la scelta di OK e
-    // portava nel nuovo account materie, eventi e (prima della correzione) nome e foto dell'altro.
-    const merge = typeof window === "undefined" || !window.confirm(ACCOUNT_TEXT.switchConfirm);
-    if (!merge) await store.resetAllData({ propagate: false });
-    else {
-      // Nome, foto e preferenze sono della persona: si tolgono qui (senza invio) e la prima
-      // sincronizzazione porta quelli del nuovo account. Prima restavano e finivano nel nuovo account.
-      const removals = personalRemovals(pickCollections(store));
-      if (removals.length) await store.applyRemoteChanges(removals);
-    }
+  const step = accountSwitchStep({ bound, userId, hasData, choice: switchChoice?.userId === userId ? switchChoice.choice : null });
+  if (step === "ask") {
+    // Nessuna risposta = nessuna unione: si resta fermi finché la persona non sceglie.
+    setState({ accountChoice: true });
+    throw new AccountChoiceNeededError();
+  }
+  switchChoice = null;
+  if (getCloudSyncState().accountChoice) setState({ accountChoice: false });
+  if (step === "separate") {
+    // Solo il nuovo account: i dati di prima sono già tutti nel loro account (coda vuota, vedi sopra),
+    // quindi si tolgono solo da qui.
+    await store.resetAllData({ propagate: false });
+  } else if (step === "merge") {
+    // Nome, foto e preferenze sono della persona: si tolgono qui (senza invio) e la prima
+    // sincronizzazione porta quelli del nuovo account. Prima restavano e finivano nel nuovo account.
+    const removals = personalRemovals(pickCollections(store));
+    if (removals.length) await store.applyRemoteChanges(removals);
   }
   // Solo un account precedente noto consente di scartare una coda già vuota.
   // Al primo collegamento i tombstone creati offline devono restare in coda.
@@ -506,6 +573,7 @@ const syncOnce = async () => {
     // Un flush fallito non deve essere seguito da pull/push o avanzamento del cursore.
     await requestPersist();
     await bindUser(userId);
+    passGuard = localResetGuard();
     const migrated = await getMeta<string>(metaKeys.migrated(userId));
     const schema = (await getMeta<number>(metaKeys.schema(userId))) ?? 1;
     if (!migrated) {
@@ -524,14 +592,27 @@ const syncOnce = async () => {
       }
       await push(userId);
     }
+    assertNoLocalReset();
     if (schema < SYNC_SCHEMA) await setMeta(metaKeys.schema(userId), SYNC_SCHEMA);
     const lastSync = new Date().toISOString();
+    assertNoLocalReset();
     await setMeta(metaKeys.lastSync(userId), lastSync);
     retryAttempt = 0;
     setState({ status: "idle", lastSync, error: undefined });
   } catch (error) {
     // Uscita o cambio di account a metà passata: chi ha cambiato la sessione ha già aggiornato lo stato.
     if (error instanceof SessionChangedError) return;
+    // Dispositivo svuotato a metà passata: non è un errore, si ripete da zero (cursore e migrazione via).
+    if (error instanceof LocalResetError) {
+      setState({ status: "idle" });
+      rerun = true;
+      return;
+    }
+    // Aspetta la scelta nel pannello Account (chooseAccountSwitch): niente errore né nuovi tentativi.
+    if (error instanceof AccountChoiceNeededError) {
+      setState({ status: "idle", error: undefined });
+      return;
+    }
     if (error instanceof SyncSuspendedError || !storeReady()) {
       // Riprende da sola allo sblocco del vault (subscription in initCloudSync).
       setState({ status: "idle" });
@@ -607,6 +688,11 @@ const handleSession = (session: Session | null) => {
 };
 
 const applySession = async (session: Session | null) => {
+  // La scelta tra tenere separati gli account e unire vale solo per l'accesso in cui è stata chiesta.
+  if (!session || currentSession()?.user.id !== session.user.id) {
+    switchChoice = null;
+    if (getCloudSyncState().accountChoice) setState({ accountChoice: false });
+  }
   if (!session) {
     // Una richiesta di riscaricare tutto vale per l'account che l'ha chiesta, non per il prossimo.
     forceNextPull = false;
@@ -702,6 +788,45 @@ export const forcePullNow = async () => {
 
 export const isSignedIn = () => Boolean(currentSession());
 
+/** Limite di un elemento per l'account, in KB (testo dell'elenco degli elementi fermi). */
+export const CLOUD_ITEM_MAX_KB = Math.round(PUSH_MAX_BYTES / 1024);
+
+/** Elementi che non arrivano all'account (troppo grandi), con titolo e dimensione (stuckOutbox.ts). */
+export const listStuck = async (): Promise<StuckItem[]> =>
+  stuckItems(await db.syncOutbox.toArray(), pickCollections(useStudyStore.getState()));
+
+/**
+ * «Togli dalla coda»: gli elementi restano su questo dispositivo ma non si prova più a inviarli, e
+ * cambio account e «togli i dati da qui» non sono più fermi per loro. Solo le voci viste nell'elenco
+ * e ancora ferme: una modifica arrivata dopo le ha rimesse in gioco e restano.
+ */
+export const discardStuck = async (items: ReadonlyArray<Pick<StuckItem, "key" | "queuedAt">>) => {
+  await outboxTransaction(async () => {
+    for (const item of items) {
+      if (discardable(await db.syncOutbox.get(item.key), item)) await db.syncOutbox.delete(item.key);
+    }
+  });
+  await refreshPendingCount();
+  // Un cambio di account fermo per loro può ripartire.
+  if (currentSession()) {
+    retryAttempt = 0;
+    void requestSync();
+  }
+};
+
+/**
+ * Risposta alla domanda del pannello Account (dati di un altro account su questo dispositivo):
+ * "separate" mostra solo i dati dell'account collegato, "merge" aggiunge quelli di prima. Vale per
+ * l'account collegato adesso; la sincronizzazione riparte subito.
+ */
+export const chooseAccountSwitch = async (choice: AccountSwitchChoice) => {
+  const userId = currentSession()?.user.id;
+  if (!userId) return;
+  switchChoice = { userId, choice };
+  retryAttempt = 0;
+  await requestSync();
+};
+
 /**
  * «Cancella anche dall'account»: il server segna come eliminato ogni dato personale dell'account, anche
  * quelli mai arrivati su questo dispositivo (prima partivano solo le eliminazioni di ciò che c'era qui e
@@ -725,6 +850,8 @@ export const eraseAccountData = async (): Promise<"ok" | "local-only" | "failed"
 export const resetCloudDeviceState = async () => {
   const userId = currentSession()?.user.id;
   if (!userId) return;
+  // Una passata già in volo (es. la prima sync) non riscrive cursore e migrazione appena tolti (P10).
+  noteLocalReset();
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));
   await deleteMeta(metaKeys.merged(userId));

@@ -39,11 +39,13 @@ import {
   SHARED_ENTITY_TYPES,
   PROTECTED_ENTITY_TYPES,
   canRestoreRevision,
+  catchUpWhenSubscribed,
   revisionFromRow,
   revisionTitle,
   safeCssColor,
   shareErrorText,
   shareNotices,
+  sharedKey,
   sharedPushBatches,
   sharingProbeOutcome,
   ShareUserError,
@@ -62,6 +64,7 @@ import {
   type SharedPushResult
 } from "./sharing";
 import { clearPendingShare } from "./shareInvite";
+import { requestPersist } from "./persistence";
 import { supabase } from "./supabase";
 import { useSharedStore } from "../store/useSharedStore";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -361,7 +364,11 @@ const pullOwner = async (me: string, ownerId: string, types: string[], sig: stri
 };
 
 /** Righe del server per le voci rifiutate (rowsForEntries), con una richiesta ogni REFETCH_PAGE_SIZE id. */
-const refetchRows = async (ownerId: string, entries: readonly SharedOutboxEntry[], gen: number): Promise<RemoteSharedRow[]> => {
+const refetchRows = async (ownerId: string, entries: readonly SharedOutboxEntry[], gen: number): Promise<RemoteSharedRow[]> =>
+  rowsForEntries(ownerId, entries, await fetchRows(ownerId, entries, gen));
+
+/** Righe del server per le voci, solo quelle che il server mostra. */
+const fetchRows = async (ownerId: string, entries: readonly SharedOutboxEntry[], gen: number): Promise<RemoteSharedRow[]> => {
   const found: RemoteSharedRow[] = [];
   const ids = [...new Set(entries.map((entry) => entry.entityId))];
   const types = [...new Set(entries.map((entry) => entry.entityType))];
@@ -376,10 +383,36 @@ const refetchRows = async (ownerId: string, entries: readonly SharedOutboxEntry[
     fail(error);
     found.push(...((data ?? []) as RemoteSharedRow[]));
   }
-  return rowsForEntries(ownerId, entries, found);
+  // Tipi e id si incrociano nella richiesta: solo le righe delle voci.
+  const wanted = new Set(entries.map((entry) => entry.key));
+  return found.filter((row) => wanted.has(sharedKey(ownerId, row.entity_type, row.entity_id)));
 };
 
 // ——— Push ———
+
+/**
+ * Prima dell'invio (S4): le modifiche in coda partite da una versione del server si riallineano sulla
+ * riga di adesso. Senza questo, una modifica fatta offline sopra una versione vecchia veniva accettata
+ * (timbro più recente) e riscriveva i campi che il proprietario aveva cambiato nel frattempo. Le righe
+ * uguali alla base non cambiano nulla; un errore qui non ferma l'invio (un rifiuto "stale" si riallinea
+ * dopo). Resta una finestra di millisecondi tra questa lettura e l'invio.
+ */
+const rebaseBeforePush = async (gen: number) => {
+  const byOwner = new Map<string, SharedOutboxEntry[]>();
+  for (const entry of useSharedStore.getState().outbox) {
+    if (entry.deleted || !entry.base) continue;
+    byOwner.set(entry.ownerId, [...(byOwner.get(entry.ownerId) ?? []), entry]);
+  }
+  for (const [ownerId, entries] of byOwner) {
+    try {
+      const rows = await fetchRows(ownerId, entries, gen);
+      still(gen);
+      if (rows.length) await useSharedStore.getState().applyRows(ownerId, rows);
+    } catch (error) {
+      if (error instanceof ViewerChanged || gen !== viewers.generation) throw error;
+    }
+  }
+};
 
 const pushBatch = async (batch: SharedPushBatch, gen: number) => {
   // Segnate (e salvate) prima dell'invio: se la risposta si perde, la riga può essere già sul server.
@@ -401,7 +434,13 @@ const pushBatch = async (batch: SharedPushBatch, gen: number) => {
   // coda solo con la riga riletta: se la rilettura fallisce restano, e la passata dopo riprova.
   const rows = await refetchRows(batch.ownerId, rejected, gen);
   still(gen);
-  await useSharedStore.getState().settleRejected(batch.ownerId, rejected, rows);
+  // "stale" con la versione da cui era partita: si unisce alla riga riletta e riparte (S4).
+  await useSharedStore.getState().settleRejected(
+    batch.ownerId,
+    rejected,
+    rows,
+    rejected.filter((entry) => reason(entry) === "stale")
+  );
   const denied = sharedPushDenied(rejected, reason, rows);
   if (denied || sharedPushGone(rejected, reason)) {
     still(gen);
@@ -416,6 +455,8 @@ let failedLastPass = new Set<string>();
 
 /** Invia la coda, un lotto alla volta: un lotto che fallisce (troppo grande, errore del server) non ferma gli altri. */
 const pushOutbox = async (gen: number) => {
+  await rebaseBeforePush(gen);
+  still(gen);
   const store = useSharedStore.getState();
   const { batches, orphans } = sharedPushBatches(store.outbox, store.items);
   if (orphans.length) await store.settleOutbox(orphans);
@@ -528,7 +569,10 @@ const ensureRealtime = async (me: string, owners: string[], gen: number) => {
       }
     );
   }
-  channel = next.subscribe();
+  // A ogni SUBSCRIBED (prima iscrizione e riconnessioni) un pull di recupero, con la solita attesa: le
+  // righe scritte prima che il canale fosse davvero iscritto non arrivano come evento.
+  const subscribing = next;
+  channel = subscribing.subscribe(catchUpWhenSubscribed(() => channel === subscribing, () => schedule()));
 };
 
 // ——— Ciclo ———
@@ -957,9 +1001,10 @@ const revisionsSince = async (since: string) => {
 const STATE_PAGE_SIZE = 100;
 
 /**
- * Dove sta oggi ogni elemento: la copia su questo dispositivo e la riga sul server. `updated_at` della
- * riga è dell'orologio del server, come `changed_at` delle revisioni: una scrittura del proprietario
- * (che non lascia revisioni) si riconosce perché è più recente dell'ultima revisione.
+ * Dove sta oggi ogni elemento: la copia su questo dispositivo, la riga sul server e la coda d'invio.
+ * `updated_at` della riga è dell'orologio del server, come `changed_at` delle revisioni: una scrittura
+ * del proprietario (che non lascia revisioni) si riconosce perché è più recente dell'ultima revisione,
+ * o perché è ancora in coda. Il timbro della copia qui (orologio del dispositivo) non si confronta.
  */
 const itemStates = async (entities: readonly { entityType: string; entityId: string }[]) => {
   const me = viewer();
@@ -977,9 +1022,18 @@ const itemStates = async (entities: readonly { entityType: string; entityId: str
       server.set(`${row.entity_type}:${row.entity_id}`, { updatedAt: String(row.updated_at), deleted: row.deleted === true });
     }
   }
+  // Modifiche del proprietario fatte qui e non ancora inviate (coda d'invio personale, chiave
+  // `${tipo}:${id}`): contano come «cambiato dopo». Prima il salvataggio, così c'è anche l'ultima.
+  await requestPersist().catch(() => undefined);
+  const keys = entities.map((entity) => `${entity.entityType}:${entity.entityId}`);
+  const queued = new Set((await db.syncOutbox.bulkGet(keys)).flatMap((row) => (row ? [row.key] : [])));
   return (entityType: string, entityId: string): ItemState => {
     const local = localEntity(entityType, entityId);
-    return { local: local ? { updatedAt: local.updatedAt } : null, server: server.get(`${entityType}:${entityId}`) ?? null };
+    return {
+      local: local ? { updatedAt: local.updatedAt } : null,
+      server: server.get(`${entityType}:${entityId}`) ?? null,
+      pending: queued.has(`${entityType}:${entityId}`)
+    };
   };
 };
 

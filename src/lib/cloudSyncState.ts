@@ -12,9 +12,16 @@ export interface CloudSyncState {
   error?: string;
   pendingChanges: boolean;
   pendingCount: number;
+  /** Voci che non partiranno mai così come sono (troppo grandi, stuckOutbox.ts): non in pendingCount. */
+  stuckCount?: number;
   realtime: boolean;
   /** Problema non bloccante (es. elementi troppo grandi per il cloud). */
   warning?: string;
+  /**
+   * L'account appena collegato non è quello dei dati su questo dispositivo: la sincronizzazione aspetta
+   * la scelta nel pannello Account (cloudSync `chooseAccountSwitch`).
+   */
+  accountChoice?: boolean;
 }
 
 /** Stessa condizione di creazione del client in supabase.ts (variabili pubbliche di build). */

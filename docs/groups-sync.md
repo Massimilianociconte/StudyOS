@@ -230,6 +230,17 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   vivono in `useSharedStore` e nelle tabelle Dexie `sharedItems` e `sharedOutbox`, mai
   nelle collezioni personali, nei backup o nei conteggi; con la password dell'app attiva
   restano solo in memoria.
+- **Modifiche contemporanee** (chi riceve): la voce in coda ricorda la versione del server da
+  cui è partita la modifica (`base`, `baseAt` in `SharedOutboxEntry`). Prima dell'invio
+  (`rebaseBeforePush`), a ogni riga nuova dal pull e dopo un rifiuto `stale` la modifica si
+  riallinea sulla versione nuova campo per campo (`rebaseSharedEdit`, `rebasePendingEdits`): i
+  campi cambiati solo da una parte si uniscono; se entrambi cambiano la stessa unità (un campo,
+  o un gruppo come orari o ripetizione) resta il timbro più recente e compare l'avviso
+  «avete cambiato la stessa informazione». La versione unita ha un timbro oltre l'ora del
+  server della riga, così il server la accetta. Limiti: resta una finestra di millisecondi tra
+  la lettura e l'invio; elementi creati da chi riceve e voci di versioni precedenti seguono la
+  regola di prima; dal lato del proprietario una sua modifica offline contro una modifica di
+  chi riceve già accettata resta «tutta la riga, vince il più recente» (sync personale).
 - **Valori scritti da chi riceve**: li controlla il server, non il client. La funzione
   `studyos_recipient_payload` e il trigger `studyos_items_recipient_values` su
   `studyos_items` valgono anche per le scritture dirette sulla tabella che la RLS
@@ -303,7 +314,10 @@ Decisione: [ADR](agent/decisions/2026-11-10-condivisione-righe-originali.md); de
   una condivisione attiva in uno dei due sensi (`studyos_knows_user`).
 - **Aggiornamenti**: Realtime su `studyos_shares`, `studyos_share_invites` e sulle righe dei
   proprietari (fino a 100 persone per canale), più un controllo ogni 5 minuti e al ritorno
-  sulla scheda. Il confronto con tutti gli id visibili si fa al controllo dei 5 minuti, al
+  sulla scheda. A ogni `SUBSCRIBED` del canale (prima iscrizione, canale ricreato,
+  riconnessione) parte un pull di recupero con la solita attesa (`catchUpWhenSubscribed`): le
+  righe scritte prima che il canale fosse davvero iscritto non arrivano come evento e prima
+  restavano fuori fino all'evento dopo. Il confronto con tutti gli id visibili si fa al controllo dei 5 minuti, al
   ritorno sulla scheda se l'ultimo è più vecchio di 5 minuti e quando cambiano i permessi di
   un proprietario: un segnale Realtime scarica solo le righe cambiate. Un elemento che esce da
   un filtro sparisce al controllo successivo. Le cancellazioni vere (`DELETE`, solo account

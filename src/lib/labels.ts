@@ -81,6 +81,21 @@ export const SHELL_TEXT = {
   lockTitle: "Chiude StudyOS: per riaprirlo servirà la password"
 } as const;
 
+/**
+ * Stato della sincronizzazione mentre aspetta la scelta tra i dati di due account (badge nella barra e
+ * pannello Account).
+ */
+export const ACCOUNT_CHOICE_TEXT = {
+  label: "Scegli quali dati tenere",
+  hint: "Su questo dispositivo ci sono i dati di un altro account"
+} as const;
+
+/** Elementi troppo grandi per l'account (stuckOutbox.ts): badge nella shell e pannello Account. */
+export const CLOUD_STUCK_TEXT = {
+  label: (count: number) => (count === 1 ? "1 elemento non sincronizzabile" : `${count} elementi non sincronizzabili`),
+  hint: "Troppo grandi per l'account: apri Account"
+} as const;
+
 /** Riquadro mostrato quando una sezione non si carica (ViewErrorBoundary, nel bundle iniziale). */
 export const VIEW_ERROR_TEXT = {
   title: "Questa sezione non si è caricata",
@@ -642,6 +657,9 @@ export const SHARE_GONE_TEXT = "Questa condivisione non c'è più.";
 export const SHARE_NOTICE_TEXT = {
   denied: (owner: string) => `Non hai più il permesso di modificare i dati di ${owner || "questa persona"}: la modifica non è stata salvata.`,
   gone: (owner: string) => `${owner || "Il proprietario"} ha eliminato ciò che stavi modificando: la modifica non è stata salvata.`,
+  /** Stesso campo cambiato qui e dal proprietario (S4): gli altri campi si sono uniti. */
+  conflict: (owner: string) =>
+    `Tu e ${owner || "il proprietario"} avete cambiato la stessa informazione: è rimasta la modifica più recente. Le altre modifiche sono state unite.`,
   dismiss: "Ok",
   dismissTitle: "Chiudi l'avviso sulla condivisione"
 } as const;
