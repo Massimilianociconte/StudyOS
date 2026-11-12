@@ -30,7 +30,7 @@ test("M1: un mio evento d'esame o un mio esame dello stesso giorno non si ripete
   assert.equal(groupExamEvents({ ...base, exams: [myExam] }).length, 0, "esame personale uguale");
   const dismissed = applyPlanPatch(newExamPlan(session(), "Farmaco", NOW), { dismissMatch: "event:e1" }, session(), "Farmaco", NOW);
   assert.equal(groupExamEvents({ ...base, events: [myEvent], plans: [dismissed] }).length, 1, "«Tienili separati» li mostra entrambi");
-  const linkedExam = applyPlanPatch(newExamPlan(session(), "Farmaco", NOW), { examId: "x1" }, session(), "Farmaco", NOW);
+  const linkedExam = applyPlanPatch(newExamPlan(session(), "Farmaco", NOW), { selected: true, examId: "x1" }, session(), "Farmaco", NOW);
   assert.equal(groupExamEvents({ ...base, exams: [{ ...myExam, date: "2027-02-01T08:00:00.000Z" }], plans: [linkedExam] }).length, 0, "piano collegato a un esame");
   assert.equal(groupExamEvents({ ...base, events: [{ ...myEvent, start: "2027-01-13T00:00:00" }] }).length, 1, "altro giorno");
 });
@@ -133,6 +133,10 @@ test("M1: un appello che ho scelto resta nel calendario anche se un mio esame o 
   assert.equal(groupExamEvents({ ...base, plans: [unchosen], mode: "all" }).length, 0, "non scelto: il doppione si nasconde");
   const linkedChosen = { ...chosen, linkedEventId: "e1" };
   assert.equal(groupExamEvents({ ...base, plans: [linkedChosen] }).length, 0, "collegato a un mio evento: lo mostra l'evento");
+  const linkedExamChosen = { ...chosen, examId: "x1" };
+  assert.equal(groupExamEvents({ ...base, events: [], plans: [linkedExamChosen] }).length, 0, "scelto e collegato a un mio esame: lo mostra l'esame");
+  const linkedExamUnchosen = { ...chosen, selected: false, examId: "x1" };
+  assert.equal(groupExamEvents({ ...base, events: [], plans: [linkedExamUnchosen], mode: "all" }).length, 0, "non scelto e collegato a un mio esame");
 });
 
 test("L8: i testi delle iscrizioni stanno nelle etichette", () => {

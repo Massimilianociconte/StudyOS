@@ -94,10 +94,11 @@ export const groupExamEvents = ({ sessions, plans, groupNames, subjects, events,
 
   const push = (session: Pick<GroupExamSession, "id" | "groupId" | "courseId" | "courseName" | "date" | "kind" | "label" | "time" | "room" | "createdAt" | "updatedAt">, plan: ExamPlan | undefined, deleted: boolean, stale: boolean) => {
     if (plan?.linkedEventId && eventIds.has(plan.linkedEventId)) return;
-    // Un appello che ho scelto non sparisce mai dal calendario per un doppione: il collegamento si propone nel riquadro.
-    if (!deleted && plan?.selected !== true) {
+    if (!deleted) {
+      // Collegato a un mio esame: lo mostra già l'esame, scelto o no.
       if (plan?.examId && examIds.has(plan.examId)) return;
-      if (personalMatches(session, { events: events as readonly CalendarEvent[], exams, subjects }, plan).length) return;
+      // Un appello che ho scelto non sparisce mai per un doppione non collegato: il collegamento si propone nel riquadro.
+      if (plan?.selected !== true && personalMatches(session, { events: events as readonly CalendarEvent[], exams, subjects }, plan).length) return;
     }
     const subject = (plan?.subjectId ? subjects.find((item) => item.id === plan.subjectId) : undefined) ?? subjects.find((item) => sessionMatchesSubject(session, item));
     const groupName = groupNames.get(session.groupId) ?? plan?.snapshot.groupName ?? "";
