@@ -17,7 +17,7 @@ import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
-import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
+import { filterTasks, isOpenTask, isOverdueTask, isTaskFilter, sortByPriority, subjectFilterTarget, taskSummary, type TaskFilter } from "../lib/taskFilters";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 
 type TaskMode = "list" | "kanban" | "matrix" | "subject" | "focus";
@@ -544,8 +544,8 @@ function GroupedList({
       : [
           {
             id: sort,
-            title: sort === "priority" ? "Dalla più urgente" : "Aggiunte di recente",
-            items: sort === "priority" ? urgentTasks(open, open.length) : [...open].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            title: sort === "priority" ? "Dalla priorità più alta" : "Aggiunte di recente",
+            items: sort === "priority" ? sortByPriority(open) : [...open].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
           }
         ];
 

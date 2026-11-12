@@ -28,6 +28,20 @@ export const taskSummary = (tasks: Task[], now: Date = new Date()) => {
   };
 };
 
+const PRIORITY_RANK: Record<Task["priority"], number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+
+/**
+ * «Ordina per Priorità»: prima la priorità; dentro la stessa priorità la scadenza più vicina (quindi
+ * le in ritardo in alto, e quelle senza scadenza in fondo), poi l'importanza. Sort stabile.
+ */
+export const sortByPriority = <T extends Pick<Task, "priority" | "dueDate" | "importance">>(tasks: T[]) =>
+  [...tasks].sort(
+    (a, b) =>
+      PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+      (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") ||
+      b.importance - a.importance
+  );
+
 /** Materia del filtro, solo se esiste ancora: un id sconosciuto (materia eliminata) non nasconde tutto. */
 export const subjectFilterTarget = <T extends Pick<Subject, "id">>(subjects: T[], id: string | null) =>
   id ? subjects.find((subject) => subject.id === id) ?? null : null;

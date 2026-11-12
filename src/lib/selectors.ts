@@ -100,11 +100,16 @@ export const nextOccurrences = (events: CalendarEvent[], now: Date = new Date(),
  * Attività aperte dalla più urgente. Il punteggio si calcola una volta per attività: dentro il
  * confronto del sort costava due date per ogni passo (pesante sul connettore remoto, che ha un
  * tetto di CPU per richiesta). Il sort è stabile: a parità di punteggio resta l'ordine di partenza.
+ * Scadenza: oggi 10, poi uno in meno per ogni giorno che manca; una scadenza passata vale di più
+ * (11 dopo un giorno, fino a 20): prima, con il valore assoluto, 15 giorni di ritardo valevano 0.
  */
-export const urgentTasks = (tasks: Task[], count = 5) => {
-  const now = new Date();
+export const urgentTasks = (tasks: Task[], count = 5, now: Date = new Date()) => {
+  const deadline = (dueDate: string) => {
+    const days = daysUntil(dueDate, now);
+    return days < 0 ? 10 + Math.min(-days, 10) : Math.max(0, 10 - days);
+  };
   const score = (task: Task) => {
-    const due = task.dueDate ? Math.max(0, 10 - Math.abs(daysUntil(task.dueDate, now))) : 0;
+    const due = task.dueDate ? deadline(task.dueDate) : 0;
     const priority = { urgent: 24, high: 16, medium: 8, low: 2 }[task.priority];
     return due + priority + task.importance * 2;
   };
