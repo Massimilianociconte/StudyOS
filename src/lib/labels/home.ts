@@ -31,6 +31,14 @@ export const HOME_TEXT = {
   weekNoTarget: "Nessun obiettivo settimanale: impostalo in Impostazioni"
 } as const;
 
+/** Home: timer di studio avviato (al posto di «Inizia a studiare»), tocca per tornare a Studio. */
+export const HOME_TIMER_TEXT = {
+  paused: "In pausa",
+  ended: "Da salvare",
+  aria: (summary: string) => `Timer di studio: ${summary}. Apri Studio`,
+  title: "Torna al timer nella sezione Studio"
+} as const;
+
 export const HOME_HELP = {
   next: {
     title: "Cosa fare adesso",

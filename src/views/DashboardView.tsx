@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { format, isSameDay, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { AppView, Subject } from "../types";
@@ -27,6 +27,7 @@ import {
 import {
   ALL_DAY_LABEL,
   ATTACHMENT_KIND_ICON,
+  CALENDAR_EXAMS_TEXT,
   ENERGY_LABEL,
   EVENT_CATEGORY_LABEL,
   PRIORITY_LABEL,
@@ -38,9 +39,13 @@ import {
   formatMinutes,
   occasionAgeText
 } from "../lib/labels";
-import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT } from "../lib/labels/home";
+import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT, HOME_TIMER_TEXT } from "../lib/labels/home";
 import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import { useToday } from "../hooks/useToday";
+import { homeTimerSummary } from "../lib/homeTimer";
+import { calendarExamEvents } from "../lib/calendarExams";
+import { useNow } from "../hooks/useNow";
+import { CalendarExamsHint } from "../components/CalendarExamsHint";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
@@ -57,7 +62,7 @@ function TextLink({ children, onClick }: { children: ReactNode; onClick: () => v
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 hover:underline"
+      className="relative inline-flex min-h-8 items-center gap-1 text-xs font-black text-[var(--accent-ink)] underline-offset-2 after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] hover:underline"
     >
       {children} <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0" />
     </button>
@@ -141,6 +146,45 @@ function useBarbLookup(enabled: boolean) {
   return lookup;
 }
 
+/**
+ * Azione del titolo: «Inizia a studiare», oppure il timer già avviato («Pomodoro · Chimica · 18:42»)
+ * che riporta a Studio. Legge lo stato del timer dallo store; il tick di un secondo ridisegna solo
+ * questo pulsante e solo mentre il timer corre.
+ */
+function StudyAction({ onGo }: { onGo: () => void }) {
+  const timer = useStudyStore((state) => state.timer);
+  const subjects = useStudyStore((state) => state.subjects);
+  const now = useNow(1000, timer.running).getTime();
+  const summary = homeTimerSummary(timer, subjects, now);
+  if (!summary) {
+    return (
+      <Button icon="Timer" variant="soft" onClick={onGo} title="Apre il timer nella sezione Studio">
+        Inizia a studiare
+      </Button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onGo}
+      aria-label={HOME_TIMER_TEXT.aria(summary.text)}
+      title={HOME_TIMER_TEXT.title}
+      className="motion-safe inline-flex min-h-11 max-w-full items-center gap-2 sm:max-w-xs rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] pl-3 pr-2.5 text-sm font-extrabold text-[var(--text)] hover:bg-[color-mix(in_srgb,var(--accent)_28%,transparent)]"
+    >
+      <span className="relative grid h-2.5 w-2.5 shrink-0 grid-cols-1 place-items-center" aria-hidden="true">
+        {summary.state === "running" ? <span className="absolute inset-0 rounded-full bg-[var(--accent)] opacity-60 motion-safe:animate-ping" /> : null}
+        <span className={`h-2.5 w-2.5 rounded-full ${summary.state === "running" ? "bg-[var(--accent)]" : "bg-[var(--faint)]"}`} />
+      </span>
+      <Icon name={summary.icon} className="h-4 w-4 shrink-0" />
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="min-w-0 truncate">{summary.lead}</span>
+        <span className="shrink-0 tabular-nums">· {summary.tail}</span>
+      </span>
+      <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+    </button>
+  );
+}
+
 export function DashboardView() {
   const store = useStudyStore();
   const { events, tasks, subjects, exams, sessions, attachments, goals, topics, setActiveView, toggleTask } = store;
@@ -174,6 +218,9 @@ export function DashboardView() {
   // Come nel calendario: colori per tipologia scelti dall'utente e colore messo a mano.
   const typeOverrides = sanitizeTypeColorOverrides((preferences as { eventTypeColors?: unknown }).eventTypeColors);
 
+  // Esami segnati solo nel calendario: si propongono quando l'elenco degli esami è vuoto.
+  const hasNextExams = nextExams.length > 0;
+  const calendarExams = useMemo(() => (hasNextExams ? [] : calendarExamEvents(events, new Date())), [events, hasNextExams]);
   const nextExamDays = nextExams[0] ? studyDaysUntil(nextExams[0].date) : 0;
   const stats = [
     {
@@ -205,7 +252,11 @@ export function DashboardView() {
     {
       label: "Prossimo esame",
       value: nextExams[0] ? (nextExamDays === 0 ? "Oggi" : `tra ${nextExamDays} ${nextExamDays === 1 ? "giorno" : "giorni"}`) : "—",
-      detail: nextExams[0] ? subjectName(subjects, nextExams[0].subjectId) : "Nessun esame in programma",
+      detail: nextExams[0]
+        ? subjectName(subjects, nextExams[0].subjectId)
+        : calendarExams.length
+          ? CALENDAR_EXAMS_TEXT.tile(calendarExams.length)
+          : "Nessun esame in programma",
       icon: "GraduationCap",
       tone: "var(--warning)",
       view: "exams" as const
@@ -227,11 +278,7 @@ export function DashboardView() {
       <SectionTitle
         title={welcomeName ? `Ciao, ${welcomeName}` : "Home"}
         subtitle={`${capitalizeFirst(format(now, "EEEE d MMMM", { locale: it }))} · ${todaySummary}`}
-        action={
-          <Button icon="Timer" variant="soft" onClick={() => setActiveView("study")} title="Apre il timer nella sezione Studio">
-            Inizia a studiare
-          </Button>
-        }
+        action={<StudyAction onGo={() => setActiveView("study")} />}
       />
 
       <GettingStarted
@@ -442,6 +489,8 @@ export function DashboardView() {
                   );
                 })}
               </ul>
+            ) : calendarExams.length ? (
+              <CalendarExamsHint items={calendarExams} subjects={subjects} />
             ) : (
               <EmptyLine text={HOME_TEXT.emptyExams} action={HOME_TEXT.addExam} onAction={() => setActiveView("exams")} />
             )}
@@ -689,7 +738,7 @@ function GettingStarted({
             Puoi farli nell'ordine che preferisci.
           </p>
         </div>
-        <Button variant="ghost" icon="EyeOff" className="min-h-9 px-3 text-xs" onClick={hide} title="Nasconde questa guida su questo dispositivo">
+        <Button variant="ghost" icon="EyeOff" className="relative min-h-9 px-3 text-xs after:absolute after:-inset-1 after:content-['']" onClick={hide} title="Nasconde questa guida su questo dispositivo">
           Nascondi la guida
         </Button>
       </div>

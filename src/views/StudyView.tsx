@@ -72,6 +72,11 @@ const pillClass = (active: boolean) =>
   }`;
 
 const linkClass = "font-black text-[var(--accent-ink)] underline-offset-2 hover:underline";
+/** Collegamento nel testo (riga da 16 px): l'area di tocco arriva a 44 px senza allargare la riga. */
+const linkHit = `${linkClass} relative after:absolute after:-inset-x-1 after:-inset-y-3.5 after:content-['']`;
+/** Righe "… · Cambia" una sotto l'altra: aree estese si sovrapporrebbero, quindi pulsante alto 44 px nella riga. */
+const linkBox = `${linkClass} inline-flex min-h-11 items-center px-1`;
+const linkRow = "flex flex-wrap items-center gap-x-1 text-xs font-bold text-[var(--muted)]";
 
 /** Icona di ogni modalità (selettore, anello, elenco delle sessioni). */
 const KIND_ICON: Record<TimerKind, string> = { pomodoro: "Timer", timer: "Hourglass", stopwatch: "Clock" };
@@ -206,7 +211,7 @@ export function StudyView() {
             </div>
             <button
               type="button"
-              className={`mt-2 text-xs ${linkClass}`}
+              className={`mt-2 text-xs ${linkHit}`}
               onClick={() => {
                 requestSettingsSection("profilo");
                 setActiveView("settings");
@@ -219,7 +224,11 @@ export function StudyView() {
           <Panel>
             <div className="mb-3 flex items-center justify-between gap-2">
               <h3 className="text-lg font-black">{STUDY_SIDE_TEXT.upcoming}</h3>
-              <button type="button" onClick={() => openTopics()} className="text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
+              <button
+                type="button"
+                onClick={() => openTopics()}
+                className="relative text-xs font-black text-[var(--muted)] after:absolute after:-inset-x-2 after:-inset-y-3.5 after:content-[''] hover:text-[var(--text)]"
+              >
                 {STUDY_SIDE_TEXT.seeAll}
               </button>
             </div>
@@ -273,7 +282,7 @@ export function StudyView() {
  * Timer di studio: Pomodoro (blocchi e pause, ogni blocco finito si salva da solo), Timer (conto
  * alla rovescia con la durata scelta) o Cronometro. Lo stato vero è nello store (persistito e
  * condiviso tra schede); qui si ridisegna ogni secondo solo questo pannello. Su telefono anello e
- * tempo stanno affiancati e "Avvia" subito sotto: materia e "Cosa studi?" vengono dopo.
+ * tempo stanno affiancati; sotto prima materia e "Cosa studi?" (come dice il suggerimento), poi "Avvia".
  */
 function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: string) => void }) {
   const {
@@ -504,6 +513,14 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
   const customFocus = !FOCUS_QUICK_PICKS.some((minutes) => minutes === durations.focusMinutes);
   const customTimer = !TIMER_QUICK_PICKS.some((minutes) => minutes === durations.timerMinutes);
   const canDiscard = !idle && studying;
+  // «Termina e salva» (Pomodoro) o «Termina» (Timer, Cronometro) visibile ma spento: meno di un minuto di studio.
+  const finishWaiting = !idle && !ended && studying && unsaved < 60;
+  // Il perché, subito sotto quel pulsante e largo quanto lui (w-0 min-w-full): non si confonde con «Scarta».
+  const finishHint = finishWaiting ? (
+    <p id="study-finish-hint" className="w-0 min-w-full text-xs font-bold leading-snug text-[var(--muted)]">
+      {TIMER_TEXT.finishHint}
+    </p>
+  ) : null;
 
   return (
     <Panel>
@@ -532,7 +549,60 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
+        <div className="min-w-0">
+          <Field label={TIMER_TEXT.subject}>
+            <select className={inputClass} value={subjectId} onChange={(event) => chooseSubject(event.target.value)}>
+              <option value="">{TIMER_TEXT.noSubject}</option>
+              {selectableSubjects(subjects, subjectId).map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {!selectableSubjects(subjects).length ? (
+            <p className="mt-1 text-xs font-bold text-[var(--muted)]">
+              {TIMER_TEXT.noSubjectsYet}{" "}
+              <button type="button" className={linkHit} onClick={() => setActiveView("subjects")}>
+                {TIMER_TEXT.addSubjects}
+              </button>
+            </p>
+          ) : null}
+        </div>
+        <div className="min-w-0">
+          <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
+            <label htmlFor="study-what" className="text-xs font-black uppercase text-[var(--faint)]">
+              {TIMER_TEXT.whatField}
+            </label>
+            {linkedTopic ? (
+              <span className="inline-flex min-w-0 items-center gap-1 text-[11px] font-black text-[var(--accent-ink)]" title={TIMER_TEXT.whatTopic}>
+                <Icon name="Brain" className="h-3.5 w-3.5 shrink-0" />
+                <span className="one-line-safe">{TIMER_TEXT.whatTopic}</span>
+              </span>
+            ) : null}
+          </div>
+          <input
+            id="study-what"
+            className={inputClass}
+            list={subjectTopics.length ? "study-what-topics" : undefined}
+            value={title}
+            maxLength={160}
+            autoComplete="off"
+            onChange={(event) => writeWhat(event.target.value)}
+            placeholder={TIMER_TEXT.whatPlaceholder}
+          />
+          {subjectTopics.length ? (
+            <datalist id="study-what-topics">
+              {subjectTopics.map((topic) => (
+                <option key={topic.id} value={topic.title} />
+              ))}
+            </datalist>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-start gap-2">
         {ended ? (
           <>
             <Button variant="primary" icon="Check" onClick={() => setTimerReviewOpen(true)} className="min-w-[120px]">
@@ -551,14 +621,20 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         )}
         {/* Pomodoro: salva subito (come i blocchi). Timer e Cronometro: prima il riepilogo. */}
         {!idle && !ended && studying && timer.kind === "pomodoro" ? (
-          <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
-            {TIMER_TEXT.finish}
-          </Button>
+          <div className="grid gap-1">
+            <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
+              {TIMER_TEXT.finish}
+            </Button>
+            {finishHint}
+          </div>
         ) : null}
         {!idle && !ended && timer.kind !== "pomodoro" ? (
-          <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} title={unsaved < 60 ? TIMER_TEXT.finishHint : undefined}>
-            {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
-          </Button>
+          <div className="grid gap-1">
+            <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
+              {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
+            </Button>
+            {finishHint}
+          </div>
         ) : null}
         {!studying ? (
           <Button variant="soft" icon="SkipForward" onClick={onSkip}>
@@ -609,63 +685,10 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         </p>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
-        <div className="min-w-0">
-          <Field label={TIMER_TEXT.subject}>
-            <select className={inputClass} value={subjectId} onChange={(event) => chooseSubject(event.target.value)}>
-              <option value="">{TIMER_TEXT.noSubject}</option>
-              {selectableSubjects(subjects, subjectId).map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {!selectableSubjects(subjects).length ? (
-            <p className="mt-1 text-xs font-bold text-[var(--muted)]">
-              {TIMER_TEXT.noSubjectsYet}{" "}
-              <button type="button" className={linkClass} onClick={() => setActiveView("subjects")}>
-                {TIMER_TEXT.addSubjects}
-              </button>
-            </p>
-          ) : null}
-        </div>
-        <div className="min-w-0">
-          <div className="mb-1.5 flex min-w-0 items-center gap-1.5">
-            <label htmlFor="study-what" className="text-xs font-black uppercase text-[var(--faint)]">
-              {TIMER_TEXT.whatField}
-            </label>
-            {linkedTopic ? (
-              <span className="inline-flex min-w-0 items-center gap-1 text-[11px] font-black text-[var(--accent-ink)]" title={TIMER_TEXT.whatTopic}>
-                <Icon name="Brain" className="h-3.5 w-3.5 shrink-0" />
-                <span className="one-line-safe">{TIMER_TEXT.whatTopic}</span>
-              </span>
-            ) : null}
-          </div>
-          <input
-            id="study-what"
-            className={inputClass}
-            list={subjectTopics.length ? "study-what-topics" : undefined}
-            value={title}
-            maxLength={160}
-            autoComplete="off"
-            onChange={(event) => writeWhat(event.target.value)}
-            placeholder={TIMER_TEXT.whatPlaceholder}
-          />
-          {subjectTopics.length ? (
-            <datalist id="study-what-topics">
-              {subjectTopics.map((topic) => (
-                <option key={topic.id} value={topic.title} />
-              ))}
-            </datalist>
-          ) : null}
-        </div>
-      </div>
-
       {stopwatch ? (
-        <p className="mt-3 text-xs font-bold text-[var(--muted)]">
-          {durations.stopwatchTargetMinutes ? TIMER_TEXT.target(formatMinutes(durations.stopwatchTargetMinutes)) : TIMER_TEXT.noTarget} ·{" "}
-          <button type="button" className={linkClass} onClick={() => setSettingsOpen(true)}>
+        <p className={`mt-2 ${linkRow}`}>
+          <span className="safe-text min-w-0">{durations.stopwatchTargetMinutes ? TIMER_TEXT.target(formatMinutes(durations.stopwatchTargetMinutes)) : TIMER_TEXT.noTarget} ·</span>
+          <button type="button" className={linkBox} onClick={() => setSettingsOpen(true)}>
             {TIMER_TEXT.change}
           </button>
         </p>
@@ -737,18 +760,18 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
               {customFocus ? TIMER_TEXT.minutes(durations.focusMinutes) : TIMER_TEXT.otherDuration}
             </button>
           </div>
-          <p className="mt-1.5 text-xs font-bold text-[var(--muted)]">
-            {TIMER_TEXT.breaksSummary(durations.shortBreakMinutes, durations.longBreakMinutes, durations.longBreakEvery)} ·{" "}
-            <button type="button" className={linkClass} onClick={() => setSettingsOpen(true)}>
+          <p className={`mt-0.5 ${linkRow}`}>
+            <span className="safe-text min-w-0">{TIMER_TEXT.breaksSummary(durations.shortBreakMinutes, durations.longBreakMinutes, durations.longBreakEvery)} ·</span>
+            <button type="button" className={linkBox} onClick={() => setSettingsOpen(true)}>
               {TIMER_TEXT.change}
             </button>
           </p>
         </div>
       )}
 
-      <p className="mt-2 text-xs font-bold text-[var(--muted)]">
-        {TIMER_TEXT.templateLine(SESSION_TEMPLATE_LABEL[template])} ·{" "}
-        <button type="button" className={linkClass} onClick={() => setTemplateOpen(true)}>
+      <p className={linkRow}>
+        <span className="safe-text min-w-0">{TIMER_TEXT.templateLine(SESSION_TEMPLATE_LABEL[template])} ·</span>
+        <button type="button" className={linkBox} onClick={() => setTemplateOpen(true)}>
           {TIMER_TEXT.change}
         </button>
       </p>

@@ -41,12 +41,15 @@ export function NotificationsPanel({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       title="Notifiche"
       eyebrow={unread ? `${unread} non ${unread === 1 ? "letta" : "lette"}` : "Tutto letto"}
+      // Solo con qualcosa da leggere: un pulsante spento in un pannello vuoto non serve.
       footer={
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="soft" icon="CheckCheck" onClick={() => void markAllNotificationsRead()} disabled={!unread}>
-            Segna tutte come lette
-          </Button>
-        </div>
+        unread ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="soft" icon="CheckCheck" onClick={() => void markAllNotificationsRead()}>
+              Segna tutte come lette
+            </Button>
+          </div>
+        ) : undefined
       }
     >
       {visible.length === 0 ? (

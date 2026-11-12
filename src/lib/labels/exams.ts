@@ -12,6 +12,16 @@ export const EXAMS_TEXT = {
   tabPersonal: "I miei esami",
   tabOfficial: "Date ufficiali",
   addExam: "Aggiungi esame",
+  /** Modulo aperto da Home o Statistiche con un esame del calendario (chiave `exams.new`). */
+  fromCalendar: (title: string) => `Dal calendario: «${title}». Controlla materia e ora, poi salva.`,
+  /** Casella (spuntata) del modulo: salvando, l'esame prende il posto di quell'occorrenza. */
+  replaceEvent: (title: string) => `Togli «${title}» dal calendario: lo sostituisce l'esame`,
+  /** Dopo il salvataggio, con Annulla che rimette l'evento. */
+  eventReplaced: (title: string) => `Esame aggiunto: «${title}» tolto dal calendario.`,
+  /** Dopo «Annulla»: torna l'evento, l'esame appena salvato no (si toglie a parte, se serve). */
+  eventRestored: "Evento rimesso nel calendario; l'esame resta.",
+  /** «Annulla» quando l'evento era già cambiato altrove (sync, un'altra scheda): non si sovrascrive. */
+  eventNotRestored: "Evento non rimesso: nel frattempo è cambiato. L'esame resta.",
   recordGrade: "Registra un voto",
   shareProgress: "Condividi i progressi",
   study: "Studia",

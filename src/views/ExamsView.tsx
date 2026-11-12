@@ -12,6 +12,8 @@ import { readImageFile } from "../lib/files";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
+import { EXAMS_NEW_KEY, examPrefillFromEvent, findCalendarExam, isNullableCalendarExamRef, removeCalendarExam, type CalendarExamRef } from "../lib/calendarExams";
+import { UndoNotice } from "../components/StudySessionDrawers";
 import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useDialogLayer } from "../components/ui";
 import { DateTimeField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
@@ -99,13 +101,15 @@ export function ExamsView() {
   // Esame aperto nel modulo: scritto anche da altre schermate (writeUiState + setActiveView).
   const [editingId, setEditingId] = useUiState<string | null>(EXAMS_EDITING_KEY, null, { scope: "tab", validate: isNullableString });
   const editing = resolveExamEditing(editingId, exams);
-  const activeTab = editing.exam ? "personal" : tab;
+  // Esame del calendario da aggiungere (Home, Statistiche): apre «Aggiungi esame» già compilato, poi si cancella.
+  const [prefill, setPrefill] = useUiState<CalendarExamRef | null>(EXAMS_NEW_KEY, null, { scope: "tab", validate: isNullableCalendarExamRef });
+  const activeTab = editing.exam || prefill ? "personal" : tab;
 
   useEffect(() => {
     // Id di un esame che non c'è più: si ignora e si cancella. Altrimenti si passa a "I miei esami".
     if (editing.clear) setEditingId(null);
-    else if (editing.exam && tab !== "personal") setTab("personal");
-  }, [editing.clear, editing.exam, tab, setEditingId, setTab]);
+    else if ((editing.exam || prefill) && tab !== "personal") setTab("personal");
+  }, [editing.clear, editing.exam, prefill, tab, setEditingId, setTab]);
 
   const header: ExamsHeader = (actions) => (
     <>
@@ -125,7 +129,11 @@ export function ExamsView() {
 
   return (
     <div className="min-w-0">
-      {activeTab === "barb" ? <BarbExamCalendar header={header} /> : <PersonalExamsView header={header} editingExam={editing.exam} onEditingChange={setEditingId} />}
+      {activeTab === "barb" ? (
+        <BarbExamCalendar header={header} />
+      ) : (
+        <PersonalExamsView header={header} editingExam={editing.exam} onEditingChange={setEditingId} prefill={prefill} onPrefillUsed={() => setPrefill(null)} />
+      )}
     </div>
   );
 }
@@ -133,11 +141,15 @@ export function ExamsView() {
 function PersonalExamsView({
   header,
   editingExam,
-  onEditingChange
+  onEditingChange,
+  prefill = null,
+  onPrefillUsed
 }: {
   header: ExamsHeader;
   editingExam: Exam | null;
   onEditingChange: (id: string | null) => void;
+  prefill?: CalendarExamRef | null;
+  onPrefillUsed?: () => void;
 }) {
   const { exams, subjects, tasks, sessions, topics, addExam, updateExam, deleteExam, addTopics, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
@@ -165,6 +177,30 @@ function PersonalExamsView({
     setDraftFor(null);
   }
   const formOpen = creating || editingExam !== null;
+  // Esame del calendario (chiave `exams.new`: id e inizio dell'occorrenza). Titolo, giorno e materia si
+  // leggono dall'evento nel negozio; la casella, spuntata, toglie l'evento salvando. Evento sparito:
+  // modulo vuoto e niente casella.
+  const [fromCalendar, setFromCalendar] = useState<{ ref: CalendarExamRef; title: string } | null>(null);
+  const [replaceEvent, setReplaceEvent] = useState(true);
+  const [replaced, setReplaced] = useState<{ title: string; undo: () => Promise<number> } | null>(null);
+  if (!formOpen && fromCalendar) setFromCalendar(null);
+  useEffect(() => {
+    if (!prefill) return;
+    const item = findCalendarExam(useStudyStore.getState().events, prefill);
+    const start = item ? examPrefillFromEvent(item, subjects) : null;
+    setMessage("");
+    // Modulo che si riapre: "Salva esame" torna usabile (come openCreate / openEdit).
+    once.release();
+    onEditingChange(null);
+    setDraft(start ? { ...emptyDraft(start.subjectId), date: toDatetimeLocal(start.date) } : emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
+    setMoreOpen(false);
+    setCreating(true);
+    setFromCalendar(start ? { ref: prefill, title: start.title } : null);
+    setReplaceEvent(true);
+    onPrefillUsed?.();
+    // Solo quando arriva un esame dal calendario: le altre dipendenze non devono riaprire il modulo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
   const dialogRef = useRef<HTMLElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
 
@@ -193,6 +229,7 @@ function PersonalExamsView({
   const openCreate = () => {
     setMessage("");
     once.release();
+    setFromCalendar(null);
     onEditingChange(null);
     setDraft(emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
     setMoreOpen(false);
@@ -267,7 +304,17 @@ function PersonalExamsView({
     } else {
       await addExam(payload);
     }
+    const replacing = !editingExam && fromCalendar && replaceEvent ? fromCalendar : null;
     closeForm();
+    if (!replacing) return;
+    // L'esame è salvato: si toglie quella sola occorrenza (deleteOccurrence o deleteEvent), con Annulla.
+    try {
+      const undo = await removeCalendarExam(useStudyStore, replacing.ref);
+      setNotice("");
+      setReplaced(undo ? { title: replacing.title, undo } : null);
+    } catch {
+      // Evento rimasto nel calendario: l'esame c'è comunque, lo si può togliere a mano.
+    }
   };
 
   const removeExam = async (exam: Exam) => {
@@ -342,6 +389,15 @@ function PersonalExamsView({
         <p role="status" className="mb-4 rounded-[18px] border border-[var(--success-border)] bg-[var(--success-bg)] p-3 text-sm font-bold text-[var(--success-text)]">
           {notice}
         </p>
+      ) : null}
+      {replaced ? (
+        <div className="mb-4">
+          <UndoNotice
+            text={EXAMS_TEXT.eventReplaced(replaced.title)}
+            onUndo={() => void replaced.undo().then((count) => setNotice(count ? EXAMS_TEXT.eventRestored : EXAMS_TEXT.eventNotRestored))}
+            onDone={() => setReplaced(null)}
+          />
+        </div>
       ) : null}
 
       {subjects.length === 0 ? (
@@ -454,6 +510,7 @@ function PersonalExamsView({
               <div className="min-w-0">
                 <h3 className="safe-text text-2xl font-black">{editingExam ? "Modifica esame" : "Aggiungi esame"}</h3>
                 <p className="two-line-safe text-sm text-[var(--muted)]">Bastano materia e data: l'esame comparirà anche nel tuo Calendario.</p>
+                {creating && fromCalendar ? <p className="safe-text mt-1 text-sm font-bold text-[var(--accent-ink)]">{EXAMS_TEXT.fromCalendar(fromCalendar.title)}</p> : null}
               </div>
               <IconButton icon="X" label="Chiudi" className="h-10 w-10" onClick={() => closeForm()} />
             </div>
@@ -576,6 +633,13 @@ function PersonalExamsView({
                   ) : null}
                 </div>
               </details>
+
+              {creating && fromCalendar ? (
+                <label className="flex min-h-11 items-center gap-2 text-sm font-bold">
+                  <input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--accent)]" checked={replaceEvent} onChange={(event) => setReplaceEvent(event.target.checked)} />
+                  <span className="safe-text min-w-0">{EXAMS_TEXT.replaceEvent(fromCalendar.title)}</span>
+                </label>
+              ) : null}
 
               {message ? <p role="alert" className="rounded-[18px] border border-[var(--warning-border)] bg-[var(--warning-bg)] p-3 text-sm font-bold text-[var(--warning-text)]">{message}</p> : null}
 

@@ -46,6 +46,30 @@ export const UI_TEXT = {
   dueOptional: "Entro quando? (facoltativa)"
 } as const;
 
+/** Ricerca globale nella barra in alto. Sui telefoni il segnaposto è corto: il testo intero è nel nome accessibile. */
+export const SEARCH_TEXT = {
+  placeholder: "Cerca…",
+  placeholderWide: "Cerca in StudyOS: attività, eventi, materie, file…",
+  aria: "Cerca in StudyOS: attività, eventi, materie, file",
+  clear: "Cancella la ricerca",
+  results: "Risultati della ricerca",
+  count: (count: number) => `${count} ${count === 1 ? "risultato" : "risultati"}`,
+  keys: "↑ ↓ per scegliere · Invio per aprire",
+  empty: (query: string) => `Nessun risultato per "${query}"`,
+  emptyHint: "Prova con una parola più corta o controlla come è scritta."
+} as const;
+
+/** Home e Statistiche: esami segnati solo nel calendario (eventi di tipo «Esame») quando l'elenco degli esami è vuoto. */
+export const CALENDAR_EXAMS_TEXT = {
+  line: (count: number) =>
+    count === 1
+      ? "Hai 1 esame in calendario: aggiungilo agli esami per seguire voti e preparazione."
+      : `Hai ${count} esami in calendario: aggiungili agli esami per seguire voti e preparazione.`,
+  tile: (count: number) => (count === 1 ? "1 esame in calendario" : `${count} esami in calendario`),
+  add: (title: string, day: string) => `Aggiungi «${title}» del ${day}`,
+  addAria: (title: string, day: string) => `Aggiungi agli esami «${title}» del ${day}: si apre il modulo già compilato`
+} as const;
+
 export const EXAM_STATUS_LABEL: Record<Exam["status"], string> = {
   planning: "Da pianificare",
   studying: "In preparazione",
@@ -238,7 +262,8 @@ export const SESSION_FORM_TEXT = {
   noSubject: "Nessuna materia",
   topic: "Argomento",
   noTopic: "Nessun argomento",
-  title: "Descrizione (facoltativa)",
+  /** Stesso nome del campo del timer («Cosa studi?»): è lo stesso dato, il titolo della sessione. */
+  title: "Cosa studi? (facoltativo)",
   titlePlaceholder: "Es. Capitolo 4, esercizi 3–5",
   notes: "Note (facoltative)",
   notesPlaceholder: "Cosa rivedere, dubbi da chiedere…",

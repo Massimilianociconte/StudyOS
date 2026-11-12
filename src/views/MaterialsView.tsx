@@ -189,7 +189,7 @@ export function MaterialsView() {
         <Segmented label="Tipo di materiale" size="sm" value={kind} onChange={setKind} options={kindOptions} />
         <span className="flex min-w-0 items-center gap-1.5 lg:ml-auto">
           <select
-            className="min-h-9 min-w-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black"
+            className="min-h-11 min-w-0 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-xs font-black"
             value={subjectFilter}
             onChange={(event) => setSubjectFilter(event.target.value)}
             aria-label={MATERIALS_TEXT.subjectFilter}
