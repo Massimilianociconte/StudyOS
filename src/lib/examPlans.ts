@@ -3,6 +3,7 @@
 // non lo vede. Il voto resta sull'esame personale collegato (libretto), non qui.
 import type { EventReminder, ExamPlan, ExamPlanSnapshot, ExamPlanStatus } from "../types";
 import type { GroupExamSession } from "./groupExams";
+import { GROUP_EXAM_KINDS, courseKeyOf, isDay } from "./groupExams";
 
 export const EXAM_PLAN_STATUSES: readonly ExamPlanStatus[] = ["planned", "registered", "taken", "passed", "failed", "withdrawn", "skipped"];
 
@@ -84,11 +85,37 @@ export const applyPlanPatch = (plan: ExamPlan, patch: ExamPlanPatch, session: Gr
 export const isEmptyPlan = (plan: ExamPlan) =>
   !plan.selected && plan.status === "planned" && !plan.notes && !plan.reminders.length && !plan.subjectId && !plan.examId && !plan.linkedEventId && !plan.dismissedMatches.length;
 
+/** Copia dell'appello letta da fuori: ricostruita campo per campo; null se manca gruppo, corso o giorno valido. */
+const normalizeSnapshot = (value: unknown): ExamPlanSnapshot | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const text = (item: unknown) => (typeof item === "string" ? item : "");
+  const textOrNull = (item: unknown) => (typeof item === "string" && item ? item : null);
+  const courseName = text(raw.courseName);
+  const groupId = text(raw.groupId);
+  if (!groupId || !courseName.trim() || !isDay(raw.date)) return null;
+  const version = Number(raw.version);
+  return {
+    groupId,
+    groupName: text(raw.groupName),
+    courseKey: text(raw.courseKey) || courseKeyOf(null, courseName),
+    courseName,
+    date: raw.date,
+    kind: GROUP_EXAM_KINDS.includes(raw.kind as ExamPlanSnapshot["kind"]) ? (raw.kind as ExamPlanSnapshot["kind"]) : "appello",
+    time: textOrNull(raw.time),
+    room: text(raw.room),
+    registrationCloses: isDay(raw.registrationCloses) ? raw.registrationCloses : null,
+    version: Number.isInteger(version) && version >= 0 ? version : 0
+  };
+};
+
 /** Il piano letto dal cloud o da un backup: campi mancanti con i valori di default, mai un errore. */
 export const normalizeExamPlan = (value: unknown): ExamPlan | null => {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<ExamPlan>;
-  if (typeof raw.id !== "string" || typeof raw.sessionId !== "string" || !raw.snapshot || typeof raw.snapshot !== "object") return null;
+  if (typeof raw.id !== "string" || typeof raw.sessionId !== "string") return null;
+  const snapshot = normalizeSnapshot(raw.snapshot);
+  if (!snapshot) return null;
   return {
     ...raw,
     id: raw.id,
@@ -103,7 +130,7 @@ export const normalizeExamPlan = (value: unknown): ExamPlan | null => {
     reminders: Array.isArray(raw.reminders) ? raw.reminders : [],
     remindRegistration: raw.remindRegistration !== false,
     dismissedMatches: Array.isArray(raw.dismissedMatches) ? raw.dismissedMatches.filter((item): item is string => typeof item === "string") : [],
-    snapshot: raw.snapshot as ExamPlanSnapshot
+    snapshot
   };
 };
 

@@ -1,7 +1,8 @@
 // Appelli condivisi dei gruppi: tipi e regole pure, le stesse di supabase/group-exams.sql.
 // Senza DOM, store o Supabase: lo usano lo store degli appelli, la sync, il calendario, gli agenti e i test.
 import type { GroupExamKind } from "../types";
-import { GROUP_EXAM_FIELD_ERROR, GROUP_EXAM_FIELD_LABEL, GROUP_EXAM_KIND_LABEL } from "./labels";
+import { institutionalEmail, onlyInstitutionalEmails } from "./institutionalEmail";
+import { GROUP_EXAM_FIELD_ERROR, GROUP_EXAM_FIELD_LABEL, GROUP_EXAM_KIND_LABEL, GROUP_EXAM_TEXT } from "./labels";
 
 export const GROUP_EXAM_KINDS: readonly GroupExamKind[] = [
   "appello",
@@ -15,6 +16,21 @@ export const GROUP_EXAM_KINDS: readonly GroupExamKind[] = [
 
 export type CatalogTargetKind = "teacher" | "course" | "schedule_rule" | "contact";
 export const CATALOG_TARGET_KINDS: readonly CatalogTargetKind[] = ["teacher", "course", "schedule_rule", "contact"];
+
+/** Campi che una correzione può avere, per tipo (definiti qui e riesportati da catalogOverrides). */
+export const CATALOG_OVERRIDE_FIELDS: Record<CatalogTargetKind, readonly string[]> = {
+  teacher: ["officeHours", "officeHoursPlace", "office", "phone", "email", "website", "note"],
+  course: ["room", "building", "site", "lessonTimes", "note"],
+  schedule_rule: ["room", "building", "site", "note"],
+  contact: ["label", "value", "url", "note"]
+};
+
+/** Valore di una correzione che il client accetta di mostrare (il server li ha già controllati, ma si riverifica). */
+export const safeOverrideValue = (kind: CatalogTargetKind, key: string, value: unknown): string | null => {
+  if (typeof value !== "string" || !CATALOG_OVERRIDE_FIELDS[kind].includes(key)) return null;
+  if (key === "email") return institutionalEmail(value);
+  return onlyInstitutionalEmails(value) ? value : null;
+};
 
 /** Appello del gruppo come lo legge il client (righe del server in camelCase). */
 export interface GroupExamSession {
@@ -290,7 +306,10 @@ export const overrideFromRow = (row: unknown): CatalogOverride | null => {
   if (!Number.isInteger(version) || version < 1) return null;
   const fields: Record<string, string> = {};
   if (r.fields && typeof r.fields === "object" && !Array.isArray(r.fields)) {
-    for (const [key, value] of Object.entries(r.fields as Record<string, unknown>)) if (typeof value === "string") fields[key] = value;
+    for (const [key, value] of Object.entries(r.fields as Record<string, unknown>)) {
+      const safe = safeOverrideValue(kind, key, value);
+      if (safe !== null) fields[key] = safe;
+    }
   }
   return {
     id: str(r.id),
@@ -433,12 +452,15 @@ export const mergeSessionEdit = (base: SessionFields, mine: SessionFields, their
 /** "2027-01-12" → "12/01/2027". */
 export const formatDay = (day: string | null | undefined) => (day && DAY_SHAPE.test(day) ? `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(0, 4)}` : "—");
 
+const SHOWN_MAX = 80;
+const clip = (text: string) => (text.length > SHOWN_MAX ? `${text.slice(0, SHOWN_MAX - 1)}…` : text);
+
 const shownValue = (fields: SessionFields, field: SessionEditField): string => {
-  if (field === "course") return fields.courseName;
+  if (field === "course") return clip(fields.courseName);
   if (field === "kind") return GROUP_EXAM_KIND_LABEL[fields.kind];
   if (field === "date" || field === "registrationOpens" || field === "registrationCloses") return formatDay(fields[field]);
   const value = fields[field];
-  return typeof value === "string" && value ? value : "—";
+  return typeof value === "string" && value ? clip(value) : "—";
 };
 
 /** Righe leggibili di una modifica: «Data: 12/01/2027 → 14/01/2027». */
@@ -447,11 +469,15 @@ export const describeSessionChanges = (before: SessionFields | null, after: Sess
   if (before && after) {
     for (const field of SESSION_EDIT_FIELDS) {
       if (fieldValue(before, field) !== fieldValue(after, field)) {
+        if (field === "course" && before.courseName === after.courseName) {
+          lines.push(GROUP_EXAM_TEXT.courseLinked);
+          continue;
+        }
         lines.push(`${GROUP_EXAM_FIELD_LABEL[field]}: ${shownValue(before, field)} → ${shownValue(after, field)}`);
       }
     }
   }
-  if (deletedBefore !== deletedAfter) lines.push(deletedAfter ? "Eliminato" : "Ripristinato");
+  if (deletedBefore !== deletedAfter) lines.push(deletedAfter ? GROUP_EXAM_FIELD_LABEL.deleted : GROUP_EXAM_TEXT.restored);
   return lines;
 };
 
@@ -459,7 +485,7 @@ export const describeSessionChanges = (before: SessionFields | null, after: Sess
 export const describeHistoryEntry = (entry: GroupHistoryEntry): string[] => {
   const before = entry.before ? sessionFromRow(entry.before) : null;
   const after = entry.after ? sessionFromRow(entry.after) : null;
-  if (entry.action === "create") return after ? [`Aggiunto: ${sessionTitle(after)} del ${formatDay(after.date)}`] : [];
+  if (entry.action === "create") return after ? [GROUP_EXAM_TEXT.added(sessionTitle(after), formatDay(after.date))] : [];
   return describeSessionChanges(before ? sessionToFields(before) : null, after ? sessionToFields(after) : null, Boolean(before?.deletedAt), Boolean(after?.deletedAt));
 };
 

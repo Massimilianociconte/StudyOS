@@ -7,6 +7,7 @@ import type { CatalogOverride, GroupExamSession } from "./groupExams";
 import { describeSessionChanges, formatDay, normalizeCourseName, sessionTitle } from "./groupExams";
 import { OPEN_PLAN_STATUSES } from "./examPlans";
 import { localDay, personalMatches } from "./groupExamCalendar";
+import { GROUP_EXAM_TEXT } from "./labels";
 import { CONSISTENCY_TEXT as T } from "./labels/consistency";
 
 export type IssueSeverity = "error" | "warning" | "info";
@@ -62,6 +63,7 @@ export const checkConsistency = (input: ConsistencyInput): ConsistencyReport => 
     const refs = Object.entries(issue.refs).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`);
     issues.push({ id: `${issue.code}:${refs.join(",")}`, ...issue });
   };
+  // `toISOString()` ha sempre «.sssZ»: localDay lo legge come istante e dà il giorno LOCALE (non quello UTC).
   const today = localDay(input.now.toISOString()) ?? "";
   const subjectIds = new Set(input.subjects.map((subject) => subject.id));
   const eventById = new Map(input.events.map((event) => [event.id, event]));
@@ -113,7 +115,7 @@ export const checkConsistency = (input: ConsistencyInput): ConsistencyReport => 
         } else if (a.groupId === b.groupId && Math.abs(dayNumber(a.date) - dayNumber(b.date)) === 1) {
           add({ code: "possible_duplicate", severity: "warning", title: T.possibleDuplicate(titleOf(a)), detail: T.possibleDuplicateDetail(formatDay(a.date), formatDay(b.date)), refs: { a: a.id, b: b.id } });
         } else if (a.groupId !== b.groupId && a.date === b.date) {
-          const names = [groupNames.get(a.groupId) ?? a.groupId, groupNames.get(b.groupId) ?? b.groupId].join(", ");
+          const names = [groupNames.get(a.groupId) ?? GROUP_EXAM_TEXT.someGroup, groupNames.get(b.groupId) ?? GROUP_EXAM_TEXT.someGroup].join(", ");
           add({ code: "same_session_other_group", severity: "info", title: T.otherGroup(titleOf(a)), detail: T.otherGroupDetail(names), refs: { a: a.id, b: b.id } });
         }
       }
@@ -131,7 +133,7 @@ export const checkConsistency = (input: ConsistencyInput): ConsistencyReport => 
       }
       if (!plan.selected) continue;
       if (session.deletedAt) {
-        add({ code: "selected_deleted", severity: "warning", title: T.selectedDeleted(planTitle), detail: T.selectedDeletedDetail(session.deletedByName ?? "un membro"), refs: { sessionId: session.id }, fix: { tool: "studyos_plan_exam", args: { sessionId: session.id, chosen: false }, needsConfirmation: false } });
+        add({ code: "selected_deleted", severity: "warning", title: T.selectedDeleted(planTitle), detail: T.selectedDeletedDetail(session.deletedByName ?? GROUP_EXAM_TEXT.someMember), refs: { sessionId: session.id }, fix: { tool: "studyos_plan_exam", args: { sessionId: session.id, chosen: false }, needsConfirmation: false } });
         continue;
       }
       if (session.version > plan.snapshot.version) {
@@ -181,7 +183,7 @@ export const checkConsistency = (input: ConsistencyInput): ConsistencyReport => 
       if (session.date < today) continue;
       const matches = personalMatches(session, { events: input.events, exams: input.exams, subjects: input.subjects }, planBySession.get(session.id));
       if (!matches.length) continue;
-      const what = matches.map((match) => (match.type === "event" ? `Evento «${match.title}»` : `Esame di ${match.title}`)).join(", ");
+      const what = matches.map((match) => (match.type === "event" ? GROUP_EXAM_TEXT.matchEvent(match.title) : GROUP_EXAM_TEXT.matchExam(match.title))).join(", ");
       const first = matches[0];
       add({
         code: "unlinked_personal_duplicate",
@@ -198,7 +200,7 @@ export const checkConsistency = (input: ConsistencyInput): ConsistencyReport => 
         if (override.deletedAt || override.targetId.startsWith("nuovo:")) continue;
         const known = input.catalog[override.targetKind];
         if (!known.has(override.targetId)) {
-          add({ code: "override_target_missing", severity: "info", title: T.overrideMissing(override.targetLabel || override.targetId), detail: T.overrideMissingDetail, refs: { overrideId: override.id }, fix: { tool: "studyos_delete_catalog_override", args: { id: override.id, expectedVersion: override.version, confirm: true }, needsConfirmation: true } });
+          add({ code: "override_target_missing", severity: "info", title: T.overrideMissing(override.targetLabel || GROUP_EXAM_TEXT.someItem), detail: T.overrideMissingDetail, refs: { overrideId: override.id }, fix: { tool: "studyos_delete_catalog_override", args: { id: override.id, expectedVersion: override.version, confirm: true }, needsConfirmation: true } });
         }
       }
     }

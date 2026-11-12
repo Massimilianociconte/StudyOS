@@ -37,11 +37,30 @@ test("piano: id deterministico, copia aggiornata quando si sceglie o si conferma
 });
 
 test("piano dal cloud: campi mancanti con i default, forma sbagliata scartata", () => {
-  const plan = normalizeExamPlan({ id: "plan_x", sessionId: "x", snapshot: { date: "2027-01-12" } });
+  const plan = normalizeExamPlan({ id: "plan_x", sessionId: "x", snapshot: { groupId: "gx", courseName: "Genetica", date: "2027-01-12" } });
   assert.equal(plan.selected, false);
   assert.equal(plan.remindRegistration, true);
   assert.deepEqual(plan.reminders, []);
   assert.equal(normalizeExamPlan({ id: "plan_x" }), null);
+});
+
+test("piano dal cloud: copia incompleta riparata o scartata, il calendario non lancia (M3)", () => {
+  const partial = normalizeExamPlan({ id: "plan_x", sessionId: "x", selected: true, snapshot: { groupId: "gx", courseName: "Genetica", date: "2027-01-12", kind: "boh", version: -4, room: 7 } });
+  assert.deepEqual(partial.snapshot, { groupId: "gx", groupName: "", courseKey: "nome:genetica", courseName: "Genetica", date: "2027-01-12", kind: "appello", time: null, room: "", registrationCloses: null, version: 0 });
+  const events = groupExamEvents({ sessions: [], plans: [partial], groupNames: new Map(), subjects: [], events: [], mode: "all" });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].start, "2027-01-12T00:00:00");
+  assert.equal(groupExamReminderEvents([], [partial]).length, 0, "nessun promemoria senza promemoria né chiusura");
+  for (const snapshot of [{ groupId: "gx", courseName: "Genetica", date: "12/01/2027" }, { groupId: "gx", date: "2027-01-12" }, { courseName: "Genetica", date: "2027-01-12" }, "x"]) {
+    assert.equal(normalizeExamPlan({ id: "plan_x", sessionId: "x", selected: true, snapshot }), null, JSON.stringify(snapshot));
+  }
+});
+
+test("giorno locale: un istante vicino a mezzanotte resta nel giorno locale", () => {
+  const late = new Date(2027, 0, 12, 23, 30);
+  assert.equal(localDay(late.toISOString()), "2027-01-12");
+  const early = new Date(2027, 0, 12, 0, 20);
+  assert.equal(localDay(early.toISOString()), "2027-01-12");
 });
 
 test("calendario: tutti gli appelli, solo le mie materie, o solo quelli scelti", () => {
