@@ -12,6 +12,7 @@ import { TASKS_HELP, TASKS_TEXT } from "../lib/labels/tasks";
 import { useNow } from "../hooks/useNow";
 import { formatElapsedSeconds, isTaskCompletedLate, isTaskTimerRunning, taskElapsedSeconds } from "../lib/taskTimer";
 import { selectableSubjects, shortDate } from "../lib/selectors";
+import { LinkedNotes } from "./NoteDrawer";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -217,6 +218,7 @@ export function TaskEditorModal({
               placeholder="Es. Esercizi da 1 a 10 a pagina 52"
             />
           </Field>
+          <LinkedNotes entityType="task" id={task.id} />
 
           <details ref={moreRef} open={moreOpenAtStart || undefined} className="quiet-panel p-4">
             <summary className="cursor-pointer text-sm font-extrabold">Altre opzioni: priorità, tempi, tag e note</summary>

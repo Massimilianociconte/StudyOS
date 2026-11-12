@@ -243,6 +243,11 @@ interface StudyState {
   deleteAttachment: (id: string) => Promise<void>;
   addGoal: (goal: Partial<Goal> & Pick<Goal, "title">) => Promise<void>;
   updateGoal: (id: string, patch: Partial<Goal>) => Promise<void>;
+  /** Elimina un obiettivo («Annulla»: restoreEntities con la copia di prima). */
+  deleteGoal: (id: string) => Promise<void>;
+  updateNote: (id: string, patch: Partial<Pick<Note, "title" | "body">>) => Promise<void>;
+  /** Elimina una nota («Annulla»: restoreEntities con la copia di prima). */
+  deleteNote: (id: string) => Promise<void>;
   /** Sostituisce tutti i dati (import backup completo). Le differenze vengono propagate al cloud. */
   replaceAllData: (snapshot: Partial<StudySnapshot>) => Promise<void>;
   /** Unisce i dati per id: vince la versione con updatedAt più recente (import backup parziale). */
@@ -1568,6 +1573,23 @@ export const useStudyStore = create<StudyState>((set, get) => {
       set((state) => ({
         goals: state.goals.map((goal) => (goal.id === id ? { ...goal, ...patch, updatedAt: nowIso() } : goal))
       }));
+      await commit();
+    },
+
+    deleteGoal: async (id) => {
+      set((state) => ({ goals: state.goals.filter((goal) => goal.id !== id) }));
+      await commit();
+    },
+
+    updateNote: async (id, patch) => {
+      set((state) => ({
+        notes: state.notes.map((note) => (note.id === id ? { ...note, ...patch, updatedAt: nowIso() } : note))
+      }));
+      await commit();
+    },
+
+    deleteNote: async (id) => {
+      set((state) => ({ notes: state.notes.filter((note) => note.id !== id) }));
       await commit();
     },
 

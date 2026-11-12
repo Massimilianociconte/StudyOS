@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { differenceInCalendarDays, format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import type { Goal } from "../types";
@@ -7,11 +7,12 @@ import { GOAL_CATEGORY_LABEL, GOAL_STATUS_LABEL } from "../lib/labels";
 import { GOALS_HELP, GOALS_TEXT } from "../lib/labels/goals";
 import { Button, Drawer, EmptyState, Field, HelpTip, ProgressBar, SectionTitle, Tag, inputClass } from "../components/ui";
 import { DateField } from "../components/DatePicker";
-import { HelpField } from "../components/HelpField";
 import { Icon } from "../components/Icon";
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, useUiState } from "../lib/uiState";
+import { useLinkedUiState } from "../hooks/useLinkedUiState";
+import { GOAL_STEP, goalDraftWith, goalMove, goalStep, statusForProgress } from "../lib/goalProgress";
 
 const CATEGORY_ICON: Record<Goal["category"], string> = {
   study: "BookOpen",
@@ -37,13 +38,71 @@ const deadlineLabel = (deadline?: string) => {
   return { text: `Scade tra ${days} giorni · ${format(date, "d MMM", { locale: it })}`, late: false };
 };
 
+/** Avviso sotto il campo: l'obiettivo ha cambiato gruppo o è stato eliminato, con «Annulla». */
+type GoalNotice =
+  | { kind: "reached" | "archived" | "reopened"; id: string; title: string; previous: Pick<Goal, "progress" | "status"> }
+  | { kind: "deleted"; goal: Goal };
+
+const noticeText = (notice: GoalNotice) =>
+  notice.kind === "deleted" ? GOALS_TEXT.deleted(notice.goal.title) : GOALS_TEXT[notice.kind](notice.title);
+
+const CLOSED_TOGGLE_ID = "goals-closed-toggle";
+const cardButtonId = (id: string) => `goal-open-${id}`;
+
 export function GoalsView() {
-  const [openId, setOpenId] = useUiState<string | null>("goals.open", null, { scope: "tab", validate: isNullableString });
+  // Obiettivo aperto: scritto anche da altre schermate (ricerca, Home), pure con Obiettivi già aperta.
+  const [openId, setOpenId] = useLinkedUiState<string | null>("goals.open", null, { validate: isNullableString });
   const [showClosed, setShowClosed] = useUiState("goals.showClosed", false);
-  const { goals, addGoal, updateGoal } = useStudyStore();
+  const { goals, loading, locked, addGoal, updateGoal, deleteGoal, restoreEntities } = useStudyStore();
   const active = goals.filter((goal) => goal.status === "active" || goal.status === "paused");
   const closed = goals.filter((goal) => goal.status === "done" || goal.status === "archived");
   const open = goals.find((goal) => goal.id === openId) ?? null;
+
+  // Obiettivo da aprire che non c'è più (eliminato altrove): si dimentica, a dati caricati.
+  useEffect(() => {
+    if (openId && !open && !loading && !locked) setOpenId(null);
+  }, [openId, open, loading, locked, setOpenId]);
+
+  // La scheda che cambia gruppo (o sparisce) si porta via il focus: va su «Annulla» dell'avviso, che
+  // resta finché il focus è lì e poi si chiude da solo.
+  const [notice, setNotice] = useState<GoalNotice | null>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const [noticeFocused, setNoticeFocused] = useState(false);
+  useEffect(() => {
+    if (!notice || noticeFocused) return;
+    const timer = window.setTimeout(() => setNotice(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [notice, noticeFocused]);
+  useEffect(() => {
+    if (!notice) return;
+    // Dopo il Drawer, che alla chiusura rimette il focus dove l'aveva preso.
+    const frame = window.requestAnimationFrame(() => noticeRef.current?.querySelector("button")?.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [notice]);
+
+  /** Salva; se l'obiettivo passa tra «in corso» e «Raggiunti e archiviati» lo dice, con «Annulla». */
+  const change = (goal: Goal, patch: Partial<Goal>) => {
+    const move = patch.status ? goalMove(goal.status, patch.status) : null;
+    if (move) setNotice({ kind: move, id: goal.id, title: patch.title ?? goal.title, previous: { progress: goal.progress, status: goal.status } });
+    return updateGoal(goal.id, patch);
+  };
+  const remove = (goal: Goal) => {
+    setOpenId(null);
+    setNotice({ kind: "deleted", goal });
+    void deleteGoal(goal.id);
+  };
+  const undo = () => {
+    if (!notice) return;
+    const id = notice.kind === "deleted" ? notice.goal.id : notice.id;
+    if (notice.kind === "deleted") void restoreEntities([{ entityType: "goal", entityId: id, payload: { ...notice.goal }, complete: true }]);
+    else void updateGoal(id, notice.previous);
+    setNotice(null);
+    setNoticeFocused(false);
+    // Il focus torna sulla scheda, di nuovo al suo posto (o sul gruppo chiuso che la contiene).
+    window.requestAnimationFrame(() =>
+      (document.getElementById(cardButtonId(id)) ?? document.getElementById(CLOSED_TOGGLE_ID))?.focus({ preventScroll: true })
+    );
+  };
 
   return (
     <div>
@@ -56,6 +115,26 @@ export function GoalsView() {
       {/* Solo il titolo: la categoria parte da «Studio» e si cambia nel dettaglio. */}
       <NewGoalBar onAdd={(title) => addGoal({ title, category: "study", progress: 0, metric: "%" })} />
 
+      {/* Sempre presente: il lettore di schermo annuncia l'avviso appena compare il testo. */}
+      <div role="status" aria-live="polite">
+        {notice ? (
+          <div
+            ref={noticeRef}
+            className="soft-panel mb-4 flex flex-wrap items-center gap-2 p-2.5"
+            onFocus={() => setNoticeFocused(true)}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setNoticeFocused(false);
+            }}
+          >
+            <Icon name={notice.kind === "deleted" ? "Trash2" : notice.kind === "reached" ? "Check" : "Target"} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+            <p className="safe-text min-w-0 flex-1 text-sm font-bold">{noticeText(notice)}</p>
+            <Button variant="soft" icon="RotateCcw" onClick={undo}>
+              {GOALS_TEXT.undo}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
       {active.length ? (
         // La regola di + e − sta in un "?" vicino alle schede, non nel sottotitolo.
         <div className="mb-2 flex justify-end">
@@ -67,29 +146,26 @@ export function GoalsView() {
       {active.length ? (
         <div className="grid grid-cols-1 gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
           {active.map((goal) => (
-            <GoalCard key={goal.id} goal={goal} onOpen={() => setOpenId(goal.id)} onProgress={(progress) => void updateGoal(goal.id, { progress, status: progress >= 100 ? "done" : goal.status })} />
+            <GoalCard key={goal.id} goal={goal} onOpen={() => setOpenId(goal.id)} onStep={(delta) => void change(goal, goalStep(goal, delta))} />
           ))}
         </div>
       ) : (
+        // Si crea dal campo qui sopra: un secondo pulsante «Crea» diceva la stessa cosa due volte.
         <EmptyState
           icon="Target"
           title={closed.length ? GOALS_TEXT.noneActiveTitle : GOALS_TEXT.emptyTitle}
           body={closed.length ? GOALS_TEXT.noneActiveBody : GOALS_TEXT.emptyBody}
-          action={
-            <Button variant="primary" icon="Plus" onClick={() => document.getElementById(NEW_GOAL_ID)?.focus()}>
-              {closed.length ? GOALS_TEXT.createOne : GOALS_TEXT.createFirst}
-            </Button>
-          }
         />
       )}
 
       {closed.length ? (
         <div className="mt-6">
           <button
+            id={CLOSED_TOGGLE_ID}
             type="button"
             onClick={() => setShowClosed((value) => !value)}
             aria-expanded={showClosed}
-            className="mb-2 flex items-center gap-2 text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
+            className="mb-2 flex min-h-11 items-center gap-2 text-xs font-black uppercase text-[var(--faint)] hover:text-[var(--text)]"
           >
             <Icon name="ChevronRight" className={`h-3.5 w-3.5 transition-transform ${showClosed ? "rotate-90" : ""}`} />
             Raggiunti e archiviati · {closed.length}
@@ -97,14 +173,21 @@ export function GoalsView() {
           {showClosed ? (
             <div className="grid grid-cols-1 gap-3 opacity-75 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
               {closed.map((goal) => (
-                <GoalCard key={goal.id} goal={goal} onOpen={() => setOpenId(goal.id)} onProgress={(progress) => void updateGoal(goal.id, { progress })} />
+                <GoalCard key={goal.id} goal={goal} onOpen={() => setOpenId(goal.id)} onStep={(delta) => void change(goal, goalStep(goal, delta))} />
               ))}
             </div>
           ) : null}
         </div>
       ) : null}
 
-      <GoalDrawer goal={open} onClose={() => setOpenId(null)} onSave={(patch) => (open ? updateGoal(open.id, patch) : Promise.resolve())} />
+      <GoalDrawer
+        goal={open}
+        onClose={() => setOpenId(null)}
+        onSave={(patch) => (open ? change(open, patch) : Promise.resolve())}
+        onDelete={() => {
+          if (open) remove(open);
+        }}
+      />
 
       <SharedSection entityTypes={["goal"]} />
     </div>
@@ -135,7 +218,7 @@ function NewGoalBar({ onAdd }: { onAdd: (title: string) => Promise<void> }) {
   );
 }
 
-function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void; onProgress: (progress: number) => void }) {
+function GoalCard({ goal, onOpen, onStep }: { goal: Goal; onOpen: () => void; onStep: (delta: number) => void }) {
   const deadline = deadlineLabel(goal.deadline);
   return (
     <article className="quiet-panel flex min-w-0 flex-col p-3.5">
@@ -143,7 +226,7 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
         <span className="grid grid-cols-1 h-10 w-10 shrink-0 place-items-center rounded-super bg-[color-mix(in_srgb,var(--accent)_22%,transparent)] text-[var(--accent-ink)]">
           <Icon name={CATEGORY_ICON[goal.category]} className="h-5 w-5" />
         </span>
-        <button type="button" onClick={onOpen} aria-haspopup="dialog" title="Apri per modificare" className="min-w-0 flex-1 text-left">
+        <button id={cardButtonId(goal.id)} type="button" onClick={onOpen} aria-haspopup="dialog" title="Apri per modificare" className="min-w-0 flex-1 text-left">
           <h3 className="two-line-safe text-base font-black leading-snug">{goal.title}</h3>
           <p className="one-line-safe text-xs font-bold text-[var(--muted)]">
             {GOAL_CATEGORY_LABEL[goal.category]}
@@ -163,7 +246,7 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
               type="button"
               aria-label={`Togli 5% al progresso di "${goal.title}"`}
               title="Togli 5%"
-              onClick={() => onProgress(Math.max(0, goal.progress - 5))}
+              onClick={() => onStep(-GOAL_STEP)}
               className="relative grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)] after:absolute after:-inset-2.5 after:rounded-full after:content-['']"
             >
               −
@@ -173,7 +256,7 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
               type="button"
               aria-label={`Aggiungi 5% al progresso di "${goal.title}"`}
               title="Aggiungi 5%"
-              onClick={() => onProgress(Math.min(100, goal.progress + 5))}
+              onClick={() => onStep(GOAL_STEP)}
               className="relative grid grid-cols-1 h-6 w-6 place-items-center rounded-full bg-[var(--surface-strong)] hover:bg-[var(--surface)] after:absolute after:-inset-2.5 after:rounded-full after:content-['']"
             >
               +
@@ -186,8 +269,20 @@ function GoalCard({ goal, onOpen, onProgress }: { goal: Goal; onOpen: () => void
   );
 }
 
-function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () => void; onSave: (patch: Partial<Goal>) => Promise<void> }) {
-  const [draft, setDraft] = useState({ title: "", description: "", category: "study" as Goal["category"], deadline: "", metric: "", progress: 0, status: "active" as Goal["status"], notes: "" });
+function GoalDrawer({
+  goal,
+  onClose,
+  onSave,
+  onDelete
+}: {
+  goal: Goal | null;
+  onClose: () => void;
+  onSave: (patch: Partial<Goal>) => Promise<void>;
+  /** Subito: l'avviso nella pagina offre «Annulla». */
+  onDelete: () => void;
+}) {
+  // «Come lo misuri» non compare da nessuna parte: il campo non si mostra più, il valore salvato resta.
+  const [draft, setDraft] = useState({ title: "", description: "", category: "study" as Goal["category"], deadline: "", progress: 0, status: "active" as Goal["status"], notes: "" });
 
   useEffect(() => {
     if (!goal) return;
@@ -196,7 +291,6 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
       description: goal.description,
       category: goal.category,
       deadline: goal.deadline?.slice(0, 10) ?? "",
-      metric: goal.metric,
       progress: goal.progress,
       status: goal.status,
       notes: goal.notes
@@ -210,7 +304,6 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
       description: draft.description.trim(),
       category: draft.category,
       deadline: draft.deadline || undefined,
-      metric: draft.metric.trim(),
       progress: Math.max(0, Math.min(100, draft.progress)),
       status: draft.status,
       notes: draft.notes
@@ -226,19 +319,23 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
       title={goal?.title ?? ""}
       width="max-w-[520px]"
       footer={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="soft"
             icon="Archive"
             onClick={() => {
               if (!goal) return;
-              void onSave({ status: goal.status === "archived" ? "active" : "archived" }).then(onClose);
+              // Ripristinato al 100% è raggiunto, non «in corso».
+              void onSave({ status: goal.status === "archived" ? statusForProgress("active", goal.progress) : "archived" }).then(onClose);
             }}
           >
             {goal?.status === "archived" ? "Ripristina obiettivo" : "Archivia obiettivo"}
           </Button>
-          <span className="flex-1" />
-          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={!draft.title.trim()}>
+          <Button variant="danger" icon="Trash2" onClick={onDelete} aria-label={goal ? GOALS_TEXT.removeAria(goal.title) : undefined}>
+            {GOALS_TEXT.remove}
+          </Button>
+          {/* A destra anche quando, sui telefoni, va a capo. */}
+          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={!draft.title.trim()} className="ml-auto">
             Salva modifiche
           </Button>
         </div>
@@ -262,7 +359,7 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
             </select>
           </Field>
           <Field label="Stato">
-            <select className={inputClass} value={draft.status} onChange={(event) => setDraft((value) => ({ ...value, status: event.target.value as Goal["status"] }))}>
+            <select className={inputClass} value={draft.status} onChange={(event) => setDraft((value) => goalDraftWith(value, { status: event.target.value as Goal["status"] }))}>
               {(Object.keys(GOAL_STATUS_LABEL) as Goal["status"][]).map((id) => (
                 <option key={id} value={id}>
                   {GOAL_STATUS_LABEL[id]}
@@ -271,18 +368,15 @@ function GoalDrawer({ goal, onClose, onSave }: { goal: Goal | null; onClose: () 
             </select>
           </Field>
           <DateField label="Scadenza (facoltativa)" value={draft.deadline} onChange={(deadline) => setDraft((value) => ({ ...value, deadline }))} optional />
-          <HelpField label={GOALS_TEXT.metric} help={GOALS_HELP.metric}>
-            {(id) => <input id={id} className={inputClass} value={draft.metric} onChange={(event) => setDraft((value) => ({ ...value, metric: event.target.value }))} placeholder="Es. ore a settimana" />}
-          </HelpField>
         </div>
         <Field label={`A che punto sei · ${draft.progress}%`}>
           <input
             type="range"
             min={0}
             max={100}
-            step={5}
+            step={GOAL_STEP}
             value={draft.progress}
-            onChange={(event) => setDraft((value) => ({ ...value, progress: Number(event.target.value) }))}
+            onChange={(event) => setDraft((value) => goalDraftWith(value, { progress: Number(event.target.value) }))}
             className="w-full accent-[var(--accent)]"
           />
         </Field>

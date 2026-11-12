@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentType } from "react";
 import { useStudyStore } from "../store/useStudyStore";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { Icon } from "./Icon";
+import { NOTIFICATIONS_TEXT } from "../lib/labels/notifications";
 
 export const unreadNotifications = (notifications: ReturnType<typeof useStudyStore.getState>["notifications"]) =>
   notifications.filter((item) => !item.archived && !item.readAt);
@@ -56,8 +57,8 @@ export function NotificationsBell({ onOpen }: { onOpen: () => void }) {
       <button
         type="button"
         onClick={onOpen}
-        aria-label={unread ? `Notifiche, ${unread} non lette` : "Notifiche"}
-        title={unread ? `${unread} notifiche non lette` : "Notifiche"}
+        aria-label={NOTIFICATIONS_TEXT.bellAria(unread)}
+        title={unread ? NOTIFICATIONS_TEXT.unreadTitle(unread) : NOTIFICATIONS_TEXT.title}
         className="relative grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)]"
       >
         <span className={unread ? "motion-safe:animate-[bell-nudge_2.4s_ease-in-out_infinite]" : undefined}>
