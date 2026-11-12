@@ -412,7 +412,36 @@ export const handOffPersistence = () =>
     halted = true;
   });
 
+/**
+ * Il dispositivo è stato svuotato (o sta per esserlo): una sync in volo non deve più scrivere cursore,
+ * migrazione o ultima sync, che descrivono i dati di prima. Prima una prima sync in volo li riscriveva
+ * dopo «Svuota dispositivo» e il dispositivo restava vuoto (P10).
+ */
+export class LocalResetError extends Error {
+  constructor() {
+    super("Dispositivo svuotato durante la sincronizzazione: si riparte da capo.");
+    this.name = "LocalResetError";
+  }
+}
+
+let localResets = 0;
+
+/** Segna uno svuotamento del dispositivo (vedi localResetGuard). */
+export const noteLocalReset = () => {
+  localResets += 1;
+};
+
+/** Controllo da chiamare subito prima di scrivere un segno della sync: lancia se nel frattempo il dispositivo è stato svuotato. */
+export const localResetGuard = () => {
+  const since = localResets;
+  return () => {
+    if (localResets !== since) throw new LocalResetError();
+  };
+};
+
 export const clearAllLocalData = async () => {
+  // Prima di aprire la transazione: un controllo passato prima di qui scrive prima della cancellazione.
+  noteLocalReset();
   await db.transaction("rw", [db.vault, db.syncOutbox, db.meta, db.sharedItems, db.sharedOutbox, ...dataTables], async () => {
     await Promise.all(dataTables.map((table) => table.clear()));
     await db.vault.clear();

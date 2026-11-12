@@ -90,5 +90,11 @@ Correzioni di novembre 2026 (sync personale):
   rifiuta con `PersistenceDiscardedError` invece di «riuscire» senza scrivere.
   Il merge ricontrolla il workspace dopo la lettura della coda e dopo aver
   applicato le righe, e prima di scrivere cursore e `merged`; anche le
-  scritture dell'outbox si annullano con il vault bloccato (P9).
+  scritture dell'outbox si annullano con il vault bloccato (P9);
+- «Svuota dispositivo» segna uno svuotamento (`noteLocalReset`, anche dentro
+  `clearAllLocalData`). Ogni passata prende la sua guardia dopo `bindUser` e
+  la controlla subito prima di scrivere cursore, `merged`, `migrated`, schema
+  e ultima sync: una prima sync in volo non riscrive più i segni appena tolti
+  (il dispositivo restava vuoto). La passata si interrompe senza errore e
+  riparte da zero (P10).
 

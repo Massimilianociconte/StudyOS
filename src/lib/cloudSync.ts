@@ -16,7 +16,15 @@ import type { StudyGroup } from "../types";
 import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey, type CollectionsState } from "./collections";
 import { GROUP_COLLECTIONS, groupLookup, isServerBacked } from "./syncScope";
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
-import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
+import {
+  LocalResetError,
+  isPersistenceHalted,
+  localResetGuard,
+  noteLocalReset,
+  outboxKey,
+  requestPersist,
+  subscribeLocalChanges
+} from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import { PERSONAL_COLLECTIONS, accountSwitchStep, personalRemovals, type AccountSwitchChoice } from "./accountSwitch";
 import {
@@ -128,6 +136,13 @@ let switchChoice: { userId: string; choice: AccountSwitchChoice } | null = null;
 const assertSameSession = (userId: string) => {
   if (currentSession()?.user.id !== userId) throw new SessionChangedError();
 };
+
+/**
+ * Presa all'inizio di ogni passata (dopo bindUser): se intanto il dispositivo viene svuotato,
+ * cursore, migrazione e ultima sync di questa passata non si scrivono più (P10).
+ */
+let passGuard: () => void = () => undefined;
+const assertNoLocalReset = () => passGuard();
 
 /**
  * Con il vault bloccato (o durante il caricamento) lo stato in memoria è vuoto: leggere lo
@@ -292,6 +307,7 @@ const pull = async (userId: string, force = false) => {
   // Il cursore va avanti solo con le righe salvate: mai con il workspace bloccato a metà (P9).
   assertStoreReady();
   assertSameSession(userId);
+  assertNoLocalReset();
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
   return applied;
 };
@@ -461,6 +477,7 @@ const firstSync = async (userId: string) => {
   }
   assertStoreReady();
   assertSameSession(userId);
+  assertNoLocalReset();
   await setMeta(metaKeys.merged(userId), new Date().toISOString());
   const maxSeen = rows.reduce<string | null>((max, row) => (!max || row.updated_at > max ? row.updated_at : max), null);
   // Senza stato locale disponibile non si può accodare nulla: il flag "migrated" non va scritto.
@@ -469,7 +486,9 @@ const firstSync = async (userId: string) => {
   await push(userId);
   assertStoreReady();
   assertSameSession(userId);
+  assertNoLocalReset();
   if (maxSeen) await setMeta(metaKeys.cursor(userId), maxSeen);
+  assertNoLocalReset();
   await setMeta(metaKeys.migrated(userId), new Date().toISOString());
 };
 
@@ -529,6 +548,7 @@ const syncOnce = async () => {
     // Un flush fallito non deve essere seguito da pull/push o avanzamento del cursore.
     await requestPersist();
     await bindUser(userId);
+    passGuard = localResetGuard();
     const migrated = await getMeta<string>(metaKeys.migrated(userId));
     const schema = (await getMeta<number>(metaKeys.schema(userId))) ?? 1;
     if (!migrated) {
@@ -547,14 +567,22 @@ const syncOnce = async () => {
       }
       await push(userId);
     }
+    assertNoLocalReset();
     if (schema < SYNC_SCHEMA) await setMeta(metaKeys.schema(userId), SYNC_SCHEMA);
     const lastSync = new Date().toISOString();
+    assertNoLocalReset();
     await setMeta(metaKeys.lastSync(userId), lastSync);
     retryAttempt = 0;
     setState({ status: "idle", lastSync, error: undefined });
   } catch (error) {
     // Uscita o cambio di account a metà passata: chi ha cambiato la sessione ha già aggiornato lo stato.
     if (error instanceof SessionChangedError) return;
+    // Dispositivo svuotato a metà passata: non è un errore, si ripete da zero (cursore e migrazione via).
+    if (error instanceof LocalResetError) {
+      setState({ status: "idle" });
+      rerun = true;
+      return;
+    }
     // Aspetta la scelta nel pannello Account (chooseAccountSwitch): niente errore né nuovi tentativi.
     if (error instanceof AccountChoiceNeededError) {
       setState({ status: "idle", error: undefined });
@@ -771,6 +799,8 @@ export const eraseAccountData = async (): Promise<"ok" | "local-only" | "failed"
 export const resetCloudDeviceState = async () => {
   const userId = currentSession()?.user.id;
   if (!userId) return;
+  // Una passata già in volo (es. la prima sync) non riscrive cursore e migrazione appena tolti (P10).
+  noteLocalReset();
   await deleteMeta(metaKeys.cursor(userId));
   await deleteMeta(metaKeys.migrated(userId));
   await deleteMeta(metaKeys.merged(userId));
