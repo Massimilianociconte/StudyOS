@@ -120,6 +120,12 @@ export interface RemoteChange {
 const isRestorableVersion = ({ entityType, payload, entityId }: RestoreVersion) =>
   Boolean(COLLECTION_BY_ENTITY_TYPE[entityType]) && typeof entityId === "string" && isRestorableEntity(entityType, payload, entityId);
 
+/** Inviti a un gruppo accettati o rifiutati: le loro notifiche «accetta o rifiuta» diventano lette. */
+export const answeredInviteNotificationsRead = (notifications: AppNotification[], groupId: string, now: string) =>
+  notifications.map((item) =>
+    item.kind === "invite" && item.linkGroupId === groupId && !item.readAt ? { ...item, readAt: now, updatedAt: now } : item
+  );
+
 interface StudyState {
   loading: boolean;
   locked: boolean;
@@ -222,6 +228,8 @@ interface StudyState {
    */
   restoreEntities: (versions: readonly RestoreVersion[]) => Promise<number>;
   markNotificationRead: (id: string) => Promise<void>;
+  /** Segna lette, con un solo salvataggio, le notifiche non lette che rispettano la condizione. */
+  markNotificationsReadWhere: (match: (item: AppNotification) => boolean) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   deleteNotification: (id: string) => Promise<void>;
   /** Crea un gruppo di studio con l'utente corrente come proprietario. */
@@ -240,7 +248,12 @@ interface StudyState {
   deleteGroupResource: (id: string) => Promise<void>;
   logGroupActivity: (groupId: string, actorDisplayName: string, text: string) => Promise<GroupActivity>;
   addAttachment: (file: File, link?: { type?: Attachment["linkedEntityType"]; id?: string }) => Promise<void>;
-  addExternalAttachment: (url: string, name: string, description?: string) => Promise<void>;
+  addExternalAttachment: (
+    url: string,
+    name: string,
+    description?: string,
+    link?: { type?: Attachment["linkedEntityType"]; id?: string }
+  ) => Promise<void>;
   updateAttachment: (id: string, patch: Partial<Attachment>) => Promise<void>;
   deleteAttachment: (id: string) => Promise<void>;
   addGoal: (goal: Partial<Goal> & Pick<Goal, "title">) => Promise<void>;
@@ -856,6 +869,19 @@ export const useStudyStore = create<StudyState>((set, get) => {
       await commit();
     },
 
+    markNotificationsReadWhere: async (match) => {
+      const now = nowIso();
+      let changed = false;
+      set((state) => ({
+        notifications: state.notifications.map((item) => {
+          if (item.readAt || !match(item)) return item;
+          changed = true;
+          return { ...item, readAt: now, updatedAt: now };
+        })
+      }));
+      if (changed) await commit();
+    },
+
     markAllNotificationsRead: async () => {
       const now = nowIso();
       set((state) => ({
@@ -956,17 +982,21 @@ export const useStudyStore = create<StudyState>((set, get) => {
                   }
                 : item
             )
-          : state.studyGroups
+          : state.studyGroups,
+        // L'invito ha avuto risposta: la notifica che chiedeva «accetta o rifiuta» non resta da leggere.
+        notifications: answeredInviteNotificationsRead(state.notifications, invite.groupId, now)
       }));
       await commit();
     },
 
     declineGroupInvite: async (inviteId) => {
       const now = nowIso();
+      const invite = get().groupInvites.find((item) => item.id === inviteId);
       set((state) => ({
         groupInvites: state.groupInvites.map((item) =>
           item.id === inviteId && item.status === "pending" ? { ...item, status: "declined" as const, updatedAt: now } : item
-        )
+        ),
+        notifications: invite ? answeredInviteNotificationsRead(state.notifications, invite.groupId, now) : state.notifications
       }));
       await commit();
     },
@@ -1512,7 +1542,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       await commit();
     },
 
-    addExternalAttachment: async (url, name, description) => {
+    addExternalAttachment: async (url, name, description, link) => {
       const attachment: Attachment = {
         id: createId("attachment"),
         createdAt: nowIso(),
@@ -1524,6 +1554,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
         mimeType: "text/uri-list",
         size: 0,
         addedAt: nowIso(),
+        // Come per i file: un link salvato con il filtro di una materia resta collegato a quella materia.
+        linkedEntityType: link?.type,
+        linkedEntityId: link?.id,
         description: description ?? "",
         externalUrl: url
       };
