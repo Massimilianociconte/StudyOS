@@ -168,6 +168,23 @@ test("testo color accento (--accent-ink): almeno 4,5:1 su pagina, angolo tinto e
   }
 });
 
+test("anello del focus: tinta piena da --focus-ring, almeno 3:1 su pagina e pannelli in ogni palette e tema", () => {
+  const rule = css.match(/([^{}]*button:focus-visible[^{]*)\{([^}]*)\}/);
+  assert.ok(rule, "regola del focus");
+  for (const target of ["button", "a", "input", "select", "textarea", "summary", '[role="button"]']) {
+    assert.ok(rule[1].includes(`${target}:focus-visible`), `anello anche su ${target}`);
+  }
+  assert.match(rule[2], /outline:\s*3px solid var\(--focus-ring\)/);
+  for (const { theme, palette, tokens } of combos) {
+    const ring = color("var(--focus-ring)", tokens);
+    assert.equal(ring.a, 1, `${palette}/${theme}: anello trasparente`);
+    for (const [where, bg] of Object.entries(backgrounds(tokens))) {
+      const value = ratio(ring, bg);
+      assert.ok(value >= 3, `${palette}/${theme} su ${where}: ${value.toFixed(2)}:1`);
+    }
+  }
+});
+
 test("Bianco latte: resta un blu vicino a quello di prima", () => {
   const accent = color(tokensFor("dark", "milk")["--accent"], {});
   assert.ok(accent.b > accent.r + 100 && accent.b > accent.g + 80, "ancora blu");

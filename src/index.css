@@ -20,6 +20,8 @@
   --accent-3: #ff7a8a;
   /* Accento usato come colore del testo: leggibile anche su sfondi chiari. */
   --accent-ink: var(--accent);
+  /* Anello del focus da tastiera: l'accento come testo, già leggibile su ogni fondo. */
+  --focus-ring: var(--accent-ink);
   --warning: #ffd166;
   --ok: #a6e3a1;
   --danger-text: #fecaca;
@@ -196,12 +198,15 @@ button {
   cursor: pointer;
 }
 
+/* Anello pieno (mai trasparente): almeno 3:1 su pagina e pannelli in ogni palette e tema. */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--accent) 62%, transparent);
+textarea:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 
