@@ -49,6 +49,11 @@ export interface UserSettings {
     displayName?: string;
     avatarDataUrl?: string;
   };
+  /**
+   * Con la password dell'app (security.mode "vault") le notifiche dei promemoria su questo dispositivo
+   * dicono solo «Promemoria StudyOS» e l'ora; true = anche il titolo. Senza password il titolo c'è sempre.
+   */
+  pushShowTitles?: boolean;
   security: {
     mode: "standard" | "vault";
     backupEncryptionDefault: boolean;

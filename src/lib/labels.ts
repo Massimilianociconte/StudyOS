@@ -847,7 +847,27 @@ export const pushLabels = {
   promptAccept: "Attiva le notifiche",
   promptLater: "Non ora",
   promptFailed: "Non è stato possibile attivarle. Puoi riprovare da Impostazioni → Profilo.",
-  promptClose: "Chiudi"
+  promptClose: "Chiudi",
+  titlesToggle: "Mostra il titolo nelle notifiche",
+  titlesHint:
+    "Con la password dell'app le notifiche dei promemoria dicono solo «Promemoria StudyOS» e l'ora, così il titolo non compare sulla schermata di blocco. Vale per questo dispositivo.",
+  titlesOn: "Il titolo dell'evento compare nelle notifiche di questo dispositivo.",
+  devicesTitle: "Dispositivi con le notifiche",
+  devicesHint: "Togli un dispositivo che non usi più, anche se l'hai perso: smette subito di ricevere le notifiche di questo account.",
+  devicesEmpty: "Nessun dispositivo riceve le notifiche di questo account.",
+  devicesFailed: "Non sono riuscito a leggere i dispositivi. Riprova tra poco.",
+  deviceThis: "Questo dispositivo",
+  deviceSeen: (when: string) => `Ultimo accesso ${when}`,
+  deviceRemove: "Rimuovi",
+  deviceRemoveLabel: (name: string) => `Rimuovi ${name} dai dispositivi con le notifiche`,
+  deviceRemoveFailed: "Non sono riuscito a rimuovere il dispositivo. Riprova tra poco.",
+  deviceKinds: {
+    chrome: "Chrome o Android",
+    firefox: "Firefox",
+    safari: "Safari, iPhone o iPad",
+    edge: "Edge",
+    other: "Altro browser"
+  }
 } as const;
 
 /**

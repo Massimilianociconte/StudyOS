@@ -5,6 +5,7 @@ import { useCloudSession } from "../hooks/useCloudSession";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { useUiState } from "../lib/uiState";
 import { pushLabels } from "../lib/labels";
+import { pushPrivateOf } from "../lib/pushLocal";
 import { Button } from "./ui";
 import { Icon } from "./Icon";
 
@@ -54,7 +55,7 @@ export function PushPrompt() {
     setBusy(true);
     try {
       // Il modulo è già caricato: il permesso parte dentro il gesto del tocco.
-      const ok = await module.enablePush();
+      const ok = await module.enablePush({ private: pushPrivateOf(useStudyStore.getState().settings) });
       setSeen(true);
       if (!ok) setFailed(true);
     } finally {

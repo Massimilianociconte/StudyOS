@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 // Notifiche di questo dispositivo quando una sessione finisce: un solo aiuto (lib/pushDevice) per
 // ogni uscita e cancellazione, e la guardia per la sessione che finisce da sola.
-const { turnOffPushHere, startPushSessionGuard, PUSH_CHANGED_EVENT, PUSH_OFF_TIMEOUT_MS } = await import("../src/lib/pushDevice.ts");
+const { turnOffPushHere, startPushSessionGuard, syncPushPrivacy, PUSH_CHANGED_EVENT, PUSH_OFF_TIMEOUT_MS } = await import("../src/lib/pushDevice.ts");
 
 const withWindow = (t) => {
   const previous = globalThis.window;
@@ -87,21 +87,66 @@ test("guardia della sessione: entra → riallinea; finisce o cambia account → 
   assert.equal(stopped, true);
 });
 
-test("guardia della sessione: senza permesso non segue niente; un modulo che non arriva non lancia", async (t) => {
+test("guardia della sessione: parte sempre; push.ts solo con il permesso (anche dato dopo) o lo stato", async (t) => {
   withPermission(t, "default");
-  let subscribed = false;
-  startPushSessionGuard(() => {
-    subscribed = true;
-    return () => undefined;
-  });
-  assert.equal(subscribed, false);
-  withPermission(t, "granted");
+  const calls = [];
+  const accounts = [];
   let emit = () => undefined;
+  let loads = 0;
+  const load = async () => {
+    loads += 1;
+    return {
+      syncPushSubscription: async (options) => void calls.push(["sync", options]),
+      dropPushOfEndedSession: async () => (calls.push(["drop"]), true)
+    };
+  };
+  let hasState = false;
   startPushSessionGuard((listener) => {
     emit = listener;
     return () => undefined;
-  }, () => Promise.reject(new Error("offline")));
+  }, load, { isPrivate: () => true, hasState: () => hasState, writeAccount: async (id) => void accounts.push(id) });
+  emit({ session: { user: { id: "u1" } } });
+  await flush();
+  assert.equal(loads, 0, "permesso non dato e nessuno stato: push.ts non si carica");
+  assert.deepEqual(accounts, ["u1"], "l'account entrato va comunque al service worker");
+  // Le notifiche si accendono più tardi nella stessa pagina, poi la sessione finisce da sola.
+  withPermission(t, "granted");
   emit({ session: null });
+  await flush();
+  assert.equal(loads, 1);
+  assert.deepEqual(calls, [["drop"]], "la sessione finita è seguita anche con il permesso dato dopo l'avvio");
+  emit({ session: { user: { id: "u2" } } });
+  await flush();
+  assert.deepEqual(calls[1], ["sync", { private: true }], "titolo nascosto con la password dell'app");
+  assert.deepEqual(accounts, ["u1", "u2"], "uscito: lo scrive dropPushOfEndedSession, non la guardia");
+  // Permesso tolto ma stato rimasto: si segue lo stesso (l'iscrizione va comunque annullata).
+  withPermission(t, "denied");
+  hasState = true;
+  emit({ session: null });
+  await flush();
+  assert.equal(loads, 3);
+  // Un modulo che non arriva non lancia.
+  withPermission(t, "granted");
+  let emitOffline = () => undefined;
+  startPushSessionGuard((listener) => {
+    emitOffline = listener;
+    return () => undefined;
+  }, () => Promise.reject(new Error("offline")), { writeAccount: () => Promise.reject(new Error("quota")) });
+  emitOffline({ session: { user: { id: "u1" } } });
+  await flush();
+});
+
+test("titolo nascosto cambiato: riscrive la riga solo se le notifiche sono accese qui", async () => {
+  const calls = [];
+  const load = async () => ({ updatePushPrivacy: async (value) => void calls.push(value) });
+  syncPushPrivacy(true, load, () => false);
+  await flush();
+  assert.deepEqual(calls, [], "notifiche spente qui: niente rete");
+  syncPushPrivacy(true, load, () => true);
+  syncPushPrivacy(false, load, () => true);
+  await flush();
+  assert.deepEqual(calls, [true, false]);
+  syncPushPrivacy(true, () => Promise.reject(new Error("offline")), () => true);
   await flush();
 });
 
@@ -151,8 +196,10 @@ test("un solo aiuto: disablePush e la guardia passano solo da lib/pushDevice", (
   assert.deepEqual(users("turnOffPushHere"), ["components/CloudPanel.tsx", "components/LockScreen.tsx", "lib/pushDevice.ts", "views/SettingsView.tsx"]);
   assert.deepEqual(users("startPushSessionGuard"), ["App.tsx", "lib/pushDevice.ts"]);
   const app = sources.get("App.tsx");
-  assert.match(app, /return startPushSessionGuard\(subscribeCloudSync\);/);
+  assert.match(app, /return startPushSessionGuard\(subscribeCloudSync, undefined, \{ isPrivate: \(\) => pushPrivateOf\(useStudyStore\.getState\(\)\.settings\) \}\);/);
+  assert.match(app, /syncPushPrivacy\(pushPrivate\);/);
   const device = sources.get("lib/pushDevice.ts");
-  assert.doesNotMatch(device, /^import (?!type)/m, "nel bundle iniziale: push.ts e supabase-js solo con import()");
+  assert.doesNotMatch(device, /^import (?!type|\{ hasPushState, writePushAccount \} from "\.\/pushLocal";)/m, "nel bundle iniziale: push.ts e supabase-js solo con import()");
+  assert.doesNotMatch(sources.get("lib/pushLocal.ts"), /^import (?!type)/m, "pushLocal senza dipendenze");
   assert.match(device, /import\("\.\/push"\)/);
 });

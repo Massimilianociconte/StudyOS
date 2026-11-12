@@ -511,10 +511,15 @@ iscrizioni per richiesta (49 push più una `push_gone` sono 50 sottorichieste su
 il database ne manda al massimo 40 per volta. Tipi accettati: `invite`, `accepted`,
 `permission` (da `studyos_push_notify`, `people.sql`) e `reminder` (promemoria con l'app chiusa,
 da `studyos_push_due_reminders`, `push-reminders.sql`, una richiesta per promemoria e per
-account). Il corpo può arrivare a `MAX_PUSH_BODY_BYTES` (≈ 617 kB): ci sta sempre un lotto pieno
+account). Il corpo può arrivare a `MAX_PUSH_BODY_BYTES` (≈ 620 kB): ci sta sempre un lotto pieno
 di iscrizioni al limite del database anche con l'escape JSON più lungo, così le iscrizioni
 strane di un account non fanno respingere (413) le notifiche degli altri dello stesso lotto;
-gli endpoint non `https://` o non ASCII si scartano uno per uno. Servono quattro secret, da
+gli endpoint non `https://` o non ASCII si scartano uno per uno. Ogni iscrizione porta anche
+`account` (l'id dell'account a cui appartiene, dal database): il Worker lo mette nel messaggio
+cifrato di quel dispositivo e il service worker non mostra le push di un account diverso da
+quello entrato lì (un valore che non è un uuid si ignora). Per i promemoria il database manda una
+richiesta per tipo di testo: ai dispositivi con il titolo nascosto (password dell'app) arriva già
+«Promemoria StudyOS» (vedi [push-reminders.md](push-reminders.md#privacy)). Servono quattro secret, da
 impostare una volta (ognuno dopo il via dell'utente; `wrangler` chiede il valore a terminale,
 mai nella riga di comando):
 

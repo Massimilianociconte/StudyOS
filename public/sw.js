@@ -56,7 +56,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME && key !== PUSH_LOCAL_CACHE).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
@@ -160,31 +160,111 @@ const PUSH_FALLBACK = { title: "StudyOS", body: "Hai una nuova notifica.", url: 
 const readPushPayload = (event) => {
   try {
     const raw = event.data ? event.data.json() : null;
-    if (!raw || typeof raw !== "object") return { ...PUSH_FALLBACK };
+    if (!raw || typeof raw !== "object") return { ...PUSH_FALLBACK, account: "" };
     const text = (value, fallback, max) =>
       typeof value === "string" && value.trim() ? value.trim().slice(0, max) : fallback;
     return {
       title: text(raw.title, PUSH_FALLBACK.title, 120),
       body: text(raw.body, "", 300),
       url: text(raw.url, PUSH_FALLBACK.url, 300),
-      tag: text(raw.tag, PUSH_FALLBACK.tag, 200)
+      tag: text(raw.tag, PUSH_FALLBACK.tag, 200),
+      account: text(raw.account, "", 64)
     };
   } catch {
-    return { ...PUSH_FALLBACK };
+    return { ...PUSH_FALLBACK, account: "" };
   }
+};
+
+// Stato condiviso con la pagina (src/lib/pushLocal.ts, stesse chiavi): l'account entrato su questo
+// dispositivo e i promemoria già comparsi. Resta tra un aggiornamento e l'altro del service worker.
+const PUSH_LOCAL_CACHE = "studyos-push-local-v1";
+const REMINDER_TAG_PREFIX = "studyos-reminder-";
+const SHOWN_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
+/** La scheda aperta ha mostrato lo stesso promemoria da poco: la push lo sostituisce in silenzio. */
+const PAGE_SHOWN_RECENT_MS = 2 * 60 * 60 * 1000;
+const localKey = (path) => `${self.location.origin}/__studyos__/${path}`;
+const shownKey = (tag) => localKey(`reminder-shown/${encodeURIComponent(tag)}`);
+
+const openLocal = async () => {
+  try {
+    return typeof caches === "undefined" ? null : await caches.open(PUSH_LOCAL_CACHE);
+  } catch {
+    return null;
+  }
+};
+
+/** Account entrato qui: stringa (anche vuota = uscito) o undefined se la pagina non l'ha mai scritto. */
+const readLocalAccount = async (cache) => {
+  try {
+    const [key] = await cache.keys(localKey("push-account"), { ignoreSearch: true });
+    return key ? new URL(key.url).searchParams.get("account") || "" : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const readShown = async (cache, tag) => {
+  try {
+    let best = null;
+    for (const key of await cache.keys(shownKey(tag), { ignoreSearch: true })) {
+      const params = new URL(key.url).searchParams;
+      const at = Number(params.get("at"));
+      const by = params.get("by");
+      if (Number.isFinite(at) && at > 0 && (by === "push" || by === "page") && (!best || at > best.at)) best = { at, by };
+    }
+    return best;
+  } catch {
+    return null;
+  }
+};
+
+const recordShown = async (cache, tag, now) => {
+  try {
+    await cache.delete(shownKey(tag), { ignoreSearch: true });
+    await cache.put(`${shownKey(tag)}?at=${now}&by=push`, new Response(""));
+    for (const key of await cache.keys()) {
+      if (!key.url.includes("/__studyos__/reminder-shown/")) continue;
+      const at = Number(new URL(key.url).searchParams.get("at"));
+      if (!Number.isFinite(at) || now - at > SHOWN_KEEP_MS) await cache.delete(key.url);
+    }
+  } catch {
+    // storage pieno: al peggio la scheda aperta mostra il promemoria un'altra volta
+  }
+};
+
+const showPush = (payload, silent) =>
+  self.registration.showNotification(payload.title, {
+    body: payload.body,
+    tag: payload.tag,
+    icon: new URL("icons/studyos-192.png", self.registration.scope).href,
+    badge: new URL("icons/favicon-64.png", self.registration.scope).href,
+    data: { url: payload.url },
+    ...(silent ? { silent: true } : {})
+  });
+
+/**
+ * - Push di un altro account (la pagina ha scritto un account diverso, es. dopo un cambio di account
+ *   con l'iscrizione non ancora tolta): non si mostra.
+ * - Promemoria già mostrato dalla scheda aperta: stesso tag, sostituito in silenzio (una notifica sola).
+ * - Promemoria mostrato dalla push: la pagina lo ritrova e non lo ripete (EventReminderWatcher).
+ */
+const handlePush = async (payload) => {
+  const cache = await openLocal();
+  if (cache && payload.account) {
+    const current = await readLocalAccount(cache);
+    if (current !== undefined && current !== payload.account) return;
+  }
+  const reminder = payload.tag.startsWith(REMINDER_TAG_PREFIX);
+  const now = Date.now();
+  const shown = reminder && cache ? await readShown(cache, payload.tag) : null;
+  const silent = Boolean(shown && shown.by === "page" && now - shown.at < PAGE_SHOWN_RECENT_MS);
+  await showPush(payload, silent);
+  if (reminder && cache && !silent) await recordShown(cache, payload.tag, now);
 };
 
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
-  event.waitUntil(
-    self.registration.showNotification(payload.title, {
-      body: payload.body,
-      tag: payload.tag,
-      icon: new URL("icons/studyos-192.png", self.registration.scope).href,
-      badge: new URL("icons/favicon-64.png", self.registration.scope).href,
-      data: { url: payload.url }
-    })
-  );
+  event.waitUntil(handlePush(payload).catch(() => showPush(payload, false)));
 });
 
 // Solo pagine dell'app: mai un altro sito, anche se il contenuto di una push fosse manomesso.

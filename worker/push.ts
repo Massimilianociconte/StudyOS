@@ -28,12 +28,13 @@ export const MAX_PUSH_SUBSCRIPTIONS = 49;
 export const MAX_ENDPOINT_CHARS = 2048;
 /**
  * Byte di una riga di iscrizione nel caso peggiore che il database può scrivere: 2048 caratteri di
- * endpoint con l'escape JSON più lungo (`\u00XX`, 6 byte), chiavi al massimo del vincolo, nomi e spazi.
+ * endpoint con l'escape JSON più lungo (`\u00XX`, 6 byte), chiavi al massimo del vincolo, account,
+ * nomi e spazi.
  */
-export const MAX_SUBSCRIPTION_JSON_BYTES = MAX_ENDPOINT_CHARS * 6 + 256;
+export const MAX_SUBSCRIPTION_JSON_BYTES = MAX_ENDPOINT_CHARS * 6 + 320;
 /**
  * Corpo massimo: ci sta sempre un lotto pieno (49) di righe nel caso peggiore più la notifica
- * (≈ 616 kB). Il database mette nello stesso lotto le iscrizioni di più account: con 64 kB tre
+ * (≈ 620 kB). Il database mette nello stesso lotto le iscrizioni di più account: con 64 kB tre
  * account con endpoint lunghissimi facevano respingere (413) le notifiche di tutti gli altri. Ora il
  * lotto passa sempre e le iscrizioni strane si scartano una per una (parseSubscription).
  */
@@ -115,9 +116,14 @@ export function parseNotification(value: unknown): PushNotification | null {
   return { kind: kind as PushNotification["kind"], title: clip(title, MAX_TITLE_CHARS), body: clip(body, MAX_BODY_CHARS), url, tag };
 }
 
-export function parseSubscription(value: unknown): WebPushSubscription | null {
+/** Iscrizione da servire, con l'account a cui appartiene (se il database lo manda). */
+export type PushTarget = WebPushSubscription & { account?: string };
+
+const ACCOUNT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function parseSubscription(value: unknown): PushTarget | null {
   if (!value || typeof value !== "object") return null;
-  const { endpoint, p256dh, auth } = value as Record<string, unknown>;
+  const { endpoint, p256dh, auth, account } = value as Record<string, unknown>;
   if (!isText(endpoint, 1, MAX_ENDPOINT_CHARS) || typeof p256dh !== "string" || typeof auth !== "string") return null;
   if (!ENDPOINT.test(endpoint)) return null;
   const key = p256dh.replace(/=+$/, "");
@@ -131,7 +137,11 @@ export function parseSubscription(value: unknown): WebPushSubscription | null {
     return null;
   }
   if (url.protocol !== "https:" || url.username || url.password) return null;
-  return { endpoint, p256dh: key, auth: secret };
+  // L'account va nel messaggio cifrato: il service worker non mostra le push di un account che non è
+  // più quello entrato su quel dispositivo. Un valore strano si ignora (la push parte senza).
+  return typeof account === "string" && ACCOUNT.test(account)
+    ? { endpoint, p256dh: key, auth: secret, account: account.toLowerCase() }
+    : { endpoint, p256dh: key, auth: secret };
 }
 
 async function eachLimited<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>) {
@@ -200,7 +210,7 @@ export async function handlePush(request: Request, env: PushEnv, publicKey: stri
   if (!Array.isArray(input.subscriptions)) return json(400, { error: "Iscrizioni mancanti" });
   if (input.subscriptions.length > MAX_PUSH_SUBSCRIPTIONS) return json(400, { error: `Al massimo ${MAX_PUSH_SUBSCRIPTIONS} iscrizioni` });
 
-  const unique = new Map<string, WebPushSubscription>();
+  const unique = new Map<string, PushTarget>();
   let skipped = 0;
   for (const raw of input.subscriptions) {
     const subscription = parseSubscription(raw);
@@ -208,7 +218,7 @@ export async function handlePush(request: Request, env: PushEnv, publicKey: stri
     else if (!unique.has(subscription.endpoint)) unique.set(subscription.endpoint, subscription);
   }
 
-  const payload = JSON.stringify(notification);
+  const plain = JSON.stringify(notification);
   const options = { publicKey, privateKey, subject: VAPID_SUBJECT, topic: notification.tag };
   const gone: string[] = [];
   const statuses: Record<string, number> = {};
@@ -216,6 +226,7 @@ export async function handlePush(request: Request, env: PushEnv, publicKey: stri
   let failed = 0;
   await eachLimited([...unique.values()], PUSH_CONCURRENCY, async (subscription) => {
     try {
+      const payload = subscription.account ? JSON.stringify({ ...notification, account: subscription.account }) : plain;
       const { status } = await sendWebPush(subscription, payload, options);
       statuses[status] = (statuses[status] ?? 0) + 1;
       if (status >= 200 && status < 300) sent += 1;

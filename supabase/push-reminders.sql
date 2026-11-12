@@ -22,6 +22,10 @@ begin
   if to_regclass('public.studyos_push_subscriptions') is null then
     raise exception 'Esegui prima supabase/people.sql';
   end if;
+  if not exists (select 1 from information_schema.columns where table_schema = 'public'
+    and table_name = 'studyos_push_subscriptions' and column_name = 'private') then
+    raise exception 'Riesegui prima supabase/people.sql (revisione del 12/11/2026: colonne session_id e private)';
+  end if;
 end $$;
 
 -- ─── Tabella ────────────────────────────────────────────────────────────────
@@ -43,6 +47,10 @@ create table if not exists public.studyos_push_reminders (
   primary key (user_id, id)
 );
 
+-- Fuso del dispositivo che ha scritto la riga (l'ora nel testo è in quel fuso): un dispositivo in
+-- un altro fuso non la riscrive solo per l'ora formattata diversamente (src/lib/pushReminders.ts).
+alter table public.studyos_push_reminders add column if not exists zone text;
+
 -- Stessi limiti del Worker (titolo 120, testo 400, url ?apri=…, tag ASCII senza spazi fino a 200).
 alter table public.studyos_push_reminders drop constraint if exists studyos_push_reminders_values_check;
 alter table public.studyos_push_reminders add constraint studyos_push_reminders_values_check
@@ -53,11 +61,24 @@ alter table public.studyos_push_reminders add constraint studyos_push_reminders_
     and char_length(body) <= 400
     and url ~ '^[?]apri=[a-z]{1,30}$'
     and tag ~ '^[!-~]{1,200}$'
+    and (zone is null or zone ~ '^[A-Za-z0-9_+/-]{1,64}$')
   );
 
 -- Righe in attesa per istante: le legge il job ogni minuto.
 create index if not exists studyos_push_reminders_due_idx
   on public.studyos_push_reminders (fire_at) where sent_at is null;
+
+-- Promemoria mandati nell'ultima ora per account (tetto orario del job). Separato dalle righe: un
+-- client che cancella e riscrive le proprie righe non azzera il conto. Nessuna policy né privilegio:
+-- lo tocca solo studyos_push_due_reminders.
+create table if not exists public.studyos_push_reminder_sends (
+  user_id uuid not null,
+  at timestamptz not null default now()
+);
+create index if not exists studyos_push_reminder_sends_user_idx
+  on public.studyos_push_reminder_sends (user_id, at);
+alter table public.studyos_push_reminder_sends enable row level security;
+revoke all on table public.studyos_push_reminder_sends from public, anon, authenticated;
 
 -- ─── RLS e privilegi ────────────────────────────────────────────────────────
 
@@ -82,26 +103,26 @@ create policy studyos_push_reminders_delete on public.studyos_push_reminders for
 
 -- - fire_at al più 14 giorni avanti (l'app ne scrive 7); più indietro di mezz'ora: riga ignorata
 --   in silenzio (orologio del dispositivo indietro), non verrebbe comunque mandata;
--- - al più 300 righe in attesa per account (le nuove oltre il tetto sono rifiutate);
--- - una riga nuova o spostata è sempre "da mandare"; user_id non cambia;
--- - updated_at lo scrive il server.
+-- - al più 400 righe per account, mandate comprese (le nuove oltre il tetto sono rifiutate): una riga
+--   cancellata e riscritta è una riga nuova e passa solo sotto il tetto;
+-- - fire_at non cambia (l'istante fa parte dell'id: un promemoria spostato è una riga nuova);
+-- - una riga mandata o saltata resta tale: nessun client la rimette in coda (sent_at non torna null);
+-- - una riga nuova è sempre "da mandare"; user_id non cambia; updated_at lo scrive il server.
 create or replace function public.studyos_push_reminders_guard()
 returns trigger
 language plpgsql
 set search_path = public
 as $$
 declare
-  v_pending integer;
+  v_total integer;
 begin
   new.updated_at := now();
   if tg_op = 'UPDATE' then
     new.user_id := old.user_id;
-    if new.fire_at is distinct from old.fire_at then
-      if new.fire_at > now() + interval '14 days' then
-        raise exception 'Promemoria oltre 14 giorni' using errcode = '22023';
-      end if;
-      new.sent_at := null;
-      new.skipped := false;
+    new.fire_at := old.fire_at;
+    if old.sent_at is not null then
+      new.sent_at := old.sent_at;
+      new.skipped := old.skipped;
     end if;
     return new;
   end if;
@@ -118,10 +139,9 @@ begin
   -- lucchetto per account evita che due scritture insieme lo superino.
   if not exists (select 1 from public.studyos_push_reminders r where r.user_id = new.user_id and r.id = new.id) then
     perform pg_advisory_xact_lock(hashtextextended('studyos_push_reminders:' || new.user_id::text, 0));
-    select count(*) into v_pending from public.studyos_push_reminders r
-    where r.user_id = new.user_id and r.sent_at is null;
-    if v_pending >= 300 then
-      raise exception 'Troppi promemoria in attesa (al massimo 300)' using errcode = '54000';
+    select count(*) into v_total from public.studyos_push_reminders r where r.user_id = new.user_id;
+    if v_total >= 400 then
+      raise exception 'Troppi promemoria (al massimo 400 per account)' using errcode = '54000';
     end if;
   end if;
   return new;
@@ -139,11 +159,14 @@ for each row execute function public.studyos_push_reminders_guard();
 -- 1. Le righe scattate da più di mezz'ora e mai mandate (cron fermo, push spente) diventano
 --    "saltate": un promemoria in ritardo non serve. Le righe passate da più di un giorno si tolgono.
 -- 2. Senza pg_net o senza i segreti in Vault si ferma qui: le righe restano in attesa.
--- 3. Prende le righe scattate (al più 10 per account e 500 in tutto per giro), le segna come mandate
---    nella stessa istruzione (una scheda che le segna insieme aspetta e poi non trova più niente) e
---    per ognuna chiama il Worker con le iscrizioni di quell'account soltanto: una richiesta per
---    promemoria e per account, così un account con molti dispositivi non fa respingere le notifiche
---    degli altri. Al più 40 iscrizioni per richiesta (il Worker ne accetta 49).
+-- 3. Prende le righe scattate, a turno tra gli account (prima il primo promemoria di ogni account,
+--    poi il secondo…), al più 10 per account e giro, al più 60 per account all'ora, 500 in tutto:
+--    un account con molte righe non fa arrivare in ritardo (e saltare) quelle degli altri. Le segna
+--    come mandate nella stessa istruzione (una scheda che le segna insieme aspetta e poi non trova
+--    più niente) e per ognuna chiama il Worker con le iscrizioni di quell'account soltanto: una
+--    richiesta per promemoria, account e tipo di testo, al più 40 iscrizioni (il Worker ne accetta 49).
+--    I dispositivi con la password dell'app (private) ricevono «Promemoria StudyOS» al posto del titolo.
+--    Ogni iscrizione porta l'account: il service worker non mostra le push di un altro account.
 -- pg_net spedisce solo dopo il commit. Qualsiasi errore: avviso nel log e nessuna riga toccata.
 create or replace function public.studyos_push_due_reminders()
 returns integer
@@ -156,6 +179,7 @@ declare
   v_url text;
   v_row record;
   v_batch jsonb;
+  v_private boolean;
   v_sent integer := 0;
 begin
   -- Un solo giro alla volta (pg_cron non ne sovrappone due, una chiamata a mano sì).
@@ -167,6 +191,7 @@ begin
       set sent_at = now(), skipped = true
       where sent_at is null and fire_at < now() - interval '30 minutes';
     delete from public.studyos_push_reminders where fire_at < now() - interval '1 day';
+    delete from public.studyos_push_reminder_sends where at < now() - interval '1 hour';
 
     if not exists (
       select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -183,7 +208,13 @@ begin
     end if;
 
     for v_row in
-      with due as (
+      with used as (
+        select l.user_id, count(*) as n
+        from public.studyos_push_reminder_sends l
+        where l.at > now() - interval '1 hour'
+        group by l.user_id
+      ),
+      due as (
         select d.user_id, d.id
         from (
           select r.user_id, r.id, r.fire_at,
@@ -191,8 +222,9 @@ begin
           from public.studyos_push_reminders r
           where r.sent_at is null and r.fire_at <= now()
         ) as d
-        where d.rn <= 10
-        order by d.fire_at, d.user_id, d.id
+        left join used u on u.user_id = d.user_id
+        where d.rn <= least(10, 60 - coalesce(u.n, 0))
+        order by d.rn, d.fire_at, d.user_id, d.id
         limit 500
       )
       update public.studyos_push_reminders as t
@@ -203,23 +235,26 @@ begin
         returning t.user_id, t.id, t.title, t.body, t.url, t.tag, t.skipped
     loop
       continue when v_row.skipped;
-      for v_batch in
-        select jsonb_agg(jsonb_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth) order by s.rn)
+      insert into public.studyos_push_reminder_sends (user_id) values (v_row.user_id);
+      for v_batch, v_private in
+        select jsonb_agg(jsonb_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth, 'account', s.user_id) order by s.rn),
+          s.private
         from (
-          select sub.endpoint, sub.p256dh, sub.auth,
-            row_number() over (order by sub.last_seen_at desc, sub.id) as rn
+          select sub.endpoint, sub.p256dh, sub.auth, sub.user_id, sub.private,
+            row_number() over (partition by sub.private order by sub.last_seen_at desc, sub.id) as rn
           from public.studyos_push_subscriptions sub
           where sub.user_id = v_row.user_id
         ) as s
-        group by (s.rn - 1) / 40
-        order by (s.rn - 1) / 40
+        group by s.private, (s.rn - 1) / 40
+        order by s.private, (s.rn - 1) / 40
       loop
         perform net.http_post(
           url := v_url,
           body := jsonb_build_object(
             'notification', jsonb_build_object(
               'kind', 'reminder',
-              'title', left(coalesce(nullif(btrim(v_row.title), ''), 'Promemoria'), 120),
+              'title', case when v_private then 'Promemoria StudyOS'
+                else left(coalesce(nullif(btrim(v_row.title), ''), 'Promemoria'), 120) end,
               'body', left(coalesce(v_row.body, ''), 400),
               'url', case when v_row.url ~ '^[?]apri=[a-z]{1,30}$' then v_row.url else '?apri=calendario' end,
               'tag', left(v_row.tag, 200)

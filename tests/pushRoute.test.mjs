@@ -278,7 +278,12 @@ const MAX_NOTIFICATION = {
   tag: "t".repeat(200)
 };
 /** Riga al limite del vincolo di studyos_push_subscriptions, con l'escape JSON più lungo per ogni carattere. */
-const hostileRow = (index) => ({ endpoint: pad(`https://x${index}.example/`, "\u0001"), p256dh: `${"A".repeat(100)}==`, auth: `${"B".repeat(32)}==` });
+const hostileRow = (index) => ({
+  endpoint: pad(`https://x${index}.example/`, "\u0001"),
+  p256dh: `${"A".repeat(100)}==`,
+  auth: `${"B".repeat(32)}==`,
+  account: "504b3482-7f1b-4add-bfbc-7b3effbf21d7"
+});
 
 test("/push: endpoint non ASCII, con spazi o caratteri di controllo si scartano uno per uno", () => {
   const keys = { p256dh: "A".repeat(87), auth: "B".repeat(22) };
@@ -326,4 +331,29 @@ test("/push: gli endpoint lunghissimi di un account non tolgono le notifiche agl
   const message = JSON.parse((await decryptPush(calls[0].init.body, receiver)).text);
   assert.equal(message.title, MAX_NOTIFICATION.title);
   assert.equal(message.body, MAX_NOTIFICATION.body);
+});
+
+test("/push: l'account di ogni iscrizione va nel messaggio cifrato di quel dispositivo (filtro del service worker)", async (t) => {
+  const { publicKey } = await vapid;
+  const first = await subscriptionOf("https://fcm.googleapis.com/fcm/send/acc-a");
+  const second = await subscriptionOf("https://web.push.apple.com/acc-b");
+  const third = await subscriptionOf("https://updates.push.services.mozilla.com/acc-none");
+  const { calls } = stubFetch(t, async () => new Response(null, { status: 201 }));
+  quietConsole(t);
+  const accountA = "504B3482-7F1B-4ADD-BFBC-7B3EFFBF21D7";
+  const accountB = "fc0191e0-6663-4a43-b060-131e397f02cc";
+  const subscriptions = [
+    { ...first.row, account: accountA },
+    { ...second.row, account: accountB },
+    { ...third.row, account: "non-un-uuid" }
+  ];
+  const response = await handlePush(pushRequest({ notification: MAX_NOTIFICATION, subscriptions }), await envFor(), publicKey);
+  assert.deepEqual(await response.json(), { sent: 3, gone: 0 });
+  const byUrl = new Map(calls.map((call) => [call.url, call.init.body]));
+  const read = async (device) => JSON.parse((await decryptPush(byUrl.get(device.row.endpoint), device.receiver)).text);
+  assert.equal((await read(first)).account, accountA.toLowerCase(), "anche con la notifica più lunga ci sta");
+  assert.equal((await read(second)).account, accountB);
+  assert.equal("account" in (await read(third)), false, "valore strano: la push parte senza");
+  assert.equal((await read(second)).title, MAX_NOTIFICATION.title);
+  assert.deepEqual(parseSubscription({ ...first.row, account: 7 }), { endpoint: first.row.endpoint, p256dh: first.row.p256dh.replace(/=+$/, ""), auth: parseSubscription(first.row).auth });
 });

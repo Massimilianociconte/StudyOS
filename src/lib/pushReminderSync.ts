@@ -14,9 +14,14 @@ import {
   pushReminderRows,
   pushRemindersWanted,
   reminderRowId,
-  syncedSincePageStart,
+  reminderSyncReady,
+  rowZoneOf,
+  serverRowOf,
+  trackReminderAccount,
+  type ReminderAccountTrack,
   type ServerReminderRow
 } from "./pushReminders";
+import { deviceTimeZone } from "./tz";
 
 const TABLE = "studyos_push_reminders";
 const SUBSCRIPTIONS = "studyos_push_subscriptions";
@@ -42,6 +47,18 @@ let missingTable = false;
 let deviceCount: number | null = null;
 let lastFingerprint = "";
 let lastFullAt = 0;
+/** Account della sessione e da quando: i dati dello store valgono per lui solo dopo un suo giro di sync. */
+let track: ReminderAccountTrack | null = null;
+
+/** Segue l'account della sessione e dice se i dati dello store sono i suoi, aggiornati. */
+const readyFor = (cloud: ReturnType<typeof getCloudSyncState>) => {
+  const userId = cloud.session?.user.id ?? null;
+  track = trackReminderAccount(track, userId, Date.now(), PAGE_START_MS);
+  return reminderSyncReady({ userId, status: cloud.status, lastSync: cloud.lastSync, accountChoice: cloud.accountChoice }, track);
+};
+
+/** Ancora lo stesso account dopo un'attesa di rete: altrimenti non si scrive niente. */
+const stillSignedIn = (userId: string) => getCloudSyncState().session?.user.id === userId;
 
 const loadClient = async () => {
   const { supabase } = await import("./supabase");
@@ -54,14 +71,17 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
   const userId = cloud.session?.user.id;
   if (!userId) return "signed-out";
   if (missingTable) return "missing";
-  // Dati locali di questo account e aggiornati: niente righe da un dispositivo rimasto indietro.
-  if (cloud.status !== "idle" || !syncedSincePageStart(cloud.lastSync, PAGE_START_MS)) return "waiting";
+  // Dati locali di questo account e aggiornati: niente righe da un dispositivo rimasto indietro né
+  // dall'account di prima (cambio di account, scelta «ask» ancora aperta).
+  if (!readyFor(cloud)) return "waiting";
   const store = useStudyStore.getState();
   if (store.loading || store.locked) return "waiting";
 
   const now = new Date();
+  const events = store.events;
+  const zone = rowZoneOf(deviceTimeZone());
   const wanted = pushRemindersWanted(selectPreferences(store));
-  const rows = wanted ? pushReminderRows(store.events, now) : [];
+  const rows = wanted ? pushReminderRows(events, now) : [];
   const fingerprint = `${userId}|${wanted}|${pushReminderFingerprint(rows)}`;
   if (fingerprint === lastFingerprint && Date.now() - lastFullAt < FULL_RECHECK_MS) return "unchanged";
 
@@ -80,7 +100,7 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
 
     const { data, error } = await client
       .from(TABLE)
-      .select("id, fire_at, title, body, url, tag")
+      .select("id, fire_at, title, body, url, tag, zone")
       .eq("user_id", userId)
       .is("sent_at", null)
       .gt("fire_at", now.toISOString())
@@ -93,16 +113,24 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
       }
       return "failed";
     }
-    const { upserts, deletes } = diffPushReminders(desired, (data ?? []) as ServerReminderRow[], now.getTime());
-    // Prima si toglie, poi si scrive: il tetto di righe in attesa sul server non si supera per un attimo.
+    // Le righe scritte da un dispositivo in un altro fuso restano se sono ancora giuste per quel fuso.
+    const { upserts, deletes } = diffPushReminders(
+      desired,
+      (data ?? []) as ServerReminderRow[],
+      now.getTime(),
+      desired.length ? { zone, rowsInZone: (other) => pushReminderRows(events, now, { zone: other }) } : { zone }
+    );
+    if (!stillSignedIn(userId)) return "waiting";
+    // Prima si toglie, poi si scrive: il tetto di righe per account sul server non si supera per un attimo.
     for (const ids of chunk(deletes, DELETE_BATCH)) {
       const { error: deleteError } = await client.from(TABLE).delete().eq("user_id", userId).in("id", ids);
       if (deleteError) return "failed";
     }
     for (const batch of chunk(upserts, UPSERT_BATCH)) {
+      if (!stillSignedIn(userId)) return "waiting";
       const { error: upsertError } = await client
         .from(TABLE)
-        .upsert(batch.map((row) => ({ user_id: userId, ...row })), { onConflict: "user_id,id" });
+        .upsert(batch.map((row) => ({ user_id: userId, ...serverRowOf(row) })), { onConflict: "user_id,id" });
       if (upsertError) return "failed";
     }
     lastFingerprint = fingerprint;
@@ -119,8 +147,9 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
  */
 export const markReminderShown = async (key: string): Promise<void> => {
   try {
-    const userId = getCloudSyncState().session?.user.id;
-    if (!userId || missingTable || deviceCount === 0) return;
+    const cloud = getCloudSyncState();
+    const userId = cloud.session?.user.id;
+    if (!userId || missingTable || deviceCount === 0 || !readyFor(cloud)) return;
     const client = await loadClient();
     if (!client) return;
     const { error } = await client
@@ -192,7 +221,8 @@ export const startPushReminderSync = (): (() => void) => {
     });
     let cloudKey = "";
     const unsubscribeCloud = subscribeCloudSync((state) => {
-      const key = `${state.session?.user.id ?? ""}|${state.status}|${state.lastSync ?? ""}`;
+      track = trackReminderAccount(track, state.session?.user.id ?? null, Date.now(), PAGE_START_MS);
+      const key = `${state.session?.user.id ?? ""}|${state.status}|${state.lastSync ?? ""}|${state.accountChoice ? 1 : 0}`;
       if (key === cloudKey) return;
       const userChanged = key.split("|")[0] !== cloudKey.split("|")[0];
       cloudKey = key;

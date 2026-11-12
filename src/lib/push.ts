@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { VAPID_PUBLIC_KEY } from "./pushKeys";
 import { AUTH_STORAGE_KEYS } from "./deviceSignOut";
+import { PUSH_STATE_KEY, writePushAccount } from "./pushLocal";
 
 export type PushSupport = "ok" | "unsupported" | "ios-install" | "denied";
 
@@ -58,14 +59,17 @@ export const rowFromSubscription = (json: { endpoint?: string; keys?: Record<str
   return { endpoint, p256dh, auth };
 };
 
-// Cosa ricorda questo dispositivo: con quale account e quale endpoint è stata registrata l'iscrizione.
-const STATE_KEY = "studyos-push-state";
+// Cosa ricorda questo dispositivo: con quale account e quale endpoint è stata registrata l'iscrizione,
+// e se le notifiche dei promemoria arrivano senza titolo (password dell'app, pushPrivateOf).
+const STATE_KEY = PUSH_STATE_KEY;
 const REFRESH_EVERY_MS = 12 * 60 * 60 * 1000;
 
 export interface PushState {
   endpoint: string;
   userId: string;
   at: number;
+  /** Riga scritta con `private` (assente = stato di una versione precedente: si riscrive). */
+  private?: boolean;
 }
 
 export const parsePushState = (raw: string | null): PushState | null => {
@@ -73,11 +77,11 @@ export const parsePushState = (raw: string | null): PushState | null => {
   try {
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== "object") return null;
-    const { endpoint, userId, at } = value as Record<string, unknown>;
+    const { endpoint, userId, at, private: hidden } = value as Record<string, unknown>;
     if (typeof endpoint !== "string" || !endpoint) return null;
     if (typeof userId !== "string" || !userId) return null;
     if (typeof at !== "number" || !Number.isFinite(at)) return null;
-    return { endpoint, userId, at };
+    return typeof hidden === "boolean" ? { endpoint, userId, at, private: hidden } : { endpoint, userId, at };
   } catch {
     return null;
   }
@@ -110,8 +114,34 @@ export const pushOwnerSignedOut = (ownerId: string, rawAuth: string | null): boo
   return stored === null || (stored !== undefined && stored !== ownerId);
 };
 
-export const shouldRefresh = (previous: PushState | null, endpoint: string, userId: string, now: number): boolean =>
-  !previous || previous.endpoint !== endpoint || previous.userId !== userId || now < previous.at || now - previous.at >= REFRESH_EVERY_MS;
+/** `hidden` (se detto): la riga va riscritta anche quando cambia la scelta del titolo nascosto. */
+export const shouldRefresh = (previous: PushState | null, endpoint: string, userId: string, now: number, hidden?: boolean): boolean =>
+  !previous ||
+  previous.endpoint !== endpoint ||
+  previous.userId !== userId ||
+  now < previous.at ||
+  now - previous.at >= REFRESH_EVERY_MS ||
+  (hidden !== undefined && previous.private !== hidden);
+
+/** Nome del servizio push dall'host dell'endpoint (mai l'endpoint intero, che è un segreto). */
+export type PushDeviceKind = "chrome" | "firefox" | "safari" | "edge" | "other";
+export const pushDeviceKindOf = (endpoint: string): PushDeviceKind => {
+  let host = "";
+  try {
+    host = new URL(endpoint).hostname.toLowerCase();
+  } catch {
+    return "other";
+  }
+  if (host === "fcm.googleapis.com" || host.endsWith(".googleapis.com")) return "chrome";
+  if (host.endsWith(".mozilla.com") || host.endsWith(".mozaws.net")) return "firefox";
+  if (host.endsWith(".push.apple.com")) return "safari";
+  if (host.endsWith(".notify.windows.com")) return "edge";
+  return "other";
+};
+
+/** Colonna `private` assente: people.sql non ancora rieseguito (si scrive la riga senza). */
+export const isMissingPrivateColumn = (error: { code?: string | null; message?: string | null } | null | undefined) =>
+  Boolean(error && /PGRST204|42703/.test(`${error.code ?? ""}`) && /private/i.test(`${error.message ?? ""}`));
 
 const readState = (): PushState | null => {
   try {
@@ -178,8 +208,17 @@ const cloudSession = async (): Promise<Cloud | null> => {
 
 const TABLE = "studyos_push_subscriptions";
 
-const saveRow = (cloud: Cloud, row: SubscriptionRow) =>
-  cloud.client.from(TABLE).upsert({ ...row, last_seen_at: new Date().toISOString() }, { onConflict: "endpoint" });
+/**
+ * Scrive la riga di questo dispositivo. `hidden`: promemoria senza titolo (il job manda «Promemoria
+ * StudyOS» e l'ora). La sessione (`session_id`) la scrive il database dal token, non il client.
+ */
+const saveRow = async (cloud: Cloud, row: SubscriptionRow, hidden: boolean) => {
+  const base = { ...row, last_seen_at: new Date().toISOString() };
+  const result = await cloud.client.from(TABLE).upsert({ ...base, private: hidden }, { onConflict: "endpoint" });
+  // Database non ancora aggiornato (people.sql senza la colonna): le notifiche funzionano lo stesso.
+  if (isMissingPrivateColumn(result.error)) return cloud.client.from(TABLE).upsert(base, { onConflict: "endpoint" });
+  return result;
+};
 
 const deleteRow = async (cloud: Cloud, endpoint: string) => {
   try {
@@ -200,8 +239,9 @@ const forgetSubscription = async (cloud: Cloud, subscription: PushSubscription) 
  * Chiede il permesso (se serve) e iscrive questo dispositivo. Da chiamare solo dal gestore di un
  * tocco: la prima cosa che aspetta è la richiesta di permesso, così il browser vede il gesto.
  * Ritorna false se il permesso manca, il browser rifiuta o la riga non si salva.
+ * `private`: promemoria senza titolo su questo dispositivo (pushPrivateOf).
  */
-export const enablePush = async (): Promise<boolean> => {
+export const enablePush = async ({ private: hidden = false }: { private?: boolean } = {}): Promise<boolean> => {
   if (pushSupport() !== "ok") return false;
   try {
     const permission = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
@@ -224,9 +264,10 @@ export const enablePush = async (): Promise<boolean> => {
       if (!subscription) subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
       const row = rowFromSubscription(subscription.toJSON());
       if (row) {
-        const { error } = await saveRow(cloud, row);
+        const { error } = await saveRow(cloud, row, hidden);
         if (!error) {
-          writeState({ endpoint: row.endpoint, userId: cloud.userId, at: Date.now() });
+          writeState({ endpoint: row.endpoint, userId: cloud.userId, at: Date.now(), private: hidden });
+          await writePushAccount(cloud.userId);
           return true;
         }
       }
@@ -282,6 +323,8 @@ export const dropPushOfEndedSession = async (): Promise<boolean> => {
     if (supabase) await supabase.auth.getSession().catch(() => undefined);
     if (!pushOwnerSignedOut(state.userId, readAuthStorage())) return false;
     clearState();
+    // Il service worker non mostra più le push di quell'account (se la riga sul server resta).
+    await writePushAccount(storedAuthUserId(readAuthStorage()) ?? null);
     const registration = await navigator.serviceWorker.getRegistration();
     const subscription = registration ? await registration.pushManager.getSubscription() : null;
     if (subscription) await subscription.unsubscribe().catch(() => false);
@@ -306,9 +349,9 @@ export const isPushEnabled = async (userId: string): Promise<boolean> => {
 /**
  * All'avvio con un account: se questo dispositivo aveva attivato le notifiche con questo account,
  * riallinea la riga (endpoint cambiato → sostituito; chiave del server cambiata → nuova iscrizione;
- * ogni 12 ore aggiorna last_seen_at). Non iscrive mai chi non l'ha chiesto.
+ * ogni 12 ore aggiorna last_seen_at; `private` cambiato → riscritto). Non iscrive mai chi non l'ha chiesto.
  */
-export const syncPushSubscription = async (): Promise<void> => {
+export const syncPushSubscription = async ({ private: hidden }: { private?: boolean } = {}): Promise<void> => {
   try {
     if (pushSupport() !== "ok" || Notification.permission !== "granted") return;
     const previous = readState();
@@ -335,12 +378,85 @@ export const syncPushSubscription = async (): Promise<void> => {
     const row = rowFromSubscription(subscription.toJSON());
     if (!row) return;
     const now = Date.now();
-    if (!shouldRefresh(previous, row.endpoint, cloud.userId, now)) return;
-    const { error } = await saveRow(cloud, row);
+    if (!shouldRefresh(previous, row.endpoint, cloud.userId, now, hidden)) return;
+    const value = hidden ?? previous.private ?? false;
+    const { error } = await saveRow(cloud, row, value);
     if (error) return;
     if (previous.endpoint !== row.endpoint) await deleteRow(cloud, previous.endpoint);
-    writeState({ endpoint: row.endpoint, userId: cloud.userId, at: now });
+    writeState({ endpoint: row.endpoint, userId: cloud.userId, at: now, private: value });
   } catch {
     // rete assente o browser che rifiuta: si riprova al prossimo avvio
+  }
+};
+
+/** Password dell'app accesa o spenta, «Mostra il titolo nelle notifiche» cambiato: riscrive `private`. */
+export const updatePushPrivacy = async (hidden: boolean): Promise<void> => {
+  const state = readState();
+  if (!state || state.private === hidden) return;
+  await syncPushSubscription({ private: hidden });
+};
+
+export interface PushDevice {
+  id: string;
+  kind: PushDeviceKind;
+  lastSeenAt: string;
+  /** È l'iscrizione di questo browser. */
+  current: boolean;
+}
+
+const currentEndpoint = async (): Promise<string | null> => {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return readState()?.endpoint ?? null;
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = registration ? await registration.pushManager.getSubscription() : null;
+    return subscription?.endpoint ?? readState()?.endpoint ?? null;
+  } catch {
+    return readState()?.endpoint ?? null;
+  }
+};
+
+/**
+ * Dispositivi di questo account con le notifiche attive (Impostazioni), dal più recente. Solo il tipo
+ * di browser e l'ultimo accesso: l'endpoint non esce da qui. null se non si riesce a leggere.
+ */
+export const listPushDevices = async (): Promise<PushDevice[] | null> => {
+  try {
+    const cloud = await cloudSession();
+    if (!cloud) return null;
+    const { data, error } = await cloud.client
+      .from(TABLE)
+      .select("id, endpoint, last_seen_at")
+      .eq("user_id", cloud.userId)
+      .order("last_seen_at", { ascending: false })
+      .limit(50);
+    if (error) return null;
+    const here = await currentEndpoint();
+    return ((data ?? []) as { id: string; endpoint: string; last_seen_at: string }[]).map((row) => ({
+      id: row.id,
+      kind: pushDeviceKindOf(row.endpoint),
+      lastSeenAt: row.last_seen_at,
+      current: Boolean(here && row.endpoint === here)
+    }));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * «Rimuovi»: toglie la riga del dispositivo dal server, così smette subito di ricevere le notifiche
+ * dell'account (anche un telefono perso). Se è questo browser, spegne anche l'iscrizione qui.
+ */
+export const removePushDevice = async (id: string): Promise<boolean> => {
+  try {
+    const cloud = await cloudSession();
+    if (!cloud) return false;
+    const here = await currentEndpoint();
+    const { data, error } = await cloud.client.from(TABLE).delete().eq("user_id", cloud.userId).eq("id", id).select("endpoint");
+    if (error) return false;
+    const removed = ((data ?? []) as { endpoint: string }[]).map((row) => row.endpoint);
+    if (here && removed.includes(here)) await disablePush();
+    return true;
+  } catch {
+    return false;
   }
 };

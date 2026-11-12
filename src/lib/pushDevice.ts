@@ -1,10 +1,12 @@
 // Notifiche push di questo dispositivo, il pezzo che serve anche nel bundle d'ingresso (App, schermata
 // di blocco): spegnerle prima di un'uscita o di una cancellazione, e seguire la sessione quando finisce
 // da sola. push.ts (e supabase-js) arriva solo con import(), come vuole il bundle iniziale.
-// Nessun import di moduli che leggono import.meta.env: i test lo caricano in Node.
+// Nessun import di moduli che leggono import.meta.env: i test lo caricano in Node. pushLocal è
+// senza dipendenze (Cache Storage e localStorage).
 import type { CloudSyncState } from "./cloudSyncState";
+import { hasPushState, writePushAccount } from "./pushLocal";
 
-type PushModule = Pick<typeof import("./push"), "disablePush" | "syncPushSubscription" | "dropPushOfEndedSession">;
+type PushModule = Pick<typeof import("./push"), "disablePush" | "syncPushSubscription" | "dropPushOfEndedSession" | "updatePushPrivacy">;
 const loadPush = (): Promise<PushModule> => import("./push");
 
 /** Massima attesa per spegnere le notifiche: la rete lenta non blocca l'uscita né la cancellazione. */
@@ -55,23 +57,45 @@ export const turnOffPushHere = async (timeoutMs: number = PUSH_OFF_TIMEOUT_MS, l
  * - la sessione non c'è o finisce da sola (scaduta, revocata, uscita da un'altra scheda o da un altro
  *   dispositivo) → se le notifiche erano dell'account uscito, l'iscrizione del browser si annulla
  *   (dropPushOfEndedSession). Anche all'avvio: la sessione può essere finita ad app chiusa.
- * Con il permesso non concesso non c'è niente da seguire. Restituisce la funzione di arresto.
+ * Parte sempre, anche se il permesso arriva dopo (le notifiche accese più tardi nella stessa pagina):
+ * push.ts si carica solo quando il permesso c'è o questo dispositivo ha uno stato delle notifiche.
+ * Scrive anche l'account entrato per il service worker (pushLocal), che così non mostra le push di
+ * un altro account. `isPrivate`: promemoria senza titolo su questo dispositivo (pushPrivateOf).
+ * Restituisce la funzione di arresto.
  */
 export const startPushSessionGuard = (
   subscribe: (listener: (state: Pick<CloudSyncState, "session">) => void) => () => void,
-  load: () => Promise<PushModule> = loadPush
+  load: () => Promise<PushModule> = loadPush,
+  { isPrivate, hasState = hasPushState, writeAccount = writePushAccount }: {
+    isPrivate?: () => boolean;
+    hasState?: () => boolean;
+    writeAccount?: (userId: string | null) => Promise<void>;
+  } = {}
 ): (() => void) => {
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return () => undefined;
   let lastUserId: string | null | undefined;
   return subscribe((state) => {
     const userId = state.session?.user.id ?? null;
     if (userId === lastUserId) return;
     lastUserId = userId;
+    if (userId) void writeAccount(userId).catch(() => undefined);
+    const granted = typeof Notification !== "undefined" && Notification.permission === "granted";
+    if (!granted && !hasState()) return;
     void load()
       .then(async (module) => {
-        if (userId) await module.syncPushSubscription();
+        if (userId) await module.syncPushSubscription(isPrivate ? { private: isPrivate() } : {});
         else await module.dropPushOfEndedSession();
       })
       .catch(() => undefined);
   });
+};
+
+/**
+ * Password dell'app accesa o spenta, «Mostra il titolo nelle notifiche» cambiato: la riga di questo
+ * dispositivo dice al server se i promemoria arrivano senza titolo. Solo se le notifiche sono accese qui.
+ */
+export const syncPushPrivacy = (hidden: boolean, load: () => Promise<PushModule> = loadPush, hasState: () => boolean = hasPushState) => {
+  if (!hasState()) return;
+  void load()
+    .then((module) => module.updatePushPrivacy(hidden))
+    .catch(() => undefined);
 };

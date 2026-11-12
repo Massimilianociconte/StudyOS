@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import type { PushSupport } from "../lib/push";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { format } from "date-fns";
+import { it } from "date-fns/locale";
+import type { PushDevice, PushSupport } from "../lib/push";
 import { cloudConfigured } from "../lib/cloudSyncState";
 import { notifyPushChanged } from "../lib/pushDevice";
+import { pushPrivateOf } from "../lib/pushLocal";
 import { useCloudSession } from "../hooks/useCloudSession";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { pushLabels } from "../lib/labels";
@@ -44,6 +47,19 @@ export function PushToggle() {
   const [failed, setFailed] = useState(false);
   const remindersOn = useStudyStore((state) => selectPreferences(state).pushReminders !== false);
   const updatePreferences = useStudyStore((state) => state.updatePreferences);
+  // Password dell'app: i promemoria di questo dispositivo arrivano senza titolo, salvo scelta contraria.
+  const vaultOn = useStudyStore((state) => state.settings.security.mode === "vault");
+  const showTitles = useStudyStore((state) => state.settings.pushShowTitles === true);
+  const updateSettings = useStudyStore((state) => state.updateSettings);
+  const [devices, setDevices] = useState<PushDevice[] | null | undefined>(undefined);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removeFailed, setRemoveFailed] = useState(false);
+
+  const loadDevices = useCallback(async () => {
+    const module = push.current;
+    if (!module || !userId) return;
+    setDevices(await module.listPushDevices());
+  }, [userId]);
 
   useEffect(() => {
     if (!cloudConfigured) return;
@@ -56,6 +72,8 @@ export function PushToggle() {
         if (cancelled) return;
         setSupport(current);
         setEnabled(on);
+        const list = userId ? await module.listPushDevices() : undefined;
+        if (!cancelled) setDevices(list);
       })
       .catch(() => {
         if (!cancelled) setSupport("unsupported");
@@ -78,7 +96,7 @@ export function PushToggle() {
         setEnabled(false);
       } else {
         // Nessun await prima di enablePush: il permesso va chiesto dentro il gesto della persona.
-        const ok = await module.enablePush();
+        const ok = await module.enablePush({ private: pushPrivateOf(useStudyStore.getState().settings) });
         setEnabled(ok);
         const now = module.pushSupport();
         setSupport(now);
@@ -88,7 +106,30 @@ export function PushToggle() {
       // I promemoria con l'app chiusa contano i dispositivi con le notifiche: si riallineano subito.
       notifyPushChanged();
       setBusy(false);
+      void loadDevices();
     }
+  };
+
+  /** «Rimuovi»: la riga del dispositivo sparisce dal server (anche un telefono perso). */
+  const remove = async (device: PushDevice) => {
+    const module = push.current;
+    if (!module || removing) return;
+    setRemoving(device.id);
+    setRemoveFailed(false);
+    try {
+      const ok = await module.removePushDevice(device.id);
+      if (!ok) setRemoveFailed(true);
+      if (ok && device.current) setEnabled(false);
+    } finally {
+      notifyPushChanged();
+      setRemoving(null);
+      void loadDevices();
+    }
+  };
+
+  const seenText = (iso: string) => {
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) ? pushLabels.deviceSeen(format(ms, "d MMM yyyy", { locale: it })) : "";
   };
 
   const note = (() => {
@@ -131,6 +172,62 @@ export function PushToggle() {
           {remindersOn ? null : (
             <p className="safe-text mt-2 text-xs font-bold text-[var(--muted)]">{pushLabels.remindersOff}</p>
           )}
+        </div>
+      ) : null}
+      {userId && vaultOn ? (
+        <div className="mt-3 border-t border-[var(--border)] pt-3">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-black">{pushLabels.titlesToggle}</p>
+              <p className="safe-text mt-0.5 text-xs text-[var(--muted)]">{showTitles ? pushLabels.titlesOn : pushLabels.titlesHint}</p>
+            </div>
+            <Switch
+              checked={showTitles}
+              label={pushLabels.titlesToggle}
+              disabled={false}
+              onToggle={() => void updateSettings({ pushShowTitles: !showTitles }).catch(() => undefined)}
+            />
+          </div>
+        </div>
+      ) : null}
+      {userId && devices !== undefined ? (
+        <div className="mt-3 border-t border-[var(--border)] pt-3">
+          <p className="text-sm font-black">{pushLabels.devicesTitle}</p>
+          <p className="safe-text mt-0.5 text-xs text-[var(--muted)]">{pushLabels.devicesHint}</p>
+          {devices === null ? (
+            <p className="safe-text mt-2 text-xs font-bold text-[var(--muted)]">{pushLabels.devicesFailed}</p>
+          ) : devices.length === 0 ? (
+            <p className="safe-text mt-2 text-xs font-bold text-[var(--muted)]">{pushLabels.devicesEmpty}</p>
+          ) : (
+            <ul className="mt-2 grid grid-cols-1 gap-2">
+              {devices.map((device) => {
+                const kind = pushLabels.deviceKinds[device.kind];
+                const name = device.current ? `${pushLabels.deviceThis} · ${kind}` : kind;
+                return (
+                  <li key={device.id} className="flex items-center gap-3 rounded-2xl bg-[var(--surface)] px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="safe-text text-sm font-bold">{name}</p>
+                      <p className="safe-text text-xs text-[var(--muted)]">{seenText(device.lastSeenAt)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void remove(device)}
+                      disabled={removing !== null}
+                      aria-label={pushLabels.deviceRemoveLabel(name)}
+                      className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full px-3 text-sm font-black text-[var(--accent-ink)] underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {pushLabels.deviceRemove}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {removeFailed ? (
+            <p role="status" className="safe-text mt-2 text-xs font-bold text-[var(--muted)]">
+              {pushLabels.deviceRemoveFailed}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>
