@@ -13,6 +13,7 @@ import {
   SESSION_SOURCES,
   STATS_PERIODS,
   countInRange,
+  hoursThatAddUp,
   largestRemainderPercents,
   minutesBySubject,
   periodRange,
@@ -85,6 +86,8 @@ export function StatsView() {
   const bySubject = useMemo(() => minutesBySubject(subjects, inPeriod), [subjects, inPeriod]);
   // Percentuali arrotondate che sommano sempre a 100 (resto più grande).
   const subjectPercents = useMemo(() => largestRemainderPercents(bySubject.map((entry) => entry.minutes)), [bySubject]);
+  // Ore delle righe che sommano al totale mostrato (arrotondate una per una davano 0,8 + 0,4 = 1,3).
+  const subjectHours = useMemo(() => hoursThatAddUp(bySubject.map((entry) => entry.minutes)), [bySubject]);
   const trend = useMemo(() => {
     const unit = trendUnit(range.period);
     return trendBuckets(inPeriod, range, unit).map((bucket) => ({
@@ -250,9 +253,10 @@ export function StatsView() {
 
         <Panel>
           <h3 className="mb-3 text-lg font-black">{STATS_TEXT.bySubject}</h3>
+          {/* Da lg i pannelli sono affiancati: grafico più stretto, così i nomi («Senza materia») non si tagliano. */}
           {bySubject.length ? (
-            <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
-              <div className="mx-auto h-44 w-44 sm:h-48 sm:w-full" role="img" aria-label={STATS_TEXT.bySubjectAria(formatHours(total))}>
+            <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[180px_minmax(0,1fr)] lg:grid-cols-[136px_minmax(0,1fr)] lg:gap-3">
+              <div className="mx-auto h-44 w-44 sm:h-48 sm:w-full lg:h-36" role="img" aria-label={STATS_TEXT.bySubjectAria(formatHours(total))}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart accessibilityLayer={false}>
                     <Pie data={bySubject} dataKey="minutes" nameKey="name" outerRadius="95%" innerRadius="58%" paddingAngle={3} stroke="none" rootTabIndex={-1}>
@@ -269,8 +273,8 @@ export function StatsView() {
                   const row = (
                     <>
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: entry.color }} />
-                      <span className="one-line-safe min-w-0 flex-1 font-bold">{entry.name}</span>
-                      <span className="shrink-0 text-xs font-black tabular-nums">{formatHours(entry.minutes)} h</span>
+                      <span className="two-line-safe min-w-0 flex-1 font-bold leading-tight">{entry.name}</span>
+                      <span className="shrink-0 text-xs font-black tabular-nums">{formatHours(subjectHours[index] * 60)} h</span>
                       <span className="w-10 shrink-0 text-right text-xs font-bold text-[var(--muted)] tabular-nums">{subjectPercents[index]}%</span>
                     </>
                   );

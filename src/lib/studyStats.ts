@@ -216,6 +216,25 @@ export function largestRemainderPercents(values: readonly number[]): number[] {
   return result;
 }
 
+/**
+ * Ore (un decimale) delle righe che sommano sempre al totale mostrato: stessi resti più grandi delle
+ * percentuali, in decimi d'ora (6 minuti). Es.: 50 e 25 minuti → 0,9 + 0,4 = 1,3 h (non 0,8 + 0,4).
+ */
+export function hoursThatAddUp(minutes: readonly number[]): number[] {
+  const tenths = minutes.map((value) => Math.max(0, value) / 6);
+  // Come formatHours sul totale dei minuti (stesso arrotondamento, niente somma di decimali).
+  const target = Math.round((minutes.reduce((sum, value) => sum + Math.max(0, value), 0) / 60) * 10);
+  const result = tenths.map(Math.floor);
+  let missing = target - result.reduce((sum, value) => sum + value, 0);
+  const order = tenths.map((value, index) => ({ index, rest: value - Math.floor(value) })).sort((a, b) => b.rest - a.rest || a.index - b.index);
+  for (const { index } of order) {
+    if (missing <= 0) break;
+    result[index] += 1;
+    missing -= 1;
+  }
+  return result.map((value) => value / 10);
+}
+
 /** Sessioni completate di una materia, dalla più recente. */
 export function subjectSessions(sessions: StudySession[], subjectId: string): StudySession[] {
   return completed(sessions)
