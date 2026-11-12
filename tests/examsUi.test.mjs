@@ -78,3 +78,15 @@ test("collegamento argomenti: materia dell'esame scelta in Studio (dispositivo),
     ]
   });
 });
+
+test("giorni all'esame: il giorno stesso dice «Oggi», non «0 giorni»", async () => {
+  const { EXAMS_TEXT } = await import("../src/lib/labels/exams.ts");
+  // Riquadro della scheda (Esami e Home): numero grande e parola sotto.
+  assert.deepEqual(EXAMS_TEXT.countdown(0), { value: "Oggi", unit: "" });
+  assert.deepEqual(EXAMS_TEXT.countdown(1), { value: "1", unit: "giorno" });
+  assert.deepEqual(EXAMS_TEXT.countdown(12), { value: "12", unit: "giorni" });
+  // In riga, dopo la data (scheda con copertina): come in Statistiche.
+  assert.equal(EXAMS_TEXT.countdownInline(0), "oggi");
+  assert.equal(EXAMS_TEXT.countdownInline(1), "domani");
+  assert.equal(EXAMS_TEXT.countdownInline(12), "12 giorni");
+});

@@ -30,6 +30,15 @@ export const EXAMS_TEXT = {
   dateToDecide: "Non superato · nuova data da decidere",
   dateToDecideShort: "Data",
   dateToDecideBox: "da decidere",
+  /** Riquadro dei giorni all'esame (Esami e Home): il giorno stesso «Oggi», mai «0 giorni». */
+  countdown: (days: number) => (days === 0 ? { value: "Oggi", unit: "" } : { value: String(days), unit: days === 1 ? "giorno" : "giorni" }),
+  /** Giorni all'esame in riga, dopo la data: «oggi», «domani», «12 giorni» (come in Statistiche). */
+  countdownInline: (days: number) => (days === 0 ? "oggi" : days === 1 ? "domani" : `${days} giorni`),
+  // Chiudere «Aggiungi esame» o «Modifica esame» (✕, Esc, tocco fuori) con dati cambiati.
+  unsavedTitle: "Scartare le modifiche?",
+  unsavedText: "Hai cambiato l'esame (data, preparazione, programma…) senza salvarlo.",
+  unsavedKeep: "Continua a modificare",
+  unsavedDiscard: "Scarta le modifiche",
   shareProgress: "Condividi i progressi",
   study: "Studia",
   readiness: "Quanto sei pronto",
