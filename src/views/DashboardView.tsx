@@ -40,6 +40,7 @@ import {
 } from "../lib/labels";
 import { HOME_HELP, HOME_OCCASIONS_TEXT, HOME_TEXT } from "../lib/labels/home";
 import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
+import { useToday } from "../hooks/useToday";
 import { sanitizeTypeColorOverrides, themeTone } from "../lib/eventColors";
 import { daySpanOf, eventPaint, upcomingAfterToday } from "../lib/calendarRender";
 import { Icon } from "../components/Icon";
@@ -143,6 +144,8 @@ function useBarbLookup(enabled: boolean) {
 export function DashboardView() {
   const store = useStudyStore();
   const { events, tasks, subjects, exams, sessions, attachments, goals, topics, setActiveView, toggleTask } = store;
+  // Oggi e settimana si aggiornano a mezzanotte anche con la Home aperta.
+  useToday();
   const today = todayEvents(events);
   const now = new Date();
   const todayTasks = tasks.filter((task) => task.dueDate && task.status !== "archived" && isSameDay(parseISO(task.dueDate), now));

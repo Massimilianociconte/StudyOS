@@ -26,6 +26,7 @@ import {
   type StatsPeriod
 } from "../lib/studyStats";
 import { oneOf, useUiState, writeUiState } from "../lib/uiState";
+import { useToday } from "../hooks/useToday";
 import { Button, EmptyState, HelpTip, IconButton, Panel, ProgressBar, SectionTitle, Segmented, StatTile } from "../components/ui";
 import { Icon } from "../components/Icon";
 
@@ -72,7 +73,9 @@ export function StatsView() {
   const weeklyTarget = weeklyTargetOf(preferences.weeklyTargetMinutes);
   const [period, setPeriod] = useUiState<StatsPeriod>("stats.period", "week", { validate: oneOf(...STATS_PERIODS) });
   const [offset, setOffset] = useState(0);
-  const range = useMemo(() => periodRange(period, new Date(), { offset, semesters: BARB_DATASET.semesters }), [period, offset]);
+  // Aperta oltre la mezzanotte (o fino a lunedì): il periodo e "oggi" ripartono da soli.
+  const day = useToday();
+  const range = useMemo(() => periodRange(period, new Date(), { offset, semesters: BARB_DATASET.semesters }), [period, offset, day]);
 
   const inPeriod = useMemo(() => sessionsInRange(sessions, range), [sessions, range]);
   const summary = useMemo(() => sessionSummary(inPeriod), [inPeriod]);
@@ -100,7 +103,7 @@ export function StatsView() {
           days: studyDaysUntil(exam.date),
           color: subjectColor(subjects, exam.subjectId)
         })),
-    [exams, subjects]
+    [exams, subjects, day]
   );
 
   const visibleTasks = tasks.filter((task) => task.status !== "archived");

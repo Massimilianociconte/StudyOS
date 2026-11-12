@@ -25,6 +25,7 @@ import { ManualSessionDrawer, useSessionEditor } from "../components/StudySessio
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
+import { useToday } from "../hooks/useToday";
 import { isNullableString, oneOf, readUiState, useUiState } from "../lib/uiState";
 import { requestSettingsSection } from "../lib/settingsJump";
 import {
@@ -104,6 +105,8 @@ export function StudyView() {
   const [notice, setNotice] = useState("");
   const sessionEditor = useSessionEditor();
 
+  // Settimana, oggi e ripassi da fare si aggiornano a mezzanotte anche con la pagina aperta.
+  useToday();
   const today = new Date();
   const dueReviews = dueTopics(topics, today);
   const dueIds = new Set(dueReviews.map((topic) => topic.id));
