@@ -135,7 +135,8 @@ export const groupExamEvents = ({ sessions, plans, groupNames, subjects, events,
  * Eventi per i promemoria: gli appelli scelti con promemoria e, se richiesto, la chiusura delle
  * iscrizioni (il giorno prima e il giorno stesso alle 9) finché lo stato è «da fare».
  */
-export const groupExamReminderEvents = (sessions: readonly GroupExamSession[], plans: readonly ExamPlan[]): CalendarEvent[] => {
+export const groupExamReminderEvents = (sessions: readonly GroupExamSession[], plans: readonly ExamPlan[], events: readonly CalendarEvent[] = []): CalendarEvent[] => {
+  const eventIds = new Set(events.map((event) => event.id));
   const byId = new Map(sessions.map((session) => [session.id, session]));
   const out: CalendarEvent[] = [];
   for (const plan of plans) {
@@ -144,7 +145,9 @@ export const groupExamReminderEvents = (sessions: readonly GroupExamSession[], p
     if (live?.deletedAt) continue;
     const date = live?.date ?? plan.snapshot.date;
     const title = sessionTitle(live ?? { kind: plan.snapshot.kind, courseName: plan.snapshot.courseName, label: "" });
-    if (plan.reminders.length) {
+    // Collegato a un mio evento che esiste: avvisa quello, non anche l'appello (due promemoria per lo stesso giorno).
+    const linked = Boolean(plan.linkedEventId && eventIds.has(plan.linkedEventId));
+    if (plan.reminders.length && !linked) {
       out.push(allDayEvent(groupExamEventId(plan.sessionId), date, { title, reminders: plan.reminders }));
     }
     const closes = live ? live.registrationCloses : plan.snapshot.registrationCloses;

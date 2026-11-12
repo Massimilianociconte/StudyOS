@@ -1911,9 +1911,17 @@ export const useStudyStore = create<StudyState>((set, get) => {
           // Eliminata qui mentre la richiesta era in volo e non ancora salvata (niente tombstone in
           // coda quando il merge l'ha letta): rimetterla annullerebbe l'eliminazione in silenzio.
           if (!change.force && !current && change.entity && isPersisted(key, change.id)) continue;
-          if (change.entity) byId.set(change.id, change.entity);
+          // Un piano d'esame arrivato storto (altra versione dell'app, agente) si ripulisce o si salta:
+          // mai uno stato che fa cadere i promemoria, e mai un'eliminazione al posto suo.
+          let entity = change.entity;
+          if (key === "examPlans" && entity) {
+            const clean = normalizeExamPlan(entity);
+            if (!clean) continue;
+            entity = clean;
+          }
+          if (entity) byId.set(change.id, entity);
           else byId.delete(change.id);
-          markRemoteApplied(key, change.id, change.entity);
+          markRemoteApplied(key, change.id, entity);
         }
         (patch as Record<string, unknown>)[key] = [...byId.values()];
       }

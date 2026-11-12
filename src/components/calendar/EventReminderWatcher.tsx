@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStudyStore } from "../../store/useStudyStore";
 import { useGroupExamStore } from "../../store/useGroupExamStore";
-import { reminderSourceEvents } from "../../lib/reminderSources";
+import { dropUnconfirmedGroupReminders, groupExamsConfirmed, reminderSourceEvents } from "../../lib/reminderSources";
 import { EVENT_REMINDER_TEXT } from "../../lib/labels/eventReminders";
 import {
   FIRED_STORAGE_KEY,
@@ -115,7 +115,17 @@ export function EventReminderWatcher() {
   );
   // Eventi personali + appelli scelti (e chiusura delle iscrizioni) + promemoria autonomi.
   const groupSessions = useGroupExamStore((state) => state.sessions);
-  const sources = useMemo(() => reminderSourceEvents({ events, examPlans, reminders, groupSessions }), [events, examPlans, reminders, groupSessions]);
+  const sources = useMemo(() => {
+    // Calcolato durante il disegno, fuori dal riquadro d'errore dell'effetto: un dato strano non deve far cadere l'app.
+    try {
+      return reminderSourceEvents({ events, examPlans, reminders, groupSessions });
+    } catch {
+      return events;
+    }
+  }, [events, examPlans, reminders, groupSessions]);
+  // Prima della lettura dei gruppi non si sa se un appello scelto c'è ancora o è stato spostato: niente «persi» dalla copia.
+  const groupState = useGroupExamStore(useShallow((state) => ({ ready: state.ready, available: state.available, viewerId: state.viewerId })));
+  const confirmed = groupExamsConfirmed(groupState, getCloudSyncState().session?.user.id);
   // Promemoria con l'app chiusa: le righe sul server seguono eventi e preferenze (solo con un account).
   useEffect(() => {
     if (!cloudConfigured) return undefined;
@@ -178,7 +188,7 @@ export function EventReminderWatcher() {
       // Persi ad app chiusa: solo nella campanella (niente notifica di sistema), i più recenti non ancora
       // avvisati, una volta. Gli altri si ricordano come avvisati, anche dopo un riavvio.
       const fired = readFired();
-      const { show, skip } = splitMissed(missedReminders(sources, now), (key) => firedHere.has(key) || Boolean(fired[key]));
+      const { show, skip } = splitMissed(dropUnconfirmedGroupReminders(missedReminders(sources, now), confirmed), (key) => firedHere.has(key) || Boolean(fired[key]));
       if (skip.length) {
         for (const item of skip) firedHere.add(item.key);
         writeFired(pruneFired({ ...fired, ...Object.fromEntries(skip.map((item) => [item.key, nowMs])) }, nowMs));
@@ -201,7 +211,7 @@ export function EventReminderWatcher() {
     };
     const timers = plan.map((item) => window.setTimeout(() => fire(item), Math.max(0, item.at - Date.now())));
     return () => timers.forEach((id) => window.clearTimeout(id));
-  }, [sources, ready, wake, addNotification]);
+  }, [sources, confirmed, ready, wake, addNotification]);
 
   return null;
 }

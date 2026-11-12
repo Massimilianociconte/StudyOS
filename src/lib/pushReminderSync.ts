@@ -5,7 +5,7 @@
 // arriva solo quando serve. Senza account (ospite) non fa nulla.
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { useGroupExamStore } from "../store/useGroupExamStore";
-import { reminderSourceEvents } from "./reminderSources";
+import { planNeedsGroupPull, reminderSourceEvents } from "./reminderSources";
 import { getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { PUSH_CHANGED_EVENT } from "./pushDevice";
 import {
@@ -78,6 +78,10 @@ export const syncPushRemindersNow = async (): Promise<Result> => {
   if (!readyFor(cloud)) return "waiting";
   const store = useStudyStore.getState();
   if (store.loading || store.locked) return "waiting";
+
+  // Appelli scelti e gruppi non ancora letti: la copia salvata nel piano può essere di un appello tolto o
+  // spostato, e la push partirebbe lo stesso con l'app chiusa. Si aspetta la lettura (la sottoscrizione riprova).
+  if (planNeedsGroupPull(store.examPlans, useGroupExamStore.getState(), userId)) return "waiting";
 
   const now = new Date();
   // Stesse sorgenti del watcher in app: eventi, appelli scelti, promemoria autonomi.

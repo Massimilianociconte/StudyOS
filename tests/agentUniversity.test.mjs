@@ -39,6 +39,8 @@ const teacherOverride = (patch = {}) =>
 
 const seed = (overrides = [teacherOverride()], sessions = []) => {
   useStudyStore.setState({ loading: false, locked: false, persistError: null, subjects: [], exams: [], events: [], examPlans: [] });
+  // Un pull non porta indietro una riga più nuova già in memoria (spec §5.3): ogni prova riparte da zero.
+  useGroupExamStore.getState().reset();
   useGroupExamStore.getState().setSnapshot({ viewerId: "me", groups: [{ id: "g1", name: "Gruppo di bea@gmail.com" }], sessions, overrides });
 };
 
