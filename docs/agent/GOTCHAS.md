@@ -35,6 +35,9 @@
   La guardia valuta comunque i moduli dell'app (import statico di `App`): niente effetti
   con scritture a livello di modulo; `init()` rilegge il timer dal disco perché quello
   letto all'apertura della guardia può essere vecchio.
+- Outbox cloud: senza vault una voce put la cui entità non è in memoria non si scarta
+  se la riga è ancora in IndexedDB: si invia quella (`planOrphanPuts`). Col vault si
+  scarta come prima.
 - unimi.it offusca a volte le email via Cloudflare (`/cdn-cgi/l/email-protection`):
   `parsers.ts` le decodifica prima di hash e parsing, altrimenti ogni check
   segnala pagine "cambiate" inesistenti.

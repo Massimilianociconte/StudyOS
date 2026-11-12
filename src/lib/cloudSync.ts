@@ -13,9 +13,9 @@ import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import { getCloudSyncState, setCloudSyncState } from "./cloudSyncState";
 import { useStudyStore } from "../store/useStudyStore";
 import { COLLECTIONS, ENTITY_TYPES, countEntities, pickCollections, type CollectionKey } from "./collections";
-import { db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
+import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import { isPersistenceHalted, outboxKey, requestPersist, subscribeLocalChanges } from "./persistence";
-import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, type PendingOutbox, type RemoteRow } from "./syncMerge";
+import { chunkBySize, indexCollections, legacySnapshotToRows, planMerge, planOrphanPuts, type PendingOutbox, type RemoteRow } from "./syncMerge";
 import {
   getSession,
   isCloudConfigured,
@@ -220,6 +220,13 @@ const pull = async (userId: string, force = false) => {
   return applied;
 };
 
+/** Righe su disco delle voci in coda senza entità in memoria (senza vault i dati stanno nelle tabelle). */
+const readStoredRows = async (rows: SyncOutboxRow[]) => {
+  const known = rows.filter((row) => (COLLECTIONS as readonly string[]).includes(row.collection));
+  const entries = await Promise.all(known.map(async (row) => [row.key, await collectionTable(row.collection).get(row.entityId)] as const));
+  return new Map<string, unknown>(entries);
+};
+
 const push = async (userId: string) => {
   assertStoreReady();
   const queued = await db.syncOutbox.orderBy("queuedAt").toArray();
@@ -228,27 +235,42 @@ const push = async (userId: string) => {
   const index = indexCollections(pickCollections(useStudyStore.getState()));
   const encoder = new TextEncoder();
 
+  const prepare = (row: SyncOutboxRow, entity: unknown) => {
+    const payload = row.deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? new Date(row.queuedAt / 1000).toISOString() } : entity;
+    const push: PushRow = { entity_type: row.entityType, entity_id: row.entityId, payload, deleted: row.deleted };
+    return { row, push, size: encoder.encode(JSON.stringify(push)).length };
+  };
   const orphans: SyncOutboxRow[] = [];
   const prepared = queued.flatMap((row) => {
     const entity = index[row.collection]?.get(row.entityId);
     // Una voce "put" senza entità in memoria non diventa MAI un'eliminazione cloud: le
-    // eliminazioni reali arrivano dall'outbox con deleted=true. La voce orfana viene scartata.
+    // eliminazioni reali arrivano dall'outbox con deleted=true.
     if (!row.deleted && !entity) {
       orphans.push(row);
       return [];
     }
-    const payload = row.deleted ? { id: row.entityId, deletedAt: row.deletedAt ?? new Date(row.queuedAt / 1000).toISOString() } : entity;
-    const push: PushRow = { entity_type: row.entityType, entity_id: row.entityId, payload, deleted: row.deleted };
-    return [{ row, push, size: encoder.encode(JSON.stringify(push)).length }];
+    return [prepare(row, entity)];
   });
 
   if (orphans.length) {
-    await db.transaction("rw", db.syncOutbox, async () => {
-      for (const row of orphans) {
-        const current = await db.syncOutbox.get(row.key);
-        if (current && current.queuedAt === row.queuedAt && !current.deleted) await db.syncOutbox.delete(row.key);
-      }
-    });
+    // Senza vault la riga può essere ancora su disco (scritta in un'altra scheda): si invia quella.
+    // Si scartano solo le voci senza riga, e col vault (una sola scheda) come prima.
+    const vault = useStudyStore.getState().settings.security.mode === "vault";
+    const stored = vault ? new Map<string, unknown>() : await readStoredRows(orphans);
+    assertStoreReady();
+    const { send, drop } = planOrphanPuts(orphans, stored, vault);
+    if (send.length) {
+      prepared.push(...send.map((item) => prepare(item.row, item.entity)));
+      prepared.sort((a, b) => a.row.queuedAt - b.row.queuedAt);
+    }
+    if (drop.length) {
+      await db.transaction("rw", db.syncOutbox, async () => {
+        for (const row of drop) {
+          const current = await db.syncOutbox.get(row.key);
+          if (current && current.queuedAt === row.queuedAt && !current.deleted) await db.syncOutbox.delete(row.key);
+        }
+      });
+    }
   }
 
   let sent = 0;

@@ -182,3 +182,24 @@ export const chunkBySize = <T>(items: T[], sizeOf: (item: T) => number, maxBytes
   if (current.length) batches.push(current);
   return batches;
 };
+
+/**
+ * Voci "put" in coda la cui entità non è in memoria (es. creata in un'altra scheda o finestra).
+ * Senza vault la riga può essere ancora su disco: si invia quella, invece di perdere la modifica
+ * mentre il badge dice «Sincronizzato». Col vault (una sola scheda: non succede) o se la riga non
+ * c'è più, la voce si scarta: una voce put non diventa mai un'eliminazione cloud.
+ * `stored`: riga letta da IndexedDB per chiave outbox.
+ */
+export const planOrphanPuts = <T extends { key: string; entityId: string }>(
+  orphans: T[],
+  stored: ReadonlyMap<string, unknown>,
+  vault: boolean
+): { send: Array<{ row: T; entity: SyncableEntity }>; drop: T[] } => {
+  const plan: { send: Array<{ row: T; entity: SyncableEntity }>; drop: T[] } = { send: [], drop: [] };
+  for (const row of orphans) {
+    const entity = vault ? undefined : stored.get(row.key);
+    if (isEntity(entity, row.entityId)) plan.send.push({ row, entity });
+    else plan.drop.push(row);
+  }
+  return plan;
+};
