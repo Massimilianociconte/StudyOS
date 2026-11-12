@@ -10,6 +10,7 @@
     "lint": "tsc -b --noEmit",
     "icons": "node scripts/generate-icons.mjs",
     "test": "node --import ./scripts/lib/register-ts.mjs --test tests/*.test.mjs",
+    "e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "agent": "node --import ./scripts/lib/register-ts.mjs scripts/agent.ts",
     "agent:stdio": "node --import ./scripts/lib/register-ts.mjs scripts/agent.ts --stdio",
     "barb:sync": "node scripts/barb.mjs sync",
@@ -39,6 +40,7 @@
     "zustand": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",

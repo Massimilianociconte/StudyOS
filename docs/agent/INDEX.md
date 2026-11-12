@@ -9,4 +9,5 @@
 - Condivisione granulare tra account (decisione e design) → [decisions/2026-11-10-condivisione-righe-originali.md](decisions/2026-11-10-condivisione-righe-originali.md), [../plans/2026-11-10-sharing-design.md](../plans/2026-11-10-sharing-design.md)
 - Ricerca di persone, inviti all'account e notifiche push (decisione e design) → [decisions/2026-11-11-push-pg-net-worker.md](decisions/2026-11-11-push-pg-net-worker.md), [../plans/2026-11-11-people-search-push-design.md](../plans/2026-11-11-people-search-push-design.md); ordine degli script SQL e passi per le push → [../../supabase/README.md](../../supabase/README.md); un solo percorso per gli inviti ricevuti (per account) → [../groups-sync.md](../groups-sync.md) e [GOTCHAS.md](GOTCHAS.md)
 - Agenti MCP (ChatGPT, Claude, client locali, route `/push` del Worker) → [../agent-mcp.md](../agent-mcp.md)
+- Prove end-to-end con due account sullo stack Supabase locale (`npm run e2e`) → [../../tests/e2e/README.md](../../tests/e2e/README.md)
 - Domande aperte → [OPENQUESTIONS.md](OPENQUESTIONS.md)
