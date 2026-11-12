@@ -46,8 +46,9 @@ export const UI_TEXT = {
   dueOptional: "Entro quando? (facoltativa)"
 } as const;
 
-/** Ricerca globale nella barra in alto. */
+/** Ricerca globale nella barra in alto. Sui telefoni il segnaposto è corto: il testo intero è nel nome accessibile. */
 export const SEARCH_TEXT = {
+  placeholder: "Cerca…",
   placeholderWide: "Cerca in StudyOS: attività, eventi, materie, file…",
   aria: "Cerca in StudyOS: attività, eventi, materie, file",
   clear: "Cancella la ricerca",

@@ -81,7 +81,7 @@ export default function SubjectStudyStats({ subject }: { subject: Subject }) {
             />
             <div className="mt-3 h-44" role="img" aria-label={SUBJECT_STUDY_TEXT.trendAria(SUBJECT_STUDY_UNIT_LABEL[unit].toLowerCase(), formatHours(trendMinutes))}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={trend} margin={{ left: -18, right: 4, top: 4 }}>
+                <BarChart data={trend} margin={{ left: -18, right: 4, top: 4 }} accessibilityLayer={false}>
                   <CartesianGrid stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="label" stroke="var(--muted)" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={4} tickLine={false} />
                   <YAxis stroke="var(--muted)" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />

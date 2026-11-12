@@ -219,7 +219,7 @@ export function StatsView() {
           {total ? (
             <div className="h-64" role="img" aria-label={STATS_TEXT.trendAria(rangeLabel(range), formatHours(total))}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={trend} margin={{ left: -18, right: 4, top: 4 }}>
+                <BarChart data={trend} margin={{ left: -18, right: 4, top: 4 }} accessibilityLayer={false}>
                   <CartesianGrid stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="label" stroke="var(--muted)" tick={{ fontSize: 11 }} interval="preserveStartEnd" minTickGap={4} tickLine={false} />
                   <YAxis stroke="var(--muted)" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -244,8 +244,8 @@ export function StatsView() {
             <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
               <div className="mx-auto h-44 w-44 sm:h-48 sm:w-full" role="img" aria-label={STATS_TEXT.bySubjectAria(formatHours(total))}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={bySubject} dataKey="minutes" nameKey="name" outerRadius="95%" innerRadius="58%" paddingAngle={3} stroke="none">
+                  <PieChart accessibilityLayer={false}>
+                    <Pie data={bySubject} dataKey="minutes" nameKey="name" outerRadius="95%" innerRadius="58%" paddingAngle={3} stroke="none" rootTabIndex={-1}>
                       {bySubject.map((entry) => (
                         <Cell key={entry.id ?? "none"} fill={entry.color} />
                       ))}

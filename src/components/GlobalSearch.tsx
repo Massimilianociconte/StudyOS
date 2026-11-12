@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { AnimatePresence, m } from "framer-motion";
@@ -361,6 +361,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
   const showDropdown = open && query.trim().length > 0;
   const trimmed = query.trim();
   const listOpen = showDropdown && results.length > 0;
+  const wide = useWideSearch();
 
   // Sui telefoni il campo è stretto: il pannello si allarga a tutto lo schermo (16 px di margine).
   const [box, setBox] = useState<{ left: number; width: number } | null>(null);
@@ -397,7 +398,7 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
         onFocus={() => setOpen(true)}
         onKeyDown={handleKey}
         className={`${inputClass} pl-10 pr-10`}
-        placeholder={SEARCH_TEXT.placeholderWide}
+        placeholder={wide ? SEARCH_TEXT.placeholderWide : SEARCH_TEXT.placeholder}
         role="combobox"
         aria-label={SEARCH_TEXT.aria}
         aria-autocomplete="list"
@@ -508,4 +509,19 @@ export function GlobalSearch({ onJump }: { onJump: (view: AppView) => void }) {
       </AnimatePresence>
     </div>
   );
+}
+
+// A 768 px il campo è largo ≈ 344 px (testo utile ≈ 264): il segnaposto intero entra da 1024 in su.
+const WIDE_SEARCH_QUERY = "(min-width: 1024px)";
+const subscribeWide = (onChange: () => void) => {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => undefined;
+  const media = window.matchMedia(WIDE_SEARCH_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+};
+const readWide = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(WIDE_SEARCH_QUERY).matches;
+
+/** Campo abbastanza largo per il segnaposto completo (sotto i 1024 px resta «Cerca…»). */
+function useWideSearch() {
+  return useSyncExternalStore(subscribeWide, readWide, () => false);
 }
