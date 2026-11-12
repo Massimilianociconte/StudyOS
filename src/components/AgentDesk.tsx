@@ -17,7 +17,7 @@ import {
   setAgentPolicyChoice,
   useAgentLink
 } from "../lib/agentLink";
-import { agentDeskStatus, remoteConnectorView, type DeskStatus } from "../lib/agentDesk";
+import { agentDeskStatus, remoteConnectorView, type DeskStatus, type RemoteRevokeResult } from "../lib/agentDesk";
 import { readSavedHub } from "../lib/agentLocal";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "../lib/cloudSyncState";
 import { agentAccountLabels, agentCloudLabels } from "../lib/labels";
@@ -177,12 +177,14 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
   const link = useAgentLink();
   const signedIn = useSignedIn();
   const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<RemoteRevokeResult | null>(null);
   const text = AGENT_DESK_TEXT.remote;
   const view = remoteConnectorView({ cloud: cloudConfigured, hub, remote: link.remote, displayName: accountName });
   const revoke = async () => {
     setBusy(true);
+    setOutcome(null);
     try {
-      await revokeRemoteConnector();
+      setOutcome(await revokeRemoteConnector());
     } finally {
       setBusy(false);
     }
@@ -211,9 +213,21 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
         <p className="text-sm font-bold text-[var(--muted)]">{view.kind === "noCloud" ? agentCloudLabels.noCloud : view.kind === "off" ? text.off : text.noHub}</p>
       )}
       {cloudConfigured && (paired || signedIn) ? (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="soft" icon="LogOut" disabled={busy} onClick={() => void revoke()}>{text.revoke}</Button>
-        </div>
+        outcome?.kind === "failed" ? (
+          <div className="grid grid-cols-1 gap-2">
+            <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{outcome.text}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="soft" icon="RotateCcw" disabled={busy} onClick={() => void revoke()}>{text.retry}</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {outcome ? <p role="status" className="rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">{outcome.text}</p> : null}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="soft" icon="LogOut" disabled={busy} onClick={() => void revoke()}>{text.revoke}</Button>
+            </div>
+          </>
+        )
       ) : null}
     </section>
   );

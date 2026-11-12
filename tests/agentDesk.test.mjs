@@ -6,6 +6,7 @@ import {
   pairFirstError,
   parseRevokeOutcome,
   remoteConnectorView,
+  remoteRevokeResult,
   revokeNotice,
   revokePlan
 } from "../src/lib/agentDesk.ts";
@@ -120,4 +121,28 @@ test("connettore remoto: indirizzo dal nome del profilo, o il motivo per cui man
   assert.deepEqual(remoteConnectorView({ ...base, remote: "off" }), { kind: "off" });
   assert.deepEqual(remoteConnectorView({ ...base, hub: null }), { kind: "noHub" });
   assert.deepEqual(remoteConnectorView({ ...base, cloud: false, hub: null }), { kind: "noCloud" });
+});
+
+test("scollega il connettore remoto: un errore non diventa «nessun connettore collegato»", () => {
+  const ok = { hubRevoked: 0, cloudRevoked: 0, hubFailed: false, cloudFailed: false };
+  assert.deepEqual(remoteRevokeResult({ ...ok, cloudRevoked: 1 }), { kind: "done", text: AGENT_DESK_TEXT.remote.revoked });
+  assert.deepEqual(remoteRevokeResult({ ...ok, hubRevoked: 2 }), { kind: "done", text: AGENT_DESK_TEXT.remote.revoked });
+  assert.deepEqual(remoteRevokeResult(ok), { kind: "none", text: AGENT_DESK_TEXT.remote.none });
+  // Il cloud non ha risposto: il permesso può essere ancora attivo, anche se l'hub ha tolto i suoi token.
+  for (const failed of [
+    { ...ok, cloudFailed: true },
+    { ...ok, cloudFailed: true, hubRevoked: 1 },
+    { ...ok, hubFailed: true },
+    { ...ok, hubFailed: true, cloudFailed: true }
+  ]) {
+    const result = remoteRevokeResult(failed);
+    assert.equal(result.kind, "failed", JSON.stringify(failed));
+    assert.equal(result.text, AGENT_DESK_TEXT.remote.failed);
+  }
+  // Hub giù ma permesso tolto nel cloud: basta a fermare il connettore.
+  assert.equal(remoteRevokeResult({ ...ok, hubFailed: true, cloudRevoked: 1 }).kind, "done");
+  // Parole semplici, niente dettagli tecnici, e la frase non dice che non c'era niente da togliere.
+  assert.doesNotMatch(AGENT_DESK_TEXT.remote.failed, /Nessun|supabase|rpc|hub/i);
+  assert.match(AGENT_DESK_TEXT.remote.failed, /riprova/i);
+  assert.equal(AGENT_DESK_TEXT.remote.retry, "Riprova");
 });

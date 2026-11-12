@@ -43,7 +43,10 @@ export const AGENT_DESK_TEXT = {
     revoke: "Scollega il connettore remoto",
     revoked:
       "Connettore remoto scollegato: gli assistenti non possono più usare questo account con l'app chiusa. Per ricollegarlo serve un nuovo «Consenti».",
-    none: "Nessun connettore remoto risultava collegato a questo account."
+    none: "Nessun connettore remoto risultava collegato a questo account.",
+    /** La revoca non è arrivata: il connettore remoto può essere ancora collegato. */
+    failed: "Non è stato possibile scollegare il connettore remoto: potrebbe essere ancora collegato. Controlla la connessione e riprova.",
+    retry: "Riprova"
   },
 
   /** Toglie solo ciò che questo browser ha approvato (l'hub lo riconosce dal suo segreto, non dal nome). */

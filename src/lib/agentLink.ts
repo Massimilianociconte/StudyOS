@@ -5,7 +5,7 @@ import { decideToolAction, normalizeAgentPolicy, type AgentPolicy, type AgentRis
 import type { AgentCallResult, AuditEntry } from "../agent/types";
 import { appendAudit, readAgentToken, readAudit, readBrowserId, readBrowserSecret, readSavedHub, readStoredPolicy, writeAgentToken, writeBrowserSecret, writeSavedHub, writeStoredPolicy } from "./agentLocal";
 import { createId, nowIso } from "./id";
-import { hubRevokesPerBrowser, pairFirstError, parseRevokeOutcome, revokeNotice, revokePlan, type RevokeScope } from "./agentDesk";
+import { hubRevokesPerBrowser, pairFirstError, parseRevokeOutcome, remoteRevokeResult, revokeNotice, revokePlan, type RemoteRevokeResult, type RevokeScope } from "./agentDesk";
 import { agentCloudLabels } from "./labels";
 import { AGENT_DESK_TEXT } from "./labels/agents";
 import { loadOnce } from "./loadOnce";
@@ -550,13 +550,16 @@ export const decideAgentConsent = (approve: boolean, scopes: string[]) => {
   consentQueue[0]?.decide({ approve, scopes: granted });
 };
 
-/** Permessi cloud dei connettori remoti di questo account (serve l'accesso fatto). */
-const revokeCloudGrants = async () => {
+/**
+ * Permessi cloud dei connettori remoti di questo account (serve l'accesso fatto). `failed`: il cloud
+ * non ha risposto, i permessi possono essere ancora attivi; mai da leggere come «niente da togliere».
+ */
+const revokeCloudGrants = async (): Promise<{ count: number; failed: boolean }> => {
   try {
     const { revokeAgentGrants } = await import("./agentCloud");
-    return await revokeAgentGrants();
+    return { count: await revokeAgentGrants(), failed: false };
   } catch {
-    return 0;
+    return { count: 0, failed: true };
   }
 };
 
@@ -587,12 +590,12 @@ const ensureBrowserSecret = async () => {
 export const revokeAgentAccess = async (scope: Exclude<RevokeScope, "cloud"> = "browser"): Promise<string | null> => {
   const token = readAgentToken();
   if (!token) {
-    const count = await revokeCloudGrants();
-    if (count) {
+    const cloud = await revokeCloudGrants();
+    if (cloud.count) {
       refresh({ error: "", notice: AGENT_DESK_TEXT.remote.revoked });
       return null;
     }
-    const error = pairFirstError(localProgram());
+    const error = cloud.failed ? AGENT_DESK_TEXT.remote.failed : pairFirstError(localProgram());
     refresh({ error, notice: "" });
     return error;
   }
@@ -607,8 +610,9 @@ export const revokeAgentAccess = async (scope: Exclude<RevokeScope, "cloud"> = "
       return error;
     }
     const data = await postJson("/oauth/revoke", plan.body);
-    const count = await revokeCloudGrants();
-    refresh({ error: "", notice: revokeNotice(parseRevokeOutcome(data, scope), count) });
+    const cloud = await revokeCloudGrants();
+    // L'hub ha tolto i suoi; se il cloud non ha risposto lo si dice, senza contarlo come «niente».
+    refresh({ error: cloud.failed ? AGENT_DESK_TEXT.remote.failed : "", notice: revokeNotice(parseRevokeOutcome(data, scope), cloud.count) });
     return null;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Revoca non riuscita.";
@@ -630,23 +634,22 @@ export const checkScopedRevoke = async (): Promise<"scoped" | "allOnly" | "down"
 /**
  * «Scollega il connettore remoto»: i permessi remoti di questo account nel cloud e, con il browser
  * collegato, i token remoti dell'hub approvati da questo browser. Il connettore principale resta.
+ * L'esito lo mostra il riquadro del connettore remoto, con «Riprova» se non è riuscita.
  */
-export const revokeRemoteConnector = async () => {
+export const revokeRemoteConnector = async (): Promise<RemoteRevokeResult> => {
   const token = readAgentToken();
   let hubRevoked = 0;
-  let error = "";
+  let hubFailed = false;
   // Un hub di prima della 1.6.0 scollegherebbe tutti: lì basta il permesso tolto nel cloud.
   const plan = token ? revokePlan({ scope: "cloud", hubVersion, token, secret: await ensureBrowserSecret() }) : null;
   if (plan?.kind === "send") {
     try {
       const data = await postJson("/oauth/revoke", plan.body);
       hubRevoked = parseRevokeOutcome(data, "cloud").revoked;
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Revoca non riuscita.";
+    } catch {
+      hubFailed = true;
     }
   }
-  const count = await revokeCloudGrants();
-  if (hubRevoked > 0 || count > 0) refresh({ error: "", notice: revokeNotice({ scope: "cloud", revoked: hubRevoked, legacy: 0 }, count) });
-  else if (error) refresh({ error, notice: "" });
-  else refresh({ error: "", notice: AGENT_DESK_TEXT.remote.none });
+  const cloud = await revokeCloudGrants();
+  return remoteRevokeResult({ hubRevoked, cloudRevoked: cloud.count, hubFailed, cloudFailed: cloud.failed });
 };

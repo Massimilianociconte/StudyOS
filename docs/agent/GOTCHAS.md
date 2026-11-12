@@ -318,7 +318,9 @@
 - Connettore remoto, permessi: il segreto del permesso vive solo nell'hub (stato del Durable Object,
   legato al token OAuth); il database ne tiene l'hash. «Revoca gli accessi di questo browser» e
   «Scollega il connettore remoto» revocano tutti i permessi dell'account
-  (`studyos_revoke_agent_grants`), anche a browser scollegato.
+  (`studyos_revoke_agent_grants`), anche a browser scollegato. Un errore del cloud non è mai «niente
+  da togliere»: `revokeCloudGrants` lo riporta (`failed`) e `remoteRevokeResult` mostra il fallimento
+  con «Riprova», perché il permesso può essere ancora attivo.
 - Revoca per browser (hub 1.6.0): mai attribuire una revoca al nome del profilo o all'accountKey,
   che chiunque con la chiave può copiare o cambiare. L'hub dà a ogni browser un segreto casuale di
   256 bit (`/pair`, o `/bridge/secret` per chi era collegato prima, chiesto da solo all'avvio) e

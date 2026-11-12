@@ -75,6 +75,27 @@ export const revokeNotice = (outcome: RevokeOutcome, cloudGrants: number): strin
   return [...parts, agentCloudLabels.revoked(cloudGrants), AGENT_DESK_TEXT.browserStays].filter(Boolean).join(" ");
 };
 
+export interface RemoteRevokeResult {
+  kind: "done" | "none" | "failed";
+  text: string;
+}
+
+/**
+ * Esito di «Scollega il connettore remoto». Un errore non è mai «nessun connettore collegato»: se il
+ * cloud non risponde il permesso può essere ancora attivo; se non risponde l'hub e nel cloud non è
+ * stato tolto niente, non si sa. Con il permesso tolto nel cloud il connettore è fermo comunque.
+ */
+export const remoteRevokeResult = ({ hubRevoked, cloudRevoked, hubFailed, cloudFailed }: {
+  hubRevoked: number;
+  cloudRevoked: number;
+  hubFailed: boolean;
+  cloudFailed: boolean;
+}): RemoteRevokeResult => {
+  if (cloudFailed || (hubFailed && cloudRevoked === 0)) return { kind: "failed", text: AGENT_DESK_TEXT.remote.failed };
+  if (hubRevoked > 0 || cloudRevoked > 0) return { kind: "done", text: AGENT_DESK_TEXT.remote.revoked };
+  return { kind: "none", text: AGENT_DESK_TEXT.remote.none };
+};
+
 /** Revoca chiesta senza browser collegato: «chiave» sul sito pubblicato, «codice» con npm run agent. */
 export const pairFirstError = (local: boolean) => AGENT_DESK_TEXT.pairFirst(local);
 
