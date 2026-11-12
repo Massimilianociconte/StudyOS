@@ -68,6 +68,7 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
   const removedRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const wasDeleted = useRef(false);
+  const wasEditing = useRef(false);
 
   // Un'altra nota (o la chiusura) riparte dalla lettura.
   useEffect(() => {
@@ -117,12 +118,16 @@ export function NoteDrawer({ noteId, onClose, context }: { noteId: string | null
   const plan = shown && !isContext ? openItemPlan(shown.linkedEntityType, shown.linkedEntityId, data) : null;
   const deleted = Boolean(removed && !note);
 
-  // «Elimina» sparisce con la nota: il focus va su «Annulla»; dopo «Annulla» torna su «Modifica».
+  // Il pulsante premuto sparisce: dopo «Elimina» il focus va su «Annulla»; dopo «Annulla», «Salva nota»
+  // o «Annulla modifiche» torna su «Modifica». Si aspetta la fine del salvataggio: un pulsante
+  // disattivato non prende il focus.
   useEffect(() => {
+    if (busy) return;
     if (deleted) removedRef.current?.querySelector("button")?.focus({ preventScroll: true });
-    else if (wasDeleted.current) actionsRef.current?.querySelector<HTMLButtonElement>("button:last-of-type")?.focus({ preventScroll: true });
+    else if (!editing && (wasDeleted.current || wasEditing.current)) actionsRef.current?.querySelector<HTMLButtonElement>("button:last-of-type")?.focus({ preventScroll: true });
     wasDeleted.current = deleted;
-  }, [deleted]);
+    wasEditing.current = editing;
+  }, [deleted, busy, editing]);
 
   const footer = !shown ? undefined : deleted ? (
     <div className="flex justify-end">

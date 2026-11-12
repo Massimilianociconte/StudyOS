@@ -334,8 +334,8 @@ function GoalDrawer({
           <Button variant="danger" icon="Trash2" onClick={onDelete} aria-label={goal ? GOALS_TEXT.removeAria(goal.title) : undefined}>
             {GOALS_TEXT.remove}
           </Button>
-          <span className="flex-1" />
-          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={!draft.title.trim()}>
+          {/* A destra anche quando, sui telefoni, va a capo. */}
+          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={!draft.title.trim()} className="ml-auto">
             Salva modifiche
           </Button>
         </div>
