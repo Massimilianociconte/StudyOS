@@ -1,0 +1,81 @@
+// Correzioni del gruppo al catalogo BARB: campi permessi, controllo (specchio di
+// studyos_catalog_override_clean) e valori effettivi (ufficiale + correzione del gruppo).
+// Il catalogo ufficiale resta com'è: la correzione vale solo per chi è nel gruppo.
+import type { CatalogOverride, CatalogTargetKind, CleanResult } from "./groupExams";
+import { normalizeCourseName } from "./groupExams";
+import { institutionalEmail, onlyInstitutionalEmails } from "./institutionalEmail";
+import { GROUP_EXAM_FIELD_ERROR } from "./labels";
+
+export const CATALOG_OVERRIDE_FIELDS: Record<CatalogTargetKind, readonly string[]> = {
+  teacher: ["officeHours", "officeHoursPlace", "office", "phone", "email", "website", "note"],
+  course: ["room", "building", "site", "lessonTimes", "note"],
+  schedule_rule: ["room", "building", "site", "note"],
+  contact: ["label", "value", "url", "note"]
+};
+
+const MAX_LENGTH: Record<string, number> = { phone: 40, note: 500, officeHours: 300, lessonTimes: 300, value: 300, url: 300, website: 300 };
+const PHONE = /^[0-9 +()./-]{3,40}$/;
+const LINK = /^(https?:\/\/|mailto:)[^\s<>"]+$/i;
+
+/** Campi puliti: vuoti e null tolti, spazi compattati, email in minuscolo; errori con gli stessi testi del server. */
+export const cleanOverrideFields = (kind: CatalogTargetKind, input: unknown): CleanResult<Record<string, string>> => {
+  const allowed = CATALOG_OVERRIDE_FIELDS[kind];
+  if (!allowed) return { ok: false, field: "targetKind", message: GROUP_EXAM_FIELD_ERROR.overrideKind };
+  if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, field: "fields", message: GROUP_EXAM_FIELD_ERROR.overrideFields };
+  const out: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(input as Record<string, unknown>)) {
+    if (!allowed.includes(key)) return { ok: false, field: key, message: GROUP_EXAM_FIELD_ERROR.overrideUnknown };
+    if (raw === null || raw === undefined) continue;
+    if (typeof raw !== "string") return { ok: false, field: key, message: GROUP_EXAM_FIELD_ERROR.value };
+    let value = raw.replace(/\s+/g, " ").trim();
+    if (!value) continue;
+    const max = MAX_LENGTH[key] ?? 160;
+    if (value.length > max) return { ok: false, field: key, message: GROUP_EXAM_FIELD_ERROR.overrideTooLong(max) };
+    if (key === "email") {
+      const email = institutionalEmail(value);
+      if (!email) return { ok: false, field: "email", message: GROUP_EXAM_FIELD_ERROR.overrideEmail };
+      value = email;
+    } else if (key === "phone" && !PHONE.test(value)) {
+      return { ok: false, field: "phone", message: GROUP_EXAM_FIELD_ERROR.overridePhone };
+    } else if ((key === "website" || key === "url") && !LINK.test(value)) {
+      return { ok: false, field: key, message: GROUP_EXAM_FIELD_ERROR.overrideUrl };
+    } else if (key === "website" && /^mailto:/i.test(value)) {
+      return { ok: false, field: "website", message: GROUP_EXAM_FIELD_ERROR.overrideWebsite };
+    }
+    if (!onlyInstitutionalEmails(value)) return { ok: false, field: key, message: GROUP_EXAM_FIELD_ERROR.overrideEmail };
+    out[key] = value;
+  }
+  if (!Object.keys(out).length) return { ok: false, field: "fields", message: GROUP_EXAM_FIELD_ERROR.overrideEmpty };
+  return { ok: true, value: out };
+};
+
+/** Id stabile di un contatto ufficiale (i contatti del catalogo non hanno id): `contatto:segreteria-studenti`. */
+export const contactTargetId = (label: string) => `contatto:${normalizeCourseName(label).replaceAll(" ", "-")}`.slice(0, 160);
+
+/** Regola d'orario di un corso: gli id delle regole valgono dentro il corso. */
+export const scheduleRuleTargetId = (courseId: string, ruleId: string) => `${courseId}:${ruleId}`.slice(0, 160);
+
+/** Contatto aggiunto dal gruppo (non c'è nel catalogo). */
+export const newContactTargetId = (id: string) => `nuovo:${id}`.slice(0, 160);
+
+/** Correzioni vive di un elemento: prima quella del gruppo scelto, poi le altre (una per gruppo). */
+export const overridesOf = (overrides: readonly CatalogOverride[], kind: CatalogTargetKind, targetId: string, groupId?: string) =>
+  overrides
+    .filter((item) => !item.deletedAt && item.targetKind === kind && item.targetId === targetId)
+    .sort((a, b) => Number(b.groupId === groupId) - Number(a.groupId === groupId) || b.updatedAt.localeCompare(a.updatedAt));
+
+/**
+ * Valori effettivi: quelli ufficiali con sopra la correzione del gruppo `groupId` (se c'è).
+ * `changed` elenca i campi corretti, così l'interfaccia mostra «corretto dal gruppo».
+ */
+export const withOverride = <T extends Record<string, unknown>>(official: T, override: CatalogOverride | undefined) => {
+  if (!override) return { value: official, changed: [] as string[], override: undefined };
+  const value: Record<string, unknown> = { ...official };
+  const changed: string[] = [];
+  for (const [key, text] of Object.entries(override.fields)) {
+    if (key === "note") continue;
+    if (value[key] !== text) changed.push(key);
+    value[key] = text;
+  }
+  return { value: value as T, changed, override };
+};
