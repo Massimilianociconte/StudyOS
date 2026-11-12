@@ -530,11 +530,26 @@ begin
   );
   if jsonb_typeof(new.payload) = 'object'
      and public.studyos_item_stamp(new.payload, new.deleted, now()) > now() then
-    -- Stesso formato del client: ISO UTC con millisecondi.
+    -- Un timbro nel futuro scende all'ora del server, ma mai sotto «timbro salvato + 1 ms»: con
+    -- l'orologio del proprietario avanti la versione salvata è nel futuro, e una modifica accettata
+    -- (push_shared_rows) riportata a now() risultava più vecchia sui suoi dispositivi, che la
+    -- ricoprivano con la loro copia. Solo verso il basso (least): la stessa scrittura ripetuta dopo
+    -- una risposta persa tiene il suo timbro. Stesso formato del client: ISO UTC con millisecondi.
     new.payload := jsonb_set(
       new.payload,
       case when new.deleted then '{deletedAt}' else '{updatedAt}' end::text[],
-      to_jsonb(to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      to_jsonb(to_char(
+        least(
+          public.studyos_item_stamp(new.payload, new.deleted, now()),
+          greatest(
+            now(),
+            case when tg_op = 'UPDATE' then
+              public.studyos_item_stamp(old.payload, old.deleted, old.updated_at) + interval '1 millisecond'
+            end
+          )
+        ) at time zone 'utc',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ))
     );
   end if;
   -- I tombstone hanno già la forma { id, deletedAt } (policy e push_shared_rows).
@@ -1090,6 +1105,62 @@ $$;
 -- Scritture di chi riceve sulle righe del proprietario, con la regola LWW di push_studyos_rows.
 -- Ogni riga viene controllata prima di scrivere: una riga non consentita torna "denied" e non
 -- fa fallire il batch. RLS resta attiva (SECURITY INVOKER) come garanzia finale.
+-- Scrittura di chi riceve più recente della riga salvata. Il timbro salvato conta al massimo fino
+-- all'ora del server in cui è stato scritto (`updated_at`): con l'orologio del proprietario avanti
+-- la sua versione aveva un timbro nel futuro e ogni modifica di chi riceve, fatta dopo, perdeva
+-- come "stale" finché l'ora vera non lo superava.
+create or replace function public.studyos_recipient_newer(
+  p_payload jsonb,
+  p_deleted boolean,
+  p_current jsonb,
+  p_current_deleted boolean,
+  p_current_updated timestamptz
+)
+returns boolean
+language sql
+stable
+set search_path = pg_catalog
+as $$
+  select public.studyos_item_stamp(p_payload, p_deleted, now())
+    > least(public.studyos_item_stamp(p_current, p_current_deleted, p_current_updated), p_current_updated)
+$$;
+
+-- Payload accettato con un timbro che supera quello salvato: se il suo è più vecchio (caso sopra)
+-- diventa «timbro salvato + 1 ms», così anche i dispositivi del proprietario la vedono più recente
+-- della loro copia e non la ricoprono.
+create or replace function public.studyos_recipient_stamped(
+  p_payload jsonb,
+  p_deleted boolean,
+  p_current jsonb,
+  p_current_deleted boolean,
+  p_current_updated timestamptz
+)
+returns jsonb
+language sql
+stable
+set search_path = pg_catalog
+as $$
+  select case
+    when public.studyos_item_stamp(p_payload, p_deleted, now())
+      > public.studyos_item_stamp(p_current, p_current_deleted, p_current_updated)
+      then p_payload
+    else jsonb_set(
+      p_payload,
+      case when p_deleted then '{deletedAt}' else '{updatedAt}' end::text[],
+      to_jsonb(to_char(
+        (public.studyos_item_stamp(p_current, p_current_deleted, p_current_updated) + interval '1 millisecond')
+          at time zone 'utc',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ))
+    )
+  end
+$$;
+
+revoke all on function public.studyos_recipient_newer(jsonb, boolean, jsonb, boolean, timestamptz) from public;
+revoke all on function public.studyos_recipient_stamped(jsonb, boolean, jsonb, boolean, timestamptz) from public;
+grant execute on function public.studyos_recipient_newer(jsonb, boolean, jsonb, boolean, timestamptz) to authenticated;
+grant execute on function public.studyos_recipient_stamped(jsonb, boolean, jsonb, boolean, timestamptz) to authenticated;
+
 create or replace function public.push_shared_rows(p_owner_id uuid, p_client_id text, p_rows jsonb)
 returns table (entity_type text, entity_id text, accepted boolean, reason text)
 language plpgsql
@@ -1138,20 +1209,29 @@ begin
 
     if v_deleted then
       v_payload := jsonb_build_object('id', v_id, 'deletedAt', coalesce(v_payload->>'deletedAt', v_payload->>'updatedAt'));
-      if not v_exists or v_current.deleted
+      if (not v_exists or v_current.deleted)
+         and public.studyos_type_access(p_owner_id, v_type) = 'edit' then
+        -- Già eliminato o mai esistito: per chi può modificare quel tipo l'eliminazione è già fatta
+        -- (risposta persa, secondo dispositivo). Non "denied", che diceva «permesso tolto».
+        v_reason := 'gone';
+      elsif not v_exists or v_current.deleted
          or public.studyos_item_access(p_owner_id, v_type, v_current.payload) is distinct from 'edit' then
         v_reason := 'denied';
       else
         update public.studyos_items as current_row
-        set payload = v_payload, deleted = true, encrypted = false, client_id = p_client_id
+        set payload = public.studyos_recipient_stamped(v_payload, true, current_row.payload, current_row.deleted, current_row.updated_at),
+          deleted = true, encrypted = false, client_id = p_client_id
         where current_row.user_id = p_owner_id and current_row.entity_type = v_type and current_row.entity_id = v_id
-          and public.studyos_item_stamp(v_payload, true, now())
-            > public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+          and public.studyos_recipient_newer(v_payload, true, current_row.payload, current_row.deleted, current_row.updated_at)
         returning true into v_applied;
         if not coalesce(v_applied, false) then
           v_reason := 'stale';
         end if;
       end if;
+    elsif v_exists and v_current.deleted
+       and public.studyos_type_access(p_owner_id, v_type) = 'edit' then
+      -- Modifica di un elemento che il proprietario ha eliminato nel frattempo.
+      v_reason := 'gone';
     elsif v_payload is null
        or public.studyos_item_access(p_owner_id, v_type, v_payload) is distinct from 'edit'
        or (v_exists and (v_current.deleted
@@ -1159,11 +1239,17 @@ begin
       v_reason := 'denied';
     elsif v_exists then
       update public.studyos_items as current_row
-      set payload = v_payload, deleted = false, encrypted = false, client_id = p_client_id
+      set payload = case
+          when public.studyos_item_stamp(v_payload, false, now())
+              = public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+            and v_payload = current_row.payload
+            then v_payload
+          else public.studyos_recipient_stamped(v_payload, false, current_row.payload, current_row.deleted, current_row.updated_at)
+        end,
+        deleted = false, encrypted = false, client_id = p_client_id
       where current_row.user_id = p_owner_id and current_row.entity_type = v_type and current_row.entity_id = v_id
         and (
-          public.studyos_item_stamp(v_payload, false, now())
-            > public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+          public.studyos_recipient_newer(v_payload, false, current_row.payload, current_row.deleted, current_row.updated_at)
           or (
             public.studyos_item_stamp(v_payload, false, now())
               = public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)

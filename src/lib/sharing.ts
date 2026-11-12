@@ -541,6 +541,14 @@ export const sharedPushDenied = (
 ) => rejected.some((entry, index) => reason(entry) === "denied" && !(entry.deleted && rows[index]?.deleted === true));
 
 /**
+ * Se dire che il proprietario ha eliminato ciò che si stava modificando: una modifica (non un'eliminazione)
+ * rifiutata con "gone" (sharing.sql dal 12/11/2026; prima il server rispondeva "denied"). Un'eliminazione
+ * con "gone" è già fatta e non ha bisogno di avvisi.
+ */
+export const sharedPushGone = (rejected: readonly SharedOutboxEntry[], reason: (entry: SharedOutboxEntry) => string | null) =>
+  rejected.some((entry) => reason(entry) === "gone" && !entry.deleted);
+
+/**
  * Invia i lotti uno alla volta. Un lotto che fallisce non ferma gli altri (le sue voci restano in coda) e
  * il primo errore arriva alla fine. `abort` (chi guarda è cambiato) esce subito; `offline` (rete assente)
  * ferma i lotti dopo, che fallirebbero uguale, ognuno dopo l'attesa massima.

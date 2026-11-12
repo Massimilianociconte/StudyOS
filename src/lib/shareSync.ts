@@ -27,6 +27,7 @@ import {
   pushEachBatch,
   rowsForEntries,
   sharedPushDenied,
+  sharedPushGone,
   sharedPushOutcome,
   missingVisibleKeys,
   offerToRow,
@@ -400,11 +401,12 @@ const pushBatch = async (batch: SharedPushBatch, gen: number) => {
   const rows = await refetchRows(batch.ownerId, rejected, gen);
   still(gen);
   await useSharedStore.getState().settleRejected(batch.ownerId, rejected, rows);
-  if (sharedPushDenied(rejected, reason, rows)) {
+  const denied = sharedPushDenied(rejected, reason, rows);
+  if (denied || sharedPushGone(rejected, reason)) {
     still(gen);
     // Mostrato in ogni sezione (AppShell): chi ha modificato dal Calendario lo vede lì.
     const owner = useSharedStore.getState().received.find((grant) => grant.ownerId === batch.ownerId)?.ownerName ?? "";
-    useSharedStore.getState().setNotice(SHARE_NOTICE_TEXT.denied(owner));
+    useSharedStore.getState().setNotice(denied ? SHARE_NOTICE_TEXT.denied(owner) : SHARE_NOTICE_TEXT.gone(owner));
   }
 };
 

@@ -641,6 +641,7 @@ export const SHARE_GONE_TEXT = "Questa condivisione non c'è più.";
 /** Avviso della condivisione mostrato in ogni sezione (AppShell), lì dove si è fatta la modifica. */
 export const SHARE_NOTICE_TEXT = {
   denied: (owner: string) => `Non hai più il permesso di modificare i dati di ${owner || "questa persona"}: la modifica non è stata salvata.`,
+  gone: (owner: string) => `${owner || "Il proprietario"} ha eliminato ciò che stavi modificando: la modifica non è stata salvata.`,
   dismiss: "Ok",
   dismissTitle: "Chiudi l'avviso sulla condivisione"
 } as const;
