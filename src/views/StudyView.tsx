@@ -510,6 +510,12 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
   const canDiscard = !idle && studying;
   // «Termina e salva» (Pomodoro) o «Termina» (Timer, Cronometro) visibile ma spento: meno di un minuto di studio.
   const finishWaiting = !idle && !ended && studying && unsaved < 60;
+  // Il perché, subito sotto quel pulsante e largo quanto lui (w-0 min-w-full): non si confonde con «Scarta».
+  const finishHint = finishWaiting ? (
+    <p id="study-finish-hint" className="w-0 min-w-full text-xs font-bold leading-snug text-[var(--muted)]">
+      {TIMER_TEXT.finishHint}
+    </p>
+  ) : null;
 
   return (
     <Panel>
@@ -591,7 +597,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap items-start gap-2">
         {ended ? (
           <>
             <Button variant="primary" icon="Check" onClick={() => setTimerReviewOpen(true)} className="min-w-[120px]">
@@ -610,14 +616,20 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
         )}
         {/* Pomodoro: salva subito (come i blocchi). Timer e Cronometro: prima il riepilogo. */}
         {!idle && !ended && studying && timer.kind === "pomodoro" ? (
-          <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
-            {TIMER_TEXT.finish}
-          </Button>
+          <div className="grid gap-1">
+            <Button variant="soft" icon="Check" onClick={onFinish} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
+              {TIMER_TEXT.finish}
+            </Button>
+            {finishHint}
+          </div>
         ) : null}
         {!idle && !ended && timer.kind !== "pomodoro" ? (
-          <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
-            {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
-          </Button>
+          <div className="grid gap-1">
+            <Button variant="soft" icon="Check" onClick={onEnd} disabled={unsaved < 60} aria-describedby={finishWaiting ? "study-finish-hint" : undefined}>
+              {countdown ? TIMER_TEXT.endEarly : TIMER_TEXT.end}
+            </Button>
+            {finishHint}
+          </div>
         ) : null}
         {!studying ? (
           <Button variant="soft" icon="SkipForward" onClick={onSkip}>
@@ -635,12 +647,6 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
           </Button>
         ) : null}
       </div>
-
-      {finishWaiting ? (
-        <p id="study-finish-hint" className="mt-1.5 text-xs font-bold text-[var(--muted)]">
-          {TIMER_TEXT.finishHint}
-        </p>
-      ) : null}
 
       {confirmDiscard && canDiscard ? (
         <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-3">
