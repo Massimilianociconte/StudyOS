@@ -14,7 +14,9 @@ import {
   studyTotals,
   subjectSessions,
   trendBuckets,
-  trendUnit
+  trendUnit,
+  weeklyProgress,
+  weeklyTargetOf
 } from "../src/lib/studyStats.ts";
 import { workloadBySubject } from "../src/lib/selectors.ts";
 import { NO_SUBJECT_LABEL, NO_TOPIC_LABEL } from "../src/lib/labels.ts";
@@ -356,4 +358,16 @@ test("recentTrend e studyTotals: 23:30 e 00:30 nei giorni del cambio d'ora (Roma
   assert.equal(days.reduce((sum, bucket) => sum + bucket.minutes, 0), 152, "ogni sessione contata una volta");
   const totals = studyTotals(list, local(2026, 11, 1, 12));
   assert.equal(totals.today, 55, "il 1° novembre: 00:30 e 23:30");
+});
+
+test("weeklyProgress e weeklyTargetOf: obiettivo 0 o mancante non dà NaN né 0/0", () => {
+  assert.equal(weeklyProgress(270, 540), 50);
+  assert.equal(weeklyProgress(900, 540), 100, "oltre l'obiettivo: barra piena");
+  assert.equal(weeklyProgress(0, 540), 0);
+  for (const target of [0, -60, undefined, null, Number.NaN, Infinity, "540"]) {
+    assert.equal(weeklyTargetOf(target), undefined, String(target));
+    assert.equal(weeklyProgress(120, target), 0, String(target));
+  }
+  assert.equal(weeklyProgress(Number.NaN, 540), 0);
+  assert.equal(weeklyTargetOf(60), 60);
 });

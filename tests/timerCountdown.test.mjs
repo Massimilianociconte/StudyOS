@@ -364,6 +364,22 @@ test("store: Salva dal riepilogo usa i campi corretti; i minuti corretti spostan
   assert.equal(store.getState().sessions[0].end, new Date(now - 10 * MIN).toISOString(), "fine reale del Timer");
 });
 
+test("store: Salva dal riepilogo non fa finire la sessione nel futuro", () => {
+  const now = Date.now();
+  // Cronometro avviato 30 minuti fa e appena terminato: 45 minuti finirebbero tra un quarto d'ora.
+  const started = { ...defaultTimer("pomodoro", { kind: "stopwatch", subjectId: "s1" }), running: true, startedAt: now - 30 * MIN, runningSince: now - 30 * MIN, sessionId: "session_late" };
+  seedStore({ timer: started });
+  assert.equal(store.getState().endStudyTimer().status, "review");
+  const edit = { subjectId: "s1", title: "Limiti", notes: "", template: "review" };
+  assert.equal(store.getState().saveTimerReview({ ...edit, minutes: 45 }).status, "future");
+  assert.equal(store.getState().sessions.length, 0);
+  assert.equal(store.getState().timer.ended, true, "il riepilogo resta da salvare");
+  assert.equal(store.getState().timerReview, true);
+  const saved = store.getState().saveTimerReview({ ...edit, minutes: 30 });
+  assert.equal(saved.status, "saved");
+  assert.ok(Date.parse(saved.session.end) <= Date.now());
+});
+
 test("store: restoreSession rimette la sessione eliminata (Annulla) con updatedAt nuovo", async () => {
   seedStore();
   await store.getState().addSession({ title: "Da eliminare", status: "completed", actualMinutes: 30, source: "manual" });

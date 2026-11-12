@@ -18,6 +18,7 @@ import { goToView } from "../hooks/useLinkedUiState";
 import { ProgressBar, Segmented, StatTile } from "./ui";
 import { Icon } from "./Icon";
 import { useSessionEditor } from "./StudySessionDrawers";
+import { useToday } from "../hooks/useToday";
 
 const tooltipStyle = { background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, color: "var(--text)" };
 /** Sessioni visibili prima di "Mostra tutte". */
@@ -36,11 +37,13 @@ export default function SubjectStudyStats({ subject }: { subject: Subject }) {
   const editor = useSessionEditor();
   const color = safeCssColor(subject.color) || "var(--accent)";
 
+  // Oggi, settimana e mese ripartono a mezzanotte anche con il dettaglio aperto.
+  const day = useToday();
   const mine = useMemo(() => subjectSessions(sessions, subject.id), [sessions, subject.id]);
-  const totals = useMemo(() => studyTotals(mine, new Date()), [mine]);
+  const totals = useMemo(() => studyTotals(mine, new Date()), [mine, day]);
   const trend = useMemo(
     () => recentTrend(mine, unit, new Date()).map((bucket) => ({ ...bucketLabels(unit, bucket.start), ore: Math.round((bucket.minutes / 60) * 10) / 10, minutes: bucket.minutes })),
-    [mine, unit]
+    [mine, unit, day]
   );
   const trendMinutes = trend.reduce((sum, bucket) => sum + bucket.minutes, 0);
   const byTopic = useMemo(() => minutesByTopic(mine, topics), [mine, topics]);

@@ -20,6 +20,7 @@ import { BarbExamCalendar } from "../components/BarbExamCalendar";
 import { BarbExamImport } from "../components/BarbExamImport";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
+import { useOnce } from "../hooks/useOnce";
 
 // Pannello Condividi (e supabase-js) scaricato solo al tocco, come in ShareButton: qui è una voce
 // del menu "Altre azioni" e non un pulsante, quindi il caricamento differito sta nella vista.
@@ -151,12 +152,15 @@ function PersonalExamsView({
   const [share, setShare] = useState<"idle" | "loading" | "open" | "failed">("idle");
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState("");
+  // Un solo "Salva esame" per volta: un doppio tocco aggiungerebbe due esami. Si libera riaprendo il modulo.
+  const once = useOnce();
   if (editingExam && draftFor !== editingExam.id) {
     setDraftFor(editingExam.id);
     setDraft(draftFromExam(editingExam));
     // Le opzioni meno usate restano aperte se l'esame le usa già.
     setMoreOpen(Boolean(editingExam.frequentQuestions.length || editingExam.cover));
     setMessage("");
+    once.release();
   } else if (!editingExam && draftFor !== null) {
     setDraftFor(null);
   }
@@ -188,6 +192,7 @@ function PersonalExamsView({
 
   const openCreate = () => {
     setMessage("");
+    once.release();
     onEditingChange(null);
     setDraft(emptyDraft(selectableSubjects(subjects)[0]?.id ?? ""));
     setMoreOpen(false);
@@ -197,6 +202,7 @@ function PersonalExamsView({
   const openEdit = (exam: Exam, patch?: Partial<ExamDraft>) => {
     setMessage("");
     setNotice("");
+    once.release();
     setCreating(false);
     setDraftFor(exam.id);
     setDraft({ ...draftFromExam(exam), ...patch });
@@ -226,21 +232,20 @@ function PersonalExamsView({
   };
 
   const saveExam = async () => {
+    if (!once.take()) return;
     setMessage("");
-    if (!draft.subjectId) {
-      setMessage("Scegli la materia dell'esame.");
-      return;
-    }
+    // Errore del modulo: "Salva esame" torna usabile.
+    const fail = (text: string) => {
+      setMessage(text);
+      once.release();
+    };
+    if (!draft.subjectId) return fail("Scegli la materia dell'esame.");
     const date = new Date(draft.date);
-    if (Number.isNaN(date.getTime())) {
-      setMessage("Data non valida: scegli giorno e ora dell'esame.");
-      return;
-    }
+    if (Number.isNaN(date.getTime())) return fail("Data non valida: scegli giorno e ora dell'esame.");
 
     const grade = draft.grade ? Number(draft.grade) : undefined;
     if (draft.status === "done" && !draft.passFail && grade !== undefined && !isValidGrade(grade)) {
-      setMessage(`Voto non valido: scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
-      return;
+      return fail(`Voto non valido: scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
     }
     const done = draft.status === "done";
     const payload = {
@@ -583,7 +588,7 @@ function PersonalExamsView({
                 <Button variant="soft" onClick={() => closeForm()}>
                   Annulla
                 </Button>
-                <Button variant="primary" icon="Check" onClick={saveExam}>
+                <Button variant="primary" icon="Check" onClick={() => void saveExam()} disabled={once.busy}>
                   Salva esame
                 </Button>
               </div>

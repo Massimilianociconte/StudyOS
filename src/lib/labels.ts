@@ -248,7 +248,7 @@ export const SESSION_FORM_TEXT = {
   time: "Ora di inizio",
   template: "Tipo di sessione",
   savedWith: (source: string) => `Salvata con: ${source}`,
-  endsAt: (time: string) => `Fine alle ${time}`,
+  endsAt: (time: string, day?: string) => (day ? `Fine ${day} alle ${time}` : `Fine alle ${time}`),
   save: "Salva",
   saveAdd: "Salva sessione",
   cancel: "Annulla",
@@ -258,9 +258,6 @@ export const SESSION_FORM_TEXT = {
   discardNo: "No",
   discarded: (studied: string) => `Sessione scartata (${studied}).`,
   delete: "Elimina",
-  deleteConfirm: "Eliminare la sessione? Le ore verranno tolte dalle statistiche.",
-  deleteYes: "Sì, elimina",
-  deleteNo: "No",
   deleted: (title: string) => `Sessione eliminata: ${title}.`,
   loadFailedReview: "Non riesco ad aprire il riepilogo",
   loadFailedReviewBody: "Il tempo studiato non è perso: controlla la connessione e tocca «Rivedi e salva» in Studio. Se succede ancora, ricarica la pagina.",
@@ -273,7 +270,9 @@ export const SESSION_FORM_TEXT = {
   error: {
     minutes: "Scrivi i minuti di studio: un numero intero da 1 a 960 (16 ore).",
     start: "Controlla il giorno e l'ora di inizio.",
-    future: "L'ora di inizio è nel futuro: scegli un momento già passato."
+    future: "L'ora di inizio è nel futuro: scegli un momento già passato.",
+    endsFuture: "La sessione finirebbe nel futuro: riduci la durata o sposta l'inizio prima.",
+    reviewFuture: "Con questi minuti la sessione finirebbe nel futuro: riduci i minuti. L'inizio è quello del timer: per cambiarlo salva e poi tocca «Modifica»."
   }
 } as const;
 

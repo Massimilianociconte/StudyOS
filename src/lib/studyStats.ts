@@ -306,6 +306,20 @@ export function minutesByTopic(sessions: StudySession[], topics: ReadonlyArray<{
   return none.count ? [...sorted, none] : sorted;
 }
 
+/**
+ * Obiettivo settimanale utilizzabile (minuti > 0) o undefined. Impostazioni chiede almeno un'ora,
+ * ma un valore 0 o mancante può arrivare da dati vecchi, da un'altra versione o da un agente.
+ */
+export const weeklyTargetOf = (target: unknown): number | undefined =>
+  typeof target === "number" && Number.isFinite(target) && target > 0 ? target : undefined;
+
+/** Avanzamento della settimana verso l'obiettivo, da 0 a 100 (mai NaN): senza obiettivo valido 0. */
+export const weeklyProgress = (minutes: number, target: unknown): number => {
+  const goal = weeklyTargetOf(target);
+  if (goal === undefined || !Number.isFinite(minutes) || minutes <= 0) return 0;
+  return Math.min(100, (minutes / goal) * 100);
+};
+
 /** Quante date (ISO) cadono nel periodo: attività completate (`completedAt`), ripassi (`lastReviewedAt`). */
 export function countInRange(dates: ReadonlyArray<string | undefined>, range: Pick<PeriodRange, "start" | "end">): number {
   const from = range.start.getTime();

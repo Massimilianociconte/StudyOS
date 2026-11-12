@@ -6,6 +6,7 @@ import { MAX_GRADE, MIN_GRADE, isValidGrade } from "../lib/grades";
 import { DateField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
 import { CAREER_HELP } from "../lib/labels/career";
+import { useOnce } from "../hooks/useOnce";
 
 const GRADES = Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MIN_GRADE + index);
 
@@ -53,6 +54,8 @@ export function GradeDrawer({
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState("");
   const [openedFor, setOpenedFor] = useState<string | null>(null);
+  // Un solo Registra / Elimina per volta: un doppio tocco creerebbe due esami (e due materie).
+  const once = useOnce();
   // Ripristina il modulo a ogni apertura (anche passando da un esame all'altro).
   const key = open ? exam?.id ?? "new" : null;
   if (key !== openedFor) {
@@ -60,6 +63,7 @@ export function GradeDrawer({
     if (key) {
       setDraft(initial());
       setError("");
+      once.release();
     }
   }
 
@@ -68,11 +72,17 @@ export function GradeDrawer({
   const subjectName = subjects.find((subject) => subject.id === draft.subjectId)?.name ?? "";
 
   const save = async () => {
+    if (!once.take()) return;
     setError("");
+    // Errore del modulo: Registra torna usabile.
+    const fail = (message: string) => {
+      setError(message);
+      once.release();
+    };
     const grade = Number(draft.grade);
-    if (!draft.passFail && !isValidGrade(grade)) return setError(`Scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
+    if (!draft.passFail && !isValidGrade(grade)) return fail(`Scegli un voto da ${MIN_GRADE} a ${MAX_GRADE}.`);
     const date = new Date(`${draft.date}T12:00`);
-    if (Number.isNaN(date.getTime())) return setError("Data non valida: scegli il giorno dell'esame.");
+    if (Number.isNaN(date.getTime())) return fail("Data non valida: scegli il giorno dell'esame.");
     const result = {
       status: "done" as const,
       date: date.toISOString(),
@@ -93,12 +103,12 @@ export function GradeDrawer({
     let name = subjectName;
     if (creating) {
       const cfu = Number(draft.newCfu.replace(",", "."));
-      if (!draft.newName.trim()) return setError("Scrivi il nome della materia.");
-      if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) return setError("CFU non validi: scrivi un numero da 0 a 60.");
+      if (!draft.newName.trim()) return fail("Scrivi il nome della materia.");
+      if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) return fail("CFU non validi: scrivi un numero da 0 a 60.");
       name = draft.newName.trim();
       subjectId = await addSubject({ name, cfu, status: "completed", semester: "" });
     }
-    if (!subjectId) return setError("Scegli la materia dell'esame.");
+    if (!subjectId) return fail("Scegli la materia dell'esame.");
     const pendingExam = exams
       .filter((item) => item.subjectId === subjectId && item.status !== "done")
       .sort((a, b) => a.date.localeCompare(b.date))[0];
@@ -110,8 +120,11 @@ export function GradeDrawer({
   };
 
   const remove = async () => {
-    if (!exam) return;
-    if (!window.confirm(`Eliminare il voto di "${subjectName}"? L'esame viene tolto dal libretto e le medie si aggiornano. Non si può annullare.`)) return;
+    if (!exam || !once.take()) return;
+    if (!window.confirm(`Eliminare il voto di "${subjectName}"? L'esame viene tolto dal libretto e le medie si aggiornano. Non si può annullare.`)) {
+      once.release();
+      return;
+    }
     await deleteExam(exam.id);
     onSaved(`${subjectName}: voto eliminato dal libretto.`);
   };
@@ -126,7 +139,7 @@ export function GradeDrawer({
       footer={
         <div className="flex items-center gap-2">
           {editing ? (
-            <Button variant="danger" icon="Trash2" onClick={() => void remove()}>
+            <Button variant="danger" icon="Trash2" onClick={() => void remove()} disabled={once.busy}>
               Elimina voto
             </Button>
           ) : null}
@@ -134,7 +147,7 @@ export function GradeDrawer({
           <Button variant="ghost" onClick={onClose}>
             Annulla
           </Button>
-          <Button variant="primary" icon="Check" onClick={() => void save()}>
+          <Button variant="primary" icon="Check" onClick={() => void save()} disabled={once.busy}>
             {editing ? "Salva voto" : "Registra voto"}
           </Button>
         </div>

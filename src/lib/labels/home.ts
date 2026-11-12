@@ -26,7 +26,9 @@ export const HOME_TEXT = {
   findAction: "cerca nei materiali",
   reviews: (count: number) => `${count} ${count === 1 ? "argomento da ripassare" : "argomenti da ripassare"}`,
   preparation: (value: number) => `preparazione ${value}%`,
-  importance: (value: number) => `Importanza ${value}/5`
+  importance: (value: number) => `Importanza ${value}/5`,
+  weekTarget: (hours: string) => `su ${hours} h di obiettivo`,
+  weekNoTarget: "Nessun obiettivo settimanale: impostalo in Impostazioni"
 } as const;
 
 export const HOME_HELP = {

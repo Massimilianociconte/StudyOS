@@ -1005,23 +1005,63 @@ test("troppi giorni esclusi: si leggono i più vicini a oggi, e l'avviso dice qu
   assert.deepEqual(full.warnings, ["«Serie 21»: il file ha troppi giorni esclusi o modificati in tutto, e per questa serie non ne è stato letto nessuno."]);
 });
 
+/**
+ * Quanto cresce il tempo di CPU con un input 8 volte più grande (lineare ≈ ×8, al quadrato ≈ ×64).
+ * Un tetto in millisecondi non regge: con 6 suite in parallelo il codice lineare arriva ai tempi di
+ * quello quadratico a macchina scarica. Anche il rapporto dei tempi "a orologio" salta sotto carico
+ * (l'input grande viene interrotto più spesso: fino a ×60 su codice lineare). Il tempo di CPU del
+ * processo invece non conta le attese: piccolo e grande si alternano e vale il più veloce di 3 per
+ * ciascuno. Sopra il limite si rimisura (fino a 3 volte); al doppio del limite è una regressione.
+ */
+const growth = (runSmall, runLarge, limit) => {
+  const elapsed = (run) => {
+    const started = process.cpuUsage();
+    run();
+    const used = process.cpuUsage(started);
+    return (used.user + used.system) / 1000;
+  };
+  let ratio = Infinity;
+  for (let round = 0; round < 3; round += 1) {
+    let small = Infinity;
+    let large = Infinity;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      small = Math.min(small, elapsed(runSmall));
+      large = Math.min(large, elapsed(runLarge));
+    }
+    ratio = large / Math.max(small, 0.1);
+    if (ratio < limit || ratio >= 2 * limit) break;
+  }
+  return ratio;
+};
+
 test("regole con un numero di ripetizioni e date sparse: un'espansione sola, veloce", () => {
   const stamp = (ms) => `${new Date(ms).toISOString().replace(/[-:]/g, "").slice(0, 8)}`;
-  const series = Array.from({ length: 20 }, (_, index) => [
-    "BEGIN:VEVENT",
-    `UID:w${index}`,
-    "DTSTART:19400101T090000Z",
-    "RRULE:FREQ=MONTHLY;BYDAY=2MO;COUNT=999",
-    ...Array.from({ length: 1000 }, (_, offset) => `EXDATE;VALUE=DATE:${stamp(Date.UTC(1940, 0, 1) + offset * 40 * 86_400_000)}`),
-    `SUMMARY:Mensile ${index + 1}`,
-    "END:VEVENT"
-  ]);
-  const text = ics(...series);
-  const started = performance.now();
-  const plan = merge([], parseIcs(text), { timeZone: "UTC" });
-  const elapsed = performance.now() - started;
-  // Tetto largo come sopra: un'espansione ripetuta per ogni data esclusa resterebbe ben oltre.
-  assert.ok(elapsed < 4000, `${Math.round(elapsed)} ms`);
+  const file = (count) =>
+    ics(
+      ...Array.from({ length: 20 }, (_, index) => [
+        "BEGIN:VEVENT",
+        `UID:w${index}`,
+        "DTSTART:19400101T090000Z",
+        `RRULE:FREQ=MONTHLY;BYDAY=2MO;COUNT=${Math.min(count, 999)}`,
+        ...Array.from({ length: count }, (_, offset) => `EXDATE;VALUE=DATE:${stamp(Date.UTC(1940, 0, 1) + offset * 40 * 86_400_000)}`),
+        `SUMMARY:Mensile ${index + 1}`,
+        "END:VEVENT"
+      ])
+    );
+  const small = file(125);
+  const text = file(1000);
+  let plan;
+  // Misurato (tempo di CPU, Mac a 15 core): ×7.5–8.0 (7 → 55 ms); con 6 suite in parallelo ×7.5–8.4
+  // (11 → 94 ms). Togliendo l'espansione unica delle regole con COUNT (un'espansione per ogni data
+  // esclusa): ×56 (104 → 5860 ms). Limite 20: più del doppio sopra il lineare, quasi tre volte sotto.
+  const ratio = growth(
+    () => merge([], parseIcs(small), { timeZone: "UTC" }),
+    () => {
+      plan = merge([], parseIcs(text), { timeZone: "UTC" });
+    },
+    20
+  );
+  assert.ok(ratio < 20, `crescita ×${ratio.toFixed(1)} con un input 8 volte più grande`);
   assert.equal(plan.added, 20);
   assert.deepEqual(plan.warnings, []);
   // Le date escluse che sono davvero secondi lunedì entro le 999 volte diventano righe.
@@ -1030,40 +1070,40 @@ test("regole con un numero di ripetizioni e date sparse: un'espansione sola, vel
 });
 
 test("file ostile: 18.000 date escluse si leggono e si uniscono in tempo lineare, con un limite di righe", () => {
-  const dates = [];
-  const day = new Date(Date.UTC(1975, 0, 1, 9));
-  while (dates.length < 18000) {
-    dates.push(`${day.toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`);
-    day.setUTCDate(day.getUTCDate() + 1);
-  }
-  // Una serie settimanale con date escluse sparse in migliaia di anni: niente espansione enorme.
-  const sparse = Array.from({ length: 1500 }, (_, index) => `${String(1000 + index * 5).padStart(4, "0")}0105T090000Z`);
-  const text = ics(
+  const datesOf = (count) => {
+    const dates = [];
+    const day = new Date(Date.UTC(1975, 0, 1, 9));
+    while (dates.length < count) {
+      dates.push(`${day.toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`);
+      day.setUTCDate(day.getUTCDate() + 1);
+    }
+    return dates;
+  };
+  const flood = (dates) => [
     "BEGIN:VEVENT",
     "UID:flood",
     "DTSTART:19750101T090000Z",
     "RRULE:FREQ=DAILY",
     `EXDATE:${dates.join(",")}`,
-    // Le stesse 18.000 date anche come "cambiate a mano": il confronto delle due liste non cresce al quadrato.
+    // Le stesse date anche come "cambiate a mano": il confronto delle due liste non cresce al quadrato.
     `X-STUDYOS-EDITED:${dates.join(",")}`,
     "SUMMARY:Flood",
-    "END:VEVENT",
-    "BEGIN:VEVENT",
-    "UID:sparse",
-    "DTSTART:10000105T090000Z",
-    "RRULE:FREQ=WEEKLY",
-    `EXDATE:${sparse.join(",")}`,
-    "SUMMARY:Sparse",
     "END:VEVENT"
-  );
+  ];
+  const dates = datesOf(18000);
+  // Una serie settimanale con date escluse sparse in migliaia di anni: niente espansione enorme.
+  const sparse = Array.from({ length: 1500 }, (_, index) => `${String(1000 + index * 5).padStart(4, "0")}0105T090000Z`);
+  const text = ics(flood(dates), "BEGIN:VEVENT", "UID:sparse", "DTSTART:10000105T090000Z", "RRULE:FREQ=WEEKLY", `EXDATE:${sparse.join(",")}`, "SUMMARY:Sparse", "END:VEVENT");
   assert.ok(text.length > 580_000, `${text.length}`);
-  const started = performance.now();
   const parsed = parseIcs(text, { timeZone: "Europe/Rome" });
   const plan = merge([], parsed, { timeZone: "Europe/Rome" });
-  const elapsed = performance.now() - started;
-  // Di solito sta sotto il mezzo secondo; il tetto largo regge una macchina carica (test in parallelo)
-  // e fallisce comunque se il confronto delle liste torna quadratico (decine di secondi).
-  assert.ok(elapsed < 4000, `${Math.round(elapsed)} ms`);
+  // Tempo lineare: 2.250 contro 18.000 date (vedi `growth`). Misurato (tempo di CPU, Mac a 15 core):
+  // ×5.0–5.9 (13 → 75 ms); con 6 suite in parallelo ×5.0–5.9 (21 → 120 ms). Rimettendo `includes` al
+  // posto dei Set nel confronto delle due liste: in lettura ×36 (45 → 1640 ms), in lettura e unione
+  // ×36 (52 → 1850 ms), solo nell'unione ×18–20 (28 → 530 ms). Limite 12.
+  const run = (file) => () => merge([], parseIcs(file, { timeZone: "Europe/Rome" }), { timeZone: "Europe/Rome" });
+  const ratio = growth(run(ics(flood(datesOf(2250)))), run(ics(flood(dates))), 12);
+  assert.ok(ratio < 12, `crescita ×${ratio.toFixed(1)} con un input 8 volte più grande`);
   assert.equal(parsed.events.find((event) => event.uid === "flood").editedExdates.length, 18000);
   assert.equal(plan.added, 2);
   assert.ok(plan.puts.length <= 2 + 2 * 1000, `${plan.puts.length} righe`);

@@ -2,16 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   LONG_SESSION_MINUTES,
+  SESSION_END_TOLERANCE_MS,
   draftFromSession,
   editedSessionTimes,
   parseSessionMinutes,
   readSessionDraft,
   relinkSession,
   reviewedSessionTimes,
+  sessionDraftEnd,
   sessionEditPatch,
+  sessionEndsInFuture,
   sessionLinksOf,
   sessionSourceLabel,
-  sessionTopicId
+  sessionTopicId,
+  sessionUndoPatch
 } from "../src/lib/studySessions.ts";
 
 const MIN = 60_000;
@@ -91,6 +95,40 @@ test("readSessionDraft: errori su minuti, giorno e ora", () => {
   assert.equal(moved.value.start, new Date(2026, 10, 10, 21, 15).getTime());
 });
 
+test("readSessionDraft: una sessione fatta non finisce nel futuro (un minuto di margine)", () => {
+  // Adesso sono le 18:00: 90 minuti dalle 16:30 finiscono adesso.
+  assert.equal(readSessionDraft(draft({ date: "2026-11-11", time: "16:30" }), ctx).ok, true);
+  assert.equal(readSessionDraft(draft({ date: "2026-11-11", time: "16:31" }), ctx).ok, true, "un minuto oltre: tollerato");
+  assert.deepEqual(readSessionDraft(draft({ date: "2026-11-11", time: "17:00" }), ctx), { ok: false, error: "endsFuture" });
+  assert.deepEqual(readSessionDraft(draft({ date: "2026-11-11", time: "16:30", minutes: "120" }), ctx), { ok: false, error: "endsFuture" });
+  assert.deepEqual(readSessionDraft(draft({ date: "2026-11-11", time: "19:00" }), ctx), { ok: false, error: "future" }, "inizio nel futuro: l'errore di prima");
+  assert.equal(SESSION_END_TOLERANCE_MS, MIN);
+  assert.equal(sessionEndsInFuture(NOW + MIN, NOW), false);
+  assert.equal(sessionEndsInFuture(NOW + MIN + 1, NOW), true);
+});
+
+test("readSessionDraft: nella modifica conta la fine con le pause di prima", () => {
+  // Pomodoro 10:00 → 13:30 con 90 minuti di studio (due ore di pause).
+  const session = { start: new Date(2026, 10, 11, 10).toISOString(), end: new Date(2026, 10, 11, 13, 30).toISOString(), actualMinutes: 90 };
+  const moved = draft({ date: "2026-11-11", time: "15:00" });
+  assert.equal(readSessionDraft(moved, ctx).ok, true, "aggiunta a mano: finisce alle 16:30");
+  assert.deepEqual(readSessionDraft(moved, { ...ctx, session }), { ok: false, error: "endsFuture" }, "con le pause finirebbe alle 18:30");
+  assert.equal(readSessionDraft(draft({ date: "2026-11-11", time: "14:30" }), { ...ctx, session }).ok, true, "finisce alle 18:00");
+  // Solo le note: inizio e fine restano quelli salvati.
+  assert.equal(readSessionDraft(draft({ date: "2026-11-11", time: "10:00" }), { ...ctx, session }).ok, true);
+});
+
+test("sessionDraftEnd: la fine che il modulo salverebbe (per «Fine alle …»)", () => {
+  assert.equal(sessionDraftEnd(draft({ date: "2026-11-11", time: "09:15" })), new Date(2026, 10, 11, 10, 45).getTime());
+  const session = { start: new Date(2026, 10, 11, 10).toISOString(), end: new Date(2026, 10, 11, 13, 30).toISOString(), actualMinutes: 90 };
+  assert.equal(sessionDraftEnd(draft({ date: "2026-11-11", time: "11:00" }), session), new Date(2026, 10, 11, 14, 30).getTime(), "le pause restano");
+  assert.equal(sessionDraftEnd(draft({ date: "2026-11-11", time: "10:00", minutes: "60" }), session), new Date(2026, 10, 11, 13).getTime());
+  assert.equal(sessionDraftEnd(draft({ date: "2026-11-11", time: "10:00", minutes: "0" })), undefined, "minuti non validi");
+  assert.equal(sessionDraftEnd(draft({ date: "", time: "10:00" })), undefined, "giorno mancante");
+  assert.equal(sessionDraftEnd(draft({ date: "2026-11-11", time: "xx" })), undefined, "ora non valida");
+  assert.equal(sessionDraftEnd(draft()), undefined, "senza giorno e ora (riepilogo del timer)");
+});
+
 test("sessionEditPatch: la fine segue inizio e minuti, le pause restano", () => {
   const session = {
     id: "s1",
@@ -118,6 +156,32 @@ test("sessionEditPatch: la fine segue inizio e minuti, le pause restano", () => 
   const later = sessionEditPatch(session, { subjectId: "an", topicId: "lim", title: "x", notes: "", template: "review", minutes: 540, start: new Date(2026, 10, 10, 20, 0).getTime() });
   assert.equal(later.start, new Date(2026, 10, 10, 20, 0).toISOString());
   assert.equal(later.end, new Date(2026, 10, 11, 5, 0).toISOString());
+});
+
+test("sessionUndoPatch: «Annulla» dopo Modifica rimette i valori di prima, anche quelli che mancavano", () => {
+  const previous = {
+    id: "s1",
+    title: "Cronometro",
+    subjectId: "an",
+    topicId: "lim",
+    template: "review",
+    actualMinutes: 540,
+    plannedMinutes: 540,
+    start: new Date(2026, 10, 10, 21, 0).toISOString(),
+    end: new Date(2026, 10, 11, 6, 0).toISOString(),
+    notes: "",
+    source: "stopwatch"
+  };
+  const patch = sessionEditPatch(previous, { subjectId: "fi", title: "Moto", notes: "rivedere", template: "exercises", minutes: 90 });
+  const undo = sessionUndoPatch(previous, patch);
+  assert.deepEqual(Object.keys(undo).sort(), Object.keys(patch).sort(), "solo i campi della modifica");
+  assert.deepEqual({ ...previous, ...patch, ...undo }, previous);
+  // Senza argomento né fine prima: tornano senza (chiavi presenti con undefined, come nella modifica).
+  const bare = { ...previous, topicId: undefined, end: undefined };
+  const added = sessionEditPatch(bare, { subjectId: "an", topicId: "lim", title: "x", notes: "", template: "review", minutes: 30 });
+  const back = sessionUndoPatch(bare, added);
+  assert.equal("topicId" in back && back.topicId === undefined, true);
+  assert.equal("end" in back && back.end === undefined, true);
 });
 
 test("draftFromSession: i campi del modulo, senza ripetere titoli automatici", () => {

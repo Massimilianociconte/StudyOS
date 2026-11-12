@@ -25,6 +25,7 @@ import { ManualSessionDrawer, useSessionEditor } from "../components/StudySessio
 import { ShareButton } from "../components/ShareButton";
 import { SharedSection } from "../components/SharedSection";
 import { useNow } from "../hooks/useNow";
+import { useToday } from "../hooks/useToday";
 import { isNullableString, oneOf, readUiState, useUiState } from "../lib/uiState";
 import { requestSettingsSection } from "../lib/settingsJump";
 import {
@@ -52,6 +53,7 @@ import {
   type TimerSettingKey
 } from "../lib/timerPrefs";
 import { UNDO_MS, matchTopic, sessionSourceLabel, topicsOfSubject } from "../lib/studySessions";
+import { weeklyProgress, weeklyTargetOf } from "../lib/studyStats";
 import {
   TIMER_SOUND_KEY,
   TIMER_VIBRATE_KEY,
@@ -77,7 +79,8 @@ const KIND_ICON: Record<TimerKind, string> = { pomodoro: "Timer", timer: "Hourgl
 export function StudyView() {
   const store = useStudyStore();
   const { sessions, topics, subjects, reviewTopic, setActiveView } = store;
-  const weeklyTarget = selectPreferences(store).weeklyTargetMinutes;
+  // 0 o mancante (dati vecchi, agente): niente percentuale né "su 0 h".
+  const weeklyTarget = weeklyTargetOf(selectPreferences(store).weeklyTargetMinutes);
   const [topicsOpen, setTopicsOpen] = useUiState("study.topicsOpen", false, { scope: "tab" });
   // Materia degli argomenti nel riquadro: "" tutte. null quando lo apre un collegamento da un'altra
   // sezione (es. "argomenti" della scheda d'esame): vale la materia scritta in "study.subject",
@@ -102,6 +105,8 @@ export function StudyView() {
   const [notice, setNotice] = useState("");
   const sessionEditor = useSessionEditor();
 
+  // Settimana, oggi e ripassi da fare si aggiornano a mezzanotte anche con la pagina aperta.
+  useToday();
   const today = new Date();
   const dueReviews = dueTopics(topics, today);
   const dueIds = new Set(dueReviews.map((topic) => topic.id));
@@ -192,12 +197,12 @@ export function StudyView() {
             <StatTile
               label={STUDY_SIDE_TEXT.week}
               value={`${formatHours(weeklyMinutes)} h`}
-              hint={STUDY_SIDE_TEXT.weekHint(formatHours(weeklyTarget), streak)}
+              hint={STUDY_SIDE_TEXT.weekHint(weeklyTarget ? formatHours(weeklyTarget) : undefined, streak)}
               icon="BarChart3"
               onClick={() => setActiveView("stats")}
             />
             <div className="mt-3">
-              <ProgressBar value={(weeklyMinutes / weeklyTarget) * 100} label={STUDY_SIDE_TEXT.weekProgress} />
+              <ProgressBar value={weeklyProgress(weeklyMinutes, weeklyTarget)} label={STUDY_SIDE_TEXT.weekProgress} />
             </div>
             <button
               type="button"
