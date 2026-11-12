@@ -207,7 +207,7 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
       ) : view.kind === "noName" ? (
         <p className="text-sm font-bold text-[var(--muted)]">
           {text.noName}{" "}
-          <a href="#settings-profilo" className="font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+          <a href="#settings-profilo" className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
         </p>
       ) : (
         <p className="text-sm font-bold text-[var(--muted)]">{view.kind === "noCloud" ? agentCloudLabels.noCloud : view.kind === "off" ? text.off : text.noHub}</p>
@@ -354,7 +354,7 @@ export function AgentSettings() {
         {accountName ? null : (
           <p className={MUTED}>
             {agentAccountLabels.unnamed}{" "}
-            <a href="#settings-profilo" className="font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
+            <a href="#settings-profilo" className="inline-flex min-h-11 items-center font-black text-[var(--accent-ink)] underline underline-offset-2">{agentAccountLabels.toProfile}</a>
           </p>
         )}
       </section>
@@ -390,34 +390,15 @@ export function AgentSettings() {
             </div>
           )}
           <p className={MUTED}>{agentAccountLabels.revokeHint}</p>
-          {link.paired ? (
-            confirmAll ? (
-              <ConfirmWithError
-                text={AGENT_DESK_TEXT.revokeAllConfirm}
-                confirmLabel={AGENT_DESK_TEXT.revokeAllConfirmLabel}
-                icon="Shield"
-                onCancel={() => setConfirmAll(false)}
-                onConfirm={async () => {
-                  const failure = await revokeAgentAccess("all");
-                  if (!failure) setConfirmAll(false);
-                  return failure;
-                }}
-              />
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                <Button variant="ghost" onClick={() => setConfirmAll(true)}>{AGENT_DESK_TEXT.revokeAllButton}…</Button>
-              </div>
-            )
-          ) : null}
         </div>
       ) : null}
 
-      <details className="rounded-[20px] bg-[var(--surface-soft)] p-3">
-        <summary className="cursor-pointer text-sm font-black text-[var(--text)]">
+      <details className="rounded-[20px] bg-[var(--surface-soft)] px-3 open:pb-3">
+        <summary className="min-h-11 cursor-pointer py-3 text-sm font-black text-[var(--text)]">
           {AGENT_DESK_TEXT.advanced}
           <span className="mt-0.5 block text-xs font-bold text-[var(--muted)]">{AGENT_DESK_TEXT.advancedHint}</span>
         </summary>
-        <div className="mt-3 grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <div>
             <h4 className="text-sm font-black">{AGENT_DESK_TEXT.rulesTitle}</h4>
             <p className={`mt-1 ${MUTED}`}>{AGENT_DESK_TEXT.rulesBody}</p>
@@ -456,6 +437,25 @@ export function AgentSettings() {
             <h4 className="text-sm font-black">{agentAccountLabels.title}</h4>
             {accountName ? <p className={MUTED}>{agentAccountLabels.named(accountName)}</p> : null}
             <p className={MUTED}>{agentAccountLabels.help(localPage)}</p>
+            {link.paired ? (
+              confirmAll ? (
+                <ConfirmWithError
+                  text={AGENT_DESK_TEXT.revokeAllConfirm}
+                  confirmLabel={AGENT_DESK_TEXT.revokeAllConfirmLabel}
+                  icon="Shield"
+                  onCancel={() => setConfirmAll(false)}
+                  onConfirm={async () => {
+                    const failure = await revokeAgentAccess("all");
+                    if (!failure) setConfirmAll(false);
+                    return failure;
+                  }}
+                />
+              ) : (
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <Button variant="ghost" onClick={() => setConfirmAll(true)}>{AGENT_DESK_TEXT.revokeAllButton}…</Button>
+                </div>
+              )
+            ) : null}
           </div>
 
           <div>
@@ -478,9 +478,9 @@ export function AgentSettings() {
         </div>
       </details>
 
-      <details className="rounded-[20px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
-        <summary className="cursor-pointer font-black text-[var(--text)]">Istruzioni tecniche</summary>
-        <p className="mt-3">
+      <details className="rounded-[20px] bg-[var(--surface-soft)] px-3 text-sm font-bold text-[var(--muted)] open:pb-3">
+        <summary className="min-h-11 cursor-pointer py-3 font-black text-[var(--text)]">Istruzioni tecniche</summary>
+        <p>
           {published
             ? "ChatGPT modifica i dati di questo sito pubblicato. La finestra di localhost resta una copia a parte e riceve le modifiche solo se questa scheda è chiusa."
             : "ChatGPT modifica i dati di questa finestra. Con il sito pubblicato aperto e collegato, le modifiche vanno lì."}
