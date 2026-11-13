@@ -452,6 +452,10 @@ export const localResetGuard = () => {
   };
 };
 
+/** Chiavi di `meta` che uno svuotamento del dispositivo toglie (clearAllLocalData). */
+export const LOCAL_RESET_META_PREFIXES = ["cloud:cursor:", "cloud:migrated:", "share:", "gexam-seen:"] as const;
+export const isLocalResetMetaKey = (key: string) => LOCAL_RESET_META_PREFIXES.some((prefix) => key.startsWith(prefix));
+
 export const clearAllLocalData = async () => {
   // Prima di aprire la transazione: un controllo passato prima di qui scrive prima della cancellazione.
   noteLocalReset();
@@ -462,11 +466,9 @@ export const clearAllLocalData = async () => {
     await db.sharedItems.clear();
     await db.sharedOutbox.clear();
     // Senza dati locali i cursori cloud non valgono più: al prossimo accesso (anche dopo un
-    // logout) la sync riparte da zero e riscarica tutto invece di restare vuota.
-    await db.meta
-      .filter(
-        (row) => row.key.startsWith("cloud:cursor:") || row.key.startsWith("cloud:migrated:") || row.key.startsWith("share:")
-      )
-      .delete();
+    // logout) la sync riparte da zero e riscarica tutto invece di restare vuota. Via anche il segno
+    // degli appelli di gruppo già visti (`gexam-seen:<account>`, groupExamSync.ts): porta l'id
+    // dell'account; senza, la passata dopo riparte in silenzio (revisione finale, L-5).
+    await db.meta.filter((row) => isLocalResetMetaKey(row.key)).delete();
   });
 };

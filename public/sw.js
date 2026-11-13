@@ -154,7 +154,8 @@ self.addEventListener("message", (event) => {
 // ——— Notifiche push (invito ricevuto, invito accettato, permessi cambiati) ———
 // Il Worker invia un messaggio cifrato; qui arriva già decifrato come JSON: { kind, title, body, url, tag }.
 // `url` è relativo all'ambito dell'app (es. "?apri=notifiche"). Con userVisibleOnly ogni push deve
-// mostrare una notifica: se il contenuto non è leggibile si mostra un testo generico.
+// mostrare una notifica: se il contenuto non è leggibile si mostra un testo generico (lo stesso dei
+// dispositivi con la password dell'app, src/lib/pushLocal.ts e studyos_push_notify in people.sql).
 const PUSH_FALLBACK = { title: "StudyOS", body: "Hai una nuova notifica.", url: "./", tag: "studyos" };
 
 const readPushPayload = (event) => {
@@ -244,7 +245,9 @@ const showPush = (payload, silent) =>
 
 /**
  * - Push di un altro account (la pagina ha scritto un account diverso, es. dopo un cambio di account
- *   con l'iscrizione non ancora tolta): non si mostra.
+ *   con l'iscrizione non ancora tolta, o nessuno dopo un'uscita): solo il testo generico, con lo stesso
+ *   tag e senza aprire nulla di quell'account. Non si scarta: con userVisibleOnly una push senza
+ *   notifica fa comparire l'avviso del browser o, ripetuta, fa perdere l'iscrizione.
  * - Promemoria già mostrato dalla scheda aperta: stesso tag, sostituito in silenzio (una notifica sola).
  * - Promemoria mostrato dalla push: la pagina lo ritrova e non lo ripete (EventReminderWatcher).
  */
@@ -252,7 +255,10 @@ const handlePush = async (payload) => {
   const cache = await openLocal();
   if (cache && payload.account) {
     const current = await readLocalAccount(cache);
-    if (current !== undefined && current !== payload.account) return;
+    if (current !== undefined && current !== payload.account) {
+      await showPush({ ...PUSH_FALLBACK, tag: payload.tag }, false);
+      return;
+    }
   }
   const reminder = payload.tag.startsWith(REMINDER_TAG_PREFIX);
   const now = Date.now();

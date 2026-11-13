@@ -96,3 +96,60 @@ test("dispositivi: solo il tipo di browser dall'host, mai l'endpoint", () => {
   assert.match(toggle, /updateSettings\(\{ pushShowTitles: !showTitles \}\)/);
   assert.match(toggle, /enablePush\(\{ private: pushPrivateOf\(useStudyStore\.getState\(\)\.settings\) \}\)/);
 });
+
+// ─── Revisione finale (L-5): lo svuotamento del dispositivo pulisce anche la cache delle notifiche ───
+
+const ACCOUNT_A = "504b3482-7f1b-4add-bfbc-7b3effbf21d7";
+const ACCOUNT_B = "fc0191e0-6663-4a43-b060-131e397f02cc";
+const session = (id) => JSON.stringify({ access_token: "x", user: { id } });
+
+const filled = async () => {
+  const caches = fakeCaches();
+  const now = Date.now();
+  await local.writePushAccount(ACCOUNT_A, caches, ORIGIN);
+  await local.recordReminderShown("studyos-reminder-e1@2026-11-12#0d15m@1", "push", now, caches, ORIGIN);
+  await local.recordReminderShown("studyos-reminder-e2", "page", now, caches, ORIGIN);
+  return caches;
+};
+const keysOf = (caches) => [...caches.entries.keys()];
+
+test("svuotamento: via i promemoria comparsi e l'account di prima; resta solo l'account entrato adesso", async () => {
+  const signedIn = await filled();
+  assert.equal(keysOf(signedIn).length, 3);
+  await local.resetPushLocal(session(ACCOUNT_B), signedIn, ORIGIN);
+  assert.deepEqual(keysOf(signedIn), [`${ORIGIN}/__studyos__/push-account?account=${ACCOUNT_B}`], "cambio di account con «solo il nuovo»");
+  assert.equal(await local.readReminderShown("studyos-reminder-e2", signedIn, ORIGIN), null);
+
+  const same = await filled();
+  await local.resetPushLocal(session(ACCOUNT_A), same, ORIGIN);
+  assert.equal(await local.readPushAccount(same, ORIGIN), ACCOUNT_A, "«Cancella tutti i dati» con l'account ancora entrato: il filtro resta");
+  assert.equal(keysOf(same).length, 1);
+
+  const signedOut = await filled();
+  await local.resetPushLocal(null, signedOut, ORIGIN);
+  assert.equal(await local.readPushAccount(signedOut, ORIGIN), null, "nessuna sessione: nessun account (l'id di prima non resta)");
+  assert.ok(!keysOf(signedOut).some((url) => url.includes(ACCOUNT_A)));
+  assert.equal(keysOf(signedOut).length, 1);
+
+  const unreadable = await filled();
+  await local.resetPushLocal("{rotto", unreadable, ORIGIN);
+  assert.equal(await local.readPushAccount(unreadable, ORIGIN), ACCOUNT_A, "sessione illeggibile: l'account resta com'è");
+  assert.equal(keysOf(unreadable).length, 1, "i promemoria comparsi vanno via lo stesso");
+
+  // Mai un errore: senza Cache Storage, senza origine o con lo storage che fallisce.
+  await local.resetPushLocal(null, null, ORIGIN);
+  await local.resetPushLocal(null, signedIn, null);
+  await local.resetPushLocal(session(ACCOUNT_A), { open: () => Promise.reject(new Error("quota")) }, ORIGIN);
+});
+
+test("svuotamento: resetAllData pulisce la cache delle notifiche con la sessione salvata adesso", () => {
+  assert.equal(local.storedAuthUserId(session(ACCOUNT_A)), ACCOUNT_A);
+  assert.equal(local.storedAuthUserId(null), null);
+  assert.equal(local.storedAuthUserId("{rotto"), undefined);
+  assert.equal(push.storedAuthUserId, local.storedAuthUserId, "push.ts usa la stessa funzione");
+  const store = readFileSync(new URL("../src/store/useStudyStore.ts", import.meta.url), "utf8");
+  const reset = store.slice(store.indexOf("resetAllData: async"), store.indexOf("retryPersist: async"));
+  assert.match(reset, /clearProfileStorage\(\);\s*(?:\/\/[^\n]*\n\s*)*await resetPushLocal\(readStoredAuth\(\)\);/, "dopo la pulizia del profilo, in ogni svuotamento");
+  assert.match(store, /localStorage\.getItem\(AUTH_STORAGE_KEYS\[0\]\)/, "la chiave della sessione di supabase-js");
+  assert.match(store, /^import \{ resetPushLocal \} from "\.\.\/lib\/pushLocal";$/m, "pushLocal è già nel bundle iniziale, senza dipendenze");
+});

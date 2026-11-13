@@ -50,3 +50,41 @@ test("P10: cursore, migrazione, unione, schema e ultima sync si scrivono solo se
   // «Svuota dispositivo»: il segno è preso prima di cancellare cursore e migrazione.
   assert.match(source, /export const resetCloudDeviceState = async \(\) => \{[\s\S]*?noteLocalReset\(\);[\s\S]*?deleteMeta\(metaKeys\.cursor/);
 });
+
+// Revisione finale (L-5): lo svuotamento toglie anche il segno degli appelli di gruppo già visti, che
+// porta l'id dell'account (gexam-seen:<account>, groupExamSync.ts).
+test("L-5: clearAllLocalData toglie cursori, migrazione, condivisioni e appelli di gruppo già visti", async () => {
+  const { isLocalResetMetaKey } = await import("../src/lib/persistence.ts");
+  const account = "504b3482-7f1b-4add-bfbc-7b3effbf21d7";
+  for (const key of [`cloud:cursor:${account}`, `cloud:migrated:${account}`, "share:available:v1", `gexam-seen:${account}`]) {
+    assert.equal(isLocalResetMetaKey(key), true, key);
+  }
+  for (const key of ["cloud:boundUser", "deviceId", "gexam", "seen:gexam-seen:x"]) assert.equal(isLocalResetMetaKey(key), false, key);
+  const groupExamSync = readFileSync(new URL("../src/lib/groupExamSync.ts", import.meta.url), "utf8");
+  assert.match(groupExamSync, /const seenKey = \(userId: string\) => `gexam-seen:\$\{userId\}`;/, "stesso prefisso della sync degli appelli");
+
+  // Il filtro usato davvero dalla cancellazione.
+  const rows = [`gexam-seen:${account}`, `cloud:cursor:${account}`, "cloud:boundUser"].map((key) => ({ key }));
+  let kept = rows;
+  const patched = [];
+  const patch = (target, name, value) => {
+    target[name] = value;
+    patched.push([target, name]);
+  };
+  patch(db, "transaction", async (_mode, _tables, scope) => scope());
+  for (const table of [db.vault, db.syncOutbox, db.sharedItems, db.sharedOutbox, ...(await import("../src/lib/db.ts")).dataTables]) {
+    patch(table, "clear", async () => undefined);
+  }
+  patch(db.meta, "filter", (predicate) => ({
+    delete: async () => {
+      kept = rows.filter((row) => !predicate(row));
+      return rows.length - kept.length;
+    }
+  }));
+  try {
+    await clearAllLocalData();
+  } finally {
+    for (const [target, name] of patched.reverse()) delete target[name];
+  }
+  assert.deepEqual(kept.map((row) => row.key), ["cloud:boundUser"]);
+});

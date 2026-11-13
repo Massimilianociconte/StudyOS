@@ -217,24 +217,46 @@ test("promemoria già mostrato dalla scheda aperta: la push lo sostituisce in si
   assert.equal(worker.shown[1].options.silent, undefined);
 });
 
-test("account: la push di un altro account non si mostra; uscito → nessuna; mai scritto → come prima", async () => {
+// Revisione finale (L-2): una push di un altro account non si scarta più in silenzio (con userVisibleOnly
+// il browser mostrerebbe il suo avviso o toglierebbe l'iscrizione): compare il testo generico, stesso tag.
+const isGeneric = (item, tag) =>
+  item.title === local.GENERIC_PUSH_TITLE && item.options.body === local.GENERIC_PUSH_BODY && item.options.tag === tag
+    && item.options.data.url === "./" && item.options.silent === undefined;
+
+test("account: la push di un altro account mostra solo il testo generico; uscito → generico; mai scritto → come prima", async () => {
   const caches = fakeCaches();
   const worker = loadWorker([], { caches, Response });
   await fire(worker, "push", reminder("studyos-reminder-a", ACCOUNT_B));
   assert.equal(worker.shown.length, 1, "nessun account scritto dalla pagina: si mostra");
+  assert.equal(worker.shown[0].title, "Lezione");
   await local.writePushAccount(ACCOUNT_A, caches, ORIGIN);
   assert.equal(await local.readPushAccount(caches, ORIGIN), ACCOUNT_A);
   await fire(worker, "push", reminder("studyos-reminder-b", ACCOUNT_B));
-  assert.equal(worker.shown.length, 1, "account diverso: niente");
+  assert.equal(worker.shown.length, 2, "account diverso: compare comunque una notifica");
+  assert.ok(isGeneric(worker.shown[1], "studyos-reminder-b"), JSON.stringify(worker.shown[1]));
+  assert.equal(await local.readReminderShown("studyos-reminder-b", caches, ORIGIN), null, "il promemoria dell'altro account non conta come mostrato");
+  await fire(worker, "push", pushWith({ kind: "invite", title: "Invito a un gruppo", body: "Ada ti invita nel gruppo Visite", url: "?apri=notifiche", tag: "group-invite:9", account: ACCOUNT_B }));
+  assert.ok(isGeneric(worker.shown[2], "group-invite:9"), "né il nome né il gruppo dell'altro account");
   await fire(worker, "push", reminder("studyos-reminder-c", ACCOUNT_A));
-  assert.equal(worker.shown.length, 2);
+  assert.equal(worker.shown.length, 4);
+  assert.equal(worker.shown[3].title, "Lezione");
   await fire(worker, "push", pushWith({ kind: "invite", title: "Invito", body: "", url: "?apri=notifiche", tag: "group-invite:1" }));
-  assert.equal(worker.shown.length, 3, "senza account nel messaggio (Worker vecchio): si mostra");
+  assert.equal(worker.shown.length, 5, "senza account nel messaggio (Worker vecchio): si mostra");
+  assert.equal(worker.shown[4].title, "Invito");
   await local.writePushAccount(null, caches, ORIGIN);
   assert.equal(await local.readPushAccount(caches, ORIGIN), null);
   await fire(worker, "push", reminder("studyos-reminder-d", ACCOUNT_A));
-  assert.equal(worker.shown.length, 3, "uscito da questo dispositivo: niente");
+  assert.equal(worker.shown.length, 6, "uscito da questo dispositivo: solo il testo generico");
+  assert.ok(isGeneric(worker.shown[5], "studyos-reminder-d"));
   assert.equal([...caches.stores.get(local.PUSH_LOCAL_CACHE).entries.keys()].filter((url) => url.includes("push-account")).length, 1, "una sola chiave dell'account");
+});
+
+test("testo generico: stesso testo nel service worker, in pushLocal e in studyos_push_notify", () => {
+  assert.equal(local.GENERIC_PUSH_TITLE, "StudyOS");
+  assert.equal(local.GENERIC_PUSH_BODY, "Hai una nuova notifica.");
+  assert.ok(source.includes(`const PUSH_FALLBACK = { title: "${local.GENERIC_PUSH_TITLE}", body: "${local.GENERIC_PUSH_BODY}", url: "./", tag: "studyos" };`));
+  const people = readFileSync(new URL("../supabase/people.sql", import.meta.url), "utf8");
+  assert.ok(people.includes(`jsonb_build_object('title', '${local.GENERIC_PUSH_TITLE}', 'body', '${local.GENERIC_PUSH_BODY}')`));
 });
 
 test("senza Cache Storage o con lo storage che fallisce: la notifica compare lo stesso", async () => {

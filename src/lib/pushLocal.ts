@@ -12,6 +12,12 @@ export const PUSH_LOCAL_CACHE = "studyos-push-local-v1";
 export const PUSH_STATE_KEY = "studyos-push-state";
 /** Titolo delle notifiche dei promemoria senza titolo (stesso testo di push-reminders.sql). */
 export const PRIVATE_REMINDER_TITLE = "Promemoria StudyOS";
+/**
+ * Testo generico, uguale in tre posti: inviti e permessi verso i dispositivi con la password dell'app
+ * (studyos_push_notify in people.sql), push illeggibili e push di un altro account (public/sw.js).
+ */
+export const GENERIC_PUSH_TITLE = "StudyOS";
+export const GENERIC_PUSH_BODY = "Hai una nuova notifica.";
 const PREFIX = "/__studyos__/";
 export const REMINDER_TAG_PREFIX = "studyos-reminder-";
 /** Una notifica comparsa fino a 2 minuti prima dell'istante del promemoria conta già (orologi, cron). */
@@ -147,6 +153,48 @@ export const writePushAccount = async (
   } catch {
     // storage assente: il service worker mostra tutto, come prima
   }
+};
+
+/**
+ * Account della sessione salvata da supabase-js (valore grezzo della chiave `studyos-auth`):
+ * `null` = nessuna sessione salvata, `undefined` = valore che non si sa leggere (si lascia stare).
+ */
+export const storedAuthUserId = (raw: string | null): string | null | undefined => {
+  if (raw === null || raw === "") return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as { user?: { id?: unknown }; currentSession?: { user?: { id?: unknown } } };
+    const id = record.user?.id ?? record.currentSession?.user?.id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Dispositivo svuotato (resetAllData: «Cancella tutti i dati», «Ho dimenticato la password», uscita con
+ * «togli i dati», cambio di account con «solo il nuovo»): via i promemoria già comparsi e l'account di
+ * prima. Resta solo l'account della sessione salvata adesso (`rawAuth`, valore di `studyos-auth`), così
+ * il service worker continua a non mostrare per intero le push di un altro account; nessuna sessione =
+ * nessun account. Sessione illeggibile: l'account salvato resta com'è. Non lancia mai.
+ */
+export const resetPushLocal = async (
+  rawAuth: string | null,
+  api: CacheStorageLike | null = defaultStorage(),
+  origin: string | null = defaultOrigin()
+): Promise<void> => {
+  const account = storedAuthUserId(rawAuth);
+  try {
+    const cache = await openLocal(api);
+    if (!cache || !origin) return;
+    for (const key of await cache.keys()) {
+      if (account !== undefined || key.url.includes(`${PREFIX}reminder-shown/`)) await cache.delete(key.url);
+    }
+  } catch {
+    // storage assente o pieno: niente da togliere
+  }
+  if (account !== undefined) await writePushAccount(account, api, origin);
 };
 
 /** Account salvato (undefined = mai salvato su questo dispositivo). */

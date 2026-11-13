@@ -42,6 +42,8 @@ import type {
 import { DEFAULT_PREFERENCES, PREFERENCES_ID, SETTINGS_SCHEMA_VERSION, createEmptySnapshot, defaultSettings } from "../data/defaults";
 import { clearUiState, readDeviceUiState, readTabUiState } from "../lib/uiState";
 import { clearProfileStorage } from "../lib/deviceStorage";
+import { AUTH_STORAGE_KEYS } from "../lib/deviceSignOut";
+import { resetPushLocal } from "../lib/pushLocal";
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { isReminderNotificationId } from "../lib/reminderIds";
@@ -496,6 +498,15 @@ const restoredCollections = (incoming: CollectionsState, current: CollectionsSta
 };
 
 const errorText = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
+
+/** Sessione dell'account salvata da supabase-js su questo dispositivo (null = nessuna, "?" = illeggibile). */
+const readStoredAuth = (): string | null => {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(AUTH_STORAGE_KEYS[0]);
+  } catch {
+    return "?";
+  }
+};
 
 /** Persiste senza propagare l'errore ai chiamanti UI: l'errore resta visibile in `persistError`. */
 const commit = async () => {
@@ -1978,6 +1989,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
       // Anche il resto del profilo sul dispositivo; il timer si ferma (anche nelle altre schede) e non
       // salva più nel profilo nuovo una sessione della materia cancellata.
       clearProfileStorage();
+      // Notifiche: via i promemoria già comparsi e l'account di prima dalla cache condivisa con il
+      // service worker; resta solo l'account entrato adesso (revisione finale, L-5).
+      await resetPushLocal(readStoredAuth());
       setTimerState(set, defaultTimer());
       set({ settings, locked: false, timerReview: false, ...empty });
     },

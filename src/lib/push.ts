@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { VAPID_PUBLIC_KEY } from "./pushKeys";
 import { AUTH_STORAGE_KEYS } from "./deviceSignOut";
-import { PUSH_STATE_KEY, writePushAccount } from "./pushLocal";
+import { PUSH_STATE_KEY, storedAuthUserId, writePushAccount } from "./pushLocal";
 
 export type PushSupport = "ok" | "unsupported" | "ios-install" | "denied";
 
@@ -87,22 +87,8 @@ export const parsePushState = (raw: string | null): PushState | null => {
   }
 };
 
-/**
- * Account della sessione salvata da supabase-js (valore grezzo della chiave `studyos-auth`):
- * `null` = nessuna sessione salvata, `undefined` = valore che non si sa leggere (si lascia stare).
- */
-export const storedAuthUserId = (raw: string | null): string | null | undefined => {
-  if (raw === null || raw === "") return null;
-  try {
-    const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== "object") return undefined;
-    const record = value as { user?: { id?: unknown }; currentSession?: { user?: { id?: unknown } } };
-    const id = record.user?.id ?? record.currentSession?.user?.id;
-    return typeof id === "string" && id ? id : undefined;
-  } catch {
-    return undefined;
-  }
-};
+// In pushLocal (senza dipendenze): serve anche allo svuotamento del dispositivo, nel bundle iniziale.
+export { storedAuthUserId };
 
 /**
  * L'account che ha acceso le notifiche qui non ha più una sessione su questo dispositivo: nessuna
