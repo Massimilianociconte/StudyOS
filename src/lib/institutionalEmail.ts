@@ -11,7 +11,8 @@
 //    «Sede di Asti (AT), aula 3» no). Nei link (campi url e website) «%40» resta com'è nel percorso di un indirizzo
 //    http(s), dalla prima «/», «?» o «#» dopo il nome del sito (link di Teams e di Google Calendar); vale «@» nel
 //    destinatario di un «mailto:» e prima del percorso. Senza nessuna «@» il testo resta com'è stato scritto;
-// 2. più di 10 «@» in un testo: tutto il testo diventa «[email nascosta]»;
+// 2. più di 10 «@» in un testo, oppure un testo con «@» che normalizzato è più lungo di oltre 32 caratteri (NFKC: «ﷺ»
+//    diventa 18 caratteri): tutto il testo diventa «[email nascosta]»;
 // 3. ogni corsa di caratteri senza spazi ASCII che contiene una «@» è UN candidato (oltre 300 caratteri Unicode:
 //    sempre nascosto per intero; una corsa lunga senza «@» resta);
 // 4. tolti l'inizio (virgolette, parentesi aperte, «mailto:») e la fine (punteggiatura), il candidato resta solo se
@@ -46,6 +47,8 @@ const PARTS = /^(['’`*"(<[]*(?:[mM][aA][iI][lL][tT][oO]:)?)([\s\S]*?)([.,;:!?)
 const MAX_CANDIDATE = 300;
 /** Oltre questo numero di «@» in un testo si nasconde tutto il testo: il lavoro per valore resta piccolo. */
 const MAX_AT = 10;
+/** Caratteri in più dopo la normalizzazione oltre i quali si nasconde tutto il testo (U+FDFA: 1 → 18 caratteri). */
+const MAX_GROWTH = 32;
 
 /**
  * NFKC, senza invisibili, spazi strani e «@» scritte in altro modo: la forma su cui si applica la regola.
@@ -74,7 +77,28 @@ export const institutionalEmail = (value: unknown): string | null => {
 export const redactEmails = (text: string, keepInstitutional: boolean, url = false): string => {
   const normalized = normalizeEmailText(text, url);
   if (!normalized.includes("@")) return text;
+  if (grewTooMuch(text, normalized)) return EMAIL_HIDDEN;
   return redactNormalized(normalized, keepInstitutional);
+};
+
+/** Caratteri Unicode di un testo (come char_length in Postgres: una emoji conta uno). */
+const codePoints = (text: string) => {
+  let count = text.length;
+  for (let index = 0; index + 1 < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff && (text.charCodeAt(index + 1) & 0xfc00) === 0xdc00) {
+      count -= 1;
+      index += 1;
+    }
+  }
+  return count;
+};
+
+/** La normalizzazione ha allungato il testo di oltre MAX_GROWTH caratteri? Allora non si analizza (si nasconde). */
+const grewTooMuch = (text: string, normalized: string) => {
+  const limit = codePoints(text) + MAX_GROWTH;
+  // Ogni carattere Unicode occupa almeno un'unità UTF-16: entro il limite in unità, lo è anche in caratteri.
+  return normalized.length > limit && codePoints(normalized) > limit;
 };
 
 /** Più di `max` «@» nel testo? Si ferma appena le ha contate. */
@@ -139,7 +163,35 @@ const redactNormalized = (normalized: string, keepInstitutional: boolean): strin
  */
 export const onlyInstitutionalEmails = (text: string, url = false): boolean => {
   const normalized = normalizeEmailText(text, url);
-  return !normalized.includes("@") || redactNormalized(normalized, true) === normalized;
+  if (!normalized.includes("@")) return true;
+  return !grewTooMuch(text, normalized) && redactNormalized(normalized, true) === normalized;
+};
+
+/**
+ * Come decodeURIComponent, ma null invece di un errore (una «%» senza due cifre esadecimali, byte che non sono UTF-8)
+ * e null anche con un carattere nullo (Postgres non lo ammette nel testo). Stessa funzione di studyos_url_decode.
+ */
+export const decodeUrlText = (value: string): string | null => {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+  return decoded.includes("\u0000") ? null : decoded;
+};
+
+/**
+ * Un link di una correzione (campi url e website) come lo vede un agente: la stessa regola di agentUrl
+ * (src/agent/project.ts), ma con gli @unimi.it. Si decodifica («%40» diventa «@» anche nel percorso) e, se la forma
+ * decodificata contiene un indirizzo che non è esattamente @unimi.it, il link non arriva (null): un link di Teams
+ * («…%40thread.v2») o «?to=bea%40gmail.com» resta nell'app ma non va agli agenti; «mailto:prof@unimi.it» passa.
+ * Stessa funzione di studyos_agent_link in supabase/group-exams.sql (copie per gli agenti dello snapshot).
+ */
+export const agentCorrectionLink = (value: string): string | null => {
+  const decoded = decodeUrlText(value);
+  if (decoded === null || !onlyInstitutionalEmails(decoded)) return null;
+  return redactEmails(value, true, true);
 };
 
 /**

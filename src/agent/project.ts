@@ -180,6 +180,14 @@ export const agentMemberText = (text: string | null | undefined) => redactEmails
 export const agentGroupName = (name: string | null | undefined) => agentMemberText(cutAtRunBoundary(name ?? "", GROUP_NAME_MAX));
 
 /**
+ * Titolo di una notifica: può contenere il nome di un gruppo («Invito al gruppo "…"», «Sei entrato in "…"»). Per gli
+ * agenti si taglia al confine di una parola come i nomi dei gruppi (120 caratteri del nome più il testo intorno),
+ * poi si oscura. L'app mostra il titolo intero.
+ */
+export const NOTIFICATION_TITLE_MAX = GROUP_NAME_MAX + 40;
+export const agentNotificationTitle = (title: string | null | undefined) => agentMemberText(cutAtRunBoundary(title ?? "", NOTIFICATION_TITLE_MAX));
+
+/**
  * Indirizzo scritto da un membro (risorsa di un gruppo): solo http(s), mai mailto, e solo se nemmeno la
  * forma decodificata (%40) contiene un indirizzo o un @nome. Altrimenti null (undefined se lo schema non è sicuro).
  */

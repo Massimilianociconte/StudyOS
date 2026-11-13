@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import { AGENT_TOOLS } from "../src/agent/catalog.ts";
 import { GROUP_EXAM_TOOL_NAMES } from "../src/agent/catalogGroupExams.ts";
@@ -10,6 +10,7 @@ import { groupExamWriterLoader } from "../src/agent/groupExamTools.ts";
 import { setInstitutionalEmailsForTests } from "../src/agent/project.ts";
 import { auditEntryOut, auditImage } from "../src/agent/remoteAudit.ts";
 import { BARB_DATASET } from "../src/data/university/barb.dataset.ts";
+import { overrideFromRow } from "../src/lib/groupExams.ts";
 import { useGroupExamStore } from "../src/store/useGroupExamStore.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 
@@ -215,4 +216,58 @@ test("L5: l'etichetta di un contatto scritta da un membro è testo dei membri; p
   assert.equal(teachers.data.items[0].effective.email, "nuovo.prof@unimi.it");
   const { note, officeHours } = teachers.data.items[0].corrections[0].fields;
   assertClean([note, officeHours], "note del docente");
+});
+
+// R5-C: i campi url e website di una correzione come agentUrl: decodificati, e nulli se la forma decodificata ha un
+// indirizzo che non è esattamente @unimi.it. In locale (publicCorrection sul link) e dal connettore remoto (la copia
+// agent_fields dello snapshot, dove il link escluso è «[email nascosta]») l'agente vede lo stesso: nessun link.
+const TEAMS = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0";
+const CALENDAR = "https://calendar.google.com/calendar/embed?src=c_abc%40group.calendar.google.com";
+const linkRows = (url, website) => [
+  row("gover_t", { targetKind: "teacher", targetId: teacher.id, targetLabel: teacher.displayName, fields: { website } }),
+  row("gover_c", { targetKind: "contact", targetId: "nuovo:abc", targetLabel: "Lezioni", fields: { value: "segreteria@unimi.it", url } })
+];
+const agentLinks = async () => {
+  const teachers = await executeAgentTool("studyos_list_barb_teachers", { groupId: "g1", query: teacher.displayName });
+  const contacts = await executeAgentTool("studyos_list_barb_contacts", { groupId: "g1" });
+  const t = teachers.data.items.find((item) => item.id === teacher.id);
+  const c = contacts.data.items.find((item) => !item.official);
+  return {
+    website: t.corrections[0].fields.website, effectiveWebsite: t.effective.website, corrected: t.correctedFields.includes("website"),
+    url: c.corrections[0].fields.url, effectiveUrl: c.url
+  };
+};
+test("R5-C: link di Teams e di Google Calendar: nulli per l'agente, uguali in locale e dal connettore remoto", async () => {
+  useStudyStore.setState({ loading: false, locked: false, persistError: null, subjects: [], exams: [], events: [], examPlans: [] });
+  useGroupExamStore.getState().setSnapshot({ viewerId: "me", groups: [{ id: "g1", name: "G" }], sessions: [], overrides: linkRows(TEAMS, CALENDAR) });
+  const local = await agentLinks();
+  assert.deepEqual(local, { website: null, effectiveWebsite: null, corrected: true, url: null, effectiveUrl: null });
+  // Dal connettore remoto: le righe dello snapshot portano la copia (agent_fields), con il segnaposto al posto del link.
+  const remoteRows = linkRows("[email nascosta]", "[email nascosta]").map((item) => overrideFromRow({
+    id: item.id, group_id: item.groupId, target_kind: item.targetKind, target_id: item.targetId, target_label: item.targetLabel,
+    fields: item.fields, version: item.version, created_by_name: item.createdByName, updated_by_name: item.updatedByName,
+    deleted_at: null, deleted_by_name: null, created_at: item.createdAt, updated_at: item.updatedAt
+  }));
+  assert.equal(remoteRows.every(Boolean), true);
+  useGroupExamStore.getState().setSnapshot({ viewerId: "me", groups: [{ id: "g1", name: "G" }], sessions: [], overrides: remoteRows });
+  assert.deepEqual(await agentLinks(), local, "stesso risultato dal connettore remoto");
+  // mailto verso un indirizzo istituzionale (solo nel campo url) e un link normale restano.
+  useGroupExamStore.getState().setSnapshot({ viewerId: "me", groups: [{ id: "g1", name: "G" }], sessions: [],
+    overrides: linkRows("mailto:prof@unimi.it", "https://www.unimi.it/it/corsi") });
+  const kept = await agentLinks();
+  assert.equal(kept.url, "mailto:prof@unimi.it");
+  assert.equal(kept.website, "https://www.unimi.it/it/corsi");
+  useGroupExamStore.getState().setSnapshot({ viewerId: "me", groups: [{ id: "g1", name: "G" }], sessions: [],
+    overrides: linkRows("https://x.it/?to=bea%40gmail.com", "https://x.it/a%zz") });
+  const dropped = await agentLinks();
+  assert.equal(dropped.url, null, "?to=bea%40gmail.com");
+  assert.equal(dropped.website, null, "% non decodificabile");
+});
+
+test("R5-A: il client non legge le copie per gli agenti (colonne agent_*): sono solo dello snapshot", () => {
+  const files = readdirSync(new URL("../src", import.meta.url), { recursive: true }).filter((name) => /\.(ts|tsx)$/.test(name));
+  for (const name of files) {
+    const source = readFileSync(new URL(`../src/${name}`, import.meta.url), "utf8");
+    assert.equal(/\bagent_(course|label|room|notes|created_by|updated_by|deleted_by|target_label|fields|rule)/.test(source), false, name);
+  }
 });

@@ -117,15 +117,35 @@ select
         to_regprocedure('public.studyos_email_normalize(text,boolean)'),
         to_regprocedure('public.studyos_fields_only_unimi(jsonb)'),
         to_regprocedure('public.studyos_catalog_override_clean(text,jsonb)'),
-        to_regprocedure('public.studyos_groups_name_limit()')]) as f), false)
+        to_regprocedure('public.studyos_groups_name_limit()'),
+        to_regprocedure('public.studyos_email_rule_version()'),
+        to_regprocedure('public.studyos_url_decode(text)'),
+        to_regprocedure('public.studyos_agent_link(text)'),
+        to_regprocedure('public.studyos_without_agent_copies(jsonb)'),
+        to_regprocedure('public.studyos_gexam_agent_copy()'),
+        to_regprocedure('public.studyos_gover_agent_copy()'),
+        to_regprocedure('public.studyos_agent_copies_refresh()')]) as f), false)
     as group_exams_closed_ready,
   exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
       and schemaname = 'public' and tablename = 'studyos_group_exam_sessions')
     and exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime'
       and schemaname = 'public' and tablename = 'studyos_group_catalog_overrides') as group_exams_realtime_ready,
-  -- Il connettore remoto: la funzione dello snapshot e quella che riconosce il segreto (agent.sql).
+  -- Il connettore remoto: la funzione dello snapshot e quella che riconosce il segreto (agent.sql), e i trigger che
+  -- scrivono le copie oscurate che lo snapshot legge (attivi, BEFORE INSERT OR UPDATE per riga, senza elenco di
+  -- colonne e senza condizione).
   to_regprocedure('public.studyos_agent_group_snapshot(text)') is not null
-    and to_regprocedure('public.studyos_agent_user(text)') is not null as group_exams_agent_ready,
+    and to_regprocedure('public.studyos_agent_user(text)') is not null
+    and to_regprocedure('public.studyos_email_rule_version()') is not null
+    and exists (select 1 from pg_trigger where tgrelid = to_regclass('public.studyos_group_exam_sessions')
+      and tgname = 'studyos_gexam_agent_copy' and not tgisinternal
+      and tgenabled in ('O', 'A') and tgtype = 23
+      and tgattr = ''::int2vector and tgqual is null
+      and tgfoid = to_regprocedure('public.studyos_gexam_agent_copy()'))
+    and exists (select 1 from pg_trigger where tgrelid = to_regclass('public.studyos_group_catalog_overrides')
+      and tgname = 'studyos_gover_agent_copy' and not tgisinternal
+      and tgenabled in ('O', 'A') and tgtype = 23
+      and tgattr = ''::int2vector and tgqual is null
+      and tgfoid = to_regprocedure('public.studyos_gover_agent_copy()')) as group_exams_agent_ready,
   -- La guardia sulle righe dei membri (groups.sql: l'account e il gruppo di una riga non cambiano), attiva su OGNI
   -- modifica (niente elenco di colonne, niente WHEN), la forma degli id dei gruppi e il limite di 120 caratteri sul
   -- nome di un gruppo quando lo si scrive o lo si cambia (group-exams.sql).

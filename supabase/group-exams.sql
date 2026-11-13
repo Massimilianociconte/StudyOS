@@ -125,7 +125,8 @@ $$;
 --    del sito (i link di Teams e di Google Calendar hanno «%40thread.v2», «%40group.calendar.google.com»); vale
 --    «@» nel destinatario di un «mailto:» e prima del percorso (dove stanno utente e password). Senza nessuna «@»
 --    il testo resta com'è stato scritto (nessuna normalizzazione visibile);
--- 2. più di 10 «@» in un valore: tutto il valore diventa «[email nascosta]» (così il lavoro per valore resta piccolo);
+-- 2. più di 10 «@» in un valore, oppure un valore con «@» che normalizzato è più lungo di oltre 32 caratteri (NFKC: «ﷺ» da
+--    solo diventa 18 caratteri): tutto il valore diventa «[email nascosta]» (così il lavoro per valore resta piccolo);
 -- 3. ogni corsa di caratteri senza spazi ASCII che contiene una «@» è UN candidato (oltre 300 caratteri Unicode:
 --    sempre nascosto per intero; una corsa lunga senza «@», un link, resta);
 -- 4. si toglie dal candidato l'inizio (virgolette, parentesi aperte, «mailto:») e la fine (punteggiatura): il
@@ -184,8 +185,8 @@ $$;
 -- p_url il testo è un link (campi url e website). Lavoro piccolo e lineare per valore: si guardano solo le corse
 -- con «@» (al massimo 10) e le corse vicine, con poche istruzioni per «@»; il resto del testo si copia com'è.
 -- Mai un errore per il contenuto: con p_safe (il default) qualsiasi problema dà «[email nascosta]» per tutto il
--- valore. Lo snapshot la chiama con p_safe = false (niente sottotransazione per valore) dentro UN solo blocco di
--- eccezione, e se qualcosa va storto la rifà con p_safe = true.
+-- valore (p_safe = false: senza sottotransazione, l'errore sale a chi chiama). Si usa alla scrittura (copie per gli
+-- agenti, controlli delle correzioni) e per i nomi dei gruppi nello snapshot.
 create or replace function public.studyos_hide_emails(p_text text, p_keep boolean default false,
   p_url boolean default false, p_safe boolean default true)
 returns text
@@ -229,7 +230,10 @@ begin
   if strpos(v, '@') = 0 then
     return p_text;
   end if;
-  if octet_length(v) - octet_length(replace(v, '@', '')) > 10 then
+  -- Un testo che la normalizzazione allunga di molto (U+FDFA: 1 carattere, 18 dopo NFKC) non si analizza: il lavoro
+  -- e l'uscita restano limitati dalla lunghezza scritta.
+  if char_length(v) > char_length(p_text) + 32
+     or octet_length(v) - octet_length(replace(v, '@', '')) > 10 then
     return '[email nascosta]';
   end if;
   -- Le corse con «@» (v_runs) e il testo fra l'una e l'altra (v_gaps[j]: dopo la corsa j; l'ultimo è la coda).
@@ -397,6 +401,74 @@ revoke all on function public.studyos_hide_emails(text, boolean, boolean, boolea
 revoke all on function public.studyos_only_unimi_emails(text, boolean) from public, anon, authenticated;
 revoke all on function public.studyos_cut_at_run(text, integer) from public, anon, authenticated;
 
+-- Versione della regola sulle email (le funzioni qui sopra e studyos_agent_link qui sotto). Appelli e correzioni
+-- conservano le copie per gli agenti già oscurate, ciascuna con la versione con cui è stata calcolata: se la regola
+-- cambia, si aumenta questo numero e la prossima esecuzione di questo script ricalcola solo le righe con una
+-- versione diversa (vedi «Copie per gli agenti» più sotto e docs/group-exams.md).
+create or replace function public.studyos_email_rule_version()
+returns integer
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select 5
+$$;
+
+-- Come decodeURIComponent di JavaScript: ogni «%XX» diventa il suo byte, i byte si leggono in UTF-8. null se una «%»
+-- non è seguita da due cifre esadecimali o se i byte non sono UTF-8 valido (anche un carattere nullo): il testo non
+-- si può controllare. Mai un errore.
+create or replace function public.studyos_url_decode(p_text text)
+returns text
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v_out text;
+begin
+  if p_text is null or strpos(p_text, '%') = 0 then
+    return p_text;
+  end if;
+  if p_text ~ '%(?![0-9A-Fa-f]{2})' then
+    return null;
+  end if;
+  select string_agg(case when r.m[1] is not null
+      then convert_from(decode(replace(r.m[1], '%', ''), 'hex'), 'UTF8') else r.m[2] end, '' order by r.n)
+    into v_out
+    from regexp_matches(p_text, '((?:%[0-9A-Fa-f]{2})+)|([^%]+)', 'g') with ordinality as r (m, n);
+  return v_out;
+exception when others then
+  return null;
+end;
+$$;
+
+-- Un link di una correzione (campi url e website) come lo vede un agente. Stessa regola di agentCorrectionLink in
+-- src/lib/institutionalEmail.ts e di agentUrl in src/agent/project.ts: si decodifica («%40» diventa «@» anche nel
+-- percorso) e, se la forma decodificata contiene un indirizzo che non è esattamente @unimi.it, il link non arriva
+-- (null): così un link di Teams («…%40thread.v2») o «?to=bea%40gmail.com» resta nell'app ma non va agli agenti. Un
+-- link che passa esce come lo dà studyos_hide_emails nei link, con gli @unimi.it. Mai un errore: null.
+create or replace function public.studyos_agent_link(p_value text)
+returns text
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v_decoded text := public.studyos_url_decode(p_value);
+begin
+  if p_value is null or v_decoded is null or not public.studyos_only_unimi_emails(v_decoded) then
+    return null;
+  end if;
+  return public.studyos_hide_emails(p_value, true, true);
+exception when others then
+  return null;
+end;
+$$;
+
+revoke all on function public.studyos_email_rule_version() from public, anon, authenticated;
+revoke all on function public.studyos_url_decode(text) from public, anon, authenticated;
+revoke all on function public.studyos_agent_link(text) from public, anon, authenticated;
+
 -- Ogni valore testuale di un oggetto jsonb contiene solo indirizzi @unimi.it (si controlla valore per valore;
 -- url e website come link).
 create or replace function public.studyos_fields_only_unimi(p_fields jsonb)
@@ -414,6 +486,21 @@ $$;
 
 revoke all on function public.studyos_fields_only_unimi(jsonb) from public, anon, authenticated;
 
+-- Una riga di appello o di correzione per l'app (esito delle funzioni, cronologia): senza le copie per gli agenti
+-- (colonne agent_*, vedi «Copie per gli agenti» più sotto). L'app non le usa e la cronologia non le conserva.
+create or replace function public.studyos_without_agent_copies(p_row jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select p_row - array['agent_course_name', 'agent_course_norm', 'agent_course_key', 'agent_label', 'agent_room',
+    'agent_notes', 'agent_created_by_name', 'agent_updated_by_name', 'agent_deleted_by_name', 'agent_target_label',
+    'agent_fields', 'agent_rule']
+$$;
+
+revoke all on function public.studyos_without_agent_copies(jsonb) from public, anon, authenticated;
+
 -- Esito delle funzioni di scrittura: { status, row?, message?, field? }.
 create or replace function public.studyos_group_result(p_status text, p_row jsonb default null, p_message text default null, p_field text default null)
 returns jsonb
@@ -422,7 +509,7 @@ immutable
 set search_path = pg_catalog
 as $$
   select jsonb_build_object('status', p_status)
-    || case when p_row is null then '{}'::jsonb else jsonb_build_object('row', p_row) end
+    || case when p_row is null then '{}'::jsonb else jsonb_build_object('row', public.studyos_without_agent_copies(p_row)) end
     || case when p_message is null then '{}'::jsonb else jsonb_build_object('message', p_message) end
     || case when p_field is null then '{}'::jsonb else jsonb_build_object('field', p_field) end
 $$;
@@ -526,6 +613,161 @@ drop trigger if exists studyos_gover_stamp on public.studyos_group_catalog_overr
 create trigger studyos_gover_stamp
   before insert or update on public.studyos_group_catalog_overrides
   for each row execute function public.studyos_group_stamp();
+
+-- ---------------------------------------------------------------------------------------------
+-- Copie per gli agenti: ogni testo scritto dai membri che lo snapshot del connettore restituisce ha accanto la sua
+-- copia già oscurata (spec §9.3: nessun indirizzo nei testi dei membri, nemmeno @unimi.it; gli @unimi.it restano
+-- solo nei campi email, value, url e website delle correzioni). Le scrive un trigger BEFORE INSERT OR UPDATE a ogni
+-- scrittura (funzioni, ripristini, scritture dirette dal SQL Editor): lo snapshot le legge e non oscura nulla, così
+-- il suo tempo dipende dal numero di righe e dalla lunghezza delle copie, non dal lavoro di oscuramento (che si fa
+-- una volta, alla scrittura, e costa secondo il contenuto). agent_rule = studyos_email_rule_version()
+-- con cui sono state calcolate. Le copie stanno nella stessa riga e si leggono con la stessa RLS: i membri vedono
+-- già il testo intero, la copia ne è solo una versione con meno informazioni (l'app non la usa). Le funzioni di
+-- scrittura le tolgono dalle righe che restituiscono e dalla cronologia (studyos_without_agent_copies).
+-- La cronologia non ha copie: lo snapshot non la restituisce.
+-- ---------------------------------------------------------------------------------------------
+
+alter table public.studyos_group_exam_sessions
+  add column if not exists agent_course_name text,
+  add column if not exists agent_course_norm text,
+  add column if not exists agent_course_key text,
+  add column if not exists agent_label text,
+  add column if not exists agent_room text,
+  add column if not exists agent_notes text,
+  add column if not exists agent_created_by_name text,
+  add column if not exists agent_updated_by_name text,
+  add column if not exists agent_deleted_by_name text,
+  add column if not exists agent_rule integer;
+
+alter table public.studyos_group_catalog_overrides
+  add column if not exists agent_target_label text,
+  add column if not exists agent_fields jsonb,
+  add column if not exists agent_created_by_name text,
+  add column if not exists agent_updated_by_name text,
+  add column if not exists agent_deleted_by_name text,
+  add column if not exists agent_rule integer;
+
+-- Mai un errore per il contenuto: studyos_hide_emails e studyos_agent_link danno «[email nascosta]» o null. Se
+-- comunque qualcosa fallisse, la scrittura passa con le copie vuote (null) e agent_rule null: lo snapshot dà il
+-- segnaposto al loro posto (mai il testo intero) e il prossimo aggiornamento le ricalcola. course_norm e course_key
+-- per gli agenti vengono dal nome già oscurato (senza «@» restano quelli salvati).
+create or replace function public.studyos_gexam_agent_copy()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  new.agent_course_name := public.studyos_hide_emails(left(new.course_name, 200));
+  new.agent_course_norm := case when new.agent_course_name is not distinct from new.course_name then new.course_norm
+    else public.studyos_course_norm(new.agent_course_name) end;
+  new.agent_course_key := case when new.course_key like 'barb:%' or new.agent_course_name is not distinct from new.course_name
+    then new.course_key else 'nome:' || public.studyos_course_norm(new.agent_course_name) end;
+  new.agent_label := public.studyos_hide_emails(left(new.label, 200));
+  new.agent_room := public.studyos_hide_emails(left(new.room, 200));
+  new.agent_notes := public.studyos_hide_emails(left(new.notes, 2000));
+  new.agent_created_by_name := public.studyos_hide_emails(left(new.created_by_name, 200));
+  new.agent_updated_by_name := public.studyos_hide_emails(left(new.updated_by_name, 200));
+  new.agent_deleted_by_name := public.studyos_hide_emails(left(new.deleted_by_name, 200));
+  new.agent_rule := public.studyos_email_rule_version();
+  return new;
+exception when others then
+  new.agent_course_name := null;
+  new.agent_course_norm := null;
+  new.agent_course_key := null;
+  new.agent_label := null;
+  new.agent_room := null;
+  new.agent_notes := null;
+  new.agent_created_by_name := null;
+  new.agent_updated_by_name := null;
+  new.agent_deleted_by_name := null;
+  new.agent_rule := null;
+  return new;
+end;
+$$;
+
+-- Campi di una correzione: solo i valori di testo; email e value tengono gli @unimi.it, url e website passano da
+-- studyos_agent_link (un link che non arriva agli agenti diventa «[email nascosta]»: la chiave resta, così il valore
+-- effettivo per l'agente non torna quello del catalogo ufficiale), gli altri campi nascondono tutto.
+create or replace function public.studyos_gover_agent_copy()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  new.agent_target_label := public.studyos_hide_emails(left(new.target_label, 200));
+  new.agent_fields := coalesce((
+    select jsonb_object_agg(e.key, case when e.key in ('url', 'website')
+        then coalesce(public.studyos_agent_link(left(e.value #>> '{}', 1000)), '[email nascosta]')
+        else public.studyos_hide_emails(left(e.value #>> '{}', 1000), e.key in ('email', 'value')) end)
+    from jsonb_each(case when jsonb_typeof(new.fields) = 'object' then new.fields else '{}'::jsonb end) as e
+    where jsonb_typeof(e.value) = 'string'), '{}'::jsonb);
+  new.agent_created_by_name := public.studyos_hide_emails(left(new.created_by_name, 200));
+  new.agent_updated_by_name := public.studyos_hide_emails(left(new.updated_by_name, 200));
+  new.agent_deleted_by_name := public.studyos_hide_emails(left(new.deleted_by_name, 200));
+  new.agent_rule := public.studyos_email_rule_version();
+  return new;
+exception when others then
+  new.agent_target_label := null;
+  new.agent_fields := null;
+  new.agent_created_by_name := null;
+  new.agent_updated_by_name := null;
+  new.agent_deleted_by_name := null;
+  new.agent_rule := null;
+  return new;
+end;
+$$;
+
+revoke all on function public.studyos_gexam_agent_copy() from public, anon, authenticated;
+revoke all on function public.studyos_gover_agent_copy() from public, anon, authenticated;
+
+drop trigger if exists studyos_gexam_agent_copy on public.studyos_group_exam_sessions;
+create trigger studyos_gexam_agent_copy
+  before insert or update on public.studyos_group_exam_sessions
+  for each row execute function public.studyos_gexam_agent_copy();
+drop trigger if exists studyos_gover_agent_copy on public.studyos_group_catalog_overrides;
+create trigger studyos_gover_agent_copy
+  before insert or update on public.studyos_group_catalog_overrides
+  for each row execute function public.studyos_gover_agent_copy();
+
+-- Aggiornamento: le righe senza copie, o con copie di un'altra versione della regola, si ricalcolano una volta sola
+-- (rieseguire lo script non tocca le righe già alla versione attuale: 0 righe). Il timbro updated_at e la versione non
+-- cambiano: il contenuto per l'app è lo stesso (il trigger del timbro resta spento solo dentro la funzione, nella
+-- stessa transazione: se qualcosa fallisce torna acceso con il resto). Restituisce le righe ricalcolate.
+create or replace function public.studyos_agent_copies_refresh()
+returns integer
+language plpgsql
+set search_path = pg_catalog
+as $$
+declare
+  v_sessions integer := 0;
+  v_overrides integer := 0;
+begin
+  if exists (select 1 from public.studyos_group_exam_sessions
+             where agent_rule is distinct from public.studyos_email_rule_version()) then
+    alter table public.studyos_group_exam_sessions disable trigger studyos_gexam_stamp;
+    update public.studyos_group_exam_sessions set agent_rule = null
+      where agent_rule is distinct from public.studyos_email_rule_version();
+    get diagnostics v_sessions = row_count;
+    alter table public.studyos_group_exam_sessions enable trigger studyos_gexam_stamp;
+  end if;
+  if exists (select 1 from public.studyos_group_catalog_overrides
+             where agent_rule is distinct from public.studyos_email_rule_version()) then
+    alter table public.studyos_group_catalog_overrides disable trigger studyos_gover_stamp;
+    update public.studyos_group_catalog_overrides set agent_rule = null
+      where agent_rule is distinct from public.studyos_email_rule_version();
+    get diagnostics v_overrides = row_count;
+    alter table public.studyos_group_catalog_overrides enable trigger studyos_gover_stamp;
+  end if;
+  return v_sessions + v_overrides;
+end;
+$$;
+
+revoke all on function public.studyos_agent_copies_refresh() from public, anon, authenticated;
+
+do $$
+begin
+  perform public.studyos_agent_copies_refresh();
+end $$;
 
 -- ---------------------------------------------------------------------------------------------
 -- RLS: i membri leggono; nessuno scrive direttamente (solo le funzioni security definer).
@@ -850,7 +1092,8 @@ set search_path = public
 as $$
   insert into public.studyos_group_history
     (group_id, record_kind, record_id, action, version, before, after, changed_fields, actor_user_id, actor_name)
-  values (p_group_id, p_kind, p_record_id, p_action, p_version, p_before, p_after,
+  values (p_group_id, p_kind, p_record_id, p_action, p_version,
+    public.studyos_without_agent_copies(p_before), public.studyos_without_agent_copies(p_after),
     coalesce(p_changed, '{}'), auth.uid()::text, p_actor_name)
 $$;
 
@@ -1372,92 +1615,75 @@ as $$
 declare
   v_user uuid := public.studyos_agent_user(p_secret);
   v_me text;
-  -- false: il redattore lavora senza una sottotransazione per valore (veloce). Se qualcosa va storto si rifà
-  -- tutto con true: ogni valore che dà un errore diventa «[email nascosta]» (mai un errore per il contenuto).
-  v_safe boolean := false;
 begin
   if v_user is null then
     raise exception 'Collegamento dell''assistente non valido o revocato.' using errcode = '28000';
   end if;
   v_me := v_user::text;
-  -- Spec §9.3: il testo scritto dai membri e i loro nomi arrivano agli agenti senza NESSUN indirizzo
-  -- (nemmeno @unimi.it: un membro può averlo); gli @unimi.it restano solo nei campi email e contatto
-  -- delle correzioni (email, value, url, website). Si redige valore per valore, mai rileggendo JSON.
+  -- Spec §9.3: il testo scritto dai membri e i loro nomi arrivano agli agenti senza NESSUN indirizzo (nemmeno
+  -- @unimi.it: un membro può averlo); gli @unimi.it restano solo nei campi email, value, url e website delle
+  -- correzioni. Appelli e correzioni: si leggono le copie già oscurate alla scrittura (colonne agent_*, trigger
+  -- studyos_gexam_agent_copy e studyos_gover_agent_copy), nessuna redazione qui: il tempo dipende dal numero
+  -- di righe e dalla lunghezza delle copie. Una copia mancante (riga scritta con i trigger spenti) esce come
+  -- «[email nascosta]», mai il testo.
   -- Solo gruppi con id di forma sicura (gli id li sceglie il client): gli altri non escono dal server.
-  loop
-    begin
-      return jsonb_build_object(
-        'groups', coalesce((
-          -- Il nome si taglia a 120 caratteri PRIMA di oscurarlo, al confine di una parola: mai un pezzo di
-          -- indirizzo (i nomi nuovi non superano 120: trigger studyos_groups_name_limit; questi sono i vecchi).
-          select jsonb_agg(jsonb_build_object('id', g.id, 'name', public.studyos_hide_emails(
-              public.studyos_cut_at_run(g.name, 120), false, false, v_safe)) order by g.name, g.id)
-          from public.studyos_groups as g
-          join public.studyos_group_members as m on m.group_id = g.id and m.user_id = v_me
-          where g.id ~ '^[A-Za-z0-9_-]{1,120}$'), '[]'::jsonb),
-        'sessions', coalesce((
-          select jsonb_agg(jsonb_build_object(
-              'id', s.id, 'group_id', s.group_id,
-              -- Senza «@» nel nome si restituiscono il testo e le chiavi come sono salvati; con una «@» il nome è
-              -- oscurato e le chiavi si ricavano da quello (il nome si oscura una sola volta per riga).
-              'course_key', case when s.course_key like 'barb:%' or cn.name is not distinct from s.course_name then s.course_key
-                else 'nome:' || public.studyos_course_norm(cn.name) end,
-              'course_id', s.course_id,
-              'course_name', cn.name,
-              'course_norm', case when cn.name is not distinct from s.course_name then s.course_norm
-                else public.studyos_course_norm(cn.name) end,
-              'exam_date', s.exam_date, 'kind', s.kind,
-              'label', public.studyos_hide_emails(left(s.label, 200), false, false, v_safe),
-              'exam_time', s.exam_time,
-              'room', public.studyos_hide_emails(left(s.room, 200), false, false, v_safe),
-              'notes', public.studyos_hide_emails(left(s.notes, 2000), false, false, v_safe),
-              'registration_opens', s.registration_opens, 'registration_closes', s.registration_closes,
-              'barb_session_id', s.barb_session_id, 'source', s.source, 'version', s.version,
-              'created_by_name', public.studyos_hide_emails(left(s.created_by_name, 200), false, false, v_safe),
-              'updated_by_name', public.studyos_hide_emails(left(s.updated_by_name, 200), false, false, v_safe),
-              'deleted_at', s.deleted_at,
-              'deleted_by_name', public.studyos_hide_emails(left(s.deleted_by_name, 200), false, false, v_safe),
-              'created_at', s.created_at, 'updated_at', s.updated_at,
-              'mine', s.created_by = v_me) order by s.exam_date, s.id)
-          from (
-            select * from public.studyos_group_exam_sessions
-            where group_id in (select group_id from public.studyos_group_members where user_id = v_me)
-              and group_id ~ '^[A-Za-z0-9_-]{1,120}$'
-            order by exam_date desc, id
-            limit 2000
-          ) as s
-          cross join lateral (select public.studyos_hide_emails(left(s.course_name, 200), false, false, v_safe) as name) as cn),
-          '[]'::jsonb),
-        'overrides', coalesce((
-          select jsonb_agg(jsonb_build_object(
-              'id', o.id, 'group_id', o.group_id, 'target_kind', o.target_kind, 'target_id', o.target_id,
-              'target_label', public.studyos_hide_emails(left(o.target_label, 200), false, false, v_safe),
-              -- Solo valori di testo (la funzione di scrittura non ne accetta altri): quelli di altro tipo si scartano.
-              -- url e website sono link: «%40» nel loro percorso non è una chiocciola.
-              'fields', coalesce((
-                select jsonb_object_agg(e.key, to_jsonb(public.studyos_hide_emails(left(e.value #>> '{}', 1000),
-                  e.key in ('email', 'value', 'url', 'website'), e.key in ('url', 'website'), v_safe)))
-                from jsonb_each(o.fields) as e
-                where jsonb_typeof(e.value) = 'string'), '{}'::jsonb),
-              'version', o.version,
-              'created_by_name', public.studyos_hide_emails(left(o.created_by_name, 200), false, false, v_safe),
-              'updated_by_name', public.studyos_hide_emails(left(o.updated_by_name, 200), false, false, v_safe),
-              'deleted_at', o.deleted_at,
-              'deleted_by_name', public.studyos_hide_emails(left(o.deleted_by_name, 200), false, false, v_safe),
-              'created_at', o.created_at, 'updated_at', o.updated_at,
-              'mine', o.created_by = v_me) order by o.target_kind, o.target_id)
-          from public.studyos_group_catalog_overrides as o
-          where o.deleted_at is null
-            and o.group_id ~ '^[A-Za-z0-9_-]{1,120}$'
-            and o.group_id in (select group_id from public.studyos_group_members where user_id = v_me)), '[]'::jsonb)
-      );
-    exception when others then
-      if v_safe then
-        raise;
-      end if;
-      v_safe := true;
-    end;
-  end loop;
+  return jsonb_build_object(
+    'groups', coalesce((
+      -- I nomi dei gruppi (pochi) si oscurano qui: tagliati a 120 caratteri PRIMA di oscurarli, al confine di una
+      -- parola, mai un pezzo di indirizzo (i nomi nuovi non superano 120: trigger studyos_groups_name_limit).
+      select jsonb_agg(jsonb_build_object('id', g.id, 'name', public.studyos_hide_emails(
+          public.studyos_cut_at_run(g.name, 120))) order by g.name, g.id)
+      from public.studyos_groups as g
+      join public.studyos_group_members as m on m.group_id = g.id and m.user_id = v_me
+      where g.id ~ '^[A-Za-z0-9_-]{1,120}$'), '[]'::jsonb),
+    'sessions', coalesce((
+      select jsonb_agg(jsonb_build_object(
+          'id', s.id, 'group_id', s.group_id,
+          'course_key', coalesce(s.agent_course_key, 'nome:email nascosta'),
+          'course_id', s.course_id,
+          'course_name', coalesce(s.agent_course_name, '[email nascosta]'),
+          'course_norm', coalesce(s.agent_course_norm, 'email nascosta'),
+          'exam_date', s.exam_date, 'kind', s.kind,
+          'label', coalesce(s.agent_label, '[email nascosta]'),
+          'exam_time', s.exam_time,
+          'room', coalesce(s.agent_room, '[email nascosta]'),
+          'notes', coalesce(s.agent_notes, '[email nascosta]'),
+          'registration_opens', s.registration_opens, 'registration_closes', s.registration_closes,
+          'barb_session_id', s.barb_session_id, 'source', s.source, 'version', s.version,
+          'created_by_name', coalesce(s.agent_created_by_name, '[email nascosta]'),
+          'updated_by_name', coalesce(s.agent_updated_by_name, '[email nascosta]'),
+          'deleted_at', s.deleted_at,
+          'deleted_by_name', case when s.deleted_by_name is null then null
+            else coalesce(s.agent_deleted_by_name, '[email nascosta]') end,
+          'created_at', s.created_at, 'updated_at', s.updated_at,
+          'mine', s.created_by = v_me) order by s.exam_date, s.id)
+      from (
+        select * from public.studyos_group_exam_sessions
+        where group_id in (select group_id from public.studyos_group_members where user_id = v_me)
+          and group_id ~ '^[A-Za-z0-9_-]{1,120}$'
+        order by exam_date desc, id
+        limit 2000
+      ) as s), '[]'::jsonb),
+    'overrides', coalesce((
+      select jsonb_agg(jsonb_build_object(
+          'id', o.id, 'group_id', o.group_id, 'target_kind', o.target_kind, 'target_id', o.target_id,
+          'target_label', coalesce(o.agent_target_label, '[email nascosta]'),
+          -- Solo valori di testo (la funzione di scrittura non ne accetta altri); url e website già passati da
+          -- studyos_agent_link. Senza copia: nessun campo.
+          'fields', coalesce(o.agent_fields, '{}'::jsonb),
+          'version', o.version,
+          'created_by_name', coalesce(o.agent_created_by_name, '[email nascosta]'),
+          'updated_by_name', coalesce(o.agent_updated_by_name, '[email nascosta]'),
+          'deleted_at', o.deleted_at,
+          'deleted_by_name', case when o.deleted_by_name is null then null
+            else coalesce(o.agent_deleted_by_name, '[email nascosta]') end,
+          'created_at', o.created_at, 'updated_at', o.updated_at,
+          'mine', o.created_by = v_me) order by o.target_kind, o.target_id)
+      from public.studyos_group_catalog_overrides as o
+      where o.deleted_at is null
+        and o.group_id ~ '^[A-Za-z0-9_-]{1,120}$'
+        and o.group_id in (select group_id from public.studyos_group_members where user_id = v_me)), '[]'::jsonb)
+  );
 end;
 $$;
 

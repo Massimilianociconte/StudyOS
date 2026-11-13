@@ -34,5 +34,6 @@ export const GROUP_SYNC_TEXT = {
   leaveFailed: "Uscita non riuscita: sei ancora nel gruppo. Controlla la connessione e riprova.",
   deleteGroupFailed: "Il gruppo non è stato eliminato: controlla la connessione e riprova.",
   removedMember: (name: string) => `${name} non fa più parte del gruppo.`,
-  notPublished: "Non ancora condiviso: partirà appena il server risponde."
+  notPublished: "Non ancora condiviso: partirà appena il server risponde.",
+  nameTooLong: "Nome troppo lungo: il server accetta al massimo 120 caratteri, quindi questo gruppo non è online e gli inviti non funzionano. Per invitare altre persone crea un nuovo gruppo con un nome più corto."
 } as const;

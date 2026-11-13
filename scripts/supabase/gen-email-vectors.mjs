@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
-const { vectors, cuts } = JSON.parse(readFileSync(fileURLToPath(new URL("../../tests/fixtures/emailVectors.json", import.meta.url)), "utf8"));
+const { vectors, cuts, links } = JSON.parse(readFileSync(fileURLToPath(new URL("../../tests/fixtures/emailVectors.json", import.meta.url)), "utf8"));
 
 /** Stringa SQL E'…' con ogni carattere non ASCII scritto come \uXXXX (nessun problema di codifica). */
 export const sqlText = (value) => {
@@ -49,6 +49,12 @@ export const buildSql = () => {
     const input = sqlText(c.input);
     lines.push(`select pg_temp.vec(${id}, public.studyos_cut_at_run(${input}, 120) = ${sqlText(c.cut)});`);
     lines.push(`select pg_temp.vec(${id} || ' (agente)', public.studyos_hide_emails(public.studyos_cut_at_run(${input}, 120), false) = ${sqlText(c.agent)});`);
+  });
+  // links: campi url e website di una correzione come li vede un agente (studyos_agent_link, la copia agent_fields).
+  links.forEach((l, i) => {
+    const id = sqlText(`link ${i + 1} ${l.name}`);
+    const expected = l.agent === null ? "is null" : `= ${sqlText(l.agent)}`;
+    lines.push(`select pg_temp.vec(${id}, public.studyos_agent_link(${sqlText(l.input)}) ${expected});`);
   });
   lines.push("rollback;", "\\echo 'email-vectors-tests: tutto ok'", "");
   return lines.join("\n");

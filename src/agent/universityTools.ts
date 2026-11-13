@@ -11,6 +11,7 @@ import {
 } from "../lib/catalogOverrides";
 import { newGroupRecordId, type CatalogOverride, type CatalogTargetKind } from "../lib/groupExams";
 import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
+import { agentCorrectionLink } from "../lib/institutionalEmail";
 import { normalizeExternalUrl } from "../lib/safeUrl";
 import type { BarbTeacher, ScheduleRule } from "../lib/university/types";
 import { useGroupExamStore } from "../store/useGroupExamStore";
@@ -28,14 +29,20 @@ const NEEDS_VERSION = "Il gruppo ha già una correzione per questo elemento: pas
 const catalog = async () => (await import("../data/university/barb.dataset")).BARB_DATASET;
 const groups = () => useGroupExamStore.getState();
 
-/** Link per gli agenti: http(s) sicuro; mailto solo verso un indirizzo istituzionale. */
+/**
+ * Link per gli agenti: http(s) sicuro; mailto solo verso un indirizzo istituzionale. Prima la regola dei link delle
+ * correzioni (agentCorrectionLink, la stessa delle copie dello snapshot): se la forma decodificata contiene un
+ * indirizzo non @unimi.it (un link di Teams, «?to=bea%40gmail.com») il link non arriva.
+ */
 const agentLink = (value: string | null | undefined): string | null => {
   if (!value) return null;
-  if (/^mailto:/i.test(value)) {
-    const email = agentTeacherEmail(value.slice(7).split("?")[0]);
+  const link = agentCorrectionLink(value);
+  if (link === null) return null;
+  if (/^mailto:/i.test(link)) {
+    const email = agentTeacherEmail(link.slice(7).split("?")[0]);
     return email ? `mailto:${email}` : null;
   }
-  return normalizeExternalUrl(value);
+  return normalizeExternalUrl(link);
 };
 
 /** Un campo del catalogo o di una correzione come lo vede l'agente. */

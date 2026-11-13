@@ -6,7 +6,7 @@
 // perdono a ogni profondità email, codici di invito, token, iscrizioni push e id di account.
 
 import { COLLECTION_BY_ENTITY_TYPE } from "../lib/collections";
-import { BRIEF_MAX, agentMemberText, publicEntity, publicGroup, publicPreferences } from "./project";
+import { BRIEF_MAX, agentGroupName, agentMemberText, agentNotificationTitle, publicEntity, publicGroup, publicPreferences } from "./project";
 
 export type AuditAction = "create" | "update" | "delete";
 
@@ -171,13 +171,17 @@ export const auditImage = (entityType: string, image: unknown): Record<string, u
     // Inviti, risorse e attività dei gruppi: il connettore non li scrive; se ce ne fossero, solo il nome.
     const clean = scrub(image) as Record<string, unknown>;
     const title = clean.title ?? clean.groupName ?? clean.text;
-    return { id: clean.id, title: typeof title === "string" ? agentMemberText(title) : title, status: clean.status };
+    // Il nome del gruppo di un invito: tagliato a 120 al confine di una parola, poi oscurato (agentGroupName).
+    const fromGroupName = (clean.title === undefined || clean.title === null) && title === clean.groupName;
+    return { id: clean.id, title: typeof title === "string" ? (fromGroupName ? agentGroupName(title) : agentMemberText(title)) : title, status: clean.status };
   }
   if (entityType === "notification") {
     // Le notifiche copiano testo di appelli scritto dai membri (corso, aula, nomi): sempre oscurato.
     const clean = scrub(image) as Record<string, unknown>;
     const redact = (value: unknown) => (typeof value === "string" ? agentMemberText(value) : value);
-    return publicEntity({ ...clean, title: redact(clean.title), body: redact(clean.body) });
+    // Il titolo può contenere il nome di un gruppo («Invito al gruppo "…"»): tagliato come i nomi dei gruppi.
+    const title = typeof clean.title === "string" ? agentNotificationTitle(clean.title) : clean.title;
+    return publicEntity({ ...clean, title, body: redact(clean.body) });
   }
   return publicEntity(scrub(image) as object);
 };

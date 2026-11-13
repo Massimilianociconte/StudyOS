@@ -6,10 +6,12 @@ import {
   inviteNotificationId,
   invitesToNotify,
   isCodeOnlyInvite,
+  isGroupNameLimitError,
   makeGroupInviteCode,
   mergeSharedSnapshot,
   normalizeInviteCode,
   realtimeGroupIds,
+  serverGroupName,
   serverStampOf,
   settleInviteNotifications,
   visibleMemberName,
@@ -473,11 +475,20 @@ const rememberPublish = async (kind: PublishKind, id: string, ok: boolean) => {
   );
 };
 
-/** Gruppo e mia riga da proprietario. Se non riesce, si riprova dopo il prossimo pull. */
+/**
+ * Gruppi il cui nome il server ha rifiutato (23514, studyos_groups_name_limit): riprovare darebbe lo stesso errore,
+ * quindi non tornano in coda. L'invito mostra «nome troppo lungo» (GROUP_SYNC_TEXT.nameTooLong) finché il nome resta
+ * quello; una scrittura riuscita li toglie.
+ */
+const nameRejected = new Set<string>();
+
+export const groupNameRejected = (groupId: string) => nameRejected.has(groupId);
+
+/** Gruppo e mia riga da proprietario. Se non riesce, si riprova dopo il prossimo pull (non se il nome è rifiutato). */
 export const publishGroup = async (group: StudyGroup): Promise<boolean> => {
   const owner = group.members.find((member) => member.userId === group.ownerId);
   const ok = (await pushSharedGroup(group)) && (!owner || (await pushSharedMembership(group.id, owner)));
-  await rememberPublish("group", group.id, ok);
+  await rememberPublish("group", group.id, ok || nameRejected.has(group.id));
   return ok;
 };
 
@@ -526,18 +537,23 @@ const flushPublishQueue = async (me: string) => {
 /** Esito di una scrittura: false se non è riuscita, altrimenti il timbro scritto dal server (se la tabella ne ha uno). */
 type PushResult = false | { stamp?: string };
 
-const pushRow = async (table: string, row: Record<string, unknown>, onConflict = "id"): Promise<PushResult> => {
-  if (!(await isSharedAvailable()) || !supabase) return false;
+/** Errore restituito dal server (codice e messaggio), per chi deve distinguere un rifiuto definitivo. */
+type PushError = { code?: string; message?: string };
+
+const pushRowDetailed = async (table: string, row: Record<string, unknown>, onConflict = "id"): Promise<{ result: PushResult; error?: PushError }> => {
+  if (!(await isSharedAvailable()) || !supabase) return { result: false };
   try {
     const upsert = supabase.from(table).upsert(row, { onConflict });
     // Le tabelle con updated_at restituiscono il timbro: lo scrive il server (trigger di groups.sql).
     const { data, error } = "updated_at" in row ? await upsert.select("updated_at") : await upsert;
-    if (error) return false;
-    return { stamp: serverStampOf(data) };
+    if (error) return { result: false, error: { code: error.code, message: error.message } };
+    return { result: { stamp: serverStampOf(data) } };
   } catch {
-    return false;
+    return { result: false };
   }
 };
+
+const pushRow = async (table: string, row: Record<string, unknown>, onConflict = "id"): Promise<PushResult> => (await pushRowDetailed(table, row, onConflict)).result;
 
 type StampedKey = "studyGroups" | "groupResources" | "groupInvites";
 
@@ -587,16 +603,21 @@ const markShared = async (kind: "group" | "resource", id: string) => {
 };
 
 export const pushSharedGroup = async (group: StudyGroup) => {
-  const ok = await pushRow("studyos_groups", {
+  // Un nome più lungo di GROUP_NAME_MAX (scritto prima del limite) parte tagliato al confine di una parola.
+  const { result: ok, error } = await pushRowDetailed("studyos_groups", {
     id: group.id,
-    name: group.name,
+    name: serverGroupName(group.name),
     description: group.description,
     owner_id: group.ownerId,
     owner_display_name: group.ownerDisplayName,
     invite_code: group.inviteCode,
     updated_at: group.updatedAt
   });
-  if (!ok) return false;
+  if (!ok) {
+    if (isGroupNameLimitError(error)) nameRejected.add(group.id);
+    return false;
+  }
+  nameRejected.delete(group.id);
   await markShared("group", group.id);
   await adoptServerStamp("studyGroups", group.id, ok.stamp, group.updatedAt);
   return true;

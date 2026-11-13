@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { buildSql } from "../scripts/supabase/gen-email-vectors.mjs";
-import { EMAIL_HIDDEN, cutAtRunBoundary, institutionalEmail, normalizeEmailText, onlyInstitutionalEmails, redactEmails } from "../src/lib/institutionalEmail.ts";
+import { EMAIL_HIDDEN, agentCorrectionLink, cutAtRunBoundary, institutionalEmail, normalizeEmailText, onlyInstitutionalEmails, redactEmails } from "../src/lib/institutionalEmail.ts";
 
-const { vectors, cuts } = JSON.parse(readFileSync(new URL("./fixtures/emailVectors.json", import.meta.url), "utf8"));
+const { vectors, cuts, links } = JSON.parse(readFileSync(new URL("./fixtures/emailVectors.json", import.meta.url), "utf8"));
 
 test("la tabella di esempi: ogni vettore dà lo stesso risultato nel client", () => {
   assert.ok(vectors.length >= 30);
@@ -22,6 +22,43 @@ test("i tagli dei nomi di gruppo: stesso taglio e stesso testo per l'agente nel 
     assert.equal(cutAtRunBoundary(c.input, 120), c.cut, `taglio: ${c.name}`);
     assert.equal(redactEmails(cutAtRunBoundary(c.input, 120), false), c.agent, `agente: ${c.name}`);
   }
+});
+
+test("R5-C: i link delle correzioni (url, website) per l'agente: decodificati, nulli con un indirizzo non @unimi.it", () => {
+  assert.ok(links.length >= 10);
+  for (const l of links) assert.equal(agentCorrectionLink(l.input), l.agent, `link: ${l.name}`);
+  const named = (name) => links.find((l) => l.name === name);
+  assert.equal(named("Teams: indirizzo gmail codificato nel link").agent, null);
+  assert.equal(named("Google Calendar: invitato nel link").agent, null);
+  assert.equal(named("parametro to= con %40").agent, null);
+  assert.equal(named("mailto unimi (campo url)").agent, "mailto:prof@unimi.it");
+  assert.equal(named("mailto unimi (campo url)").field, "url", "website non accetta mailto (validazione di scrittura)");
+});
+
+test("R5-B: crescita della normalizzazione oltre 32 caratteri: il valore con una chiocciola diventa il segnaposto", () => {
+  const FDFA = "\uFDFA";
+  assert.equal(redactEmails(`x@ ${FDFA}`, false).includes(EMAIL_HIDDEN), true, "17 in più: si analizza");
+  assert.equal(redactEmails(`x@ ${FDFA.repeat(2)}`, false), EMAIL_HIDDEN, "34 in più: tutto nascosto");
+  assert.equal(redactEmails(`prof@unimi.it ${"\uFB03".repeat(16)}`, true), `prof@unimi.it ${"ffi".repeat(16)}`, "32 in più: resta");
+  assert.equal(redactEmails(`prof@unimi.it ${"\uFB03".repeat(17)}`, true), EMAIL_HIDDEN, "34 in più: nascosto");
+  assert.equal(onlyInstitutionalEmails(`prof@unimi.it ${"\uFB03".repeat(17)}`), false, "la scrittura lo rifiuta");
+  assert.equal(redactEmails(FDFA.repeat(500), false), FDFA.repeat(500), "senza chiocciola il testo torna com'è");
+});
+
+test("R5-B: 2000 valori della forma N5 (x@ e U+FDFA fino al limite della colonna) in tempo limitato", () => {
+  const FDFA = "\uFDFA";
+  const shapes = [`x@ ${FDFA.repeat(157)}`, `x@ ${FDFA.repeat(77)}`, `x@ ${FDFA.repeat(117)}`, `x@ ${FDFA.repeat(997)}`];
+  const started = performance.now();
+  let hidden = 0;
+  for (let row = 0; row < 2000; row += 1) {
+    for (const value of shapes) if (redactEmails(value, row % 2 === 0) === EMAIL_HIDDEN) hidden += 1;
+  }
+  const elapsed = performance.now() - started;
+  assert.equal(hidden, 8000);
+  assert.ok(elapsed < 2000, `8000 valori N5 in ${Math.round(elapsed)} ms`);
+  const links = performance.now();
+  for (let row = 0; row < 2000; row += 1) assert.equal(agentCorrectionLink(`https://x.it/${"%EF%B7%BA".repeat(33)}@`), null);
+  assert.ok(performance.now() - links < 2000, "2000 link con U+FDFA codificato");
 });
 
 test("gli stessi vettori sono nel file SQL generato (nessuna deriva tra client e server)", () => {
