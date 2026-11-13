@@ -47,15 +47,20 @@ const fakeCaches = () => {
   return { open, stores };
 };
 
-const loadWorker = (windows = [], extra = {}) => {
+const loadWorker = (windows = [], { failShows = 0, ...extra } = {}) => {
   const handlers = new Map();
   const shown = [];
   const opened = [];
+  let failures = failShows;
   const self = {
     location: { origin: "https://massimilianociconte.github.io" },
     registration: {
       scope: SCOPE,
       showNotification: (title, options) => {
+        if (failures > 0) {
+          failures -= 1;
+          return Promise.reject(new Error("notifica rifiutata"));
+        }
         shown.push({ title, options });
         return Promise.resolve();
       }
@@ -257,6 +262,17 @@ test("testo generico: stesso testo nel service worker, in pushLocal e in studyos
   assert.ok(source.includes(`const PUSH_FALLBACK = { title: "${local.GENERIC_PUSH_TITLE}", body: "${local.GENERIC_PUSH_BODY}", url: "./", tag: "studyos" };`));
   const people = readFileSync(new URL("../supabase/people.sql", import.meta.url), "utf8");
   assert.ok(people.includes(`jsonb_build_object('title', '${local.GENERIC_PUSH_TITLE}', 'body', '${local.GENERIC_PUSH_BODY}')`));
+});
+
+test("se la prima notifica fallisce: il ripiego di una push con account è generico, senza account resta com'era", async () => {
+  const withAccount = loadWorker([], { failShows: 1 });
+  await fire(withAccount, "push", pushWith({ kind: "invite", title: "Invito a un gruppo", body: "Ada ti invita nel gruppo Visite", url: "?apri=notifiche", tag: "group-invite:9", account: ACCOUNT_B }));
+  assert.equal(withAccount.shown.length, 1);
+  assert.ok(isGeneric(withAccount.shown[0], "group-invite:9"), JSON.stringify(withAccount.shown[0]));
+  const legacy = loadWorker([], { failShows: 1 });
+  await fire(legacy, "push", pushWith({ kind: "invite", title: "Invito", body: "", url: "?apri=notifiche", tag: "group-invite:1" }));
+  assert.equal(legacy.shown.length, 1);
+  assert.equal(legacy.shown[0].title, "Invito");
 });
 
 test("senza Cache Storage o con lo storage che fallisce: la notifica compare lo stesso", async () => {

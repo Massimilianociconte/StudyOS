@@ -270,7 +270,8 @@ const handlePush = async (payload) => {
 
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
-  event.waitUntil(handlePush(payload).catch(() => showPush(payload, false)));
+  // Se qualcosa va storto non si sa più di quale account sia la push: solo il testo generico.
+  event.waitUntil(handlePush(payload).catch(() => showPush(payload.account ? { ...PUSH_FALLBACK, tag: payload.tag } : payload, false)));
 });
 
 // Solo pagine dell'app: mai un altro sito, anche se il contenuto di una push fosse manomesso.

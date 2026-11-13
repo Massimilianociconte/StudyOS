@@ -149,11 +149,12 @@ rimette. Senza password il titolo resta.
 
 ## Attivazione
 
-Passi in [supabase/README.md](../supabase/README.md) (sezione «Promemoria con l'app chiusa»):
-notifiche push già attive (`pg_net`, Vault, Worker), `people.sql` di nuovo (colonne `private` e
-`session_id`), `pg_cron`, `push-reminders.sql`, `schema.sql` di nuovo,
-`push-reminders-verify.sql` e `people-verify.sql` tutto verde (`session_cleanup_ready` può
-restare false), deploy del Worker (tipo `reminder`, `account`).
+Ordine: prima il deploy del Worker (route `/push`, tipo `reminder`, `account`), poi `pg_net`,
+Vault, `pg_cron` e `push-reminders.sql`. Al contrario i promemoria in scadenza verrebbero segnati
+come inviati verso un Worker che non li consegna, e andrebbero persi. I passi completi sono in
+[supabase/README.md](../supabase/README.md), paragrafo «Pubblicazione di questa versione»; alla fine
+`push-reminders-verify.sql` e `people-verify.sql` tutto verde (`session_cleanup_ready` può restare
+false).
 
 ## Test
 
