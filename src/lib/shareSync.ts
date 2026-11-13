@@ -65,6 +65,7 @@ import {
   type SharedPushResult
 } from "./sharing";
 import { clearPendingShare } from "./shareInvite";
+import { serverGroupName } from "./groups";
 import { requestPersist } from "./persistence";
 import { supabase } from "./supabase";
 import { useSharedStore } from "../store/useSharedStore";
@@ -817,7 +818,8 @@ export const shareWith = async (target: ShareTarget, offers: ShareOffer[]) => {
               subject_ids: row.subject_ids,
               grantee_user_id: target.userId ?? null,
               grantee_group_id: target.groupId ?? null,
-              grantee_name: target.name.slice(0, 120)
+              // Gruppo: taglio tra due parole (mai a metà di un indirizzo); persona: come prima.
+              grantee_name: target.groupId ? serverGroupName(target.name) : target.name.slice(0, 120)
             };
           })
         );

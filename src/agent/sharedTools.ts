@@ -102,7 +102,7 @@ export const listShares = (): AgentCallResult => {
   const subjectName = (ownerId: string, id: string) =>
     ownerId === me ? mine.get(id) : shared.labels.find((label) => label.ownerId === ownerId && label.id === id)?.name;
   return ok({
-    given: shared.given.map((grant) => publicShareGrant(grant, "given", subjectName)),
+    given: shared.given.map((grant) => publicShareGrant(grant, "given", subjectName, (id) => state().studyGroups.find((group) => group.id === id)?.name)),
     received: shared.received.map((grant) => ({
       ...publicShareGrant(grant, "received", subjectName),
       // Nascosta su questo dispositivo: i suoi elementi non compaiono in studyos_list_shared_items.

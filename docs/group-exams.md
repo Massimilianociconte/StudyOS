@@ -83,7 +83,8 @@ sbagliato. Ora l'oscuramento si fa una volta, quando la riga si scrive (vedi «C
 legge copie già pronte e il suo costo dipende dal numero di righe (al massimo 2000 appelli, più le correzioni
 attive) e dalla lunghezza delle copie, che restano vicine a quella del testo salvato (una copia nascosta per la
 crescita è il solo segnaposto). Su un Postgres 17 locale, 2000 appelli con ogni testo al limite della colonna: lo
-snapshot da anon impiega da 0,03 a 0,07 s in tutte le forme, con collation C ed en_US.UTF-8 (prima 1,8 s per N3 e
+snapshot da anon impiega da 0,03 a 0,07 s nella maggior parte delle forme e fino a circa 0,2 s nelle peggiori
+(prima esecuzione, caratteri di controllo), con collation C ed en_US.UTF-8 (prima 1,8 s per N3 e
 circa 6 s per N5). Il costo si sposta sulla scrittura, una volta per riga: una scrittura con la funzione al limite
 costa 1-2 ms (circa 6 ms la prima della sessione), 2000 righe scritte direttamente da 0,1 a 2,3 s. Le prove
 `LOAD1`-`LOAD7` di `scripts/supabase/group-exams-tests.sql` chiedono lo snapshot da anon sotto il secondo con le
@@ -109,6 +110,10 @@ dei membri e i nomi perdono ogni indirizzo (anche `@unimi.it`); nei campi `email
   del timbro è spento solo dentro la funzione, nella stessa transazione). Realtime manda comunque un UPDATE per
   quelle righe: l'app le rilegge uguali. **Quando cambia la regola** (in `institutionalEmail.ts` e in SQL insieme):
   aumenta il numero in `studyos_email_rule_version()`, aggiorna i vettori, riesegui `group-exams.sql`.
+- **Mai modificare queste tabelle con i trigger spenti** (`session_replication_role = replica`, `disable trigger`):
+  una riga cambiata così tiene la copia vecchia con la versione attuale, e il ricalcolo non la tocca. Se è
+  successo, aumenta il numero in `studyos_email_rule_version()` e riesegui `group-exams.sql`: si ricalcola tutto.
+  Il reset dei test e2e usa la modalità replica ma cancella soltanto le righe, non le modifica.
 - Accesso: le copie sono colonne delle stesse righe, con la stessa RLS (i membri del gruppo le leggono, anon non ha
   privilegi, nessuno scrive). Un membro legge già il testo intero, e la copia ne è una versione con meno
   informazioni: non serve chiuderle. Privilegi per colonna no: `select=*` di PostgREST si romperebbe. L'app non le

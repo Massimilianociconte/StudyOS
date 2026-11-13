@@ -1,7 +1,7 @@
 // Dati di altre persone per gli agenti MCP: id opachi, proiezioni senza email né id di account e
 // controlli di permesso puri (gli stessi di push_shared_rows). Niente store: i test girano senza IndexedDB.
 
-import { agentMemberText } from "./project";
+import { agentGroupName, agentMemberText } from "./project";
 import {
   EVENT_STATUS_LABEL,
   EXAM_STATUS_LABEL,
@@ -72,7 +72,16 @@ export const contactByHandle = (people: readonly ShareContact[], handle: string)
 type SubjectName = (ownerId: string, subjectId: string) => string | undefined;
 
 /** Una condivisione vista dall'agente: sezione, permesso, materie e nomi. Mai email, codici o id di account. */
-export const publicShareGrant = (grant: ShareGrant, side: "given" | "received", subjectName: SubjectName) => ({
+/**
+ * Per una condivisione con un gruppo il nome viene dal gruppo attuale, tagliato tra due parole (`agentGroupName`):
+ * quello salvato nella condivisione può essere un taglio a metà di una parola, con l'inizio di un indirizzo.
+ */
+export const publicShareGrant = (
+  grant: ShareGrant,
+  side: "given" | "received",
+  subjectName: SubjectName,
+  groupName: (groupId: string) => string | undefined = () => undefined
+) => ({
   id: grant.id,
   scope: grant.scope,
   scopeLabel: SHARE_SCOPE_LABEL[grant.scope],
@@ -82,7 +91,9 @@ export const publicShareGrant = (grant: ShareGrant, side: "given" | "received", 
   subjects: grant.subjectIds.map((id) => ({ id, name: subjectName(grant.ownerId, id) ?? "Materia senza nome" })),
   ...(side === "given"
     ? {
-        sharedWith: agentMemberText(grant.granteeName) || (grant.granteeGroupId ? "Gruppo" : "Persona"),
+        sharedWith:
+          (grant.granteeGroupId ? agentGroupName(groupName(grant.granteeGroupId) ?? grant.granteeName) : agentMemberText(grant.granteeName)) ||
+          (grant.granteeGroupId ? "Gruppo" : "Persona"),
         ...(grant.granteeGroupId
           ? { groupId: grant.granteeGroupId }
           : { personId: grant.granteeUserId ? personHandle(grant.granteeUserId) : undefined })

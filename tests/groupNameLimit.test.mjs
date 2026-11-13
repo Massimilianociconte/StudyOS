@@ -5,6 +5,7 @@ import { executeAgentTool } from "../src/agent/execute.ts";
 import { hiddenGroupName } from "../src/agent/groupExamTools.ts";
 import { NOTIFICATION_TITLE_MAX, agentGroupName, agentNotificationTitle, publicGroup } from "../src/agent/project.ts";
 import { auditImage } from "../src/agent/remoteAudit.ts";
+import { publicShareGrant } from "../src/agent/shared.ts";
 import { BARB_DATASET } from "../src/data/university/barb.dataset.ts";
 import { GROUP_NAME_MAX, isGroupNameLimitError, serverGroupName } from "../src/lib/groups.ts";
 import { GROUP_SYNC_TEXT } from "../src/lib/labels/groups.ts";
@@ -173,6 +174,26 @@ test("isGroupNameLimitError: 23514 o il messaggio del limite, non gli errori di 
   assert.equal(isGroupNameLimitError({ code: "08006", message: "connection failure" }), false);
   assert.equal(isGroupNameLimitError(undefined), false);
   assert.equal(isGroupNameLimitError(null), false);
+  // R5-2: un altro vincolo (id di un gruppo vecchio) non è «nome troppo lungo».
+  assert.equal(isGroupNameLimitError({ code: "23514", message: 'new row for relation "studyos_groups" violates check constraint "studyos_groups_id_shape"' }), false);
+});
+
+test("R5-1: una condivisione con un gruppo mostra all'agente il nome attuale tagliato tra due parole", () => {
+  // 112 caratteri prima dell'indirizzo: il vecchio slice(0, 120) teneva «bea.priv», senza @ e quindi non oscurato.
+  const name = `${"Gruppo di studio ".repeat(6)}seminario bea.privata@gmail.com`;
+  const stored = name.slice(0, 120);
+  assert.equal(stored.endsWith("bea.priv"), true);
+  const grant = {
+    id: "s1", ownerId: "me", ownerName: "Io", scope: "tasks", subjectIds: [], permission: "view", granteeUserId: null, granteeGroupId: "g1",
+    granteeName: stored, granteeEmail: null, createdAt: "2026-11-10T00:00:00.000Z", updatedAt: "2026-11-10T00:00:00.000Z"
+  };
+  const shown = publicShareGrant(grant, "given", () => undefined, (id) => (id === "g1" ? name : undefined)).sharedWith;
+  for (const leak of ["bea", "priv", "gmail"]) assert.equal(shown.includes(leak), false, `${leak}: ${shown}`);
+  assert.equal(shown.startsWith("Gruppo di studio"), true);
+  // Gruppo non più presente in locale: il nome salvato passa comunque dal taglio e dall'oscuramento.
+  assert.equal(publicShareGrant(grant, "given", () => undefined).sharedWith.includes("@"), false);
+  const sync = readFileSync(new URL("../src/lib/shareSync.ts", import.meta.url), "utf8");
+  assert.match(sync, /grantee_name: target\.groupId \? serverGroupName\(target\.name\) : target\.name\.slice\(0, 120\)/);
 });
 
 test("groupSync taglia il nome prima dell'upsert e non rimette in coda un nome rifiutato", () => {

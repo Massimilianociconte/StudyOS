@@ -57,9 +57,16 @@ export const serverGroupName = (name: string): string => {
   return Array.from(redactEmails(name, false)).slice(0, GROUP_NAME_MAX).join("").trim();
 };
 
-/** Il server ha rifiutato il nome del gruppo (23514 o il messaggio di studyos_groups_name_limit): riprovare non serve. */
-export const isGroupNameLimitError = (error: { code?: unknown; message?: unknown } | null | undefined): boolean =>
-  Boolean(error) && (error?.code === "23514" || (typeof error?.message === "string" && /nome del gruppo|studyos_groups_name_limit/i.test(error.message)));
+/**
+ * Il server ha rifiutato il nome del gruppo (23514 o il messaggio di studyos_groups_name_limit): riprovare non serve.
+ * Un 23514 di un altro vincolo (per esempio studyos_groups_id_shape di un gruppo vecchio) non è il nome.
+ */
+export const isGroupNameLimitError = (error: { code?: unknown; message?: unknown } | null | undefined): boolean => {
+  if (!error) return false;
+  const message = typeof error.message === "string" ? error.message : "";
+  if (/nome del gruppo|studyos_groups_name_limit/i.test(message)) return true;
+  return error.code === "23514" && !/check constraint|violates/i.test(message);
+};
 
 /** Gruppi ascoltati in tempo reale al massimo (limite del filtro `in` di Supabase Realtime). */
 export const REALTIME_GROUPS_MAX = 100;
