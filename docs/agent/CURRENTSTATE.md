@@ -439,4 +439,10 @@ Worker è stato rifiutato (10021: `persistence.ts` chiedeva un UUID mentre si ca
 corretto in 4a35e39 (`outboxWriter()` al primo uso, test `workerGlobalScope.test.mjs`), poi deploy
 riuscito. `/health` risponde 1.9.0 dopo circa 3 minuti, quando Cloudflare riavvia il Durable Object.
 `/push` risponde 503 finché mancano `STUDYOS_PUSH_SECRET` e `STUDYOS_VAPID_PRIVATE_KEY` (li mette la
-persona). Restano: quei due segreti, ricollegare i connettori, il passo 4.
+persona).
+
+Passo 4 fatto il 13/11/2026: i due segreti nel Worker (`/push` senza segreto ora dà 401), il Vault
+(blocco del README, segreto messo dalla persona), `pg_cron` attivo, `push-reminders.sql` rieseguito
+(job `studyos-push-reminders` ogni minuto). `push-reminders-verify.sql` e `people-verify.sql` tutto
+`true`. Restano: ricollegare i connettori (`/mcp`, `/u/camilla-rossi/mcp`, `/u/chicca/mcp`) e la
+prova del passo 5 (una notifica vera conferma anche la coppia di chiavi VAPID).
