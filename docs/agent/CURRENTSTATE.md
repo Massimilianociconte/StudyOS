@@ -427,3 +427,9 @@ questa versione»):
 3. deploy del Worker;
 4. solo dopo il Worker, attivare i segreti nel Vault, `pg_net` e `pg_cron` (prima del Worker
    nuovo le push andrebbero a un indirizzo senza `/push` e si perderebbero).
+
+Passo 1 fatto il 13/11/2026: gli 8 script di questo ramo, `university.sql` (la tabella c'era) e la
+revoca di `EXECUTE` su `rls_auto_enable()` (funzione di Supabase per la RLS automatica). Tutti i
+verify come previsto: `security_issues` vuoto; restano `false` solo `vault_ready` e `cron_ready`
+fino al passo 4. `pg_net` era già attivo. La prima prova era fallita perché gli script venivano da
+una copia vecchia (`groups.sql` senza la guardia sui membri).

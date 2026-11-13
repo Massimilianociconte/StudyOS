@@ -38,13 +38,20 @@ ha `/push`: il database li segna come mandati e si perdono.
    strada B committa `src/lib/pushKeys.ts` prima del passo 2, altrimenti pubblichi due volte.
 1. **SQL.** Nel SQL Editor, una query per script, ognuno incollato per intero: `schema.sql`,
    `groups.sql`, `sharing.sql`, `people.sql`, `storage.sql`, `agent.sql`, `push-reminders.sql`
-   (senza `pg_cron` finisce con un avviso: va bene) e `group-exams.sql`. Poi i verify:
+   (senza `pg_cron` finisce con un avviso: va bene), `group-exams.sql` e, solo se l'avevi
+   eseguito, `university.sql` (toglie `TRUNCATE` a `university_sync_reports`). Prendi gli
+   script da questo ramo, non da una copia vecchia: con un `groups.sql` vecchio
+   `group-exams.sql` si ferma con «Esegui prima groups.sql». Poi i verify:
    - `verify.sql`: ogni `*_ready` `true`, `security_issues` vuoto, `own_item_policies` = 4 e
-     `file_policies` = 4;
+     `file_policies` = 4. Se il progetto attiva da solo la RLS sulle tabelle nuove, Supabase
+     crea `rls_auto_enable()` e `security_issues` la segnala «eseguibile da anon»: non si può
+     chiamare direttamente, ma togli il permesso con
+     `revoke execute on function public.rls_auto_enable() from public, anon, authenticated;`;
    - `sharing-verify.sql`: ogni `*_ready` `true` (`group_exams_realtime_ready` vuole la
      pubblicazione `supabase_realtime`);
    - `people-verify.sql`: tutto `true` tranne `pg_net_ready` e `vault_ready` (fino al passo 4);
-     `session_cleanup_ready` può restare `false`;
+     `session_cleanup_ready` può restare `false`. Se `pg_net` era già attivo va bene, ma i
+     segreti nel Vault si mettono solo al passo 4;
    - `agent-verify.sql`: tutto `true`;
    - `push-reminders-verify.sql`: `pg_net_ready`, `vault_ready` e `cron_ready` restano `false`
      fino al passo 4.
