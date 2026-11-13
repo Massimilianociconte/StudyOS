@@ -2,6 +2,7 @@
 
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
 import { bindInviteRecipients } from "./people";
+import { cutAtRunBoundary, redactEmails } from "./institutionalEmail";
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
@@ -42,6 +43,23 @@ export const groupInviteMessage = (groupName: string, inviter: string, code: str
  * supabase/group-exams.sql); un nome più vecchio e più lungo arriva agli agenti tagliato a questa lunghezza.
  */
 export const GROUP_NAME_MAX = 120;
+
+/**
+ * Nome da scrivere sul server: un nome locale più lungo di GROUP_NAME_MAX caratteri Unicode (scritto prima del
+ * limite) si taglia al confine di una parola, come per gli agenti (cutAtRunBoundary): mai un pezzo d'indirizzo.
+ * Una sola parola più lunga del limite: prima si oscurano gli indirizzi, poi si taglia. Senza il taglio il server
+ * rifiuterebbe il nome (studyos_groups_name_limit) e la pubblicazione tornerebbe in coda per sempre.
+ */
+export const serverGroupName = (name: string): string => {
+  if (Array.from(name).length <= GROUP_NAME_MAX) return name;
+  const cut = cutAtRunBoundary(name, GROUP_NAME_MAX).trim();
+  if (cut) return cut;
+  return Array.from(redactEmails(name, false)).slice(0, GROUP_NAME_MAX).join("").trim();
+};
+
+/** Il server ha rifiutato il nome del gruppo (23514 o il messaggio di studyos_groups_name_limit): riprovare non serve. */
+export const isGroupNameLimitError = (error: { code?: unknown; message?: unknown } | null | undefined): boolean =>
+  Boolean(error) && (error?.code === "23514" || (typeof error?.message === "string" && /nome del gruppo|studyos_groups_name_limit/i.test(error.message)));
 
 /** Gruppi ascoltati in tempo reale al massimo (limite del filtro `in` di Supabase Realtime). */
 export const REALTIME_GROUPS_MAX = 100;

@@ -6,12 +6,16 @@ import { checkConsistency, type ConsistencyInput, type ConsistencyIssue, type Is
 import { normalizeCourseName } from "../lib/groupExams";
 import { tagSummary, type TaggableType } from "../lib/itemTags";
 import { linkedCounts } from "../lib/subjectLinks";
-import { groupNamesOf, useGroupExamStore } from "../store/useGroupExamStore";
+import { groupNamesOf, useGroupExamStore, type GroupExamGroup } from "../store/useGroupExamStore";
 import type { Reminder } from "../types";
-import { agentMemberText } from "./project";
+import { agentGroupName, agentMemberText } from "./project";
 import { CLOUD_UNAVAILABLE } from "./catalog";
 import { fail, instant, isRemoteRuntime, ok, optional, page, state, text, type Args } from "./toolkit";
 import type { AgentCallResult } from "./types";
+
+/** Id del gruppo → nome per gli agenti (stesso taglio e oscuramento di publicGroup e dello snapshot). */
+const agentGroupNames = (list: readonly GroupExamGroup[]): ReadonlyMap<string, string> =>
+  new Map([...groupNamesOf(list)].map(([id, name]) => [id, agentGroupName(name)]));
 
 const NOTHING = "Niente da cambiare: indica almeno un campo.";
 const NO_REMINDER = "Promemoria non trovato: usa un id di studyos_list_reminders.";
@@ -224,7 +228,9 @@ export const checkConsistencyTool = async (args: Args): Promise<AgentCallResult>
       note: ids(current.notes),
       attachment: ids(current.attachments)
     },
-    groupExams: { ready: read, groupIds: groups.groups.map((group) => group.id), groupNames: groupNamesOf(groups.groups), sessions: groups.sessions, overrides: groups.overrides },
+    // Nomi dei gruppi come li vede un agente (agentGroupName: tagliati a 120 al confine di una parola, poi oscurati);
+    // l'app continua a mostrare i nomi interi.
+    groupExams: { ready: read, groupIds: groups.groups.map((group) => group.id), groupNames: agentGroupNames(groups.groups), sessions: groups.sessions, overrides: groups.overrides },
     catalog: read && groups.overrides.length ? await catalogIds() : null
   } satisfies ConsistencyInput;
   const report = checkConsistency(input);

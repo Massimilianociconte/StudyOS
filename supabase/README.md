@@ -496,6 +496,11 @@ successiva: la revisione di questo giro aggiunge un controllo sulle righe dei me
    già salvati restano come sono. Agli agenti il connettore dà i testi dei membri senza nessuna email.
    Il nome di un gruppo nuovo o rinominato può avere al massimo 120 caratteri (trigger
    `studyos_groups_name_limit`, stesso limite nell'app); i nomi più lunghi già salvati restano.
+   Aggiunge alle righe di appelli e correzioni le copie oscurate per gli agenti (colonne `agent_*`, scritte da un
+   trigger a ogni scrittura) e le calcola per le righe che già ci sono: la prima esecuzione aggiorna tutte le
+   righe una volta (senza cambiare `updated_at` né `version`), le successive nessuna. Se cambia la regola sulle
+   email si aumenta `studyos_email_rule_version()` e si riesegue: si ricalcolano solo le righe vecchie (dettagli
+   in `docs/group-exams.md`, «Copie per gli agenti»).
 2. `verify.sql`: `definer_functions_ready` deve restare `true` (l'ingresso del connettore
    `studyos_agent_group_snapshot` è tra quelli permessi); poi `sharing-verify.sql`: le colonne
    `group_exams_*` devono essere tutte `true`.

@@ -3,9 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { executeAgentTool } from "../src/agent/execute.ts";
 import { hiddenGroupName } from "../src/agent/groupExamTools.ts";
-import { agentGroupName, publicGroup } from "../src/agent/project.ts";
+import { NOTIFICATION_TITLE_MAX, agentGroupName, agentNotificationTitle, publicGroup } from "../src/agent/project.ts";
+import { auditImage } from "../src/agent/remoteAudit.ts";
 import { BARB_DATASET } from "../src/data/university/barb.dataset.ts";
-import { GROUP_NAME_MAX } from "../src/lib/groups.ts";
+import { GROUP_NAME_MAX, isGroupNameLimitError, serverGroupName } from "../src/lib/groups.ts";
+import { GROUP_SYNC_TEXT } from "../src/lib/labels/groups.ts";
 import { useGroupExamStore } from "../src/store/useGroupExamStore.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 
@@ -95,4 +97,99 @@ test("il nome di un nuovo gruppo ha maxLength 120 nel modulo", () => {
   const input = view.slice(view.indexOf('<Field label="Nome del gruppo">'), view.indexOf("</Field>", view.indexOf('<Field label="Nome del gruppo">')));
   assert.match(input, /maxLength=\{GROUP_NAME_MAX\}/);
   assert.match(view, /import \{[^}]*GROUP_NAME_MAX[^}]*\} from "\.\.\/lib\/groups"/);
+});
+
+// R5-D: il dettaglio «stesso appello in un altro gruppo», l'invito nel registro delle azioni e il titolo delle
+// notifiche passano dallo stesso taglio. Un nome più lungo di 120 (T5) tagliato a metà lascerebbe «bea.priv».
+const T5 = `${"x".repeat(100)} ${"y".repeat(30)} bea.privata@gmail.com`;
+
+test("controllo di coerenza: i nomi degli altri gruppi sono tagliati e oscurati per l'agente", async () => {
+  seed(T1);
+  useGroupExamStore.getState().setSnapshot({
+    viewerId: "me",
+    groups: [{ id: "g1", name: T1 }, { id: "g2", name: T5 }],
+    sessions: [session(), session({ id: "gexam_b", groupId: "g2", createdAt: "2026-11-01T11:00:00Z" })],
+    overrides: []
+  });
+  const report = await executeAgentTool("studyos_check_consistency", {});
+  assert.equal(report.ok, true, JSON.stringify(report));
+  const issue = report.data.items.find((item) => item.code === "same_session_other_group");
+  assert.ok(issue, JSON.stringify(report.data.items));
+  assert.equal(issue.detail.startsWith(`Gruppi: ${"x".repeat(110)}, ${"x".repeat(100)}.`), true, issue.detail);
+  assertClean(issue, "coerenza");
+});
+
+test("registro delle azioni e notifiche: il nome del gruppo si taglia prima di oscurare", async () => {
+  assert.equal(auditImage("groupInvite", { id: "i1", groupName: T1, status: "pending" }).title, "x".repeat(110));
+  assert.equal(auditImage("groupInvite", { id: "i1", groupName: T5, status: "pending" }).title, "x".repeat(100));
+  assertClean(auditImage("groupInvite", { id: "i1", groupName: T4, status: "pending" }), "invito T4");
+  assert.equal(auditImage("groupResource", { id: "r1", title: "Dispense bea@gmail.com" }).title, "Dispense [email nascosta]");
+  const invite = `Invito al gruppo "${T5}"`;
+  const audited = auditImage("notification", { id: "n1", kind: "invite", title: invite, body: "Ti ha invitato Bea" });
+  assertClean(audited, "notifica nel registro");
+  assert.equal(audited.title, `Invito al gruppo "${"x".repeat(100)} ${"y".repeat(30)}`);
+  assert.equal(agentNotificationTitle(invite).length <= NOTIFICATION_TITLE_MAX, true);
+  assert.equal(agentNotificationTitle('Sei entrato in "Farmaco bea@gmail.com"'), 'Sei entrato in "Farmaco [email nascosta]"');
+  seed(T5);
+  useStudyStore.setState({
+    notifications: [{ id: "n1", kind: "invite", title: invite, body: "", createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z" }]
+  });
+  const listed = await executeAgentTool("studyos_list_notifications", {});
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.equal(listed.data.items[0].title, `Invito al gruppo "${"x".repeat(100)} ${"y".repeat(30)}`);
+  assertClean(listed.data, "notifiche");
+  const searched = await executeAgentTool("studyos_list_notifications", { query: "gmail" });
+  assert.equal(searched.data.items.length, 0, "la ricerca lavora sul titolo tagliato e oscurato");
+  // L'app mostra il titolo intero.
+  assert.equal(useStudyStore.getState().notifications[0].title, invite);
+});
+
+// R5-E: un nome locale più lungo di 120 (scritto prima del limite) parte tagliato al confine di una parola; se il
+// server lo rifiuta comunque (23514), il gruppo non torna in coda e l'invito dice «nome troppo lungo».
+test("serverGroupName: entro 120 caratteri Unicode, tagliato al confine di una parola, mai un pezzo d'indirizzo", () => {
+  assert.equal(serverGroupName("Farmaco"), "Farmaco");
+  const exact = "é".repeat(GROUP_NAME_MAX);
+  assert.equal(serverGroupName(exact), exact, "120 caratteri restano");
+  const astral = "\u{1F600}".repeat(GROUP_NAME_MAX);
+  assert.equal(serverGroupName(astral), astral, "120 caratteri astrali (240 unità UTF-16) restano");
+  assert.equal(serverGroupName(T1), "x".repeat(110));
+  assert.equal(serverGroupName(T4), "x".repeat(105));
+  assert.equal(serverGroupName(T5), `${"x".repeat(100)} ${"y".repeat(30)}`.slice(0, 100));
+  const oneWord = `${"x".repeat(110)}bea.privata@gmail.com`;
+  const cut = serverGroupName(oneWord);
+  assert.equal(Array.from(cut).length <= GROUP_NAME_MAX, true);
+  for (const leak of ["bea", "priv", "gmail"]) assert.equal(cut.includes(leak), false, `una parola sola: ${leak}`);
+  for (const name of [T1, T4, T5, oneWord, "a ".repeat(200), "\u{1F600} ".repeat(100)]) {
+    assert.equal(Array.from(serverGroupName(name)).length <= GROUP_NAME_MAX, true, name.slice(0, 20));
+  }
+});
+
+test("isGroupNameLimitError: 23514 o il messaggio del limite, non gli errori di rete", () => {
+  assert.equal(isGroupNameLimitError({ code: "23514", message: "Il nome del gruppo può avere al massimo 120 caratteri." }), true);
+  assert.equal(isGroupNameLimitError({ code: "P0001", message: "Il nome del gruppo può avere al massimo 120 caratteri." }), true);
+  assert.equal(isGroupNameLimitError({ message: 'trigger "studyos_groups_name_limit"' }), true);
+  assert.equal(isGroupNameLimitError({ code: "23514" }), true);
+  assert.equal(isGroupNameLimitError({ code: "PGRST301", message: "JWT expired" }), false);
+  assert.equal(isGroupNameLimitError({ code: "08006", message: "connection failure" }), false);
+  assert.equal(isGroupNameLimitError(undefined), false);
+  assert.equal(isGroupNameLimitError(null), false);
+});
+
+test("groupSync taglia il nome prima dell'upsert e non rimette in coda un nome rifiutato", () => {
+  const sync = readFileSync(new URL("../src/lib/groupSync.ts", import.meta.url), "utf8");
+  const push = sync.slice(sync.indexOf("export const pushSharedGroup"), sync.indexOf("export const pushSharedMembership"));
+  assert.match(push, /name: serverGroupName\(group\.name\)/, "il nome parte tagliato");
+  assert.doesNotMatch(push, /name: group\.name/);
+  assert.match(push, /if \(isGroupNameLimitError\(error\)\) nameRejected\.add\(group\.id\);/);
+  assert.match(push, /nameRejected\.delete\(group\.id\);/, "una scrittura riuscita toglie il rifiuto");
+  const publish = sync.slice(sync.indexOf("export const publishGroup"), sync.indexOf("export const publishResource"));
+  assert.match(publish, /rememberPublish\("group", group\.id, ok \|\| nameRejected\.has\(group\.id\)\)/, "un nome rifiutato esce dalla coda");
+  assert.match(sync, /error: \{ code: error\.code, message: error\.message \}/, "pushRowDetailed riporta codice e messaggio");
+  assert.match(sync, /export const groupNameRejected = \(groupId: string\) => nameRejected\.has\(groupId\);/);
+  const invite = readFileSync(new URL("../src/components/GroupInvite.tsx", import.meta.url), "utf8");
+  assert.match(invite, /"name-too-long": \{ tone: "warn", text: GROUP_SYNC_TEXT\.nameTooLong \}/);
+  assert.match(invite, /setNameRejected\(groupNameRejected\(group\.id\)\)/);
+  assert.match(invite, /: nameRejected\s*\? "name-too-long"/);
+  assert.match(GROUP_SYNC_TEXT.nameTooLong, /^Nome troppo lungo/);
+  assert.match(GROUP_SYNC_TEXT.nameTooLong, /120 caratteri/);
 });

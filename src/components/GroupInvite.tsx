@@ -15,6 +15,7 @@ import {
 } from "../lib/groupInvite";
 import {
   getActor,
+  groupNameRejected,
   joinGroupWithCode,
   logSharedActivity,
   previewInvite,
@@ -26,6 +27,7 @@ import {
   type InvitePreviewResult
 } from "../lib/groupSync";
 import { peopleLabels } from "../lib/labels";
+import { GROUP_SYNC_TEXT } from "../lib/labels/groups";
 import { peopleCauseText, personName, type FoundPerson } from "../lib/people";
 import { Button, Drawer } from "./ui";
 import { Icon } from "./Icon";
@@ -55,12 +57,13 @@ export function usePendingInvite() {
 const shareLinkClass =
   "motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--surface-strong)] px-4 text-sm font-extrabold text-[var(--text)] hover:bg-[var(--surface)]";
 
-type Reach = "no-cloud" | "login" | "device-only" | "publishing" | "ready" | "pending";
+type Reach = "no-cloud" | "login" | "device-only" | "publishing" | "ready" | "pending" | "name-too-long";
 
 const REACH_TEXT: Record<Reach, { tone: "ok" | "warn"; text: string }> = {
   ready: { tone: "ok", text: "Gli inviti sono attivi: chi apre il link o il QR entra nel gruppo con il proprio account." },
   publishing: { tone: "ok", text: "Sto preparando il gruppo per gli inviti…" },
   pending: { tone: "warn", text: "Il gruppo non è ancora online, quindi gli inviti potrebbero non funzionare. Controlla la connessione e riapri questa finestra tra poco." },
+  "name-too-long": { tone: "warn", text: GROUP_SYNC_TEXT.nameTooLong },
   login: { tone: "warn", text: "Per invitare altre persone devi accedere al tuo account: finché non accedi, link, QR e codice non funzionano per gli altri." },
   "device-only": { tone: "warn", text: "Questo gruppo è stato creato senza account, quindi non si può condividere. Per invitare altre persone accedi e crea un nuovo gruppo." },
   "no-cloud": { tone: "warn", text: "Gli account non sono attivi in questa versione dell'app: link, QR e codice funzionano solo su questo dispositivo." }
@@ -77,6 +80,8 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [publishing, setPublishing] = useState(false);
+  // Il server ha rifiutato il nome (troppo lungo): non si riprova da soli, lo si dice (groupNameRejected).
+  const [nameRejected, setNameRejected] = useState(() => groupNameRejected(group.id));
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const code = group.inviteCode;
   const link = groupInviteLink(code);
@@ -92,7 +97,9 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
     let alive = true;
     setPublishing(true);
     void publishGroup(group).finally(() => {
-      if (alive) setPublishing(false);
+      if (!alive) return;
+      setPublishing(false);
+      setNameRejected(groupNameRejected(group.id));
     });
     return () => {
       alive = false;
@@ -112,7 +119,9 @@ export function InviteSheet({ group, actor, onClose, onNotice, onLogin }: { grou
           ? "ready"
           : publishing
             ? "publishing"
-            : "pending";
+            : nameRejected
+              ? "name-too-long"
+              : "pending";
   const reachInfo = REACH_TEXT[reach];
   const showLogin = Boolean(onLogin) && cloudConfigured && !loggedIn && (reach === "login" || reach === "device-only");
 

@@ -11,6 +11,7 @@ import {
   publicGroup,
   agentGroupName,
   agentMemberText,
+  agentNotificationTitle,
   agentUrl,
   publicPreferences,
   publicSubject,
@@ -419,7 +420,7 @@ const entityLabel = (id: string): string | undefined => {
   for (const list of titled) {
     const hit = list.find((item) => item.id === id);
     // Il riassunto finisce nel registro: titoli di risorse e notifiche possono venire da altri membri.
-    if (hit) return list === current.groupResources || list === current.notifications ? agentMemberText(hit.title) : hit.title;
+    if (hit) return list === current.notifications ? agentNotificationTitle(hit.title) : list === current.groupResources ? agentMemberText(hit.title) : hit.title;
   }
   const material = current.attachments.find((item) => item.id === id);
   if (material) return material.name;
@@ -1283,8 +1284,8 @@ const listNotifications = (args: Args): AgentCallResult => {
   const items = state().notifications.filter((item) => {
     if (args.unreadOnly === true && item.readAt) return false;
     // Il testo delle notifiche può copiare appelli scritti dai membri: la ricerca lavora sul testo oscurato.
-    return includes(query, agentMemberText(item.title), agentMemberText(item.body));
-  }).map((item) => ({ id: item.id, kind: item.kind, title: agentMemberText(item.title), body: agentMemberText(item.body), readAt: item.readAt, linkView: item.linkView, createdAt: item.createdAt }));
+    return includes(query, agentNotificationTitle(item.title), agentMemberText(item.body));
+  }).map((item) => ({ id: item.id, kind: item.kind, title: agentNotificationTitle(item.title), body: agentMemberText(item.body), readAt: item.readAt, linkView: item.linkView, createdAt: item.createdAt }));
   return ok(page(items, args));
 };
 

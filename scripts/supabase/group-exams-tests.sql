@@ -488,11 +488,16 @@ from (select public.save_group_catalog_override('gx', 'gover_e24', null, 'contac
   jsonb_build_object('url', 'https://example.com/@bea')) as r) as t;
 reset role;
 set local role anon;
-select pg_temp.expect('E25 lo snapshot dà i link con %40 nel percorso com''erano', exists (
+-- R5-C: per gli agenti un link si decodifica; con un indirizzo che non è @unimi.it (Teams: «…%40thread.v2»,
+-- Google Calendar: «…%40group.calendar.google.com») diventa il segnaposto. L'app lo mostra com'è (E18, E19).
+select pg_temp.expect('E25 lo snapshot dà il segnaposto per i link con un indirizzo non @unimi.it, il resto com''è', exists (
     select 1 from jsonb_array_elements(s -> 'overrides') as o
-    where o ->> 'id' = 'gover_e18' and o -> 'fields' ->> 'url' = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0')
+    where o ->> 'id' = 'gover_e18' and o -> 'fields' ->> 'url' = '[email nascosta]')
   and exists (select 1 from jsonb_array_elements(s -> 'overrides') as o
-    where o ->> 'id' = 'gover_e20' and o -> 'fields' ->> 'site' = 'Sede di Asti (AT), aula 3'))
+    where o ->> 'id' = 'gover_e19' and o -> 'fields' ->> 'website' = '[email nascosta]')
+  and exists (select 1 from jsonb_array_elements(s -> 'overrides') as o
+    where o ->> 'id' = 'gover_e20' and o -> 'fields' ->> 'site' = 'Sede di Asti (AT), aula 3')
+  and (s -> 'overrides')::text !~ 'thread\.v2|group\.calendar')
 from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
 reset role;
 set local role authenticated;
@@ -661,6 +666,292 @@ reset role;
 set local statement_timeout = 0;
 delete from public.studyos_group_exam_sessions where id like 'gexam_load_%';
 
+-- ---------------------------------------------------------------------------------------------
+-- Giro di correzioni 5 (revisione R-I1): copie per gli agenti scritte alla scrittura (trigger), lo snapshot le
+-- legge e non oscura nulla. Il tempo dello snapshot dipende dal numero di righe e dalla lunghezza delle copie.
+-- ---------------------------------------------------------------------------------------------
+select pg_temp.expect('AC0 versione della regola', public.studyos_email_rule_version() = 5);
+select pg_temp.expect('AC1 ogni appello ha le copie della versione attuale, uguali alla regola sul testo salvato',
+  bool_and(agent_rule = public.studyos_email_rule_version()
+    and agent_course_name = public.studyos_hide_emails(left(course_name, 200))
+    and agent_label = public.studyos_hide_emails(left(label, 200))
+    and agent_room = public.studyos_hide_emails(left(room, 200))
+    and agent_notes = public.studyos_hide_emails(left(notes, 2000))
+    and agent_created_by_name = public.studyos_hide_emails(left(created_by_name, 200))
+    and agent_updated_by_name = public.studyos_hide_emails(left(updated_by_name, 200))
+    and agent_deleted_by_name is not distinct from public.studyos_hide_emails(left(deleted_by_name, 200))
+    and agent_course_norm is not null and agent_course_key is not null) and count(*) > 5)
+from public.studyos_group_exam_sessions;
+select pg_temp.expect('AC1b ogni correzione ha le copie della versione attuale', bool_and(agent_rule = public.studyos_email_rule_version()
+    and agent_target_label = public.studyos_hide_emails(left(target_label, 200)) and jsonb_typeof(agent_fields) = 'object'
+    and agent_updated_by_name = public.studyos_hide_emails(left(updated_by_name, 200))) and count(*) > 5)
+from public.studyos_group_catalog_overrides;
+
+-- AC2: una scrittura con la funzione scrive le copie; la risposta e la cronologia non le portano.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+select pg_temp.expect('AC2 creazione: la risposta non porta le copie', r ->> 'status' = 'ok' and (r -> 'row')::text !~ '"agent_')
+from (select public.save_group_exam_session('gx', 'gexam_ac1', null, jsonb_build_object(
+  'courseName', 'Chimica prof@unimi.it', 'date', '2027-10-01', 'kind', 'appello', 'label', 'Turno prof@unimi.it',
+  'room', 'Aula 1', 'notes', 'scrivi a bea.privata@gmail.com')) as r) as t;
+reset role;
+select pg_temp.expect('AC2b copie scritte dal trigger: corso, chiave e nome normalizzato dal nome oscurato',
+  agent_course_name = 'Chimica [email nascosta]' and agent_course_norm = 'chimica email nascosta'
+  and agent_course_key = 'nome:chimica email nascosta' and agent_label = 'Turno [email nascosta]' and agent_room = 'Aula 1'
+  and agent_notes = 'scrivi a [email nascosta]' and agent_created_by_name = 'Olga' and agent_rule = public.studyos_email_rule_version()
+  and course_name = 'Chimica prof@unimi.it' and notes = 'scrivi a bea.privata@gmail.com')
+from public.studyos_group_exam_sessions where id = 'gexam_ac1';
+select pg_temp.expect('AC2c la cronologia non conserva le copie', count(*) >= 1 and bool_and(coalesce(before::text, '') !~ '"agent_'
+  and coalesce(after::text, '') !~ '"agent_'))
+from public.studyos_group_history where record_kind = 'exam_session';
+-- AC3: una modifica con la funzione aggiorna le copie.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+select pg_temp.expect('AC3 modifica', r ->> 'status' = 'ok' and (r -> 'row')::text !~ '"agent_')
+from (select public.save_group_exam_session('gx', 'gexam_ac1', 1, jsonb_build_object(
+  'courseName', 'Chimica prof@unimi.it', 'date', '2027-10-01', 'kind', 'appello', 'label', 'Turno prof@unimi.it',
+  'room', 'Aula 1', 'notes', 'niente indirizzi')) as r) as t;
+reset role;
+select pg_temp.expect('AC3b copia aggiornata', agent_notes = 'niente indirizzi' and version = 2)
+from public.studyos_group_exam_sessions where id = 'gexam_ac1';
+-- AC4: una scrittura diretta (SQL Editor) passa dal trigger: le copie non si scrivono a mano.
+update public.studyos_group_exam_sessions set notes = 'bea.privata@gmail.com', agent_notes = 'bea.privata@gmail.com', agent_rule = 99
+  where id = 'gexam_ac1';
+select pg_temp.expect('AC4 copia ricalcolata, non quella scritta', agent_notes = '[email nascosta]' and agent_rule = public.studyos_email_rule_version())
+from public.studyos_group_exam_sessions where id = 'gexam_ac1';
+-- AC5: eliminazione e ripristino ricalcolano le copie.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+select pg_temp.expect('AC5 eliminazione', r ->> 'status' = 'ok' and (r -> 'row')::text !~ '"agent_')
+from (select public.delete_group_exam_session('gexam_ac1', 2) as r) as t;
+reset role;
+select pg_temp.expect('AC5b copia del nome di chi elimina', agent_deleted_by_name = 'Olga' and deleted_by_name = 'Olga')
+from public.studyos_group_exam_sessions where id = 'gexam_ac1';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+select pg_temp.expect('AC5c ripristino', r ->> 'status' = 'ok' and (r -> 'row')::text !~ '"agent_')
+from (select public.restore_group_record((select id from public.studyos_group_history
+  where record_id = 'gexam_ac1' and action = 'delete'), 3) as r) as t;
+reset role;
+select pg_temp.expect('AC5d copie dopo il ripristino', agent_deleted_by_name is null and deleted_at is null
+  and agent_notes = public.studyos_hide_emails(notes) and agent_rule = public.studyos_email_rule_version())
+from public.studyos_group_exam_sessions where id = 'gexam_ac1';
+
+-- AC6: correzioni. url e website come agentCorrectionLink: decodificati, nulli (il segnaposto) con un indirizzo
+-- non @unimi.it; mailto unimi resta nel campo url; email e value tengono gli @unimi.it; gli altri campi no.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+select pg_temp.expect('AC6 correzione di un contatto: la risposta non porta le copie', r ->> 'status' = 'ok' and (r -> 'row')::text !~ '"agent_')
+from (select public.save_group_catalog_override('gx', 'gover_ac6', null, 'contact', 'contatto:ac6', 'Segreteria prof@unimi.it',
+  jsonb_build_object('url', 'mailto:prof@unimi.it', 'value', 'prof@unimi.it', 'label', 'Scrivi a prof@unimi.it')) as r) as t;
+reset role;
+select pg_temp.expect('AC6b copie della correzione', agent_fields ->> 'url' = 'mailto:prof@unimi.it'
+  and agent_fields ->> 'value' = 'prof@unimi.it' and agent_fields ->> 'label' = 'Scrivi a [email nascosta]'
+  and agent_target_label = 'Segreteria [email nascosta]' and fields ->> 'label' = 'Scrivi a prof@unimi.it')
+from public.studyos_group_catalog_overrides where id = 'gover_ac6';
+select pg_temp.expect('AC6c Teams e Google Calendar: il link resta nella riga, la copia è il segnaposto',
+  (select fields ->> 'url' = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_x%40thread.v2/0' and agent_fields ->> 'url' = '[email nascosta]'
+   from public.studyos_group_catalog_overrides where id = 'gover_e18')
+  and (select fields ->> 'website' like 'https://calendar.google.com/%' and agent_fields ->> 'website' = '[email nascosta]'
+   from public.studyos_group_catalog_overrides where id = 'gover_e19')
+  and (select agent_fields ->> 'site' = 'Sede di Asti (AT), aula 3' from public.studyos_group_catalog_overrides where id = 'gover_e20'));
+-- Scritta direttamente (la funzione la rifiuterebbe): «?to=bea%40gmail.com» non arriva agli agenti.
+insert into public.studyos_group_catalog_overrides (id, group_id, target_kind, target_id, target_label, fields, created_by, created_by_name, updated_by, updated_by_name)
+  values ('gover_ac6d', 'gx', 'contact', 'contatto:ac6d', 'X', jsonb_build_object('url', 'https://x.it/?to=bea%40gmail.com',
+    'note', 'bea@gmail.com', 'email', 'prof@unimi.it', 'n', 3), :'olga', 'Olga', :'olga', 'Olga');
+select pg_temp.expect('AC6d scrittura diretta: link nullo, nota oscurata, valori non testuali scartati',
+  agent_fields = jsonb_build_object('url', '[email nascosta]', 'note', '[email nascosta]', 'email', 'prof@unimi.it'))
+from public.studyos_group_catalog_overrides where id = 'gover_ac6d';
+set local role anon;
+select pg_temp.expect('AC6e lo snapshot dà le copie', exists (select 1 from jsonb_array_elements(s -> 'overrides') as o
+    where o ->> 'id' = 'gover_ac6d' and o -> 'fields' = jsonb_build_object('url', '[email nascosta]', 'note', '[email nascosta]', 'email', 'prof@unimi.it'))
+  and exists (select 1 from jsonb_array_elements(s -> 'sessions') as e where e ->> 'id' = 'gexam_ac1'
+    and e ->> 'course_name' = 'Chimica [email nascosta]' and e ->> 'course_key' = 'nome:chimica email nascosta'
+    and e ->> 'course_norm' = 'chimica email nascosta' and e ->> 'notes' = '[email nascosta]')
+  and s::text !~ '"agent_')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+
+-- AC7: aggiornamento (backfill) alla versione della regola. Righe scritte prima (senza copie) o con una versione
+-- vecchia: si ricalcolano una volta, senza cambiare updated_at né version; rieseguito non tocca nulla.
+set local session_replication_role = replica;
+update public.studyos_group_exam_sessions set agent_rule = 4, agent_notes = 'vecchia copia bea.privata@gmail.com' where id = 'gexam_ac1';
+update public.studyos_group_exam_sessions set agent_rule = null, agent_course_name = null, agent_course_norm = null, agent_course_key = null,
+  agent_label = null, agent_room = null, agent_notes = null, agent_created_by_name = null, agent_updated_by_name = null,
+  agent_deleted_by_name = null where id = 'gexam_nf1';
+update public.studyos_group_catalog_overrides set agent_rule = null, agent_fields = null, agent_target_label = null where id = 'gover_e18';
+set local session_replication_role = origin;
+set local role anon;
+select pg_temp.expect('AC7 prima dell''aggiornamento: lo snapshot dà il segnaposto, mai il testo', exists (
+    select 1 from jsonb_array_elements(s -> 'sessions') as e where e ->> 'id' = 'gexam_nf1' and e ->> 'notes' = '[email nascosta]'
+      and e ->> 'course_name' = '[email nascosta]' and e ->> 'course_key' = 'nome:email nascosta')
+  and exists (select 1 from jsonb_array_elements(s -> 'overrides') as o where o ->> 'id' = 'gover_e18' and o -> 'fields' = '{}'::jsonb
+      and o ->> 'target_label' = '[email nascosta]'))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+create temp table ac7_before as
+  select id, updated_at, version from public.studyos_group_exam_sessions
+  union all select id, updated_at, version from public.studyos_group_catalog_overrides;
+select pg_temp.expect('AC7b aggiornamento: solo le tre righe vecchie', public.studyos_agent_copies_refresh() = 3);
+select pg_temp.expect('AC7c copie ricalcolate', (select agent_notes = public.studyos_hide_emails(notes) and agent_rule = public.studyos_email_rule_version()
+    and agent_course_name = public.studyos_hide_emails(course_name) from public.studyos_group_exam_sessions where id = 'gexam_ac1')
+  and (select agent_course_name = course_name and agent_course_key = course_key and agent_notes = notes and agent_rule = public.studyos_email_rule_version()
+    from public.studyos_group_exam_sessions where id = 'gexam_nf1')
+  and (select agent_fields ->> 'url' = '[email nascosta]' and agent_rule = public.studyos_email_rule_version()
+    from public.studyos_group_catalog_overrides where id = 'gover_e18'));
+select pg_temp.expect('AC7d updated_at e version invariati', not exists (
+  select 1 from ac7_before as b join (select id, updated_at, version from public.studyos_group_exam_sessions
+    union all select id, updated_at, version from public.studyos_group_catalog_overrides) as x using (id)
+  where x.updated_at is distinct from b.updated_at or x.version is distinct from b.version));
+select pg_temp.expect('AC7e rieseguito: nessuna riga', public.studyos_agent_copies_refresh() = 0);
+select pg_temp.expect('AC7f i trigger del timbro sono di nuovo attivi', (select count(*) from pg_trigger
+  where tgname in ('studyos_gexam_stamp', 'studyos_gover_stamp') and tgenabled = 'O') = 2);
+drop table ac7_before;
+
+-- AC8: le copie si leggono come il resto della riga (stessa RLS: i membri, che vedono già il testo intero); anon
+-- nessun privilegio; nessuno le scrive se non il trigger.
+select pg_temp.expect('AC8 privilegi sulle colonne delle copie',
+  has_column_privilege('authenticated', 'public.studyos_group_exam_sessions', 'agent_notes', 'SELECT')
+  and not has_column_privilege('anon', 'public.studyos_group_exam_sessions', 'agent_notes', 'SELECT')
+  and not has_column_privilege('anon', 'public.studyos_group_catalog_overrides', 'agent_fields', 'SELECT')
+  and not has_column_privilege('authenticated', 'public.studyos_group_exam_sessions', 'agent_notes', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.studyos_group_catalog_overrides', 'agent_fields', 'INSERT')
+  and not has_function_privilege('authenticated', 'public.studyos_agent_copies_refresh()', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.studyos_agent_link(text)', 'EXECUTE'));
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'mallory', true) \g /dev/null
+select pg_temp.expect('AC8b chi non è nel gruppo non legge le copie', (select count(*) from public.studyos_group_exam_sessions where id = 'gexam_ac1') = 0
+  and (select count(*) from public.studyos_group_catalog_overrides where id = 'gover_ac6') = 0);
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
+select pg_temp.expect('AC8c un membro legge la copia (meno di quanto legge già)', agent_notes = '[email nascosta]' and notes = 'bea.privata@gmail.com')
+from public.studyos_group_exam_sessions where id = 'gexam_ac1';
+reset role;
+
+-- AC9: se il calcolo delle copie fallisse, la scrittura passa con copie vuote: lo snapshot dà il segnaposto.
+savepoint ac9;
+create or replace function public.studyos_email_rule_version() returns integer language plpgsql immutable
+  set search_path = pg_catalog as $$ begin raise exception 'rotto per la prova'; end $$;
+update public.studyos_group_exam_sessions set notes = 'scrivi a bea.privata@gmail.com' where id = 'gexam_ac1';
+update public.studyos_group_catalog_overrides set target_label = 'Y' where id = 'gover_ac6';
+select pg_temp.expect('AC9 copie vuote, scrittura riuscita', (select notes = 'scrivi a bea.privata@gmail.com' and agent_notes is null
+    and agent_course_name is null and agent_rule is null from public.studyos_group_exam_sessions where id = 'gexam_ac1')
+  and (select target_label = 'Y' and agent_fields is null and agent_rule is null from public.studyos_group_catalog_overrides where id = 'gover_ac6'));
+set local role anon;
+select pg_temp.expect('AC9b snapshot: segnaposto, nessun testo', exists (select 1 from jsonb_array_elements(s -> 'sessions') as e
+    where e ->> 'id' = 'gexam_ac1' and e ->> 'notes' = '[email nascosta]' and e ->> 'course_name' = '[email nascosta]')
+  and (s -> 'sessions')::text !~ 'bea.privata')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+rollback to savepoint ac9;
+select pg_temp.expect('AC9c dopo la prova la regola è di nuovo quella', public.studyos_email_rule_version() = 5);
+
+-- R5-1: le forme più care della revisione 4 (N2, N3, N5 con U+FDFA, N6), 2000 appelli al limite delle colonne: lo
+-- snapshot (anon, come il Worker) resta sotto il secondo in tutte, perché legge copie già fatte.
+create function pg_temp.shape(p_name text, p_part text) returns text language sql immutable as $$
+  select btrim(case p_name
+    when 'N2' then case p_part
+      when 'course' then left('x' || repeat(' @ ' || rtrim(repeat('w ', 7)), 10), 160)
+      when 'label' then left('x' || repeat(' @ ' || repeat('w ', 3), 10), 80)
+      when 'room' then left('x' || repeat(' @ ' || repeat('w ', 5), 10), 120)
+      when 'notes' then left('x' || repeat(' @ ' || repeat('w ', 48), 10), 1000)
+      else left('x' || repeat(' @ ' || repeat('w ', 3), 10), 80) end
+    when 'N3' then case p_part
+      when 'course' then left('y' || repeat(E' @ ' || rtrim(repeat(E'ｗ​ ', 5)), 10), 160)
+      when 'label' then left('x' || repeat(E'\t@\t' || repeat(E'ｗ​\t', 2), 10), 80)
+      when 'room' then left('x' || repeat(E'\t@\t' || repeat(E'ｗ​\t', 3), 10), 120)
+      when 'notes' then left('x' || repeat(E'\t@\t' || repeat(E'ｗ​\t', 32), 10), 1000)
+      else left('x' || repeat(E'\t@\t' || repeat(E'ｗ​\t', 2), 10), 80) end
+    when 'N5' then case p_part
+      when 'course' then 'x@ ' || repeat(E'ﷺ', 157)
+      when 'label' then 'x@ ' || repeat(E'ﷺ', 77)
+      when 'room' then 'x@ ' || repeat(E'ﷺ', 117)
+      when 'notes' then 'x@ ' || repeat(E'ﷺ', 997)
+      else 'x@ ' || repeat(E'ﷺ', 77) end
+    else case p_part
+      when 'course' then left('y' || repeat(E' @ ' || repeat(E'ﷺ', 13), 10), 160)
+      when 'label' then left('y' || repeat(E' @ ' || repeat(E'ﷺ', 5), 10), 80)
+      when 'room' then left('y' || repeat(E' @ ' || repeat(E'ﷺ', 9), 10), 120)
+      when 'notes' then left('y' || repeat(E' @ ' || repeat(E'ﷺ', 97), 10), 1000)
+      else left('y' || repeat(E' @ ' || repeat(E'ﷺ', 5), 10), 80) end
+  end)
+$$;
+select pg_temp.expect('LOAD4a le forme N2, N3, N5, N6 sono al limite delle colonne', bool_and(
+  char_length(pg_temp.shape(n, 'course')) between 155 and 160 and char_length(pg_temp.shape(n, 'label')) between 75 and 80
+  and char_length(pg_temp.shape(n, 'room')) between 115 and 120 and char_length(pg_temp.shape(n, 'notes')) between 985 and 1000
+  and char_length(pg_temp.shape(n, 'member')) between 75 and 80))
+from unnest(array['N2', 'N3', 'N5', 'N6']) as n;
+select pg_temp.expect('LOAD4b N2: 2000 appelli', pg_temp.load_sessions(pg_temp.shape('N2', 'course'), pg_temp.shape('N2', 'label'),
+  pg_temp.shape('N2', 'room'), pg_temp.shape('N2', 'notes'), pg_temp.shape('N2', 'member')) = 2000);
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LOAD4 N2: snapshot sotto il secondo, nessuna chiocciola', jsonb_array_length(s -> 'sessions') = 2000
+  and (s -> 'sessions')::text !~ '@')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = 0;
+select pg_temp.expect('LOAD5b N3: 2000 appelli', pg_temp.load_sessions(pg_temp.shape('N3', 'course'), pg_temp.shape('N3', 'label'),
+  pg_temp.shape('N3', 'room'), pg_temp.shape('N3', 'notes'), pg_temp.shape('N3', 'member')) = 2000);
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LOAD5 N3: snapshot sotto il secondo, nessuna chiocciola né lettera larga', jsonb_array_length(s -> 'sessions') = 2000
+  and (s -> 'sessions')::text !~ E'[@ｗ]')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = 0;
+select pg_temp.expect('LOAD6b N5 (U+FDFA): 2000 appelli', pg_temp.load_sessions(pg_temp.shape('N5', 'course'), pg_temp.shape('N5', 'label'),
+  pg_temp.shape('N5', 'room'), pg_temp.shape('N5', 'notes'), pg_temp.shape('N5', 'member')) = 2000);
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LOAD6 N5: snapshot sotto il secondo, ogni testo è il segnaposto (cresce di oltre 32)', jsonb_array_length(s -> 'sessions') = 2000
+  and (s -> 'sessions')::text !~ E'[@ﷺ]'
+  and (select bool_and(e ->> 'notes' = '[email nascosta]' and e ->> 'course_name' = '[email nascosta]' and e ->> 'updated_by_name' = '[email nascosta]')
+       from jsonb_array_elements(s -> 'sessions') as e where e ->> 'id' like 'gexam_load_%'))
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = 0;
+select pg_temp.expect('LOAD7b N6: 2000 appelli', pg_temp.load_sessions(pg_temp.shape('N6', 'course'), pg_temp.shape('N6', 'label'),
+  pg_temp.shape('N6', 'room'), pg_temp.shape('N6', 'notes'), pg_temp.shape('N6', 'member')) = 2000);
+set local role anon;
+set local statement_timeout = '1s';
+select pg_temp.expect('LOAD7 N6: snapshot sotto il secondo, nessuna chiocciola né U+FDFA', jsonb_array_length(s -> 'sessions') = 2000
+  and (s -> 'sessions')::text !~ E'[@ﷺ]')
+from (select public.studyos_agent_group_snapshot(repeat('a', 64)) as s) as t;
+reset role;
+set local statement_timeout = 0;
+delete from public.studyos_group_exam_sessions where id like 'gexam_load_%';
+
+-- W1: una scrittura con la funzione, ogni testo al limite nella forma più cara (e il nome del membro copiato), resta
+-- sotto i 50 ms: il trigger delle copie costa poco a ogni scrittura (si misura dentro una funzione).
+select set_config('request.jwt.claim.sub', '', true) \g /dev/null
+update public.studyos_group_members set display_name = pg_temp.shape('N3', 'member') where group_id = 'gx' and user_id = :'olga';
+create function pg_temp.timed_write(p_id text, p_shape text, p_version integer, p_date text) returns interval language plpgsql as $$
+declare
+  v_start timestamptz := clock_timestamp();
+  v_result jsonb;
+begin
+  v_result := public.save_group_exam_session('gx', p_id, p_version, jsonb_build_object(
+    'courseName', pg_temp.shape(p_shape, 'course'), 'date', p_date, 'kind', 'appello', 'label', pg_temp.shape(p_shape, 'label'),
+    'room', pg_temp.shape(p_shape, 'room'), 'notes', pg_temp.shape(p_shape, 'notes')));
+  if v_result ->> 'status' is distinct from 'ok' then
+    raise exception 'FALLITO: W1 scrittura %', v_result;
+  end if;
+  return clock_timestamp() - v_start;
+end $$;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'olga', true) \g /dev/null
+select pg_temp.expect('W1 scrittura N3 al limite sotto 50 ms', pg_temp.timed_write('gexam_w1', 'N3', null, '2027-11-01') < interval '50 ms');
+select pg_temp.expect('W1b modifica N2 al limite sotto 50 ms', pg_temp.timed_write('gexam_w1', 'N2', 1, '2027-11-01') < interval '50 ms');
+select pg_temp.expect('W1c scrittura N5 al limite sotto 50 ms', pg_temp.timed_write('gexam_w2', 'N5', null, '2027-11-02') < interval '50 ms');
+select pg_temp.expect('W1d scrittura N6 al limite sotto 50 ms', pg_temp.timed_write('gexam_w3', 'N6', null, '2027-11-03') < interval '50 ms');
+reset role;
+select pg_temp.expect('W1e copie della scrittura al limite', agent_rule = public.studyos_email_rule_version()
+  and agent_notes = public.studyos_hide_emails(notes) and agent_updated_by_name = public.studyos_hide_emails(updated_by_name)
+  and updated_by_name = pg_temp.shape('N3', 'member'))
+from public.studyos_group_exam_sessions where id = 'gexam_w1';
+select set_config('request.jwt.claim.sub', '', true) \g /dev/null
+update public.studyos_group_members set display_name = 'Olga' where group_id = 'gx' and user_id = :'olga';
+delete from public.studyos_group_exam_sessions where id in ('gexam_w1', 'gexam_w2', 'gexam_w3');
+
 -- L4: ogni funzione nuova ha i privilegi giusti.
 select pg_temp.expect('G5 scrittura chiusa ad anon e aperta ad authenticated', bool_and(
     not has_function_privilege('anon', f, 'EXECUTE') and has_function_privilege('authenticated', f, 'EXECUTE')))
@@ -669,11 +960,15 @@ from unnest(array['public.save_group_exam_session(text,text,integer,jsonb)', 'pu
   'public.restore_group_record(bigint,integer)']) as f;
 select pg_temp.expect('G6 redattore, controlli di scrittura, pulizia delle correzioni e limite del nome: chiusi a tutti',
   bool_and(f is not null and not has_function_privilege('anon', f, 'EXECUTE') and not has_function_privilege('authenticated', f, 'EXECUTE')
-    and not has_function_privilege('public', f, 'EXECUTE')) and count(*) = 7)
+    and not has_function_privilege('public', f, 'EXECUTE')) and count(*) = 14)
 from unnest(array[to_regprocedure('public.studyos_hide_emails(text,boolean,boolean,boolean)'),
   to_regprocedure('public.studyos_only_unimi_emails(text,boolean)'), to_regprocedure('public.studyos_email_normalize(text,boolean)'),
   to_regprocedure('public.studyos_fields_only_unimi(jsonb)'), to_regprocedure('public.studyos_catalog_override_clean(text,jsonb)'),
-  to_regprocedure('public.studyos_groups_name_limit()'), to_regprocedure('public.studyos_cut_at_run(text,integer)')]) as f;
+  to_regprocedure('public.studyos_groups_name_limit()'), to_regprocedure('public.studyos_cut_at_run(text,integer)'),
+  to_regprocedure('public.studyos_email_rule_version()'), to_regprocedure('public.studyos_url_decode(text)'),
+  to_regprocedure('public.studyos_agent_link(text)'), to_regprocedure('public.studyos_without_agent_copies(jsonb)'),
+  to_regprocedure('public.studyos_gexam_agent_copy()'), to_regprocedure('public.studyos_gover_agent_copy()'),
+  to_regprocedure('public.studyos_agent_copies_refresh()')]) as f;
 select pg_temp.expect('G7 le firme vecchie non ci sono più', to_regprocedure('public.studyos_hide_emails_normalized(text,boolean)') is null
   and to_regprocedure('public.studyos_hide_emails(text,boolean)') is null and to_regprocedure('public.studyos_hide_emails(text)') is null
   and to_regprocedure('public.studyos_only_unimi_emails(text)') is null and to_regprocedure('public.studyos_email_normalize(text)') is null);
