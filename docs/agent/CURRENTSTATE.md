@@ -388,9 +388,10 @@ condivisi); trigger che tiene fissi `user_id` e `group_id` dei membri (`groups.s
 appelli nuovi o cambiati sono solo in app (niente push, Task 23 non fatto); i promemoria di un appello
 scelto partono anche con l'app chiusa.
 
-Verifiche: `npm test` e `TZ=UTC npm test` 1606/1606, `npm run lint` pulito. Build, bundle d'ingresso, prove
-SQL su Postgres usa e getta (anche con `en_US.UTF-8`) e `tests/e2e/08-group-exams.spec.ts` sono state
-eseguite nei singoli giri di lavoro; la verifica finale unica (Task 25) è ancora da fare.
+Verifica finale unica (Task 25, 13 novembre 2026, commit 59b0ca6): `npm run lint` pulito, `npm test`
+e `TZ=UTC npm test` 1648/1648, build ok, nessun client Supabase nel bundle d'ingresso; gli 8 script SQL
+applicati sullo stack locale e i 5 verify (`security_issues` vuoto, tutto `t` tranne `cron_ready`, che in
+locale non c'è); `people-check` 122/122; e2e 8/8 (anche `08-group-exams.spec.ts`).
 
 Resta alla persona sul progetto reale: eseguire `group-exams.sql` (dopo `schema`, `groups`, `sharing`,
 `people`, `storage`, `agent` e `push-reminders`) e le verifiche (`verify.sql`, `sharing-verify.sql` con le
