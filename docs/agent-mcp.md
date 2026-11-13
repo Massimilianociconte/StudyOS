@@ -528,7 +528,9 @@ Lo stesso Worker `studyos-agent` espone `POST /push`: non è uno strumento MCP e
 lo vedono. Lo chiama solo il database (`pg_net`) con l'intestazione `x-studyos-push-secret`; il
 Worker cifra e invia le notifiche push e non legge né scrive altro. Accetta al massimo 49
 iscrizioni per richiesta (49 push più una `push_gone` sono 50 sottorichieste sul piano Free);
-il database ne manda al massimo 40 per volta. Tipi accettati: `invite`, `accepted`,
+il database ne manda al massimo 15 per volta per inviti e permessi (CPU del Worker sul piano
+Free: circa 0,3 ms per iscrizione) e al massimo 40 per i promemoria (un account ha al massimo 10
+iscrizioni). Tipi accettati: `invite`, `accepted`,
 `permission` (da `studyos_push_notify`, `people.sql`) e `reminder` (promemoria con l'app chiusa,
 da `studyos_push_due_reminders`, `push-reminders.sql`, una richiesta per promemoria e per
 account). Il corpo può arrivare a `MAX_PUSH_BODY_BYTES` (≈ 620 kB): ci sta sempre un lotto pieno
@@ -536,10 +538,12 @@ di iscrizioni al limite del database anche con l'escape JSON più lungo, così l
 strane di un account non fanno respingere (413) le notifiche degli altri dello stesso lotto;
 gli endpoint non `https://` o non ASCII si scartano uno per uno. Ogni iscrizione porta anche
 `account` (l'id dell'account a cui appartiene, dal database): il Worker lo mette nel messaggio
-cifrato di quel dispositivo e il service worker non mostra le push di un account diverso da
-quello entrato lì (un valore che non è un uuid si ignora). Per i promemoria il database manda una
-richiesta per tipo di testo: ai dispositivi con il titolo nascosto (password dell'app) arriva già
-«Promemoria StudyOS» (vedi [push-reminders.md](push-reminders.md#privacy)). Servono quattro secret, da
+cifrato di quel dispositivo e il service worker, per una push di un account diverso da quello
+entrato lì, mostra solo «StudyOS» / «Hai una nuova notifica.» con lo stesso tag (deve mostrare
+qualcosa: `userVisibleOnly`; un valore che non è un uuid si ignora). Il database manda una
+richiesta per tipo di testo: ai dispositivi con il titolo nascosto (password dell'app) arrivano già
+«Promemoria StudyOS» per i promemoria e «StudyOS» / «Hai una nuova notifica.» per inviti e permessi
+(vedi [push-reminders.md](push-reminders.md#privacy)). Servono quattro secret, da
 impostare una volta (ognuno dopo il via dell'utente; `wrangler` chiede il valore a terminale,
 mai nella riga di comando):
 

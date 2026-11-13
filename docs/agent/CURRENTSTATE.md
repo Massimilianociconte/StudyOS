@@ -396,3 +396,33 @@ Resta alla persona sul progetto reale: eseguire `group-exams.sql` (dopo `schema`
 `people`, `storage`, `agent` e `push-reminders`) e le verifiche (`verify.sql`, `sharing-verify.sql` con le
 `group_exams_*` vere), pubblicare il client subito dopo (vuole `people.sql` e `group-exams.sql`),
 ridistribuire il Worker 1.9.0 e ricreare i connettori.
+
+## Revisione finale del ramo (13 novembre 2026)
+
+Correzioni dopo la revisione finale:
+
+- le notifiche di persone e gruppi (`studyos_push_notify`) mandano ai dispositivi con `private`
+  solo «StudyOS» / «Hai una nuova notifica.», con lo stesso link e tag, in lotti separati da 15
+  iscrizioni (erano 40: CPU del Worker sul piano Free). Controllo: `push_private_ready` in
+  `people-verify.sql`;
+- il service worker mostra lo stesso testo generico, con lo stesso tag, per una push di un altro
+  account invece di scartarla (le push sono `userVisibleOnly`);
+- «Cancella tutti i dati» svuota anche la cache `studyos-push-local-v1` (promemoria mostrati,
+  account del service worker riscritto solo se resta una sessione) e i segni `gexam-seen:`;
+- `push_studyos_rows` tiene `storedFile` della riga salvata quando una scheda vecchia lo omette
+  (`stored_file_guard_ready` in `verify.sql`).
+
+Prove SQL: `scripts/supabase/push-notify-tests.sql` (i sei trigger) e `stored-file-tests.sql` in
+`scratch-pg.sh`; `scripts/supabase/upgrade-from-published.sh` applica il SQL pubblicato (c28f036),
+scrive righe di allora (email nei membri, inviti per email, nomi dalla parte dell'email, nome di
+gruppo oltre 120 caratteri, id con lo spazio), poi gli 8 script attuali due volte e i 5 verify.
+
+Sul progetto reale, in quest'ordine (passi completi in `supabase/README.md`, «Pubblicazione di
+questa versione»):
+
+1. eseguire il SQL (gli 8 script, anche `people.sql` e `schema.sql` già eseguiti) e i 5 verify;
+2. pubblicare il client subito dopo, poi ricaricare o chiudere le schede vecchie dopo la
+   pubblicazione, su ogni dispositivo;
+3. deploy del Worker;
+4. solo dopo il Worker, attivare i segreti nel Vault, `pg_net` e `pg_cron` (prima del Worker
+   nuovo le push andrebbero a un indirizzo senza `/push` e si perderebbero).

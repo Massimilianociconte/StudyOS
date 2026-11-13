@@ -52,7 +52,8 @@ La «Password dell'app» cifra solo la copia sul dispositivo (vedi sotto).
   altri). Non riceve mai email, @nome, token, codici di invito, iscrizioni alle notifiche, file
   dei materiali o la chiave di collegamento.
 - **Il Worker delle notifiche** (Cloudflare) vede titolo e testo delle notifiche che manda.
-  I promemoria dei dispositivi con «Mostra il titolo nelle notifiche» spento non hanno il titolo.
+  Ai dispositivi con «Mostra il titolo nelle notifiche» spento i promemoria arrivano senza titolo
+  e inviti e permessi solo come «Hai una nuova notifica.», senza nomi di persone o gruppi.
 - **L'amministratore del progetto Supabase**, cioè chi entra nel Dashboard del progetto (oggi
   il proprietario di StudyOS). Dal SQL Editor legge tutto in chiaro, comprese le email e i dati
   di ogni account: le regole RLS non valgono per lui. Lo stesso vale per chiunque ottenga la

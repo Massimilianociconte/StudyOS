@@ -29,6 +29,46 @@ avevi già applicato, **rieseguilo dopo la revisione dell'08/10/2026** (vedi
 passano dalla conferma email, tra i Redirect URLs aggiungi anche
 `https://massimilianociconte.github.io/StudyOS/**`.
 
+**Pubblicazione di questa versione (revisione finale, 13/11/2026): in quest'ordine.** Le
+notifiche push si accendono per ultime. Se `pg_net`, i segreti nel Vault e `pg_cron` sono attivi
+prima del Worker nuovo, i promemoria e gli avvisi di quel momento vanno al Worker vecchio, che non
+ha `/push`: il database li segna come mandati e si perdono.
+
+0. Prima di tutto scegli la strada delle chiavi (passo 1 di «Notifiche push» più sotto). Con la
+   strada B committa `src/lib/pushKeys.ts` prima del passo 2, altrimenti pubblichi due volte.
+1. **SQL.** Nel SQL Editor, una query per script, ognuno incollato per intero: `schema.sql`,
+   `groups.sql`, `sharing.sql`, `people.sql`, `storage.sql`, `agent.sql`, `push-reminders.sql`
+   (senza `pg_cron` finisce con un avviso: va bene) e `group-exams.sql`. Poi i verify:
+   - `verify.sql`: ogni `*_ready` `true`, `security_issues` vuoto, `own_item_policies` = 4 e
+     `file_policies` = 4;
+   - `sharing-verify.sql`: ogni `*_ready` `true` (`group_exams_realtime_ready` vuole la
+     pubblicazione `supabase_realtime`);
+   - `people-verify.sql`: tutto `true` tranne `pg_net_ready` e `vault_ready` (fino al passo 4);
+     `session_cleanup_ready` può restare `false`;
+   - `agent-verify.sql`: tutto `true`;
+   - `push-reminders-verify.sql`: `pg_net_ready`, `vault_ready` e `cron_ready` restano `false`
+     fino al passo 4.
+
+   Rieseguili anche se li avevi già eseguiti: `people.sql` ora manda solo «Hai una nuova
+   notifica.» ai dispositivi con il titolo nascosto (colonna `push_private_ready` di
+   `people-verify.sql`), in lotti più piccoli; `schema.sql` tiene il segno del file salvato quando
+   una scheda vecchia lo omette (`stored_file_guard_ready` di `verify.sql`). Se uno script si ferma
+   con un errore non ha applicato niente: correggi la causa e rieseguilo prima di andare avanti.
+2. **Client, subito.** Pubblica il sito (push su `main`) appena i verify sono a posto, poi
+   **ricarica o chiudi le schede vecchie dopo la pubblicazione**, su ogni dispositivo: una scheda
+   rimasta aperta con la versione di prima continua a scrivere con le sue regole. La prima apertura
+   su ogni dispositivo rifà una lettura completa e sposta i file incorporati nello spazio file
+   (1 GB sul piano Free).
+3. **Worker.** I secret e `npx wrangler deploy -c worker/wrangler.jsonc` (passo 2 di «Notifiche
+   push» più sotto).
+4. **Solo dopo il Worker: le push.** Attiva `pg_net`, metti i due segreti nel Vault (passi 3 e 4
+   di «Notifiche push»), attiva `pg_cron` e riesegui `push-reminders.sql` (passi 2 e 4 di
+   «Promemoria con l'app chiusa»). Poi riesegui `people-verify.sql` e
+   `push-reminders-verify.sql`: tutto `true`, tranne al più `session_cleanup_ready`.
+5. **Prova.** Da un secondo account invita un dispositivo con le notifiche attive; se non arriva,
+   vedi le risposte del Worker in `net._http_response` (più sotto). Dopo la prima notifica a un
+   gruppo grande guarda `wrangler tail` per errori di CPU.
+
 **La revisione del 10/11/2026** (accettare un invito nominale con un'email presente, uguale e
 confermata) è superata da quella dell'11/11/2026 qui sotto: con la conferma email spenta un
 invito nominale vale solo per l'account destinatario. `groups.sql` si può rieseguire senza
@@ -221,12 +261,15 @@ Servono due valori segreti, che non stanno mai in un file del repository: la **c
 VAPID** (`STUDYOS_VAPID_PRIVATE_KEY`, coppia della chiave pubblica in `src/lib/pushKeys.ts`) e il
 **segreto condiviso** (`STUDYOS_PUSH_SECRET`, uguale nel Vault e nel Worker). La chiave pubblica
 in `src/lib/pushKeys.ts` è già stata generata l'11/11/2026, quindi `node scripts/push-keys.mjs`
-senza opzioni si ferma e non la sostituisce. Al passo 2 scegli una delle due strade.
+senza opzioni si ferma e non la sostituisce. Al passo 1 scegli una delle due strade.
 
-1. **pg_net**: Dashboard → **Database → Extensions** → cerca `pg_net` → **Enable**.
-2. **Chiavi.**
+L'ordine conta: prima il Worker nuovo (passo 2), solo dopo `pg_net` e il Vault (passi 3 e 4). Con
+`pg_net` e i segreti attivi e il Worker vecchio, le notifiche vanno a un indirizzo che risponde 404
+e si perdono.
+
+1. **Chiavi.**
    - **Strada A: hai ancora i due valori stampati l'11/11/2026** (chiave privata e segreto).
-     Non rigenerare niente: li usi ai passi 3 e 4.
+     Non rigenerare niente: li usi ai passi 2 e 4.
    - **Strada B: te ne manca anche solo uno.** Nella cartella del progetto lancia
      `node scripts/push-keys.mjs --rigenera`. Lo script riscrive `src/lib/pushKeys.ts` con una
      chiave pubblica nuova e stampa nel terminale la chiave privata, il segreto, i comandi
@@ -234,12 +277,32 @@ senza opzioni si ferma e non la sostituisce. Al passo 2 scegli una delle due str
      1. committa `src/lib/pushKeys.ts` e pubblica il sito (push su `main`). I dispositivi che
         avevano già le notifiche attive si iscrivono di nuovo da soli alla prima apertura dopo
         l'aggiornamento.
-     2. Al passo 4 rimetti **tutti e due** i secret e **ripubblica il Worker**: il Worker contiene la
+     2. Al passo 2 rimetti **tutti e due** i secret e **ripubblica il Worker**: il Worker contiene la
         chiave pubblica e la usa con la privata. Chiave privata nuova con un Worker vecchio, o il
         contrario, vuol dire che ogni push viene rifiutata dal servizio push.
-3. **Vault** (SQL Editor). Strada B: incolla il blocco stampato da `push-keys.mjs`. Strada A: usa
-   questo blocco, mettendo il tuo segreto al posto di `<SEGRETO>` (due volte). Si può rieseguire:
-   crea i due segreti o ne aggiorna il valore.
+2. **Worker** (terminale, nella cartella del progetto). `wrangler` chiede ogni valore a terminale:
+   incollalo lì, mai nella riga di comando.
+
+```bash
+npx wrangler secret put STUDYOS_PUSH_SECRET -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_VAPID_PRIVATE_KEY -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_SUPABASE_URL -c worker/wrangler.jsonc
+npx wrangler secret put STUDYOS_SUPABASE_KEY -c worker/wrangler.jsonc
+npx wrangler deploy -c worker/wrangler.jsonc
+```
+
+   - `STUDYOS_PUSH_SECRET`: lo stesso valore che metti nel Vault al passo 4.
+   - `STUDYOS_VAPID_PRIVATE_KEY`: la chiave privata (strada A: quella dell'11/11; strada B: quella
+     appena stampata).
+   - `STUDYOS_SUPABASE_URL` (lo stesso valore di `VITE_SUPABASE_URL`) e `STUDYOS_SUPABASE_KEY` (la
+     chiave `sb_publishable_…`, mai la `service_role`): sono gli stessi del connettore remoto. Se li
+     hai già messi per `agent.sql`, salta quei due comandi.
+   - `wrangler deploy` serve sempre: la route `/push` c'è solo nel Worker nuovo.
+3. **pg_net**, solo dopo il passo 2: Dashboard → **Database → Extensions** → cerca `pg_net` →
+   **Enable**.
+4. **Vault** (SQL Editor), solo dopo il passo 2. Strada B: incolla il blocco stampato da
+   `push-keys.mjs`. Strada A: usa questo blocco, mettendo il tuo segreto al posto di `<SEGRETO>`
+   (due volte). Si può rieseguire: crea i due segreti o ne aggiorna il valore.
 
 ```sql
 do $$
@@ -262,24 +325,6 @@ end
 $$;
 ```
 
-4. **Worker** (terminale, nella cartella del progetto). `wrangler` chiede ogni valore a terminale:
-   incollalo lì, mai nella riga di comando.
-
-```bash
-npx wrangler secret put STUDYOS_PUSH_SECRET -c worker/wrangler.jsonc
-npx wrangler secret put STUDYOS_VAPID_PRIVATE_KEY -c worker/wrangler.jsonc
-npx wrangler secret put STUDYOS_SUPABASE_URL -c worker/wrangler.jsonc
-npx wrangler secret put STUDYOS_SUPABASE_KEY -c worker/wrangler.jsonc
-npx wrangler deploy -c worker/wrangler.jsonc
-```
-
-   - `STUDYOS_PUSH_SECRET`: lo stesso valore messo nel Vault al passo 3.
-   - `STUDYOS_VAPID_PRIVATE_KEY`: la chiave privata (strada A: quella dell'11/11; strada B: quella
-     appena stampata).
-   - `STUDYOS_SUPABASE_URL` (lo stesso valore di `VITE_SUPABASE_URL`) e `STUDYOS_SUPABASE_KEY` (la
-     chiave `sb_publishable_…`, mai la `service_role`): sono gli stessi del connettore remoto. Se li
-     hai già messi per `agent.sql`, salta quei due comandi.
-   - `wrangler deploy` serve sempre: la route `/push` c'è solo nel Worker nuovo.
 5. **Controllo.** Riesegui `people-verify.sql`: ora anche `pg_net_ready` e `vault_ready` devono
    essere `true`. Poi prova: su un dispositivo accendi **Impostazioni → Profilo → Notifiche su
    questo dispositivo**; da un altro account invita quella persona in un gruppo. La notifica arriva
@@ -289,9 +334,9 @@ Se la notifica non arriva, nel SQL Editor:
 `select id, status_code, left(content, 120) from net._http_response order by id desc limit 5;`
 mostra le ultime risposte del Worker.
 
-- **401**: il segreto nel Vault e `STUDYOS_PUSH_SECRET` sono diversi. Rifai i passi 3 e 4 con lo
+- **401**: il segreto nel Vault e `STUDYOS_PUSH_SECRET` sono diversi. Rifai i passi 2 e 4 con lo
   stesso valore.
-- **404**: l'URL nel Vault è sbagliato, oppure il Worker non è stato ripubblicato (passo 4).
+- **404**: l'URL nel Vault è sbagliato, oppure il Worker non è stato ripubblicato (passo 2).
 - **200 con `"sent":0`**: il Worker ha risposto ma il servizio push ha rifiutato. Quasi sempre la
   chiave privata del Worker non è la coppia di quella in `src/lib/pushKeys.ts`: rifai la strada B
   per intero (commit, sito, secret, deploy).
@@ -368,9 +413,9 @@ ogni dispositivo con le notifiche attive. L'app scrive i promemoria dei prossimi
 iscrizioni di quell'account soltanto. Dettagli in
 [docs/push-reminders.md](../docs/push-reminders.md).
 
-1. Prima i passi delle notifiche push qui sopra (`pg_net`, Vault, Worker con il deploy che
-   accetta il tipo `reminder` e l'`account` di ogni iscrizione).
-2. **pg_cron**: Dashboard → **Database → Extensions** → cerca `pg_cron` → **Enable**.
+1. Prima i passi delle notifiche push qui sopra, nel loro ordine (Worker con il deploy che
+   accetta il tipo `reminder` e l'`account` di ogni iscrizione, poi `pg_net` e Vault).
+2. **pg_cron**, solo dopo il deploy del Worker: Dashboard → **Database → Extensions** → cerca `pg_cron` → **Enable**.
 3. Riesegui `people.sql` (anche se l'avevi già eseguito): aggiunge alle iscrizioni `private`
    (promemoria senza titolo con la password dell'app) e `session_id` (iscrizione tolta quando la
    sessione finisce), e l'account di ogni iscrizione nelle notifiche. `push-reminders.sql` si

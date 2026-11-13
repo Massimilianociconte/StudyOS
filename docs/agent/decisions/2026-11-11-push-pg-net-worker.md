@@ -55,7 +55,9 @@ publishable, mai `service_role`.
   database al Worker su HTTPS: servono per cifrare e non sono un segreto d'account.
 - `pg_net` è asincrono e senza ritentativi: la consegna è al meglio; TTL 24 ore, urgenza
   `normal`. L'avviso resta comunque nella campanella dell'app.
-- Tetti: il database manda lotti di al massimo 40 iscrizioni e il Worker ne accetta al massimo
+- Tetti: `studyos_push_notify` manda lotti di al massimo 15 iscrizioni (erano 40: circa 13 ms di
+  CPU nel Worker, oltre i 10 ms del piano Free; revisione finale, L-1), i promemoria al massimo 40
+  (un account ha al massimo 10 iscrizioni), e il Worker ne accetta al massimo
   49 per richiesta (49 push più una `push_gone` sono 50 sottorichieste sul piano Free). Per chi
   compie l'azione `studyos_push_notify` manda al massimo 30 notifiche all'ora
   (`studyos_push_sends`, righe più vecchie di un'ora cancellate): oltre salta la push in

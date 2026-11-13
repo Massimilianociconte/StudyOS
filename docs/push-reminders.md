@@ -100,8 +100,10 @@ fuso**.
   browser si annulla (`dropPushOfEndedSession`).
 - **Filtro del service worker**: la guardia scrive l'account entrato nella cache condivisa
   (`writePushAccount`; `null` quando la sessione è finita). Una push con un `account` diverso da
-  quello scritto (riga rimasta sul server dopo un cambio di account) non si mostra. Se la pagina
-  non ha mai scritto l'account (versione vecchia), si mostra tutto come prima.
+  quello scritto (riga rimasta sul server dopo un cambio di account) mostra solo «StudyOS» /
+  «Hai una nuova notifica.» con lo stesso tag (le push sono `userVisibleOnly`: una push senza
+  notifica fa comparire l'avviso del browser o consuma il credito delle push silenziose). Se la
+  pagina non ha mai scritto l'account (versione vecchia), si mostra tutto come prima.
 - **Pulizia sul server** (`people.sql`): la riga dell'iscrizione ricorda la sessione che l'ha
   scritta (`session_id`, dal token, trigger `studyos_push_subscriptions_session`; il client non
   può sceglierla). Quando la sessione finisce (uscita, revoca, «esci ovunque») un trigger su
@@ -110,6 +112,9 @@ fuso**.
   `push_gone` e «Rimuovi».
 - «Cancella tutti i dati» dall'account toglie anche le righe dei promemoria
   (`erase_studyos_account_items` in `schema.sql` e `clearPushReminders` nel client).
+- «Cancella tutti i dati» (ogni modo) svuota anche la cache condivisa (`resetPushLocal` in
+  `resetAllData`): promemoria già mostrati e account del service worker. L'account si riscrive
+  subito se resta una sessione (scelta «separa»: si resta dentro), altrimenti resta vuoto.
 
 ## Impostazioni
 
@@ -136,7 +141,9 @@ rimette. Senza password il titolo resta.
   verso quei dispositivi.
 - Anche la notifica di sistema della scheda aperta usa «Promemoria StudyOS»; nella campanella
   dell'app (dietro la password) il titolo resta.
-- Inviti e permessi (`studyos_push_notify`) non cambiano: il loro testo non ha titoli di eventi.
+- Inviti e permessi (`studyos_push_notify`, `people.sql`): il loro testo ha nomi di persone e di
+  gruppi, quindi ai dispositivi con `private` va un lotto a parte con «StudyOS» e «Hai una nuova
+  notifica.» (stesso link e tag); nella campanella dell'app il testo intero resta.
 - Il contenuto della push è cifrato fino al dispositivo (RFC 8291) e il Worker registra solo
   conteggi.
 
@@ -153,8 +160,10 @@ restare false), deploy del Worker (tipo `reminder`, `account`).
 - `tests/pushReminders.test.mjs`: righe, chiavi, diff, fusi orari (Europe/Rome, cambi
   dell'ora legale, tutto il giorno, serie ripetute), dispositivi in fusi diversi, cambio di
   account, collegamenti nel sorgente.
-- `tests/swPush.test.mjs`: push prima o dopo la scheda, account diverso, cache assente.
-- `tests/pushLocal.test.mjs`: cache condivisa, titolo nascosto, dispositivi, `private`.
+- `tests/swPush.test.mjs`: push prima o dopo la scheda, account diverso (testo generico, stesso
+  tag), cache assente.
+- `tests/pushLocal.test.mjs`: cache condivisa, titolo nascosto, dispositivi, `private`, pulizia
+  della cache con «Cancella tutti i dati».
 - `tests/pushDevice.test.mjs`: `turnOffPushHere`, guardia della sessione (anche con il permesso
   dato dopo), ogni chiamante.
 - `tests/pushRoute.test.mjs`: tipo `reminder`, `account` per iscrizione, lotto pieno al limite,
@@ -162,3 +171,7 @@ restare false), deploy del Worker (tipo `reminder`, `account`).
 - SQL: su un Postgres temporaneo con stub di `auth.sessions`, `pg_net`, Vault e `pg_cron` (mai
   sul progetto reale), comprese le sonde della revisione (rimessa in coda, spostamento, tetto,
   turni, tetto orario, testo privato, pulizia delle sessioni).
+- `scripts/supabase/push-notify-tests.sql` (in `scratch-pg.sh`): i sei trigger di
+  `studyos_push_notify` (invito al gruppo, invito alla condivisione, invito accettato, ingresso nel
+  gruppo, cambio di permesso, condivisione tolta) mandano il testo generico ai dispositivi con
+  `private`, lotti da 15 mai misti.

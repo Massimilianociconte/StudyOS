@@ -532,8 +532,12 @@
   chiamata. Il contenuto è cifrato fino al dispositivo; mai registrare endpoint o testi.
 - Push, tetti: `studyos_push_notify` manda al massimo 30 notifiche all'ora per chi agisce
   (`studyos_push_sends`; oltre salta la push in silenzio e le notifiche in app arrivano lo
-  stesso). Il database manda lotti di al massimo 40 iscrizioni; il Worker ne accetta al massimo
-  49 per richiesta (49 push più una `push_gone` = 50 sottorichieste sul piano Free).
+  stesso). `studyos_push_notify` manda lotti di al massimo 15 iscrizioni: ognuna costa circa
+  0,3 ms di CPU nel Worker e il piano Free ne dà 10 per richiesta (40 arrivavano a circa 13 ms).
+  Il Worker ne accetta al massimo 49 per richiesta (49 push più una `push_gone` = 50
+  sottorichieste sul piano Free). I dispositivi con `private` ricevono dagli inviti e dai permessi
+  solo «StudyOS» / «Hai una nuova notifica.» (stesso link e tag): un lotto non mescola mai i due
+  testi.
 - Supabase: `net.http_request_queue` e `net._http_response` sono leggibili da `anon` e `authenticated`; restano irraggiungibili solo finché `net` NON è tra gli schemi esposti dell'API (Dashboard → Settings → API). Controllalo dopo aver abilitato `pg_net`.
 - `src/lib/push.ts` e `supabase` solo con `import()`. Il permesso del browser si chiede solo
   dentro un tocco (`enablePush` aspetta come prima cosa `Notification.requestPermission`: non

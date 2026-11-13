@@ -47,3 +47,15 @@ In build la CSP accetta solo l'URL configurato. Alla fine:
 ```bash
 cd .cache/ai/supabase-sharing && supabase stop --no-backup
 ```
+
+## Senza stack: Postgres usa e getta
+
+Due script non usano lo stack né Docker, solo `initdb`, `pg_ctl` e `psql` (Postgres 15+), con
+stub di Supabase (`auth-stub.sql`, `upgrade-stubs.sql`). Usano una porta diversa da quelle dello
+stack (`PORT`, mai 5432x o 5542x) e fermano il database alla fine.
+
+- `LC_ALL=C LANG=C zsh scripts/supabase/scratch-pg.sh`: applica gli script due volte ed esegue le
+  prove SQL (email, appelli, notifiche di persone e gruppi, `storedFile`), anche con `en_US.UTF-8`.
+- `LC_ALL=C LANG=C PORT=55518 zsh scripts/supabase/upgrade-from-published.sh <cartella>`: parte dal
+  SQL pubblicato (i file presi uno per uno con `git show <commit>:supabase/<file>.sql`), scrive righe
+  come i client di allora, applica due volte gli 8 script attuali e mostra i verify e le prove.

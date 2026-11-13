@@ -391,8 +391,11 @@ la colonna si ferma la sincronizzazione dei gruppi e anche il caricamento delle 
   Trigger `AFTER` su inviti, accettazioni, ingressi nei gruppi e permessi chiamano
   `studyos_push_notify`, che raccoglie le iscrizioni dei destinatari (mai di chi ha compiuto
   l'azione) e con `pg_net` fa `POST` al Worker `/push` con l'intestazione
-  `x-studyos-push-secret`, in lotti di al massimo 40 iscrizioni (il Worker ne accetta al massimo
-  49 per richiesta: 49 push più una `push_gone` sono 50 sottorichieste sul piano Free). Segreto e
+  `x-studyos-push-secret`, in lotti di al massimo 15 iscrizioni (CPU del Worker; il Worker ne
+  accetta al massimo 49 per richiesta: 49 push più una `push_gone` sono 50 sottorichieste sul
+  piano Free). Ai dispositivi con `private` (password dell'app e titolo nascosto) va un lotto a
+  parte con «StudyOS» e «Hai una nuova notifica.»: nomi di persone e gruppi non lasciano il
+  database verso quei dispositivi; link e tag restano. Segreto e
   URL stanno in Vault (`studyos_push_secret`, `studyos_push_url`). Senza `pg_net` o senza segreti
   non succede nulla e la scrittura che ha fatto scattare il trigger riesce lo stesso. Per chi
   compie l'azione `studyos_push_notify` manda al massimo 30 notifiche all'ora (tabella
@@ -435,8 +438,9 @@ righe dei membri.
   push ammessi): lo limita il tetto di notifiche per chi agisce.
 - Se un `@nome` è già preso si può sapere anche salvando direttamente il profilo (vincolo di
   unicità), non solo con `is_handle_available`.
-- Il tempo di CPU di un lotto grande di push sul piano Free dei Worker (10 ms) non è stato
-  misurato: controllalo con `wrangler tail` dopo il deploy.
+- Il tempo di CPU di un lotto di push sul piano Free dei Worker (10 ms) è stato misurato solo in
+  locale (Node, rete finta): circa 0,3 ms per iscrizione, quindi circa 5 ms per un lotto di 15.
+  Sul Worker vero controllalo con `wrangler tail` dopo il deploy.
 - I membri di un gruppo leggono l'email di chi è entrato con codice o link in
   `studyos_group_members` (scelta: entrare è un'azione propria, e la conferma lo dice). Chi accetta
   un invito per `@nome` non scrive la propria email: né nella riga del membro né in quella della
