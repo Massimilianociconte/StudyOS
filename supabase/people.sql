@@ -1002,11 +1002,15 @@ end $$;
 
 -- Manda una notifica agli account indicati, tranne chi compie l'azione (auth.uid()) e senza
 -- doppioni: raccoglie le loro iscrizioni e chiama il Worker (POST studyos_push_url, intestazione
--- x-studyos-push-secret) con pg_net, al massimo 40 iscrizioni per richiesta: il Worker sul piano
--- Free ha 50 sottorichieste, una serve a push_gone. Testi tagliati ai limiti del Worker (titolo 120,
--- corpo 240, tag 200 caratteri; url solo tra i tre ammessi), altrimenti risponderebbe 400. pg_net
--- spedisce solo dopo il commit. Senza pg_net, senza segreti o con qualsiasi errore non fa nulla: mai
--- un errore che blocca la scrittura che l'ha chiamata. Non eseguibile dai client.
+-- x-studyos-push-secret) con pg_net, al massimo 15 iscrizioni per richiesta: ogni iscrizione costa
+-- al Worker circa 0,3 ms di CPU (cifratura e firma), e sul piano Free il limite è 10 ms per
+-- richiesta (revisione finale, L-1). Testi tagliati ai limiti del Worker (titolo 120, corpo 240, tag
+-- 200 caratteri; url solo tra i tre ammessi), altrimenti risponderebbe 400. pg_net spedisce solo
+-- dopo il commit. Senza pg_net, senza segreti o con qualsiasi errore non fa nulla: mai un errore che
+-- blocca la scrittura che l'ha chiamata. Non eseguibile dai client.
+-- Dispositivi con la password dell'app (`private`, revisione finale M-1): ricevono solo «StudyOS» e
+-- «Hai una nuova notifica.», con lo stesso url e lo stesso tag. Nomi di persone e di gruppi e sezioni
+-- condivise non lasciano il database verso quei dispositivi (stesso testo generico di public/sw.js).
 create or replace function public.studyos_push_notify(
   p_user_ids uuid[],
   p_kind text,
@@ -1026,6 +1030,7 @@ declare
   v_url text;
   v_notification jsonb;
   v_batch jsonb;
+  v_private boolean;
 begin
   begin
     v_users := array(
@@ -1064,22 +1069,29 @@ begin
       'url', case when p_url in ('?apri=notifiche', '?apri=condivisione', '?apri=gruppi') then p_url else '?apri=notifiche' end,
       'tag', left(coalesce(nullif(p_tag, ''), p_kind), 200)
     );
-    for v_batch in
+    for v_batch, v_private in
       -- account: il service worker del dispositivo non mostra le push di un account che non è più
-      -- quello entrato lì (public/sw.js).
-      select jsonb_agg(jsonb_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth, 'account', s.user_id) order by s.rn)
+      -- quello entrato lì (public/sw.js). Lotti separati per `private`, come i promemoria
+      -- (push-reminders.sql).
+      select jsonb_agg(jsonb_build_object('endpoint', s.endpoint, 'p256dh', s.p256dh, 'auth', s.auth, 'account', s.user_id) order by s.rn),
+        s.private
       from (
-        select sub.endpoint, sub.p256dh, sub.auth, sub.user_id,
-          row_number() over (order by sub.user_id, sub.created_at, sub.id) as rn
+        select sub.endpoint, sub.p256dh, sub.auth, sub.user_id, sub.private,
+          row_number() over (partition by sub.private order by sub.user_id, sub.created_at, sub.id) as rn
         from public.studyos_push_subscriptions sub
         where sub.user_id = any (v_users)
       ) as s
-      group by (s.rn - 1) / 40
-      order by (s.rn - 1) / 40
+      group by s.private, (s.rn - 1) / 15
+      order by s.private, (s.rn - 1) / 15
     loop
       perform net.http_post(
         url := v_url,
-        body := jsonb_build_object('notification', v_notification, 'subscriptions', v_batch),
+        body := jsonb_build_object(
+          'notification', case when v_private
+            then v_notification || jsonb_build_object('title', 'StudyOS', 'body', 'Hai una nuova notifica.')
+            else v_notification end,
+          'subscriptions', v_batch
+        ),
         params := '{}'::jsonb,
         headers := jsonb_build_object('content-type', 'application/json', 'x-studyos-push-secret', v_secret),
         timeout_milliseconds := 15000

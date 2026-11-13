@@ -121,21 +121,41 @@ const stub = createServer((request, response) => {
     response.end(JSON.stringify({ sent: Array.isArray(body?.subscriptions) ? body.subscriptions.length : 0, gone: 0 }));
   });
 });
+// Iscrizioni dei dispositivi con la password dell'app (`private`): studyos_push_notify le manda in
+// richieste a parte, con il solo testo generico (revisione finale, M-1).
+const privateEndpoints = new Set();
+const GENERIC = { title: "StudyOS", body: "Hai una nuova notifica." };
+const isPrivateBatch = (push) =>
+  (push.body?.subscriptions ?? []).length > 0 && push.body.subscriptions.every((subscription) => privateEndpoints.has(subscription.endpoint));
 const withTag = (tag) => pushes.filter((push) => push.body?.notification?.tag === tag);
+const publicWithTag = (tag) => withTag(tag).filter((push) => !isPrivateBatch(push));
+const privateWithTag = (tag) => withTag(tag).filter(isPrivateBatch);
 // Chi riceve: etichette dei proprietari degli endpoint, in ordine, con i doppioni (una notifica a testa).
-const receivers = (tag) =>
-  withTag(tag)
+const receiversOf = (list) =>
+  list
     .flatMap((push) => push.body?.subscriptions ?? [])
     .map((subscription) => owners.get(subscription.endpoint) ?? "?")
     .sort()
     .join(",");
-const notification = (tag) => withTag(tag)[0]?.body?.notification ?? null;
+const receivers = (tag) => receiversOf(publicWithTag(tag));
+const privateReceivers = (tag) => receiversOf(privateWithTag(tag));
+const notification = (tag) => publicWithTag(tag)[0]?.body?.notification ?? null;
+// Testo generico verso i dispositivi con la password dell'app: stesso tipo, url e tag della notifica
+// completa, nessun nome di persona, di gruppo o di sezione.
+const genericOnly = (tag, full = notification(tag)) => {
+  const items = privateWithTag(tag).map((push) => push.body.notification);
+  return items.length > 0 && Boolean(full) && items.every((item) =>
+    item.title === GENERIC.title && item.body === GENERIC.body && item.kind === full.kind && item.url === full.url && item.tag === tag);
+};
+const privateDetail = (tag) => `${privateReceivers(tag) || "nessuna push privata"} ${JSON.stringify(privateWithTag(tag).map((push) => push.body.notification))}`;
 const waitFor = async (predicate, ms = 10_000) => {
   const until = Date.now() + ms;
   while (!predicate() && Date.now() < until) await sleep(100);
   return predicate();
 };
 const waitTag = (tag) => waitFor(() => withTag(tag).length > 0);
+// Notifica completa e generica: arrivano in due richieste distinte.
+const waitBoth = (tag) => waitFor(() => publicWithTag(tag).length > 0 && privateWithTag(tag).length > 0);
 
 const account = async (label, ip, email = `${label}-${run}@studyos.test`) => {
   const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -152,6 +172,16 @@ const pushKeys = () => ({ p256dh: randomBytes(65).toString("base64url"), auth: r
 const subscribe = async (who, endpoint = `https://push.example.test/${who.label}-${run}-${randomBytes(4).toString("hex")}`) => {
   const { error } = await who.client.from("studyos_push_subscriptions").upsert({ endpoint, ...pushKeys() }, { onConflict: "endpoint" });
   if (!error) owners.set(endpoint, who.label);
+  return { endpoint, error };
+};
+// Come enablePush con la password dell'app accesa (push.ts: `private: true`).
+const subscribePrivate = async (who) => {
+  const endpoint = `https://push.example.test/${who.label}-private-${run}-${randomBytes(4).toString("hex")}`;
+  const { error } = await who.client.from("studyos_push_subscriptions").upsert({ endpoint, ...pushKeys(), private: true }, { onConflict: "endpoint" });
+  if (!error) {
+    owners.set(endpoint, who.label);
+    privateEndpoints.add(endpoint);
+  }
   return { endpoint, error };
 };
 const ownRows = async (who, table, columns = "id") => {
@@ -263,6 +293,11 @@ const main = async () => {
   need("Iscrizioni push salvate (upsert su endpoint)", subscriptions.every((item) => !item.error),
     subscriptions.map((item) => item.error?.message).filter(Boolean).join("; "));
   const mallorySubscription = subscriptions[3];
+  // Un secondo dispositivo con la password dell'app per Alice, Bob e Carla: ogni trigger qui sotto
+  // raggiunge almeno uno di loro (Mallory resta con un solo dispositivo, per le prove sulle iscrizioni).
+  const privateSubscriptions = [await subscribePrivate(alice), await subscribePrivate(bob), await subscribePrivate(carla)];
+  need("Iscrizioni con la password dell'app salvate (private = true)", privateSubscriptions.every((item) => !item.error),
+    privateSubscriptions.map((item) => item.error?.message).filter(Boolean).join("; "));
 
   // ─── Inviti di gruppo ─────────────────────────────────────────────────────
   const groupId = `group-people-${run}`;
@@ -276,8 +311,10 @@ const main = async () => {
   const { error: joinError } = await carla.client.rpc("join_group_by_code", { p_code: code, p_display_name: "Carla" });
   check("Carla entra con il codice", !joinError, joinError?.message);
   const carlaJoin = `group-join:${md5(groupId)}:${carla.id}`;
-  await waitTag(carlaJoin);
+  await waitBoth(carlaJoin);
   check("Push «nuovo membro» (codice) solo alla proprietaria", receivers(carlaJoin) === "alice", receivers(carlaJoin) || "nessuna push");
+  check("Password dell'app: «nuovo membro» arriva con il solo testo generico, stesso url e tag",
+    privateReceivers(carlaJoin) === "alice" && genericOnly(carlaJoin), privateDetail(carlaJoin));
   check("La push arriva con segreto, JSON e percorso /push",
     withTag(carlaJoin).length > 0 && withTag(carlaJoin).every((push) => push.secret === secret && push.type.startsWith("application/json") && push.path === "/push"));
   const joinText = notification(carlaJoin);
@@ -317,12 +354,14 @@ const main = async () => {
   const { data: malloryPeek } = await mallory.client.from("studyos_group_invites").select("id").eq("id", groupInvite.data);
   check("Mallory non vede l'invito di Bob", malloryPeek?.length === 0);
   const inviteTag = `group-invite:${groupInvite.data}`;
-  await waitTag(inviteTag);
+  await waitBoth(inviteTag);
   check("Push «invito» solo a Bob, mai ad Alice che invita", receivers(inviteTag) === "bob", receivers(inviteTag) || "nessuna push");
   const inviteText = notification(inviteTag);
   check("Testo «invito a un gruppo»",
     inviteText?.kind === "invite" && inviteText.title === "Invito a un gruppo" && inviteText.body === "Alice ti invita nel gruppo Fisica 2"
       && inviteText.url === "?apri=notifiche", JSON.stringify(inviteText));
+  check("Password dell'app: «invito a un gruppo» senza il nome di chi invita né del gruppo",
+    privateReceivers(inviteTag) === "bob" && genericOnly(inviteTag), privateDetail(inviteTag));
   await errorIs("Mallory non accetta l'invito di Bob",
     mallory.client.rpc("accept_group_invite", { p_invite_id: groupInvite.data, p_display_name: "Mallory" }), "Invito destinato a un altro account");
   await errorIs("Mallory non rifiuta l'invito di Bob",
@@ -333,9 +372,11 @@ const main = async () => {
   const bobMemberEmail = sql(`select coalesce(email, '<null>') from public.studyos_group_members where group_id = ${lit(groupId)} and user_id = ${lit(bob.id)}`);
   check("Invito di gruppo accettato: l'email di Bob non resta nella riga del membro", bobMemberEmail === "<null>", bobMemberEmail);
   const bobJoin = `group-join:${md5(groupId)}:${bob.id}`;
-  await waitTag(bobJoin);
+  await waitBoth(bobJoin);
   check("Push «nuovo membro»: proprietaria (anche autrice dell'invito) e amministratrice, una a testa, mai a Bob",
     receivers(bobJoin) === "alice,carla", receivers(bobJoin) || "nessuna push");
+  check("Password dell'app: «nuovo membro» (invito accettato) con il testo generico, una a testa",
+    privateReceivers(bobJoin) === "alice,carla" && genericOnly(bobJoin), privateDetail(bobJoin));
 
   // Carla (amministratrice) invita Mallory: Mallory rifiuta, Carla la invita di nuovo, Mallory accetta.
   const firstForMallory = await inviteToGroup(carla, mallory.id, "Carla");
@@ -346,9 +387,11 @@ const main = async () => {
   check("Dopo un rifiuto si può invitare di nuovo, e Mallory accetta", !secondForMallory.error && !malloryAcceptError,
     secondForMallory.error?.message ?? malloryAcceptError?.message);
   const malloryJoin = `group-join:${md5(groupId)}:${mallory.id}`;
-  await waitTag(malloryJoin);
+  await waitBoth(malloryJoin);
   check("Push «nuovo membro»: Carla, amministratrice e autrice dell'invito, la riceve una volta sola",
     receivers(malloryJoin) === "alice,carla", receivers(malloryJoin) || "nessuna push");
+  check("Password dell'app: anche la notifica generica arriva una volta sola a testa",
+    privateReceivers(malloryJoin) === "alice,carla" && genericOnly(malloryJoin), privateDetail(malloryJoin));
 
   // ─── Inviti di condivisione ───────────────────────────────────────────────
   const offer = (scope, permission = "view") => ({ scope, permission, subject_ids: [], subject_names: [] });
@@ -371,12 +414,14 @@ const main = async () => {
     .select("id, owner_name, recipient_user_id, status").eq("recipient_user_id", bob.id).eq("status", "pending");
   check("Bob vede l'invito di condivisione", bobShareInbox?.length === 1 && bobShareInbox[0].id === shareInvite.data.id, JSON.stringify(bobShareInbox));
   const shareTag = `share-invite:${shareInvite.data.id}`;
-  await waitTag(shareTag);
+  await waitBoth(shareTag);
   check("Push «invito a condividere» a Bob, una sola anche con l'invito aggiornato",
-    receivers(shareTag) === "bob" && withTag(shareTag).length === 1, `${receivers(shareTag)} in ${withTag(shareTag).length} richieste`);
+    receivers(shareTag) === "bob" && publicWithTag(shareTag).length === 1, `${receivers(shareTag)} in ${publicWithTag(shareTag).length} richieste`);
   check("Testo «invito a condividere» con le sezioni",
     notification(shareTag)?.body === "Alice vuole condividere con te: Calendario, Attività" && notification(shareTag)?.url === "?apri=notifiche",
     JSON.stringify(notification(shareTag)));
+  check("Password dell'app: «invito a condividere» senza il nome né le sezioni, una sola",
+    privateReceivers(shareTag) === "bob" && privateWithTag(shareTag).length === 1 && genericOnly(shareTag), privateDetail(shareTag));
   await errorIs("Mallory non accetta un invito per Bob",
     mallory.client.rpc("accept_share_invite", { p_invite_id: shareInvite.data.id, p_token: null, p_display_name: "Mallory", p_reciprocal: [] }),
     "Invito destinato a un altro account");
@@ -386,11 +431,13 @@ const main = async () => {
   check("Invito di condivisione accettato: l'email di Bob non resta nelle righe della condivisione",
     bobShareEmails.length > 0 && bobShareEmails.split("\n").every((value) => value === "<null>"), bobShareEmails);
   const acceptedTag = `share-accepted:${shareInvite.data.id}`;
-  await waitTag(acceptedTag);
+  await waitBoth(acceptedTag);
   check("Push «invito accettato» ad Alice, mai a Bob", receivers(acceptedTag) === "alice", receivers(acceptedTag) || "nessuna push");
   check("Testo «invito accettato»",
     notification(acceptedTag)?.body === "Bob ha accettato il tuo invito" && notification(acceptedTag)?.url === "?apri=condivisione",
     JSON.stringify(notification(acceptedTag)));
+  check("Password dell'app: «invito accettato» senza il nome di chi ha accettato",
+    privateReceivers(acceptedTag) === "alice" && genericOnly(acceptedTag), privateDetail(acceptedTag));
 
   const { data: bobShares } = await alice.client.from("studyos_shares").select("id, scope, permission").eq("owner_id", alice.id).eq("grantee_user_id", bob.id);
   const calendarShare = bobShares?.find((item) => item.scope === "calendar");
@@ -405,18 +452,23 @@ const main = async () => {
   const { error: permissionError } = await alice.client.from("studyos_shares").update({ permission: "edit" }).eq("id", calendarShare.id);
   check("Alice passa il calendario a «Può modificare»", !permissionError, permissionError?.message);
   const calendarTag = `share-permission:${calendarShare.id}`;
-  await waitTag(calendarTag);
+  await waitBoth(calendarTag);
   check("Push «permessi cambiati» a Bob", receivers(calendarTag) === "bob", receivers(calendarTag) || "nessuna push");
   check("Testo «permessi cambiati»", notification(calendarTag)?.title === "Permessi cambiati"
     && notification(calendarTag)?.body === "Alice ora ti permette di modificare: Calendario", JSON.stringify(notification(calendarTag)));
+  check("Password dell'app: «permessi cambiati» senza il nome né le sezioni",
+    privateReceivers(calendarTag) === "bob" && genericOnly(calendarTag), privateDetail(calendarTag));
   const { error: leaveError } = await bob.client.from("studyos_shares").delete().eq("id", tasksShare.id);
   check("Bob esce dalla condivisione delle attività", !leaveError, leaveError?.message);
   const { error: revokeError } = await alice.client.from("studyos_shares").delete().eq("id", calendarShare.id);
   check("Alice toglie il calendario a Bob", !revokeError, revokeError?.message);
-  await waitFor(() => withTag(calendarTag).length > 1);
-  const removed = withTag(calendarTag).map((push) => push.body.notification).find((item) => item.title === "Accesso tolto");
+  // Una notifica completa e una generica per il cambio di permesso, poi altrettante per l'accesso tolto.
+  await waitFor(() => publicWithTag(calendarTag).length > 1 && privateWithTag(calendarTag).length > 1);
+  const removed = publicWithTag(calendarTag).map((push) => push.body.notification).find((item) => item.title === "Accesso tolto");
   check("Push «accesso tolto» a Bob", removed?.body === "Alice ha smesso di condividere con te: Calendario"
     && receivers(calendarTag) === "bob,bob", `${JSON.stringify(removed)} → ${receivers(calendarTag)}`);
+  check("Password dell'app: «accesso tolto» (smesso di condividere) con il solo testo generico",
+    privateReceivers(calendarTag) === "bob,bob" && genericOnly(calendarTag, removed), privateDetail(calendarTag));
   check("Nessuna push a chi agisce: Bob che si alza «Può modificare» o esce non riceve nulla",
     withTag(`share-permission:${tasksShare.id}`).length === 0, `${withTag(`share-permission:${tasksShare.id}`).length} richieste`);
 
@@ -427,10 +479,12 @@ const main = async () => {
   check("Alice condivide gli obiettivi con il gruppo", !groupShareError, groupShareError?.message);
   await alice.client.from("studyos_shares").update({ permission: "edit" }).eq("id", groupShare?.id);
   const groupTag = `share-permission:${groupShare?.id}`;
-  await waitTag(groupTag);
+  await waitBoth(groupTag);
   check("Push «permessi cambiati» ai membri del gruppo, non ad Alice", receivers(groupTag) === "bob,carla,mallory", receivers(groupTag) || "nessuna push");
   check("Testo per il gruppo", notification(groupTag)?.body === "Alice ora permette al gruppo Fisica 2 di modificare: Obiettivi",
     JSON.stringify(notification(groupTag)));
+  check("Password dell'app: permessi del gruppo senza il nome del gruppo, solo ai dispositivi con la password",
+    privateReceivers(groupTag) === "bob,carla" && genericOnly(groupTag), privateDetail(groupTag));
 
   // ─── Migrazione degli inviti per email ────────────────────────────────────
   // Inviti per email creati prima dell'aggiornamento: li scrive psql, come se fossero vecchi.
@@ -580,6 +634,18 @@ const main = async () => {
     !budgetInvite.error && Boolean(budgetInvite.data?.id) && withTag(budgetTag).length === 0,
     budgetInvite.error?.message ?? `${withTag(budgetTag).length} richieste`);
   sql(`delete from public.studyos_push_sends where user_id = ${lit(alice.id)}`);
+
+  // Revisione finale (L-1, M-1): ogni richiesta al Worker porta al massimo 15 iscrizioni, tutte con la
+  // password dell'app o tutte senza; le prime hanno sempre il testo generico.
+  const sent = pushes.filter((push) => push.path === "/push");
+  check("Lotti di al massimo 15 iscrizioni, mai misti tra dispositivi con e senza password",
+    sent.length > 0 && sent.every((push) => {
+      const list = push.body?.subscriptions ?? [];
+      const hidden = list.filter((subscription) => privateEndpoints.has(subscription.endpoint)).length;
+      return list.length <= 15 && (hidden === 0 || hidden === list.length);
+    }), `${sent.length} richieste`);
+  check("Nessuna richiesta con la password dell'app porta un testo diverso da quello generico",
+    sent.filter(isPrivateBatch).every((push) => push.body.notification.title === GENERIC.title && push.body.notification.body === GENERIC.body));
 };
 
 main()

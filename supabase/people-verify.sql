@@ -132,6 +132,12 @@ select
       and tgrelid = to_regclass('public.studyos_push_subscriptions') and tgname = 'studyos_push_subscriptions_session')
     and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_notify(uuid[],text,text,text,text,text)'))
       like '%''account'', s.user_id%', false) as push_devices_ready,
+  -- Revisione finale (M-1, L-1): i dispositivi con la password dell'app ricevono inviti e permessi con
+  -- il testo generico «Hai una nuova notifica.», in lotti di al massimo 15 iscrizioni.
+  coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_notify(uuid[],text,text,text,text,text)'))
+      like '%when v_private%Hai una nuova notifica.%', false)
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_notify(uuid[],text,text,text,text,text)'))
+      like '%group by s.private, (s.rn - 1) / 15%', false) as push_private_ready,
   -- Facoltativo: false se il progetto non permette trigger su auth.sessions; allora le iscrizioni
   -- delle sessioni finite si tolgono alla prima notifica respinta (push_gone).
   exists (select 1 from pg_trigger where not tgisinternal

@@ -110,3 +110,26 @@ test("SQL delle push: pg_net e Vault sono facoltativi, le notifiche non bloccano
   assert.match(notify, /exception when others/);
   assert.match(people, /revoke all on function public\.studyos_push_notify\(uuid\[\], text, text, text, text, text\) from public/);
 });
+
+test("SQL delle push (revisione finale M-1, L-1): password dell'app → testo generico; lotti da 15", () => {
+  const notify = blockOf(people, "create or replace function public.studyos_push_notify(", "\n$$;\n");
+  // Lotti separati per `private`, come il job dei promemoria (push-reminders.sql).
+  assert.match(notify, /for v_batch, v_private in/);
+  assert.match(notify, /row_number\(\) over \(partition by sub\.private order by sub\.user_id, sub\.created_at, sub\.id\) as rn/);
+  assert.match(notify, /group by s\.private, \(s\.rn - 1\) \/ 15\n\s+order by s\.private, \(s\.rn - 1\) \/ 15/);
+  assert.doesNotMatch(notify, /\/ 40/, "niente più lotti da 40 (CPU del Worker sul piano Free)");
+  // Solo titolo e testo cambiano: url, tag e tipo restano quelli della notifica.
+  assert.match(notify, /'notification', case when v_private\n\s+then v_notification \|\| jsonb_build_object\('title', 'StudyOS', 'body', 'Hai una nuova notifica\.'\)\n\s+else v_notification end/);
+  assert.match(notify, /'account', s\.user_id/, "l'account resta in ogni iscrizione (filtro del service worker)");
+  // Ogni trigger delle persone passa da qui: nessuno chiama net.http_post da sé.
+  for (const trigger of ["studyos_push_group_invite", "studyos_push_share_invite", "studyos_push_share_accepted",
+    "studyos_push_group_join", "studyos_push_share_permission", "studyos_push_share_removed"]) {
+    const body = blockOf(people, `create or replace function public.${trigger}(`, "\n$$;\n");
+    assert.match(body, /perform public\.studyos_push_notify\(/, trigger);
+    assert.doesNotMatch(body, /net\.http_post/, trigger);
+  }
+  assert.equal(people.match(/net\.http_post\(/g)?.length, 1, "un solo invio, in studyos_push_notify");
+  const verify = readFileSync(new URL("../supabase/people-verify.sql", import.meta.url), "utf8");
+  assert.match(verify, /like '%when v_private%Hai una nuova notifica\.%', false\)/);
+  assert.match(verify, /like '%group by s\.private, \(s\.rn - 1\) \/ 15%', false\) as push_private_ready,/);
+});
