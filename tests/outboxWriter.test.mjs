@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
-import { OUTBOX_WRITER, resetBaseline, setPersistenceSuspended, setVaultSession, whenPersisted } from "../src/lib/persistence.ts";
+import { outboxWriter, resetBaseline, setPersistenceSuspended, setVaultSession, whenPersisted } from "../src/lib/persistence.ts";
 import { newerCopy } from "../src/lib/syncMerge.ts";
 import { dataTables, db } from "../src/lib/db.ts";
 import { pickCollections } from "../src/lib/collections.ts";
@@ -55,15 +55,15 @@ test("P15: le voci accodate da un salvataggio portano l'identità di questa pagi
   } finally {
     for (const [target, name] of patched.reverse()) delete target[name];
   }
-  assert.equal(typeof OUTBOX_WRITER, "string");
-  assert.ok(OUTBOX_WRITER.length > 0);
-  assert.deepEqual(queued.map((row) => [row.key, row.writer]), [["task:t1", OUTBOX_WRITER]]);
+  assert.equal(typeof outboxWriter(), "string");
+  assert.ok(outboxWriter().length > 0);
+  assert.deepEqual(queued.map((row) => [row.key, row.writer]), [["task:t1", outboxWriter()]]);
 });
 
 test("P15: push legge dal disco le voci non scritte da questa pagina (senza vault) e invia la più recente", () => {
   const source = readFileSync(new URL("../src/lib/cloudSync.ts", import.meta.url), "utf8");
   const push = source.slice(source.indexOf("const push = async"), source.indexOf("const firstSync"));
-  assert.match(push, /row\.writer !== OUTBOX_WRITER/);
+  assert.match(push, /row\.writer !== outboxWriter\(\)/);
   assert.match(push, /await readStoredRows\(/);
   assert.match(push, /newerCopy\(row\.entityId, /);
 });

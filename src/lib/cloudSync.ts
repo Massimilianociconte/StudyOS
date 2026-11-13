@@ -18,7 +18,7 @@ import { GROUP_COLLECTIONS, groupLookup, isServerBacked } from "./syncScope";
 import { collectionTable, db, deleteMeta, getMeta, setMeta, type SyncOutboxRow } from "./db";
 import {
   LocalResetError,
-  OUTBOX_WRITER,
+  outboxWriter,
   isPersistenceHalted,
   localResetGuard,
   noteLocalReset,
@@ -383,7 +383,7 @@ const push = async (userId: string) => {
   // stesso contenuto) e la voce dell'altra scheda spariva (P15). Col vault su disco c'è solo lo
   // snapshot cifrato: resta la copia in memoria (con il vault la guardia è la stessa, vedi docs).
   const vault = useStudyStore.getState().settings.security.mode === "vault";
-  const foreign = vault || singleActiveTab() ? [] : queued.filter((row) => !row.deleted && row.writer !== OUTBOX_WRITER);
+  const foreign = vault || singleActiveTab() ? [] : queued.filter((row) => !row.deleted && row.writer !== outboxWriter());
   const onDisk = foreign.length ? await readStoredRows(foreign) : new Map<string, unknown>();
   assertStoreReady();
   const index = indexCollections(pickCollections(useStudyStore.getState()));

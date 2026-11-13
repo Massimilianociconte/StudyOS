@@ -74,9 +74,13 @@ export const outboxKey = (collection: CollectionKey, id: string) => `${ENTITY_TY
  * Identità di questa pagina (cambia a ogni caricamento) sulle voci che accoda il salvataggio. Senza
  * Web Locks (activeTab.ts) due schede possono essere attive insieme: una scheda rimasta indietro
  * inviava la sua copia vecchia per la voce accodata dall'altra e la toglieva (P15).
+ * Si crea al primo uso, non al caricamento: il Worker del connettore remoto importa questo modulo e
+ * Cloudflare rifiuta un Worker che chiede un valore casuale mentre carica i moduli.
  */
-export const OUTBOX_WRITER =
-  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `page-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+let pageWriter: string | undefined;
+export const outboxWriter = (): string =>
+  (pageWriter ??=
+    typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `page-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 export interface PersistHostState {
   collections: CollectionsState;
@@ -256,7 +260,7 @@ const buildOutbox = (diff: CollectionDiff, collections: CollectionsState): SyncO
         entityId: item.id,
         deleted: false,
         queuedAt: nextQueuedAt(),
-        writer: OUTBOX_WRITER
+        writer: outboxWriter()
       });
     }
     for (const id of diff.deletes[key] ?? []) {
@@ -272,7 +276,7 @@ const buildOutbox = (diff: CollectionDiff, collections: CollectionsState): SyncO
         // Come per le modifiche: dopo l'ultimo timbro visto, anche con l'orologio indietro.
         deletedAt: laterStamp(previous?.updatedAt, now),
         queuedAt: nextQueuedAt(),
-        writer: OUTBOX_WRITER
+        writer: outboxWriter()
       });
     }
   }

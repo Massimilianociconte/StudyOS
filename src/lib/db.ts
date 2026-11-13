@@ -45,7 +45,7 @@ export interface SyncOutboxRow {
   deletedAt?: string;
   queuedAt: number;
   /**
-   * La pagina che ha accodato la voce (OUTBOX_WRITER in persistence.ts). Senza Web Locks più schede
+   * La pagina che ha accodato la voce (outboxWriter() in persistence.ts). Senza Web Locks più schede
    * scrivono insieme: per una voce di un'altra pagina l'invio confronta memoria e disco (P15).
    * Assente nelle voci di versioni precedenti e in quelle accodate dalla sync: vale come «altra pagina».
    */
