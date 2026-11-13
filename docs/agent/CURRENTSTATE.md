@@ -433,3 +433,10 @@ revoca di `EXECUTE` su `rls_auto_enable()` (funzione di Supabase per la RLS auto
 verify come previsto: `security_issues` vuoto; restano `false` solo `vault_ready` e `cron_ready`
 fino al passo 4. `pg_net` era già attivo. La prima prova era fallita perché gli script venivano da
 una copia vecchia (`groups.sql` senza la guardia sui membri).
+
+Passo 2 fatto il 13/11/2026: client pubblicato (`main` = bcb2c3a). Passo 3: il primo deploy del
+Worker è stato rifiutato (10021: `persistence.ts` chiedeva un UUID mentre si caricava il modulo);
+corretto in 4a35e39 (`outboxWriter()` al primo uso, test `workerGlobalScope.test.mjs`), poi deploy
+riuscito. `/health` risponde 1.9.0 dopo circa 3 minuti, quando Cloudflare riavvia il Durable Object.
+`/push` risponde 503 finché mancano `STUDYOS_PUSH_SECRET` e `STUDYOS_VAPID_PRIVATE_KEY` (li mette la
+persona). Restano: quei due segreti, ricollegare i connettori, il passo 4.
