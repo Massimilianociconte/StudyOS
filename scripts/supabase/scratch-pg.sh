@@ -31,6 +31,8 @@ run_db() {
   fi
   psql "$URL" -q -v ON_ERROR_STOP=1 -f "$REPO/scripts/supabase/email-vectors-tests.sql"
   psql "$URL" -q -v ON_ERROR_STOP=1 -f "$REPO/scripts/supabase/group-exams-tests.sql"
+  psql "$URL" -q -v ON_ERROR_STOP=1 -f "$REPO/scripts/supabase/push-notify-tests.sql"
+  psql "$URL" -q -v ON_ERROR_STOP=1 -f "$REPO/scripts/supabase/stored-file-tests.sql"
   psql "$URL" -q -f "$REPO/supabase/sharing-verify.sql"
   psql "$URL" -q -x -f "$REPO/supabase/verify.sql" | grep -E "^(tables_rls_ready|anon_closed_ready|definer_functions_ready|security_issues) "
 }

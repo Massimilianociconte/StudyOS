@@ -172,6 +172,18 @@ begin
        ) then
       v_payload := jsonb_set(v_payload, '{storedFile}', '"cloud"');
     end if;
+    -- Revisione finale (L-4): un materiale senza `storedFile` tiene il segno della riga viva salvata,
+    -- come studyos_agent_push (agent.sql). Lo manda così solo una scheda rimasta aperta con l'app di
+    -- prima (non conosce il campo): l'app non lo toglie mai, e un materiale eliminato arriva come
+    -- tombstone (deleted), che qui non passa.
+    if v_type = 'attachment' and not v_deleted and not (v_payload ? 'storedFile') then
+      v_payload := v_payload || coalesce((
+        select jsonb_build_object('storedFile', s.payload->'storedFile')
+        from public.studyos_items as s
+        where s.user_id = p_user_id and s.entity_type = 'attachment' and s.entity_id = v_id
+          and not s.deleted and s.payload->>'storedFile' in ('local', 'cloud')
+      ), '{}'::jsonb);
+    end if;
 
     v_applied := false;
     insert into public.studyos_items as current_row
