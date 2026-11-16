@@ -50,6 +50,8 @@ export const SETTINGS_TEXT = {
   },
   appearance: {
     comfortTitle: "Spazio e avvio",
+    /** Sotto Tema e Colori: la scelta si sincronizza; densità e sezione all'apertura restano del dispositivo. */
+    followsAccount: "Tema e colori seguono il tuo account su ogni dispositivo. Spazio e avvio valgono solo qui.",
     /** Solo se la guida «Per iniziare» della Home è stata nascosta e ha ancora passi da fare. */
     guideHint: "Hai nascosto la guida «Per iniziare» della Home.",
     /** Corto: sui telefoni il pulsante sta su una riga (la frase sopra dice già «della Home»). */

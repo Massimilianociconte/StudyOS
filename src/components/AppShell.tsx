@@ -129,12 +129,12 @@ export function AppShell({ children }: PropsWithChildren) {
     setQuickAddMode("task");
     setQuickAddOpen(true);
   };
-  const { activeView, setActiveView, settings, updateSettings, lockVault, vaultBusy, persistError, retryPersist } = useStudyStore(
+  const { activeView, setActiveView, settings, updateAppearance, lockVault, vaultBusy, persistError, retryPersist } = useStudyStore(
     useShallow((state) => ({
       activeView: state.activeView,
       setActiveView: state.setActiveView,
       settings: state.settings,
-      updateSettings: state.updateSettings,
+      updateAppearance: state.updateAppearance,
       lockVault: state.lockVault,
       vaultBusy: state.vaultBusy,
       persistError: state.persistError,
@@ -314,7 +314,7 @@ export function AppShell({ children }: PropsWithChildren) {
               <IconButton
                 icon={settings.themeMode === "light" ? "Sun" : "Moon"}
                 label={settings.themeMode === "light" ? "Passa al tema scuro" : "Passa al tema chiaro"}
-                onClick={() => updateSettings({ themeMode: settings.themeMode === "light" ? "dark" : "light" })}
+                onClick={() => void updateAppearance({ themeMode: settings.themeMode === "light" ? "dark" : "light" })}
                 className="hidden sm:grid"
               />
               <NotificationsBell onOpen={() => setNotificationsOpen(true)} />

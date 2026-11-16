@@ -121,6 +121,7 @@ import { applyPlanPatch, newExamPlan, normalizeExamPlan, unlinkPlans, type ExamP
 import { retag, type TaggableType } from "../lib/itemTags";
 import type { GroupExamSession } from "../lib/groupExams";
 import { useSharedStore } from "./useSharedStore";
+import { lookFromAccount, validLook, type AppearancePatch } from "../lib/accountLook";
 
 let sessionPassphrase: string | undefined;
 
@@ -251,6 +252,8 @@ interface StudyState {
   reviewTopic: (id: string, rating: ReviewRating) => Promise<void>;
   /** Aggiorna le preferenze personali sincronizzate (entità unica "main"). */
   updatePreferences: (patch: PreferencesPatch) => Promise<void>;
+  /** Tema e colori: sul dispositivo e nelle preferenze dell'account (seguono l'account). Valori non validi ignorati. */
+  updateAppearance: (patch: AppearancePatch) => Promise<void>;
   /** Crea una notifica dell'account (max 200 conservate, le più vecchie vengono potate). */
   addNotification: (notification: Partial<AppNotification> & Pick<AppNotification, "kind" | "title">) => Promise<string>;
   /**
@@ -1705,6 +1708,24 @@ export const useStudyStore = create<StudyState>((set, get) => {
       await commit();
     },
 
+    updateAppearance: async (patch) => {
+      const look = validLook(patch);
+      if (!Object.keys(look).length) return;
+      const now = nowIso();
+      // Un solo passo: la copia del dispositivo e le preferenze cambiano insieme e si salvano insieme.
+      set((state) => {
+        const current = state.preferences.find((item) => item.id === PREFERENCES_ID);
+        const next: Preferences = current
+          ? { ...current, ...look, updatedAt: laterStamp(current.updatedAt) }
+          : { ...DEFAULT_PREFERENCES, tags: [], createdAt: now, updatedAt: now, ...look };
+        return {
+          settings: { ...state.settings, ...look, updatedAt: now },
+          preferences: [next, ...state.preferences.filter((item) => item.id !== PREFERENCES_ID)]
+        };
+      });
+      await commit();
+    },
+
     addAttachment: async (file, link) => {
       // I byte non entrano mai nella riga sincronizzata: prima la copia locale (scrittura confermata),
       // poi il materiale con `storedFile: "local"`; attachmentSync.ts lo carica con l'account.
@@ -2310,6 +2331,18 @@ export const useStudyStore = create<StudyState>((set, get) => {
       await Promise.all(writes);
     }
   };
+});
+
+// Preferenze arrivate da fuori (avvio, sblocco, altro dispositivo via cloud, cambio account): il tema
+// dell'account diventa anche quello del dispositivo, così l'avvio e la schermata di blocco lo mostrano
+// subito. Preferenze vuote (bloccato, uscita) o senza tema: resta l'ultimo del dispositivo.
+useStudyStore.subscribe((state, previous) => {
+  if (state.preferences === previous.preferences || state.locked || state.loading) return;
+  const settings = lookFromAccount(state.settings, selectPreferences(state));
+  if (settings === state.settings) return;
+  useStudyStore.setState({ settings });
+  // Errori già mostrati da persistError; il prossimo salvataggio riprova (le impostazioni restano diverse).
+  requestPersist().catch(() => undefined);
 });
 
 export const hasAnyLocalData = (state: CollectionsState) => countEntities(state) > 0;

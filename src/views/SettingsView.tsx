@@ -100,6 +100,7 @@ export function SettingsView() {
   const {
     settings,
     updateSettings,
+    updateAppearance,
     updatePreferences,
     enableVault,
     disableVault,
@@ -607,7 +608,7 @@ export function SettingsView() {
                   key={mode}
                   type="button"
                   aria-pressed={settings.themeMode === mode}
-                  onClick={() => updateSettings({ themeMode: mode })}
+                  onClick={() => void updateAppearance({ themeMode: mode })}
                   className={`min-h-12 rounded-[20px] border px-3 text-sm font-black ${
                     settings.themeMode === mode ? "border-transparent bg-[var(--accent)] text-[#10131d]" : "border-[var(--border)] bg-[var(--surface-soft)]"
                   }`}
@@ -625,7 +626,7 @@ export function SettingsView() {
                   key={palette.id}
                   type="button"
                   aria-pressed={settings.palette === palette.id}
-                  onClick={() => updateSettings({ palette: palette.id })}
+                  onClick={() => void updateAppearance({ palette: palette.id })}
                   className={`flex min-h-14 items-center justify-between rounded-[22px] border p-3 text-left ${
                     settings.palette === palette.id ? "border-[var(--accent)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--surface-soft)]"
                   }`}
@@ -640,6 +641,7 @@ export function SettingsView() {
               ))}
             </div>
           </Field>
+          <p className="-mt-2 text-xs font-medium text-[var(--muted)]">{SETTINGS_TEXT.appearance.followsAccount}</p>
 
           <div>
             <h4 className="mb-2 text-sm font-black">{SETTINGS_TEXT.appearance.comfortTitle}</h4>

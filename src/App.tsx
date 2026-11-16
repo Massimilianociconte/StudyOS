@@ -2,7 +2,9 @@ import { Suspense, useEffect } from "react";
 import type { ReactNode } from "react";
 import { m } from "framer-motion";
 import { useShallow } from "zustand/react/shallow";
-import { useStudyStore } from "./store/useStudyStore";
+import { selectPreferences, useStudyStore } from "./store/useStudyStore";
+import { defaultSettings } from "./data/defaults";
+import { lookToMigrate } from "./lib/accountLook";
 import { AppShell } from "./components/AppShell";
 import { LockScreen } from "./components/LockScreen";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
@@ -93,6 +95,23 @@ export default function App() {
   useEffect(() => {
     if (loading || !cloudConfigured) return;
     return startPushSessionGuard(subscribeCloudSync, undefined, { isPrivate: () => pushPrivateOf(useStudyStore.getState().settings) });
+  }, [loading]);
+
+  // Tema scelto qui prima che seguisse l'account: passa all'account una volta, appena finisce una
+  // sincronizzazione di questa sessione (preferenze aggiornate, niente copia vecchia sopra quella del cloud).
+  useEffect(() => {
+    if (loading || !cloudConfigured) return;
+    let previous: string | undefined;
+    let done = false;
+    return subscribeCloudSync((sync) => {
+      const finished = previous === "syncing" && sync.status === "idle";
+      previous = sync.status;
+      const state = useStudyStore.getState();
+      if (done || !finished || state.locked) return;
+      done = true;
+      const look = lookToMigrate(state.settings, selectPreferences(state), defaultSettings());
+      if (look) void state.updateAppearance(look);
+    });
   }, [loading]);
 
   // Password dell'app: i promemoria push di questo dispositivo arrivano senza titolo, salvo «Mostra il

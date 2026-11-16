@@ -457,6 +457,12 @@ export interface Preferences extends BaseEntity {
    * notifiche attive. Assente = acceso; false = solo ad app aperta.
    */
   pushReminders?: boolean;
+  /**
+   * Tema e colori (Impostazioni › Aspetto): seguono l'account su ogni dispositivo. Assenti = quelli
+   * del dispositivo (account di prima). Arrivano dalla sincronizzazione: leggerli con `validLook`.
+   */
+  themeMode?: ThemeMode;
+  palette?: PaletteName;
 }
 
 /** Notifica dell'account: segue l'utente su ogni dispositivo (collezione sincronizzata). */

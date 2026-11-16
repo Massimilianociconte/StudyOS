@@ -110,7 +110,11 @@
   `hover:`, altrimenti su tablet touch resta invisibile. Altezze: `dvh`, non `vh`.
 - Preferenze personali (nome, foto, ore settimanali, CFU del corso, BARB visibile): entità
   sincronizzata `preferences` con id `main`, letta con `selectPreferences` (oggetto stabile).
-  Non rimettere dati personali in `settings`, che restano del dispositivo. L'id `main` è lo stesso
+  Non rimettere dati personali in `settings`, che restano del dispositivo. Tema e palette stanno nelle
+  preferenze (seguono l'account) con una copia in `settings`: cambiarli solo con `updateAppearance`,
+  mai con `updateSettings` (resterebbero su un solo browser). Densità e sezione all'apertura restano del
+  dispositivo. `preferences` è un'entità sola in LWW: una modifica fatta prima del pull su un dispositivo
+  rimasto indietro riscrive anche gli altri campi (colori delle tipologie compresi). L'id `main` è lo stesso
   in ogni account. Cambiando account (bindUser) con dati sul dispositivo la sync si ferma
   (`accountChoice` nello stato, badge «Scegli quali dati tenere») finché nel pannello Account non si
   preme «Mostra solo i dati di questo account» (fuoco iniziale) o «Aggiungi i dati di prima»

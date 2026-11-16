@@ -560,3 +560,27 @@ Pubblicato il 16 novembre 2026: commit `86029ed` su `main`, workflow Pages riusc
 Sul sito pubblicato il blocco di LearnView contiene i nuovi testi («Personalizza il ripasso»,
 «Ripassa comunque», «torna tra», «Continua con altre», legenda dei tasti). Nessuna modifica a
 database o Worker: il connettore resta 1.10.0.
+
+## Tema che torna al predefinito (16 novembre 2026)
+
+Segnalazione: entrando, ogni tanto il tema tornava a «Scuro · Aurora» anche dopo averlo cambiato.
+Causa: `themeMode` e `palette` stavano solo nelle impostazioni del browser (IndexedDB
+`studyos-local-db`, tabella `settings`), mai nel cloud. Ripartivano dal predefinito su ogni altro
+dispositivo o browser, nell'app installata sulla schermata Home (spazio separato dal browser) e quando
+il browser libera lo spazio del sito. SQL iniettato, Worker e agenti non toccano questi campi; un
+nuovo deploy non svuota IndexedDB (il service worker cancella solo le sue cache).
+
+Correzione: tema e palette stanno anche nell'entità sincronizzata `preferences`
+(`src/lib/accountLook.ts`, `updateAppearance` nello store). Le impostazioni del dispositivo ne tengono
+una copia, riallineata quando le preferenze arrivano (avvio, sblocco, pull, cambio account). Il tema
+già scelto su un dispositivo passa all'account dopo la prima sincronizzazione della sessione, solo se
+non è quello predefinito. Densità e sezione all'apertura restano del dispositivo; Impostazioni ›
+Aspetto lo dice. Gli altri colori (materie, eventi, colori delle tipologie, tag, widget, raccolte) erano
+già nelle entità sincronizzate; le note non hanno un colore proprio. Resta il limite noto delle
+preferenze in LWW (vedi GOTCHAS).
+
+Verifiche: `npm test` 1728/1728 (11 nuove in `tests/accountLook.test.mjs`), `npm run lint` pulito,
+`vite build` ok (ingresso 213,22 kB gzip). In Chromium headless sul server di sviluppo: scelta dal
+pulsante della barra e dalla palette, ricarica, impostazioni locali cancellate (il tema torna
+dall'account), cambio arrivato da un altro dispositivo (si applica e resta dopo la ricarica); a 375 px
+nessuno scorrimento orizzontale. Non provato con due dispositivi veri sul cloud.

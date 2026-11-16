@@ -72,7 +72,14 @@ Preferenze personali e nuovi tipi di entità (29 settembre 2026):
   il cursore. `SYNC_SCHEMA` in `cloudSync.ts` va incrementato ogni volta che si
   aggiunge un tipo: al primo avvio della nuova build il pull riparte da zero
   (merge LWW normale) e recupera le righe saltate;
-- nessuna modifica allo schema SQL: `entity_type` è testo libero.
+- nessuna modifica allo schema SQL: `entity_type` è testo libero;
+- dal 16 novembre 2026 anche tema e palette (`themeMode`, `palette`) stanno in
+  `preferences`: prima vivevano solo nelle impostazioni del browser e un altro
+  dispositivo, l'app installata sulla schermata Home o lo spazio liberato dal
+  browser ripartivano da «Scuro · Aurora». Le impostazioni del dispositivo ne
+  tengono una copia per l'avvio e la schermata di blocco (`src/lib/accountLook.ts`).
+  Il tema scelto prima su un dispositivo passa all'account una volta, dopo la
+  prima sincronizzazione della sessione e solo se non è quello predefinito.
 
 Verifica end-to-end (stack Supabase locale, due origini browser): preferenze,
 voti del libretto, intervalli di ripasso ed eventi importati da .ics arrivano
