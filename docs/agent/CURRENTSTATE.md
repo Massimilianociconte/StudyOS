@@ -612,3 +612,7 @@ pulsante fuori schermo o tagliato, bersagli di almeno 40 px (numeri del quiz 32�
 «riduci movimento» provati su 393×852 e 1440×900. Non provati su dispositivi veri né su Safari/WebKit;
 `npm run e2e` non eseguito (Docker spento): `10-quiz.spec.ts` aggiornato alla griglia delle modalità e
 gli stessi passaggi di interfaccia di 09 e 10 provati sul server di sviluppo.
+
+Pubblicato il 17 novembre 2026: commit `b7aba92` su `main`, workflow Pages riuscito (build e deploy);
+il codice pubblicato contiene «Torna alle schede», «La tua risposta» e le due nuove media query in
+orizzontale. Nessuna modifica a database o Worker.
