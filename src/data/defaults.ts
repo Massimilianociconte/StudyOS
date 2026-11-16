@@ -56,7 +56,15 @@ export const createEmptySnapshot = (): StudySnapshot => ({
   groupInvites: [],
   groupResources: [],
   groupActivities: [],
-  examPlans: []
+  examPlans: [],
+  decks: [],
+  flashcards: [],
+  quizzes: [],
+  quizQuestions: [],
+  cardStates: [],
+  studyRuns: [],
+  aiAnalyses: [],
+  aiRequests: []
 });
 
 export const PREFERENCES_ID = "main";

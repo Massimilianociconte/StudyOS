@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CLOUD_CLIENT_ID, CLOUD_TEXT, createCloudRunner, plannedRows } from "../src/agent/cloudRunner.ts";
+import { CLOUD_CLIENT_ID, CLOUD_TEXT, createCloudRunner, perItemConflicts, plannedRows } from "../src/agent/cloudRunner.ts";
 import { CLOUD_UNAVAILABLE } from "../src/agent/catalog.ts";
 import { COLLECTIONS } from "../src/lib/collections.ts";
 
@@ -22,6 +22,7 @@ const fakeCloud = () => {
   let clock = Date.parse("2026-11-11T10:00:00Z");
   let seq = 0;
   let refuseNext = 0;
+  let legacy = false;
   const tick = () => new Date((clock += 1000)).toISOString();
   const find = (user, type, id) => rows.find((row) => row.user === user && row.entity_type === type && row.entity_id === id);
   const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -33,8 +34,10 @@ const fakeCloud = () => {
     const user = secrets.get(body.p_secret);
     if (!user) return reply(403, { code: "28000", message: INVALID });
     if (fn === "studyos_agent_pull") {
+      // agent.sql di prima della 1.10.0: la funzione a 5 argomenti non esiste.
+      if (legacy && "p_types" in body) return reply(404, { code: "PGRST202", message: "Could not find the function public.studyos_agent_pull(p_limit, p_offset, p_secret, p_since, p_types)" });
       const list = rows
-        .filter((row) => row.user === user && (!body.p_since || row.updated_at >= body.p_since))
+        .filter((row) => row.user === user && (!body.p_since || row.updated_at >= body.p_since) && (!body.p_types || body.p_types.includes(row.entity_type)))
         .sort((a, b) => (a.updated_at === b.updated_at ? a.seq - b.seq : a.updated_at < b.updated_at ? -1 : 1))
         .slice(body.p_offset, body.p_offset + body.p_limit)
         .map((row) => {
@@ -73,6 +76,12 @@ const fakeCloud = () => {
     secrets,
     refuse: (count = 1) => {
       refuseNext = count;
+    },
+    setLegacy: (value) => {
+      legacy = value;
+    },
+    advance: (ms) => {
+      clock += ms;
     },
     seed: (user, type, payload, deleted = false) => {
       rows.push({ user, entity_type: type, entity_id: payload.id, payload, deleted, updated_at: tick(), client_id: "browser", seq: ++seq });
@@ -295,4 +304,164 @@ test("connettore remoto: New York, la serie segue la fine dell'ora legale e il g
     ["2026-11-09", "2026-11-09T15:00:00.000Z"],
     ["2026-11-16", "2026-11-16T14:00:00.000Z"]
   ]);
+});
+
+// ─── Flashcard, quiz e richieste sul connettore remoto ─────────────────────────────────────
+
+const LEARNING_TYPES = ["studyDeck", "quiz", "flashcard", "quizQuestion", "flashcardState", "studyRun", "aiAnalysis", "aiRequest"];
+
+test("connettore remoto: flashcard nel cloud, solo i tipi che servono a ogni strumento", async () => {
+  const { cloud, runner } = setup();
+  const t0 = "2026-11-01T08:00:00.000Z";
+  cloud.seed("alice", "subject", { id: "sub_1", name: "Chimica", color: "#123456", ...stamp(t0) });
+  cloud.seed("alice", "task", { id: "task_1", title: "Esercizi", status: "todo", tags: [], subtasks: [], attachmentIds: [], ...stamp(t0) });
+
+  const decks = await runner.run(rome(A), "studyos_save_decks", { decks: [{ title: "Stechiometria", subjectId: "sub_1", externalRef: "chim-3" }] });
+  assert.equal(decks.ok, true, JSON.stringify(decks));
+  const deckId = decks.data.items[0].id;
+  const pull = cloud.calls[0];
+  assert.equal(pull.fn, "studyos_agent_pull");
+  assert.ok(pull.body.p_types.includes("studyDeck") && pull.body.p_types.includes("subject"));
+  assert.equal(pull.body.p_types.includes("task"), false, "le task non servono");
+
+  const cards = Array.from({ length: 60 }, (_, i) => ({
+    externalRef: `c3-${i}`,
+    front: [{ type: "text", text: `Domanda ${i}` }],
+    back: [{ type: "formula", latex: `x_{${i}} = ${i}` }]
+  }));
+  const saved = await runner.run(rome(A), "studyos_save_flashcards", { deckId, cards });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+  assert.equal(saved.data.created, 60);
+  const stored = cloud.rows.filter((row) => row.user === "alice" && row.entity_type === "flashcard");
+  assert.equal(stored.length, 60);
+  assert.equal(stored[0].payload.subjectId, "sub_1");
+  assert.equal(stored[0].client_id, CLOUD_CLIENT_ID);
+  // Ripetere il lotto (es. timeout dell'agente) non crea doppioni né scritture.
+  const pushes = cloud.calls.filter((item) => item.fn === "studyos_agent_push").length;
+  const again = await runner.run(rome(A), "studyos_save_flashcards", { deckId, cards });
+  assert.equal(again.data.unchanged, 60);
+  assert.equal(cloud.calls.filter((item) => item.fn === "studyos_agent_push").length, pushes);
+
+  // Uno strumento di sempre non legge le flashcard.
+  const before = cloud.calls.length;
+  const tasks = await runner.run(rome(A), "studyos_list_tasks", {});
+  assert.equal(tasks.ok, true);
+  const taskPulls = cloud.calls.slice(before).filter((item) => item.fn === "studyos_agent_pull");
+  assert.ok(taskPulls.length >= 1);
+  for (const item of taskPulls) for (const type of LEARNING_TYPES.filter((type) => type !== "studyDeck")) assert.equal(item.body.p_types.includes(type), false, type);
+  // Dopo una lettura per tipi diversi la cache resta coerente: la raccolta si rilegge.
+  assert.equal(groupsHas(await runner.run(rome(A), "studyos_list_decks", {}), deckId), true);
+});
+
+const groupsHas = (result, id) => result.ok && result.data.items.some((item) => item.id === id);
+
+test("connettore remoto: account isolati, nessuno legge o chiude le richieste di un altro", async () => {
+  const { cloud, runner } = setup();
+  const t0 = "2026-11-01T08:00:00.000Z";
+  const deck = await runner.run(rome(A), "studyos_save_decks", { decks: [{ title: "Privata di Alice" }] });
+  const deckId = deck.data.items[0].id;
+  const card = await runner.run(rome(A), "studyos_save_flashcards", { deckId, cards: [{ front: [{ type: "text", text: "Segreto" }], back: [{ type: "text", text: "Sì" }] }] });
+  const cardId = card.data.items[0].id;
+  // Richiesta fatta da Alice nell'app (riga come la sincronizza il browser).
+  cloud.seed("alice", "aiRequest", {
+    id: "aireq_1", kind: "explain_card", targetId: cardId, style: "simple", prompt: "Non capisco", status: "pending",
+    expiresAt: "2099-01-01T00:00:00.000Z", attempts: 0, archived: false, tags: [], ...stamp(t0)
+  });
+
+  // Bob non vede nulla di Alice, neanche passando gli id.
+  assert.equal((await runner.run(rome(B), "studyos_list_decks", {})).data.total, 0);
+  assert.equal((await runner.run(rome(B), "studyos_list_flashcards", {})).data.total, 0);
+  assert.deepEqual((await runner.run(rome(B), "studyos_get_flashcards", { ids: [cardId] })).data.missing, [cardId]);
+  assert.equal((await runner.run(rome(B), "studyos_list_ai_requests", {})).data.total, 0);
+  assert.equal((await runner.run(rome(B), "studyos_take_ai_request", { id: "aireq_1" })).code, "not_found");
+  assert.equal((await runner.run(rome(B), "studyos_delete_flashcards", { ids: [cardId], confirm: true })).code, "not_found");
+  const spoof = await runner.run(rome(B), "studyos_save_flashcards", { cards: [{ id: cardId, back: [{ type: "text", text: "Cambiata" }] }] });
+  assert.equal(spoof.data.items[0].status, "error");
+  // ownerId di un'altra persona: sul connettore remoto non c'è nessuna condivisione da leggere.
+  assert.equal((await runner.run(rome(B), "studyos_list_flashcards", { ownerId: "11111111-1111-4111-8111-111111111111" })).code, "not_found");
+  assert.equal(cloud.row("alice", "flashcard", cardId).payload.back[0].text, "Sì");
+  assert.equal(cloud.rows.filter((row) => row.user === "bob").length, 0, "Bob non ha scritto nulla");
+
+  // Alice (il suo assistente) prende e chiude la richiesta: risultato nel cloud, token solo come hash.
+  const taken = await runner.run(rome(A), "studyos_take_ai_request", { id: "aireq_1", author: { name: "Claude" } });
+  assert.equal(taken.ok, true, JSON.stringify(taken));
+  const claimed = cloud.row("alice", "aiRequest", "aireq_1").payload;
+  assert.equal(claimed.status, "claimed");
+  assert.notEqual(claimed.claimToken, taken.data.claimToken);
+  assert.equal(taken.data.request.target.type, "flashcard");
+  // Un secondo assistente (stesso account, altra cache) trova la richiesta occupata.
+  const other = createCloudRunner({ url: "http://cloud.test/", key: "sb_publishable_prova", fetch: cloud.fetch });
+  assert.equal((await other.run(rome(A), "studyos_take_ai_request", { id: "aireq_1" })).code, "conflict");
+  const done = await runner.run(rome(A), "studyos_finish_ai_request", { id: "aireq_1", claimToken: taken.data.claimToken, outcome: "completed", blocks: [{ type: "text", text: "Spiegazione semplice." }] });
+  assert.equal(done.ok, true, JSON.stringify(done));
+  const finished = cloud.row("alice", "aiRequest", "aireq_1").payload;
+  assert.equal(finished.status, "completed");
+  assert.deepEqual(finished.result.blocks, [{ type: "text", text: "Spiegazione semplice." }]);
+  // L'altro assistente con un token inventato non può riscriverla.
+  assert.equal((await other.run(rome(A), "studyos_finish_ai_request", { id: "aireq_1", claimToken: "f".repeat(32), outcome: "failed" })).code, "denied");
+});
+
+test("connettore remoto: agent.sql senza p_types, si legge tutto come prima e si riprova più tardi", async () => {
+  const { cloud, runner } = setup();
+  cloud.setLegacy(true);
+  cloud.seed("alice", "subject", { id: "sub_1", name: "Fisica", color: "#123456", ...stamp("2026-11-01T08:00:00.000Z") });
+  const decks = await runner.run(rome(A), "studyos_save_decks", { decks: [{ title: "Cinematica", subjectId: "sub_1" }] });
+  assert.equal(decks.ok, true, JSON.stringify(decks));
+  const pulls = cloud.calls.filter((item) => item.fn === "studyos_agent_pull");
+  assert.equal("p_types" in pulls[0].body, true);
+  assert.equal("p_types" in pulls[1].body, false, "ripiego sul pull completo");
+  assert.equal(cloud.rows.filter((row) => row.entity_type === "studyDeck").length, 1);
+  // Nel periodo di ripiego le letture successive non riprovano p_types.
+  const listed = await runner.run(rome(A), "studyos_list_decks", {});
+  assert.equal(listed.data.total, 1);
+  assert.equal(cloud.calls.filter((item) => item.fn === "studyos_agent_pull" && "p_types" in item.body).length, 1);
+});
+
+test("connettore remoto: dopo il primo pull ogni gruppo riparte dall'ultima riga letta, non dal gruppo più fermo", async () => {
+  const { cloud, runner } = setup();
+  const t0 = "2026-11-01T08:00:00.000Z";
+  // La materia è l'ultima riga del suo gruppo da molto prima delle schede.
+  cloud.seed("alice", "subject", { id: "sub_1", name: "Chimica", color: "#123456", ...stamp(t0) });
+  cloud.advance(3_600_000);
+  cloud.seed("alice", "studyDeck", { id: "deck_1", title: "D", description: "", kind: "topic", position: 1, subjectId: "sub_1", archived: false, tags: [], ...stamp(t0) });
+  for (let i = 0; i < 5; i++) {
+    cloud.seed("alice", "flashcard", { id: `card_${i}`, deckId: "deck_1", front: [{ type: "text", text: `F${i}` }], back: [{ type: "text", text: "B" }], position: i, revision: 1, archived: false, tags: [], ...stamp(t0) });
+  }
+  assert.equal((await runner.run(rome(A), "studyos_list_flashcards", {})).data.total, 5);
+  cloud.seed("alice", "flashcard", { id: "card_9", deckId: "deck_1", front: [{ type: "text", text: "Nuova" }], back: [{ type: "text", text: "B" }], position: 9, revision: 1, archived: false, tags: [], ...stamp(t0) });
+  const before = cloud.calls.length;
+  assert.equal((await runner.run(rome(A), "studyos_list_flashcards", {})).data.total, 6, "la scheda nuova arriva");
+  const pulls = cloud.calls.slice(before).filter((call) => call.fn === "studyos_agent_pull");
+  assert.equal(pulls.length, 1, "una sola lettura incrementale");
+  const subjectAt = cloud.row("alice", "subject", "sub_1").updated_at;
+  assert.ok(pulls[0].body.p_since > subjectAt, `p_since ${pulls[0].body.p_since} non torna alla materia (${subjectAt})`);
+});
+
+test("righe rifiutate dal database: esito conflict sul loro elemento, gli altri restano salvati", () => {
+  const result = {
+    ok: true,
+    data: {
+      created: 1,
+      updated: 1,
+      unchanged: 0,
+      duplicate: 0,
+      conflict: 0,
+      error: 0,
+      items: [
+        { index: 0, status: "created", id: "card_a" },
+        { index: 1, status: "updated", id: "card_b" },
+        { index: 2, status: "unchanged", id: "card_c" }
+      ]
+    }
+  };
+  const mapped = perItemConflicts(result, new Set(["card_b"]));
+  assert.equal(mapped.ok, true);
+  assert.equal(mapped.data.items[1].status, "conflict");
+  assert.equal(mapped.data.items[1].error, CLOUD_TEXT.itemConflict);
+  assert.equal(mapped.data.items[0].status, "created");
+  assert.equal(mapped.data.updated, 0);
+  assert.equal(mapped.data.conflict, 1);
+  assert.equal(perItemConflicts(result, new Set(["card_b", "subject_x"])), null, "una riga rifiutata senza elemento: errore per tutta la chiamata");
+  assert.equal(perItemConflicts(result, new Set(["card_c"])), null, "un elemento invariato non ha scritto nulla");
+  assert.equal(perItemConflicts({ ok: true, data: { id: "quiz_1" } }, new Set(["quiz_1"])), null);
 });

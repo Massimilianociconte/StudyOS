@@ -171,7 +171,7 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
   try {
     switch (name) {
       case "studyos_status":
-        return statusResult();
+        return statusResult(await learningCounts());
       case "studyos_overview":
         return await overviewResult();
       case "studyos_search":
@@ -312,6 +312,48 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
         return deleteReminderTool(args);
       case "studyos_check_consistency":
         return checkConsistencyTool(args);
+      case "studyos_learning_guide":
+        return learningCall((tools) => tools.learningGuide());
+      case "studyos_list_decks":
+        return learningCall((tools) => tools.listDecks(args));
+      case "studyos_save_decks":
+        return learningCall((tools) => tools.saveDecks(args));
+      case "studyos_delete_deck":
+        return learningCall((tools) => tools.deleteDeckTool(args));
+      case "studyos_copy_deck":
+        return learningCall((tools) => tools.copyDeckTool(args));
+      case "studyos_list_flashcards":
+        return learningCall((tools) => tools.listFlashcards(args));
+      case "studyos_get_flashcards":
+        return learningCall((tools) => tools.getFlashcards(args));
+      case "studyos_save_flashcards":
+        return learningCall((tools) => tools.saveFlashcards(args));
+      case "studyos_delete_flashcards":
+        return learningCall((tools) => tools.deleteFlashcardsTool(args));
+      case "studyos_find_duplicate_flashcards":
+        return learningCall((tools) => tools.findDuplicateFlashcards(args));
+      case "studyos_list_quizzes":
+        return learningCall((tools) => tools.listQuizzes(args));
+      case "studyos_get_quiz":
+        return learningCall((tools) => tools.getQuiz(args));
+      case "studyos_save_quiz":
+        return learningCall((tools) => tools.saveQuiz(args));
+      case "studyos_delete_quiz_items":
+        return learningCall((tools) => tools.deleteQuizItems(args));
+      case "studyos_learning_stats":
+        return learningCall((tools) => tools.learningStatsTool(args));
+      case "studyos_list_ai_analyses":
+        return learningCall((tools) => tools.listAnalyses(args));
+      case "studyos_save_ai_analysis":
+        return learningCall((tools) => tools.saveAnalysis(args));
+      case "studyos_delete_ai_analysis":
+        return learningCall((tools) => tools.deleteAnalysisTool(args));
+      case "studyos_list_ai_requests":
+        return learningCall((tools) => tools.listRequests(args));
+      case "studyos_take_ai_request":
+        return learningCall((tools) => tools.takeRequest(args));
+      case "studyos_finish_ai_request":
+        return learningCall((tools) => tools.finishRequest(args));
       case "studyos_list_group_exam_sessions":
         return groupExamCall((tools) => tools.listGroupExamSessions(args));
       case "studyos_create_group_exam_session":
@@ -451,7 +493,7 @@ export const describeAgentCall = async (name: string, args: Args, options: { aud
   return (target ? `${base}: «${target}»` : base).slice(0, 240);
 };
 
-const statusResult = (): AgentCallResult => {
+const statusResult = (learning?: { flashcardsDueToday: number; aiRequestsWaiting: number }): AgentCallResult => {
   const current = state();
   const preferences = selectPreferences(current);
   return ok({
@@ -473,7 +515,8 @@ const statusResult = (): AgentCallResult => {
       notes: current.notes.length,
       goals: current.goals.length,
       groups: current.studyGroups.length,
-      unreadNotifications: current.notifications.filter((item) => !item.readAt).length
+      unreadNotifications: current.notifications.filter((item) => !item.readAt).length,
+      ...(learning ?? {})
     }
   });
 };
@@ -497,7 +540,9 @@ const overviewResult = async (): Promise<AgentCallResult> => {
     upcomingExams: upcomingExams(current.exams, 6).map((exam) => ({ id: exam.id, subjectId: exam.subjectId, subjectName: nameOf(names, exam.subjectId), date: exam.date, daysLeft: differenceInCalendarDays(parseISO(exam.date), now), status: exam.status, preparation: exam.preparation })),
     topicsDue: { count: due.length, first: due.slice(0, 5).map((topic) => ({ id: topic.id, title: topic.title, subjectName: nameOf(names, topic.subjectId) })) },
     unreadNotifications: current.notifications.filter((item) => !item.readAt).length,
-    sharedTodayEvents: await sharedToday(now)
+    sharedTodayEvents: await sharedToday(now),
+    // Flashcard da ripassare oggi e richieste «Spiegami meglio» in attesa (studyos_list_ai_requests).
+    learning: await learningCounts()
   });
 };
 
@@ -1554,6 +1599,26 @@ const groupExamCall = async (run: (tools: GroupExamTools) => AgentCallResult | P
     return await run(await import("./groupExamTools"));
   } catch {
     return fail("failed", "Operazione sugli appelli del gruppo non riuscita. Riprova tra poco.");
+  }
+};
+
+type LearningTools = typeof import("./learningTools");
+
+/** Flashcard, quiz e richieste agli agenti: modulo caricato solo quando serve. */
+const learningCall = async (run: (tools: LearningTools) => AgentCallResult | Promise<AgentCallResult>): Promise<AgentCallResult> => {
+  try {
+    return await run(await import("./learningTools"));
+  } catch {
+    return fail("failed", "Operazione su flashcard e quiz non riuscita. Riprova tra poco.");
+  }
+};
+
+/** Contatori leggeri di flashcard e richieste per stato e panoramica (zero se il modulo non si carica). */
+const learningCounts = async () => {
+  try {
+    return (await import("./learningTools")).learningCounters();
+  } catch {
+    return undefined;
   }
 };
 

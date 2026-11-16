@@ -29,7 +29,8 @@ test("examPlans è una collezione personale sincronizzata", () => {
   assert.ok(COLLECTIONS.includes("examPlans"));
   assert.equal(ENTITY_TYPES.examPlans, "examPlan");
   assert.match(source("src/lib/db.ts"), /this\.version\(8\)\.stores\(\{\s*examPlans: "id, updatedAt, sessionId"/);
-  assert.match(source("src/lib/cloudSync.ts"), /const SYNC_SCHEMA = 4;/);
+  // examPlans è arrivata con lo schema 4; le versioni successive aggiungono altri tipi.
+  assert.ok(Number(/const SYNC_SCHEMA = (\d+);/.exec(source("src/lib/cloudSync.ts"))[1]) >= 4);
   assert.match(source("src/lib/backup.ts"), /examPlans: "piani d'esame"/);
   assert.match(source("src/views/SettingsView.tsx"), /examPlans: scope === "full" \? snapshot\.examPlans : \[\]/);
 });

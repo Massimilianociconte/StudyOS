@@ -60,7 +60,7 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.9.0 (`/health` la mostra dopo il deploy). La 1.8.0 aggiunge `studyos_split_pages` (vedi
+versione 1.10.0 (`/health` la mostra dopo il deploy). La 1.8.0 aggiunge `studyos_split_pages` (vedi
 «Pagine da studiare») e, sul connettore remoto, il registro del server con il ripristino (vedi
 «Registro e ripristino del connettore remoto»). Dalla 1.7.0, negli elenchi di attività, eventi,
 sessioni, argomenti e obiettivi descrizioni e note oltre 300 caratteri arrivano accorciate con
@@ -91,6 +91,52 @@ altre scritture visibili al gruppo. Email: tutti gli indirizzi scritti dai membr
 cronologia) sono nascosti sempre, anche `@unimi.it`; solo i campi `email`, `website`, `url` e `value` di
 una correzione del catalogo possono mostrare `@unimi.it` (costante `AGENT_INSTITUTIONAL_EMAILS`, mai
 sottodomini). Dettagli in [group-exams.md](group-exams.md). Ricrea il connettore dopo il deploy.
+
+La 1.10.0 porta gli strumenti da 94 a 115 (21 nuovi) per flashcard, quiz, ripasso e richieste
+agli agenti: `studyos_learning_guide` (formato dei blocchi e regole, da leggere prima di scrivere),
+raccolte (`studyos_list_decks`, `studyos_save_decks`, `studyos_delete_deck`, `studyos_copy_deck`),
+schede (`studyos_list_flashcards`, `studyos_get_flashcards`, `studyos_save_flashcards`,
+`studyos_delete_flashcards`, `studyos_find_duplicate_flashcards`), quiz (`studyos_list_quizzes`,
+`studyos_get_quiz`, `studyos_save_quiz`, `studyos_delete_quiz_items`), `studyos_learning_stats`,
+analisi (`studyos_list_ai_analyses`, `studyos_save_ai_analysis`, `studyos_delete_ai_analysis`) e
+richieste «Spiegami meglio» (`studyos_list_ai_requests`, `studyos_take_ai_request`,
+`studyos_finish_ai_request`). Design completo in
+[superpowers/specs/2026-11-16-flashcards-quiz-design.md](superpowers/specs/2026-11-16-flashcards-quiz-design.md).
+Ricrea il connettore dopo il deploy.
+
+### Flashcard e quiz: lotti, idempotenza e concorrenza
+
+- Lotti: fino a 100 schede o 60 domande per chiamata; la risposta dice per elemento `created`,
+  `updated`, `unchanged`, `duplicate`, `conflict` o `error`. Un lotto in parte rifiutato non
+  annulla il resto.
+- `externalRef` rende i lotti ripetibili: rimandare lo stesso lotto non crea doppioni. Sul
+  connettore remoto l'id di un elemento nuovo con `externalRef` si ricava da raccolta (o quiz) e
+  `externalRef` (`stableId` in `src/lib/id.ts`): due assistenti che creano nello stesso momento la
+  stessa scheda scrivono la stessa riga, non due.
+- `expectedRevision` per elemento: se la scheda è cambiata nel frattempo risponde `conflict` con la
+  revisione attuale. Sul connettore remoto lo controlla anche il database
+  (`studyos_agent_revision_conflict` dentro la push, `agent.sql` 1.10.0): fra due assistenti con la
+  stessa revisione vince il primo, il secondo riceve `conflict` sugli elementi rifiutati (gli
+  altri del lotto sono salvati) o, se la riga rifiutata non è un elemento della risposta,
+  «Modifica salvata solo in parte… Rileggi i dati e riprova.». Vale solo per la push degli agenti:
+  la sync dell'app e le modifiche di chi riceve una condivisione restano «l'ultima scrittura
+  vince». Solo revisioni intere sicure; etichette, fonti, difficoltà e spostamenti non alzano la
+  revisione e restano a ultima scrittura vince.
+- I blocchi delle schede sono JSON (`text`, `heading`, `list`, `formula` KaTeX, `image` https,
+  `svg` ripulito, `code`, `table`, `callout`, `reference`; `BLOCK_TYPES` in `src/lib/cardBlocks.ts`):
+  niente HTML né JavaScript, link solo https; chi legge ripulisce di nuovo.
+- «Spiegami meglio»: la richiesta nasce nell'app ed è già il consenso, quindi
+  `studyos_take_ai_request` e `studyos_finish_ai_request` non chiedono conferma (salvo modifiche
+  vietate). La presa dura 15 minuti, con un token; un altro assistente non può chiudere una
+  richiesta presa. Sul connettore remoto anche due prese nello stesso istante si escludono (la
+  `revision` della richiesta sale a ogni presa e il database rifiuta la seconda). Nessun client MCP
+  avvia da solo un turno per un evento del server: la coda la elabora un assistente collegato
+  quando lo si chiede (o un'attività pianificata).
+- Risposte oltre 24 000 caratteri: elementi in coda tolti (`has_more`), poi i disegni SVG
+  (`omitted: "svg"`), infine un errore leggibile; mai JSON troncato. Una scheda con un SVG grande
+  si legge per intero solo nell'app.
+- Sul connettore remoto il pull carica solo i gruppi di dati dello strumento (`p_types`,
+  `src/agent/cloudGroups.ts`): gli strumenti di prima non leggono schede e quiz.
 
 ## Pagine da studiare
 

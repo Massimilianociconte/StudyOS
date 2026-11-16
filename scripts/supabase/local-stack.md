@@ -31,6 +31,27 @@ database, lo raggiunge come `host.docker.internal:55428`. I segreti di prova res
 dello stack locale; il Worker finto si chiude alla fine dello script. Tra due esecuzioni di
 `people-check.mjs` aspetta più di un minuto: le prove sui limiti per IP usano IP fissi.
 
+Connettore remoto e flashcard (dopo `agent.sql`, `psql "$PGURL" -v ON_ERROR_STOP=1 -f
+supabase/agent.sql`): `agent-check.mjs` (permessi, registro, `p_types`, controllo di revisione,
+creazione simultanea della stessa scheda) e `learning-stress.mjs` (scenari A–F: 1000 schede in
+lotti, 3000 risposte e statistiche, 22 richieste «Spiegami meglio» con un secondo account che
+prova a leggerle o chiuderle, due assistenti in due processi sulla stessa raccolta, 3 account in
+parallelo, un gruppo di 6 con raccolta condivisa e progressi separati). Le chiavi si leggono senza
+stamparle:
+
+```bash
+eval "$(supabase status -o env --workdir .cache/ai/supabase-sharing | grep -E '^(API_URL|PUBLISHABLE_KEY)=')"
+SUPABASE_URL=$API_URL SUPABASE_KEY=$PUBLISHABLE_KEY PGURL="$PGURL" node scripts/supabase/agent-check.mjs
+SUPABASE_URL=$API_URL SUPABASE_KEY=$PUBLISHABLE_KEY PGURL="$PGURL" \
+  node --import ./scripts/lib/register-ts.mjs scripts/supabase/learning-stress.mjs
+```
+
+`learning-stress.mjs` crea account nuovi a ogni esecuzione e, per lo scenario E, invecchia gli
+`updated_at` con `session_replication_role = replica` (salta il trigger): solo sullo stack locale,
+mai su un progetto vero. La CPU che stampa è quella del processo Node per chiamata
+(`process.cpuUsage`): una stima, non il `cpuTime` del Worker, che si legge con `wrangler tail`
+dopo un deploy.
+
 Per l'app su due origini non creare `.env.local` (un file dimenticato punterebbe ogni
 `npm run dev` allo stack locale): passa le variabili in linea, una per origine.
 
@@ -55,7 +76,8 @@ stub di Supabase (`auth-stub.sql`, `upgrade-stubs.sql`). Usano una porta diversa
 stack (`PORT`, mai 5432x o 5542x) e fermano il database alla fine.
 
 - `LC_ALL=C LANG=C zsh scripts/supabase/scratch-pg.sh`: applica gli script due volte ed esegue le
-  prove SQL (email, appelli, notifiche di persone e gruppi, `storedFile`), anche con `en_US.UTF-8`.
+  prove SQL (email, appelli, notifiche di persone e gruppi, `storedFile`, condivisione di flashcard e
+  quiz in `learning-share-tests.sql`), anche con `en_US.UTF-8`.
 - `LC_ALL=C LANG=C PORT=55518 zsh scripts/supabase/upgrade-from-published.sh <cartella>`: parte dal
   SQL pubblicato (i file presi uno per uno con `git show <commit>:supabase/<file>.sql`), scrive righe
   come i client di allora, applica due volte gli 8 script attuali e mostra i verify e le prove.

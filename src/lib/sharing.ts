@@ -11,7 +11,7 @@ import { chunkBySize } from "./syncMerge";
 import { taskStatusTransitionPatch } from "./taskTimer";
 import type { Task } from "../types";
 
-export const SHARE_SCOPES = ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals"] as const;
+export const SHARE_SCOPES = ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals", "flashcards"] as const;
 export type ShareScope = (typeof SHARE_SCOPES)[number];
 export type SharePermission = "view" | "edit";
 
@@ -22,7 +22,9 @@ export const SCOPE_ENTITY_TYPES: Record<ShareScope, readonly string[]> = {
   study: ["studySession", "studyTopic"],
   progress: ["exam"],
   materials: ["attachment", "note"],
-  goals: ["goal"]
+  goals: ["goal"],
+  // Solo i contenuti: stati di ripasso, sessioni, tentativi, analisi e richieste restano personali.
+  flashcards: ["studyDeck", "flashcard", "quiz", "quizQuestion"]
 };
 
 /** Tipi di elemento che la condivisione copre: gli unici che una cronologia di altri può contenere e ripristinare. */
@@ -30,8 +32,11 @@ export const SHARED_ENTITY_TYPES: ReadonlySet<string> = new Set(Object.values(SC
 
 /** Date ufficiali: si condividono solo in lettura. */
 export const VIEW_ONLY_SCOPES: ReadonlySet<ShareScope> = new Set<ShareScope>(["barb_exams"]);
-/** Sezioni senza materia: il filtro per materie non si applica. */
-export const SUBJECTLESS_SCOPES: ReadonlySet<ShareScope> = new Set<ShareScope>(["goals"]);
+/**
+ * Sezioni senza filtro per materie. Flashcard e quiz: la materia ce l'ha solo la raccolta in cima,
+ * le sotto-raccolte la ereditano; filtrando si perderebbe la catena che porta alle schede.
+ */
+export const SUBJECTLESS_SCOPES: ReadonlySet<ShareScope> = new Set<ShareScope>(["goals", "flashcards"]);
 
 export const isShareScope = (value: unknown): value is ShareScope =>
   typeof value === "string" && (SHARE_SCOPES as readonly string[]).includes(value);
@@ -694,8 +699,23 @@ export const revisionFromRow = (row: Record<string, unknown>): ItemRevision => (
   changedAt: String(row.changed_at ?? "")
 });
 
+/** Primo testo leggibile di una lista di blocchi (fronte di una scheda, domanda di un quiz), senza import pesanti. */
+const firstBlockText = (value: unknown): string | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  for (const block of value.slice(0, 20)) {
+    const record = typeof block === "object" && block !== null ? (block as Payload) : null;
+    const text = typeof block === "string" ? block : str(record?.text) ?? str(record?.latex);
+    if (text?.trim()) return text.trim().replace(/\s+/g, " ").slice(0, 80);
+  }
+  return undefined;
+};
+
 export const revisionTitle = (revision: Pick<ItemRevision, "payload">) =>
-  str(revision.payload.title) || str(revision.payload.name) || "Elemento senza titolo";
+  str(revision.payload.title) ||
+  str(revision.payload.name) ||
+  firstBlockText(revision.payload.front) ||
+  firstBlockText(revision.payload.prompt) ||
+  "Elemento senza titolo";
 
 /**
  * Una versione salvata si può riscrivere tra i dati personali solo se è un elemento vero: un tipo

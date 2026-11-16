@@ -16,6 +16,7 @@ type Section =
   | "Calendario"
   | "Attività"
   | "Studio"
+  | "Ripasso"
   | "Gruppi"
   | "Condivisione"
   | "Impostazioni";

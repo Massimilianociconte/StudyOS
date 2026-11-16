@@ -32,6 +32,7 @@
     "date-fns": "latest",
     "dexie": "latest",
     "framer-motion": "latest",
+    "katex": "0.19.1",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",

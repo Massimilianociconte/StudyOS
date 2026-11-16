@@ -20,7 +20,13 @@ export const CHANGE_ENTITY_LABEL: Record<string, string> = {
   studyGroup: "il gruppo",
   groupInvite: "l'invito",
   groupResource: "la risorsa del gruppo",
-  groupActivity: "l'attività del gruppo"
+  groupActivity: "l'attività del gruppo",
+  studyDeck: "la raccolta",
+  flashcard: "la flashcard",
+  quiz: "il quiz",
+  quizQuestion: "la domanda del quiz",
+  aiAnalysis: "l'analisi",
+  aiRequest: "la richiesta all'assistente"
 };
 
 /** Campi cambiati, in parole semplici. Quelli non elencati diventano «altri dettagli». */

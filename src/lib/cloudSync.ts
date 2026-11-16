@@ -61,7 +61,8 @@ const MAX_RETRY_MS = 5 * 60_000;
 // ma fa avanzare comunque il cursore: quando la versione sale, il primo pull riparte da zero
 // (merge LWW normale) per recuperare le righe saltate. 2 = preferenze personali.
 // 4: collezione examPlans. Un'app vecchia ha saltato le righe examPlan spostando il cursore: si rilegge tutto una volta.
-const SYNC_SCHEMA = 4;
+// 5: flashcard, quiz, stati di ripasso, sessioni, analisi e richieste agli agenti (8 tipi nuovi).
+const SYNC_SCHEMA = 5;
 
 const metaKeys = {
   cursor: (userId: string) => `cloud:cursor:${userId}`,

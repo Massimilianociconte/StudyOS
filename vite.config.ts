@@ -41,7 +41,7 @@ const contentSecurityPolicy = (supabaseUrl: string | undefined, hubOrigin: strin
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     `connect-src 'self' ${supabase} http://127.0.0.1:47321 http://localhost:47321 https://*.trycloudflare.com${hub}`,
     "worker-src 'self'",

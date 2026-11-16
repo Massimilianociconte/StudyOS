@@ -143,12 +143,18 @@ test("catalogo: nomi unici, schemi chiusi, eliminazioni con confirm", () => {
           ? ["confirm", "id", "onlyThisChange"]
           : ["studyos_delete_group_exam_session", "studyos_delete_catalog_override"].includes(tool.name)
             ? ["confirm", "expectedVersion", "id"]
-            : ["confirm", "id"];
+            // Flashcard e domande si eliminano a lotti: l'elenco di id è ancora «cosa eliminare».
+            : tool.name === "studyos_delete_flashcards"
+              ? ["confirm", "ids"]
+              : tool.name === "studyos_delete_quiz_items"
+                ? ["confirm", "questionIds", "quizId"]
+                : ["confirm", "id"];
       assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), what, tool.name);
       assert.equal(tool.inputSchema.required.includes("confirm"), true, tool.name);
       assert.deepEqual(tool.inputSchema.properties.confirm.enum, [true], tool.name);
-      assert.equal(parseToolArgs(tool.inputSchema, { id: "task_1", confirm: false }).ok, false);
-      assert.equal(parseToolArgs(tool.inputSchema, { id: "task_1", confirm: true }).ok, true);
+      const target = tool.name === "studyos_delete_flashcards" ? { ids: ["card_1"] } : tool.name === "studyos_delete_quiz_items" ? { quizId: "quiz_1" } : { id: "task_1" };
+      assert.equal(parseToolArgs(tool.inputSchema, { ...target, confirm: false }).ok, false);
+      assert.equal(parseToolArgs(tool.inputSchema, { ...target, confirm: true }).ok, true);
     }
   }
   assert.equal(parseToolArgs({ type: "object", additionalProperties: false, properties: { note: { type: "string", pattern: "^[a-z]+$" } } }, { note: "" }).ok, true);

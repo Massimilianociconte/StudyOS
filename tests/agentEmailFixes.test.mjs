@@ -5,6 +5,7 @@ import { AGENT_TOOLS } from "../src/agent/catalog.ts";
 import { GROUP_EXAM_TOOL_NAMES } from "../src/agent/catalogGroupExams.ts";
 import { EXTRA_TOOL_NAMES } from "../src/agent/catalogExtras.ts";
 import { UNIVERSITY_TOOL_NAMES } from "../src/agent/catalogUniversity.ts";
+import { LEARNING_TOOL_NAMES } from "../src/agent/catalogLearning.ts";
 import { configureAgentRuntime, executeAgentTool } from "../src/agent/execute.ts";
 import { groupExamWriterLoader } from "../src/agent/groupExamTools.ts";
 import { setInstitutionalEmailsForTests } from "../src/agent/project.ts";
@@ -158,11 +159,11 @@ test("L1: sul remoto il controllo non propone strumenti che non ci sono; counts 
   }
 });
 
-test("L2: 94 strumenti in tutto, 73 nel catalogo di base", () => {
-  const core = AGENT_TOOLS.length - GROUP_EXAM_TOOL_NAMES.length - EXTRA_TOOL_NAMES.length - UNIVERSITY_TOOL_NAMES.length;
-  assert.equal(AGENT_TOOLS.length, 94, `Strumenti: ${AGENT_TOOLS.length}, attesi 94 (73 di base + 8 + 8 + 5). Se ne hai aggiunti, aggiorna spec e documenti.`);
+test("L2: 115 strumenti in tutto, 73 nel catalogo di base", () => {
+  const core = AGENT_TOOLS.length - GROUP_EXAM_TOOL_NAMES.length - EXTRA_TOOL_NAMES.length - UNIVERSITY_TOOL_NAMES.length - LEARNING_TOOL_NAMES.length;
+  assert.equal(AGENT_TOOLS.length, 115, `Strumenti: ${AGENT_TOOLS.length}, attesi 115 (73 di base + 8 + 8 + 5 + 21). Se ne hai aggiunti, aggiorna spec e documenti.`);
   assert.equal(core, 73, `Catalogo di base: ${core}, atteso 73: i nuovi strumenti vanno nei file catalog*.ts.`);
-  assert.equal(new Set(AGENT_TOOLS.map((tool) => tool.name)).size, 94, "Nomi di strumenti ripetuti.");
+  assert.equal(new Set(AGENT_TOOLS.map((tool) => tool.name)).size, 115, "Nomi di strumenti ripetuti.");
 });
 
 test("L3: il caricamento dello snapshot sta dentro il try che azzera lo store", () => {

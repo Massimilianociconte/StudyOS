@@ -13,7 +13,7 @@ select
     and to_regprocedure('public.studyos_create_agent_grant(text)') is not null
     and to_regprocedure('public.studyos_revoke_agent_grants()') is not null
     and to_regprocedure('public.studyos_agent_user(text)') is not null
-    and to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)') is not null
+    and to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer,text[])') is not null
     and to_regprocedure('public.studyos_agent_push(text,text,jsonb,text,uuid)') is not null as rpc_ready,
   -- Permessi: si creano e si revocano solo con l'accesso fatto.
   coalesce(has_function_privilege('authenticated', to_regprocedure('public.studyos_create_agent_grant(text)'), 'EXECUTE')
@@ -22,19 +22,31 @@ select
     and not has_function_privilege('anon', to_regprocedure('public.studyos_revoke_agent_grants()'), 'EXECUTE'), false)
     as grant_rpc_ready,
   -- Pull e push: le chiama l'hub con la chiave publishable e il segreto del permesso.
-  coalesce(has_function_privilege('anon', to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)'), 'EXECUTE')
+  -- Nessun pull a quattro argomenti accanto a quello nuovo (un agent.sql di prima rieseguito lo
+  -- ricrea): PostgREST non saprebbe quale chiamare e ogni lettura dell'hub fallirebbe.
+  coalesce(has_function_privilege('anon', to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer,text[])'), 'EXECUTE')
     and has_function_privilege('anon', to_regprocedure('public.studyos_agent_push(text,text,jsonb,text,uuid)'), 'EXECUTE'), false)
+    and to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)') is null
     as hub_rpc_ready,
   -- Il segno del file nello spazio file (`storedFile`) non va all'agente e non si perde con le sue modifiche.
-  coalesce(position('storedFile' in pg_get_functiondef(to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)'))) > 0
+  coalesce(position('storedFile' in pg_get_functiondef(to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer,text[])'))) > 0
     and position('storedFile' in pg_get_functiondef(to_regprocedure('public.studyos_agent_push(text,text,jsonb,text,uuid)'))) > 0, false)
     as stored_file_kept_ready,
+  -- 1.10.0: due assistenti sulla stessa scheda non si sovrascrivono in silenzio (revisione nella push).
+  -- Dal 16/11/2026 anche le richieste agli assistenti e solo revisioni intere sicure (9007199254740991).
+  coalesce(to_regprocedure('public.studyos_agent_revision_conflict(text,jsonb,boolean,jsonb,boolean)') is not null
+    and position('studyos_agent_revision_conflict' in pg_get_functiondef(to_regprocedure('public.studyos_agent_push(text,text,jsonb,text,uuid)'))) > 0
+    and position('aiRequest' in pg_get_functiondef(to_regprocedure('public.studyos_agent_revision_conflict(text,jsonb,boolean,jsonb,boolean)'))) > 0
+    and position('9007199254740991' in pg_get_functiondef(to_regprocedure('public.studyos_agent_revision_conflict(text,jsonb,boolean,jsonb,boolean)'))) > 0, false)
+    as revision_guard_ready,
   -- Funzioni interne: nessuno le chiama da fuori.
   not coalesce(
     has_function_privilege('anon', to_regprocedure('public.studyos_agent_user(text)'), 'EXECUTE')
     or has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_user(text)'), 'EXECUTE')
     or has_function_privilege('anon', to_regprocedure('public.studyos_agent_secret_hash(text)'), 'EXECUTE')
-    or has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_secret_hash(text)'), 'EXECUTE'),
+    or has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_secret_hash(text)'), 'EXECUTE')
+    or has_function_privilege('anon', to_regprocedure('public.studyos_agent_revision_conflict(text,jsonb,boolean,jsonb,boolean)'), 'EXECUTE')
+    or has_function_privilege('authenticated', to_regprocedure('public.studyos_agent_revision_conflict(text,jsonb,boolean,jsonb,boolean)'), 'EXECUTE'),
     true) as internal_rpc_private_ready,
   -- La tabella: nessun accesso per anon; chi ha fatto l'accesso legge soltanto (le righe sue, per RLS).
   not coalesce(

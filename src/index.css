@@ -279,6 +279,16 @@ summary:focus-visible,
   hyphens: auto;
 }
 
+/* Formula KaTeX dentro il testo di una scheda: se è più larga della scheda scorre di lato invece di
+   uscire (sul telefono). Solo la versione in riga: quella a sé (div) scorre già con overflow-x-auto. */
+span.learn-formula {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
+
 .scrollbar-soft {
   scrollbar-color: color-mix(in srgb, var(--accent) 45%, transparent) transparent;
 }

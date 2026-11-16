@@ -1,10 +1,14 @@
 import Dexie, { type Table } from "dexie";
 import type {
+  AiAnalysis,
+  AiRequest,
   AppNotification,
   Attachment,
   CalendarEvent,
   DashboardWidget,
   Exam,
+  Flashcard,
+  FlashcardState,
   Goal,
   ExamPlan,
   GroupActivity,
@@ -12,8 +16,12 @@ import type {
   GroupResource,
   Note,
   Preferences,
+  Quiz,
+  QuizQuestion,
   Reminder,
+  StudyDeck,
   StudyGroup,
+  StudyRun,
   StudySession,
   StudySnapshot,
   StudyTopic,
@@ -140,6 +148,14 @@ class StudyOSDatabase extends Dexie {
   attachmentBytes!: Table<AttachmentBytesRow, string>;
   attachmentDeletes!: Table<AttachmentDeleteRow, string>;
   examPlans!: Table<ExamPlan, string>;
+  decks!: Table<StudyDeck, string>;
+  flashcards!: Table<Flashcard, string>;
+  quizzes!: Table<Quiz, string>;
+  quizQuestions!: Table<QuizQuestion, string>;
+  cardStates!: Table<FlashcardState, string>;
+  studyRuns!: Table<StudyRun, string>;
+  aiAnalyses!: Table<AiAnalysis, string>;
+  aiRequests!: Table<AiRequest, string>;
 
   constructor() {
     super("studyos-local-db");
@@ -193,6 +209,18 @@ class StudyOSDatabase extends Dexie {
     // Tabella nuova e vuota: niente da convertire.
     this.version(8).stores({
       examPlans: "id, updatedAt, sessionId"
+    });
+    // v9: flashcard, quiz, ripasso personale, analisi e richieste agli agenti (sync per entità).
+    // Tabelle nuove e vuote: niente da convertire.
+    this.version(9).stores({
+      decks: "id, updatedAt, parentId, subjectId",
+      flashcards: "id, updatedAt, deckId",
+      quizzes: "id, updatedAt, deckId",
+      quizQuestions: "id, updatedAt, quizId",
+      cardStates: "id, updatedAt, due",
+      studyRuns: "id, updatedAt, startedAt",
+      aiAnalyses: "id, updatedAt",
+      aiRequests: "id, updatedAt, status"
     });
   }
 }

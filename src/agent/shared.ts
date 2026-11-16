@@ -20,6 +20,7 @@ import { normalizeExternalUrl } from "../lib/safeUrl";
 import { SESSION_SOURCE_VALUES, sessionSourceLabel, sessionTopicId } from "../lib/studySessions";
 import { civilAddDays, isCivilDate, isValidTimeZone, localMidnight } from "../lib/tz";
 import {
+  SCOPE_ENTITY_TYPES,
   SUBJECTLESS_SCOPES,
   VIEW_ONLY_SCOPES,
   originOf,
@@ -252,6 +253,8 @@ const occurrenceSource = (entry: SharedItem) => {
   };
 };
 
+const LEARNING_TYPES: ReadonlySet<string> = new Set(SCOPE_ENTITY_TYPES.flashcards);
+
 /** Elementi altrui per l'agente: prima le occorrenze degli eventi nella finestra, poi il resto. */
 export const sharedItemsView = (
   items: readonly SharedItem[],
@@ -263,6 +266,8 @@ export const sharedItemsView = (
   const found = (entity: SharedEntity) => !query || searchable(entity).includes(query);
   const matches = items.filter(
     (entry) =>
+      // Raccolte, schede e quiz altrui: le leggono studyos_list_decks e gli altri strumenti di ripasso.
+      !LEARNING_TYPES.has(entry.entityType) &&
       (!filter.scope || scopeCovers(filter.scope, entry.entityType, entry.entity)) &&
       (!filter.personId || personHandle(entry.ownerId) === filter.personId)
   );

@@ -23,7 +23,11 @@ export type EntityType =
   | "studyGroup"
   | "groupInvite"
   | "groupResource"
-  | "groupActivity";
+  | "groupActivity"
+  | "studyDeck"
+  | "flashcard"
+  | "quiz"
+  | "quizQuestion";
 
 export interface BaseEntity {
   id: ID;
@@ -78,6 +82,7 @@ export type AppView =
   | "barb"
   | "groups"
   | "sharing"
+  | "learn"
   | "settings";
 
 export interface Subject extends BaseEntity {
@@ -600,6 +605,14 @@ export interface StudySnapshot {
   groupResources: GroupResource[];
   groupActivities: GroupActivity[];
   examPlans: ExamPlan[];
+  decks: StudyDeck[];
+  flashcards: Flashcard[];
+  quizzes: Quiz[];
+  quizQuestions: QuizQuestion[];
+  cardStates: FlashcardState[];
+  studyRuns: StudyRun[];
+  aiAnalyses: AiAnalysis[];
+  aiRequests: AiRequest[];
 }
 
 export interface BackupEnvelope {
@@ -615,4 +628,243 @@ export interface BackupEnvelope {
   data?: StudySnapshot;
   crypto?: VaultRecord;
   settings: Pick<UserSettings, "themeMode" | "palette" | "density" | "cardShape" | "dateFormat" | "profile">;
+}
+
+// ─── Flashcard, quiz, ripasso e analisi degli agenti (design: docs/superpowers/specs/2026-11-16-flashcards-quiz-design.md) ───
+
+/** Blocco di contenuto strutturato (schema v1, validato da src/lib/cardBlocks.ts). */
+export type CardBlock =
+  | { type: "text"; text: string }
+  | { type: "heading"; text: string; level?: 2 | 3 }
+  | { type: "list"; items: string[]; ordered?: boolean }
+  | { type: "formula"; latex: string; display?: boolean; caption?: string }
+  | { type: "image"; url: string; alt: string; caption?: string; width?: number; height?: number }
+  | { type: "svg"; svg: string; alt: string; caption?: string; background?: "light" | "transparent" }
+  | { type: "code"; code: string; language?: string }
+  | { type: "table"; rows: string[][]; header?: string[]; caption?: string }
+  | { type: "callout"; text: string; tone?: "info" | "tip" | "warning" | "key"; title?: string }
+  | { type: "reference"; title: string; chapter?: string; section?: string; pages?: string; url?: string; note?: string };
+
+export type CardBlockType = CardBlock["type"];
+
+/** Fonte verificabile di un contenuto: mai pagine inventate. */
+export interface SourceRef {
+  title: string;
+  chapter?: string;
+  section?: string;
+  pages?: string;
+  url?: string;
+  /** Materiale di StudyOS da cui viene (id di un attachment), se c'è. */
+  attachmentId?: ID;
+}
+
+/** Chi ha creato un contenuto: una persona nell'app o un agente (con il modello, se lo dice). */
+export interface ContentAuthor {
+  kind: "person" | "agent";
+  name?: string;
+  model?: string;
+}
+
+export type DeckKind = "collection" | "topic" | "chapter" | "paragraph" | "subtopic";
+
+/** Raccolta gerarchica di flashcard e quiz (collezione decks, entità studyDeck). */
+export interface StudyDeck extends BaseEntity {
+  title: string;
+  description: string;
+  kind: DeckKind;
+  /** Raccolta madre; assente = radice (sotto la materia, se c'è). */
+  parentId?: ID;
+  subjectId?: ID;
+  position: number;
+  color?: string;
+  icon?: string;
+  source?: SourceRef;
+  /** Metadati liberi (chiave → testo), al massimo 20. */
+  meta?: Record<string, string>;
+  author?: ContentAuthor;
+  /** Chiave dell'agente per non duplicare la raccolta (unica nell'account). */
+  externalRef?: string;
+}
+
+export interface Flashcard extends BaseEntity {
+  deckId: ID;
+  /** Copiato dalla raccolta: serve al filtro per materia della condivisione e alle statistiche. */
+  subjectId?: ID;
+  title?: string;
+  front: CardBlock[];
+  back: CardBlock[];
+  /** Spiegazione pubblicata nella raccolta (visibile a chi la condivide). */
+  explanation?: CardBlock[];
+  difficulty?: 1 | 2 | 3 | 4 | 5;
+  position: number;
+  sources?: SourceRef[];
+  author?: ContentAuthor;
+  /** Sale a ogni modifica del contenuto: le risposte registrano la revisione che hanno visto. */
+  revision: number;
+  /** Chiave dell'agente per non duplicare lo stesso elemento (unica nella raccolta). */
+  externalRef?: string;
+}
+
+export interface Quiz extends BaseEntity {
+  deckId?: ID;
+  subjectId?: ID;
+  title: string;
+  description: string;
+  difficulty?: 1 | 2 | 3 | 4 | 5;
+  /** Tempo suggerito per la simulazione d'esame (minuti). */
+  timeLimitMinutes?: number;
+  position: number;
+  sources?: SourceRef[];
+  author?: ContentAuthor;
+  revision: number;
+  externalRef?: string;
+}
+
+export interface QuizOption {
+  /** Id stabile: la correttezza non dipende dall'ordine mostrato. */
+  id: string;
+  text: string;
+  correct: boolean;
+  /** Perché questa opzione è giusta o sbagliata. */
+  feedback?: string;
+}
+
+export interface QuizQuestion extends BaseEntity {
+  quizId: ID;
+  subjectId?: ID;
+  /** single = una sola giusta; multiple = una o più giuste (punto solo con l'insieme esatto). */
+  kind: "single" | "multiple";
+  prompt: CardBlock[];
+  options: QuizOption[];
+  explanation?: CardBlock[];
+  /** Errori comuni da evitare. */
+  mistakes?: string;
+  difficulty?: 1 | 2 | 3 | 4 | 5;
+  position: number;
+  sources?: SourceRef[];
+  revision: number;
+  externalRef?: string;
+}
+
+export type ReviewResult = "correct" | "wrong" | "doubt" | "skip";
+
+/** Stato personale di ripasso di una scheda (id = id della scheda). Mai condiviso. */
+export interface FlashcardState extends BaseEntity {
+  /** Proprietario della scheda: assente = scheda propria; altrimenti id dell'account che la condivide. */
+  ownerId?: string;
+  deckId?: ID;
+  subjectId?: ID;
+  reps: number;
+  lapses: number;
+  ease: number;
+  intervalDays: number;
+  /** Prossimo ripasso (ISO). */
+  due: string;
+  lastResult?: Exclude<ReviewResult, "skip">;
+  lastReviewedAt?: string;
+  correct: number;
+  wrong: number;
+  doubt: number;
+  /** Revisione della scheda all'ultima risposta. */
+  revision?: number;
+}
+
+/** Evento compatto di una sessione: scheda o domanda, esito, ms, istante, revisione vista. */
+export interface StudyRunEvent {
+  /** Id della scheda o della domanda. */
+  i: string;
+  /** Esito. Nei quiz: correct, wrong o skip (non data). */
+  r: ReviewResult;
+  /** Millisecondi per rispondere. */
+  ms?: number;
+  /** Istante (ISO). */
+  at: string;
+  /** Revisione del contenuto vista. */
+  v?: number;
+  /** Quiz: opzioni scelte. */
+  c?: string[];
+  /** Quiz: segnata come dubbia dall'utente. */
+  f?: boolean;
+}
+
+export type StudyRunMode = "review" | "free" | "training" | "exam" | "errors" | "random" | "custom";
+
+/** Sessione di ripasso o tentativo di quiz (personale, storico immutabile per risposta). */
+export interface StudyRun extends BaseEntity {
+  kind: "flashcards" | "quiz";
+  mode: StudyRunMode;
+  title: string;
+  quizId?: ID;
+  deckIds: ID[];
+  subjectIds: ID[];
+  startedAt: string;
+  endedAt?: string;
+  /** Domande/schede previste, nell'ordine mostrato. */
+  itemIds: ID[];
+  events: StudyRunEvent[];
+  /** Continuazione di una sessione con più di 400 risposte. */
+  continuesId?: ID;
+  /** Quiz: punteggio finale (corrette ÷ domande). */
+  score?: number;
+}
+
+export interface AiAnalysisSection {
+  kind: "strengths" | "weaknesses" | "mistakes" | "priorities" | "tips" | "quizzes" | "progress" | "other";
+  title: string;
+  body: string;
+  /** Elementi citati (schede, raccolte, quiz, materie) per i collegamenti nell'app. */
+  refs?: { type: "flashcard" | "deck" | "quiz" | "subject"; id: ID }[];
+}
+
+/** Analisi qualitativa scritta da un agente (personale). */
+export interface AiAnalysis extends BaseEntity {
+  title: string;
+  summary: string;
+  sections: AiAnalysisSection[];
+  scope: { subjectIds: ID[]; deckIds: ID[] };
+  periodFrom?: string;
+  periodTo?: string;
+  agent: ContentAuthor;
+  version: number;
+  status: "active" | "archived";
+  /** Analisi precedente che questa sostituisce. */
+  supersedesId?: ID;
+  /** Richiesta da cui nasce, se c'è. */
+  requestId?: ID;
+  /** Dati usati (contatori, filtri) dichiarati dall'agente. */
+  dataNote?: string;
+}
+
+export type AiRequestStatus = "pending" | "claimed" | "completed" | "failed" | "expired" | "cancelled";
+export type AiRequestStyle = "simple" | "deep" | "example" | "analogy" | "diagram" | "doubt" | "custom";
+
+/** Richiesta dell'app a un agente («Spiegami meglio», «Analizza»): coda persistente, personale. */
+export interface AiRequest extends BaseEntity {
+  kind: "explain_card" | "explain_question" | "analysis";
+  targetId?: ID;
+  /** Proprietario del contenuto, se è di un'altra persona. */
+  targetOwnerId?: string;
+  style: AiRequestStyle;
+  /** Domanda o dubbio scritto dall'utente. */
+  prompt: string;
+  status: AiRequestStatus;
+  /** Ambito di un'analisi. */
+  scope?: { subjectIds: ID[]; deckIds: ID[]; days?: number };
+  expiresAt: string;
+  claimedAt?: string;
+  /** Nome dell'agente che l'ha presa. */
+  claimedBy?: string;
+  /** Hash della presa: solo chi l'ha presa la chiude. */
+  claimToken?: string;
+  leaseUntil?: string;
+  attempts: number;
+  /**
+   * Sale a ogni presa, chiusura o rinuncia di un assistente: sul connettore remoto due assistenti
+   * che prendono la stessa richiesta dalla stessa versione scrivono la stessa revisione con token
+   * diversi, e il database rifiuta la seconda (agent.sql). Assente nelle richieste mai toccate.
+   */
+  revision?: number;
+  completedAt?: string;
+  result?: { title?: string; blocks: CardBlock[]; agent: ContentAuthor; analysisId?: ID };
+  error?: string;
 }

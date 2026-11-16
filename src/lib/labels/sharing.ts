@@ -13,7 +13,8 @@ export const SHARE_SCOPE_HINT: Record<ShareScope, string> = {
   study: "Sessioni di studio e argomenti da ripassare",
   progress: "Esami ancora da sostenere e preparazione, mai i voti",
   materials: "File, link e note",
-  goals: "I tuoi traguardi"
+  goals: "I tuoi traguardi",
+  flashcards: "Raccolte, schede e quiz (tutte le materie): le tue risposte e i tuoi progressi restano tuoi"
 };
 
 export const SHARE_INVITE_STATUS_LABEL: Record<ShareInviteStatus, string> = {

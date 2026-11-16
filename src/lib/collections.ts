@@ -20,7 +20,15 @@ export const COLLECTIONS = [
   "groupInvites",
   "groupResources",
   "groupActivities",
-  "examPlans"
+  "examPlans",
+  "decks",
+  "flashcards",
+  "quizzes",
+  "quizQuestions",
+  "cardStates",
+  "studyRuns",
+  "aiAnalyses",
+  "aiRequests"
 ] as const;
 
 export type CollectionKey = (typeof COLLECTIONS)[number];
@@ -52,7 +60,15 @@ export const ENTITY_TYPES: Record<CollectionKey, string> = {
   groupInvites: "groupInvite",
   groupResources: "groupResource",
   groupActivities: "groupActivity",
-  examPlans: "examPlan"
+  examPlans: "examPlan",
+  decks: "studyDeck",
+  flashcards: "flashcard",
+  quizzes: "quiz",
+  quizQuestions: "quizQuestion",
+  cardStates: "flashcardState",
+  studyRuns: "studyRun",
+  aiAnalyses: "aiAnalysis",
+  aiRequests: "aiRequest"
 };
 
 export const COLLECTION_BY_ENTITY_TYPE: Record<string, CollectionKey> = Object.fromEntries(

@@ -86,6 +86,34 @@ const main = async () => {
   check("L'hub legge le righe di Alice col segreto", !pulled.error && byId.has(task.id) && byId.has(file.id), pulled.error?.message);
   check("Il pull toglie copertine e file incorporati",
     byId.get(task.id)?.payload.cover === undefined && byId.get(file.id)?.payload.dataUrl === undefined && byId.get(task.id)?.payload.title === "Ripasso");
+  // 1.10.0: p_types legge solo i tipi chiesti (il connettore remoto carica i gruppi che servono).
+  const onlyTasks = await anon.rpc("studyos_agent_pull", { p_secret: secret, p_since: null, p_offset: 0, p_limit: 500, p_types: ["task"] });
+  check("Il pull con p_types legge solo i tipi chiesti",
+    !onlyTasks.error && onlyTasks.data.some((row) => row.entity_id === task.id) && onlyTasks.data.every((row) => row.entity_type === "task"), onlyTasks.error?.message);
+  const noneOfThem = await anon.rpc("studyos_agent_pull", { p_secret: secret, p_since: null, p_offset: 0, p_limit: 500, p_types: ["flashcard", "quiz"] });
+  check("Il pull con tipi assenti non legge nulla", !noneOfThem.error && noneOfThem.data.length === 0, noneOfThem.error?.message ?? `${noneOfThem.data?.length} righe`);
+  const tooMany = await anon.rpc("studyos_agent_pull", { p_secret: secret, p_since: null, p_offset: 0, p_limit: 10, p_types: Array.from({ length: 65 }, (_, i) => `t${i}`) });
+  check("Il pull con più di 64 tipi è rifiutato", Boolean(tooMany.error), tooMany.error ? "" : "nessun errore");
+
+  // 1.10.0: revisione delle schede nella push degli assistenti (due assistenti sulla stessa versione).
+  const card = (revision, back, extra = {}) => ({
+    entity_type: "flashcard", entity_id: `card_${run}`, deleted: false,
+    payload: { id: `card_${run}`, deckId: "deck", front: [{ type: "text", text: "Domanda" }], back: [{ type: "text", text: back }], revision, tags: [], ...extra }
+  });
+  const pushCard = async (row) => (await anon.rpc("studyos_agent_push", { p_secret: secret, p_client_id: "agent-cloud", p_rows: [row] })).data?.[0]?.accepted;
+  const backNow = () => sql(`select payload #>> '{back,0,text}' from public.studyos_items where user_id = ${lit(alice.id)} and entity_id = ${lit(`card_${run}`)}`);
+  check("Scheda nuova dall'assistente", await pushCard(card(1, "Base", { updatedAt: stamp(1) })) === true);
+  check("Primo assistente: revisione 2 accettata", await pushCard(card(2, "Versione A", { updatedAt: stamp(2) })) === true);
+  check("Secondo assistente dalla stessa base: revisione 2 con altro contenuto rifiutata",
+    (await pushCard(card(2, "Versione B", { updatedAt: stamp(3) }))) === false && backNow() === "Versione A", backNow());
+  check("Stesso invio ripetuto (stessa revisione, stesso contenuto): accettato", await pushCard(card(2, "Versione A", { updatedAt: stamp(4), tags: ["ripasso"] })) === true);
+  check("Revisione più vecchia rifiutata", (await pushCard(card(1, "Vecchia", { updatedAt: stamp(5) }))) === false && backNow() === "Versione A", backNow());
+  check("Revisione successiva accettata", await pushCard(card(3, "Versione C", { updatedAt: stamp(6) })) === true && backNow() === "Versione C");
+  const freshCard = { ...card(1, "Creata da A", { updatedAt: stamp(7) }), entity_id: `card2_${run}` };
+  freshCard.payload.id = `card2_${run}`;
+  const twinCard = { ...freshCard, payload: { ...freshCard.payload, back: [{ type: "text", text: "Creata da B" }], updatedAt: stamp(8) } };
+  const [firstCreate, secondCreate] = await Promise.all([pushCard(freshCard), pushCard(twinCard)]);
+  check("Stessa scheda creata insieme da due assistenti: una sola versione passa", [firstCreate, secondCreate].filter(Boolean).length === 1, `${firstCreate}/${secondCreate}`);
   const lastUsed = sql(`select last_used_at is not null from public.studyos_agent_grants where user_id = ${lit(alice.id)}`);
   check("Il permesso registra l'ultimo uso", lastUsed === "t", lastUsed);
 

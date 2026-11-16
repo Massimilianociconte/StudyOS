@@ -635,7 +635,8 @@ export const SHARE_SCOPE_LABEL: Record<ShareScope, string> = {
   study: "Studio",
   progress: "Progressi",
   materials: "Materiali",
-  goals: "Obiettivi"
+  goals: "Obiettivi",
+  flashcards: "Flashcard e quiz"
 };
 
 export const SHARE_PERMISSION_LABEL: Record<SharePermission, string> = {
@@ -689,7 +690,11 @@ export const SHARED_ENTITY_LABEL: Record<string, string> = {
   exam: "esame",
   attachment: "materiale",
   note: "nota",
-  goal: "obiettivo"
+  goal: "obiettivo",
+  studyDeck: "raccolta",
+  flashcard: "flashcard",
+  quiz: "quiz",
+  quizQuestion: "domanda di quiz"
 };
 
 /** Etichetta di un tipo che arriva dal server: i nomi di Object.prototype ("constructor"…) non sono tipi. */

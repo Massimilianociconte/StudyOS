@@ -39,11 +39,13 @@ export const decideAgentAction = (
   policy: AgentPolicy,
   risk: AgentRisk,
   now: Date = new Date(),
-  options: { alwaysAsk?: boolean } = {}
+  options: { alwaysAsk?: boolean; consented?: boolean } = {}
 ): PolicyChoice => {
   const choice = policy[risk];
   if (choice === "deny") return choice;
   if (options.alwaysAsk === true) return "ask";
+  // Richiesta fatta dalla persona nell'app: è già il consenso (mai per le eliminazioni).
+  if (options.consented === true && risk === "write") return "allow";
   if (choice === "allow") return choice;
   if (risk === "write" && policy.trustedWritesUntil) {
     const until = Date.parse(policy.trustedWritesUntil);
@@ -53,8 +55,8 @@ export const decideAgentAction = (
 };
 
 /** Decisione per uno strumento del catalogo: rischio più l'eventuale conferma obbligatoria. */
-export const decideToolAction = (policy: AgentPolicy, tool: { risk: AgentRisk; alwaysAsk?: boolean }, now: Date = new Date()) =>
-  decideAgentAction(policy, tool.risk, now, { alwaysAsk: tool.alwaysAsk === true });
+export const decideToolAction = (policy: AgentPolicy, tool: { risk: AgentRisk; alwaysAsk?: boolean; consented?: boolean }, now: Date = new Date()) =>
+  decideAgentAction(policy, tool.risk, now, { alwaysAsk: tool.alwaysAsk === true, consented: tool.consented === true });
 
 export const trustedWritesActive =(policy: AgentPolicy, now: Date = new Date()) => {
   if (!policy.trustedWritesUntil) return false;

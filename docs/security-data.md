@@ -215,3 +215,9 @@ indirizzi. Dettagli in [group-exams.md](group-exams.md).
   Dashboard Supabase (vedi «Se perdi un dispositivo»).
 - Le voci di attività «ha tolto … dal gruppo» scritte prima della revisione possono contenere un
   nome preso dall'email: il testo della voce non dice di chi è, quindi la pulizia non lo cambia.
+- Immagini delle flashcard (dalla 1.10.0): la CSP accetta immagini da qualunque indirizzo `https:`
+  (`img-src` in `vite.config.ts`), perché le schede scritte dagli assistenti puntano a immagini
+  pubbliche. Chi ospita l'immagine vede l'indirizzo IP e l'ora di chi la apre (come un pixel di
+  tracciamento). Mitigazioni: niente referrer (`referrerpolicy="no-referrer"`), solo host pubblici
+  (niente IP privati né `localhost`, `safeUrl` in `src/lib/cardBlocks.ts`), e nelle raccolte di
+  altre persone le immagini si caricano solo al tocco. Le altre regole della CSP non cambiano.

@@ -30,6 +30,7 @@ const SettingsView = lazyView(() => import("./views/SettingsView"), "SettingsVie
 const BarbView = lazyView(() => import("./views/BarbView"), "BarbView");
 const GroupsView = lazyView(() => import("./views/GroupsView"), "GroupsView");
 const SharingView = lazyView(() => import("./views/SharingView"), "SharingView");
+const LearnView = lazyView(() => import("./views/LearnView"), "LearnView");
 
 const views: Record<AppView, ReactNode> = {
   dashboard: <DashboardView />,
@@ -45,6 +46,7 @@ const views: Record<AppView, ReactNode> = {
   barb: <BarbView />,
   groups: <GroupsView />,
   sharing: <SharingView />,
+  learn: <LearnView />,
   settings: <SettingsView />
 };
 

@@ -29,6 +29,36 @@ avevi già applicato, **rieseguilo dopo la revisione dell'08/10/2026** (vedi
 passano dalla conferma email, tra i Redirect URLs aggiungi anche
 `https://massimilianociconte.github.io/StudyOS/**`.
 
+**Flashcard, quiz e connettore 1.10.0 (16/11/2026): riesegui `sharing.sql`, `people.sql`,
+`agent.sql`, poi i verify.** Nessuna tabella nuova: raccolte, schede, quiz, stati di ripasso e
+richieste agli agenti sono righe di `studyos_items` come le altre. Cosa cambia:
+
+- `sharing.sql`: sezione `flashcards` («Flashcard e quiz»), sempre per tutte le materie (il
+  vincolo e `studyos_validate_share_items` rifiutano `subject_ids`); chi riceve con «Può
+  modificare» scrive solo i campi di `studyDeck`, `flashcard`, `quiz` e `quizQuestion`, con il
+  loro tipo. Stati di ripasso, sessioni, analisi e richieste restano personali;
+- `people.sql`: il nome della sezione nelle notifiche;
+- `agent.sql`: `studyos_agent_pull` con `p_types` facoltativo (la firma a quattro argomenti si
+  toglie; un hub di prima chiama senza `p_types` e legge tutto) e il controllo di revisione nella
+  push degli agenti (`studyos_agent_revision_conflict`: schede, quiz, domande e richieste agli
+  assistenti; solo revisioni intere tra 0 e 2^53 − 1, il resto a ultima scrittura vince).
+
+Ordine: i tre script (dopo `schema.sql`, `groups.sql`), poi `verify.sql`, `sharing-verify.sql`,
+`people-verify.sql` e `agent-verify.sql` (nuova colonna `revision_guard_ready`; tutte le `*_ready`
+come al rilascio precedente). Poi il client, poi il Worker 1.10.0. Con `sharing.sql` vecchio il
+vincolo rifiuta una condivisione della sezione `flashcards` (non provato con un client vero); un
+Worker nuovo con `agent.sql` vecchio legge tutto come prima (PGRST202, `tests/cloudRunner.test.mjs`)
+e scrive senza controllo di revisione.
+
+Applicati al progetto reale il 16/11/2026 (SQL Editor; verify tutti `true`), poi riapplicato
+`agent.sql` con la guardia corretta dopo la revisione (stesso giorno). Per tornare all'`agent.sql`
+precedente togli prima la firma nuova, altrimenti restano due `studyos_agent_pull` e ogni lettura
+dell'hub fallisce (`function … is not unique`; `hub_rpc_ready` lo segnala):
+
+```sql
+drop function if exists public.studyos_agent_pull(text, timestamptz, integer, integer, text[]);
+```
+
 **Pubblicazione di questa versione (revisione finale, 13/11/2026): in quest'ordine.** Le
 notifiche push si accendono per ultime. Se `pg_net`, i segreti nel Vault e `pg_cron` sono attivi
 prima del Worker nuovo, i promemoria e gli avvisi di quel momento vanno al Worker vecchio, che non

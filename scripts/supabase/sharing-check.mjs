@@ -82,6 +82,17 @@ const fullGoal = (id, extra = {}) => entity(id, {
   linkedSessionIds: [], status: "active", notes: "", ...extra
 });
 const row = (entityType, payload, deleted = false) => ({ entity_type: entityType, entity_id: payload.id, payload, deleted });
+// Raccolte, schede e quiz (sezione «flashcards»), come li scrive l'app.
+const fullDeck = (id, extra = {}) => entity(id, { title: "Raccolta", description: "", kind: "collection", position: 1, author: { kind: "person" }, ...extra });
+const fullCard = (id, deckId, extra = {}) => entity(id, {
+  deckId, front: [{ type: "text", text: "Domanda" }], back: [{ type: "text", text: "Risposta" }], position: 1, author: { kind: "person" }, revision: 1, ...extra
+});
+const fullQuiz = (id, extra = {}) => entity(id, { title: "Quiz", description: "", position: 1, author: { kind: "person" }, revision: 1, ...extra });
+const fullQuestion = (id, quizId, extra = {}) => entity(id, {
+  quizId, kind: "single", prompt: [{ type: "text", text: "Quanto fa 2+2?" }],
+  options: [{ id: "a", text: "4", correct: true }, { id: "b", text: "5", correct: false }], position: 1, revision: 1, ...extra
+});
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const account = async (label) => {
@@ -606,6 +617,66 @@ const main = async () => {
   ].map(([type, id]) => row(type, { id, deletedAt: iso(60_000) }, true)));
   const { error: typeShareCleanup } = await alice.client.from("studyos_shares").delete().in("id", typeShares.map((item) => item.id));
   need("Alice toglie le condivisioni temporanee del blocco", !typeShareCleanup, typeShareCleanup?.message);
+
+  // Flashcard e quiz: righe originali condivise, progressi sempre personali, tipi dei campi controllati.
+  const FD = fullDeck(`deck-fd-${run}`, { title: "Chimica", subjectId: S1 });
+  const FC = fullCard(`card-fc-${run}`, FD.id, { subjectId: S1 });
+  const FQ = fullQuiz(`quiz-fq-${run}`, { deckId: FD.id, subjectId: S1 });
+  const FQQ = fullQuestion(`qq-fqq-${run}`, FQ.id, { subjectId: S1 });
+  const FS = entity(FC.id, { deckId: FD.id, subjectId: S1, reps: 1, lapses: 0, ease: 2.5, intervalDays: 1, due: iso(86_400_000), lastResult: "correct", lastReviewedAt: iso(), correct: 1, wrong: 0, doubt: 0, revision: 1 });
+  const FR = entity(`run-fr-${run}`, { kind: "flashcards", mode: "review", title: "Chimica", deckIds: [FD.id], subjectIds: [S1], startedAt: iso(), itemIds: [FC.id], events: [] });
+  await pushOwn(alice, [row("studyDeck", FD), row("flashcard", FC), row("quiz", FQ), row("quizQuestion", FQQ), row("flashcardState", FS), row("studyRun", FR)]);
+  const { error: flashSubjectsError } = await alice.client.from("studyos_shares").insert({
+    owner_id: alice.id, owner_name: "Alice", scope: "flashcards", subject_ids: [S1], permission: "view", grantee_user_id: bob.id, grantee_name: "Bob"
+  });
+  check("Flashcard e quiz con un filtro per materia: rifiutati dal vincolo", Boolean(flashSubjectsError), flashSubjectsError ? "" : "nessun errore");
+  const { data: flashShare, error: flashShareError } = await alice.client.from("studyos_shares").insert({
+    owner_id: alice.id, owner_name: "Alice", scope: "flashcards", permission: "view", grantee_user_id: bob.id, grantee_name: "Bob"
+  }).select("id").single();
+  need("Alice dà a Bob «Può vedere» su Flashcard e quiz", !flashShareError && Boolean(flashShare), flashShareError?.message);
+  const flashSeen = {
+    deck: liveIds(await items(bob, alice, "studyDeck")), card: liveIds(await items(bob, alice, "flashcard")),
+    quiz: liveIds(await items(bob, alice, "quiz")), question: liveIds(await items(bob, alice, "quizQuestion"))
+  };
+  check("Bob legge raccolta, scheda, quiz e domanda di Alice",
+    flashSeen.deck.includes(FD.id) && flashSeen.card.includes(FC.id) && flashSeen.quiz.includes(FQ.id) && flashSeen.question.includes(FQQ.id), JSON.stringify(flashSeen));
+  const privateSeen = [...await items(bob, alice, "flashcardState"), ...await items(bob, alice, "studyRun")];
+  check("Stati di ripasso e sessioni di Alice restano solo suoi", privateSeen.length === 0, `${privateSeen.length} righe visibili`);
+  const { data: flashViewOnly } = await pushShared(bob, alice, [row("flashcard", { ...FC, back: [{ type: "text", text: "No" }], updatedAt: iso(4_000) })]);
+  check("Con «Può vedere» Bob non modifica la scheda", flashViewOnly?.[0]?.reason === "denied", JSON.stringify(flashViewOnly));
+  await alice.client.from("studyos_shares").update({ permission: "edit" }).eq("id", flashShare.id);
+  const flashAt = iso(5_000);
+  const { data: flashLegit, error: flashLegitError } = await pushShared(bob, alice, [
+    row("flashcard", { ...FC, back: [{ type: "text", text: "Risposta di Bob" }], explanation: [{ type: "text", text: "Perché sì" }], revision: 2, updatedAt: flashAt }),
+    row("studyDeck", { ...FD, description: "Con le note di Bob", updatedAt: flashAt }),
+    row("quizQuestion", { ...FQQ, options: [...FQQ.options, { id: "c", text: "22", correct: false }], revision: 2, updatedAt: flashAt }),
+    row("flashcard", fullCard(`card-bob-${run}`, FD.id, { subjectId: S1, position: 2 }))
+  ]);
+  check("Con «Può modificare» Bob modifica scheda, raccolta e domanda e crea una scheda",
+    !flashLegitError && flashLegit?.length === 4 && flashLegit.every((result) => result.accepted === true), flashLegitError?.message ?? JSON.stringify(flashLegit));
+  const flashStored = await storedOf("flashcard", FC.id);
+  const flashAttacks = [
+    ["fronte testo", "flashcard", { ...flashStored, front: "x" }],
+    ["spiegazione testo", "flashcard", { ...flashStored, explanation: "x" }],
+    ["autore testo", "flashcard", { ...flashStored, author: "x" }],
+    ["raccolta della scheda numerica", "flashcard", { ...flashStored, deckId: 42 }],
+    ["titolo della raccolta oggetto", "studyDeck", { ...(await storedOf("studyDeck", FD.id)), title: { x: 1 } }],
+    ["opzioni testo", "quizQuestion", { ...(await storedOf("quizQuestion", FQQ.id)), options: "x" }],
+    ["tipo di domanda numerico", "quizQuestion", { ...(await storedOf("quizQuestion", FQQ.id)), kind: 1 }]
+  ];
+  for (const [label, type, payload] of flashAttacks) {
+    const before = JSON.stringify((await storedOf(type, payload.id)) ?? null);
+    const { data: rpcResult } = await pushShared(bob, alice, [row(type, { ...payload, updatedAt: iso(9_000) })]);
+    check(`Flashcard: tipo sbagliato (${label}) con l'RPC: rifiutato, riga invariata`,
+      rpcResult?.[0]?.reason === "denied" && JSON.stringify((await storedOf(type, payload.id)) ?? null) === before, JSON.stringify(rpcResult));
+  }
+  const { data: flashPrivateWrite } = await pushShared(bob, alice, [row("flashcardState", { ...FS, due: iso(9 * 86_400_000), updatedAt: iso(9_000) })]);
+  check("Bob non scrive gli stati di ripasso di Alice", flashPrivateWrite?.[0]?.reason === "denied", JSON.stringify(flashPrivateWrite));
+  await pushOwn(alice, [
+    ["studyDeck", FD.id], ["flashcard", FC.id], ["flashcard", `card-bob-${run}`], ["quiz", FQ.id], ["quizQuestion", FQQ.id], ["flashcardState", FS.id], ["studyRun", FR.id]
+  ].map(([type, id]) => row(type, { id, deletedAt: iso(60_000) }, true)));
+  const { error: flashCleanup } = await alice.client.from("studyos_shares").delete().eq("id", flashShare.id);
+  need("Alice toglie la condivisione di Flashcard e quiz", !flashCleanup, flashCleanup?.message);
 
   // La sync personale di Alice non cambia: i suoi dati restano come li scrive.
   const own = { ...P1, title: "Di Alice", color: "hsl(0 0% 50%)", cover: "data:image/png;base64,BBBB", sourceUid: `ics-own-${run}`, updatedAt: iso(30_000) };

@@ -8,6 +8,7 @@ import type { ShareScope } from "../lib/sharing";
 import { GROUP_EXAM_TOOLS } from "./catalogGroupExams";
 import { EXTRA_TOOLS } from "./catalogExtras";
 import { UNIVERSITY_TOOLS } from "./catalogUniversity";
+import { LEARNING_TOOLS } from "./catalogLearning";
 
 const ID = { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9_.:-]{1,120}$", description: "Id StudyOS restituito da una lettura precedente." } as const satisfies JsonSchema;
 const LIMIT = { type: "integer", minimum: 1, maximum: 100, default: 30, description: "Quanti elementi restituire (1–100, default 30)." } as const satisfies JsonSchema;
@@ -28,8 +29,8 @@ const SHARED_ID = { ...ID, description: "id di un elemento condiviso, restituito
 // Stesso ordine di SHARE_SCOPES in src/lib/sharing.ts (il test lo verifica): il catalogo resta senza import runtime del browser.
 const SHARE_SCOPE = {
   type: "string",
-  enum: ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals"],
-  description: "calendar = calendario; barb_exams = appelli ufficiali scelti; tasks = attività; study = sessioni e ripasso; progress = esami ancora da sostenere; materials = materiali e note; goals = obiettivi."
+  enum: ["calendar", "barb_exams", "tasks", "study", "progress", "materials", "goals", "flashcards"],
+  description: "calendar = calendario; barb_exams = appelli ufficiali scelti; tasks = attività; study = sessioni e ripasso; progress = esami ancora da sostenere; materials = materiali e note; goals = obiettivi; flashcards = raccolte di flashcard e quiz (senza filtro per materia; le leggi con studyos_list_decks e studyos_list_quizzes, mai le risposte di chi riceve)."
 } as const satisfies JsonSchema;
 const PERMISSION = { type: "string", enum: ["view", "edit"], description: "view = può vedere; edit = può modificare. Gli appelli ufficiali sono sempre view." } as const satisfies JsonSchema;
 const SUBJECT_IDS = { type: "array", maxItems: 50, items: ID, description: "Id delle tue materie (studyos_list_subjects). Vuoto = tutte le materie." } as const satisfies JsonSchema;
@@ -156,6 +157,11 @@ export interface AgentTool {
    * per gli strumenti che danno ad altre persone accesso ai dati.
    */
   alwaysAsk?: boolean;
+  /**
+   * La persona l'ha già chiesto nell'app (richieste «Spiegami meglio»): niente seconda conferma,
+   * salvo un divieto delle modifiche. Tocca solo le richieste e i loro risultati.
+   */
+  consented?: boolean;
   /** Descrizione sul connettore remoto, quando lì lo strumento fa altro (registro del server). */
   cloudDescription?: string;
   inputSchema: JsonSchema;
@@ -1027,7 +1033,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
     inputSchema: objectSchema({
       personId: PERSON,
       groupId: ID,
-      scopes: { type: "array", minItems: 1, maxItems: 7, items: SHARE_SCOPE, description: "Sezioni da condividere." },
+      scopes: { type: "array", minItems: 1, maxItems: 8, items: SHARE_SCOPE, description: "Sezioni da condividere." },
       permission: { ...PERMISSION, default: "view" },
       subjectIds: SUBJECT_IDS
     }, ["scopes"]),
@@ -1185,7 +1191,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
 ];
 
 /** Tutti gli strumenti: quelli di base e i cataloghi in file propri (appelli dei gruppi, strumenti personali in più, università). */
-export const AGENT_TOOLS: readonly AgentTool[] = [...CORE_TOOLS, ...GROUP_EXAM_TOOLS, ...EXTRA_TOOLS, ...UNIVERSITY_TOOLS];
+export const AGENT_TOOLS: readonly AgentTool[] = [...CORE_TOOLS, ...GROUP_EXAM_TOOLS, ...EXTRA_TOOLS, ...UNIVERSITY_TOOLS, ...LEARNING_TOOLS];
 
 const BY_NAME = new Map(AGENT_TOOLS.map((item) => [item.name, item]));
 

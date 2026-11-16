@@ -289,7 +289,15 @@ export function SettingsView() {
       groupInvites: scope === "full" ? snapshot.groupInvites : [],
       groupResources: scope === "full" ? snapshot.groupResources : [],
       groupActivities: scope === "full" ? snapshot.groupActivities : [],
-      examPlans: scope === "full" ? snapshot.examPlans : []
+      examPlans: scope === "full" ? snapshot.examPlans : [],
+      decks: scope === "full" ? snapshot.decks : [],
+      flashcards: scope === "full" ? snapshot.flashcards : [],
+      quizzes: scope === "full" ? snapshot.quizzes : [],
+      quizQuestions: scope === "full" ? snapshot.quizQuestions : [],
+      cardStates: scope === "full" ? snapshot.cardStates : [],
+      studyRuns: scope === "full" ? snapshot.studyRuns : [],
+      aiAnalyses: scope === "full" ? snapshot.aiAnalyses : [],
+      aiRequests: scope === "full" ? snapshot.aiRequests : []
       });
       const save = async (attachments: StudySnapshot["attachments"]) => {
         const envelope = await createBackupEnvelope(scopedFor(attachments), settings, exportEncrypted ? backupPassphrase : undefined, scope);

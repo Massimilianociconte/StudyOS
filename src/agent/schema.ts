@@ -82,6 +82,8 @@ export const validateSchema = (schema: JsonSchema, value: unknown, path = "input
   }
   if (schema.type === "object" || schema.properties) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, error: `${path} deve essere un oggetto.` };
+    // Oggetto libero (chiave → valore, es. meta delle raccolte): lo controlla lo strumento.
+    if (!schema.properties && schema.additionalProperties !== false) return { ok: true, data: value };
     const source = value as Record<string, unknown>;
     if (schema.additionalProperties === false) {
       const allowed = new Set(Object.keys(schema.properties ?? {}));

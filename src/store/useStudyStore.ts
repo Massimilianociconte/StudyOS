@@ -22,6 +22,14 @@ import type {
   DashboardWidget,
   Exam,
   ExamPlan,
+  AiAnalysis,
+  AiRequest,
+  Flashcard,
+  FlashcardState,
+  Quiz,
+  QuizQuestion,
+  StudyDeck,
+  StudyRun,
   Goal,
   GroupActivity,
   GroupInvite,
@@ -161,6 +169,14 @@ interface StudyState {
   groupResources: GroupResource[];
   groupActivities: GroupActivity[];
   examPlans: ExamPlan[];
+  decks: StudyDeck[];
+  flashcards: Flashcard[];
+  quizzes: Quiz[];
+  quizQuestions: QuizQuestion[];
+  cardStates: FlashcardState[];
+  studyRuns: StudyRun[];
+  aiAnalyses: AiAnalysis[];
+  aiRequests: AiRequest[];
   timer: TimerState;
   /** Riepilogo aperto di un Timer o Cronometro finito (Salva / Scarta); si riapre dal timer. */
   timerReview: boolean;
@@ -412,6 +428,7 @@ const APP_VIEWS: Record<AppView, true> = {
   barb: true,
   groups: true,
   sharing: true,
+  learn: true,
   settings: true
 };
 
@@ -1414,7 +1431,12 @@ export const useStudyStore = create<StudyState>((set, get) => {
         attachments: state.attachments.map(unlink),
         notes: state.notes.map(unlink),
         reminders: state.reminders.map(unlink),
-        examPlans: unlinkPlans(state.examPlans, { subjectIds: new Set([id]), examIds: goneExams }, now)
+        examPlans: unlinkPlans(state.examPlans, { subjectIds: new Set([id]), examIds: goneExams }, now),
+        // Raccolte, schede e quiz restano (contenuti di valore), solo senza materia.
+        decks: state.decks.map(free),
+        flashcards: state.flashcards.map(free),
+        quizzes: state.quizzes.map(free),
+        quizQuestions: state.quizQuestions.map(free)
       }));
       await commit();
     },

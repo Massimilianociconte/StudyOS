@@ -381,6 +381,7 @@ as $$
     when 'progress' then 'Progressi'
     when 'materials' then 'Materiali'
     when 'goals' then 'Obiettivi'
+    when 'flashcards' then 'Flashcard e quiz'
     else 'Dati'
   end
 $$;

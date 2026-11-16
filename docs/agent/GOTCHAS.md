@@ -595,3 +595,54 @@
   scattano. Una tabella nuova dei gruppi va aggiunta lì.
 - Gruppi con id di forma insolita (prima di `studyos_groups_id_shape`): lo snapshot del connettore li salta.
   Una riga di membro non cambia `user_id` né `group_id` (trigger in `groups.sql`).
+- Flashcard e quiz (`src/lib/learningModel.ts`, `srs.ts`, `cardBlocks.ts`, `learningStats.ts`,
+  `src/agent/learningTools.ts`): sono righe di `studyos_items` come le altre (tipi `studyDeck`,
+  `flashcard`, `flashcardState`, `quiz`, `quizQuestion`, `studyRun`, `aiAnalysis`, `aiRequest`).
+  `CONTENT_KEYS` di `learningModel.ts` e la lista di `studyos_agent_revision_conflict` in
+  `agent.sql` devono restare uguali (un test lo controlla). Blocchi e opzioni si ripuliscono anche
+  in lettura (`safeBlocks`, `safeOptions`): una riga può arrivare da un altro account o da una
+  versione vecchia.
+- Controllo di revisione solo nella push degli agenti (`studyos_agent_push`, nella WHERE
+  dell'upsert, non prima: un controllo prima dell'insert non vede una creazione simultanea). La
+  sync dell'app (`push_studyos_rows`) e le modifiche di chi riceve (`push_shared_rows`) restano
+  «l'ultima scrittura vince». Stessa revisione e stesso contenuto passano: è il retry. La guardia è
+  in plpgsql (i controlli di tipo vengono prima della conversione) e vale solo per interi sicuri
+  (0 … 2^53 − 1): una revisione fuori scala, scritta da chi può modificare una raccolta condivisa,
+  torna a ultima scrittura vince invece di bloccare la scheda. Le eliminazioni restano a ultima
+  scrittura vince in entrambi i sensi (una modifica vecchia può riportare in vita una scheda
+  eliminata): si ripristinano dal registro del connettore. Le richieste agli assistenti hanno una
+  `revision` che sale a ogni presa o chiusura (`updateRequest`): due prese dalla stessa versione nel
+  cloud, passa la prima. `expectedRevision` protegge solo il contenuto (`CONTENT_KEYS`): etichette,
+  fonti, difficoltà e spostamenti restano a ultima scrittura vince.
+- Il runner del connettore remoto manda le righe in ordine (tipo, id): due hub che scrivono le
+  stesse schede in ordine diverso andrebbero in deadlock. Le righe rifiutate diventano
+  `status=conflict` sui loro elementi (`perItemConflicts`); se una riga rifiutata non è un elemento
+  della risposta, l'errore vale per tutta la chiamata.
+- Risposte oltre `AGENT_RESPONSE_CHAR_LIMIT` (24 000 caratteri): prima si tolgono elementi in coda,
+  poi il disegno dei blocchi SVG (`omitted: "svg"`; senza `svg` una modifica che lo rimanda è
+  respinta), infine un errore leggibile. Mai JSON tagliato a metà.
+- `stableId` (`src/lib/id.ts`) per gli elementi nuovi con `externalRef`: due assistenti creano la
+  stessa riga invece di due. Ambito: raccolta madre o materia per le raccolte (le materie hanno id
+  casuali, quindi due account non danno lo stesso id), raccolta per le schede, raccolta o materia
+  per i quiz, quiz per le domande. Se l'id è già di un altro elemento, tuo o di una raccolta che ti
+  condividono, id casuale: lo stato di ripasso è una riga per id di scheda e due schede con lo
+  stesso id si mescolerebbero. Resta possibile solo per raccolte radice senza materia create con la
+  stessa chiave in due account prima di condividerle. Cambiare la funzione di hash o l'ambito cambia
+  gli id dei prossimi lotti, non di quelli salvati.
+- Condivisione `flashcards`: sempre per tutte le materie (raccolte senza materia). Stati di
+  ripasso e sessioni non entrano mai (`studyos_scope_types`): progressi personali anche sulle
+  schede degli altri. Una raccolta condivisa si elimina solo se vuota.
+- Connettore remoto: `CloudRunner` serializza le chiamate nello stesso processo (`exclusive`), quindi
+  due «assistenti» nello stesso processo non sono concorrenti. La concorrenza vera (due Durable
+  Object) si prova con due processi (`learning-stress-agent.mjs`). La cache del runner rilegge le
+  righe degli ultimi 60 s (`CURSOR_OVERLAP_MS`): le misure «a caldo» subito dopo molte scritture
+  contano anche quelle righe.
+- CPU: la CPU del processo Node di `learning-stress.mjs` è una stima, non il `cpuTime` del
+  Worker; la prima chiamata di un processo paga la compilazione (40–56 ms). Il numero vero si legge
+  con `wrangler tail` dopo un deploy. `zonedDate.parse` salta la regex per le date che finiscono
+  con «Z»: non rimuovere, le statistiche ne leggono migliaia.
+- `session_replication_role = replica` (salta il trigger di `updated_at`) solo sullo stack locale
+  nelle prove; mai su un progetto vero.
+- Vite in sviluppo serve i moduli con `?t=`: per ispezionare uno store dalla console prendi l'URL
+  del modulo da `performance.getEntriesByType('resource')`, un `import()` senza `?t=` crea
+  un'altra istanza vuota.

@@ -57,7 +57,11 @@ import {
   revisionFromRow,
   withProtectedFrom,
   restoredPayload,
-  PROTECTED_ENTITY_TYPES
+  PROTECTED_ENTITY_TYPES,
+  SCOPE_ENTITY_TYPES,
+  SHARE_SCOPES,
+  SUBJECTLESS_SCOPES,
+  revisionTitle
 } from "../src/lib/sharing.ts";
 import { readFileSync } from "node:fs";
 import { SHARED_ENTITY_LABEL, SHARE_PERMISSION_LABEL, SHARE_SCOPE_LABEL, scopesSummary, sharedEntityLabel } from "../src/lib/labels.ts";
@@ -84,7 +88,18 @@ const COVER_CASES = [
   ["materials", "note", { linkedEntityType: "task", linkedEntityId: "s1" }, ["s1"], false],
   ["materials", "note", {}, [], true],
   ["goals", "goal", {}, [], true],
-  ["goals", "preferences", {}, [], false]
+  ["goals", "preferences", {}, [], false],
+  ["flashcards", "studyDeck", { subjectId: "s1" }, [], true],
+  ["flashcards", "studyDeck", { parentId: "d1" }, [], true],
+  ["flashcards", "flashcard", { deckId: "d1", subjectId: "s1" }, [], true],
+  ["flashcards", "quiz", {}, [], true],
+  ["flashcards", "quizQuestion", { quizId: "q1" }, [], true],
+  // Progressi personali: mai nella sezione.
+  ["flashcards", "flashcardState", {}, [], false],
+  ["flashcards", "studyRun", {}, [], false],
+  ["flashcards", "aiRequest", {}, [], false],
+  ["flashcards", "aiAnalysis", {}, [], false],
+  ["study", "flashcard", { subjectId: "s1" }, [], false]
 ];
 
 test("copertura: specchio di studyos_scope_covers", () => {
@@ -558,7 +573,9 @@ test("cronologia: senza un nome da mostrare non compare mai l'id o l'email dell'
 
 test("cronologia: ogni tipo condivisibile ha un'etichetta in italiano", () => {
   for (const type of SHARED_ENTITY_TYPES) assert.ok(SHARED_ENTITY_LABEL[type], type);
-  assert.deepEqual([...SHARED_ENTITY_TYPES].sort(), ["attachment", "calendarEvent", "exam", "goal", "note", "studySession", "studyTopic", "task"]);
+  assert.deepEqual([...SHARED_ENTITY_TYPES].sort(), [
+    "attachment", "calendarEvent", "exam", "flashcard", "goal", "note", "quiz", "quizQuestion", "studyDeck", "studySession", "studyTopic", "task"
+  ]);
 });
 
 test("ripristino: solo elementi veri di un tipo condivisibile, con un id", () => {
@@ -941,7 +958,10 @@ test("ripristino: le chiavi protette vengono dalla copia attuale, poi dall'eleme
 
 test("ripristino: i tipi con copertine, file o UID sono proprio quelli che in src/types.ts li hanno", () => {
   const source = readFileSync(new URL("../src/types.ts", import.meta.url), "utf8");
-  const interfaces = { calendarEvent: "CalendarEvent", task: "Task", exam: "Exam", attachment: "Attachment", studySession: "StudySession", studyTopic: "StudyTopic", goal: "Goal", note: "Note" };
+  const interfaces = {
+    calendarEvent: "CalendarEvent", task: "Task", exam: "Exam", attachment: "Attachment", studySession: "StudySession", studyTopic: "StudyTopic", goal: "Goal", note: "Note",
+    studyDeck: "StudyDeck", flashcard: "Flashcard", quiz: "Quiz", quizQuestion: "QuizQuestion"
+  };
   assert.deepEqual(new Set(Object.keys(interfaces)), SHARED_ENTITY_TYPES);
   for (const [type, name] of Object.entries(interfaces)) {
     const start = source.indexOf(`export interface ${name} extends BaseEntity {`);
@@ -951,4 +971,64 @@ test("ripristino: i tipi con copertine, file o UID sono proprio quelli che in sr
     const hasProtected = /^\s*(?:cover|dataUrl|storedFile|sourceUid|[A-Za-z]*DataUrl)\??:/m.test(body);
     assert.equal(PROTECTED_ENTITY_TYPES.has(type), hasProtected, type);
   }
+});
+
+// ─── Sezione «flashcards» (raccolte, schede e quiz) ─────────────────────────────────────────
+
+const sqlCaseArrays = (sql, fn) => {
+  const start = sql.indexOf(`create or replace function public.${fn}(`);
+  assert.ok(start >= 0, fn);
+  const body = sql.slice(start, sql.indexOf("$$;", start));
+  return Object.fromEntries([...body.matchAll(/when '([a-z_]+)' then array\[([^\]]*)\]/g)].map(([, key, list]) => [key, [...list.matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1])]));
+};
+
+test("SQL: sezioni, tipi e sezioni senza materie sono lo specchio di src/lib/sharing.ts", () => {
+  const sql = readFileSync(new URL("../supabase/sharing.sql", import.meta.url), "utf8");
+  const scopeList = (text) => [...text.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  const check = sql.match(/check \(scope in \(([^)]*)\)\)/);
+  assert.deepEqual(scopeList(check[1]), [...SHARE_SCOPES]);
+  const validated = sql.match(/v_scope not in \(([^)]*)\)/);
+  assert.deepEqual(scopeList(validated[1]), [...SHARE_SCOPES]);
+  assert.match(sql, new RegExp(`jsonb_array_length\\(p_items\\) > ${SHARE_SCOPES.length} then`));
+  const types = sqlCaseArrays(sql, "studyos_scope_types");
+  for (const scope of SHARE_SCOPES) assert.deepEqual(types[scope], [...SCOPE_ENTITY_TYPES[scope]], scope);
+  const subjectless = sql.match(/scope not in \(([^)]*)\) or cardinality\(subject_ids\) = 0/);
+  assert.deepEqual(new Set(scopeList(subjectless[1])), SUBJECTLESS_SCOPES);
+  const people = readFileSync(new URL("../supabase/people.sql", import.meta.url), "utf8");
+  const labels = people.slice(people.indexOf("function public.studyos_scope_label("));
+  for (const scope of SHARE_SCOPES) assert.match(labels.slice(0, labels.indexOf("$$;", labels.indexOf("$$") + 2)), new RegExp(`when '${scope}' then '${SHARE_SCOPE_LABEL[scope]}'`), scope);
+});
+
+test("SQL: chi riceve scrive raccolte, schede e quiz con i campi controllati per tipo", () => {
+  const sql = readFileSync(new URL("../supabase/sharing.sql", import.meta.url), "utf8");
+  const start = sql.indexOf("create or replace function public.studyos_recipient_payload(");
+  const body = sql.slice(start, sql.indexOf("$$;", start));
+  const section = (name) => {
+    const from = body.indexOf(`${name} := `);
+    return body.slice(from, body.indexOf("end;", from));
+  };
+  for (const type of SCOPE_ENTITY_TYPES.flashcards) assert.ok(section("v_text").includes(`when '${type}' then`), `testi di ${type}`);
+  assert.match(section("v_lists"), /when 'flashcard' then array\['front', 'back'\]/);
+  assert.match(section("v_lists"), /when 'quizQuestion' then array\['prompt', 'options'\]/);
+  assert.match(section("v_optional_lists"), /when 'flashcard' then array\['explanation', 'sources'\]/);
+  assert.match(section("v_optional_objects"), /when 'studyDeck' then array\['source', 'meta', 'author'\]/);
+});
+
+test("flashcard: sezione senza materie, solo contenuti, mai i progressi personali", () => {
+  assert.equal(SUBJECTLESS_SCOPES.has("flashcards"), true);
+  assert.deepEqual([...SCOPE_ENTITY_TYPES.flashcards], ["studyDeck", "flashcard", "quiz", "quizQuestion"]);
+  for (const type of ["flashcardState", "studyRun", "aiRequest", "aiAnalysis"]) assert.equal(SHARED_ENTITY_TYPES.has(type), false, type);
+  assert.equal(SHARE_SCOPE_LABEL.flashcards, "Flashcard e quiz");
+  const received = [grant({ scope: "flashcards", permission: "edit" })];
+  assert.equal(itemAccess(received, "alice", "flashcard", { deckId: "d1" }), "edit");
+  assert.equal(itemAccess(received, "alice", "flashcardState", { id: "c1" }), null);
+  assert.deepEqual([...ownerEntityTypes(received)], [["alice", ["studyDeck", "flashcard", "quiz", "quizQuestion"]]]);
+});
+
+test("cronologia: una scheda senza titolo prende il testo del fronte, una domanda quello del testo", () => {
+  assert.equal(revisionTitle({ payload: { front: [{ type: "formula", latex: "K_c" }, { type: "text", text: "Costante" }] } }), "K_c");
+  assert.equal(revisionTitle({ payload: { front: [{ type: "image", url: "https://x" }, { type: "text", text: "  Legge   dei gas " }] } }), "Legge dei gas");
+  assert.equal(revisionTitle({ payload: { prompt: ["Quanto fa 2+2?"] } }), "Quanto fa 2+2?");
+  assert.equal(revisionTitle({ payload: { front: "non una lista" } }), "Elemento senza titolo");
+  assert.equal(revisionTitle({ payload: { title: "Raccolta", front: [{ type: "text", text: "x" }] } }), "Raccolta");
 });

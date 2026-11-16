@@ -41,13 +41,13 @@ create table if not exists public.studyos_shares (
 
 alter table public.studyos_shares drop constraint if exists studyos_shares_scope_check;
 alter table public.studyos_shares add constraint studyos_shares_scope_check
-  check (scope in ('calendar', 'barb_exams', 'tasks', 'study', 'progress', 'materials', 'goals'));
+  check (scope in ('calendar', 'barb_exams', 'tasks', 'study', 'progress', 'materials', 'goals', 'flashcards'));
 alter table public.studyos_shares drop constraint if exists studyos_shares_permission_check;
 alter table public.studyos_shares add constraint studyos_shares_permission_check
   check (permission in ('view', 'edit') and (scope <> 'barb_exams' or permission = 'view'));
 alter table public.studyos_shares drop constraint if exists studyos_shares_subjects_check;
 alter table public.studyos_shares add constraint studyos_shares_subjects_check
-  check (cardinality(subject_ids) <= 50 and (scope <> 'goals' or cardinality(subject_ids) = 0));
+  check (cardinality(subject_ids) <= 50 and (scope not in ('goals', 'flashcards') or cardinality(subject_ids) = 0));
 alter table public.studyos_shares drop constraint if exists studyos_shares_target_check;
 alter table public.studyos_shares add constraint studyos_shares_target_check
   check (num_nonnulls(grantee_user_id, grantee_group_id) = 1 and grantee_user_id is distinct from owner_id);
@@ -131,6 +131,8 @@ as $$
     when 'progress' then array['exam']
     when 'materials' then array['attachment', 'note']
     when 'goals' then array['goal']
+    -- Solo i contenuti: stati di ripasso, sessioni, tentativi, analisi e richieste restano personali.
+    when 'flashcards' then array['studyDeck', 'flashcard', 'quiz', 'quizQuestion']
     else array[]::text[]
   end
 $$;
@@ -370,6 +372,8 @@ declare
   v_text text[];
   v_optional text[];
   v_lists text[];
+  v_optional_lists text[];
+  v_optional_objects text[];
   v_hex constant text := '^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$';
   v_web constant text := '^[hH][tT][tT][pP][sS]?://[^[:space:][:cntrl:]]+$';
   -- Come NEVER_KEYS in src/agent/shared.ts, tranne il cronometro (lo chiude un cambio di stato).
@@ -453,6 +457,10 @@ begin
     when 'attachment' then array['name', 'mimeType', 'addedAt', 'description']
     when 'note' then array['title', 'body']
     when 'goal' then array['title', 'description', 'category', 'startDate', 'metric', 'status', 'notes']
+    when 'studyDeck' then array['title', 'description', 'kind']
+    when 'flashcard' then array['deckId']
+    when 'quiz' then array['title', 'description']
+    when 'quizQuestion' then array['quizId', 'kind']
     else array[]::text[]
   end;
   v_optional := case p_type
@@ -463,6 +471,10 @@ begin
     when 'attachment' then array['linkedEntityType', 'linkedEntityId']
     when 'note' then array['linkedEntityType', 'linkedEntityId']
     when 'goal' then array['deadline']
+    when 'studyDeck' then array['parentId', 'subjectId', 'icon', 'externalRef']
+    when 'flashcard' then array['subjectId', 'title', 'externalRef']
+    when 'quiz' then array['deckId', 'subjectId', 'externalRef']
+    when 'quizQuestion' then array['subjectId', 'mistakes', 'externalRef']
     else array[]::text[]
   end;
   v_lists := array['tags'] || case p_type
@@ -472,6 +484,22 @@ begin
     when 'studyTopic' then array['attachmentIds', 'questions']
     when 'exam' then array['program', 'frequentQuestions']
     when 'goal' then array['linkedTaskIds', 'linkedSessionIds']
+    -- Blocchi e opzioni: la forma di ogni elemento la controlla chi legge (safeBlocks, safeOptions).
+    when 'flashcard' then array['front', 'back']
+    when 'quizQuestion' then array['prompt', 'options']
+    else array[]::text[]
+  end;
+  -- Liste e oggetti facoltativi: possono mancare o essere null, altrimenti hanno il loro tipo.
+  v_optional_lists := case p_type
+    when 'flashcard' then array['explanation', 'sources']
+    when 'quiz' then array['sources']
+    when 'quizQuestion' then array['explanation', 'sources']
+    else array[]::text[]
+  end;
+  v_optional_objects := case p_type
+    when 'studyDeck' then array['source', 'meta', 'author']
+    when 'flashcard' then array['author']
+    when 'quiz' then array['author']
     else array[]::text[]
   end;
   if exists (
@@ -486,6 +514,14 @@ begin
     select 1 from unnest(v_lists) as field (key)
     where (v_create or (v_result->field.key) is distinct from (v_old->field.key))
       and coalesce(jsonb_typeof(v_result->field.key), 'missing') <> 'array'
+  ) or exists (
+    select 1 from unnest(v_optional_lists) as field (key)
+    where (v_result->field.key) is distinct from (v_old->field.key)
+      and coalesce(jsonb_typeof(v_result->field.key), 'null') not in ('array', 'null')
+  ) or exists (
+    select 1 from unnest(v_optional_objects) as field (key)
+    where (v_result->field.key) is distinct from (v_old->field.key)
+      and coalesce(jsonb_typeof(v_result->field.key), 'null') not in ('object', 'null')
   ) then
     return null;
   end if;
@@ -808,7 +844,7 @@ begin
   if p_require and jsonb_array_length(p_items) = 0 then
     raise exception 'Scegli almeno una sezione';
   end if;
-  if jsonb_array_length(p_items) > 7 then
+  if jsonb_array_length(p_items) > 8 then
     raise exception 'Troppe sezioni';
   end if;
   for v_item in select value from jsonb_array_elements(p_items) loop
@@ -816,7 +852,7 @@ begin
     v_permission := coalesce(v_item->>'permission', 'view');
     v_subjects := coalesce(v_item->'subject_ids', '[]'::jsonb);
     v_names := coalesce(v_item->'subject_names', '[]'::jsonb);
-    if v_scope is null or v_scope not in ('calendar', 'barb_exams', 'tasks', 'study', 'progress', 'materials', 'goals') then
+    if v_scope is null or v_scope not in ('calendar', 'barb_exams', 'tasks', 'study', 'progress', 'materials', 'goals', 'flashcards') then
       raise exception 'Sezione non valida: %', coalesce(v_scope, '');
     end if;
     if v_scope = any (v_seen) then
@@ -839,6 +875,9 @@ begin
     end if;
     if v_scope = 'goals' and jsonb_array_length(v_subjects) > 0 then
       raise exception 'Gli obiettivi non hanno materie';
+    end if;
+    if v_scope = 'flashcards' and jsonb_array_length(v_subjects) > 0 then
+      raise exception 'Flashcard e quiz si condividono per tutte le materie';
     end if;
   end loop;
 end;

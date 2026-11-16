@@ -110,6 +110,10 @@ export const createZonedDate = (timeZone: string): DateConstructor => {
     return early;
   };
   const parse = (value: string) => {
+    // Istanti con «Z» (toISOString: timbri, scadenze, risposte) non hanno ora locale: stesso esito
+    // di prima (LOCAL_ISO non li accetta), senza la regex. Le statistiche ne leggono migliaia.
+    const last = value.charCodeAt(value.length - 1);
+    if (last === 90 || last === 122) return NativeDate.parse(value);
     const match = LOCAL_ISO.exec(value.trim());
     if (!match) return NativeDate.parse(value);
     const [, year, month, day, hour, minute, second = "0", fraction = "0"] = match;

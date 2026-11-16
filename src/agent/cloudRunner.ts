@@ -15,6 +15,7 @@
 // studyos_split_pages è puro: si risponde subito, senza leggere né scrivere il cloud.
 
 import { CLOUD_UNAVAILABLE } from "./catalog";
+import { ALL_GROUPS, GROUP_TYPES, groupOfType, groupsForTool, type DataGroup } from "./cloudGroups";
 import { configureAgentRuntime, executeAgentTool, splitPagesResult } from "./execute";
 import {
   AUDIT_UUID_RE,
@@ -81,7 +82,11 @@ interface PulledRow {
 
 interface AccountCache {
   rows: Map<string, PulledRow>;
+  /** Cursore del pull di tutti i tipi (agent.sql senza p_types). */
   cursor: string | null;
+  /** Gruppi già letti e il loro cursore (1.10.0: pull per tipi, vedi cloudGroups.ts). */
+  loaded: Set<DataGroup>;
+  cursors: Map<DataGroup, string | null>;
 }
 
 interface PushRow {
@@ -109,7 +114,8 @@ export const CLOUD_TEXT = {
   offline: "Il cloud di StudyOS non risponde. Riprova tra poco.",
   unavailable: "Strumento non disponibile sul connettore remoto: usa il connettore principale con StudyOS aperto.",
   conflict: (count: number, partial: boolean) =>
-    `${partial ? "Modifica salvata solo in parte" : "Modifica non salvata"}: ${count === 1 ? "un elemento è stato cambiato" : `${count} elementi sono stati cambiati`} nel frattempo da un altro dispositivo. Rileggi i dati e riprova.`,
+    `${partial ? "Modifica salvata solo in parte" : "Modifica non salvata"}: ${count === 1 ? "un elemento è stato cambiato" : `${count} elementi sono stati cambiati`} nel frattempo da un altro dispositivo o da un altro assistente. Rileggi i dati e riprova.`,
+  itemConflict: "Cambiato nel frattempo da un altro dispositivo o da un altro assistente: non salvato. Rileggi l'elemento e riprova.",
   auditMissing: "Il registro del connettore non è ancora attivo: chi gestisce StudyOS deve eseguire di nuovo supabase/agent.sql.",
   badAuditId: "id deve essere l'id (un uuid) di una voce o di una chiamata (callId) restituito da studyos_list_audit.",
   badDate: "since e until devono essere date ISO 8601.",
@@ -168,10 +174,12 @@ const rowStamp = (row: PulledRow | undefined) => {
 const emptyCollections = () =>
   Object.fromEntries(COLLECTIONS.map((key) => [key, [] as SyncableEntity[]])) as unknown as CollectionsState;
 
-const collectionsFrom = (cache: AccountCache): CollectionsState => {
+const collectionsFrom = (cache: AccountCache, groups: ReadonlySet<DataGroup>): CollectionsState => {
   const collections = emptyCollections() as unknown as Record<CollectionKey, SyncableEntity[]>;
   for (const row of cache.rows.values()) {
     if (row.deleted) continue;
+    // Solo i gruppi dello strumento: meno dati da confrontare dopo (CPU del Worker).
+    if (!groups.has(groupOfType(row.entity_type))) continue;
     const collection = COLLECTION_BY_ENTITY_TYPE[row.entity_type];
     if (!collection || !isEntity(row.payload, row.entity_id)) continue;
     // Gruppi: la verità è nelle tabelle condivise; nel cloud personale ne resta solo una copia vecchia
@@ -214,6 +222,31 @@ const exclusive = <T>(task: () => Promise<T>): Promise<T> => {
   return run;
 };
 
+/**
+ * Righe rifiutate dal database (revisione cambiata nel frattempo) riportate sui loro elementi: gli
+ * strumenti a lotti (flashcard, domande, raccolte) promettono un esito per elemento, e gli altri
+ * elementi sono stati salvati. Solo se ogni riga rifiutata corrisponde a un elemento della risposta;
+ * altrimenti (righe di contorno, strumenti senza elenco) l'errore resta per tutta la chiamata.
+ */
+export const perItemConflicts = (result: AgentCallResult, refusedIds: ReadonlySet<string>): AgentCallResult | null => {
+  if (!result.ok || !Array.isArray(result.data.items) || !refusedIds.size) return null;
+  const matched = new Set<string>();
+  const counts: Record<string, number> = {};
+  const items = (result.data.items as unknown[]).map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const record = item as Record<string, unknown>;
+    if (typeof record.id !== "string" || !refusedIds.has(record.id) || (record.status !== "created" && record.status !== "updated")) return item;
+    matched.add(record.id);
+    counts[record.status] = (counts[record.status] ?? 0) + 1;
+    return { ...record, status: "conflict", error: CLOUD_TEXT.itemConflict };
+  });
+  if (matched.size !== refusedIds.size) return null;
+  const data: Record<string, unknown> = { ...result.data, items };
+  for (const [status, count] of Object.entries(counts)) if (typeof data[status] === "number") data[status] = (data[status] as number) - count;
+  if (typeof data.conflict === "number") data.conflict = (data.conflict as number) + matched.size;
+  return { ...result, data };
+};
+
 export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
   const base = backend.url.replace(/\/+$/, "");
   const doFetch = backend.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
@@ -253,14 +286,14 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
       caches.set(secret, cache);
       return cache;
     }
-    cache = { rows: new Map(), cursor: null };
+    cache = { rows: new Map(), cursor: null, loaded: new Set(), cursors: new Map() };
     caches.set(secret, cache);
     while (caches.size > MAX_CACHED_ACCOUNTS) caches.delete(caches.keys().next().value as string);
     return cache;
   };
 
   /** Righe nuove dopo l'ultimo cursore, con un minuto di sovrapposizione come la sync dell'app. */
-  const refresh = async (secret: string, cache: AccountCache) => {
+  const refreshAll = async (secret: string, cache: AccountCache) => {
     const since = cache.cursor ? new Date(Date.parse(cache.cursor) - CURSOR_OVERLAP_MS).toISOString() : null;
     let offset = 0;
     for (;;) {
@@ -272,6 +305,65 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
       }
       if (page.length < PAGE_SIZE) break;
       offset += PAGE_SIZE;
+    }
+    // Letto tutto: ogni gruppo riparte da qui se torna il pull per tipi.
+    for (const group of ALL_GROUPS) {
+      cache.loaded.add(group);
+      cache.cursors.set(group, cache.cursor);
+    }
+  };
+
+  /** Pull per tipi di alcuni gruppi da `since` (null = tutto), con il cursore di ciascun gruppo. */
+  const pullGroups = async (secret: string, cache: AccountCache, groups: DataGroup[], since: string | null) => {
+    const types = groups.flatMap((group) => GROUP_TYPES[group]);
+    let offset = 0;
+    let latest: string | null = null;
+    for (;;) {
+      const page = await rpc<PulledRow[]>("studyos_agent_pull", { p_secret: secret, p_since: since, p_offset: offset, p_limit: PAGE_SIZE, p_types: types });
+      if (!Array.isArray(page)) throw new Error("Risposta del cloud non valida.");
+      for (const row of page) {
+        cache.rows.set(keyOf(row.entity_type, row.entity_id), row);
+        if (!latest || row.updated_at > latest) latest = row.updated_at;
+      }
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+    // Tutti i gruppi letti sono aggiornati fino all'ultima riga vista, anche quelli senza righe nuove:
+    // updated_at lo scrive il server, una riga successiva arriva dopo (col minuto di sovrapposizione).
+    // Con il cursore della sola ultima riga di ogni gruppo, il gruppo fermo da più tempo (le materie)
+    // farebbe rileggere a ogni chiamata tutte le righe degli altri gruppi scritte dopo.
+    for (const group of groups) {
+      cache.loaded.add(group);
+      const cursor = cache.cursors.get(group);
+      if (latest && (!cursor || latest > cursor)) cache.cursors.set(group, latest);
+    }
+  };
+
+  // agent.sql di prima della 1.10.0: studyos_agent_pull senza p_types (PGRST202). Si legge tutto come
+  // prima per LEGACY_PUSH_RETRY_MS, poi si riprova il pull per tipi.
+  let legacyPullUntil = 0;
+
+  /**
+   * Aggiorna i gruppi chiesti: quelli mai letti da capo in una chiamata, gli altri in una sola
+   * chiamata incrementale dal cursore più vecchio fra loro (da capo se uno è ancora senza righe:
+   * account vuoto, lettura vuota). Al massimo due letture (più pagine).
+   */
+  const refresh = async (secret: string, cache: AccountCache, groups: readonly DataGroup[]) => {
+    if (!groups.length) return;
+    if (now() < legacyPullUntil) return refreshAll(secret, cache);
+    const fresh = groups.filter((group) => !cache.loaded.has(group));
+    const known = groups.filter((group) => cache.loaded.has(group));
+    try {
+      if (fresh.length) await pullGroups(secret, cache, fresh, null);
+      if (known.length) {
+        const cursors = known.map((group) => cache.cursors.get(group) ?? null);
+        const oldest = cursors.includes(null) ? null : (cursors as string[]).sort()[0];
+        await pullGroups(secret, cache, known, oldest ? new Date(Date.parse(oldest) - CURSOR_OVERLAP_MS).toISOString() : null);
+      }
+    } catch (error) {
+      if (!(error instanceof MissingFunctionError)) throw error;
+      legacyPullUntil = now() + LEGACY_PUSH_RETRY_MS;
+      await refreshAll(secret, cache);
     }
   };
 
@@ -298,9 +390,13 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
 
   const push = async (secret: string, cache: AccountCache, rows: PushRow[], tool: string, callId: string) => {
     const encoder = new TextEncoder();
-    const sized = rows.map((row) => ({ row, size: encoder.encode(JSON.stringify(row)).length }));
+    // Righe in ordine fisso (tipo, id): due hub che scrivono le stesse schede in ordine diverso
+    // bloccherebbero le righe a incrocio e Postgres annullerebbe un lotto intero (deadlock).
+    const ordered = [...rows].sort((a, b) => (a.entity_type === b.entity_type ? (a.entity_id < b.entity_id ? -1 : a.entity_id > b.entity_id ? 1 : 0) : a.entity_type < b.entity_type ? -1 : 1));
+    const sized = ordered.map((row) => ({ row, size: encoder.encode(JSON.stringify(row)).length }));
     let accepted = 0;
     let refused = 0;
+    const refusedIds = new Set<string>();
     for (const batch of chunkBySize(sized, (item) => item.size, PUSH_MAX_BYTES, PUSH_MAX_ROWS)) {
       const results = await pushBatch(secret, batch.map((item) => item.row), tool, callId);
       if (!Array.isArray(results) || results.length !== batch.length) throw new Error("Risposta del cloud incompleta.");
@@ -312,10 +408,11 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
           cache.rows.set(keyOf(row.entity_type, row.entity_id), { ...row, updated_at: now });
         } else {
           refused += 1;
+          refusedIds.add(row.entity_id);
         }
       }
     }
-    return { accepted, refused };
+    return { accepted, refused, refusedIds };
   };
 
   /** Appelli e correzioni dei gruppi dell'account nello store in memoria. Script non eseguito = non attivi. */
@@ -343,8 +440,9 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
 
   const execute = async (grant: CloudGrant, name: string, args: Record<string, unknown>): Promise<AgentCallResult> => {
     const cache = cacheFor(grant.secret);
-    await refresh(grant.secret, cache);
-    const before = collectionsFrom(cache);
+    const groups = groupsForTool(name, args);
+    await refresh(grant.secret, cache, groups);
+    const before = collectionsFrom(cache, new Set(groups));
 
     if (!sharedReset) {
       // Nessun dato di altre persone sul connettore remoto.
@@ -372,10 +470,10 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     if (!rows.length) return result;
 
     // Un id per richiesta: tutte le push di questa chiamata finiscono nella stessa voce del registro.
-    const { accepted, refused } = await push(grant.secret, cache, rows, name, newCallId());
+    const { accepted, refused, refusedIds } = await push(grant.secret, cache, rows, name, newCallId());
     if (!refused) return result;
-    await refresh(grant.secret, cache).catch(() => caches.delete(grant.secret));
-    return fail("failed", CLOUD_TEXT.conflict(refused, accepted > 0));
+    await refresh(grant.secret, cache, groups).catch(() => caches.delete(grant.secret));
+    return perItemConflicts(result, refusedIds) ?? fail("failed", CLOUD_TEXT.conflict(refused, accepted > 0));
   };
 
   /** studyos_list_audit sul connettore remoto: il registro del server per chiamate, non quello di un browser. */

@@ -54,7 +54,7 @@ definer as (
 -- (keepalive.sql) scrive solo l'ora dell'ultimo battito.
 anon_entry (fn_oid) as (
   select fn::oid from (values
-    (to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer)')),
+    (to_regprocedure('public.studyos_agent_pull(text,timestamptz,integer,integer,text[])')),
     (to_regprocedure('public.studyos_agent_push(text,text,jsonb,text,uuid)')),
     (to_regprocedure('public.studyos_agent_audit_list(text,integer,integer,text,text,timestamptz,timestamptz,uuid)')),
     (to_regprocedure('public.studyos_agent_restore(text,uuid)')),

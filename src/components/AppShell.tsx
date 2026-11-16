@@ -35,7 +35,8 @@ const navGroups: { title: string; items: NavItem[] }[] = [
       { view: "dashboard", label: "Home", short: "Home", icon: "LayoutDashboard", hint: "Il riepilogo di oggi" },
       { view: "calendar", label: "Calendario", short: "Calendario", icon: "CalendarDays", hint: "Lezioni, impegni e scadenze" },
       { view: "tasks", label: "Attività", short: "Attività", icon: "Check", hint: "Le cose da fare, con scadenza" },
-      { view: "study", label: "Studio", short: "Studio", icon: "Timer", hint: "Timer, sessioni e ripassi" }
+      { view: "study", label: "Studio", short: "Studio", icon: "Timer", hint: "Timer, sessioni e ripassi" },
+      { view: "learn", label: "Ripasso", short: "Ripasso", icon: "Brain", hint: "Flashcard, quiz e ripasso a intervalli" }
     ]
   },
   {

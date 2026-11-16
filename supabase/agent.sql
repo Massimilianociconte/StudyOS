@@ -117,11 +117,18 @@ revoke all on function public.studyos_agent_user(text) from public, anon, authen
 -- Righe dell'account dopo `p_since` (updated_at del server), in ordine come il pull dell'app.
 -- Senza i file incorporati: gli strumenti degli agenti non li leggono. Senza `storedFile` (file
 -- nello spazio file, storage.sql): una copia vecchia dell'agente non lo riporta indietro.
+-- 1.10.0: p_types (facoltativo) legge solo alcuni tipi di entità. Il connettore remoto carica solo
+-- i gruppi di dati che servono allo strumento (cloudGroups.ts): gli strumenti di sempre non leggono
+-- flashcard, quiz e sessioni di ripasso, e il loro costo non cresce con le raccolte. Una sola firma
+-- (la vecchia a quattro argomenti si toglie): un hub di prima chiama senza p_types e legge tutto.
+drop function if exists public.studyos_agent_pull(text, timestamptz, integer, integer);
+
 create or replace function public.studyos_agent_pull(
   p_secret text,
   p_since timestamptz,
   p_offset integer,
-  p_limit integer
+  p_limit integer,
+  p_types text[] default null
 )
 returns table(entity_type text, entity_id text, payload jsonb, deleted boolean, updated_at timestamptz)
 language plpgsql
@@ -135,6 +142,9 @@ begin
   if v_user is null then
     raise exception 'Collegamento dell''assistente non valido o revocato.' using errcode = '28000';
   end if;
+  if p_types is not null and cardinality(p_types) > 64 then
+    raise exception 'Troppi tipi richiesti.' using errcode = '22023';
+  end if;
   return query
     select i.entity_type, i.entity_id,
       case when jsonb_typeof(i.payload) = 'object'
@@ -145,6 +155,7 @@ begin
     from public.studyos_items as i
     where i.user_id = v_user
       and i.entity_type <> 'snapshot'
+      and (p_types is null or i.entity_type = any(p_types))
       and (p_since is null or i.updated_at >= p_since)
     order by i.updated_at asc, i.id asc
     offset greatest(coalesce(p_offset, 0), 0)
@@ -152,8 +163,8 @@ begin
 end;
 $$;
 
-revoke all on function public.studyos_agent_pull(text, timestamptz, integer, integer) from public;
-grant execute on function public.studyos_agent_pull(text, timestamptz, integer, integer) to anon, authenticated;
+revoke all on function public.studyos_agent_pull(text, timestamptz, integer, integer, text[]) from public;
+grant execute on function public.studyos_agent_pull(text, timestamptz, integer, integer, text[]) to anon, authenticated;
 
 -- Registro del connettore remoto (revisione 1.8.0). Ogni riga che studyos_agent_push cambia
 -- lascia una voce con l'immagine prima e dopo: la scrive la funzione stessa, quindi l'hub non può
@@ -315,6 +326,70 @@ revoke all on function public.studyos_agent_audit_prune(uuid) from public, anon,
 -- predefiniti), e più versioni renderebbero ambigua la chiamata.
 drop function if exists public.studyos_agent_push(text, text, jsonb);
 
+-- Schede, quiz e domande (1.10.0): la revisione sale quando cambia il contenuto. Due assistenti che
+-- modificano (o creano, con la stessa externalRef: id stabile) la stessa versione scrivono la stessa
+-- revisione con contenuti diversi: passa la prima, la seconda è rifiutata e il connettore lo dice
+-- («Modifica non salvata… rileggi») invece di sovrascrivere in silenzio. Una revisione più vecchia è
+-- rifiutata. Stessa revisione e stesso contenuto (etichette, posizione, invio ripetuto) restano a
+-- ultima scrittura vince. Richieste agli assistenti: ogni presa, chiusura o rinuncia alza la
+-- revisione, così due assistenti non prendono la stessa richiesta (il secondo token è rifiutato).
+-- Solo interi sicuri per JavaScript (0 … 2^53 − 1): un valore fuori scala (1e300, scritto da chi
+-- può modificare una raccolta condivisa) torna a ultima scrittura vince invece di bloccare la scheda
+-- per sempre. Le eliminazioni (in un senso o nell'altro) restano a ultima scrittura vince: il
+-- registro del connettore le ripristina. Solo la push degli assistenti: la sync dell'app non cambia.
+-- plpgsql: i controlli di tipo vengono sempre prima della conversione in numero.
+create or replace function public.studyos_agent_revision_conflict(
+  p_type text,
+  p_new jsonb,
+  p_new_deleted boolean,
+  p_current jsonb,
+  p_current_deleted boolean
+)
+returns boolean
+language plpgsql
+immutable
+set search_path = pg_catalog
+as $$
+declare
+  v_keys text[];
+  v_new numeric;
+  v_current numeric;
+begin
+  if p_type in ('flashcard', 'quiz', 'quizQuestion') then
+    v_keys := array['front', 'back', 'explanation', 'prompt', 'options', 'kind', 'title', 'mistakes'];
+  elsif p_type = 'aiRequest' then
+    v_keys := array['status', 'claimToken', 'leaseUntil', 'result', 'error'];
+  else
+    return false;
+  end if;
+  if coalesce(p_new_deleted, false) or coalesce(p_current_deleted, false) then
+    return false;
+  end if;
+  if jsonb_typeof(p_new) is distinct from 'object' or jsonb_typeof(p_current) is distinct from 'object'
+     or jsonb_typeof(p_new->'revision') is distinct from 'number'
+     or jsonb_typeof(p_current->'revision') is distinct from 'number' then
+    return false;
+  end if;
+  v_new := (p_new->>'revision')::numeric;
+  v_current := (p_current->>'revision')::numeric;
+  if v_new <> trunc(v_new) or v_current <> trunc(v_current)
+     or v_new < 0 or v_current < 0
+     or v_new > 9007199254740991 or v_current > 9007199254740991 then
+    return false;
+  end if;
+  if v_new <> v_current then
+    return v_new < v_current;
+  end if;
+  return exists (
+    select 1
+    from unnest(v_keys) as content (key)
+    where (p_new->content.key) is distinct from (p_current->content.key)
+  );
+end;
+$$;
+
+revoke all on function public.studyos_agent_revision_conflict(text, jsonb, boolean, jsonb, boolean) from public, anon, authenticated;
+
 create or replace function public.studyos_agent_push(
   p_secret text,
   p_client_id text,
@@ -392,14 +467,18 @@ begin
       deleted = excluded.deleted,
       encrypted = false,
       client_id = excluded.client_id
-    where public.studyos_item_stamp(excluded.payload, excluded.deleted, excluded.updated_at)
-        > public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
-       or (
-         public.studyos_item_stamp(excluded.payload, excluded.deleted, excluded.updated_at)
-           = public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
-         and excluded.payload = current_row.payload
-         and excluded.deleted = current_row.deleted
-       )
+    where (
+        public.studyos_item_stamp(excluded.payload, excluded.deleted, excluded.updated_at)
+          > public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+        or (
+          public.studyos_item_stamp(excluded.payload, excluded.deleted, excluded.updated_at)
+            = public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
+          and excluded.payload = current_row.payload
+          and excluded.deleted = current_row.deleted
+        )
+      )
+      -- Valutata sulla riga bloccata: vale anche quando due assistenti creano la stessa riga insieme.
+      and not public.studyos_agent_revision_conflict(v_type, excluded.payload, excluded.deleted, current_row.payload, current_row.deleted)
     returning true, public.studyos_item_stamp(current_row.payload, current_row.deleted, current_row.updated_at)
       into v_applied, v_stamp;
 

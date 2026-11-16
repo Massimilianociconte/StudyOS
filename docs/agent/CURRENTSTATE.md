@@ -446,3 +446,87 @@ Passo 4 fatto il 13/11/2026: i due segreti nel Worker (`/push` senza segreto ora
 (job `studyos-push-reminders` ogni minuto). `push-reminders-verify.sql` e `people-verify.sql` tutto
 `true`. Restano: ricollegare i connettori (`/mcp`, `/u/camilla-rossi/mcp`, `/u/chicca/mcp`) e la
 prova del passo 5 (una notifica vera conferma anche la coppia di chiavi VAPID).
+
+## Flashcard, quiz, ripasso e richieste agli agenti (16 novembre 2026, ramo `claude/flashcards-quiz`)
+
+Nuova sezione **Ripasso** (raccolte, flashcard a blocchi JSON con KaTeX, SVG ripulito e immagini
+https, quiz a risposta singola o multipla, ripasso a intervalli tipo SM-2 con Corretta/Sbagliata/
+Dubbia/Salta, statistiche, Analisi AI, «Spiegami meglio»), connettore 1.10.0 con 21 strumenti nuovi
+(115 in tutto) e sezione di condivisione «Flashcard e quiz». Nessuna chiave di fornitori AI: i testi
+li scrivono gli assistenti collegati via MCP. Design:
+[../superpowers/specs/2026-11-16-flashcards-quiz-design.md](../superpowers/specs/2026-11-16-flashcards-quiz-design.md).
+
+SQL sul progetto reale (16/11/2026, SQL Editor della dashboard): `sharing.sql`, `people.sql`,
+`agent.sql`, poi `agent.sql` di nuovo con la guardia corretta dalla revisione; `verify`,
+`sharing-verify`, `people-verify` e `agent-verify` tutti `true` (`security_issues` vuoto,
+`revision_guard_ready` con richieste agli assistenti e interi sicuri). Il Worker pubblicato è ancora
+1.9.0 e funziona con questo SQL (pull senza `p_types`).
+
+Revisione completa dopo l'iniezione (quattro revisori: modello e store, SQL, connettore, UI), tutto
+corretto e riprovato:
+
+- quiz con più di 400 domande: punteggio su tutte le risposte e righe di continuazione senza
+  punteggio (prima: risposte perse e punteggio sbagliato); id delle opzioni stabili quando se ne
+  inserisce una in testa o se ne toglie una; contatori del ripasso mai `NaN`;
+- `safeUrl`: rifiutati `localhost.`, `%2e`, host senza punto, IPv4 esadecimali/interi (diventano
+  127.0.0.1), CGNAT, 0/8, multicast, `.lan`, `.home.arpa`, `fritz.box`, IPv6 letterali;
+- copia di una raccolta: `externalRef` tolta, altezza dell'albero controllata (prima 14 livelli);
+  raccolte in un ciclo di genitori mostrate come radici;
+- quiz condivisi: chi riceve non cambia raccolta e materia; spostando un quiz la materia segue la
+  raccolta (anche nessuna) e le domande si riallineano (anche da `studyos_save_decks`);
+- connettore: id stabili mai uguali a quelli di una raccolta condivisa (lo stato di ripasso di una
+  scheda finiva sull'altra) e ambito per materia o raccolta madre; indice delle raccolte per array
+  (`deckById`) e conteggi in un passaggio (prima 47 ms con 600 raccolte); risposte troppo grandi
+  sempre JSON valido (SVG omessi, poi errore); conflitti del database come `status=conflict` per
+  elemento; righe inviate in ordine (niente deadlock fra due hub); due prese della stessa richiesta
+  nel cloud escluse (`revision` della richiesta e guardia SQL); spiegazioni oltre 96 kB rifiutate;
+- SQL: guardia in plpgsql, solo interi sicuri (una revisione `1e300` bloccava la scheda per
+  sempre), `hub_rpc_ready` falso se torna il pull a quattro argomenti, prove nuove in
+  `scripts/supabase/agent-revision-tests.sql` (dentro `scratch-pg.sh`);
+- UI: la scheda successiva non si mostra più girata, tasti ignorati sotto un altro dialogo e se
+  tenuti premuti, immagini «tocca per caricare» non ereditate fra domande, pulsante «Mostra la
+  risposta» per tastiera e screen reader nel drawer e nell'anteprima, tabelle delle statistiche a
+  375 px, formule in linea contenute, doppio invio bloccato (Duplica, Invia, Pubblica, Enter),
+  conferma di eliminazione non ereditata dalla sotto-raccolta.
+
+Verifiche eseguite, tutte in locale, sul codice finale del ramo (nulla è committato):
+
+- dopo la revisione: `npm run lint` pulito, `npm test` 1714/1714, `vite build` ok (ingresso 212,56
+  kB gzip), Worker `--dry-run` 584,51 KiB gzip; `scratch-pg.sh` ok con le 21 prove della guardia;
+  stack locale con gli script riapplicati: `agent-check` 35/35, `sharing-check` 136/136, verify
+  tutti `t`; `learning-stress.mjs` 35/35 (scenario D: 25 `conflict` per elemento, 0 modifiche
+  perse, 1 scheda per `externalRef`); `npm run e2e` 10/10 (la prova 09 ora aspetta la chiusura
+  del drawer: il drawer in uscita e la sessione hanno lo stesso nome);
+- prima della revisione: `npm run lint` pulito; `npm test` 1711/1711 (anche KaTeX vero con LaTeX ostile: `\href`,
+  `\htmlStyle`, `\includegraphics`, `<script>`; con `trust: true` il test fallisce); `vite build`
+  ok, ingresso 212,56 kB gzip (prima 211,85); Worker `--dry-run` 582,35 KiB gzip (prima 543,8).
+- `scratch-pg.sh`: tutte le prove SQL, comprese FC1–FC11 di `learning-share-tests.sql`
+  (condivisione: lettura, permessi, 13 attacchi sui tipi dei campi, stati di ripasso non scrivibili,
+  revoca). Una mutazione del controllo dei campi o della lista dei tipi fa fallire FC8/FC2/FC4.
+- Stack locale, dopo aver riapplicato gli 8 script: `sharing-check` 136/136, `agent-check` 35/35
+  (`p_types`, controllo di revisione, creazione simultanea), `people-check` 122/122; verify tutto
+  `t`, `security_issues` vuoto, solo `cron_ready` falso (in locale non c'è).
+- `npm run e2e` 10/10, con due prove nuove: `09-share-flashcards` (Alice condivide, Bob ripassa in
+  sola lettura, la risposta resta sua) e `10-quiz` (quiz in allenamento, punteggio salvato).
+  Hanno trovato un difetto: l'editor di una flashcard o di una domanda nuova si apriva senza campo
+  di testo (`safeBlocks` scartava il blocco vuoto iniziale); corretto con `keyBlocksOrBlank`.
+- `learning-stress.mjs`, scenari A–F, 35/35: 1000 schede in 10 lotti, lotto ripetuto senza
+  doppioni; 3000 risposte e statistiche; 22 richieste «Spiegami meglio» con un secondo account che
+  non le vede, non le prende e non le chiude, e parametri `ownerId/userId/account` ignorati; due
+  assistenti in due processi sulla stessa raccolta (prima: 25 modifiche dette salvate e perse e 2
+  schede per la stessa `externalRef`; dopo il controllo di revisione e `stableId`: 0 perse, 1
+  scheda, il secondo riceve «Modifica salvata solo in parte… Rileggi i dati e riprova.»); 3
+  account insieme in 201 ms; gruppo di 6 con una raccolta condivisa (5 pull in parallelo in 147 ms,
+  ~100 ms e 200 kB ciascuno) e progressi separati.
+- CPU per chiamata (processo Node, **stima**, non il `cpuTime` del Worker), mediana (p95):
+  `learning_stats` calda 4,4 (17,3), a freddo 11,7, prima chiamata ~50; `list_flashcards` a freddo
+  con 1000 schede 7,4 (11,6); `save_flashcards` ×100 6,9 (12,3), con 3 account 9,7 (14,7). Le
+  chiamate a freddo e i lotti grandi stanno vicino o sopra i 10 ms del piano Free: da misurare con
+  `wrangler tail` dopo il deploy.
+- Spazio: payload medio per riga flashcard 650 B, stato di ripasso 492 B, domanda 504 B, richiesta
+  700 B, sessione di ripasso ~11,5 KB. Un account con 1000 schede ripassate tutte occupa circa
+  1,2 MB di payload (indici e overhead di Postgres esclusi).
+
+Non fatto, serve il permesso della persona: pubblicazione del client, deploy del Worker 1.10.0 e misura vera della CPU con `wrangler tail`, prova con
+ChatGPT/Claude veri sui 21 strumenti nuovi (provati solo con i test del server MCP, il runner del
+connettore remoto in Node e l'app nel browser). Commit e push.

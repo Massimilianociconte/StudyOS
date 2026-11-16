@@ -1,0 +1,328 @@
+// Ripasso: flashcard, quiz, statistiche dell'apprendimento, analisi e richieste agli agenti.
+// Testi che si caricano con la sezione (vista lazy).
+import type { AiRequestStyle, ReviewResult } from "../../types";
+
+export const LEARN_TABS = ["library", "review", "quiz", "stats", "ai"] as const;
+export type LearnTab = (typeof LEARN_TABS)[number];
+
+export const LEARN_TAB_LABEL: Record<LearnTab, string> = {
+  library: "Raccolte",
+  review: "Ripasso",
+  quiz: "Quiz",
+  stats: "Andamento",
+  ai: "Analisi AI"
+};
+
+export const RESULT_LABEL: Record<ReviewResult, string> = {
+  correct: "Corretta",
+  wrong: "Sbagliata",
+  doubt: "Dubbia",
+  skip: "Salta"
+};
+
+export const RESULT_HINT: Record<ReviewResult, string> = {
+  correct: "La sapevi: torna tra più giorni.",
+  wrong: "Non la sapevi: torna tra 10 minuti e riparte da capo.",
+  doubt: "Incerta: torna presto, l'intervallo cresce poco.",
+  skip: "Non conta: il ripasso non cambia."
+};
+
+export const STYLE_HINT: Record<AiRequestStyle, string> = {
+  simple: "Parole semplici, senza dare nulla per scontato.",
+  deep: "Più dettagli, passaggi e collegamenti.",
+  example: "Un esempio concreto o un esercizio svolto.",
+  analogy: "Un paragone con qualcosa di quotidiano.",
+  diagram: "Uno schema o un disegno (SVG).",
+  doubt: "Rispondi a un dubbio preciso che scrivi tu.",
+  custom: "Scrivi tu cosa vuoi."
+};
+
+export const SESSION_FILTERS = ["due", "new", "difficult", "doubtful", "all", "random"] as const;
+export type SessionFilter = (typeof SESSION_FILTERS)[number];
+
+export const SESSION_FILTER_LABEL: Record<SessionFilter, string> = {
+  due: "Da ripassare",
+  new: "Nuove",
+  difficult: "Difficili",
+  doubtful: "Dubbie",
+  all: "Tutte",
+  random: "A caso"
+};
+
+export const QUIZ_MODES = ["training", "exam", "mistakes", "random"] as const;
+export type QuizMode = (typeof QUIZ_MODES)[number];
+
+export const QUIZ_MODE_LABEL: Record<QuizMode, string> = {
+  training: "Allenamento",
+  exam: "Simulazione d'esame",
+  mistakes: "Ripasso degli errori",
+  random: "Casuale"
+};
+
+export const QUIZ_MODE_HINT: Record<QuizMode, string> = {
+  training: "Vedi subito se è giusta e perché.",
+  exam: "Esiti solo alla fine, con il tempo se il quiz ne ha uno.",
+  mistakes: "Solo le domande sbagliate o lasciate vuote l'ultima volta.",
+  random: "Domande a caso da tutti i quiz scelti."
+};
+
+export const LEARN_TEXT = {
+  title: "Ripasso",
+  subtitle: "Flashcard, quiz e ripasso a intervalli. Gli assistenti collegati possono crearli e spiegarli meglio.",
+  tabsAria: "Sezioni del ripasso",
+  // Raccolte
+  newDeck: "Nuova raccolta",
+  newSubdeck: "Nuova sotto-raccolta",
+  newCard: "Nuova flashcard",
+  newQuiz: "Nuovo quiz",
+  editDeck: "Modifica la raccolta",
+  deleteDeck: "Elimina la raccolta",
+  duplicateDeck: "Duplica nella mia libreria",
+  studyDeck: "Ripassa",
+  emptyLibraryTitle: "Ancora nessuna raccolta",
+  emptyLibraryBody:
+    "Crea una raccolta per una materia o un capitolo, oppure chiedi a un assistente collegato di prepararne una dal tuo materiale (studyos_save_flashcards).",
+  searchPlaceholder: "Cerca nelle flashcard",
+  searchAria: "Cerca flashcard per testo",
+  noResults: "Nessuna flashcard corrisponde.",
+  sharedBy: (name: string) => `Condivisa da ${name || "un'altra persona"}`,
+  readOnlyShared: "Raccolta condivisa in sola lettura: puoi studiarla o duplicarla.",
+  deleteSharedConfirm: (title: string, name: string) =>
+    `Eliminare «${title}» dai dati di ${name || "chi la condivide"}? Resta nella sua cronologia e può ripristinarla.`,
+  editShared: (name: string) =>
+    `Puoi modificarla: le modifiche arrivano subito a ${name || "chi la condivide"}, che può ripristinarle dalla cronologia. Le tue risposte restano tue.`,
+  cardsCount: (count: number) => (count === 1 ? "1 flashcard" : `${count} flashcard`),
+  ofTotalCards: (count: number) => (count === 1 ? "su 1 flashcard" : `su ${count} flashcard`),
+  cardsHere: (count: number) => (count === 1 ? "1 flashcard in questa raccolta" : `${count} flashcard in questa raccolta`),
+  dueCount: (count: number) => (count === 1 ? "1 da ripassare" : `${count} da ripassare`),
+  newCount: (count: number) => (count === 1 ? "1 nuova" : `${count} nuove`),
+  subdecks: (count: number) => (count === 1 ? "1 sotto-raccolta" : `${count} sotto-raccolte`),
+  quizzesCount: (count: number) => (count === 1 ? "1 quiz" : `${count} quiz`),
+  showMore: (count: number) => `Mostra altre ${count}`,
+  expand: (title: string) => `Apri ${title}`,
+  collapse: (title: string) => `Chiudi ${title}`,
+  deckPath: "Percorso",
+  noSubject: "Senza materia",
+  agentMade: (name: string) => `Creata da ${name}`,
+  deleteDeckConfirm: (cards: number, decks: number) =>
+    `Eliminare la raccolta${decks > 1 ? `, ${decks - 1} sotto-raccolte` : ""} e ${cards} flashcard? I progressi di queste schede si perdono; lo storico delle sessioni resta.`,
+  deleteDone: "Raccolta eliminata.",
+  duplicated: (title: string) => `Copia creata: ${title}.`,
+  // Editor raccolta
+  deckTitle: "Titolo",
+  deckDescription: "Descrizione",
+  deckKind: "Livello",
+  deckParent: "Dentro",
+  deckParentRoot: "Nessuna (in cima)",
+  deckSubject: "Materia",
+  save: "Salva",
+  cancel: "Annulla",
+  // Editor flashcard
+  front: "Fronte",
+  back: "Retro",
+  explanation: "Spiegazione",
+  explanationHint: "Facoltativa: si vede dopo aver girato la scheda.",
+  difficulty: "Difficoltà",
+  tags: "Etichette",
+  tagsHint: "Separate da virgola",
+  sources: "Fonti",
+  addBlock: "Aggiungi",
+  removeBlock: "Togli",
+  moveUp: "Sposta su",
+  moveDown: "Sposta giù",
+  preview: "Anteprima",
+  editCard: "Modifica la flashcard",
+  deleteCard: "Elimina la flashcard",
+  deleteCardConfirm: "Eliminare questa flashcard? Il suo progresso di ripasso si perde.",
+  cardSaved: "Flashcard salvata.",
+  blockLabel: {
+    text: "Testo",
+    heading: "Titolo",
+    list: "Elenco",
+    formula: "Formula",
+    image: "Immagine",
+    svg: "Schema SVG",
+    code: "Codice",
+    table: "Tabella",
+    callout: "Riquadro",
+    reference: "Fonte"
+  } as Record<string, string>,
+  textHelp: "**grassetto**, *corsivo*, `codice`, $formula$, ^apice^, ~pedice~",
+  formulaHelp: "LaTeX, anche \\ce{H2O} per la chimica",
+  listHelp: "Una voce per riga",
+  tableHelp: "Una riga per riga, celle separate da |. La prima riga è l'intestazione.",
+  imageUrl: "Indirizzo https dell'immagine",
+  imageAlt: "Descrizione (per chi non la vede)",
+  caption: "Didascalia",
+  svgCode: "Codice SVG",
+  svgHelp: "Niente script, eventi o link esterni: viene ripulito e mostrato come immagine.",
+  calloutTitle: "Titolo del riquadro",
+  referenceTitle: "Libro o documento",
+  referenceChapter: "Capitolo",
+  referencePages: "Pagine",
+  codeLanguage: "Linguaggio",
+  // Rendering
+  imageTapToLoad: "Tocca per caricare l'immagine",
+  imageExternal: (host: string) => `Immagine da ${host}`,
+  imageError: "Immagine non disponibile",
+  svgBlocked: "Schema non mostrato: contiene parti non sicure.",
+  formulaError: "Formula non valida",
+  formulaLoading: "Formula…",
+  // Scheda e sessione
+  flip: "Gira la scheda",
+  flipHint: "Spazio o tocca per girare",
+  flipHintTouch: "Tocca la scheda per girarla",
+  showAnswer: "Mostra la risposta",
+  showQuestion: "Mostra la domanda",
+  question: "Domanda",
+  answer: "Risposta",
+  sessionTitle: "Sessione di ripasso",
+  sessionOf: (index: number, total: number) => `${index} di ${total}`,
+  sessionDone: "Sessione finita",
+  sessionSummary: (correct: number, wrong: number, doubt: number, skip: number) =>
+    [
+      `${correct} ${correct === 1 ? "corretta" : "corrette"}`,
+      `${wrong} ${wrong === 1 ? "sbagliata" : "sbagliate"}`,
+      `${doubt} ${doubt === 1 ? "dubbia" : "dubbie"}`,
+      ...(skip ? [`${skip} ${skip === 1 ? "saltata" : "saltate"}`] : [])
+    ].join(" · "),
+  sessionAgain: "Ripassa le sbagliate",
+  sessionClose: "Chiudi",
+  sessionEmpty: "Nessuna flashcard da ripassare con questi filtri.",
+  sessionStop: "Interrompi",
+  sessionStopConfirm: "Interrompere la sessione? Le risposte date restano salvate.",
+  keysHint: "Tasti: 1 corretta · 2 sbagliata · 3 dubbia · 4 salta",
+  swipeHint: "Scorri a destra se corretta, a sinistra se sbagliata",
+  sharedNoProgress: "Le tue risposte restano solo tue: chi condivide la raccolta non le vede.",
+  // Costruttore di sessione
+  builderTitle: "Prepara un ripasso",
+  builderScope: "Cosa ripassare",
+  builderAllDecks: "Tutte le raccolte",
+  builderFilter: "Quali schede",
+  builderLimit: "Quante al massimo",
+  builderOrder: "Ordine",
+  orderPriority: "Prima le più urgenti",
+  orderShuffle: "Mescolate",
+  start: "Inizia",
+  dueToday: "Da ripassare oggi",
+  dueTodayHint: (count: number) => (count ? `${count} schede ti aspettano` : "Niente in scadenza: puoi studiare le nuove"),
+  startDue: "Ripassa ora",
+  // Quiz
+  quizEmptyTitle: "Nessun quiz",
+  quizEmptyBody: "Crea un quiz a scelta multipla o chiedi a un assistente di generarlo (studyos_save_quiz).",
+  questionsCount: (count: number) => (count === 1 ? "1 domanda" : `${count} domande`),
+  lastScore: (score: string) => `Ultimo: ${score}`,
+  bestScore: (score: string) => `Migliore: ${score}`,
+  startQuiz: "Inizia il quiz",
+  quizMode: "Modalità",
+  quizTimeLimit: (minutes: number) => `Tempo suggerito: ${minutes} minuti`,
+  quizTimeLeft: (time: string) => `Tempo: ${time}`,
+  quizTimeUp: "Tempo scaduto: il quiz si chiude con le risposte date.",
+  confirmAnswer: "Conferma",
+  nextQuestion: "Avanti",
+  previousQuestion: "Indietro",
+  finishQuiz: "Concludi",
+  finishQuizConfirm: (unanswered: number) => (unanswered ? `Concludere? ${unanswered} domande restano senza risposta e contano come sbagliate.` : "Concludere il quiz?"),
+  markDoubt: "Segna come dubbia",
+  singleHint: "Una sola risposta",
+  multipleHint: "Una o più risposte: vale solo se le scegli tutte giuste",
+  resultTitle: "Risultato",
+  resultScore: (correct: number, total: number) => `${correct} su ${total}`,
+  resultReview: "Rivedi le risposte",
+  yourAnswer: "La tua risposta",
+  correctAnswer: "Risposta giusta",
+  noAnswer: "Nessuna risposta",
+  mistakesNone: "Nessun errore nell'ultimo tentativo: niente da ripassare.",
+  editQuiz: "Modifica il quiz",
+  deleteQuiz: "Elimina il quiz",
+  deleteQuizConfirm: (count: number) => `Eliminare il quiz e le sue ${count} domande? I tentativi passati restano nello storico.`,
+  quizTitle: "Titolo del quiz",
+  quizDescription: "Descrizione",
+  quizMinutes: "Minuti (facoltativo)",
+  newQuestion: "Nuova domanda",
+  questionPrompt: "Domanda",
+  questionKind: "Tipo",
+  kindSingle: "Risposta singola",
+  kindMultiple: "Risposta multipla",
+  option: (letter: string) => `Risposta ${letter}`,
+  optionCorrect: "Giusta",
+  optionFeedback: "Perché (facoltativo)",
+  addOption: "Aggiungi risposta",
+  removeOption: "Togli risposta",
+  questionExplanation: "Spiegazione",
+  deleteQuestion: "Elimina la domanda",
+  scoringRule:
+    "Punteggio: 1 punto per domanda. Nelle domande a risposta multipla il punto vale solo se scegli esattamente tutte le risposte giuste (nessun punteggio parziale). Le domande senza risposta valgono 0.",
+  // Statistiche
+  statsEmptyTitle: "Ancora nessun dato",
+  statsEmptyBody: "Le statistiche compaiono dopo le prime risposte alle flashcard o il primo quiz.",
+  statAccuracy: "Correttezza",
+  statAnswers: "Risposte",
+  statTime: "Tempo di ripasso",
+  statStreak: "Giorni di fila",
+  statDue: "Da ripassare",
+  statNew: "Mai viste",
+  statDifficult: "Difficili",
+  statConsolidated: "Consolidate",
+  statTrend: "Tendenza",
+  statQuizAvg: "Media nei quiz",
+  trendUp: (points: number) => `+${points} punti rispetto alle 2 settimane prima`,
+  trendDown: (points: number) => `${points} punti rispetto alle 2 settimane prima`,
+  trendFlat: "Stabile rispetto alle 2 settimane prima",
+  trendMissing: "Servono almeno 5 risposte in ognuna delle ultime due quindicine",
+  chartDaily: "Risposte negli ultimi 30 giorni",
+  chartForecast: "In scadenza nei prossimi 7 giorni",
+  perDeck: "Per raccolta",
+  perSubject: "Per materia",
+  hardest: "Le più difficili per te",
+  missedQuestions: "Domande sbagliate più spesso",
+  definitions: "Come si calcolano",
+  period: "Periodo",
+  periodAll: "Sempre",
+  periodDays: (days: number) => `${days} giorni`,
+  minutes: (value: number) => (value < 60 ? `${value} min` : `${Math.floor(value / 60)} h ${value % 60 ? `${value % 60} min` : ""}`.trim()),
+  // Analisi e richieste
+  aiIntro:
+    "Qui arrivano le analisi scritte dagli assistenti collegati a StudyOS, basate sui tuoi dati di ripasso. StudyOS non genera testi da solo.",
+  aiEmptyTitle: "Nessuna analisi",
+  aiEmptyBody: "Chiedi un'analisi: la vedrà il prossimo assistente collegato che controlla le richieste.",
+  askAnalysis: "Chiedi un'analisi",
+  askAnalysisPrompt: "Cosa vuoi sapere (facoltativo)",
+  askAnalysisPlaceholder: "Es. su cosa concentrarmi per l'esame di chimica",
+  analysisBy: (name: string, date: string) => `${name} · ${date}`,
+  analysisData: "Dati usati",
+  analysisVersion: (version: number) => `Versione ${version}`,
+  archive: "Archivia",
+  unarchive: "Riporta tra le attive",
+  deleteAnalysis: "Elimina l'analisi",
+  deleteAnalysisConfirm: "Eliminare questa analisi?",
+  showArchived: "Mostra archiviate",
+  requests: "Richieste agli assistenti",
+  requestsEmpty: "Nessuna richiesta.",
+  requestStatus: {
+    pending: "In attesa di un assistente",
+    claimed: "Un assistente ci sta lavorando",
+    processing: "Un assistente ci sta lavorando",
+    completed: "Pronta",
+    failed: "Non riuscita",
+    expired: "Scaduta",
+    cancelled: "Annullata"
+  } as Record<string, string>,
+  requestWaitHelp:
+    "Le richieste restano in attesa finché un assistente collegato le elabora: aprilo e chiedigli di controllare le richieste di StudyOS (studyos_list_ai_requests), oppure imposta un'attività pianificata che lo faccia da sola. Scadono dopo 14 giorni.",
+  cancelRequest: "Annulla la richiesta",
+  deleteRequest: "Togli dall'elenco",
+  // Spiegami meglio
+  explain: "Spiegami meglio",
+  explainTitle: "Spiegami meglio",
+  explainStyle: "Come",
+  explainPrompt: "Il tuo dubbio (facoltativo)",
+  explainPromptRequired: "Scrivi il dubbio o cosa vuoi",
+  explainSend: "Invia la richiesta",
+  explainSent: "Richiesta inviata. La vedrà il prossimo assistente collegato.",
+  explainResults: "Spiegazioni ricevute",
+  explainPublish: "Usala come spiegazione della scheda",
+  explainPublished: "Spiegazione aggiunta alla scheda.",
+  explainBy: (name: string) => `Spiegazione di ${name}`,
+  locked: "Il vault è bloccato: sbloccalo per modificare."
+} as const;
