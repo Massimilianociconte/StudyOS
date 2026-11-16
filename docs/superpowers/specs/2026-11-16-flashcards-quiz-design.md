@@ -198,3 +198,28 @@ flashcard di `sharing-check.mjs` (anche Realtime), scenario B di `learning-stres
 
 Caricamento di immagini su Storage, punteggio parziale dei quiz a risposta multipla, statistiche
 comparative tra membri di una raccolta condivisa (richiederebbero regole di privacy esplicite).
+
+## 13. Avvio, sessione e fine del ripasso (UI, semplificata il 16/11/2026)
+
+- **Scheda Ripasso**: «N schede per oggi» (da ripassare, in ritardo, nuove) e un solo pulsante
+  «Ripassa N schede»: coda `today` di `buildQueue` (scadute e di oggi per urgenza, poi le mai viste
+  nell'ordine della raccolta), al massimo le schede per sessione scelte (10/20/30/50/tutte, 20 di
+  partenza, `learn.sessionSize` sul dispositivo). Senza nulla per oggi: «Sei in pari», la prossima
+  scadenza e «Ripassa comunque» (tutte, prima le più vicine). «Per raccolta»: un tocco e si parte
+  sulla raccolta. Anche «Ripassa» nelle Raccolte parte subito, senza altre scelte.
+- **Personalizza**: raccolte, cinque scelte con conteggio e spiegazione (Consigliate, Da ripassare,
+  Nuove, Difficili o dubbie, Tutte; quelle a 0 disattivate), quante per sessione, «Mescola l'ordine».
+  Scelta e mescolamento restano sul dispositivo (`learn.filter`, `learn.shuffle`).
+- **Sessione**: «Mostra la risposta»; sul retro la domanda resta in piccolo sopra la risposta.
+  «Com'è andata?» Sbagliata / Dubbia / Corretta, ognuna con «torna tra …» calcolato da `applyReview`
+  (`nextWaits`), anche come descrizione accessibile. Tasti nell'ordine dei pulsanti: 1 sbagliata,
+  2 dubbia, 3 corretta, 4 salta (Salta anche prima di girare). «Termina», Esc e Indietro portano al
+  riepilogo senza conferma (ogni risposta è già salvata); senza risposte si esce.
+- **Riepilogo**: completato o terminato, «X di Y schede in …» (tempo misurato per scheda, tetto di
+  un'ora come nel salvataggio), percentuale di corrette sulle risposte date (le saltate non contano),
+  conteggi, schede «Da rivedere» (sbagliate e dubbie). Azioni sempre in vista nella barra in basso:
+  «Ripassa le N da rivedere», «Continua con altre N» (stesso ambito e scelte, escluse le schede viste
+  in questa sessione), «Fine».
+- **Materia**: ogni scheda, raccolta e quiz mostra il segno della sua materia come nella sezione
+  Materie (`SubjectMark`: copertina, icona del corso BARB caricata a parte, icona scelta, sul colore
+  della materia). Le raccolte condivise da altre persone hanno materie non tue: icona di riserva.

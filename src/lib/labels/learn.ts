@@ -20,6 +20,14 @@ export const RESULT_LABEL: Record<ReviewResult, string> = {
   skip: "Salta"
 };
 
+/** Conteggi del riepilogo di una sessione. */
+export const RESULT_PLURAL: Record<ReviewResult, string> = {
+  correct: "Corrette",
+  wrong: "Sbagliate",
+  doubt: "Dubbie",
+  skip: "Saltate"
+};
+
 export const RESULT_HINT: Record<ReviewResult, string> = {
   correct: "La sapevi: torna tra più giorni.",
   wrong: "Non la sapevi: torna tra 10 minuti e riparte da capo.",
@@ -37,17 +45,28 @@ export const STYLE_HINT: Record<AiRequestStyle, string> = {
   custom: "Scrivi tu cosa vuoi."
 };
 
-export const SESSION_FILTERS = ["due", "new", "difficult", "doubtful", "all", "random"] as const;
+/** Scelte di «Personalizza il ripasso», nell'ordine mostrato. */
+export const SESSION_FILTERS = ["today", "due", "new", "hard", "all"] as const;
 export type SessionFilter = (typeof SESSION_FILTERS)[number];
 
 export const SESSION_FILTER_LABEL: Record<SessionFilter, string> = {
+  today: "Consigliate",
   due: "Da ripassare",
   new: "Nuove",
-  difficult: "Difficili",
-  doubtful: "Dubbie",
-  all: "Tutte",
-  random: "A caso"
+  hard: "Difficili o dubbie",
+  all: "Tutte"
 };
+
+export const SESSION_FILTER_HINT: Record<SessionFilter, string> = {
+  today: "Prima quelle in scadenza oggi, poi quelle mai viste.",
+  due: "Solo quelle che il ripasso a intervalli ti ripropone oggi.",
+  new: "Solo quelle mai viste.",
+  hard: "Sbagliate spesso o segnate come dubbie l'ultima volta.",
+  all: "Tutta la raccolta, anche quelle che sai già."
+};
+
+/** Schede per sessione: 0 = tutte. */
+export const SESSION_SIZES = [10, 20, 30, 50, 0] as const;
 
 export const QUIZ_MODES = ["training", "exam", "mistakes", "random"] as const;
 export type QuizMode = (typeof QUIZ_MODES)[number];
@@ -170,15 +189,15 @@ export const LEARN_TEXT = {
   formulaLoading: "Formula…",
   // Scheda e sessione
   flip: "Gira la scheda",
-  flipHint: "Spazio o tocca per girare",
-  flipHintTouch: "Tocca la scheda per girarla",
+  flipHint: "Tocca la scheda o premi Spazio per vedere la risposta",
+  flipHintTouch: "Tocca la scheda per vedere la risposta",
   showAnswer: "Mostra la risposta",
   showQuestion: "Mostra la domanda",
   question: "Domanda",
   answer: "Risposta",
-  sessionTitle: "Sessione di ripasso",
+  howWell: "Com'è andata?",
+  sessionTitle: "Ripasso",
   sessionOf: (index: number, total: number) => `${index} di ${total}`,
-  sessionDone: "Sessione finita",
   sessionSummary: (correct: number, wrong: number, doubt: number, skip: number) =>
     [
       `${correct} ${correct === 1 ? "corretta" : "corrette"}`,
@@ -186,27 +205,61 @@ export const LEARN_TEXT = {
       `${doubt} ${doubt === 1 ? "dubbia" : "dubbie"}`,
       ...(skip ? [`${skip} ${skip === 1 ? "saltata" : "saltate"}`] : [])
     ].join(" · "),
-  sessionAgain: "Ripassa le sbagliate",
-  sessionClose: "Chiudi",
-  sessionEmpty: "Nessuna flashcard da ripassare con questi filtri.",
+  sessionEnd: "Termina",
   sessionStop: "Interrompi",
-  sessionStopConfirm: "Interrompere la sessione? Le risposte date restano salvate.",
-  keysHint: "Tasti: 1 corretta · 2 sbagliata · 3 dubbia · 4 salta",
+  sessionClose: "Chiudi",
+  sessionEmpty: "Nessuna flashcard da ripassare con queste scelte.",
+  keysHint: "Tasti: 1 sbagliata · 2 dubbia · 3 corretta · 4 salta",
   swipeHint: "Scorri a destra se corretta, a sinistra se sbagliata",
+  nextIn: (when: string) => `torna tra ${when}`,
   sharedNoProgress: "Le tue risposte restano solo tue: chi condivide la raccolta non le vede.",
-  // Costruttore di sessione
-  builderTitle: "Prepara un ripasso",
+  // Fine della sessione
+  resultDone: "Ripasso completato",
+  resultStopped: "Ripasso terminato",
+  resultReviewed: (answered: number, total: number) => `${answered} di ${total} schede`,
+  resultCorrect: "corrette",
+  resultTime: (minutes: string) => `in ${minutes}`,
+  resultGreat: "Ottimo: le sapevi quasi tutte.",
+  resultGood: "Buon ripasso. Le sbagliate tornano tra 10 minuti, le dubbie domani.",
+  resultLow: "Da riprendere: le sbagliate tornano tra 10 minuti, ripassale di nuovo.",
+  resultOnlySkips: "Nessuna risposta data: le schede saltate restano dove erano.",
+  resultMissed: "Da rivedere",
+  resultMissedMore: (count: number) => (count === 1 ? "e un'altra" : `e altre ${count}`),
+  retryMissed: (count: number) => (count === 1 ? "Ripassa la scheda da rivedere" : `Ripassa le ${count} da rivedere`),
+  continueMore: (count: number) => (count === 1 ? "Continua con 1 altra" : `Continua con altre ${count}`),
+  finish: "Fine",
+  // Scheda Ripasso
+  today: "Oggi",
+  todayCount: (count: number) => (count === 1 ? "1 scheda per oggi" : `${count} schede per oggi`),
+  todayBreakdown: (due: number, fresh: number, overdue: number) =>
+    [
+      ...(due ? [due === 1 ? "1 da ripassare" : `${due} da ripassare`] : []),
+      ...(overdue ? [`${overdue} in ritardo`] : []),
+      ...(fresh ? [fresh === 1 ? "1 nuova" : `${fresh} nuove`] : [])
+    ].join(" · "),
+  startCount: (count: number) => (count === 1 ? "Ripassa 1 scheda" : `Ripassa ${count} schede`),
+  startRest: (count: number) => (count === 1 ? "Dopo puoi continuare con l'ultima." : `Dopo puoi continuare con le altre ${count}.`),
+  caughtUp: "Sei in pari",
+  caughtUpNext: (when: string, count: number) => `Prossimo ripasso ${when}: ${count === 1 ? "1 scheda" : `${count} schede`}.`,
+  caughtUpNone: "Nessuna scheda in scadenza.",
+  reviewAnyway: "Ripassa comunque",
+  customize: "Personalizza",
+  byDeck: "Per raccolta",
+  byDeckHint: "Tocca una raccolta per ripassarla subito.",
+  deckTodo: (due: number, fresh: number) =>
+    [...(due ? [due === 1 ? "1 da ripassare" : `${due} da ripassare`] : []), ...(fresh ? [fresh === 1 ? "1 nuova" : `${fresh} nuove`] : [])].join(" · "),
+  studyNow: (title: string) => `Ripassa ${title}`,
+  recentSessions: "Ultime sessioni",
+  // Personalizza il ripasso
+  builderTitle: "Personalizza il ripasso",
   builderScope: "Cosa ripassare",
   builderAllDecks: "Tutte le raccolte",
   builderFilter: "Quali schede",
-  builderLimit: "Quante al massimo",
-  builderOrder: "Ordine",
-  orderPriority: "Prima le più urgenti",
-  orderShuffle: "Mescolate",
+  builderLimit: "Quante per sessione",
+  limitAll: "Tutte",
+  shuffle: "Mescola l'ordine",
+  shuffleHint: "Altrimenti prima le più urgenti, poi nell'ordine della raccolta.",
   start: "Inizia",
-  dueToday: "Da ripassare oggi",
-  dueTodayHint: (count: number) => (count ? `${count} schede ti aspettano` : "Niente in scadenza: puoi studiare le nuove"),
-  startDue: "Ripassa ora",
   // Quiz
   quizEmptyTitle: "Nessun quiz",
   quizEmptyBody: "Crea un quiz a scelta multipla o chiedi a un assistente di generarlo (studyos_save_quiz).",

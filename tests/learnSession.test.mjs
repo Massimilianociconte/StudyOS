@@ -1,7 +1,7 @@
 // Logica pura della sezione Ripasso: albero, coda della sessione, quiz mescolati, ultimi errori.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDeckTree, buildQueue, cardsInDecks, clockText, flattenTree, lastMistakes, percent, prepareQuiz, reviewAnswers } from "../src/lib/learnSession.ts";
+import { buildDeckTree, buildQueue, cardsInDecks, clockText, filterCounts, flattenTree, lastMistakes, nextDueDay, nextWaits, percent, prepareQuiz, reviewAnswers, waitLabel } from "../src/lib/learnSession.ts";
 
 const stamp = { createdAt: "2026-11-01T08:00:00.000Z", updatedAt: "2026-11-01T08:00:00.000Z", archived: false, tags: [] };
 const now = new Date("2026-11-16T10:00:00");
@@ -41,6 +41,46 @@ test("coda: da ripassare per urgenza, nuove nell'ordine della raccolta, limite e
   const b = buildQueue(cards, states, decks, now, opts("random", { seed: 3 })).map((item) => item.id);
   assert.deepEqual(a, b);
   assert.deepEqual([...a].sort(), ["c1", "c2", "c3", "c4", "c5"]);
+});
+
+test("coda consigliata: prima le scadute per urgenza, poi le nuove; difficili o dubbie; schede già viste escluse", () => {
+  const opts = (filter, extra = {}) => ({ filter, limit: 50, order: "priority", seed: 7, ...extra });
+  assert.deepEqual(buildQueue(cards, states, decks, now, opts("today")).map((item) => item.id), ["c2", "c3", "c1", "c4"]);
+  assert.deepEqual(buildQueue(cards, states, decks, now, opts("today", { limit: 3 })).map((item) => item.id), ["c2", "c3", "c1"]);
+  assert.deepEqual(buildQueue(cards, states, decks, now, opts("hard")).map((item) => item.id), ["c5", "c3"]);
+  assert.deepEqual(buildQueue(cards, states, decks, now, opts("today", { exclude: new Set(["c2", "c1"]) })).map((item) => item.id), ["c3", "c4"]);
+  assert.deepEqual(buildQueue(cards, states, decks, now, opts("all", { exclude: new Set(["c2", "c3", "c1", "c4"]) })).map((item) => item.id), ["c5"]);
+  const shuffledToday = buildQueue(cards, states, decks, now, opts("today", { order: "shuffle", seed: 5 })).map((item) => item.id);
+  assert.deepEqual([...shuffledToday].sort(), ["c1", "c2", "c3", "c4"]);
+  assert.deepEqual(filterCounts(cards, states, now), { today: 4, due: 2, new: 2, hard: 2, all: 5, overdue: 1 });
+});
+
+test("attese: etichette leggibili e tra quanto torna una scheda con ogni risposta", () => {
+  assert.equal(waitLabel(10 * 60_000), "10 min");
+  assert.equal(waitLabel(20_000), "1 min");
+  assert.equal(waitLabel(60 * 60_000), "1 ora");
+  assert.equal(waitLabel(5 * 3_600_000), "5 ore");
+  assert.equal(waitLabel(86_400_000), "1 giorno");
+  assert.equal(waitLabel(3 * 86_400_000), "3 giorni");
+  assert.equal(waitLabel(60 * 86_400_000), "2 mesi");
+  assert.equal(waitLabel(400 * 86_400_000), "1 anno");
+  // Mai vista: sbagliata 10 minuti, dubbia e corretta 1 giorno.
+  assert.deepEqual(nextWaits(undefined, { id: "c1" }, now), { wrong: "10 min", doubt: "1 giorno", correct: "1 giorno" });
+  // Due risposte giuste, intervallo 3 giorni, facilità 2,5: corretta 8 giorni, dubbia 4.
+  assert.deepEqual(nextWaits(states.get("c2"), { id: "c2" }, now), { wrong: "10 min", doubt: "4 giorni", correct: "8 giorni" });
+});
+
+test("prossima scadenza: il primo giorno futuro e quante schede scadono quel giorno", () => {
+  const later = new Map([
+    ["a", state("a", { due: "2026-11-18T08:00:00.000Z" })],
+    ["b", state("b", { due: "2026-11-18T15:00:00.000Z" })],
+    ["c", state("c", { due: "2026-11-25T08:00:00.000Z" })],
+    ["d", state("d", { due: "2026-11-10T08:00:00.000Z" })]
+  ]);
+  const next = nextDueDay(["a", "b", "c", "d", "nuova"], later, now);
+  assert.equal(next.count, 2);
+  assert.equal(next.day.toISOString(), "2026-11-18T08:00:00.000Z");
+  assert.equal(nextDueDay(["d", "nuova"], later, now), null);
 });
 
 test("quiz: opzioni mescolate con id stabili, ripasso degli errori, punteggio delle risposte", () => {

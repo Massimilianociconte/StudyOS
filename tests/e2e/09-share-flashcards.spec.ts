@@ -62,21 +62,28 @@ test("09 Alice crea una raccolta e la condivide; Bob la ripassa e le risposte re
   const sharedDeck = bob.page.getByRole("dialog", { name: deckTitle });
   await expect(sharedDeck.getByText("Raccolta condivisa in sola lettura: puoi studiarla o duplicarla.")).toBeVisible();
   await expect(sharedDeck.getByRole("button", { name: "Nuova flashcard" })).toHaveCount(0);
+  // «Ripassa» parte subito (prima le schede in scadenza, poi le nuove), senza altre scelte.
   await sharedDeck.getByRole("button", { name: "Ripassa", exact: true }).click();
-  // Il drawer della raccolta e la sessione hanno lo stesso nome: si va avanti a drawer chiuso.
-  await expect(sharedDeck).toHaveCount(0);
-  const builder = bob.page.getByRole("dialog", { name: "Prepara un ripasso" });
-  await builder.getByRole("group", { name: "Quali schede" }).getByRole("button", { name: /^Nuove/ }).click();
-  await builder.getByRole("button", { name: "Inizia" }).click();
+  // Il drawer della raccolta e la sessione hanno lo stesso nome: si va avanti quando resta solo la
+  // sessione (quella con «Termina»).
+  await expect(sharedDeck.filter({ has: bob.page.getByRole("button", { name: "Termina" }) })).toBeVisible();
+  await expect(sharedDeck).toHaveCount(1);
   const session = bob.page.getByRole("dialog", { name: deckTitle });
   await expect(session.getByText(front)).toBeVisible();
   await expect(session.getByText(/le tue risposte restano solo tue/i)).toBeVisible();
   await session.getByRole("button", { name: "Mostra la risposta" }).click();
   await expect(session.getByText(back)).toBeVisible();
-  await session.getByRole("button", { name: "Sbagliata", exact: true }).click();
-  await expect(session.getByText("Sessione finita")).toBeVisible();
-  await expect(session.getByText("0 corrette · 1 sbagliata · 0 dubbie")).toBeVisible();
-  await session.getByRole("button", { name: "Chiudi", exact: true }).last().click();
+  // Ogni valutazione dice tra quanto torna la scheda; una mai vista sbagliata torna tra 10 minuti.
+  const wrong = session.getByRole("button", { name: "Sbagliata", exact: true });
+  await expect(wrong).toHaveAccessibleDescription("torna tra 10 min");
+  await wrong.click();
+  // Riepilogo: risultato, conteggi e la scheda da rivedere.
+  await expect(session.getByRole("heading", { name: "Ripasso completato" })).toBeVisible();
+  await expect(session.getByText("1 di 1 schede", { exact: false })).toBeVisible();
+  await expect(session.getByRole("definition").filter({ hasText: /^1$/ })).toHaveCount(1);
+  await expect(session.getByRole("listitem").filter({ hasText: front })).toBeVisible();
+  await expect(session.getByRole("button", { name: "Ripassa la scheda da rivedere" })).toBeVisible();
+  await session.getByRole("button", { name: "Fine", exact: true }).click();
   await expect(session).toBeHidden();
   await waitSynced(bob.page);
 

@@ -1,10 +1,10 @@
 // Logica pura della sezione Ripasso: albero delle raccolte con i conteggi, coda di una sessione,
 // preparazione di un quiz (mescolato in modo riproducibile), ultimi errori di un quiz.
-import { classifyCard, reviewPriority } from "./srs";
+import { applyReview, classifyCard, reviewPriority, type CardRef } from "./srs";
 import { deckDescendantIds, sortByPosition } from "./learningModel";
 import { safeOptions, scoreQuestion, shuffled } from "./quizScoring";
 import type { SessionFilter } from "./labels/learn";
-import type { Flashcard, FlashcardState, Quiz, QuizQuestion, StudyDeck, StudyRun } from "../types";
+import type { Flashcard, FlashcardState, Quiz, QuizQuestion, ReviewResult, StudyDeck, StudyRun } from "../types";
 
 export interface DeckCounts {
   /** Schede nella raccolta e nelle sotto-raccolte. */
@@ -109,16 +109,22 @@ export const buildDeckTree = (
 /** Raccolte dell'albero in ordine piatto, con la profondità (per selettori e liste). */
 export const flattenTree = (nodes: readonly DeckNode[]): DeckNode[] => nodes.flatMap((node) => [node, ...flattenTree(node.children)]);
 
+/** Filtri della coda: quelli di «Personalizza il ripasso» più alcuni usati solo dalla logica. */
+export type QueueFilter = SessionFilter | "difficult" | "doubtful" | "random";
+
 export interface QueueOptions {
-  filter: SessionFilter;
+  filter: QueueFilter;
   limit: number;
   order: "priority" | "shuffle";
   seed: number;
+  /** Schede già viste in questa sessione: «Continua» non le ripropone. */
+  exclude?: ReadonlySet<string>;
 }
 
 /**
- * Coda di una sessione. «Da ripassare»: scadute e di oggi, prima quelle in ritardo da più tempo.
- * «Nuove»: mai viste, nell'ordine della raccolta. «Tutte»: da ripassare, poi nuove, poi le altre per
+ * Coda di una sessione. «Consigliate»: scadute e di oggi per urgenza, poi le mai viste nell'ordine
+ * della raccolta. «Da ripassare»: solo le scadute e di oggi. «Nuove»: mai viste. «Difficili o
+ * dubbie»: prima quelle sbagliate più volte. «Tutte»: da ripassare, poi nuove, poi le altre per
  * scadenza. «A caso»: tutte mescolate.
  */
 export const buildQueue = (
@@ -131,17 +137,29 @@ export const buildQueue = (
   const order = deckVisitOrder(decks);
   const inDeckOrder = (a: Flashcard, b: Flashcard) =>
     (order.get(a.deckId) ?? 0) - (order.get(b.deckId) ?? 0) || a.position - b.position || a.createdAt.localeCompare(b.createdAt);
-  const classified = cards.map((card) => ({ card, state: states.get(card.id), info: classifyCard(states.get(card.id), now) }));
+  const pool = options.exclude?.size ? cards.filter((card) => !options.exclude?.has(card.id)) : cards;
+  const classified = pool.map((card) => ({ card, state: states.get(card.id), info: classifyCard(states.get(card.id), now) }));
+  const byUrgency = (a: (typeof classified)[number], b: (typeof classified)[number]) => reviewPriority(a.state) - reviewPriority(b.state) || inDeckOrder(a.card, b.card);
+  const byLapses = (a: (typeof classified)[number], b: (typeof classified)[number]) => (b.state?.lapses ?? 0) - (a.state?.lapses ?? 0) || inDeckOrder(a.card, b.card);
   let picked: typeof classified;
   switch (options.filter) {
+    case "today":
+      picked = [
+        ...classified.filter((item) => item.info.due).sort(byUrgency),
+        ...classified.filter((item) => item.info.isNew).sort((a, b) => inDeckOrder(a.card, b.card))
+      ];
+      break;
     case "due":
-      picked = classified.filter((item) => item.info.due).sort((a, b) => reviewPriority(a.state) - reviewPriority(b.state) || inDeckOrder(a.card, b.card));
+      picked = classified.filter((item) => item.info.due).sort(byUrgency);
       break;
     case "new":
       picked = classified.filter((item) => item.info.isNew).sort((a, b) => inDeckOrder(a.card, b.card));
       break;
+    case "hard":
+      picked = classified.filter((item) => item.info.difficult || item.info.doubtful).sort(byLapses);
+      break;
     case "difficult":
-      picked = classified.filter((item) => item.info.difficult).sort((a, b) => (b.state?.lapses ?? 0) - (a.state?.lapses ?? 0) || inDeckOrder(a.card, b.card));
+      picked = classified.filter((item) => item.info.difficult).sort(byLapses);
       break;
     case "doubtful":
       picked = classified.filter((item) => item.info.doubtful).sort((a, b) => inDeckOrder(a.card, b.card));
@@ -151,12 +169,61 @@ export const buildQueue = (
       break;
     default: {
       const rank = (item: (typeof classified)[number]) => (item.info.due ? 0 : item.info.isNew ? 1 : 2);
-      picked = classified.slice().sort((a, b) => rank(a) - rank(b) || reviewPriority(a.state) - reviewPriority(b.state) || inDeckOrder(a.card, b.card));
+      picked = classified.slice().sort((a, b) => rank(a) - rank(b) || byUrgency(a, b));
     }
   }
   const limited = picked.slice(0, Math.max(1, Math.floor(options.limit)));
   const result = limited.map((item) => item.card);
   return options.order === "shuffle" && options.filter !== "random" ? shuffled(result, options.seed) : result;
+};
+
+/** Quante schede entrerebbero con ogni scelta di «Personalizza il ripasso» (senza limite). */
+export const filterCounts = (cards: readonly Flashcard[], states: ReadonlyMap<string, FlashcardState>, now: Date) => {
+  const out: Record<SessionFilter, number> & { overdue: number } = { today: 0, due: 0, new: 0, hard: 0, all: cards.length, overdue: 0 };
+  for (const card of cards) {
+    const info = classifyCard(states.get(card.id), now);
+    if (info.due) out.due++;
+    if (info.overdue) out.overdue++;
+    if (info.isNew) out.new++;
+    if (info.difficult || info.doubtful) out.hard++;
+  }
+  out.today = out.due + out.new;
+  return out;
+};
+
+/** «10 min», «1 giorno», «3 giorni», «2 mesi», «1 anno»: tra quanto torna una scheda. */
+export const waitLabel = (ms: number) => {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours === 1 ? "1 ora" : `${hours} ore`;
+  const days = Math.round(hours / 24);
+  if (days < 45) return days === 1 ? "1 giorno" : `${days} giorni`;
+  const months = Math.round(days / 30);
+  if (months < 12) return months === 1 ? "1 mese" : `${months} mesi`;
+  const years = Math.round(days / 365);
+  return years === 1 ? "1 anno" : `${years} anni`;
+};
+
+/** Tra quanto torna la scheda con ogni risposta (stessa regola che la salva). */
+export const nextWaits = (state: FlashcardState | undefined, card: CardRef, now: Date): Record<Exclude<ReviewResult, "skip">, string> => {
+  const wait = (result: Exclude<ReviewResult, "skip">) => waitLabel(Date.parse(applyReview(state, card, result, now).due) - now.getTime());
+  return { wrong: wait("wrong"), doubt: wait("doubt"), correct: wait("correct") };
+};
+
+/** Prima scadenza futura e quante schede scadono quel giorno (per «Sei in pari»). */
+export const nextDueDay = (cardIds: Iterable<string>, states: ReadonlyMap<string, FlashcardState>, now: Date): { day: Date; count: number } | null => {
+  const dues: number[] = [];
+  for (const id of cardIds) {
+    const state = states.get(id);
+    const due = state ? Date.parse(state.due) : NaN;
+    if (Number.isFinite(due) && due > now.getTime()) dues.push(due);
+  }
+  if (!dues.length) return null;
+  const first = new Date(Math.min(...dues));
+  const start = new Date(first.getFullYear(), first.getMonth(), first.getDate()).getTime();
+  const end = start + 86_400_000;
+  return { day: first, count: dues.filter((due) => due >= start && due < end).length };
 };
 
 /** Schede di alcune raccolte (con le sotto-raccolte); nessuna raccolta scelta = tutte. */

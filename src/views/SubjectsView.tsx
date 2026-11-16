@@ -30,7 +30,7 @@ import { safeCssColor } from "../lib/sharing";
 import { safeHref } from "../lib/safeUrl";
 import { FILE_STATES, fileStateText, useMaterialFiles, useOpenMaterial } from "../components/MaterialFile";
 import { FILE_ACCEPT } from "../lib/attachments";
-import { DARK_INK, inkOn } from "../lib/subjectInk";
+import { COURSE_INK, DARK_INK, inkOn } from "../lib/subjectInk";
 
 const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
 // Nomi leggibili dei colori per i lettori di schermo (i codici esadecimali non dicono nulla).
@@ -56,7 +56,6 @@ const STATUS_ICON: Record<Subject["status"], string> = {
 };
 const subjectColor = (subject: Subject) => safeCssColor(subject.color) || "var(--accent)";
 /** Inchiostro dell'icona sul colore della materia (anche un colore scuro scelto a mano); le icone del corso hanno il loro blu scuro. */
-const COURSE_INK = "#172333";
 const iconInk = (subject: Subject, course: boolean) => inkOn(subject.color, course ? COURSE_INK : DARK_INK);
 // Studio della materia (grafico con recharts): si carica solo aprendo il dettaglio.
 const SubjectStudyStats = lazy(() => import("../components/SubjectStudyStats"));

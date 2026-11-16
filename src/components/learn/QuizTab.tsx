@@ -13,6 +13,7 @@ import { QuizEditor } from "./QuizEditor";
 import type { LearningSource } from "../../agent/learningShared";
 import type { QuizPlay } from "./QuizPlayer";
 import { errorText, type LearnData } from "./useLearnData";
+import { SubjectMark } from "../SubjectMark";
 
 interface QuizEntry {
   quiz: Quiz;
@@ -137,14 +138,17 @@ export function QuizTab({ data, onPlay }: { data: LearnData; onPlay: (play: Quiz
             const score = scores.get(entry.quiz.id);
             return (
               <li key={entry.quiz.id} className="soft-panel flex min-w-0 flex-col gap-2 p-4">
-                <div className="min-w-0">
-                  {entry.owner || entry.path ? <p className="one-line-safe text-xs font-bold text-[var(--faint)]">{entry.owner ? LEARN_TEXT.sharedBy(entry.owner.name) : entry.path}</p> : null}
-                  <h3 className="safe-text text-base font-black">{entry.quiz.title}</h3>
-                  <p className="text-xs font-bold text-[var(--muted)]">
-                    {LEARN_TEXT.questionsCount(entry.questions.length)}
-                    {score?.last !== undefined ? ` · ${LEARN_TEXT.lastScore(percent(score.last))}` : ""}
-                    {score?.best !== undefined ? ` · ${LEARN_TEXT.bestScore(percent(score.best))}` : ""}
-                  </p>
+                <div className="flex min-w-0 items-start gap-3">
+                  <SubjectMark subjectId={entry.owner ? undefined : entry.quiz.subjectId} fallback="CircleDot" />
+                  <div className="min-w-0 flex-1">
+                    {entry.owner || entry.path ? <p className="one-line-safe text-xs font-bold text-[var(--faint)]">{entry.owner ? LEARN_TEXT.sharedBy(entry.owner.name) : entry.path}</p> : null}
+                    <h3 className="safe-text text-base font-black">{entry.quiz.title}</h3>
+                    <p className="text-xs font-bold text-[var(--muted)]">
+                      {LEARN_TEXT.questionsCount(entry.questions.length)}
+                      {score?.last !== undefined ? ` · ${LEARN_TEXT.lastScore(percent(score.last))}` : ""}
+                      {score?.best !== undefined ? ` · ${LEARN_TEXT.bestScore(percent(score.best))}` : ""}
+                    </p>
+                  </div>
                 </div>
                 {confirmDelete === entry.quiz.id ? (
                   <ConfirmWithError

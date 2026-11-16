@@ -538,3 +538,20 @@ connettori in ChatGPT e Claude.
 Non fatto: misura vera della CPU con `wrangler tail` sulle chiamate nuove (piano Free, 10 ms),
 prova con ChatGPT/Claude veri sui 21 strumenti nuovi (provati solo con i test del server MCP, il
 runner del connettore remoto in Node e l'app nel browser).
+
+## Ripasso più semplice e icone delle materie (16 novembre 2026, ramo `claude/flashcards-quiz`)
+
+Su richiesta: avviare, terminare e valutare un ripasso doveva essere più immediato. Dettagli in
+[../superpowers/specs/2026-11-16-flashcards-quiz-design.md](../superpowers/specs/2026-11-16-flashcards-quiz-design.md) §13.
+Un pulsante «Ripassa N schede» (in scadenza poi nuove, al massimo le schede per sessione), raccolte
+con un tocco, «Personalizza» con cinque scelte spiegate; nella sessione «Com'è andata?» con «torna tra
+…» per ogni risposta e la domanda visibile sul retro; «Termina» porta a un riepilogo che valuta la
+sessione (percentuale, conteggi, tempo, da rivedere, continua). Ogni flashcard, raccolta e quiz mostra
+l'icona della sua materia (`src/components/SubjectMark.tsx`, catalogo BARB caricato a parte con
+`src/lib/useCourseLookup.ts`). Tasti cambiati: 1 sbagliata, 2 dubbia, 3 corretta, 4 salta.
+
+Verifiche: `npm test` 1717/1717 (nuove prove di coda consigliata, difficili o dubbie, esclusione delle
+schede viste, attese e prossima scadenza), `npm run lint` pulito, `vite build` ok (ingresso 212,83 kB
+gzip). Flusso provato con Playwright sul server di sviluppo a 375 px e 1280 px, anche da tastiera:
+nessuno scorrimento orizzontale. `npm run e2e` 10/10 sullo stack locale (09 aggiornata al nuovo flusso:
+«Ripassa» diretto, «torna tra 10 min», riepilogo). Non pubblicato.

@@ -14,7 +14,7 @@ import { LibraryTab } from "../components/learn/LibraryTab";
 import { QuizPlayer, type QuizPlay } from "../components/learn/QuizPlayer";
 import { QuizTab } from "../components/learn/QuizTab";
 import { ReviewTab } from "../components/learn/ReviewTab";
-import { SessionBuilder, sessionSpec } from "../components/learn/SessionBuilder";
+import { SessionBuilder, isSessionSize, sessionSpec, type SessionOptions } from "../components/learn/SessionBuilder";
 import { StudySession, type SessionSpec } from "../components/learn/StudySession";
 import { findCard, useLearnData } from "../components/learn/useLearnData";
 
@@ -32,20 +32,20 @@ export function LearnView() {
   const [notice, setNotice] = useState("");
   const openCard = openCardId ? findCard(data, openCardId) : null;
 
-  const start = (spec: SessionSpec) => {
+  // Schede per sessione (0 = tutte): una scelta sola per «Ripassa», le raccolte e Personalizza.
+  const [size, setSize] = useUiState<number>("learn.sessionSize", 20, { validate: isSessionSize });
+
+  const start = (options: SessionOptions) => {
     setBuilder(null);
+    let spec = sessionSpec(data, options);
+    // Una raccolta senza schede in scadenza né nuove: si ripassa comunque, prima le più vicine.
+    if (!spec.items.length && options.filter === "today") spec = sessionSpec(data, { ...options, filter: "all" });
     if (!spec.items.length) {
       setNotice(LEARN_TEXT.sessionEmpty);
       return;
     }
     setNotice("");
     setSession(spec);
-  };
-
-  const quickStart = () => {
-    // Da ripassare oggi; se non c'è nulla, le nuove nell'ordine delle raccolte.
-    const due = sessionSpec(data, { deckIds: [], filter: "due", limit: 100, order: "priority", title: LEARN_TEXT.dueToday });
-    start(due.items.length ? due : sessionSpec(data, { deckIds: [], filter: "new", limit: 20, order: "priority", title: LEARN_TEXT.sessionTitle }));
   };
 
   const targetTitle = (request: AiRequest) => {
@@ -69,18 +69,20 @@ export function LearnView() {
         </p>
       ) : null}
 
-      {tab === "library" ? <LibraryTab data={data} today={today} onStudy={(scope) => setBuilder(scope.deckIds)} onExplain={setExplain} /> : null}
-      {tab === "review" ? <ReviewTab data={data} today={today} onQuickStart={quickStart} onBuild={setBuilder} /> : null}
+      {tab === "library" ? <LibraryTab data={data} today={today} onStudy={(scope) => start({ deckIds: scope.deckIds, filter: "today", limit: size, shuffle: false })} onExplain={setExplain} /> : null}
+      {tab === "review" ? <ReviewTab data={data} today={today} size={size} onStart={start} onCustomize={setBuilder} /> : null}
       {tab === "quiz" ? <QuizTab data={data} onPlay={setQuiz} /> : null}
       {tab === "stats" ? <LearnStats data={data} today={today} onOpenCard={setOpenCardId} /> : null}
       {tab === "ai" ? <AiPanel data={data} targetTitle={targetTitle} /> : null}
 
-      <SessionBuilder open={builder !== null} initialDeckIds={builder ?? []} data={data} onClose={() => setBuilder(null)} onStart={start} />
+      <SessionBuilder open={builder !== null} initialDeckIds={builder ?? []} data={data} size={size} onSize={setSize} onClose={() => setBuilder(null)} onStart={start} />
       <CardDrawer card={openCard?.card ?? null} source={openCard?.source ?? null} state={openCard ? data.states.get(openCard.card.id) : undefined} onClose={() => setOpenCardId(null)} onExplain={setExplain} />
       <ExplainSheet target={explain} requests={data.aiRequests} onClose={() => setExplain(null)} />
       {session ? (
         <StudySession
           spec={session}
+          states={data.states}
+          more={session.options ? (seen) => sessionSpec(data, session.options as SessionOptions, { exclude: seen }).items : undefined}
           onClose={() => setSession(null)}
           onExplain={(item) => setExplain({ kind: "explain_card", id: item.card.id, ...(item.owner ? { ownerId: item.owner.id } : {}), title: blocksPlainText(item.card.front, 80) })}
         />

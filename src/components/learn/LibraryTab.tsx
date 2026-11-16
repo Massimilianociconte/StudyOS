@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { blocksPlainText } from "../../lib/cardBlocks";
 import { buildDeckTree, type DeckNode } from "../../lib/learnSession";
 import { CARD_STATUS_LABEL, classifyCard } from "../../lib/srs";
-import { DECK_KIND_LABEL, deckDescendantIds, deckPath, sortByPosition } from "../../lib/learningModel";
+import { DECK_KIND_LABEL, deckDescendantIds, deckPath, deckSubjectId, sortByPosition } from "../../lib/learningModel";
 import { LEARN_TEXT } from "../../lib/labels/learn";
 import { deleteDeck, duplicateDeck } from "../../store/learning";
 import { deleteSharedDeck } from "../../store/sharedLearning";
@@ -13,6 +13,7 @@ import type { LearningSource } from "../../agent/learningShared";
 import type { Flashcard, StudyDeck, Subject } from "../../types";
 import { ConfirmWithError } from "../ConfirmWithError";
 import { Icon } from "../Icon";
+import { SubjectMark } from "../SubjectMark";
 import { Button, Drawer, EmptyState, IconButton, Pill, inputClass } from "../ui";
 import { CardDrawer, type ExplainTarget } from "./CardDrawer";
 import { CardEditor } from "./CardEditor";
@@ -30,15 +31,19 @@ function DeckRow({
   expanded,
   toggle,
   onOpen,
-  onStudy
+  onStudy,
+  inheritedSubjectId
 }: {
   node: DeckNode;
   expanded: ReadonlySet<string>;
   toggle: (id: string) => void;
   onOpen: (deck: StudyDeck) => void;
   onStudy: (deck: StudyDeck) => void;
+  /** Materia della raccolta madre: le sotto-raccolte senza materia propria la ereditano. */
+  inheritedSubjectId?: string;
 }) {
   const open = expanded.has(node.deck.id);
+  const subjectId = node.deck.subjectId ?? inheritedSubjectId;
   const { counts } = node;
   return (
     <li>
@@ -56,6 +61,7 @@ function DeckRow({
         ) : (
           <span className="w-9 shrink-0" aria-hidden="true" />
         )}
+        <SubjectMark subjectId={subjectId} size="sm" />
         <button type="button" onClick={() => onOpen(node.deck)} className="motion-safe min-w-0 flex-1 rounded-[14px] px-1 py-1.5 text-left">
           <span className="one-line-safe block text-sm font-black">{node.deck.title}</span>
           <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
@@ -69,7 +75,7 @@ function DeckRow({
       {open && node.children.length ? (
         <ul>
           {node.children.map((child) => (
-            <DeckRow key={child.deck.id} node={child} expanded={expanded} toggle={toggle} onOpen={onOpen} onStudy={onStudy} />
+            <DeckRow key={child.deck.id} node={child} expanded={expanded} toggle={toggle} onOpen={onOpen} onStudy={onStudy} inheritedSubjectId={subjectId} />
           ))}
         </ul>
       ) : null}
@@ -81,6 +87,7 @@ function CardRow({ card, status, onOpen }: { card: Flashcard; status: string; on
   return (
     <li>
       <button type="button" onClick={onOpen} className="motion-safe flex w-full min-w-0 items-center gap-3 rounded-[16px] px-3 py-2.5 text-left hover:bg-[var(--surface-soft)]">
+        <SubjectMark subjectId={card.subjectId} size="sm" />
         <span className="safe-text line-clamp-2 min-w-0 flex-1 text-sm font-bold">{blocksPlainText(card.front, 160) || "—"}</span>
         <span className="shrink-0 text-xs font-bold text-[var(--muted)]">{status}</span>
       </button>
@@ -235,7 +242,7 @@ function DeckDrawer({
                   {children.map((child) => (
                     <li key={child.id}>
                       <button type="button" onClick={() => onOpenDeck(child)} className="motion-safe flex w-full items-center gap-2 rounded-[16px] px-3 py-2.5 text-left hover:bg-[var(--surface-soft)]">
-                        <Icon name="Layers" className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+                        <SubjectMark subjectId={deckSubjectId(bundle.decks, child.id)} size="sm" />
                         <span className="one-line-safe min-w-0 flex-1 text-sm font-black">{child.title}</span>
                         <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
                       </button>

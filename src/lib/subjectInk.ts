@@ -5,6 +5,8 @@ import { safeCssColor } from "./sharing";
 
 export const DARK_INK = "#10131d";
 export const LIGHT_INK = "#ffffff";
+/** Le icone dei corsi del catalogo hanno il loro blu scuro. */
+export const COURSE_INK = "#172333";
 
 /**
  * Inchiostro con più contrasto sul colore della materia: scuro (`dark`) sui colori chiari, bianco su

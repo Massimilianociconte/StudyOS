@@ -16,7 +16,7 @@ Non tocca mai il progetto Supabase reale né le porte 5432x (un altro progetto).
 | `06-account-erase.spec.ts` | Bob usa «Cancella anche dall'account» dal telefono: spariscono anche le attività create sul portatile, il portatile le perde dal vivo, e né un ricaricamento né un accesso da un dispositivo nuovo le riportano. |
 | `07-group-join-catchup.spec.ts` | Con la rete di Bob lenta, Alice aggiunge una nota mentre Bob sta entrando nel gruppo: la nota compare a Bob appena il suo canale è pronto, senza ricaricare. |
 | `08-group-exams.spec.ts` | Alice aggiunge un appello nella scheda «Appelli» del gruppo; Bob lo vede comparire dal vivo e lo sceglie; per Alice resta da scegliere (il piano è personale). |
-| `09-share-flashcards.spec.ts` | Alice crea una raccolta e una flashcard e condivide «Flashcard e quiz» con Bob («Può vedere»); Bob la trova in sola lettura, la ripassa e risponde «Sbagliata»; la risposta resta sua dopo un ricaricamento, Alice non la vede. |
+| `09-share-flashcards.spec.ts` | Alice crea una raccolta e una flashcard e condivide «Flashcard e quiz» con Bob («Può vedere»); Bob la trova in sola lettura, «Ripassa» parte subito, risponde «Sbagliata» («torna tra 10 min») e vede il riepilogo con la scheda da rivedere; la risposta resta sua dopo un ricaricamento, Alice non la vede. |
 | `10-quiz.spec.ts` | Alice crea un quiz con una domanda a risposta singola, lo fa in allenamento (esito subito), vede 1 su 1 e 100%; dopo un ricaricamento il punteggio c'è ancora. |
 
 Ogni prova crea i propri dati (nomi con un suffisso unico) e parte e finisce con i due account

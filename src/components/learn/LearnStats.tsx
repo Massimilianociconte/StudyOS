@@ -12,6 +12,7 @@ import { LEARN_TEXT } from "../../lib/labels/learn";
 import { oneOf, useUiState } from "../../lib/uiState";
 import { EmptyState, HelpTip, Panel, Segmented, StatTile } from "../ui";
 import { unionOf, type LearnData } from "./useLearnData";
+import { SubjectMark } from "../SubjectMark";
 
 const tooltipStyle = { background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, color: "var(--text)" };
 const tooltipItemStyle = { color: "var(--text)" };
@@ -193,6 +194,7 @@ export function LearnStats({ data, today, onOpenCard }: { data: LearnData; today
               {stats.hardest.map((item) => (
                 <li key={item.cardId}>
                   <button type="button" onClick={() => onOpenCard(item.cardId)} className="motion-safe flex w-full min-w-0 items-center gap-3 rounded-[14px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]">
+                    <SubjectMark subjectId={cardText.get(item.cardId)?.subjectId} size="sm" />
                     <span className="safe-text line-clamp-2 min-w-0 flex-1 text-sm font-bold">{blocksPlainText(cardText.get(item.cardId)?.front, 120) || "—"}</span>
                     <span className="shrink-0 text-xs font-bold tabular-nums text-[var(--danger-text)]">{percent(item.errorRate)}</span>
                   </button>
