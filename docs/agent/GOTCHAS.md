@@ -646,3 +646,6 @@
 - Vite in sviluppo serve i moduli con `?t=`: per ispezionare uno store dalla console prendi l'URL
   del modulo da `performance.getEntriesByType('resource')`, un `import()` senza `?t=` crea
   un'altra istanza vuota.
+- Dopo `wrangler deploy` del Worker `studyos-agent`, `/health` (servito dal Durable Object «owner»)
+  può dare la versione vecchia per 3–10 minuti, finché Cloudflare non riavvia il Durable Object;
+  `wrangler tail` mostra già la versione nuova. Aspetta con un ciclo su `/health`, non ridistribuire.

@@ -459,8 +459,8 @@ li scrivono gli assistenti collegati via MCP. Design:
 SQL sul progetto reale (16/11/2026, SQL Editor della dashboard): `sharing.sql`, `people.sql`,
 `agent.sql`, poi `agent.sql` di nuovo con la guardia corretta dalla revisione; `verify`,
 `sharing-verify`, `people-verify` e `agent-verify` tutti `true` (`security_issues` vuoto,
-`revision_guard_ready` con richieste agli assistenti e interi sicuri). Il Worker pubblicato è ancora
-1.9.0 e funziona con questo SQL (pull senza `p_types`).
+`revision_guard_ready` con richieste agli assistenti e interi sicuri). Il Worker 1.9.0 ha funzionato
+con questo SQL (pull senza `p_types`) fino al deploy del 1.10.0.
 
 Revisione completa dopo l'iniezione (quattro revisori: modello e store, SQL, connettore, UI), tutto
 corretto e riprovato:
@@ -489,7 +489,7 @@ corretto e riprovato:
   375 px, formule in linea contenute, doppio invio bloccato (Duplica, Invia, Pubblica, Enter),
   conferma di eliminazione non ereditata dalla sotto-raccolta.
 
-Verifiche eseguite, tutte in locale, sul codice finale del ramo (nulla è committato):
+Verifiche eseguite, tutte in locale, sul codice finale del ramo (prima del commit d95a61c):
 
 - dopo la revisione: `npm run lint` pulito, `npm test` 1714/1714, `vite build` ok (ingresso 212,56
   kB gzip), Worker `--dry-run` 584,51 KiB gzip; `scratch-pg.sh` ok con le 21 prove della guardia;
@@ -527,6 +527,14 @@ Verifiche eseguite, tutte in locale, sul codice finale del ramo (nulla è commit
   700 B, sessione di ripasso ~11,5 KB. Un account con 1000 schede ripassate tutte occupa circa
   1,2 MB di payload (indici e overhead di Postgres esclusi).
 
-Non fatto, serve il permesso della persona: pubblicazione del client, deploy del Worker 1.10.0 e misura vera della CPU con `wrangler tail`, prova con
-ChatGPT/Claude veri sui 21 strumenti nuovi (provati solo con i test del server MCP, il runner del
-connettore remoto in Node e l'app nel browser). Commit e push.
+Pubblicato il 16/11/2026, con il permesso della persona: commit d95a61c su `main` (fast-forward da
+47647e3), workflow Pages riuscito (run 43913395021) e sito pubblicato con la nuova sezione Ripasso
+(il bundle `LearnView` contiene «Mostra la domanda»). Worker `studyos-agent` distribuito (Version ID
+dd16d208-7c3e-42b0-8aea-158740457b14, 100%); `/health` è passato a `"version":"1.10.0"` solo alle
+17:05 UTC, circa 10 minuti dopo il deploy, quando Cloudflare ha riavviato il Durable Object (prima
+`wrangler tail` mostrava già la versione nuova). Per vedere i 21 strumenti nuovi vanno ricreati i
+connettori in ChatGPT e Claude.
+
+Non fatto: misura vera della CPU con `wrangler tail` sulle chiamate nuove (piano Free, 10 ms),
+prova con ChatGPT/Claude veri sui 21 strumenti nuovi (provati solo con i test del server MCP, il
+runner del connettore remoto in Node e l'app nel browser).
