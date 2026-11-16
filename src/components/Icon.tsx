@@ -94,7 +94,10 @@ import {
   Share2,
   MessageCircle,
   RefreshCw,
-  ShieldCheck
+  ShieldCheck,
+  Lightbulb,
+  CircleHelp,
+  Flag
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Suspense } from "react";
@@ -200,7 +203,10 @@ const icons = {
   Share2,
   MessageCircle,
   RefreshCw,
-  ShieldCheck
+  ShieldCheck,
+  Lightbulb,
+  CircleHelp,
+  Flag
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof icons;

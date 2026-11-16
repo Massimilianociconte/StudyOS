@@ -588,3 +588,27 @@ nessuno scorrimento orizzontale. Non provato con due dispositivi veri sul cloud.
 Pubblicato il 16 novembre 2026: commit `05f6376` su `main`, workflow Pages riuscito (build e deploy);
 il codice pubblicato contiene `updateAppearance` e la frase in Aspetto. Nessuna modifica a database o
 Worker.
+
+## Flashcard e quiz: indietro, tastiera, aspetto e schermi (17 novembre 2026)
+
+Su richiesta: nel ripasso si poteva solo andare avanti. Ora Indietro e Avanti (pulsanti e frecce ← →)
+scorrono le schede; una scheda già vista si ritrova girata con la risposta data e se ne può scegliere
+un'altra (`changeCardAnswer` in `src/store/learning.ts`: sostituisce l'evento e rifà lo stato di
+ripasso da prima della risposta). Schede ridisegnate (colore della materia sul fronte, accento sul
+retro, pila dietro, testo breve grande), avanzamento a tacche colorate, «Torna alle schede» dal
+riepilogo. Quiz: Indietro anche in allenamento, numeri delle domande per saltare, tasti A–F/1–6 e
+Invio, «Segna come dubbia» nella domanda, due colonne su tablet in orizzontale, computer e telefono in
+orizzontale, modalità in una griglia 2×2. Dettagli nella specifica
+[../superpowers/specs/2026-11-16-flashcards-quiz-design.md](../superpowers/specs/2026-11-16-flashcards-quiz-design.md) §13.
+
+Verifiche: `npm test` 1732/1732 (nuove: cambio di risposta nello store, `tests/learnNav.test.mjs`),
+`npm run lint` pulito, `vite build` ok. Con Playwright (Chromium) sul server di sviluppo, 15 schermi:
+telefoni 320×568, 360×780, 375×667, 393×852, telefono in orizzontale 844×390 e 667×375, iPad mini
+744×1133, iPad 820×1180 e 1180×820, Galaxy Tab S8 800×1280 e 1280×800, iPad Pro 1024×1366, computer
+1280×720, 1440×900, 1920×1080 (tocco emulato su telefoni e tablet). Su ognuno: indietro, cambio di
+risposta (un solo evento salvato), salta e avanti, riepilogo e ritorno; quiz in allenamento con
+indietro e numeri, simulazione con salto alla domanda 12; nessuno scorrimento orizzontale, nessun
+pulsante fuori schermo o tagliato, bersagli di almeno 40 px (numeri del quiz 32–36 px). Tema chiaro e
+«riduci movimento» provati su 393×852 e 1440×900. Non provati su dispositivi veri né su Safari/WebKit;
+`npm run e2e` non eseguito (Docker spento): `10-quiz.spec.ts` aggiornato alla griglia delle modalità e
+gli stessi passaggi di interfaccia di 09 e 10 provati sul server di sviluppo.

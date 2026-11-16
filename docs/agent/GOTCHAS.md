@@ -633,6 +633,15 @@
   stesso id si mescolerebbero. Resta possibile solo per raccolte radice senza materia create con la
   stessa chiave in due account prima di condividerle. Cambiare la funzione di hash o l'ambito cambia
   gli id dei prossimi lotti, non di quelli salvati.
+- Sessione di ripasso: una risposta cambiata tornando indietro sostituisce l'evento nella sua riga
+  (`changeCardAnswer`, cercato per id della scheda e istante `at`); le statistiche contano così una
+  risposta per scheda e sessione. Lo stato si rifà da `before` solo se `updatedAt` è ancora quello
+  scritto dalla risposta (`after`): se un altro dispositivo l'ha cambiato, la nuova risposta vale
+  sullo stato attuale. La sessione tiene le risposte salvate in memoria (`SavedAnswer`): chiusa la
+  sessione non si torna più indietro.
+- Varianti Tailwind `short:` (orizzontale, altezza ≤ 520 px) e `wide:` (orizzontale, larghezza ≥
+  1024 px e altezza ≥ 521 px) in `tailwind.config.js`: le usano ripasso e quiz. La scheda con `fill`
+  vuole un contenitore con `container-type: size` (unità `cqh`).
 - Condivisione `flashcards`: sempre per tutte le materie (raccolte senza materia). Stati di
   ripasso e sessioni non entrano mai (`studyos_scope_types`): progressi personali anche sulle
   schede degli altri. Una raccolta condivisa si elimina solo se vuota.

@@ -1,6 +1,6 @@
 // Quiz: elenco (tuoi e condivisi) con ultimo e miglior punteggio, avvio con la modalità scelta,
 // creazione e modifica dei tuoi quiz.
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import { deleteQuiz } from "../../store/learning";
 import { deleteSharedQuiz } from "../../store/sharedLearning";
 import { lastMistakes, percent, prepareQuiz } from "../../lib/learnSession";
@@ -8,12 +8,15 @@ import { deckPath, sortByPosition } from "../../lib/learningModel";
 import { LEARN_TEXT, QUIZ_MODES, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, type QuizMode } from "../../lib/labels/learn";
 import type { Quiz, QuizQuestion } from "../../types";
 import { ConfirmWithError } from "../ConfirmWithError";
-import { Button, Drawer, EmptyState, Field, Segmented, inputClass } from "../ui";
+import { Button, Drawer, EmptyState, Field, inputClass } from "../ui";
+import { Icon } from "../Icon";
 import { QuizEditor } from "./QuizEditor";
 import type { LearningSource } from "../../agent/learningShared";
 import type { QuizPlay } from "./QuizPlayer";
 import { errorText, type LearnData } from "./useLearnData";
 import { SubjectMark } from "../SubjectMark";
+
+const MODE_ICON: Record<QuizMode, string> = { training: "Target", exam: "Timer", mistakes: "RotateCcw", random: "Zap" };
 
 interface QuizEntry {
   quiz: Quiz;
@@ -27,6 +30,16 @@ interface QuizEntry {
 function StartDrawer({ entry, data, onClose, onPlay }: { entry: QuizEntry | null; data: LearnData; onClose: () => void; onPlay: (play: QuizPlay) => void }) {
   const [mode, setMode] = useState<QuizMode>("training");
   const [limit, setLimit] = useState(20);
+  const modeLabelId = useId();
+  // Gruppo di scelte: le frecce cambiano modalità e spostano il focus (Tab entra solo su quella scelta).
+  const onModeKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = QUIZ_MODES[(QUIZ_MODES.indexOf(mode) + step + QUIZ_MODES.length) % QUIZ_MODES.length];
+    setMode(next);
+    event.currentTarget.querySelector<HTMLElement>(`[data-mode="${next}"]`)?.focus();
+  };
   const mistakes = useMemo(() => (entry ? lastMistakes(data.studyRuns, entry.quiz.id) : new Set<string>()), [entry, data.studyRuns]);
   if (!entry) return <Drawer open={false} onClose={onClose} title="" />;
   const available = mode === "mistakes" ? entry.questions.filter((question) => mistakes.has(question.id)).length : entry.questions.length;
@@ -60,9 +73,34 @@ function StartDrawer({ entry, data, onClose, onPlay }: { entry: QuizEntry | null
       <div className="grid grid-cols-1 gap-4">
         {entry.quiz.description ? <p className="safe-text whitespace-pre-line text-sm font-medium text-[var(--muted)]">{entry.quiz.description}</p> : null}
         <div className="min-w-0">
-          <p className="mb-1.5 text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.quizMode}</p>
-          <Segmented<QuizMode> label={LEARN_TEXT.quizMode} value={mode} onChange={setMode} size="sm" options={QUIZ_MODES.map((id) => ({ id, label: QUIZ_MODE_LABEL[id] }))} />
-          <p className="mt-2 text-sm font-medium text-[var(--muted)]">{QUIZ_MODE_HINT[mode]}</p>
+          <p id={modeLabelId} className="mb-1.5 text-xs font-black uppercase text-[var(--faint)]">
+            {LEARN_TEXT.quizMode}
+          </p>
+          {/* Le quattro modalità tutte in vista, ciascuna con cosa fa (su telefono una fila scorrevole ne nascondeva due). */}
+          <div role="radiogroup" aria-labelledby={modeLabelId} className="grid grid-cols-2 gap-2" onKeyDown={onModeKey}>
+            {QUIZ_MODES.map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={mode === id}
+                tabIndex={mode === id ? 0 : -1}
+                data-mode={id}
+                onClick={() => setMode(id)}
+                className={`motion-safe flex min-h-[4.5rem] min-w-0 flex-col items-start gap-1 rounded-[18px] border p-3 text-left ${
+                  mode === id
+                    ? "border-[var(--accent-ink)] bg-[color-mix(in_srgb,var(--accent)_12%,var(--surface))] shadow-[0_0_0_1px_var(--accent-ink)]"
+                    : "border-[var(--border)] bg-[var(--surface-soft)] hover:bg-[var(--surface)]"
+                }`}
+              >
+                <span className="flex min-w-0 items-center gap-1.5 text-sm font-black">
+                  <Icon name={MODE_ICON[id]} className="h-4 w-4 shrink-0 text-[var(--accent-ink)]" />
+                  <span className="safe-text">{QUIZ_MODE_LABEL[id]}</span>
+                </span>
+                <span className="safe-text text-xs font-medium leading-snug text-[var(--muted)]">{QUIZ_MODE_HINT[id]}</span>
+              </button>
+            ))}
+          </div>
           {mode === "exam" && entry.quiz.timeLimitMinutes ? <p className="mt-1 text-sm font-bold">{LEARN_TEXT.quizTimeLimit(entry.quiz.timeLimitMinutes)}</p> : null}
           {mode === "mistakes" && !available ? <p className="mt-1 text-sm font-bold">{LEARN_TEXT.mistakesNone}</p> : null}
         </div>

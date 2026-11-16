@@ -36,7 +36,7 @@ test("10 Alice crea un quiz a risposta singola, lo fa in allenamento e il risult
   // Allenamento: scelta, conferma, esito subito, poi il risultato.
   await page.getByRole("button", { name: "Inizia il quiz" }).first().click();
   const start = page.getByRole("dialog", { name: quizTitle });
-  await start.getByRole("group", { name: "Modalità" }).getByRole("button", { name: "Allenamento" }).click();
+  await start.getByRole("radiogroup", { name: "Modalità" }).getByRole("radio", { name: /^Allenamento/ }).click();
   await start.getByRole("button", { name: "Inizia il quiz" }).click();
   const player = page.getByRole("dialog", { name: quizTitle });
   await expect(player.getByText(prompt)).toBeVisible();

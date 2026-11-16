@@ -32,6 +32,12 @@ export default {
   plugins: [
     // `can-hover:` = dispositivi con mouse/trackpad. Serve per nascondere azioni secondarie
     // fino al passaggio del mouse SOLO dove il passaggio esiste: su tablet restano visibili.
-    plugin(({ addVariant }) => addVariant("can-hover", "@media (hover: hover) and (pointer: fine)"))
+    plugin(({ addVariant }) => {
+      addVariant("can-hover", "@media (hover: hover) and (pointer: fine)");
+      // `short:` = schermo basso e largo (telefono in orizzontale): ripasso e quiz mettono i comandi di lato.
+      addVariant("short", "@media (orientation: landscape) and (max-height: 520px)");
+      // `wide:` = tablet in orizzontale e computer: quiz su due colonne (domanda | risposte).
+      addVariant("wide", "@media (orientation: landscape) and (min-width: 1024px) and (min-height: 521px)");
+    })
   ]
 };

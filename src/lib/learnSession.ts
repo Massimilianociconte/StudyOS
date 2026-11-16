@@ -4,7 +4,8 @@ import { applyReview, classifyCard, reviewPriority, type CardRef } from "./srs";
 import { deckDescendantIds, sortByPosition } from "./learningModel";
 import { safeOptions, scoreQuestion, shuffled } from "./quizScoring";
 import type { SessionFilter } from "./labels/learn";
-import type { Flashcard, FlashcardState, Quiz, QuizQuestion, ReviewResult, StudyDeck, StudyRun } from "../types";
+import { blocksPlainText } from "./cardBlocks";
+import type { CardBlock, Flashcard, FlashcardState, Quiz, QuizQuestion, ReviewResult, StudyDeck, StudyRun } from "../types";
 
 export interface DeckCounts {
   /** Schede nella raccolta e nelle sotto-raccolte. */
@@ -284,3 +285,35 @@ export const clockText = (seconds: number) => {
   const safe = Math.max(0, Math.floor(seconds));
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
 };
+
+// ─── Navigazione di ripasso e quiz ───────────────────────────────────────────────────────
+
+const SHORT_TEXT = 140;
+
+/** Testo breve (uno o due blocchi di testo o formula): sulla scheda va grande e al centro. */
+export const isShortCardText = (blocks: readonly CardBlock[] | undefined) =>
+  Array.isArray(blocks) &&
+  blocks.length > 0 &&
+  blocks.length <= 2 &&
+  blocks.every((block) => block && (block.type === "text" || block.type === "formula")) &&
+  blocksPlainText(blocks).length <= SHORT_TEXT;
+
+/** Tasto → opzione del quiz: 1–9 oppure la lettera mostrata (A, B, …). -1 se non è un'opzione. */
+export const optionFromKey = (key: string, count: number) => {
+  if (key.length !== 1) return -1;
+  const digit = key >= "1" && key <= "9" ? Number(key) - 1 : -1;
+  const lower = key.toLowerCase();
+  const letter = lower >= "a" && lower <= "z" ? lower.charCodeAt(0) - 97 : -1;
+  const index = digit >= 0 ? digit : letter;
+  return index >= 0 && index < count ? index : -1;
+};
+
+/** Prima domanda dell'allenamento non ancora confermata (o saltata); le precedenti si possono rivedere. */
+export const quizFrontier = (prepared: readonly PreparedQuestion[], checked: ReadonlySet<string>) => {
+  const index = prepared.findIndex((item) => !checked.has(item.question.id));
+  return index < 0 ? prepared.length - 1 : index;
+};
+
+/** Dove si può andare: in simulazione ovunque, in allenamento fino alla prima domanda da fare. */
+export const quizReachable = (position: number, prepared: readonly PreparedQuestion[], checked: ReadonlySet<string>, exam: boolean) =>
+  position >= 0 && position < prepared.length && (exam || position <= quizFrontier(prepared, checked));

@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
 import * as learning from "../src/store/learning.ts";
+import { applyReview } from "../src/lib/srs.ts";
 
 const stamp = { createdAt: "2026-11-01T08:00:00.000Z", updatedAt: "2026-11-01T08:00:00.000Z", archived: false, tags: [] };
 const seed = () =>
@@ -73,6 +74,72 @@ test("ripasso: risposte, stati, sessione salvata solo alla prima risposta", asyn
   await learning.finishRun("run_inesistente");
   await learning.resetCardStates([b.id]);
   assert.equal(s().cardStates.length, 1);
+});
+
+test("tornare indietro e cambiare risposta: un solo evento, stato rifatto da prima della risposta", async () => {
+  seed();
+  const deck = await learning.createDeck({ title: "D", subjectId: "sub_chim" });
+  const a = await learning.createCard(deck.id, { front: "A", back: "a" });
+  const b = await learning.createCard(deck.id, { front: "B", back: "b" });
+  const refA = { id: a.id, deckId: deck.id, subjectId: "sub_chim", revision: 1 };
+  const refB = { id: b.id, deckId: deck.id, subjectId: "sub_chim", revision: 1 };
+  const fresh = (ref, result) => applyReview(undefined, ref, result, new Date());
+  let run = learning.newRun({ kind: "flashcards", mode: "review", title: "R", deckIds: [deck.id], subjectIds: [], itemIds: [a.id, b.id] });
+
+  // Scheda nuova: Corretta, poi Sbagliata. Resta un evento, lo stato è quello di un primo «sbagliata».
+  let first = await learning.answerCard(run, refA, "correct", 2000);
+  run = first.run;
+  assert.equal(first.saved.before, undefined);
+  assert.equal(first.saved.after.reps, 1);
+  const changed = await learning.changeCardAnswer(run, first.saved, "wrong", 500);
+  run = changed.run;
+  assert.deepEqual(s().studyRuns[0].events.map((event) => [event.i, event.r]), [[a.id, "wrong"]]);
+  assert.equal(s().studyRuns[0].events[0].ms, 2500, "tempo della prima risposta più quello per cambiarla");
+  const stateA = s().cardStates.find((item) => item.id === a.id);
+  assert.equal(stateA.lapses, 1);
+  assert.equal(stateA.reps, 0);
+  assert.equal(stateA.correct, fresh(refA, "wrong").correct);
+  assert.equal(stateA.wrong, 1, "la prima risposta non conta più");
+
+  // Cambiata di nuovo in «salta»: la scheda torna nuova (nessuno stato).
+  const skipped = await learning.changeCardAnswer(run, changed.saved, "skip");
+  assert.deepEqual(s().studyRuns[0].events.map((event) => event.r), ["skip"]);
+  assert.equal(s().cardStates.some((item) => item.id === a.id), false);
+  // E da «salta» a Dubbia: stato come una prima risposta dubbia.
+  const doubt = await learning.changeCardAnswer(run, skipped.saved, "doubt");
+  assert.equal(s().cardStates.find((item) => item.id === a.id).reps, fresh(refA, "doubt").reps);
+  assert.equal(s().studyRuns[0].events.length, 1);
+
+  // Scheda già ripassata in passato: Corretta → Dubbia riparte dallo stato di prima.
+  const older = await learning.answerCard(learning.newRun({ kind: "flashcards", mode: "review", title: "", deckIds: [], subjectIds: [], itemIds: [] }), refB, "correct", 100);
+  const before = s().cardStates.find((item) => item.id === b.id);
+  const second = await learning.answerCard(run, refB, "correct", 100);
+  assert.equal(second.saved.before.updatedAt, before.updatedAt);
+  await learning.changeCardAnswer(second.run, second.saved, "doubt");
+  const stateB = s().cardStates.find((item) => item.id === b.id);
+  assert.equal(stateB.reps, applyReview(before, refB, "doubt", new Date()).reps);
+  assert.equal(stateB.doubt, (before.doubt ?? 0) + 1);
+  assert.equal(stateB.correct, before.correct, "la Corretta cambiata non resta nel conteggio");
+  assert.ok(stateB.updatedAt > second.saved.after.updatedAt, "la nuova scrittura vince sulla precedente");
+  assert.ok(older.run.id !== run.id);
+
+  // Stato cambiato altrove dopo la risposta: la nuova risposta vale sullo stato attuale.
+  const third = await learning.answerCard(run, refB, "wrong", 100);
+  const elsewhere = { ...s().cardStates.find((item) => item.id === b.id), reps: 7, updatedAt: "2099-01-01T00:00:00.000Z" };
+  useStudyStore.setState({ cardStates: s().cardStates.map((item) => (item.id === b.id ? elsewhere : item)) });
+  await learning.changeCardAnswer(third.run, third.saved, "correct");
+  assert.equal(s().cardStates.find((item) => item.id === b.id).reps, 8);
+  await learning.changeCardAnswer(third.run, { ...third.saved, result: "correct", after: undefined }, "skip");
+  assert.equal(s().cardStates.find((item) => item.id === b.id).reps, 8, "«salta» non tocca uno stato scritto da altri");
+
+  // Evento non più nella riga (riga tolta altrove): la risposta si aggiunge alla sessione.
+  const lost = await learning.answerCard(run, refA, "correct", 100);
+  useStudyStore.setState({ studyRuns: s().studyRuns.map((item) => (item.id === run.id ? { ...item, events: item.events.filter((event) => event.at !== lost.saved.at) } : item)) });
+  const count = s().studyRuns.find((item) => item.id === run.id).events.length;
+  const re = await learning.changeCardAnswer(lost.run, lost.saved, "wrong");
+  assert.equal(s().studyRuns.find((item) => item.id === run.id).events.length, count + 1);
+  assert.equal(re.saved.runId, run.id);
+  assert.equal(doubt.saved.result, "doubt");
 });
 
 test("eliminare una raccolta toglie sotto-raccolte, schede, quiz, stati propri; lo storico resta", async () => {

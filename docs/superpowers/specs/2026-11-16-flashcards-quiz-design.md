@@ -215,6 +215,28 @@ comparative tra membri di una raccolta condivisa (richiederebbero regole di priv
   (`nextWaits`), anche come descrizione accessibile. Tasti nell'ordine dei pulsanti: 1 sbagliata,
   2 dubbia, 3 corretta, 4 salta (Salta anche prima di girare). «Termina», Esc e Indietro portano al
   riepilogo senza conferma (ogni risposta è già salvata); senza risposte si esce.
+- **Indietro e Avanti** (17 novembre 2026): pulsanti sotto la scheda e frecce ← →. Tornando a una
+  scheda già vista la si ritrova girata con «La tua risposta: …» e il pulsante di quella risposta
+  segnato; sceglierne un'altra la cambia (`changeCardAnswer`): l'evento prende il posto di quello di
+  prima nella stessa riga della sessione (una risposta per scheda e sessione nelle statistiche) e lo
+  stato di ripasso riparte da com'era prima della risposta, se nessun altro l'ha cambiato nel
+  frattempo; «salta» al posto di una risposta riporta lo stato di prima (scheda mai vista: nessuno
+  stato). La stessa risposta di prima non scrive nulla e va avanti. Avanti su una scheda senza
+  risposta la salta. Dal riepilogo «Torna alle schede» (o ←) riapre la scheda dove ci si era fermati.
+- **Aspetto e schermi**: fronte sfumato col colore della materia, retro con l'accento, pila delle
+  schede che restano dietro, testo breve grande e al centro (`isShortCardText`), elenchi e testi
+  lunghi a sinistra. Nella sessione la scheda occupa l'altezza libera (`container-type: size`,
+  `min(100cqh − 2,75rem, 36rem)`); avanzamento con una tacca per scheda colorata con la risposta.
+  Telefono in orizzontale (variante Tailwind `short:`, altezza ≤ 520 px): comandi in una colonna a
+  destra. Margini per la tacca dei telefoni (`env(safe-area-inset-*)`).
+- **Quiz**: Indietro anche in allenamento (le domande confermate si rileggono, bloccate, con esito e
+  spiegazione); numeri delle domande in alto per saltare (in allenamento fino alla prima da fare,
+  `quizReachable`; in simulazione ovunque), con risposta data, esito e segno «dubbia». Tasti: ← →,
+  A–F o 1–6 per scegliere (`optionFromKey`), Invio conferma o va avanti (anche con il focus su una
+  risposta). «Segna come dubbia» è un interruttore nella domanda. Su tablet in orizzontale e computer
+  (`wide:`, larghezza ≥ 1024 px in orizzontale) e sul telefono in orizzontale la domanda sta a sinistra
+  e le risposte a destra. Le quattro modalità si scelgono da una griglia 2×2 con la spiegazione di
+  ciascuna (prima una fila scorrevole ne nascondeva due sul telefono).
 - **Riepilogo**: completato o terminato, «X di Y schede in …» (tempo misurato per scheda, tetto di
   un'ora come nel salvataggio), percentuale di corrette sulle risposte date (le saltate non contano),
   conteggi, schede «Da rivedere» (sbagliate e dubbie). Azioni sempre in vista nella barra in basso:

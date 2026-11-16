@@ -439,30 +439,118 @@ export const newRun = (start: RunStart, now = new Date()): StudyRun => {
 };
 
 /**
- * Registra una risposta a una flashcard: evento immutabile nella sessione e nuovo stato di
- * ripasso (salvo «salta»). Restituisce la sessione aggiornata (o la continuazione oltre 400).
+ * Risposta salvata in una sessione di ripasso: tornando indietro si può cambiare (changeCardAnswer).
+ * Riga e istante identificano l'evento; gli stati dicono da dove ripartire.
  */
-export const recordCardAnswer = async (run: StudyRun, card: CardRef, result: ReviewResult, ms: number): Promise<StudyRun> => {
+export interface SavedAnswer {
+  card: CardRef;
+  result: ReviewResult;
+  /** Riga della sessione che contiene l'evento (la continuazione, oltre 400 risposte). */
+  runId: string;
+  at: string;
+  ms: number;
+  /** Stato di ripasso prima della risposta (assente: scheda mai valutata). */
+  before?: FlashcardState;
+  /** Stato scritto dalla risposta (assente con «salta», che non lo tocca). */
+  after?: FlashcardState;
+}
+
+const answerEvent = (card: CardRef, result: ReviewResult, iso: string, ms: number): StudyRunEvent => ({
+  i: card.id,
+  r: result,
+  at: iso,
+  ...(ms > 0 ? { ms: Math.min(3_600_000, Math.round(ms)) } : {}),
+  ...(card.revision ? { v: card.revision } : {})
+});
+
+const appendToRun = (runs: readonly StudyRun[], run: StudyRun, event: StudyRunEvent, iso: string) => {
+  const stored = runs.find((item) => item.id === run.id) ?? run;
+  const { run: updated, next } = appendRunEvent(stored, event, () => createId("run"), iso);
+  const list = runs.some((item) => item.id === run.id) ? runs.map((item) => (item.id === run.id ? updated : item)) : [...runs, updated];
+  return { runs: next ? [...list, next] : list, latest: next ?? updated };
+};
+
+const putState = (states: readonly FlashcardState[], state: FlashcardState) =>
+  states.some((item) => item.id === state.id) ? states.map((item) => (item.id === state.id ? state : item)) : [...states, state];
+
+/**
+ * Registra una risposta a una flashcard: evento nella sessione e nuovo stato di ripasso (salvo
+ * «salta»). Restituisce la sessione aggiornata (o la continuazione oltre 400) e la risposta salvata.
+ */
+export const answerCard = async (run: StudyRun, card: CardRef, result: ReviewResult, ms: number): Promise<{ run: StudyRun; saved: SavedAnswer }> => {
   const now = new Date();
   const iso = now.toISOString();
-  const event: StudyRunEvent = { i: card.id, r: result, at: iso, ...(ms > 0 ? { ms: Math.min(3_600_000, Math.round(ms)) } : {}), ...(card.revision ? { v: card.revision } : {}) };
+  const event = answerEvent(card, result, iso, ms);
   let latest = run;
+  let saved: SavedAnswer = { card, result, runId: run.id, at: iso, ms: event.ms ?? 0 };
   await commitLearning((current) => {
-    const stored = current.studyRuns.find((item) => item.id === run.id) ?? run;
-    const { run: updated, next } = appendRunEvent(stored, event, () => createId("run"), iso);
-    latest = next ?? updated;
-    const runs = current.studyRuns.some((item) => item.id === run.id)
-      ? current.studyRuns.map((item) => (item.id === run.id ? updated : item))
-      : [...current.studyRuns, updated];
-    const patch: Partial<Learning> = { studyRuns: next ? [...runs, next] : runs };
+    const appended = appendToRun(current.studyRuns, run, event, iso);
+    latest = appended.latest;
+    const patch: Partial<Learning> = { studyRuns: appended.runs };
+    const previous = current.cardStates.find((item) => item.id === card.id);
+    saved = { ...saved, runId: appended.latest.id, ...(previous ? { before: previous } : {}) };
     if (result !== "skip") {
-      const previous = current.cardStates.find((item) => item.id === card.id);
       const nextState: FlashcardState = { ...applyReview(previous, card, result, now), updatedAt: laterStamp(previous?.updatedAt, now.getTime()) };
-      patch.cardStates = previous ? current.cardStates.map((item) => (item.id === card.id ? nextState : item)) : [...current.cardStates, nextState];
+      patch.cardStates = putState(current.cardStates, nextState);
+      saved = { ...saved, after: nextState };
     }
     return patch;
   });
-  return latest;
+  return { run: latest, saved };
+};
+
+/** Come answerCard, restituisce solo la sessione aggiornata. */
+export const recordCardAnswer = async (run: StudyRun, card: CardRef, result: ReviewResult, ms: number): Promise<StudyRun> => (await answerCard(run, card, result, ms)).run;
+
+/**
+ * Cambia una risposta già data nella sessione (si è tornati alla scheda): l'evento prende il posto
+ * di quello di prima, così le statistiche contano una sola risposta per quella volta. Lo stato di
+ * ripasso riparte da com'era prima della risposta, se nessun altro l'ha cambiato nel frattempo
+ * (un altro dispositivo, un'altra sessione); altrimenti la nuova risposta vale sullo stato attuale.
+ * Se l'evento non c'è più (riga tolta altrove), la risposta si aggiunge alla sessione.
+ */
+export const changeCardAnswer = async (run: StudyRun, saved: SavedAnswer, result: ReviewResult, extraMs = 0): Promise<{ run: StudyRun; saved: SavedAnswer }> => {
+  const now = new Date();
+  const iso = now.toISOString();
+  const { card } = saved;
+  const event = answerEvent(card, result, iso, saved.ms + Math.max(0, extraMs));
+  let latest = run;
+  let next: SavedAnswer = { card, result, runId: saved.runId, at: iso, ms: event.ms ?? 0 };
+  await commitLearning((current) => {
+    const row = current.studyRuns.find((item) => item.id === saved.runId);
+    const position = row ? row.events.findIndex((item) => item.i === card.id && item.at === saved.at) : -1;
+    let runs: StudyRun[];
+    if (row && position >= 0) {
+      const events = row.events.slice();
+      events[position] = event;
+      const updated: StudyRun = { ...row, events, updatedAt: laterStamp(row.updatedAt, now.getTime()) };
+      runs = current.studyRuns.map((item) => (item.id === row.id ? updated : item));
+      latest = runs.find((item) => item.id === run.id) ?? run;
+    } else {
+      const appended = appendToRun(current.studyRuns, run, event, iso);
+      runs = appended.runs;
+      latest = appended.latest;
+      next = { ...next, runId: appended.latest.id };
+    }
+    const patch: Partial<Learning> = { studyRuns: runs };
+    const stored = current.cardStates.find((item) => item.id === card.id);
+    // Lo stato è ancora quello scritto dalla risposta di prima: si riparte da prima di quella risposta.
+    const ours = Boolean(saved.after && stored && stored.updatedAt === saved.after.updatedAt);
+    const base = ours ? saved.before : stored;
+    next = { ...next, ...(base ? { before: base } : {}) };
+    if (result !== "skip") {
+      const nextState: FlashcardState = { ...applyReview(base, card, result, now), updatedAt: laterStamp(stored?.updatedAt, now.getTime()) };
+      patch.cardStates = putState(current.cardStates, nextState);
+      next = { ...next, after: nextState };
+    } else if (ours) {
+      // «Salta» al posto di una risposta: la scheda torna com'era (mai valutata: niente stato).
+      patch.cardStates = saved.before
+        ? putState(current.cardStates, { ...saved.before, updatedAt: laterStamp(stored?.updatedAt, now.getTime()) })
+        : current.cardStates.filter((item) => item.id !== card.id);
+    }
+    return patch;
+  });
+  return { run: latest, saved: next };
 };
 
 /** Chiude la sessione (se è stata salvata: almeno una risposta). */
