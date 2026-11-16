@@ -584,3 +584,7 @@ Verifiche: `npm test` 1728/1728 (11 nuove in `tests/accountLook.test.mjs`), `npm
 pulsante della barra e dalla palette, ricarica, impostazioni locali cancellate (il tema torna
 dall'account), cambio arrivato da un altro dispositivo (si applica e resta dopo la ricarica); a 375 px
 nessuno scorrimento orizzontale. Non provato con due dispositivi veri sul cloud.
+
+Pubblicato il 16 novembre 2026: commit `05f6376` su `main`, workflow Pages riuscito (build e deploy);
+il codice pubblicato contiene `updateAppearance` e la frase in Aspetto. Nessuna modifica a database o
+Worker.
