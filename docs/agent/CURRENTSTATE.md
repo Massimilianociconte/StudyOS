@@ -554,4 +554,9 @@ Verifiche: `npm test` 1717/1717 (nuove prove di coda consigliata, difficili o du
 schede viste, attese e prossima scadenza), `npm run lint` pulito, `vite build` ok (ingresso 212,83 kB
 gzip). Flusso provato con Playwright sul server di sviluppo a 375 px e 1280 px, anche da tastiera:
 nessuno scorrimento orizzontale. `npm run e2e` 10/10 sullo stack locale (09 aggiornata al nuovo flusso:
-«Ripassa» diretto, «torna tra 10 min», riepilogo). Non pubblicato.
+«Ripassa» diretto, «torna tra 10 min», riepilogo).
+
+Pubblicato il 16 novembre 2026: commit `86029ed` su `main`, workflow Pages riuscito (build e deploy).
+Sul sito pubblicato il blocco di LearnView contiene i nuovi testi («Personalizza il ripasso»,
+«Ripassa comunque», «torna tra», «Continua con altre», legenda dei tasti). Nessuna modifica a
+database o Worker: il connettore resta 1.10.0.
