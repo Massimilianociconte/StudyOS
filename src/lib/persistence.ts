@@ -417,6 +417,47 @@ export const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
 export const whenPersisted = () => chain.then(() => undefined);
 
 /**
+ * Rimette su disco l'ultima copia salvata (impostazioni e dati, o la copia cifrata), senza voci in
+ * coda. Il browser può svuotare IndexedDB con la scheda aperta (dati del sito cancellati, spazio
+ * liberato): Dexie riapre da solo un database vuoto, ma memoria e baseline dicono «già salvato» e il
+ * diff non lo riscrive mai. La prima sincronizzazione la chiama prima di segnare il dispositivo come
+ * allineato: senza, dopo un ricaricamento il dispositivo restava vuoto e i pull successivi, che partono
+ * dal cursore, non lo riempivano più (incidente Opera, 2026-11-16).
+ */
+export const rewriteLocalCopy = () =>
+  runExclusive(async () => {
+    assertNotHalted();
+    if (!host) return;
+    // Bloccato o sospeso: lo stato in memoria è vuoto, non c'è nulla da rimettere.
+    const pendingNow = pendingWrites();
+    if (!pendingNow) return;
+    // Prima le modifiche non ancora salvate, con le loro voci in coda.
+    if (pendingNow.any) await flush();
+    const settings = baselineSettings ?? host.getState().settings;
+    if (vaultMode) {
+      if (!vaultKey) return;
+      const record = await encryptWithKey(JSON.stringify(snapshotOf(persistedCollections())), vaultKey);
+      assertNotHalted();
+      await db.transaction("rw", [db.settings, db.vault], async () => {
+        assertNotHalted();
+        await db.settings.put({ ...settings });
+        assertNotHalted();
+        await db.vault.put(record);
+      });
+      return;
+    }
+    await db.transaction("rw", [db.settings, ...dataTables], async () => {
+      assertNotHalted();
+      await db.settings.put({ ...settings });
+      for (const key of COLLECTIONS) {
+        const items = [...baseline[key].values()];
+        assertNotHalted();
+        if (items.length) await collectionTable(key).bulkPut(items);
+      }
+    });
+  });
+
+/**
  * Un'altra scheda chiede il posto: salva tutto (dati, impostazioni, outbox del cloud) in coda ai
  * flush già chiesti, poi smette di scrivere. Il controllo finale e lo stop sono nello stesso tick:
  * nessuna modifica può restare a metà. Se il salvataggio fallisce la promise è rifiutata e la scheda

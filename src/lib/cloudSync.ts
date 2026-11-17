@@ -24,6 +24,7 @@ import {
   noteLocalReset,
   outboxKey,
   requestPersist,
+  rewriteLocalCopy,
   subscribeLocalChanges
 } from "./persistence";
 import { chunkBySize, indexCollections, legacySnapshotToRows, newerCopy, planMerge, planOrphanPuts, tieBreakStamp, wellFormedForJsonb, type PendingOutbox, type RemoteRow } from "./syncMerge";
@@ -526,6 +527,11 @@ const firstSync = async (userId: string) => {
   } else {
     await mergeRows(userId, rows, false, accountWins);
   }
+  assertStoreReady();
+  // Il merge scrive solo ciò che cambia in memoria. Se il browser ha svuotato il database con la scheda
+  // aperta (anche i segni della sync, da cui questa prima sync), memoria e cloud coincidono e su disco
+  // non tornava nulla: dopo un ricaricamento il dispositivo restava vuoto (incidente Opera, 2026-11-16).
+  await rewriteLocalCopy();
   assertStoreReady();
   assertSameSession(userId);
   assertNoLocalReset();

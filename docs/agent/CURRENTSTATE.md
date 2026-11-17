@@ -616,3 +616,32 @@ gli stessi passaggi di interfaccia di 09 e 10 provati sul server di sviluppo.
 Pubblicato il 17 novembre 2026: commit `b7aba92` su `main`, workflow Pages riuscito (build e deploy);
 il codice pubblicato contiene «Torna alle schede», «La tua risposta» e le due nuove media query in
 orizzontale. Nessuna modifica a database o Worker.
+
+## Incidente: dispositivo vuoto dopo la prima sync (Opera, 16–17 novembre 2026)
+
+Su Opera (macOS) l'account Birillo è comparso vuoto dopo il ricaricamento portato dalla
+pubblicazione delle 00:11; Chrome (Camilla Rossi) andava. Il cloud era intatto (nessuna eliminazione
+in massa); Cmd+R non bastava, «Riscarica tutto dall'account» ha rimesso tutto (materie 14, eventi 63,
+flashcard 70). Segni rimasti su Opera: `cloud:merged`/`cloud:migrated` alle 23:27:36 ora italiana
+(prima sync da capo), cursore all'ultima riga del cloud delle 23:33, impostazioni riscritte alle 00:14
+al ricaricamento.
+
+Causa nel codice (riprodotta): se il browser svuota IndexedDB con la scheda aperta, Dexie riapre da
+solo un database vuoto e la scheda continua con tutto in memoria. Spariti anche i segni della sync,
+parte una prima sync: il cloud coincide con la memoria, il merge non cambia nulla e quindi non scrive
+nulla, poi `migrated` e cursore vengono segnati. Dopo un ricaricamento il disco ha solo ciò che è
+cambiato dopo lo svuotamento, e i pull rileggono solo dal cursore meno 60 s. Correzione:
+`rewriteLocalCopy()` in `src/lib/persistence.ts`, chiamata da `firstSync` dopo il merge e prima dei
+segni, riscrive impostazioni e dati (o la copia cifrata) senza voci in coda. Il motivo per cui Opera
+ha svuotato il database alle 23:27 non è noto (spazio liberato dal browser, pulizia dei dati del sito
+o un'estensione): dedotto dai segni, non osservato. Le modifiche flashcard di quella sera non c'entrano.
+
+Verifiche: `tests/persistenceRewrite.test.mjs` (5 prove: buco del diff, modifiche in sospeso prima
+con la loro coda, bloccato/sospeso, vault, scheda fermata) fallisce senza la funzione;
+`tests/e2e/11-storage-cleared.spec.ts` fallisce senza la correzione («Più vecchia …» assente dopo il
+ricaricamento) e passa con. `npm test` 1737/1737, `npm run lint` pulito, `npm run build` ok,
+`npm run e2e` 11/11 sullo stack Supabase locale. Non provato su Opera vero né su Safari/Firefox.
+
+Aperti: un dispositivo senza account nella stessa situazione perde comunque i dati (nessuna prima
+sync che riscriva); l'app non chiede `navigator.storage.persist()`, quindi Chromium può liberare lo
+spazio del sito.

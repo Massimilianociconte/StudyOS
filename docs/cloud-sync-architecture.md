@@ -136,5 +136,15 @@ Correzioni di novembre 2026 (sync personale):
   tiene (`accountSwitchBlock`, P6). Togliere o mettere la password, e
   bloccare, vanno uno alla volta: durante un cambio «Blocca» è disattivato e
   rifiutato, e la riscrittura rifiuta prima di scrivere se il workspace è
-  bloccato e non ha la chiave (revisione di P8).
+  bloccato e non ha la chiave (revisione di P8);
+- il browser può svuotare IndexedDB con la scheda aperta (dati del sito
+  cancellati, spazio liberato): Dexie riapre da solo un database vuoto, anche
+  senza i segni della sync, mentre memoria e baseline dicono «già salvato». La
+  prima sync che segue trovava il cloud uguale alla memoria, non scriveva
+  nulla e segnava `migrated` e il cursore: dopo un ricaricamento il
+  dispositivo restava vuoto e i pull, che rileggono solo dal cursore meno un
+  minuto, non lo riempivano più. Ora `firstSync` chiama `rewriteLocalCopy()`
+  (persistence.ts) dopo il merge e prima dei segni: rimette su disco
+  impostazioni e dati (o la copia cifrata), senza voci in coda. Prova:
+  `tests/e2e/11-storage-cleared.spec.ts` (incidente Opera, 16 novembre 2026).
 

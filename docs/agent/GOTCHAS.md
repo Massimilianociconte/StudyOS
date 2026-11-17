@@ -21,6 +21,12 @@
   [../security-data.md](../security-data.md).
 - Il lock del vault e l'applicazione di dati remoti richiedono una scrittura
   IndexedDB confermata. Gli errori di push non eliminano voci dall'outbox.
+- La baseline di persistence.ts dice cosa c'è su disco, ma il browser può svuotare IndexedDB con la
+  scheda aperta (Dexie riapre un database vuoto senza errori). Il diff non lo vede: una scrittura che
+  deve garantire «su disco c'è tutto» (oggi la prima sync, prima dei segni `migrated`/cursore) usa
+  `rewriteLocalCopy()`, non `requestPersist()`. Nelle prove: CDP `Storage.clearDataForOrigin`
+  (`storageTypes: "indexeddb"`), e righe più vecchie di 60 s rispetto al cursore (`CURSOR_OVERLAP_MS`),
+  altrimenti il pull successivo le rilegge e nasconde il problema.
 - La sync cloud aggiornata richiede la funzione `push_studyos_rows` definita in
   `supabase/schema.sql` prima dell'uso; senza migrazione il client conserva la
   coda e mostra un errore.
