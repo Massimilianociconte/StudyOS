@@ -645,3 +645,7 @@ ricaricamento) e passa con. `npm test` 1737/1737, `npm run lint` pulito, `npm ru
 Aperti: un dispositivo senza account nella stessa situazione perde comunque i dati (nessuna prima
 sync che riscriva); l'app non chiede `navigator.storage.persist()`, quindi Chromium può liberare lo
 spazio del sito.
+
+Pubblicato il 17 novembre 2026: commit `8bd3341` su `main`, workflow Pages riuscito (build e deploy);
+il bundle pubblicato contiene la riscrittura della copia cifrata (transazione su `settings` e `vault`
+soli). Nessuna modifica a database o Worker.
