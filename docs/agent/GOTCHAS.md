@@ -699,6 +699,10 @@
   con la parola visibile (WCAG 2.5.3).
 - Editor flashcard: Esc dentro un campo di testo non chiude il drawer (protegge quanto scritto);
   nei percorsi automatici chiudilo con «Annulla».
+- `npm run e2e` subito dopo l'avvio a freddo di Docker e dello stack locale può far fallire alcuni
+  file (dialog che sparisce per un ricaricamento di Vite che ottimizza le dipendenze, badge fermo su
+  «1 modifica da inviare»): rilancia solo i file falliti e poi la suite intera prima di parlare di
+  regressione.
 - Avvia `vite` dalla cartella del checkout che vuoi provare (anche un worktree): Tailwind 3 legge
   `content: ["./src/**"]` dalla cartella corrente, quindi un server avviato altrove serve il codice
   giusto con il CSS generato dall'altro checkout (classi nuove mancanti, sfondi trasparenti).

@@ -732,6 +732,14 @@ ricerca globale (`GlobalSearch` non li cerca), nome del timer «Studio» vicino 
 
 Verifiche: `npm test` 1752/1752, `npm run lint`, `npm run build`; Playwright su 390, 320 e 1366 px
 (schede in vista, ordine di Oggi, legenda, drawer, quiz da raccolta, editor, gruppi dei quiz,
-ripasso degli errori, più difficili, nessuno sforamento) e di nuovo le etichette di ripresa. Non
-eseguito `npm run e2e` (serve lo stack Supabase locale); `09-share-flashcards` aggiornato ai nuovi
-nomi dei campi della flashcard.
+ripasso degli errori, più difficili, nessuno sforamento) e di nuovo le etichette di ripresa;
+`09-share-flashcards` aggiornato ai nuovi nomi dei campi della flashcard. `npm run e2e` sullo stack
+Supabase locale: 11/11 (al primo avvio a freddo 09, 10 e 11 erano falliti e sono passati rilanciati,
+poi la suite intera è passata di seguito).
+
+Pubblicato il 18 novembre 2026: commit `562de5f` su `main` (questa sezione e la precedente: dubbi,
+pausa e ripresa, gerarchia nuova), workflow Pages riuscito (build e deploy); il bundle pubblicato
+contiene «Ripassa queste», «Rifai il quiz», «Ripassa i N errori» e «Domanda (fronte)». Nessuna
+modifica al database: i dubbi (`studyMark`) passano dalla stessa `push_studyos_rows` e restano
+privati (non sono in `supabase/sharing.sql`). Il Worker del connettore non è stato ridistribuito:
+finché non lo è, il gruppo «states» degli agenti non include i dubbi.
