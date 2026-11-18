@@ -65,7 +65,7 @@ test("scheda nuova e modificata: stesse regole della libreria, in coda verso Ali
   assert.equal(edited.revision, 2);
   assert.deepEqual(outboxOf("flashcard").map((entry) => entry.entityId).sort(), [card.id, "c1"].sort());
   await assert.rejects(createSharedCard(source(), "d2", { front: [], back: ["x"] }), /front/);
-  await assert.rejects(createSharedCard(source(), "nessuna", { front: ["x"], back: ["y"] }), /Raccolta non trovata/);
+  await assert.rejects(createSharedCard(source(), "nessuna", { front: ["x"], back: ["y"] }), /Mazzo non trovato/);
 });
 
 test("raccolte: sotto-raccolta dentro quella di Alice, materia e madre restano sue", async () => {

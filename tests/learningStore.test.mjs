@@ -182,7 +182,7 @@ test("duplicare una raccolta crea una copia indipendente nella libreria", async 
   assert.notEqual(s().flashcards[0].id, "card_x");
   assert.equal(s().flashcards[0].revision, 1);
   assert.equal(copy.flashcards.length, 1);
-  await assert.rejects(learning.duplicateDeck(bundle, "deck_nessuno"), /non trovata/);
+  await assert.rejects(learning.duplicateDeck(bundle, "deck_nessuno"), /non trovato/);
 });
 
 test("quiz: domande con id di opzione stabili, revisione e tentativo salvato", async () => {

@@ -1,12 +1,16 @@
-// Raccolte: albero (materia → argomento → capitolo → …) con i conteggi, raccolte condivise da altre
-// persone in sola lettura, ricerca nel testo delle schede, dettaglio di una raccolta con le schede a
-// pagine di 50 (anche con migliaia di schede si disegna solo quello che si vede). Una raccolta con
-// una sessione in pausa lo dice con un'etichetta e il suo «Ripassa» riprende quella sessione.
+// Flashcard: i mazzi divisi per materia (come i quiz), ogni materia con il suo segno e un riquadro
+// con i mazzi; i sotto-mazzi stanno sotto il loro mazzo, appesi a una linea, più piccoli e tenui.
+// Mazzi condivisi da altre persone in sola lettura (un gruppo per persona), ricerca nel testo delle
+// flashcard, dettaglio di un mazzo con le flashcard a pagine di 50 (anche con migliaia si disegna
+// solo quello che si vede). Un mazzo con una sessione in pausa lo dice con un'etichetta e il suo
+// «Ripassa» riprende quella sessione.
 import { createContext, useContext, useMemo, useState } from "react";
 import { blocksPlainText } from "../../lib/cardBlocks";
 import { buildDeckTree, type DeckNode } from "../../lib/learnSession";
+import { groupDeckNodes } from "../../lib/learnGroups";
+import { useUiState } from "../../lib/uiState";
 import { CARD_STATUS_LABEL, classifyCard, type CardStatus } from "../../lib/srs";
-import { DECK_KIND_LABEL, deckDescendantIds, deckPath, deckSubjectId, sortByPosition } from "../../lib/learningModel";
+import { DECK_KIND_LABEL, deckDescendantIds, deckPath, sortByPosition } from "../../lib/learningModel";
 import { LEARN_TEXT } from "../../lib/labels/learn";
 import { deleteDeck, duplicateDeck } from "../../store/learning";
 import { deleteSharedDeck } from "../../store/sharedLearning";
@@ -21,10 +25,11 @@ import { CardDrawer, type ExplainTarget } from "./CardDrawer";
 import { CardEditor } from "./CardEditor";
 import { DeckEditor } from "./DeckEditor";
 import { PausedTags } from "./ResumeTags";
-import { CARD_STATUS_TONE } from "./tones";
+import { CARD_STATUS_TONE, FILTER_CHIP, FILTER_CHIP_IDLE } from "./tones";
 import { errorText, findCard, type LearnData } from "./useLearnData";
 
 const PAGE = 50;
+const ALL_GROUPS = "all";
 
 type PausedDecks = ReadonlyMap<string, { run: StudyRun; point: ResumePoint }>;
 const PausedDecksContext = createContext<PausedDecks>(new Map());
@@ -38,24 +43,21 @@ function DeckRow({
   expanded,
   toggle,
   onOpen,
-  onStudy,
-  inheritedSubjectId
+  onStudy
 }: {
   node: DeckNode;
   expanded: ReadonlySet<string>;
   toggle: (id: string) => void;
   onOpen: (deck: StudyDeck) => void;
   onStudy: (deck: StudyDeck) => void;
-  /** Materia della raccolta madre: le sotto-raccolte senza materia propria la ereditano. */
-  inheritedSubjectId?: string;
 }) {
   const open = expanded.has(node.deck.id);
-  const subjectId = node.deck.subjectId ?? inheritedSubjectId;
   const { counts } = node;
   const paused = useContext(PausedDecksContext).get(node.deck.id);
+  const root = node.depth === 0;
   return (
-    <li>
-      <div className="flex min-w-0 items-center gap-1.5 rounded-[18px] py-1 pr-1 hover:bg-[var(--surface-soft)]" style={{ paddingLeft: `${node.depth * 1.1}rem` }}>
+    <li className="min-w-0">
+      <div className="flex min-w-0 items-center gap-1 rounded-[16px] py-0.5 pr-1 hover:bg-[var(--surface-soft)]">
         {node.children.length ? (
           <button
             type="button"
@@ -69,34 +71,35 @@ function DeckRow({
         ) : (
           <span className="w-9 shrink-0" aria-hidden="true" />
         )}
-        <SubjectMark subjectId={subjectId} size="sm" />
         <button type="button" onClick={() => onOpen(node.deck)} className="motion-safe min-w-0 flex-1 rounded-[14px] px-1 py-1.5 text-left">
-          <span className="one-line-safe block text-sm font-black">{node.deck.title}</span>
-          <span className="one-line-safe block text-xs font-bold text-[var(--muted)]">
+          {/* Mazzo: titolo pieno; sotto-mazzo: più piccolo e tenue. I numeri hanno sempre il loro nome. */}
+          <span className={`line-clamp-2 leading-snug ${root ? "text-[15px] font-black" : "text-sm font-bold text-[var(--muted)]"}`}>{node.deck.title}</span>
+          <span className="block text-xs font-bold text-[var(--muted)]">
             {LEARN_TEXT.cardsCount(counts.cards)}
             {counts.quizzes ? ` · ${LEARN_TEXT.quizzesCount(counts.quizzes)}` : ""}
+            {counts.due ? (
+              <>
+                {" · "}
+                <span className="text-[var(--accent-ink)]">{LEARN_TEXT.dueToday(counts.due)}</span>
+              </>
+            ) : null}
           </span>
         </button>
-        {counts.due ? (
-          <span title={LEARN_TEXT.dueCount(counts.due)} className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] px-2 py-0.5 text-xs font-black tabular-nums text-[var(--accent-ink)]">
-            <span className="sr-only">{LEARN_TEXT.dueCount(counts.due)}</span>
-            <span aria-hidden="true">{counts.due}</span>
-          </span>
-        ) : null}
         {counts.cards ? (
           <IconButton icon="PlayCircle" label={paused ? LEARN_TEXT.resumeDeck(node.deck.title) : `${LEARN_TEXT.studyDeck}: ${node.deck.title}`} onClick={() => onStudy(node.deck)} />
         ) : null}
       </div>
-      {/* Sessione in pausa: etichette su una riga loro, dal segno della materia (sui telefoni stretti non si troncano). */}
+      {/* Sessione in pausa: etichette su una riga loro, sotto il titolo (sui telefoni stretti non si troncano). */}
       {paused ? (
-        <div className="pb-1.5 pr-1" style={{ paddingLeft: `${node.depth * 1.1 + 2.625}rem` }}>
+        <div className="pb-1.5 pl-10 pr-1">
           <PausedTags run={paused.run} status />
         </div>
       ) : null}
+      {/* Sotto-mazzi appesi a una linea verticale che scende dalla freccia del mazzo. */}
       {open && node.children.length ? (
-        <ul>
+        <ul className="mb-1 ml-[1.1rem] border-l-2 border-[var(--border)] pl-1">
           {node.children.map((child) => (
-            <DeckRow key={child.deck.id} node={child} expanded={expanded} toggle={toggle} onOpen={onOpen} onStudy={onStudy} inheritedSubjectId={subjectId} />
+            <DeckRow key={child.deck.id} node={child} expanded={expanded} toggle={toggle} onOpen={onOpen} onStudy={onStudy} />
           ))}
         </ul>
       ) : null}
@@ -192,7 +195,7 @@ function DeckDrawer({
         onClose={close}
         eyebrow={
           owner
-            ? LEARN_TEXT.sharedBy(owner.name)
+            ? LEARN_TEXT.sharedDeckBy(owner.name)
             : path.length > 1
               ? path.slice(0, -1).map((item) => item.title).join(" › ")
               : subjectName && subjectName !== deck?.title
@@ -305,7 +308,7 @@ function DeckDrawer({
                   {children.map((child) => (
                     <li key={child.id}>
                       <button type="button" onClick={() => onOpenDeck(child)} className="motion-safe flex w-full items-center gap-2 rounded-[16px] px-3 py-2.5 text-left hover:bg-[var(--surface-soft)]">
-                        <SubjectMark subjectId={deckSubjectId(bundle.decks, child.id)} size="sm" />
+                        <Icon name="Layers" className="h-4 w-4 shrink-0 text-[var(--faint)]" />
                         <span className="one-line-safe min-w-0 flex-1 text-sm font-black">{child.title}</span>
                         <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-[var(--muted)]" />
                       </button>
@@ -318,7 +321,7 @@ function DeckDrawer({
             <section>
               <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-black uppercase text-[var(--faint)]">{!cards.length ? LEARN_TEXT.cardsTitle : children.length ? LEARN_TEXT.cardsHere(cards.length) : LEARN_TEXT.cardsCount(cards.length)}</h3>
-                {/* Ogni «nuova» sta nella sua sezione: la flashcard qui, la sotto-raccolta sopra (o in fondo se non ce ne sono). */}
+                {/* Ogni «nuova» sta nella sua sezione: la flashcard qui, il sotto-mazzo sopra (o in fondo se non ce ne sono). */}
                 {canEdit ? (
                   <Button variant="soft" icon="Plus" onClick={() => setEditor("card")}>
                     {LEARN_TEXT.newCard}
@@ -414,7 +417,8 @@ function DeckTree({ nodes, onOpen, onStudy }: { nodes: DeckNode[]; onOpen: (deck
       return next;
     });
   return (
-    <ul className="grid grid-cols-1 gap-0.5">
+    // I mazzi principali separati da una linea: ognuno con i suoi sotto-mazzi è un blocco.
+    <ul className="grid grid-cols-1 divide-y divide-[var(--border)]">
       {nodes.map((node) => (
         <DeckRow key={node.deck.id} node={node} expanded={expanded} toggle={toggle} onOpen={onOpen} onStudy={onStudy} />
       ))}
@@ -449,6 +453,22 @@ export function LibraryTab({
     () => data.shared.map((source) => ({ source, nodes: buildDeckTree(source.bundle.decks, source.bundle.flashcards, data.states, source.bundle.quizzes, now) })),
     [data.shared, data.states, now]
   );
+
+  // Mazzi per materia (i condivisi per chi li condivide), con i chip per vederne una sola come nei quiz.
+  const subjectName = useMemo(() => new Map(data.subjects.map((subject) => [subject.id, subject.name])), [data.subjects]);
+  const groups = useMemo(() => {
+    const ownerOf = new Map<string, { id: string; name: string }>();
+    for (const { source } of sharedTrees) if (source.owner) for (const deck of source.bundle.decks) ownerOf.set(deck.id, { id: source.owner.id, name: source.owner.name });
+    return groupDeckNodes([...ownTree, ...sharedTrees.flatMap((tree) => tree.nodes)], {
+      subjectName: (id) => subjectName.get(id),
+      ownerOf: (id) => ownerOf.get(id),
+      noSubject: LEARN_TEXT.noSubject,
+      sharedBy: LEARN_TEXT.sharedDecksBy
+    });
+  }, [ownTree, sharedTrees, subjectName]);
+  const [groupKey, setGroupKey] = useUiState<string>("learn.deckGroup", ALL_GROUPS);
+  const activeGroup = groups.find((group) => group.key === groupKey);
+  const visibleGroups = activeGroup ? [activeGroup] : groups;
 
   // Indice di ricerca costruito solo alla prima ricerca (e rifatto se le schede cambiano).
   const index = useMemo(() => {
@@ -508,33 +528,42 @@ export function LibraryTab({
           <EmptyState icon="Layers" title={LEARN_TEXT.emptyLibraryTitle} body={LEARN_TEXT.emptyLibraryBody} />
         ) : (
           <>
-            {ownTree.length ? (
-              <section className="soft-panel p-2 sm:p-3">
-                <DeckTree nodes={ownTree} onOpen={(deck) => setOpenDeckId(deck.id)} onStudy={studyDeck} />
-                {/* Cosa vogliono dire numero e pulsante a destra di ogni raccolta. */}
-                <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 px-2 pb-1 text-xs font-bold text-[var(--faint)]">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span aria-hidden="true" className="rounded-full bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] px-1.5 text-[10px] font-black text-[var(--accent-ink)]">N</span>
-                    {LEARN_TEXT.legendDue}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <Icon name="PlayCircle" className="h-3.5 w-3.5" />
-                    {LEARN_TEXT.legendPlay}
-                  </span>
-                </p>
-              </section>
+            {groups.length > 1 ? (
+              <div role="group" aria-label={LEARN_TEXT.doubtsSubjects} className="scrollbar-hidden -mx-1 flex min-w-0 gap-2 overflow-x-auto px-1 py-0.5">
+                <button type="button" aria-pressed={!activeGroup} onClick={() => setGroupKey(ALL_GROUPS)} className={`${FILTER_CHIP} ${activeGroup ? FILTER_CHIP_IDLE : ""}`}>
+                  {LEARN_TEXT.doubtsAll}
+                </button>
+                {groups.map((group) => (
+                  <button
+                    key={group.key}
+                    type="button"
+                    aria-pressed={group === activeGroup}
+                    onClick={() => setGroupKey(group.key)}
+                    className={`${FILTER_CHIP} max-w-[16rem] ${group === activeGroup ? "" : FILTER_CHIP_IDLE}`}
+                  >
+                    {group.subjectId ? <SubjectMark subjectId={group.subjectId} size="sm" /> : null}
+                    <span className="one-line-safe">{group.label}</span>
+                  </button>
+                ))}
+              </div>
             ) : null}
-            {sharedTrees.map(({ source, nodes }) =>
-              nodes.length ? (
-                <section key={source.owner?.id} className="soft-panel p-2 sm:p-3">
-                  <h3 className="mb-1 flex items-center gap-2 px-2 text-xs font-black uppercase text-[var(--faint)]">
-                    <Icon name="Share2" className="h-3.5 w-3.5" />
-                    {LEARN_TEXT.sharedBy(source.owner?.name ?? "")}
-                  </h3>
-                  <DeckTree nodes={nodes} onOpen={(deck) => setOpenDeckId(deck.id)} onStudy={studyDeck} />
-                </section>
-              ) : null
-            )}
+            {visibleGroups.map((group) => (
+              <section key={group.key} aria-label={group.label} className="grid min-w-0 grid-cols-1 gap-2">
+                {/* Primo livello: la materia, con il suo segno e quanto contiene. */}
+                <h2 className="flex min-w-0 items-center gap-2.5 px-1">
+                  <SubjectMark subjectId={group.subjectId} fallback={group.ownerId ? "Share2" : "Layers"} />
+                  <span className="min-w-0">
+                    <span className="one-line-safe block text-base font-black leading-tight">{group.label}</span>
+                    <span className="block text-xs font-bold text-[var(--muted)]">
+                      {LEARN_TEXT.decksCount(group.nodes.length)} · {LEARN_TEXT.cardsCount(group.cards)}
+                    </span>
+                  </span>
+                </h2>
+                <div className="soft-panel min-w-0 p-1.5 sm:p-2">
+                  <DeckTree nodes={group.nodes} onOpen={(deck) => setOpenDeckId(deck.id)} onStudy={studyDeck} />
+                </div>
+              </section>
+            ))}
           </>
         )}
 

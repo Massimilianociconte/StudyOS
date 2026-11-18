@@ -411,7 +411,7 @@ export function QuizPlayer({
             <div className="flex min-w-0 items-center gap-2">
               <p className="one-line-safe min-w-0 text-xs font-bold text-[var(--muted)]">
                 {QUIZ_MODE_LABEL[mode]}
-                {owner ? ` · ${LEARN_TEXT.sharedBy(owner.name)}` : ""}
+                {owner ? ` · ${LEARN_TEXT.sharedDeckBy(owner.name)}` : ""}
               </p>
               {resume && !result ? <ResumedTag run={resume} detail={pauseText(resume, thisDevice())} /> : null}
             </div>

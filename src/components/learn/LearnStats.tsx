@@ -184,7 +184,7 @@ export function LearnStats({
         <Panel>
           <h3 className="mb-2 text-lg font-black">{LEARN_TEXT.perDeck}</h3>
           <BreakdownTable
-            label="Raccolta"
+            label="Mazzo"
             rows={stats.decks.slice(0, 12).map((deck) => ({ key: deck.deckId, name: deck.title || "—", cards: deck.cards, due: deck.due, accuracy: deck.accuracy }))}
           />
         </Panel>

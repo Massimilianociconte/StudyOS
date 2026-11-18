@@ -124,7 +124,7 @@ const resubject = (current: Learning, decks: StudyDeck[], touched: Set<string>, 
 export const buildDeckUpdate = (decks: readonly StudyDeck[], id: string, input: Record<string, unknown>) => {
   const fields = must(normalizeDeckFields(input, true));
   const existing = decks.find((deck) => deck.id === id);
-  if (!existing) throw new LearningError("Raccolta non trovata.");
+  if (!existing) throw new LearningError("Mazzo non trovato.");
   if ("parentId" in fields) {
     const problem = parentError(decks, id, fields.parentId);
     if (problem) throw new LearningError(problem);
@@ -148,7 +148,7 @@ export const updateDeck = async (id: string, input: Record<string, unknown>) => 
 /** Elimina la raccolta con sotto-raccolte, schede, quiz, domande e i tuoi stati di ripasso. Lo storico delle sessioni resta. */
 export const deleteDeck = async (id: string) => {
   const { decks } = state();
-  if (!decks.some((deck) => deck.id === id)) throw new LearningError("Raccolta non trovata.");
+  if (!decks.some((deck) => deck.id === id)) throw new LearningError("Mazzo non trovato.");
   const gone = deckDescendantIds(decks, id);
   const now = new Date().toISOString();
   let removed = { decks: 0, flashcards: 0, quizzes: 0, quizQuestions: 0 };
@@ -188,7 +188,7 @@ export const duplicateDeck = async (source: DeckBundle, rootId: string, options:
   }
   const siblings = decks.filter((deck) => (deck.parentId ?? undefined) === options.parentId);
   const copy = copyDeckTree(source, rootId, { newId: createId, now, ...options, position: nextPosition(siblings) });
-  if (!copy.decks.length) throw new LearningError("Raccolta da copiare non trovata.");
+  if (!copy.decks.length) throw new LearningError("Mazzo da copiare non trovato.");
   await commitLearning((current) => ({
     decks: [...current.decks, ...copy.decks],
     flashcards: [...current.flashcards, ...copy.flashcards],
@@ -203,7 +203,7 @@ export const duplicateDeck = async (source: DeckBundle, rootId: string, options:
 /** Scheda nuova (pura): la materia viene dalla raccolta. */
 export const buildCard = (decks: readonly StudyDeck[], flashcards: readonly Flashcard[], deckId: string, input: Record<string, unknown>, now: string): Flashcard => {
   const fields = must(normalizeCardFields(input, false));
-  if (!decks.some((deck) => deck.id === deckId)) throw new LearningError("Raccolta non trovata.");
+  if (!decks.some((deck) => deck.id === deckId)) throw new LearningError("Mazzo non trovato.");
   const problem = cardSizeError({ front: fields.front ?? [], back: fields.back ?? [], explanation: fields.explanation });
   if (problem) throw new LearningError(problem);
   const subjectId = deckSubjectId(decks, deckId);
@@ -257,7 +257,7 @@ export const updateCard = async (id: string, input: Record<string, unknown>) => 
 
 export const moveCards = async (ids: readonly string[], deckId: string) => {
   const { decks } = state();
-  if (!decks.some((deck) => deck.id === deckId)) throw new LearningError("Raccolta non trovata.");
+  if (!decks.some((deck) => deck.id === deckId)) throw new LearningError("Mazzo non trovato.");
   const set = new Set(ids);
   const subjectId = deckSubjectId(decks, deckId);
   await commitLearning((current) => {
@@ -289,7 +289,7 @@ export const deleteCards = async (ids: readonly string[]) => {
 /** Quiz nuovo (puro). */
 export const buildQuiz = (decks: readonly StudyDeck[], quizzes: readonly Quiz[], input: Record<string, unknown>, now: string): Quiz => {
   const fields = must(normalizeQuizFields(input, false));
-  if (fields.deckId && !decks.some((deck) => deck.id === fields.deckId)) throw new LearningError("Raccolta non trovata.");
+  if (fields.deckId && !decks.some((deck) => deck.id === fields.deckId)) throw new LearningError("Mazzo non trovato.");
   const subjectId = fields.subjectId ?? deckSubjectId(decks, fields.deckId);
   return {
     ...base("quiz", now),
@@ -320,7 +320,7 @@ export const buildQuizUpdate = (decks: readonly StudyDeck[], quizzes: readonly Q
   const fields = must(normalizeQuizFields(input, true));
   const existing = quizzes.find((quiz) => quiz.id === id);
   if (!existing) throw new LearningError("Quiz non trovato.");
-  if (fields.deckId && !decks.some((deck) => deck.id === fields.deckId)) throw new LearningError("Raccolta non trovata.");
+  if (fields.deckId && !decks.some((deck) => deck.id === fields.deckId)) throw new LearningError("Mazzo non trovato.");
   const next: Quiz = { ...existing, ...fields, revision: touchesContent(fields) ? existing.revision + 1 : existing.revision, updatedAt: laterStamp(existing.updatedAt) };
   // Spostato in una raccolta: la materia è quella della raccolta (anche nessuna). Tolto da ogni
   // raccolta: resta la materia che aveva, salvo una scelta esplicita.
@@ -714,12 +714,12 @@ export const publishExplanation = async (requestId: string) => {
   const { aiRequests, flashcards, quizQuestions } = state();
   const request = aiRequests.find((item) => item.id === requestId);
   if (!request?.result || !request.targetId) throw new LearningError("Spiegazione non trovata.");
-  if (request.targetOwnerId) throw new LearningError("La scheda è di un'altra persona: pubblicala dalla raccolta condivisa.");
+  if (request.targetOwnerId) throw new LearningError("La flashcard è di un'altra persona: pubblica la spiegazione dal mazzo condiviso.");
   const blocks = request.result.blocks;
   if (flashcards.some((card) => card.id === request.targetId)) return updateCard(request.targetId, { explanation: blocks });
   const question = quizQuestions.find((item) => item.id === request.targetId);
   if (question) return saveQuestion(question.quizId, { explanation: blocks }, question.id);
-  throw new LearningError("La scheda non esiste più.");
+  throw new LearningError("La flashcard o la domanda non esiste più.");
 };
 
 export const archiveAnalysis = async (id: string, archived: boolean) => {

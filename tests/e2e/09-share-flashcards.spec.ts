@@ -2,19 +2,19 @@ import { channelMark, expect, test, waitForChannel } from "./support/fixtures";
 import { ACROSS, goTo, waitSynced } from "./support/app";
 import type { Page } from "@playwright/test";
 
-const learnTab = (page: Page, name: "Raccolte" | "Andamento") =>
+const learnTab = (page: Page, name: "Flashcard" | "Andamento") =>
   page.getByRole("group", { name: "Sezioni del ripasso" }).getByRole("button", { name, exact: true }).click();
 
-test("09 Alice crea una raccolta e la condivide; Bob la ripassa e le risposte restano di ciascuno", async ({ alice, bob, tag }) => {
+test("09 Alice crea un mazzo e lo condivide; Bob lo ripassa e le risposte restano di ciascuno", async ({ alice, bob, tag }) => {
   const deckTitle = `Enzimi ${tag}`;
   const front = `Cosa abbassa un enzima? ${tag}`;
   const back = `L'energia di attivazione ${tag}`;
 
-  // Alice: Ripasso → Nuova raccolta (si apre da sola) → Nuova flashcard con fronte e retro.
+  // Alice: Ripasso → Flashcard → Nuovo mazzo (si apre da solo) → Nuova flashcard con fronte e retro.
   await goTo(alice.page, "Ripasso");
-  await learnTab(alice.page, "Raccolte");
-  await alice.page.getByRole("button", { name: "Nuova raccolta" }).click();
-  const deckEditor = alice.page.getByRole("dialog", { name: "Nuova raccolta" });
+  await learnTab(alice.page, "Flashcard");
+  await alice.page.getByRole("button", { name: "Nuovo mazzo" }).click();
+  const deckEditor = alice.page.getByRole("dialog", { name: "Nuovo mazzo" });
   await deckEditor.getByLabel("Titolo").fill(deckTitle);
   await deckEditor.getByRole("button", { name: "Salva" }).click();
   await expect(deckEditor).toBeHidden();
@@ -54,17 +54,17 @@ test("09 Alice crea una raccolta e la condivide; Bob la ripassa e le risposte re
   await expect(bob.page.getByText(/^Fatto: ora vedi Flashcard e quiz \(Può vedere\)/)).toBeVisible(ACROSS);
   await waitForChannel(bob, "studyos-sharing:", bobSharing);
 
-  // Bob trova la raccolta di Alice tra quelle condivise, in sola lettura, e la ripassa.
+  // Bob trova il mazzo di Alice tra quelli condivisi (gruppo «Condivisi da …»), in sola lettura, e lo ripassa.
   await goTo(bob.page, "Ripasso");
-  await learnTab(bob.page, "Raccolte");
-  await expect(bob.page.getByText(/^Condivisa da /).first()).toBeVisible(ACROSS);
+  await learnTab(bob.page, "Flashcard");
+  await expect(bob.page.getByText(/^Condivisi da /).first()).toBeVisible(ACROSS);
   await bob.page.getByRole("button", { name: new RegExp(`^${deckTitle}`) }).click();
   const sharedDeck = bob.page.getByRole("dialog", { name: deckTitle });
-  await expect(sharedDeck.getByText("Raccolta condivisa in sola lettura: puoi studiarla o duplicarla.")).toBeVisible();
+  await expect(sharedDeck.getByText("Mazzo condiviso in sola lettura: puoi studiarlo o duplicarlo.")).toBeVisible();
   await expect(sharedDeck.getByRole("button", { name: "Nuova flashcard" })).toHaveCount(0);
-  // «Ripassa» parte subito (prima le schede in scadenza, poi le nuove), senza altre scelte.
+  // «Ripassa» parte subito (prima le flashcard in scadenza, poi le mai studiate), senza altre scelte.
   await sharedDeck.getByRole("button", { name: "Ripassa", exact: true }).click();
-  // Il drawer della raccolta e la sessione hanno lo stesso nome: si va avanti quando resta solo la
+  // Il drawer del mazzo e la sessione hanno lo stesso nome: si va avanti quando resta solo la
   // sessione (quella con «Termina»).
   await expect(sharedDeck.filter({ has: bob.page.getByRole("button", { name: "Termina" }) })).toBeVisible();
   await expect(sharedDeck).toHaveCount(1);
@@ -73,16 +73,16 @@ test("09 Alice crea una raccolta e la condivide; Bob la ripassa e le risposte re
   await expect(session.getByText(/le tue risposte restano solo tue/i)).toBeVisible();
   await session.getByRole("button", { name: "Mostra la risposta" }).click();
   await expect(session.getByText(back)).toBeVisible();
-  // Ogni valutazione dice tra quanto torna la scheda; una mai vista sbagliata torna tra 10 minuti.
+  // Ogni valutazione dice tra quanto torna la flashcard; una mai vista sbagliata torna tra 10 minuti.
   const wrong = session.getByRole("button", { name: "Sbagliata", exact: true });
   await expect(wrong).toHaveAccessibleDescription("torna tra 10 min");
   await wrong.click();
-  // Riepilogo: risultato, conteggi e la scheda da rivedere.
+  // Riepilogo: risultato, conteggi e la flashcard da rivedere.
   await expect(session.getByRole("heading", { name: "Ripasso completato" })).toBeVisible();
-  await expect(session.getByText("1 di 1 schede", { exact: false })).toBeVisible();
+  await expect(session.getByText("1 di 1 flashcard", { exact: false })).toBeVisible();
   await expect(session.getByRole("definition").filter({ hasText: /^1$/ })).toHaveCount(1);
   await expect(session.getByRole("listitem").filter({ hasText: front })).toBeVisible();
-  await expect(session.getByRole("button", { name: "Ripassa la scheda da rivedere" })).toBeVisible();
+  await expect(session.getByRole("button", { name: "Ripassa la flashcard da rivedere" })).toBeVisible();
   await session.getByRole("button", { name: "Fine", exact: true }).click();
   await expect(session).toBeHidden();
   await waitSynced(bob.page);
@@ -97,6 +97,6 @@ test("09 Alice crea una raccolta e la condivide; Bob la ripassa e le risposte re
   await goTo(alice.page, "Ripasso");
   await learnTab(alice.page, "Andamento");
   await expect(alice.page.getByText("Risposte: 0", { exact: true })).toBeVisible(ACROSS);
-  await learnTab(alice.page, "Raccolte");
+  await learnTab(alice.page, "Flashcard");
   await expect(alice.page.getByRole("button", { name: new RegExp(`^${deckTitle}`) })).toBeVisible();
 });

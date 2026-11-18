@@ -694,9 +694,13 @@
   un'altra istanza vuota.
 - Ripasso: le schede (`LearnTabs`) hanno nome accessibile «Oggi 16» anche sul telefono (il numero
   è `sr-only` nel testo, `aria-hidden` sull'icona): i test le cercano per nome esatto senza numero
-  solo dove il numero non c'è (Raccolte, Quiz, Andamento). Le azioni con testo corto e
-  `aria-label` lungo (Elimina/«Elimina la raccolta», Chiarito/«Chiarito: togli…») devono iniziare
-  con la parola visibile (WCAG 2.5.3).
+  solo dove il numero non c'è (Flashcard, Quiz, Andamento). Le azioni con testo corto e
+  `aria-label` lungo (Elimina/«Elimina il mazzo», Chiarito/«Chiarito: togli…», Ripassa/«Ripassa
+  Biochimica») devono iniziare con la parola visibile (WCAG 2.5.3).
+- Ripasso, parole: nell'interfaccia «mazzo» (maschile: «Condiviso da», «Condivisi da» con
+  `sharedDeckBy`/`sharedDecksBy`) e «flashcard» (femminile: `sharedBy` «Condivisa da»); «scheda»
+  resta solo per le schede in alto. Il tipo dei dati e gli strumenti degli agenti dicono ancora
+  `deck`/«raccolta».
 - Editor flashcard: Esc dentro un campo di testo non chiude il drawer (protegge quanto scritto);
   nei percorsi automatici chiudilo con «Annulla».
 - `npm run e2e` subito dopo l'avvio a freddo di Docker e dello stack locale può far fallire alcuni

@@ -5,6 +5,7 @@ import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import { deleteQuiz, discardRun } from "../../store/learning";
 import { deleteSharedQuiz } from "../../store/sharedLearning";
 import { lastMistakes, percent, prepareQuiz } from "../../lib/learnSession";
+import { quizBlocks } from "../../lib/learnGroups";
 import { deckPath, sortByPosition } from "../../lib/learningModel";
 import { LEARN_TEXT, QUIZ_MODES, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, type QuizMode } from "../../lib/labels/learn";
 import { pausedRuns, type ResumePoint } from "../../lib/learnResume";
@@ -81,7 +82,7 @@ function StartDrawer({
     <Drawer
       open
       onClose={onClose}
-      eyebrow={entry.owner ? LEARN_TEXT.sharedBy(entry.owner.name) : entry.path || undefined}
+      eyebrow={entry.owner ? LEARN_TEXT.sharedDeckBy(entry.owner.name) : entry.path || undefined}
       title={entry.quiz.title}
       footer={
         <div className="flex items-center justify-end gap-2">
@@ -150,8 +151,15 @@ function StartDrawer({
   );
 }
 
+interface QuizGroup {
+  key: string;
+  label: string;
+  subjectId?: string;
+  entries: QuizEntry[];
+}
+
 const groupedContext = (entry: { owner?: { name: string }; path: string }, groupKey: string, groupLabel: string, grouped: boolean) => {
-  if (entry.owner) return grouped && groupKey.startsWith("owner:") ? entry.path : LEARN_TEXT.sharedBy(entry.owner.name);
+  if (entry.owner) return grouped && groupKey.startsWith("owner:") ? entry.path : LEARN_TEXT.sharedDeckBy(entry.owner.name);
   if (!grouped) return entry.path;
   if (entry.path === groupLabel) return "";
   return entry.path.startsWith(`${groupLabel} › `) ? entry.path.slice(groupLabel.length + 3) : entry.path;
@@ -219,10 +227,10 @@ export function QuizTab({
   const subjectName = useMemo(() => new Map(data.subjects.map((subject) => [subject.id, subject.name])), [data.subjects]);
   const groupOf = (entry: QuizEntry) =>
     entry.owner
-      ? { key: `owner:${entry.owner.id}`, label: LEARN_TEXT.sharedBy(entry.owner.name), subjectId: undefined }
+      ? { key: `owner:${entry.owner.id}`, label: LEARN_TEXT.sharedDecksBy(entry.owner.name), subjectId: undefined }
       : { key: entry.quiz.subjectId ?? "none", label: (entry.quiz.subjectId && subjectName.get(entry.quiz.subjectId)) || LEARN_TEXT.quizNoSubject, subjectId: entry.quiz.subjectId };
   const groups = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; subjectId?: string; entries: QuizEntry[] }>();
+    const map = new Map<string, QuizGroup>();
     for (const entry of entries) {
       const group = groupOf(entry);
       const current = map.get(group.key) ?? { ...group, entries: [] };
@@ -237,8 +245,121 @@ export function QuizTab({
   const activeGroup = groups.find((group) => group.key === groupKey);
   const visibleGroups = activeGroup ? [activeGroup] : groups;
 
+  // Titoli dei mazzi (tuoi e condivisi): il nome di un gruppo di quiz in parti.
+  const deckTitles = useMemo(() => new Map([...data.decks, ...data.shared.flatMap((source) => source.bundle.decks)].map((deck) => [deck.id, deck.title])), [data.decks, data.shared]);
+
   const startEntry = entries.find((entry) => entry.quiz.id === starting) ?? null;
   const editEntry = editing && editing !== "new" ? entries.find((entry) => entry.quiz.id === editing && (!entry.owner || entry.shared)) : undefined;
+
+  // Un quiz: segno, titolo, numeri in evidenza, pausa e un solo pulsante. `part`: titolo accorciato
+  // quando il quiz è una parte di un quiz più grande (il gruppo dice già il resto).
+  const renderCard = (entry: QuizEntry, group: QuizGroup, part?: string) => {
+    const score = scores.get(entry.quiz.id);
+    const paused = pausedByQuiz.get(entry.quiz.id);
+    const editable = !entry.owner || Boolean(entry.shared);
+    // Raggruppati per materia: sopra il titolo solo ciò che il gruppo non dice già.
+    const context = part ? "" : groupedContext(entry, group.key, group.label, groups.length > 1);
+    const more: PageAction[] = [
+      ...(paused ? [{ label: LEARN_TEXT.restartQuiz, icon: "RotateCcw", onClick: () => setStarting(entry.quiz.id) }] : []),
+      ...(editable
+        ? [
+            { label: LEARN_TEXT.editQuiz, icon: "PenLine", onClick: () => setEditing(entry.quiz.id) },
+            { label: LEARN_TEXT.deleteQuiz, icon: "Trash2", danger: true, onClick: () => setConfirmDelete(entry.quiz.id) }
+          ]
+        : [])
+    ];
+    return (
+      <li key={entry.quiz.id} className="soft-panel flex min-w-0 flex-col gap-3 p-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <SubjectMark subjectId={entry.owner ? undefined : entry.quiz.subjectId} fallback="CircleDot" />
+          <div className="min-w-0 flex-1">
+            {context ? <p className="one-line-safe text-xs font-bold text-[var(--faint)]">{context}</p> : null}
+            <h3 className="learn-read text-base font-black leading-snug">{part ?? entry.quiz.title}</h3>
+          </div>
+        </div>
+        {/* Numeri in evidenza: ultimo e miglior punteggio, quante domande. Un quiz vuoto lo dice. */}
+        {!entry.questions.length ? (
+          <p className="text-sm font-semibold text-[var(--muted)]">{editable ? LEARN_TEXT.quizNoQuestionsEdit : LEARN_TEXT.quizNoQuestions}</p>
+        ) : (
+        <dl className="grid grid-cols-3 gap-1.5">
+          <div className="min-w-0 rounded-[14px] bg-[var(--surface-soft)] px-2 py-1.5">
+            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{LEARN_TEXT.lastLabel}</dt>
+            <dd className={`text-xl font-black tabular-nums ${score?.last !== undefined ? scoreTone(score.last) : "text-[var(--faint)]"}`}>{score?.last !== undefined ? percent(score.last) : "—"}</dd>
+          </div>
+          <div className="min-w-0 rounded-[14px] bg-[var(--surface-soft)] px-2 py-1.5">
+            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{LEARN_TEXT.bestLabel}</dt>
+            <dd className="text-xl font-black tabular-nums">{score?.best !== undefined ? percent(score.best) : "—"}</dd>
+          </div>
+          <div className="min-w-0 rounded-[14px] bg-[var(--surface-soft)] px-2 py-1.5">
+            <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{LEARN_TEXT.questionsLabel}</dt>
+            <dd className="text-xl font-black tabular-nums">{entry.questions.length}</dd>
+          </div>
+        </dl>
+        )}
+        {confirmDelete === entry.quiz.id ? (
+          <ConfirmWithError
+            text={entry.shared && entry.owner ? LEARN_TEXT.deleteSharedConfirm(entry.quiz.title, entry.owner.name) : LEARN_TEXT.deleteQuizConfirm(entry.questions.length)}
+            confirmLabel={LEARN_TEXT.deleteQuiz}
+            icon="Trash2"
+            onCancel={() => setConfirmDelete(null)}
+            onConfirm={async () => {
+              try {
+                if (entry.shared) await deleteSharedQuiz(entry.shared, entry.quiz.id);
+                else await deleteQuiz(entry.quiz.id);
+                setConfirmDelete(null);
+                return null;
+              } catch (failure) {
+                return errorText(failure);
+              }
+            }}
+          />
+        ) : null}
+        {/* Tentativo in pausa: «Da riprendere», dove e quando, e a che punto. */}
+        {paused ? (
+          <div className="grid min-w-0 grid-cols-1 gap-1.5 rounded-[14px] bg-[var(--warning-bg)] p-2.5">
+            <PausedTags run={paused.run} status when />
+            <span className="flex min-w-0 items-center gap-2">
+              <span
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={paused.point.total}
+                aria-valuenow={paused.point.done}
+                aria-label={LEARN_TEXT.resumeAt(paused.point.done, paused.point.total)}
+                className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-strong)]"
+              >
+                <span className="block h-full rounded-full bg-[var(--warning-text)]" style={{ width: `${(paused.point.done / Math.max(1, paused.point.total)) * 100}%` }} />
+              </span>
+              <span className="shrink-0 text-xs font-black tabular-nums text-[var(--warning-text)]">{LEARN_TEXT.resumeAt(paused.point.done, paused.point.total)}</span>
+            </span>
+          </div>
+        ) : null}
+        <div className="mt-auto flex min-w-0 items-center gap-2">
+          <div className="ml-auto">
+            <PageActions
+              label={LEARN_TEXT.quizActions(entry.quiz.title)}
+              primary={
+                paused ? (
+                  <Button variant="primary" icon="PlayCircle" onClick={() => onResume(paused.run)}>
+                    {LEARN_TEXT.resume}
+                  </Button>
+                ) : !entry.questions.length && editable ? (
+                  // Quiz senza domande: il passo successivo è aggiungerle, non un «Inizia» spento.
+                  <Button variant="primary" icon="Plus" onClick={() => setEditing(entry.quiz.id)}>
+                    {LEARN_TEXT.addQuestions}
+                  </Button>
+                ) : (
+                  <Button variant="primary" icon="PlayCircle" disabled={!entry.questions.length} onClick={() => setStarting(entry.quiz.id)}>
+                    {LEARN_TEXT.startQuiz}
+                  </Button>
+                )
+              }
+              more={more}
+            />
+          </div>
+        </div>
+      </li>
+    );
+  };
 
   return (
     <div className="grid grid-cols-1 gap-4">
@@ -271,117 +392,40 @@ export function QuizTab({
       {entries.length ? (
         visibleGroups.map((group) => (
           <section key={group.key} aria-label={group.label} className="grid min-w-0 grid-cols-1 gap-2">
+            {/* Primo livello: la materia, con il suo segno (come nei mazzi di flashcard). */}
             {groups.length > 1 && !activeGroup ? (
-              <h2 className="flex min-w-0 items-center gap-2 px-1 text-sm font-black text-[var(--muted)]">
-                <span className="one-line-safe">{group.label}</span>
-                <span className="tabular-nums text-[var(--faint)]">{group.entries.length}</span>
+              <h2 className="flex min-w-0 items-center gap-2.5 px-1">
+                <SubjectMark subjectId={group.subjectId} fallback={group.key.startsWith("owner:") ? "Share2" : "CircleDot"} />
+                <span className="min-w-0">
+                  <span className="one-line-safe block text-base font-black leading-tight">{group.label}</span>
+                  <span className="block text-xs font-bold text-[var(--muted)]">{LEARN_TEXT.quizzesCount(group.entries.length)}</span>
+                </span>
               </h2>
             ) : null}
             <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {group.entries.map((entry) => {
-                const score = scores.get(entry.quiz.id);
-                const paused = pausedByQuiz.get(entry.quiz.id);
-                const editable = !entry.owner || Boolean(entry.shared);
-                // Raggruppati per materia: sopra il titolo solo ciò che il gruppo non dice già.
-                const context = groupedContext(entry, group.key, group.label, groups.length > 1);
-                const more: PageAction[] = [
-                  ...(paused ? [{ label: LEARN_TEXT.restartQuiz, icon: "RotateCcw", onClick: () => setStarting(entry.quiz.id) }] : []),
-                  ...(editable
-                    ? [
-                        { label: LEARN_TEXT.editQuiz, icon: "PenLine", onClick: () => setEditing(entry.quiz.id) },
-                        { label: LEARN_TEXT.deleteQuiz, icon: "Trash2", danger: true, onClick: () => setConfirmDelete(entry.quiz.id) }
-                      ]
-                    : [])
-                ];
+              {quizBlocks(group.entries, (entry) => ({ id: entry.quiz.id, title: entry.quiz.title, deckId: entry.quiz.deckId }), (deckId) => deckTitles.get(deckId)).map((block) => {
+                if (block.kind === "single") return renderCard(block.item, group);
+                const first = block.items[0];
+                // Dove sta il gruppo: il percorso del mazzo senza il mazzo stesso (che è il titolo).
+                const where = groupedContext(first, group.key, group.label, groups.length > 1).split(" › ").filter((part) => part !== block.title).join(" › ");
+                const questions = block.items.reduce((sum, entry) => sum + entry.questions.length, 0);
                 return (
-                  <li key={entry.quiz.id} className="soft-panel flex min-w-0 flex-col gap-3 p-4">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <SubjectMark subjectId={entry.owner ? undefined : entry.quiz.subjectId} fallback="CircleDot" />
-                      <div className="min-w-0 flex-1">
-                        {context ? <p className="one-line-safe text-xs font-bold text-[var(--faint)]">{context}</p> : null}
-                        <h3 className="learn-read text-base font-black leading-snug">{entry.quiz.title}</h3>
-                      </div>
-                    </div>
-                    {/* Numeri in evidenza: ultimo e miglior punteggio, quante domande. Un quiz vuoto lo dice. */}
-                    {!entry.questions.length ? (
-                      <p className="text-sm font-semibold text-[var(--muted)]">{editable ? LEARN_TEXT.quizNoQuestionsEdit : LEARN_TEXT.quizNoQuestions}</p>
-                    ) : (
-                    <dl className="grid grid-cols-3 gap-1.5">
-                      <div className="min-w-0 rounded-[14px] bg-[var(--surface-soft)] px-2 py-1.5">
-                        <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{LEARN_TEXT.lastLabel}</dt>
-                        <dd className={`text-xl font-black tabular-nums ${score?.last !== undefined ? scoreTone(score.last) : "text-[var(--faint)]"}`}>{score?.last !== undefined ? percent(score.last) : "—"}</dd>
-                      </div>
-                      <div className="min-w-0 rounded-[14px] bg-[var(--surface-soft)] px-2 py-1.5">
-                        <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{LEARN_TEXT.bestLabel}</dt>
-                        <dd className="text-xl font-black tabular-nums">{score?.best !== undefined ? percent(score.best) : "—"}</dd>
-                      </div>
-                      <div className="min-w-0 rounded-[14px] bg-[var(--surface-soft)] px-2 py-1.5">
-                        <dt className="text-[11px] font-black uppercase text-[var(--faint)]">{LEARN_TEXT.questionsLabel}</dt>
-                        <dd className="text-xl font-black tabular-nums">{entry.questions.length}</dd>
-                      </div>
-                    </dl>
-                    )}
-                    {confirmDelete === entry.quiz.id ? (
-                      <ConfirmWithError
-                        text={entry.shared && entry.owner ? LEARN_TEXT.deleteSharedConfirm(entry.quiz.title, entry.owner.name) : LEARN_TEXT.deleteQuizConfirm(entry.questions.length)}
-                        confirmLabel={LEARN_TEXT.deleteQuiz}
-                        icon="Trash2"
-                        onCancel={() => setConfirmDelete(null)}
-                        onConfirm={async () => {
-                          try {
-                            if (entry.shared) await deleteSharedQuiz(entry.shared, entry.quiz.id);
-                            else await deleteQuiz(entry.quiz.id);
-                            setConfirmDelete(null);
-                            return null;
-                          } catch (failure) {
-                            return errorText(failure);
-                          }
-                        }}
-                      />
-                    ) : null}
-                    {/* Tentativo in pausa: «Da riprendere», dove e quando, e a che punto. */}
-                    {paused ? (
-                      <div className="grid min-w-0 grid-cols-1 gap-1.5 rounded-[14px] bg-[var(--warning-bg)] p-2.5">
-                        <PausedTags run={paused.run} status when />
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span
-                            role="progressbar"
-                            aria-valuemin={0}
-                            aria-valuemax={paused.point.total}
-                            aria-valuenow={paused.point.done}
-                            aria-label={LEARN_TEXT.resumeAt(paused.point.done, paused.point.total)}
-                            className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--surface-strong)]"
-                          >
-                            <span className="block h-full rounded-full bg-[var(--warning-text)]" style={{ width: `${(paused.point.done / Math.max(1, paused.point.total)) * 100}%` }} />
-                          </span>
-                          <span className="shrink-0 text-xs font-black tabular-nums text-[var(--warning-text)]">{LEARN_TEXT.resumeAt(paused.point.done, paused.point.total)}</span>
+                  <li key={block.key} className="min-w-0 md:col-span-2">
+                    <section aria-label={block.title} className="rounded-[24px] border border-[var(--border)] p-2 sm:p-2.5">
+                      <div className="flex min-w-0 items-start gap-3 px-2 pb-2.5 pt-1.5">
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] bg-[var(--surface-strong)] text-[var(--accent-ink)]">
+                          <Icon name="Layers" className="h-4.5 w-4.5" />
                         </span>
+                        <div className="min-w-0 flex-1">
+                          {where ? <p className="one-line-safe text-xs font-bold text-[var(--faint)]">{where}</p> : null}
+                          <h3 className="learn-read text-base font-black leading-snug">{block.title}</h3>
+                          <p className="text-xs font-bold text-[var(--muted)]">{LEARN_TEXT.quizPartsTotal(block.items.length, questions)}</p>
+                        </div>
                       </div>
-                    ) : null}
-                    <div className="mt-auto flex min-w-0 items-center gap-2">
-                      <div className="ml-auto">
-                        <PageActions
-                          label={LEARN_TEXT.quizActions(entry.quiz.title)}
-                          primary={
-                            paused ? (
-                              <Button variant="primary" icon="PlayCircle" onClick={() => onResume(paused.run)}>
-                                {LEARN_TEXT.resume}
-                              </Button>
-                            ) : !entry.questions.length && editable ? (
-                              // Quiz senza domande: il passo successivo è aggiungerle, non un «Inizia» spento.
-                              <Button variant="primary" icon="Plus" onClick={() => setEditing(entry.quiz.id)}>
-                                {LEARN_TEXT.addQuestions}
-                              </Button>
-                            ) : (
-                              <Button variant="primary" icon="PlayCircle" disabled={!entry.questions.length} onClick={() => setStarting(entry.quiz.id)}>
-                                {LEARN_TEXT.startQuiz}
-                              </Button>
-                            )
-                          }
-                          more={more}
-                        />
-                      </div>
-                    </div>
+                      <ul aria-label={LEARN_TEXT.quizParts(block.items.length)} className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                        {block.items.map((entry, index) => renderCard(entry, group, block.titles[index]))}
+                      </ul>
+                    </section>
                   </li>
                 );
               })}

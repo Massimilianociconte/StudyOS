@@ -743,3 +743,37 @@ contiene «Ripassa queste», «Rifai il quiz», «Ripassa i N errori» e «Doman
 modifica al database: i dubbi (`studyMark`) passano dalla stessa `push_studyos_rows` e restano
 privati (non sono in `supabase/sharing.sql`). Il Worker del connettore non è stato ridistribuito:
 finché non lo è, il gruppo «states» degli agenti non include i dubbi.
+
+## Ripasso: gerarchia per materia, «mazzi» e quiz in parti (18 novembre 2026, ramo `claude/flashcards-quiz`)
+
+Dopo la pubblicazione la persona trovava Oggi e Raccolte troppo uniformi (tutte le righe uguali, i
+sotto-elenchi distinti solo dal rientro), non capiva il numero viola «+19» né che cosa fossero le
+«schede» del pulsante, e vedeva le due metà di un quiz da 100 domande come argomenti diversi.
+
+- **Nomi**: la scheda «Raccolte» si chiama **Flashcard**; i contenitori sono **mazzi** e
+  **sotto-mazzi** (scelta della persona). Nel Ripasso «scheda» non indica più una flashcard (era
+  ambiguo con le schede in alto): ovunque «flashcard». «Nuove» → **mai studiate**. Il connettore
+  (descrizioni degli strumenti, `learningTools.ts`, `catalogLearning.ts`) e i messaggi di convalida
+  di `learningModel.ts` dicono ancora «raccolta»: da allineare con la prossima distribuzione del Worker.
+- **Oggi**: sotto il numero grande, «Le prime 20 vengono da» con un chip per materia (segno, nome,
+  quante): è la stessa coda che parte con «Ripassa 20 flashcard» (`sessionSpec`). «Per raccolta» è
+  diventato **Per materia**: un riquadro per materia con segno, nome, «1 da ripassare · 19 mai
+  studiate» e «Ripassa» per tutta la materia (sotto i 420 px solo l'icona); dentro i mazzi, e i
+  sotto-mazzi più piccoli, tenui e appesi a una linea verticale. Ogni numero ha il suo nome (niente
+  più «+19»). Un solo mazzo con il nome della materia non si ripete: si vedono i suoi sotto-mazzi.
+- **Flashcard**: mazzi divisi per materia come i quiz (chip delle materie, titolo con segno, «N mazzi
+  · N flashcard»), un riquadro per materia, mazzi separati da una linea, sotto-mazzi appesi a una
+  linea verticale; «N da ripassare oggi» nella riga al posto del numero da solo (via la legenda). I
+  mazzi condivisi stanno in «Condivisi da …».
+- **Quiz**: titolo della materia con il segno; i quiz dello stesso mazzo (almeno due) o con «1 di 2»,
+  «Parte 2», «(1/2)» e lo stesso nome stanno in un **gruppo** con il titolo del mazzo, «In 2 parti ·
+  100 domande in tutto» e ogni parte con il titolo accorciato («Simulazione 1 di 2 (50 domande)»).
+  Logica pura in `src/lib/learnGroups.ts` (`groupDeckNodes`, `pruneToTodo`, `quizBlocks`,
+  `partTitles`), provata in `tests/learnGroups.test.mjs`.
+
+Verifiche: `npm test` 1758/1758, `npm run lint`, `npm run build`; Playwright a 390, 320 e 1366 px con
+dati come quelli della persona (materia con mazzo e sotto-mazzo di nome diverso, due simulazioni
+nello stesso mazzo): nomi delle schede, chip delle materie, gruppi per materia, linea dei
+sotto-mazzi, «Ripassa» della materia, filtro per materia, gruppo dei quiz in parti, niente parole
+vecchie né scorrimento orizzontale. `09-share-flashcards` e `10-quiz` aggiornati ai nomi nuovi;
+`npm run e2e` sullo stack Supabase locale 11/11. Non pubblicato.

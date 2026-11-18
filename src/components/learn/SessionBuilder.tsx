@@ -158,7 +158,7 @@ export function SessionBuilder({
               <label key={deck.id} className="flex min-h-11 items-center gap-2 rounded-[12px] px-2 text-sm font-bold hover:bg-[var(--surface)]" style={{ paddingLeft: `${0.5 + depth * 1.1}rem` }}>
                 <input type="checkbox" checked={deckIds.includes(deck.id)} onChange={() => toggle(deck.id)} />
                 <span className="one-line-safe min-w-0 flex-1">{deck.title}</span>
-                {owner && depth === 0 ? <span className="shrink-0 text-xs font-bold text-[var(--faint)]">{LEARN_TEXT.sharedBy(owner.name)}</span> : null}
+                {owner && depth === 0 ? <span className="shrink-0 text-xs font-bold text-[var(--faint)]">{LEARN_TEXT.sharedDeckBy(owner.name)}</span> : null}
               </label>
             ))}
           </div>

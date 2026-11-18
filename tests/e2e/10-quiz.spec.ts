@@ -2,7 +2,7 @@ import { expect, test } from "./support/fixtures";
 import { ACROSS, goTo, waitSynced } from "./support/app";
 import type { Page } from "@playwright/test";
 
-const learnTab = (page: Page, name: "Raccolte" | "Quiz") =>
+const learnTab = (page: Page, name: "Flashcard" | "Quiz") =>
   page.getByRole("group", { name: "Sezioni del ripasso" }).getByRole("button", { name, exact: true }).click();
 
 test("10 Alice crea un quiz a risposta singola, lo fa in allenamento e il risultato resta dopo un ricaricamento", async ({ alice, tag }) => {

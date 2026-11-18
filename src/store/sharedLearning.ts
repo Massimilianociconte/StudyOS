@@ -13,8 +13,8 @@ import { useSharedStore } from "./useSharedStore";
 const OWNER_DECK_FIELDS = ["subjectId", "parentId"] as const;
 
 const editable = (source: LearningSource) => {
-  if (!source.owner) throw new LearningError("Questa raccolta è tua: si modifica dalla libreria.");
-  if (source.owner.permission !== "edit") throw new LearningError("Puoi solo vedere questa raccolta.");
+  if (!source.owner) throw new LearningError("Questo mazzo è tuo: si modifica dalla libreria.");
+  if (source.owner.permission !== "edit") throw new LearningError("Puoi solo vedere questo mazzo.");
   return source.owner;
 };
 
@@ -70,7 +70,7 @@ export const deleteSharedDeck = async (source: LearningSource, id: string) => {
   const { owner, decks, flashcards, quizzes } = current(source);
   if (!decks.some((deck) => deck.id === id)) throw new LearningError(SHARE_GONE_TEXT);
   if (decks.some((deck) => deck.parentId === id) || flashcards.some((card) => card.deckId === id) || quizzes.some((quiz) => quiz.deckId === id)) {
-    throw new LearningError("Svuota prima la raccolta: si eliminano solo le raccolte condivise senza sotto-raccolte, schede o quiz.");
+    throw new LearningError("Svuota prima il mazzo: si eliminano solo i mazzi condivisi senza sotto-mazzi, flashcard o quiz.");
   }
   await remove(owner.id, "studyDeck", id);
 };
@@ -144,12 +144,12 @@ export const editableSource = (ownerId: string | undefined): LearningSource | nu
 /** «Pubblica nella raccolta» per una scheda o una domanda altrui: la spiegazione la vedranno tutti. */
 export const publishSharedExplanation = async (request: AiRequest) => {
   const source = editableSource(request.targetOwnerId);
-  if (!source) throw new LearningError("Puoi solo vedere questa raccolta: la spiegazione resta tua.");
+  if (!source) throw new LearningError("Puoi solo vedere questo mazzo: la spiegazione resta tua.");
   if (!request.result || !request.targetId) throw new LearningError("Spiegazione non trovata.");
   const blocks = request.result.blocks;
   const { flashcards, quizQuestions } = current(source);
   if (flashcards.some((card) => card.id === request.targetId)) return updateSharedCard(source, request.targetId, { explanation: blocks });
   const question = quizQuestions.find((item) => item.id === request.targetId);
   if (question) return saveSharedQuestion(source, question.quizId, { explanation: blocks }, question.id);
-  throw new LearningError("La scheda non esiste più.");
+  throw new LearningError("La flashcard o la domanda non esiste più.");
 };

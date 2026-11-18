@@ -49,7 +49,7 @@ export const LEARNING_LIMITS = {
 export const DECK_KINDS: readonly DeckKind[] = ["collection", "topic", "chapter", "paragraph", "subtopic"];
 
 export const DECK_KIND_LABEL: Record<DeckKind, string> = {
-  collection: "Raccolta",
+  collection: "Mazzo",
   topic: "Argomento",
   chapter: "Capitolo",
   paragraph: "Paragrafo",
