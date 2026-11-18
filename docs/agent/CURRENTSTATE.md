@@ -776,4 +776,8 @@ dati come quelli della persona (materia con mazzo e sotto-mazzo di nome diverso,
 nello stesso mazzo): nomi delle schede, chip delle materie, gruppi per materia, linea dei
 sotto-mazzi, «Ripassa» della materia, filtro per materia, gruppo dei quiz in parti, niente parole
 vecchie né scorrimento orizzontale. `09-share-flashcards` e `10-quiz` aggiornati ai nomi nuovi;
-`npm run e2e` sullo stack Supabase locale 11/11. Non pubblicato.
+`npm run e2e` sullo stack Supabase locale 11/11.
+
+Pubblicato il 18 novembre 2026: commit `c81c1f9` su `main`, workflow Pages riuscito (build e deploy);
+il bundle pubblicato contiene «Nuovo mazzo», «Per materia», «vengono da», «mai studiate» e «domande
+in tutto». Nessuna modifica al database né al Worker (il connettore dice ancora «raccolta»).
