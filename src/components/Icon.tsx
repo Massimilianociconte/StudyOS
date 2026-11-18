@@ -97,7 +97,11 @@ import {
   ShieldCheck,
   Lightbulb,
   CircleHelp,
-  Flag
+  Flag,
+  Smartphone,
+  MonitorSmartphone,
+  Tablet,
+  Monitor
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Suspense } from "react";
@@ -206,7 +210,11 @@ const icons = {
   ShieldCheck,
   Lightbulb,
   CircleHelp,
-  Flag
+  Flag,
+  Smartphone,
+  MonitorSmartphone,
+  Tablet,
+  Monitor
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof icons;

@@ -105,7 +105,7 @@ function QuestionEditor({
         </div>
       }
     >
-      <div className="grid gap-5">
+      <div className="grid grid-cols-1 gap-5">
         <BlockListEditor label={LEARN_TEXT.questionPrompt} value={draft.prompt} onChange={(prompt) => setDraft((value) => ({ ...value, prompt }))} required />
         <Field label={LEARN_TEXT.questionKind}>
           <select
@@ -125,12 +125,12 @@ function QuestionEditor({
             <option value="multiple">{LEARN_TEXT.kindMultiple}</option>
           </select>
         </Field>
-        <fieldset className="grid gap-2">
+        <fieldset className="grid grid-cols-1 gap-2">
           <legend className="mb-1 text-xs font-black uppercase text-[var(--faint)]">{draft.kind === "multiple" ? LEARN_TEXT.multipleHint : LEARN_TEXT.singleHint}</legend>
           {draft.options.map((option, index) => (
-            <div key={option.key} className="grid gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-2.5">
+            <div key={option.key} className="grid grid-cols-1 gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--surface-soft)] p-2.5">
               <div className="flex items-center gap-2">
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-xs font-black">{optionLetter(index)}</span>
+                <span className="grid grid-cols-1 h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--surface-strong)] text-xs font-black">{optionLetter(index)}</span>
                 <input
                   aria-label={LEARN_TEXT.option(optionLetter(index))}
                   className={`${inputClass} min-w-0 flex-1`}
@@ -248,14 +248,14 @@ export function QuizEditor({
           </div>
         }
       >
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <Field label={LEARN_TEXT.quizTitle}>
             <input className={inputClass} value={fields.title} maxLength={200} data-autofocus onChange={(event) => setFields((value) => ({ ...value, title: event.target.value }))} />
           </Field>
           <Field label={LEARN_TEXT.quizDescription}>
             <textarea className={`${inputClass} min-h-20 py-2.5`} value={fields.description} maxLength={4000} onChange={(event) => setFields((value) => ({ ...value, description: event.target.value }))} />
           </Field>
-          <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_10rem]">
             <Field label={LEARN_TEXT.deckParent}>
               <select className={inputClass} value={fields.deckId} onChange={(event) => setFields((value) => ({ ...value, deckId: event.target.value }))}>
                 <option value="">—</option>
@@ -272,14 +272,14 @@ export function QuizEditor({
           </div>
 
           {quiz ? (
-            <section className="grid gap-2">
+            <section className="grid grid-cols-1 gap-2">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.questionsCount(own.length)}</h3>
                 <Button variant="soft" icon="Plus" onClick={() => setEditing("new")}>
                   {LEARN_TEXT.newQuestion}
                 </Button>
               </div>
-              <ol className="grid gap-1">
+              <ol className="grid grid-cols-1 gap-1">
                 {own.map((question, index) => (
                   <li key={question.id} className="rounded-[16px] bg-[var(--surface-soft)] p-2">
                     <div className="flex items-center gap-2">

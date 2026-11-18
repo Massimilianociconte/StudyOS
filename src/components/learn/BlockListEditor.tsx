@@ -98,7 +98,7 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
       return <SmallInput label={LEARN_TEXT.blockLabel.heading} value={block.text} maxLength={CARD_LIMITS.heading} onChange={(text) => onChange({ ...block, text })} />;
     case "list":
       return (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <LinesField
             label={LEARN_TEXT.blockLabel.list}
             help={LEARN_TEXT.listHelp}
@@ -113,7 +113,7 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
       );
     case "formula":
       return (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <label className="block">
             <span className="sr-only">{LEARN_TEXT.blockLabel.formula}</span>
             <textarea aria-label={LEARN_TEXT.blockLabel.formula} className={`${textareaClass} font-mono`} rows={2} maxLength={CARD_LIMITS.latex} value={block.latex} onChange={(event) => onChange({ ...block, latex: event.target.value })} spellCheck={false} />
@@ -124,7 +124,7 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
       );
     case "image":
       return (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <SmallInput label={LEARN_TEXT.imageUrl} type="url" placeholder="https://" value={block.url} maxLength={CARD_LIMITS.url} onChange={(url) => onChange({ ...block, url })} />
           </div>
@@ -134,13 +134,13 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
       );
     case "svg":
       return (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <label className="block">
             <span className="mb-1 block text-[11px] font-black uppercase text-[var(--faint)]">{LEARN_TEXT.svgCode}</span>
             <textarea className={`${textareaClass} font-mono text-xs`} rows={5} value={block.svg} onChange={(event) => onChange({ ...block, svg: event.target.value })} spellCheck={false} />
             <span className="mt-1 block text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.svgHelp}</span>
           </label>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <SmallInput label={LEARN_TEXT.imageAlt} value={block.alt} maxLength={CARD_LIMITS.alt} onChange={(alt) => onChange({ ...block, alt })} />
             <SmallInput label={LEARN_TEXT.caption} value={block.caption ?? ""} maxLength={CARD_LIMITS.caption} onChange={(caption) => onChange({ ...block, caption: caption || undefined })} />
           </div>
@@ -148,7 +148,7 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
       );
     case "code":
       return (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <textarea aria-label={LEARN_TEXT.blockLabel.code} className={`${textareaClass} font-mono text-xs`} rows={4} maxLength={CARD_LIMITS.code} value={block.code} onChange={(event) => onChange({ ...block, code: event.target.value })} spellCheck={false} />
           <SmallInput label={LEARN_TEXT.codeLanguage} value={block.language ?? ""} maxLength={CARD_LIMITS.codeLanguage} onChange={(language) => onChange({ ...block, language: language || undefined })} />
         </div>
@@ -156,7 +156,7 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
     case "table": {
       const lines = [...(block.header ? [block.header] : []), ...block.rows].map((row) => row.join(" | ")).join("\n");
       return (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <LinesField
             label={LEARN_TEXT.blockLabel.table}
             help={LEARN_TEXT.tableHelp}
@@ -177,8 +177,8 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
     }
     case "callout":
       return (
-        <div className="grid gap-2">
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <div className="grid grid-cols-1 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
             <SmallInput label={LEARN_TEXT.calloutTitle} value={block.title ?? ""} maxLength={CARD_LIMITS.heading} onChange={(title) => onChange({ ...block, title: title || undefined })} />
             <label className="block">
               <span className="mb-1 block text-[11px] font-black uppercase text-[var(--faint)]">Tono</span>
@@ -195,7 +195,7 @@ function BlockFields({ block, onChange }: { block: CardBlock; onChange: (block: 
       );
     case "reference":
       return (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <SmallInput label={LEARN_TEXT.referenceTitle} value={block.title} maxLength={CARD_LIMITS.referenceField} onChange={(title) => onChange({ ...block, title })} />
           </div>
@@ -239,7 +239,7 @@ export function BlockListEditor({ label, value, onChange, required = false }: { 
     onChange(next);
   };
   return (
-    <section aria-labelledby={headingId} className="grid gap-2">
+    <section aria-labelledby={headingId} className="grid grid-cols-1 gap-2">
       <h3 id={headingId} className="text-xs font-black uppercase text-[var(--faint)]">
         {label}
         {required ? <span aria-hidden="true"> *</span> : null}

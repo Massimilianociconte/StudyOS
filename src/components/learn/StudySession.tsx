@@ -5,12 +5,15 @@
 // scorrono, Spazio gira, 1–3 rispondono nell'ordine dei pulsanti, 4 salta; sulla scheda girata si
 // trascina a destra (corretta) o a sinistra (sbagliata). Ogni risposta si salva subito: «Termina»
 // porta al riepilogo senza perdere nulla, e dal riepilogo si può tornare alle schede.
+// Pausa (pulsante, Esc o Indietro del telefono): ogni risposta salva anche il punto di ripresa sulla
+// riga della sessione, che si sincronizza: si riprende da Oggi › Da riprendere, anche da un altro
+// dispositivo, alla prima scheda senza risposta. «Dubbio» (o D) segna la scheda per la scheda Dubbi.
 // Layout: la scheda occupa lo spazio libero (contenitore con `container-type: size`); su un telefono in
 // orizzontale (`short:`) i comandi passano a destra, così la scheda resta leggibile.
 import { createPortal } from "react-dom";
 import { m, useReducedMotion, type PanInfo } from "framer-motion";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { answerCard, changeCardAnswer, finishRun, newRun, type SavedAnswer } from "../../store/learning";
+import { answerCard, changeCardAnswer, finishRun, newRun, toggleMark, type SavedAnswer } from "../../store/learning";
 import { blocksPlainText } from "../../lib/cardBlocks";
 import { nextWaits } from "../../lib/learnSession";
 import { LEARN_TEXT, RESULT_HINT, RESULT_LABEL, RESULT_PLURAL } from "../../lib/labels/learn";
@@ -18,8 +21,13 @@ import type { Flashcard, FlashcardState, ReviewResult, StudyRun } from "../../ty
 import { Button, IconButton, ProgressRing, useBackCloses, useDialogLayer } from "../ui";
 import { Icon } from "../Icon";
 import { SubjectMark } from "../SubjectMark";
+import { ResumedTag } from "./ResumeTags";
+import { thisDevice } from "../../lib/learnDevice";
+import { pauseText } from "../../lib/learnResumeTag";
 import { FlashcardCard } from "./FlashcardCard";
+import { MarkToggle, cardMark } from "./MarkToggle";
 import type { SessionOptions } from "./SessionBuilder";
+import { scoreColor } from "./tones";
 
 export interface SessionItem {
   card: Flashcard;
@@ -35,6 +43,8 @@ export interface SessionSpec {
   mode: StudyRun["mode"];
   /** Scelte che hanno prodotto la coda: «Continua» le riusa. */
   options?: SessionOptions;
+  /** Sessione in pausa: la riga salvata e le risposte già date, nell'ordine della coda. */
+  resume?: { run: StudyRun; answers: SavedAnswer[] };
 }
 
 type Rated = Exclude<ReviewResult, "skip">;
@@ -106,6 +116,7 @@ function ProgressStrip({ results, index, total, label }: { results: readonly Rev
 export function StudySession({
   spec,
   states,
+  marked,
   onClose,
   onExplain,
   more
@@ -113,7 +124,10 @@ export function StudySession({
   spec: SessionSpec;
   /** Stati di ripasso attuali: dicono tra quanto torna la scheda con ogni risposta. */
   states: ReadonlyMap<string, FlashcardState>;
-  onClose: () => void;
+  /** Schede segnate come dubbio. */
+  marked: ReadonlySet<string>;
+  /** paused: si esce lasciando la sessione da riprendere. */
+  onClose: (paused?: boolean) => void;
   onExplain?: (item: SessionItem) => void;
   /** Altre schede dello stesso ambito, escluse quelle già viste in questa sessione. */
   more?: (seen: ReadonlySet<string>) => SessionItem[];
@@ -124,16 +138,18 @@ export function StudySession({
   const reduce = useReducedMotion() === true;
   const coarse = useMemo(() => typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)").matches), []);
   const [queue, setQueue] = useState(spec.items);
-  const [index, setIndex] = useState(0);
   // Una risposta per posizione della coda: answers.length è la prima scheda ancora da fare.
-  const [answers, setAnswers] = useState<SavedAnswer[]>([]);
+  const [answers, setAnswers] = useState<SavedAnswer[]>(() => spec.resume?.answers ?? []);
+  const [index, setIndex] = useState(() => spec.resume?.answers.length ?? 0);
   const [flipped, setFlipped] = useState(false);
   const [direction, setDirection] = useState<1 | -1>(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [stopped, setStopped] = useState(false);
-  const seen = useRef(new Set<string>());
-  const runRef = useRef<StudyRun>(newRun({ kind: "flashcards", mode: spec.mode, title: spec.title, deckIds: spec.deckIds, subjectIds: spec.subjectIds, itemIds: spec.items.map((item) => item.card.id) }));
+  const seen = useRef(new Set<string>(spec.resume?.answers.map((item) => item.card.id) ?? []));
+  const runRef = useRef<StudyRun>(
+    spec.resume?.run ?? newRun({ kind: "flashcards", mode: spec.mode, title: spec.title, deckIds: spec.deckIds, subjectIds: spec.subjectIds, itemIds: spec.items.map((item) => item.card.id) })
+  );
   const shownAt = useRef(performance.now());
   const frontier = answers.length;
   const finished = index >= queue.length;
@@ -161,8 +177,8 @@ export function StudySession({
     onClose();
   }, [onClose]);
 
-  // «Termina», Esc e Indietro del telefono: senza risposte si esce, altrimenti si va al riepilogo
-  // (tutto è già salvato, niente conferma); dal riepilogo si esce.
+  // «Termina»: senza risposte si esce, altrimenti si va al riepilogo (tutto è già salvato, niente
+  // conferma); dal riepilogo si esce.
   const end = useCallback(() => {
     if (summary || !answers.length) {
       close();
@@ -172,11 +188,21 @@ export function StudySession({
     setStopped(true);
   }, [answers.length, close, summary]);
 
-  useDialogLayer(true, { panelRef, onEscape: end });
+  // Pausa, Esc e Indietro del telefono: le risposte e il punto di ripresa sono già salvati, si esce
+  // e la sessione resta da riprendere. Senza risposte (o dal riepilogo) si esce e basta.
+  const canPause = !summary && answers.length > 0;
+  const pause = useCallback(() => {
+    if (!canPause) {
+      close();
+      return;
+    }
+    onClose(true);
+  }, [canPause, close, onClose]);
+
+  useDialogLayer(true, { panelRef, onEscape: pause });
   useBackCloses(true, () => {
-    const leaving = summary || !answers.length;
-    end();
-    return leaving;
+    pause();
+    return true;
   });
 
   useEffect(() => {
@@ -220,7 +246,8 @@ export function StudySession({
               runRef.current,
               { id: current.card.id, deckId: current.card.deckId, subjectId: current.card.subjectId, revision: current.card.revision, ...(current.owner ? { ownerId: current.owner.id } : {}) },
               result,
-              ms
+              ms,
+              index + 1
             );
         runRef.current = out.run;
         seen.current.add(current.card.id);
@@ -291,6 +318,11 @@ export function StudySession({
         void answer("skip");
         return;
       }
+      if ((event.key === "d" || event.key === "D") && current) {
+        event.preventDefault();
+        void toggleMark(cardMark(current.card, current.owner?.id), !marked.has(current.card.id)).catch(() => undefined);
+        return;
+      }
       const hit = ANSWERS.find((item) => item.key === event.key);
       // Sbagliata/Dubbia/Corretta solo dopo aver visto la risposta.
       if (!hit || !flipped) return;
@@ -299,7 +331,7 @@ export function StudySession({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [answer, answers.length, flipped, go, resume, summary]);
+  }, [answer, answers.length, current, flipped, go, marked, resume, summary]);
 
   const onDragEnd = (_: unknown, info: PanInfo) => {
     if (!flipped || busy) return;
@@ -347,9 +379,13 @@ export function StudySession({
               {spec.title || LEARN_TEXT.sessionTitle}
             </h2>
             {summary ? null : (
-              <p className="text-xs font-bold tabular-nums text-[var(--muted)]" aria-live="polite">
-                {LEARN_TEXT.sessionOf(position, queue.length)}
-              </p>
+              <div className="flex min-w-0 items-center gap-2">
+                <p className="shrink-0 text-xs font-bold tabular-nums text-[var(--muted)]" aria-live="polite">
+                  {LEARN_TEXT.sessionOf(position, queue.length)}
+                </p>
+                {/* Ripresa (qui o da un altro dispositivo): il dettaglio dice quando e dove si era fermata. */}
+                {spec.resume ? <ResumedTag run={spec.resume.run} detail={pauseText(spec.resume.run, thisDevice())} /> : null}
+              </div>
             )}
           </div>
           {summary ? null : (
@@ -366,9 +402,12 @@ export function StudySession({
           {summary ? (
             <IconButton icon="X" label={LEARN_TEXT.sessionClose} onClick={close} />
           ) : (
-            <Button variant="soft" onClick={end} className="min-h-10 px-3.5">
-              {LEARN_TEXT.sessionEnd}
-            </Button>
+            <>
+              {canPause ? <IconButton icon="Pause" label={LEARN_TEXT.pauseHint} onClick={pause} /> : null}
+              <Button variant="soft" onClick={end} className="min-h-10 px-3.5">
+                {LEARN_TEXT.sessionEnd}
+              </Button>
+            </>
           )}
         </div>
         {summary ? null : (
@@ -393,7 +432,7 @@ export function StudySession({
                   </p>
                   {score !== null ? (
                     <div className="mt-4 w-36 short:w-28">
-                      <ProgressRing value={score * 100} label={LEARN_TEXT.resultCorrect} />
+                      <ProgressRing value={score * 100} label={LEARN_TEXT.resultCorrect} color={scoreColor(score)} />
                     </div>
                   ) : null}
                   <p className="mt-3 max-w-md text-sm font-bold">{feedback}</p>
@@ -411,13 +450,14 @@ export function StudySession({
                 {missed.length ? (
                   <div className="mt-5">
                     <h4 className="mb-1.5 text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.resultMissed}</h4>
-                    <ul className="grid gap-1">
+                    <ul className="grid grid-cols-1 gap-1">
                       {missed.slice(0, MISSED_SHOWN).map(({ item, result }) => (
                         <li key={item.card.id} className="flex min-w-0 items-center gap-2 rounded-[14px] bg-[var(--surface-soft)] px-2.5 py-2">
                           <SubjectMark subjectId={item.owner ? undefined : item.card.subjectId} size="sm" />
                           <span className="sr-only">{RESULT_LABEL[result]}:</span>
-                          <span className="one-line-safe min-w-0 flex-1 text-sm font-bold">{blocksPlainText(item.card.front, 120)}</span>
                           <Icon name={result === "wrong" ? "X" : "CircleDot"} className={`h-4 w-4 shrink-0 ${TALLY_TONE[result]}`} />
+                          <span className="one-line-safe min-w-0 flex-1 text-sm font-bold">{blocksPlainText(item.card.front, 120)}</span>
+                          <MarkToggle target={cardMark(item.card, item.owner?.id)} marked={marked.has(item.card.id)} compact className="min-h-9 px-2.5" />
                         </li>
                       ))}
                     </ul>
@@ -448,6 +488,7 @@ export function StudySession({
                     stack={queue.length - index - 1}
                     answered={saved?.result}
                     hint={coarse ? LEARN_TEXT.tapToFlip : LEARN_TEXT.clickToFlip}
+                    action={<MarkToggle target={cardMark(current.card, current.owner?.id)} marked={marked.has(current.card.id)} compact />}
                   />
                 </m.div>
                 {error ? (
@@ -526,7 +567,7 @@ export function StudySession({
                   {LEARN_TEXT.showAnswer}
                 </Button>
               )}
-              <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-1 short:mt-1.5">
+              <div className="mt-2 grid grid-cols-1 grid-cols-[1fr_auto_1fr] items-center gap-1 short:mt-1.5">
                 <button
                   type="button"
                   onClick={() => go(-1)}
@@ -564,7 +605,7 @@ export function StudySession({
                 </button>
               </div>
               <p className="mt-1 hidden text-center text-[11px] font-medium text-[var(--faint)] can-hover:block short:!hidden">{LEARN_TEXT.keysHint}</p>
-              {flipped && !reduce ? <p className="mt-1 hidden text-center text-[11px] font-medium text-[var(--faint)] [@media(pointer:coarse)]:block short:!hidden">{LEARN_TEXT.swipeHint}</p> : null}
+              {flipped && !reduce && index < 2 ? <p className="mt-1 hidden text-center text-[11px] font-medium text-[var(--faint)] [@media(pointer:coarse)]:block short:!hidden">{LEARN_TEXT.swipeHint}</p> : null}
             </div>
           </footer>
         ) : null}

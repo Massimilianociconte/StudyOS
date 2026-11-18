@@ -62,6 +62,7 @@ export const createEmptySnapshot = (): StudySnapshot => ({
   quizzes: [],
   quizQuestions: [],
   cardStates: [],
+  studyMarks: [],
   studyRuns: [],
   aiAnalyses: [],
   aiRequests: []

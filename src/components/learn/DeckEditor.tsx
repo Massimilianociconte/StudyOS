@@ -127,7 +127,7 @@ export function DeckEditor({
       }
     >
       <form
-        className="grid gap-4"
+        className="grid grid-cols-1 gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           void save();
@@ -136,32 +136,19 @@ export function DeckEditor({
         <Field label={LEARN_TEXT.deckTitle}>
           <input className={inputClass} value={draft.title} maxLength={200} required data-autofocus onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} />
         </Field>
-        <Field label={LEARN_TEXT.deckDescription}>
-          <textarea className={`${inputClass} min-h-24 py-2.5`} value={draft.description} maxLength={4000} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} />
-        </Field>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={LEARN_TEXT.deckKind}>
-            <select className={inputClass} value={draft.kind} onChange={(event) => setDraft((value) => ({ ...value, kind: event.target.value as DeckKind }))}>
-              {DECK_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {DECK_KIND_LABEL[kind]}
+        {/* Ordine delle domande che ci si fa: dove sta, di che materia è, che cos'è; la descrizione per ultima. */}
+        {shared ? null : (
+          <Field label={LEARN_TEXT.deckParent}>
+            <select className={inputClass} value={draft.parentId} onChange={(event) => setDraft((value) => ({ ...value, parentId: event.target.value }))}>
+              <option value="">{LEARN_TEXT.deckParentRoot}</option>
+              {parents.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
                 </option>
               ))}
             </select>
           </Field>
-          {shared ? null : (
-            <Field label={LEARN_TEXT.deckParent}>
-              <select className={inputClass} value={draft.parentId} onChange={(event) => setDraft((value) => ({ ...value, parentId: event.target.value }))}>
-                <option value="">{LEARN_TEXT.deckParentRoot}</option>
-                {parents.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-        </div>
+        )}
         {draft.parentId || shared ? null : (
           <Field label={LEARN_TEXT.deckSubject}>
             <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
@@ -176,6 +163,18 @@ export function DeckEditor({
             </select>
           </Field>
         )}
+        <Field label={LEARN_TEXT.deckKind}>
+          <select className={inputClass} value={draft.kind} onChange={(event) => setDraft((value) => ({ ...value, kind: event.target.value as DeckKind }))}>
+            {DECK_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {DECK_KIND_LABEL[kind]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={LEARN_TEXT.deckDescription}>
+          <textarea className={`${inputClass} min-h-24 py-2.5`} value={draft.description} maxLength={4000} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} />
+        </Field>
         <button type="submit" hidden />
       </form>
     </Drawer>

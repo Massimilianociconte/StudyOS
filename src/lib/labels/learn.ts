@@ -2,21 +2,24 @@
 // Testi che si caricano con la sezione (vista lazy).
 import type { AiRequestStyle, ReviewResult } from "../../types";
 
-export const LEARN_TABS = ["library", "review", "quiz", "stats", "ai"] as const;
+// Ordine delle schede: prima cosa fare oggi e i dubbi, poi i contenuti, poi i dati.
+// Cinque schede, tutte in vista anche sul telefono. Le analisi degli assistenti stanno in Andamento:
+// parlano dello stesso argomento (come stai andando) e una sesta scheda non ci stava.
+export const LEARN_TABS = ["review", "doubts", "library", "quiz", "stats"] as const;
 export type LearnTab = (typeof LEARN_TABS)[number];
 
 export const LEARN_TAB_LABEL: Record<LearnTab, string> = {
+  review: "Oggi",
+  doubts: "Dubbi",
   library: "Raccolte",
-  review: "Ripasso",
   quiz: "Quiz",
-  stats: "Andamento",
-  ai: "Analisi AI"
+  stats: "Andamento"
 };
 
 export const RESULT_LABEL: Record<ReviewResult, string> = {
   correct: "Corretta",
   wrong: "Sbagliata",
-  doubt: "Dubbia",
+  doubt: "Incerta",
   skip: "Salta"
 };
 
@@ -24,7 +27,7 @@ export const RESULT_LABEL: Record<ReviewResult, string> = {
 export const RESULT_PLURAL: Record<ReviewResult, string> = {
   correct: "Corrette",
   wrong: "Sbagliate",
-  doubt: "Dubbie",
+  doubt: "Incerte",
   skip: "Saltate"
 };
 
@@ -53,7 +56,7 @@ export const SESSION_FILTER_LABEL: Record<SessionFilter, string> = {
   today: "Consigliate",
   due: "Da ripassare",
   new: "Nuove",
-  hard: "Difficili o dubbie",
+  hard: "Difficili o incerte",
   all: "Tutte"
 };
 
@@ -61,7 +64,7 @@ export const SESSION_FILTER_HINT: Record<SessionFilter, string> = {
   today: "Prima quelle in scadenza oggi, poi quelle mai viste.",
   due: "Solo quelle che il ripasso a intervalli ti ripropone oggi.",
   new: "Solo quelle mai viste.",
-  hard: "Sbagliate spesso o segnate come dubbie l'ultima volta.",
+  hard: "Sbagliate spesso o incerte l'ultima volta.",
   all: "Tutta la raccolta, anche quelle che sai già."
 };
 
@@ -87,7 +90,6 @@ export const QUIZ_MODE_HINT: Record<QuizMode, string> = {
 
 export const LEARN_TEXT = {
   title: "Ripasso",
-  subtitle: "Flashcard, quiz e ripasso a intervalli. Gli assistenti collegati possono crearli e spiegarli meglio.",
   tabsAria: "Sezioni del ripasso",
   // Raccolte
   newDeck: "Nuova raccolta",
@@ -96,11 +98,13 @@ export const LEARN_TEXT = {
   newQuiz: "Nuovo quiz",
   editDeck: "Modifica la raccolta",
   deleteDeck: "Elimina la raccolta",
+  deleteShort: "Elimina",
+  editShort: "Modifica",
   duplicateDeck: "Duplica nella mia libreria",
   studyDeck: "Ripassa",
   emptyLibraryTitle: "Ancora nessuna raccolta",
   emptyLibraryBody:
-    "Crea una raccolta per una materia o un capitolo, oppure chiedi a un assistente collegato di prepararne una dal tuo materiale (studyos_save_flashcards).",
+    "Crea una raccolta per una materia o un capitolo, oppure chiedi a un assistente collegato di prepararne una dal tuo materiale.",
   searchPlaceholder: "Cerca nelle flashcard",
   searchAria: "Cerca flashcard per testo",
   noResults: "Nessuna flashcard corrisponde.",
@@ -112,7 +116,14 @@ export const LEARN_TEXT = {
     `Puoi modificarla: le modifiche arrivano subito a ${name || "chi la condivide"}, che può ripristinarle dalla cronologia. Le tue risposte restano tue.`,
   cardsCount: (count: number) => (count === 1 ? "1 flashcard" : `${count} flashcard`),
   ofTotalCards: (count: number) => (count === 1 ? "su 1 flashcard" : `su ${count} flashcard`),
+  cardsTitle: "Flashcard",
+  legendDue: "da ripassare oggi",
+  legendPlay: "ripassa la raccolta",
   cardsHere: (count: number) => (count === 1 ? "1 flashcard in questa raccolta" : `${count} flashcard in questa raccolta`),
+  cardsInSubdecks: (count: number) => (count === 1 ? "L'unica flashcard sta in una sotto-raccolta." : `Le ${count} flashcard stanno nelle sotto-raccolte.`),
+  deckEmptyHint: "Ancora nessuna flashcard: aggiungi la prima.",
+  deckQuizzes: (count: number) => (count === 1 ? "1 quiz collegato" : `${count} quiz collegati`),
+  startQuizNamed: (title: string) => `Inizia il quiz: ${title}`,
   dueCount: (count: number) => (count === 1 ? "1 da ripassare" : `${count} da ripassare`),
   newCount: (count: number) => (count === 1 ? "1 nuova" : `${count} nuove`),
   subdecks: (count: number) => (count === 1 ? "1 sotto-raccolta" : `${count} sotto-raccolte`),
@@ -129,16 +140,16 @@ export const LEARN_TEXT = {
   duplicated: (title: string) => `Copia creata: ${title}.`,
   // Editor raccolta
   deckTitle: "Titolo",
-  deckDescription: "Descrizione",
-  deckKind: "Livello",
-  deckParent: "Dentro",
-  deckParentRoot: "Nessuna (in cima)",
+  deckDescription: "Descrizione (facoltativa)",
+  deckKind: "Che cos'è (materia, argomento, capitolo…)",
+  deckParent: "Dentro la raccolta",
+  deckParentRoot: "Nessuna: è una raccolta principale",
   deckSubject: "Materia",
   save: "Salva",
   cancel: "Annulla",
   // Editor flashcard
-  front: "Fronte",
-  back: "Retro",
+  front: "Domanda (fronte)",
+  back: "Risposta (retro)",
   explanation: "Spiegazione",
   explanationHint: "Facoltativa: si vede dopo aver girato la scheda.",
   difficulty: "Difficoltà",
@@ -202,14 +213,17 @@ export const LEARN_TEXT = {
     [
       `${correct} ${correct === 1 ? "corretta" : "corrette"}`,
       `${wrong} ${wrong === 1 ? "sbagliata" : "sbagliate"}`,
-      `${doubt} ${doubt === 1 ? "dubbia" : "dubbie"}`,
+      `${doubt} ${doubt === 1 ? "incerta" : "incerte"}`,
       ...(skip ? [`${skip} ${skip === 1 ? "saltata" : "saltate"}`] : [])
     ].join(" · "),
   sessionEnd: "Termina",
   sessionStop: "Interrompi",
+  pause: "Pausa",
+  pauseHint: "Metti in pausa: riprendi da qui, anche da un altro dispositivo",
+  paused: "In pausa: la ritrovi in Oggi, anche sugli altri dispositivi.",
   sessionClose: "Chiudi",
   sessionEmpty: "Nessuna flashcard da ripassare con queste scelte.",
-  keysHint: "Tasti: ← → scorri · Spazio gira · 1 sbagliata · 2 dubbia · 3 corretta · 4 salta",
+  keysHint: "Tasti: ← → scorri · Spazio gira · 1 sbagliata · 2 incerta · 3 corretta · 4 salta · D dubbio · Esc pausa",
   swipeHint: "Scorri a destra se corretta, a sinistra se sbagliata",
   tapToFlip: "Tocca per girare",
   clickToFlip: "Clic o Spazio per girare",
@@ -230,8 +244,8 @@ export const LEARN_TEXT = {
   resultCorrect: "corrette",
   resultTime: (minutes: string) => `in ${minutes}`,
   resultGreat: "Ottimo: le sapevi quasi tutte.",
-  resultGood: "Buon ripasso. Le sbagliate tornano tra 10 minuti, le dubbie domani.",
-  resultLow: "Da riprendere: le sbagliate tornano tra 10 minuti, ripassale di nuovo.",
+  resultGood: "Buon ripasso. Le sbagliate tornano tra 10 minuti, le incerte domani.",
+  resultLow: "Ancora da consolidare: le sbagliate tornano tra 10 minuti, ripassale di nuovo.",
   resultOnlySkips: "Nessuna risposta data: le schede saltate restano dove erano.",
   resultMissed: "Da rivedere",
   resultMissedMore: (count: number) => (count === 1 ? "e un'altra" : `e altre ${count}`),
@@ -240,6 +254,10 @@ export const LEARN_TEXT = {
   finish: "Fine",
   // Scheda Ripasso
   today: "Oggi",
+  todayCards: (count: number) => (count === 1 ? "scheda da ripassare" : "schede da ripassare"),
+  todayDue: "da ripassare",
+  todayOverdue: "in ritardo",
+  todayNew: "nuove",
   todayCount: (count: number) => (count === 1 ? "1 scheda per oggi" : `${count} schede per oggi`),
   todayBreakdown: (due: number, fresh: number, overdue: number) =>
     [
@@ -260,6 +278,43 @@ export const LEARN_TEXT = {
     [...(due ? [due === 1 ? "1 da ripassare" : `${due} da ripassare`] : []), ...(fresh ? [fresh === 1 ? "1 nuova" : `${fresh} nuove`] : [])].join(" · "),
   studyNow: (title: string) => `Ripassa ${title}`,
   recentSessions: "Ultime sessioni",
+  // Da riprendere
+  resumeTitle: "Da riprendere",
+  resume: "Riprendi",
+  resumeDeck: (title: string) => `Riprendi ${title}`,
+  deckPausedHint: (done: number, total: number) => `Sessione in pausa: ${done} di ${total} schede fatte. «Riprendi» continua da lì.`,
+  resumeAt: (done: number, total: number) => `${done} di ${total}`,
+  justNow: "adesso",
+  resumeFlashcards: "Flashcard",
+  resumeQuiz: "Quiz",
+  discard: "Scarta",
+  discardConfirm: "Scartare? Le risposte date restano nell'andamento, ma non si riprende più.",
+  discardQuizConfirm: "Scartare il tentativo? Le risposte date finora si perdono.",
+  resumeMissing: "Le schede o le domande di questa sessione non ci sono più.",
+  restartQuiz: "Da capo",
+  quizNoSubject: "Senza materia",
+  quizNoQuestions: "Ancora nessuna domanda.",
+  quizNoQuestionsEdit: "Ancora nessuna domanda: aggiungile per poterlo fare.",
+  addQuestions: "Aggiungi domande",
+  pausedReplace: (done: number, total: number) => `Hai un tentativo in pausa (${done} di ${total}): iniziandone uno nuovo viene scartato.`,
+  // Etichette di ciò che è stato interrotto e ripreso
+  tagPaused: "Da riprendere",
+  tagHere: "Questo dispositivo",
+  tagFrom: (device: string) => `Da ${device}`,
+  tagHereHint: "Interrotta su questo dispositivo",
+  tagFromHint: (device: string) => `Interrotta su un altro dispositivo: ${device}`,
+  tagResumed: "Ripresa",
+  tagResumedFrom: (device: string) => `Ripresa da ${device}`,
+  tagResumedElsewhere: "Ripresa da un altro dispositivo",
+  tagResumedTimes: (count: number) => (count > 1 ? `Ripresa ${count} volte` : "Ripresa una volta"),
+  pausedWhen: (when: string, quiz: boolean) => `${quiz ? "Interrotto" : "Interrotta"} ${when}`,
+  pausedWhere: (device: string | null) => (device ? `su ${device}` : "su questo dispositivo"),
+  whenNow: "adesso",
+  whenMinutes: (minutes: number) => `${minutes} min fa`,
+  whenToday: (time: string) => `oggi alle ${time}`,
+  whenYesterday: (time: string) => `ieri alle ${time}`,
+  whenWeekday: (day: string, time: string) => `${day} alle ${time}`,
+  whenDate: (date: string) => `il ${date}`,
   // Personalizza il ripasso
   builderTitle: "Personalizza il ripasso",
   builderScope: "Cosa ripassare",
@@ -272,9 +327,15 @@ export const LEARN_TEXT = {
   start: "Inizia",
   // Quiz
   quizEmptyTitle: "Nessun quiz",
-  quizEmptyBody: "Crea un quiz a scelta multipla o chiedi a un assistente di generarlo (studyos_save_quiz).",
+  quizEmptyBody: "Crea un quiz a scelta multipla o chiedi a un assistente di generarlo.",
   questionsCount: (count: number) => (count === 1 ? "1 domanda" : `${count} domande`),
   lastScore: (score: string) => `Ultimo: ${score}`,
+  lastLabel: "Ultimo",
+  questionsLabel: "Domande",
+  bestLabel: "Migliore",
+  neverTaken: "Mai fatto",
+  quizActions: (title: string) => `Altre azioni per ${title}`,
+  scoringTitle: "Come si calcola il punteggio",
   bestScore: (score: string) => `Migliore: ${score}`,
   startQuiz: "Inizia il quiz",
   quizMode: "Modalità",
@@ -287,18 +348,22 @@ export const LEARN_TEXT = {
   questionNav: "Domande del quiz",
   goToQuestion: (index: number, state: string) => `Domanda ${index}${state ? `, ${state}` : ""}`,
   questionAnswered: "risposta data",
-  questionFlagged: "segnata come dubbia",
+  questionFlagged: "segnata tra i dubbi",
   questionCurrent: "quella che stai vedendo",
-  quizKeysHint: "Tasti: ← → scorri · A–F o 1–6 scegli · Invio conferma",
+  quizKeysHint: "Tasti: ← → scorri · A–F o 1–6 scegli · Invio conferma · D dubbio · Esc pausa",
   quizRight: "Giusta",
   quizWrong: "Sbagliata",
   finishQuiz: "Concludi",
   finishQuizConfirm: (unanswered: number) => (unanswered ? `Concludere? ${unanswered} domande restano senza risposta e contano come sbagliate.` : "Concludere il quiz?"),
-  markDoubt: "Segna come dubbia",
+  markDoubt: "Dubbio",
+  markDoubtOn: "Segna come dubbio: la ritrovi in Dubbi",
+  markDoubtOff: "Togli dai dubbi",
   singleHint: "Una sola risposta",
   multipleHint: "Una o più risposte: vale solo se le scegli tutte giuste",
   resultTitle: "Risultato",
   resultScore: (correct: number, total: number) => `${correct} su ${total}`,
+  quizRedo: "Rifai il quiz",
+  quizRetryMissed: (count: number) => (count === 1 ? "Ripassa l'errore" : `Ripassa i ${count} errori`),
   resultReview: "Rivedi le risposte",
   yourAnswer: "La tua risposta",
   correctAnswer: "Risposta giusta",
@@ -324,6 +389,31 @@ export const LEARN_TEXT = {
   deleteQuestion: "Elimina la domanda",
   scoringRule:
     "Punteggio: 1 punto per domanda. Nelle domande a risposta multipla il punto vale solo se scegli esattamente tutte le risposte giuste (nessun punteggio parziale). Le domande senza risposta valgono 0.",
+  // Dubbi
+  doubtsTitle: "Dubbi",
+  doubtsCount: (count: number) => (count === 1 ? "dubbio da chiarire" : "dubbi da chiarire"),
+  doubtsCards: (count: number) => (count === 1 ? "1 flashcard" : `${count} flashcard`),
+  doubtsQuestions: (count: number) => (count === 1 ? "1 domanda" : `${count} domande`),
+  doubtsEmptyTitle: "Nessun dubbio",
+  doubtsEmptyBody:
+    "Durante un ripasso o un quiz tocca «Dubbio» (o premi D) su ciò che vuoi ristudiare: lo ritrovi qui, per materia e argomento, su tutti i tuoi dispositivi.",
+  doubtsStudyCards: (count: number) => (count === 1 ? "Ripassa 1 flashcard" : `Ripassa ${count} flashcard`),
+  doubtsQuiz: (count: number) => (count === 1 ? "Quiz su 1 domanda" : `Quiz su ${count} domande`),
+  doubtsSessionTitle: "Ripasso dei dubbi",
+  doubtsQuizTitle: "Quiz sui dubbi",
+  doubtsSubjects: "Materie",
+  doubtsTopics: "Argomenti",
+  doubtsAll: "Tutte",
+  doubtsAllTopics: "Tutti",
+  doubtsOther: "Altro",
+  doubtsCleared: "Chiarito",
+  doubtsClearTopic: (title: string) => `Chiarito: togli tutti i dubbi di ${title}`,
+  doubtsClearConfirm: (count: number) => (count === 1 ? "Togliere il dubbio?" : `Togliere tutti i ${count} dubbi di questo argomento?`),
+  doubtsUnmark: "Togli dai dubbi",
+  doubtsUnmarkHint: "Chiarito un dubbio? Tocca la sua bandierina per toglierlo dalla lista.",
+  doubtsShowAnswer: "Vedi la risposta",
+  doubtsFromQuiz: (title: string) => `Dal quiz ${title}`,
+  doubtsStudyTopic: (title: string) => `Ripassa ${title}`,
   // Statistiche
   statsEmptyTitle: "Ancora nessun dato",
   statsEmptyBody: "Le statistiche compaiono dopo le prime risposte alle flashcard o il primo quiz.",
@@ -346,6 +436,11 @@ export const LEARN_TEXT = {
   perDeck: "Per raccolta",
   perSubject: "Per materia",
   hardest: "Le più difficili per te",
+  hardestHint: "Percentuale di risposte sbagliate su ciascuna scheda.",
+  hardestStudy: (count: number) => (count === 1 ? "Ripassa questa" : `Ripassa queste ${count}`),
+  hardestSessionTitle: "Le più difficili",
+  hardestRate: (rate: string) => `${rate} sbagliate`,
+  aiSectionTitle: "Analisi degli assistenti",
   missedQuestions: "Domande sbagliate più spesso",
   definitions: "Come si calcolano",
   period: "Periodo",
@@ -380,7 +475,7 @@ export const LEARN_TEXT = {
     cancelled: "Annullata"
   } as Record<string, string>,
   requestWaitHelp:
-    "Le richieste restano in attesa finché un assistente collegato le elabora: aprilo e chiedigli di controllare le richieste di StudyOS (studyos_list_ai_requests), oppure imposta un'attività pianificata che lo faccia da sola. Scadono dopo 14 giorni.",
+    "Le richieste restano in attesa finché un assistente collegato le elabora: aprilo e chiedigli di controllare le richieste di StudyOS, oppure imposta un'attività pianificata che lo faccia da sola. Scadono dopo 14 giorni.",
   cancelRequest: "Annulla la richiesta",
   deleteRequest: "Togli dall'elenco",
   // Spiegami meglio

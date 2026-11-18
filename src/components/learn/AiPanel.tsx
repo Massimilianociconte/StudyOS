@@ -102,7 +102,7 @@ function AnalysisCard({ analysis }: { analysis: AiAnalysis }) {
       <h3 className="safe-text mt-1 text-lg font-black">{analysis.title}</h3>
       {analysis.summary ? <p className="safe-text mt-2 whitespace-pre-line text-sm font-medium">{analysis.summary}</p> : null}
       {analysis.sections.length ? (
-        <div className="mt-3 grid gap-3">
+        <div className="mt-3 grid grid-cols-1 gap-3">
           {analysis.sections.map((section, index) => (
             <section key={index} className="rounded-[16px] bg-[var(--surface-soft)] p-3">
               <h4 className="safe-text text-sm font-black">{section.title}</h4>
@@ -188,8 +188,8 @@ export function AiPanel({ data, targetTitle }: { data: LearnData; targetTitle: (
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-      <div className="grid content-start gap-4">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 content-start gap-4">
         <p className="safe-text text-sm font-medium text-[var(--muted)]">{LEARN_TEXT.aiIntro}</p>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" icon="Sparkles" onClick={() => setAsking((value) => !value)} aria-expanded={asking}>
@@ -208,11 +208,11 @@ export function AiPanel({ data, targetTitle }: { data: LearnData; targetTitle: (
           </p>
         ) : null}
         {asking ? (
-          <Panel className="grid gap-3">
+          <Panel className="grid grid-cols-1 gap-3">
             <Field label={LEARN_TEXT.askAnalysisPrompt}>
               <textarea className={`${inputClass} min-h-20 py-2.5`} maxLength={2000} placeholder={LEARN_TEXT.askAnalysisPlaceholder} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
             </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label={LEARN_TEXT.deckSubject}>
                 <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
                   <option value="">Tutte</option>
@@ -250,7 +250,7 @@ export function AiPanel({ data, targetTitle }: { data: LearnData; targetTitle: (
         <h3 className="mb-1 text-lg font-black">{LEARN_TEXT.requests}</h3>
         <p className="mb-3 text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.requestWaitHelp}</p>
         {requests.length ? (
-          <ul className="grid gap-2">
+          <ul className="grid grid-cols-1 gap-2">
             {requests.map((request) => (
               <RequestItem key={request.id} request={request} targetTitle={targetTitle(request)} />
             ))}

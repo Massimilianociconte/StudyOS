@@ -28,7 +28,8 @@ export const COLLECTIONS = [
   "cardStates",
   "studyRuns",
   "aiAnalyses",
-  "aiRequests"
+  "aiRequests",
+  "studyMarks"
 ] as const;
 
 export type CollectionKey = (typeof COLLECTIONS)[number];
@@ -68,7 +69,8 @@ export const ENTITY_TYPES: Record<CollectionKey, string> = {
   cardStates: "flashcardState",
   studyRuns: "studyRun",
   aiAnalyses: "aiAnalysis",
-  aiRequests: "aiRequest"
+  aiRequests: "aiRequest",
+  studyMarks: "studyMark"
 };
 
 export const COLLECTION_BY_ENTITY_TYPE: Record<string, CollectionKey> = Object.fromEntries(

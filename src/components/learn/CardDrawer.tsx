@@ -1,5 +1,6 @@
 // Una flashcard aperta: la scheda che si gira, il tuo stato di ripasso, modifica, eliminazione e
-// «Spiegami meglio». Le schede delle raccolte condivise si studiano e si fanno spiegare, non si modificano qui.
+// «Spiegami meglio», segno «Dubbio». Le schede delle raccolte condivise si studiano e si fanno spiegare,
+// non si modificano qui.
 import { useState } from "react";
 import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
@@ -11,9 +12,12 @@ import { LEARN_TEXT } from "../../lib/labels/learn";
 import type { LearningSource } from "../../agent/learningShared";
 import type { Flashcard, FlashcardState } from "../../types";
 import { ConfirmWithError } from "../ConfirmWithError";
-import { Button, Drawer, Pill } from "../ui";
+import { Button, Drawer } from "../ui";
+import { CARD_STATUS_TONE } from "./tones";
+import { useStudyStore } from "../../store/useStudyStore";
 import { CardEditor } from "./CardEditor";
 import { FlashcardCard } from "./FlashcardCard";
+import { MarkToggle, cardMark } from "./MarkToggle";
 import { errorText } from "./useLearnData";
 
 export interface ExplainTarget {
@@ -37,6 +41,7 @@ export function CardDrawer({
   onExplain: (target: ExplainTarget) => void;
 }) {
   const [flipped, setFlipped] = useState(false);
+  const marked = useStudyStore((store) => Boolean(card && store.studyMarks.some((mark) => mark.id === card.id)));
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Un'altra scheda (o la chiusura decisa da fuori): si riparte coperta e senza conferma aperta.
@@ -105,12 +110,24 @@ export function CardDrawer({
               />
             ) : null}
             {/* key: le immagini «tocca per caricare» di una scheda non restano caricate su un'altra. */}
-            <FlashcardCard key={card.id} card={card} flipped={flipped} onFlip={() => setFlipped((value) => !value)} external={Boolean(owner)} flipButton />
+            <FlashcardCard
+              key={card.id}
+              card={card}
+              flipped={flipped}
+              onFlip={() => setFlipped((value) => !value)}
+              external={Boolean(owner)}
+              flipButton
+              action={<MarkToggle target={cardMark(card, owner?.id)} marked={marked} compact />}
+            />
             <div className="flex flex-wrap items-center gap-2">
-              <Pill active={info.due}>{CARD_STATUS_LABEL[info.status]}</Pill>
+              {/* Stato in testo colorato, non in una pillola piena (sembrava un pulsante). */}
+              <span className={`inline-flex items-center gap-1.5 text-xs font-black ${CARD_STATUS_TONE[info.status] ?? "text-[var(--muted)]"}`}>
+                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
+                {CARD_STATUS_LABEL[info.status]}
+              </span>
               {state && !info.isNew ? (
                 <span className="text-xs font-bold text-[var(--muted)]">
-                  {`Prossimo ripasso: ${format(parseISO(state.due), "d MMM", { locale: it })} · ${state.correct} corrette, ${state.wrong} sbagliate, ${state.doubt} dubbie`}
+                  {`Prossimo ripasso: ${format(parseISO(state.due), "d MMM", { locale: it })} · ${state.correct} corrette, ${state.wrong} sbagliate, ${state.doubt} incerte`}
                 </span>
               ) : null}
               {card.author?.kind === "agent" && card.author.name ? <span className="text-xs font-bold text-[var(--faint)]">{LEARN_TEXT.agentMade(card.author.name)}</span> : null}

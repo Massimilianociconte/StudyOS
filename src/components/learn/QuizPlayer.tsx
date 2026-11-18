@@ -5,18 +5,27 @@
 // Tastiera: ← → scorrono, A–F o 1–6 scelgono, Invio conferma o va avanti.
 // Layout: una colonna su telefono e tablet in verticale; domanda a sinistra e risposte a destra su
 // tablet in orizzontale e computer (`wide:`) e sul telefono in orizzontale (`short:`).
-// Il tentativo si salva una volta, alla fine, con punteggio deterministico (saveQuizAttempt).
+// Il tentativo si salva alla fine, con punteggio deterministico (saveQuizAttempt). Prima, a ogni
+// risposta, si salva il punto di ripresa (risposte, posizione, tempo) sulla riga del tentativo, che si
+// sincronizza: Pausa, Esc o Indietro del telefono escono e il quiz si riprende da Oggi o da Quiz, anche
+// da un altro dispositivo. Le statistiche contano le risposte solo a tentativo concluso.
+// «Dubbio» (o D) segna la domanda per la scheda Dubbi.
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { newRun, saveQuizAttempt } from "../../store/learning";
-import { clockText, optionFromKey, quizReachable, reviewAnswers, type PreparedQuestion } from "../../lib/learnSession";
+import { newRun, saveQuizAttempt, saveRunProgress, toggleMark } from "../../store/learning";
+import { clockText, optionFromKey, prepareQuiz, quizReachable, reviewAnswers, type PreparedQuestion } from "../../lib/learnSession";
 import { correctOptionIds, optionLetter, scoreQuestion } from "../../lib/quizScoring";
 import { LEARN_TEXT, QUIZ_MODE_LABEL, RESULT_LABEL, type QuizMode } from "../../lib/labels/learn";
 import type { Quiz, StudyRun, StudyRunEvent, StudyRunMode } from "../../types";
 import { InlineConfirm } from "../InlineConfirm";
+import { MarkToggle, questionMark } from "./MarkToggle";
 import { Icon } from "../Icon";
 import { Button, IconButton, ProgressRing, useBackCloses, useDialogLayer } from "../ui";
+import { ResumedTag } from "./ResumeTags";
+import { thisDevice } from "../../lib/learnDevice";
+import { pauseText } from "../../lib/learnResumeTag";
 import { Blocks } from "./Blocks";
+import { scoreColor } from "./tones";
 import type { ExplainTarget } from "./CardDrawer";
 import { errorText } from "./useLearnData";
 
@@ -29,7 +38,16 @@ export interface QuizPlay {
   prepared: PreparedQuestion[];
   mode: QuizMode;
   owner?: { id: string; name: string };
+  /** Seme e mescolamento con cui è stato preparato: alla ripresa le risposte tornano nello stesso ordine. */
+  seed: number;
+  shuffle: boolean;
+  /** Tentativo in pausa da riprendere (la riga salvata, con il punto di ripresa). */
+  resume?: StudyRun;
+  /** Quiz misto (i dubbi): chi condivide ogni domanda non tua. */
+  ownerOf?: ReadonlyMap<string, { id: string; name: string }>;
 }
+
+const AUTOSAVE_MS = 700;
 
 function OptionButton({
   letter,
@@ -80,7 +98,7 @@ function OptionButton({
         onClick={onToggle}
         className={`motion-safe flex min-h-[3.25rem] w-full min-w-0 items-start gap-3 rounded-[18px] border p-3 text-left disabled:cursor-default sm:p-3.5 short:min-h-11 short:p-2.5 ${tone}`}
       >
-        <span className={`grid h-8 w-8 shrink-0 place-items-center border text-sm font-black ${multiple ? "rounded-[10px]" : "rounded-full"} ${badge}`}>
+        <span className={`grid grid-cols-1 h-8 w-8 shrink-0 place-items-center border text-sm font-black ${multiple ? "rounded-[10px]" : "rounded-full"} ${badge}`}>
           {state === "right" || state === "missed" ? <Icon name="Check" className="h-4 w-4" /> : state === "wrong" ? <Icon name="X" className="h-4 w-4" /> : letter}
         </span>
         <span className="min-w-0 flex-1 self-center">
@@ -92,28 +110,47 @@ function OptionButton({
   );
 }
 
-export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClose: () => void; onExplain: (target: ExplainTarget) => void }) {
-  const { quiz, prepared, mode, owner } = play;
+export function QuizPlayer({
+  play,
+  marked,
+  onClose,
+  onExplain,
+  onAgain
+}: {
+  play: QuizPlay;
+  /** Domande segnate come dubbio. */
+  marked: ReadonlySet<string>;
+  /** paused: si esce lasciando il tentativo da riprendere. */
+  onClose: (paused?: boolean) => void;
+  onExplain: (target: ExplainTarget) => void;
+  /** Dal risultato: un altro giro sulle sole sbagliate o su tutto il quiz. */
+  onAgain?: (play: QuizPlay) => void;
+}) {
+  const { quiz, prepared, mode, owner, resume } = play;
+  const progress = resume?.progress;
+  const ownerOfQuestion = (id: string) => owner ?? play.ownerOf?.get(id);
   const exam = mode === "exam";
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLOListElement>(null);
-  const [index, setIndex] = useState(0);
-  const [answers, setAnswers] = useState<Map<string, string[]>>(() => new Map());
-  const [flags, setFlags] = useState<Set<string>>(() => new Set());
-  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  const [index, setIndex] = useState(() => Math.max(0, Math.min(prepared.length - 1, progress?.index ?? 0)));
+  const [answers, setAnswers] = useState<Map<string, string[]>>(() => new Map(Object.entries(progress?.answers ?? {}).filter(([, ids]) => ids.length)));
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(progress?.checked ?? []));
   const [confirmFinish, setConfirmFinish] = useState(false);
-  const [confirmStop, setConfirmStop] = useState(false);
   const [result, setResult] = useState<StudyRun | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Inizio di questa seduta; il tempo già passato prima della pausa si somma (elapsedBase).
   const startedAt = useRef(Date.now());
+  const elapsedBase = progress?.elapsedMs ?? 0;
+  const elapsed = () => elapsedBase + (Date.now() - startedAt.current);
   const shownAt = useRef(Date.now());
   const times = useRef(new Map<string, number>());
   const limitSeconds = exam && quiz.timeLimitMinutes ? quiz.timeLimitMinutes * 60 : 0;
-  const [left, setLeft] = useState(limitSeconds);
+  const [left, setLeft] = useState(() => limitSeconds - Math.floor(elapsedBase / 1000));
   const run = useMemo(
     () =>
+      resume ??
       newRun({
         kind: "quiz",
         mode: RUN_MODE[mode],
@@ -123,7 +160,7 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
         subjectIds: quiz.subjectId ? [quiz.subjectId] : [],
         itemIds: prepared.map((item) => item.question.id)
       }),
-    [mode, prepared, quiz]
+    [mode, prepared, quiz, resume]
   );
 
   const current = prepared[index];
@@ -158,11 +195,12 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
         ...(picked.length ? { c: picked } : {}),
         ...(ms > 0 ? { ms: Math.min(3_600_000, Math.round(ms)) } : {}),
         ...(question.revision ? { v: question.revision } : {}),
-        ...(flags.has(question.id) ? { f: true } : {})
+        ...(marked.has(question.id) ? { f: true } : {})
       };
     });
+    window.clearTimeout(autosave.current);
     try {
-      setResult(await saveQuizAttempt({ ...run, startedAt: new Date(startedAt.current).toISOString() }, events));
+      setResult(await saveQuizAttempt(resume ? run : { ...run, startedAt: new Date(startedAt.current).toISOString() }, events));
     } catch (failure) {
       setError(errorText(failure));
     } finally {
@@ -173,11 +211,34 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
   const finishRef = useRef(finish);
   finishRef.current = finish;
 
+  // Punto di ripresa: risposte, posizione e tempo. Si salva poco dopo ogni cambiamento e alla pausa.
+  const autosave = useRef(0);
+  const started = answers.size > 0 || checked.size > 0 || Boolean(resume);
+  const persist = useCallback(
+    () =>
+      saveRunProgress(run, {
+        index,
+        seed: play.seed,
+        shuffle: play.shuffle,
+        answers: Object.fromEntries(answers),
+        checked: [...checked],
+        ...(limitSeconds ? { elapsedMs: Math.round(elapsed()) } : {})
+      }),
+    // elapsed legge solo ref e costanti della seduta.
+    [answers, checked, index, limitSeconds, play.seed, play.shuffle, run]
+  );
+  useEffect(() => {
+    if (!started || result) return;
+    window.clearTimeout(autosave.current);
+    autosave.current = window.setTimeout(() => void persist().catch(() => undefined), AUTOSAVE_MS);
+    return () => window.clearTimeout(autosave.current);
+  }, [persist, result, started]);
+
   // Timer della simulazione: allo zero il tentativo si chiude con le risposte date.
   useEffect(() => {
     if (!limitSeconds || result) return;
     const timer = window.setInterval(() => {
-      const remaining = limitSeconds - Math.floor((Date.now() - startedAt.current) / 1000);
+      const remaining = limitSeconds - Math.floor(elapsed() / 1000);
       setLeft(remaining);
       if (remaining <= 0) {
         window.clearInterval(timer);
@@ -185,17 +246,25 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
       }
     }, 1000);
     return () => window.clearInterval(timer);
+    // elapsed legge solo ref e costanti della seduta.
   }, [limitSeconds, result]);
 
-  const leave = () => (result || !answers.size ? onClose() : setConfirmStop(true));
+  // Pausa, Esc e Indietro del telefono: con qualcosa di fatto si salva il punto di ripresa e si esce.
+  const canPause = !result && started;
+  const leave = () => {
+    if (!canPause) {
+      onClose();
+      return;
+    }
+    window.clearTimeout(autosave.current);
+    void persist()
+      .then(() => onClose(true))
+      .catch((failure) => setError(errorText(failure)));
+  };
   useDialogLayer(true, { panelRef, onEscape: leave });
   useBackCloses(true, () => {
-    if (result || !answers.size) {
-      onClose();
-      return true;
-    }
-    setConfirmStop(true);
-    return false;
+    leave();
+    return true;
   });
 
   // Il pulsante premuto sparisce (Conferma, Avanti, fine): il focus resta nella finestra.
@@ -252,7 +321,7 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
   keysRef.current = { forward, jump, check, toggle };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey || result || confirmStop || !current) return;
+      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey || result || !current) return;
       const target = event.target instanceof Element ? event.target : null;
       if (!target || !panelRef.current?.contains(target)) return;
       if (target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return;
@@ -277,6 +346,11 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
         } else keys.forward();
         return;
       }
+      if (event.key === "d" || event.key === "D") {
+        event.preventDefault();
+        void toggleMark(questionMark(current.question, quiz, ownerOfQuestion(current.question.id)?.id), !marked.has(current.question.id)).catch(() => undefined);
+        return;
+      }
       const option = optionFromKey(event.key, current.options.length);
       if (option < 0 || locked) return;
       event.preventDefault();
@@ -284,10 +358,23 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [chosen.length, confirmFinish, confirmStop, current, exam, index, isChecked, locked, result]);
+    // ownerOfQuestion dipende solo da play.
+  }, [chosen.length, confirmFinish, current, exam, index, isChecked, locked, marked, quiz, result]);
 
   const review = result ? reviewAnswers(prepared, answers) : [];
   const right = review.filter((item) => item.outcome === "correct").length;
+  const missed = review.flatMap((item, position) => (item.outcome === "correct" ? [] : [prepared[position].question.id]));
+  // Un altro giro parte dalle stesse domande (anche quelle di un quiz misto), in ordine nuovo.
+  const again = (only?: ReadonlySet<string>) => {
+    if (!onAgain) return;
+    const seed = Date.now() % 2_147_483_647;
+    const next = prepareQuiz(
+      prepared.map((item) => item.question),
+      { seed, shuffle: play.shuffle, ...(only ? { only } : {}) }
+    );
+    if (!next.length) return;
+    onAgain({ quiz, prepared: next, mode: only ? "mistakes" : mode === "mistakes" ? "training" : mode, seed, shuffle: play.shuffle, ...(owner ? { owner } : {}), ...(play.ownerOf ? { ownerOf: play.ownerOf } : {}) });
+  };
   const lowTime = limitSeconds > 0 && left <= 60;
 
   const navState = (position: number) => {
@@ -321,10 +408,13 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
             <h2 id={titleId} className="one-line-safe text-base font-black sm:text-lg short:text-sm">
               {quiz.title}
             </h2>
-            <p className="one-line-safe text-xs font-bold text-[var(--muted)]">
-              {QUIZ_MODE_LABEL[mode]}
-              {owner ? ` · ${LEARN_TEXT.sharedBy(owner.name)}` : ""}
-            </p>
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="one-line-safe min-w-0 text-xs font-bold text-[var(--muted)]">
+                {QUIZ_MODE_LABEL[mode]}
+                {owner ? ` · ${LEARN_TEXT.sharedBy(owner.name)}` : ""}
+              </p>
+              {resume && !result ? <ResumedTag run={resume} detail={pauseText(resume, thisDevice())} /> : null}
+            </div>
           </div>
           {limitSeconds && !result ? (
             <span
@@ -335,14 +425,14 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
               {clockText(left)}
             </span>
           ) : null}
-          <IconButton icon="X" label={result ? LEARN_TEXT.sessionClose : LEARN_TEXT.sessionStop} onClick={leave} />
+          {canPause ? <IconButton icon="Pause" label={LEARN_TEXT.pauseHint} onClick={leave} /> : <IconButton icon="X" label={result ? LEARN_TEXT.sessionClose : LEARN_TEXT.sessionStop} onClick={leave} />}
         </div>
         {!result && prepared.length > 1 ? (
           <nav aria-label={LEARN_TEXT.questionNav} className="mt-2.5 short:mt-1.5" data-small-ok>
             <ol ref={navRef} className="scrollbar-hidden -mx-1 flex gap-1.5 overflow-x-auto px-1 py-0.5">
               {prepared.map((item, position) => {
                 const state = navState(position);
-                const flagged = flags.has(item.question.id);
+                const flagged = marked.has(item.question.id);
                 const here = position === index;
                 const reachable = quizReachable(position, prepared, checked, exam);
                 const said = [
@@ -360,7 +450,7 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
                       disabled={!reachable}
                       aria-current={here ? "step" : undefined}
                       aria-label={LEARN_TEXT.goToQuestion(position + 1, said)}
-                      className={`motion-safe relative grid h-9 min-w-9 place-items-center rounded-full border px-2 text-xs font-black tabular-nums disabled:cursor-not-allowed disabled:opacity-40 short:h-8 short:min-w-8 ${NAV_TONE[state]} ${
+                      className={`motion-safe relative grid grid-cols-1 h-9 min-w-9 place-items-center rounded-full border px-2 text-xs font-black tabular-nums disabled:cursor-not-allowed disabled:opacity-40 short:h-8 short:min-w-8 ${NAV_TONE[state]} ${
                         here ? "ring-2 ring-[var(--accent-ink)] ring-offset-2 ring-offset-[var(--bg)]" : ""
                       }`}
                     >
@@ -381,19 +471,33 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
             <section className="soft-panel flex flex-col items-center p-6 text-center" aria-live="polite">
               <p className="text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.resultTitle}</p>
               <div className="mt-3 w-36 short:w-28">
-                <ProgressRing value={(result.score ?? 0) * 100} label={LEARN_TEXT.resultCorrect} />
+                <ProgressRing value={(result.score ?? 0) * 100} label={LEARN_TEXT.resultCorrect} color={scoreColor(result.score ?? 0)} />
               </div>
               <p className="mt-3 text-lg font-black tabular-nums">{LEARN_TEXT.resultScore(right, prepared.length)}</p>
               {left <= 0 && limitSeconds ? <p className="mt-2 text-sm font-bold text-[var(--warning-text)]">{LEARN_TEXT.quizTimeUp}</p> : null}
-              <p className="mx-auto mt-3 max-w-md text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.scoringRule}</p>
-              <div className="mt-4 flex justify-center">
-                <Button variant="primary" icon="Check" onClick={onClose} data-autofocus>
+              <details className="mx-auto mt-3 max-w-md text-xs font-medium text-[var(--muted)]">
+                <summary className="cursor-pointer font-bold">{LEARN_TEXT.scoringTitle}</summary>
+                <p className="mt-1 text-[var(--faint)]">{LEARN_TEXT.scoringRule}</p>
+              </details>
+              {/* Il passo dopo: con errori, ripassarli è la prima scelta; senza, si chiude. */}
+              <div className="mt-5 flex w-full flex-col-reverse items-stretch justify-center gap-2 sm:w-auto sm:flex-row sm:items-center">
+                <Button variant={missed.length && onAgain ? "soft" : "primary"} icon="Check" onClick={() => onClose()} data-autofocus={missed.length && onAgain ? undefined : true}>
                   {LEARN_TEXT.sessionClose}
                 </Button>
+                {onAgain ? (
+                  <Button variant="soft" icon="RotateCcw" onClick={() => again()}>
+                    {LEARN_TEXT.quizRedo}
+                  </Button>
+                ) : null}
+                {onAgain && missed.length ? (
+                  <Button variant="primary" icon="Target" onClick={() => again(new Set(missed))} data-autofocus>
+                    {LEARN_TEXT.quizRetryMissed(missed.length)}
+                  </Button>
+                ) : null}
               </div>
             </section>
             <h3 className="text-lg font-black">{LEARN_TEXT.resultReview}</h3>
-            <ol className="grid gap-3">
+            <ol className="grid grid-cols-1 gap-3">
               {prepared.map(({ question, options }, position) => {
                 const item = review[position];
                 const rightIds = new Set(correctOptionIds(question));
@@ -417,10 +521,9 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
                       <span className="text-xs font-black uppercase text-[var(--faint)]">
                         {position + 1}/{prepared.length}
                       </span>
-                      {flags.has(question.id) ? <Icon name="Flag" className="h-3.5 w-3.5 text-[var(--warning-text)]" /> : null}
                     </div>
-                    <Blocks blocks={question.prompt} external={Boolean(owner)} />
-                    <dl className="mt-3 grid gap-1 text-sm">
+                    <Blocks blocks={question.prompt} external={Boolean(ownerOfQuestion(question.id))} />
+                    <dl className="mt-3 grid grid-cols-1 gap-1 text-sm">
                       <div>
                         <dt className="inline font-black">{LEARN_TEXT.yourAnswer}: </dt>
                         <dd className="safe-text inline font-medium">{text(item.chosen)}</dd>
@@ -434,12 +537,20 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
                     </dl>
                     {question.explanation?.length ? (
                       <div className="mt-3 border-t border-[var(--border)] pt-3 text-sm">
-                        <Blocks blocks={question.explanation} external={Boolean(owner)} />
+                        <Blocks blocks={question.explanation} external={Boolean(ownerOfQuestion(question.id))} />
                       </div>
                     ) : null}
                     {question.mistakes ? <p className="safe-text mt-2 text-xs font-medium text-[var(--warning-text)]">{question.mistakes}</p> : null}
-                    <div className="mt-2">
-                      <Button variant="ghost" icon="Sparkles" onClick={() => onExplain({ kind: "explain_question", id: question.id, ...(owner ? { ownerId: owner.id } : {}), title: quiz.title })}>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <MarkToggle target={questionMark(question, quiz, ownerOfQuestion(question.id)?.id)} marked={marked.has(question.id)} />
+                      <Button
+                        variant="ghost"
+                        icon="Sparkles"
+                        onClick={() => {
+                          const by = ownerOfQuestion(question.id);
+                          onExplain({ kind: "explain_question", id: question.id, ...(by ? { ownerId: by.id } : {}), title: quiz.title });
+                        }}
+                      >
                         {LEARN_TEXT.explain}
                       </Button>
                     </div>
@@ -450,9 +561,8 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
           </div>
         ) : current ? (
           <div className="mx-auto grid w-full max-w-3xl grid-cols-1 items-start gap-4 short:max-w-none short:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] short:gap-3 wide:max-w-6xl wide:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] wide:gap-6">
-            {confirmStop || error ? (
-              <div className="grid gap-3 short:col-span-2 wide:col-span-2">
-                {confirmStop ? <InlineConfirm text="Uscire? Il tentativo non viene salvato." confirmLabel={LEARN_TEXT.sessionStop} icon="X" onConfirm={onClose} onCancel={() => setConfirmStop(false)} /> : null}
+            {error ? (
+              <div className="grid grid-cols-1 gap-3 short:col-span-2 wide:col-span-2">
                 {error ? (
                   <p role="alert" className="safe-text rounded-[14px] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">
                     {error}
@@ -467,34 +577,16 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
                   <span className="text-[var(--accent-ink)]">{LEARN_TEXT.sessionOf(index + 1, prepared.length)}</span>
                   <span className="block normal-case sm:inline"> {current.question.kind === "multiple" ? LEARN_TEXT.multipleHint : LEARN_TEXT.singleHint}</span>
                 </p>
-                <button
-                  type="button"
-                  aria-pressed={flags.has(current.question.id)}
-                  onClick={() =>
-                    setFlags((value) => {
-                      const next = new Set(value);
-                      if (next.has(current.question.id)) next.delete(current.question.id);
-                      else next.add(current.question.id);
-                      return next;
-                    })
-                  }
-                  title={LEARN_TEXT.markDoubt}
-                  className={`motion-safe inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-extrabold ${
-                    flags.has(current.question.id) ? "border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning-text)]" : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface)]"
-                  }`}
-                >
-                  <Icon name="Flag" className="h-3.5 w-3.5" />
-                  <span className="max-[379px]:sr-only">{LEARN_TEXT.markDoubt}</span>
-                </button>
+                <MarkToggle target={questionMark(current.question, quiz, ownerOfQuestion(current.question.id)?.id)} marked={marked.has(current.question.id)} compact />
               </div>
               <div className="text-[1.08rem] font-semibold leading-relaxed sm:text-lg short:text-base wide:text-xl">
                 {/* key: lo stato dei blocchi (immagini caricate al tocco, errori) non passa alla domanda dopo. */}
-                <Blocks key={current.question.id} blocks={current.question.prompt} external={Boolean(owner)} />
+                <Blocks key={current.question.id} blocks={current.question.prompt} external={Boolean(ownerOfQuestion(current.question.id))} />
               </div>
             </section>
 
-            <div className="grid min-w-0 gap-3">
-              <ul role={current.question.kind === "multiple" ? "group" : "radiogroup"} aria-label={LEARN_TEXT.answer} className="grid gap-2">
+            <div className="grid grid-cols-1 min-w-0 gap-3">
+              <ul role={current.question.kind === "multiple" ? "group" : "radiogroup"} aria-label={LEARN_TEXT.answer} className="grid grid-cols-1 gap-2">
                 {current.options.map((option, position) => {
                   const selected = chosen.includes(option.id);
                   const state: OptionState = locked ? (option.correct ? (selected ? "right" : "missed") : selected ? "wrong" : "idle") : "idle";
@@ -530,7 +622,7 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
                   </p>
                   {current.question.explanation?.length ? (
                     <div className="mt-2 text-sm text-[var(--text)]">
-                      <Blocks key={current.question.id} blocks={current.question.explanation} external={Boolean(owner)} />
+                      <Blocks key={current.question.id} blocks={current.question.explanation} external={Boolean(ownerOfQuestion(current.question.id))} />
                     </div>
                   ) : null}
                   {current.question.mistakes ? <p className="safe-text mt-2 text-xs font-medium text-[var(--warning-text)]">{current.question.mistakes}</p> : null}
@@ -551,7 +643,8 @@ export function QuizPlayer({ play, onClose, onExplain }: { play: QuizPlay; onClo
             <Button variant="ghost" icon="ChevronLeft" disabled={index === 0} onClick={() => jump(index - 1)} aria-keyshortcuts="ArrowLeft" title={LEARN_TEXT.previousQuestion} className="shrink-0 px-3">
               <span className="max-[379px]:sr-only">{LEARN_TEXT.previousQuestion}</span>
             </Button>
-            <p className="mx-auto hidden min-w-0 text-center text-[11px] font-medium text-[var(--faint)] can-hover:block short:!hidden">{LEARN_TEXT.quizKeysHint}</p>
+            {/* In riga con i pulsanti solo se c'è spazio: in una finestra stretta andava a capo parola per parola. */}
+            <p className="mx-auto hidden min-w-0 text-center text-[11px] font-medium text-[var(--faint)] can-hover:block max-md:!hidden short:!hidden">{LEARN_TEXT.quizKeysHint}</p>
             <div className="ml-auto flex shrink-0 gap-2">
               {exam || isChecked ? (
                 last ? (

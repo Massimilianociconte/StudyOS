@@ -53,7 +53,8 @@ test("le 8 collezioni nuove sono registrate per persistenza, sync e backup", () 
     assert.match(source("src/data/defaults.ts"), new RegExp(`${key}: \\[\\]`));
   }
   assert.match(source("src/lib/db.ts"), /this\.version\(9\)\.stores\(\{[^}]*decks: "id, updatedAt, parentId, subjectId"/);
-  assert.match(source("src/lib/cloudSync.ts"), /const SYNC_SCHEMA = 5;/);
+  // Ogni collezione nuova alza SYNC_SCHEMA (5 = raccolte e quiz, 6 = dubbi segnati).
+  assert.ok(Number(/const SYNC_SCHEMA = (\d+);/.exec(source("src/lib/cloudSync.ts"))[1]) >= 5);
 });
 
 // ─── Blocchi ──────────────────────────────────────────────────────────────────────────────

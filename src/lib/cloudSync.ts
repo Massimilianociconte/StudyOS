@@ -63,7 +63,8 @@ const MAX_RETRY_MS = 5 * 60_000;
 // (merge LWW normale) per recuperare le righe saltate. 2 = preferenze personali.
 // 4: collezione examPlans. Un'app vecchia ha saltato le righe examPlan spostando il cursore: si rilegge tutto una volta.
 // 5: flashcard, quiz, stati di ripasso, sessioni, analisi e richieste agli agenti (8 tipi nuovi).
-const SYNC_SCHEMA = 5;
+// 6: segni «dubbio» su flashcard e domande (studyMark).
+const SYNC_SCHEMA = 6;
 
 const metaKeys = {
   cursor: (userId: string) => `cloud:cursor:${userId}`,

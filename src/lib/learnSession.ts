@@ -264,6 +264,24 @@ export const prepareQuiz = (questions: readonly QuizQuestion[], options: { seed:
   });
 };
 
+/**
+ * Domande di un tentativo ripreso: l'ordine salvato (itemIds) e le opzioni mescolate con lo stesso
+ * seme di prepareQuiz (la posizione originale resta quella del seme). Le domande sparite nel frattempo
+ * si saltano, quelle modificate si mostrano come sono ora.
+ */
+export const preparedFromIds = (questions: readonly QuizQuestion[], itemIds: readonly string[], options: { seed: number; shuffle: boolean }): PreparedQuestion[] => {
+  const byId = new Map(questions.map((question) => [question.id, question]));
+  const out: PreparedQuestion[] = [];
+  itemIds.forEach((id, index) => {
+    const raw = byId.get(id);
+    if (!raw) return;
+    const safe = safeOptions(raw.options);
+    const question = { ...raw, options: safe };
+    out.push({ question, options: options.shuffle ? shuffled(safe, options.seed + index + 1) : safe });
+  });
+  return out;
+};
+
 export interface QuizReview {
   questionId: string;
   outcome: "correct" | "wrong" | "skip";

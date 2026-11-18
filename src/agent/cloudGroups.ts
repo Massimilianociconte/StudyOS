@@ -12,7 +12,7 @@ const LEARNING_GROUPS: Record<Exclude<DataGroup, "core">, readonly string[]> = {
   decks: ["studyDeck", "quiz"],
   cards: ["flashcard"],
   questions: ["quizQuestion"],
-  states: ["flashcardState"],
+  states: ["flashcardState", "studyMark"],
   runs: ["studyRun"],
   ai: ["aiAnalysis", "aiRequest"]
 };

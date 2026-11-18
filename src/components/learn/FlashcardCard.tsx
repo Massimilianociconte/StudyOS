@@ -48,7 +48,8 @@ function Face({
   subject,
   answered,
   hint,
-  top
+  top,
+  action
 }: {
   label: string;
   hidden: boolean;
@@ -61,6 +62,8 @@ function Face({
   hint?: string;
   /** Sopra il contenuto, fuori dal centro verticale (la domanda sul retro). */
   top?: ReactNode;
+  /** Comando in alto a destra (il segno «Dubbio»): un clic lì non gira la scheda. */
+  action?: ReactNode;
 }) {
   return (
     <section
@@ -100,8 +103,9 @@ function Face({
           }`}
         >
           <Icon name={back ? "Lightbulb" : "CircleHelp"} className="h-3.5 w-3.5" />
-          {label}
+          <span className={action ? "max-[379px]:sr-only" : ""}>{label}</span>
         </span>
+        {action}
       </div>
       {top}
       <div className="flex min-w-0 flex-1 flex-col justify-center py-4 short:py-2">{children}</div>
@@ -126,7 +130,8 @@ export function FlashcardCard({
   fill = false,
   stack = 0,
   answered,
-  hint
+  hint,
+  action
 }: {
   card: Flashcard;
   flipped: boolean;
@@ -147,6 +152,8 @@ export function FlashcardCard({
   answered?: ReviewResult;
   /** Suggerimento in fondo al fronte («Tocca per girare»). */
   hint?: string;
+  /** Comando in alto a destra su entrambi i lati (il segno «Dubbio»). */
+  action?: ReactNode;
 }) {
   const reduce = useReducedMotion() === true;
   // Solo le materie tue: una scheda condivisa da un'altra persona ha l'id di una sua materia.
@@ -160,7 +167,7 @@ export function FlashcardCard({
       {layers > 1 ? <div aria-hidden="true" className="flash-stack absolute inset-x-7 bottom-0 top-3 opacity-40 short:hidden" /> : null}
       {layers > 0 ? <div aria-hidden="true" className={`flash-stack absolute inset-x-3.5 top-1.5 opacity-70 short:hidden ${layers > 1 ? "bottom-1.5" : "bottom-0"}`} /> : null}
       <m.div
-        className="relative grid min-w-0 cursor-pointer select-text [transform-style:preserve-3d]"
+        className="relative grid grid-cols-1 min-w-0 cursor-pointer select-text [transform-style:preserve-3d]"
         onClick={(event) => {
           // Un clic su un link, un pulsante o una selezione di testo non gira la scheda.
           if ((event.target as HTMLElement).closest("a, button") || window.getSelection()?.toString()) return;
@@ -171,7 +178,7 @@ export function FlashcardCard({
         key={reduce ? String(flipped) : "card"}
         transition={reduce ? { duration: 0.15 } : { duration: 0.45, ease: [0.2, 0.7, 0.2, 1] }}
       >
-        <Face label={LEARN_TEXT.question} hidden={flipped} reduce={reduce} fill={fill} subject={subject} answered={answered} hint={hint}>
+        <Face label={LEARN_TEXT.question} hidden={flipped} reduce={reduce} fill={fill} subject={subject} answered={answered} hint={hint} action={action}>
           <Content blocks={card.front} external={external} />
         </Face>
         <Face
@@ -182,6 +189,7 @@ export function FlashcardCard({
           fill={fill}
           subject={subject}
           answered={answered}
+          action={action}
           top={
             questionOnBack && flipped ? (
               <div className="mt-4 border-b border-[var(--border)] pb-3 text-left text-sm font-semibold text-[var(--muted)] sm:text-base short:mt-2 short:pb-2">

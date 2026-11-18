@@ -115,7 +115,8 @@ const COLLECTION_LABEL: Record<(typeof COLLECTIONS)[number], string> = {
   cardStates: "stati di ripasso",
   studyRuns: "sessioni di ripasso",
   aiAnalyses: "analisi degli agenti",
-  aiRequests: "richieste agli agenti"
+  aiRequests: "richieste agli agenti",
+  studyMarks: "dubbi segnati"
 };
 
 export const backupSummary = (snapshot: StudySnapshot) => {

@@ -649,3 +649,89 @@ spazio del sito.
 Pubblicato il 17 novembre 2026: commit `8bd3341` su `main`, workflow Pages riuscito (build e deploy);
 il bundle pubblicato contiene la riscrittura della copia cifrata (transazione su `settings` e `vault`
 soli). Nessuna modifica a database o Worker.
+
+## Ripasso: gerarchia nuova, dubbi, pausa e ripresa (18 novembre 2026, ramo `claude/flashcards-quiz`)
+
+Sezione Ripasso rifatta per leggere subito le informazioni principali. Schede nell'ordine d'uso
+(Oggi, Dubbi, Raccolte, Quiz, Andamento, Analisi AI) con i numeri di cosa c'è da fare; via il
+sottotitolo. **Oggi**: «Da riprendere» in cima, poi il numero grande delle schede di oggi con barra
+in ritardo / da ripassare / nuove e un solo pulsante, le raccolte con contatori a colori, le ultime
+sessioni con barra dei risultati al posto delle frasi. **Quiz**: ultimo, migliore e domande in tre
+riquadri, un solo pulsante principale (Inizia o Riprendi) e il resto nel menu ⋯; regola del
+punteggio richiudibile. **Raccolte**: righe senza il livello, «Nuova raccolta» secondaria.
+
+**Dubbi**: pulsante «Dubbio» (o tasto D) su flashcard (sessione e scheda aperta) e domande (durante
+e dopo il quiz), reversibile, sincronizzato (`studyMarks`). La scheda Dubbi li raggruppa per materia
+e argomento (raccolta `topic` dell'assistente), con filtri a chip, «Ripassa N flashcard», «Quiz su
+N domande», ripasso o «Chiarito» per argomento. La valutazione SRS «Dubbia» ora si chiama «Incerta».
+
+**Pausa**: pulsante Pausa, Esc o Indietro del telefono escono da una sessione o da un quiz di
+qualsiasi modalità lasciandolo da riprendere (Oggi › Da riprendere, o Riprendi sulla scheda del
+quiz), anche da un altro dispositivo dello stesso account: il punto di ripresa sta sulla riga
+sincronizzata. La simulazione d'esame riparte con il tempo che restava. Prima uscire da un quiz
+perdeva il tentativo. Testo da studiare senza trattini automatici (`.learn-read`, `.learn-blocks`).
+
+**Etichette di ripresa**: ciò che è interrotto porta «Da riprendere» (scheda del quiz, raccolta in
+Oggi › Per raccolta e in Raccolte, drawer della raccolta), dove si è fermato («Questo dispositivo» o
+«Da iPhone · Safari» con colore diverso) e quando («Interrotta ieri alle 18:30», testo completo nel
+suggerimento e per lo screen reader). Ripresa la sessione o il quiz, l'intestazione mostra «Ripresa»
+o «Ripresa da Mac · Chrome»; il segno resta anche chiusa, in Ultime sessioni. Una raccolta con una
+sessione in pausa riprende quella con il suo pulsante di ripasso e Raccolte apre i rami che ci
+portano. Sotto i 380 px l'icona del tipo in «Da riprendere» lascia spazio al titolo; i tasti del quiz
+non stanno più in riga sotto i 768 px (andavano a capo parola per parola).
+
+Telefono: la pagina sforava a destra (Raccolte 379 px su 320 e 375, Andamento 324 su 320) per
+griglie senza `grid-cols-1`; ora nessuno sforamento su tutte le schede a 320, 360, 375, 390 e 430
+px (Chromium, misura di `scrollWidth`). Dati: Dexie 10, `SYNC_SCHEMA` 6, tipo `studyMark`.
+
+Verifiche etichette: `npm test` 1752/1752 (nuovo `tests/learnResumeTags.test.mjs`), lint, build;
+prova nel browser (390, 360, 320 px) con pausa su un «dispositivo», ripresa sullo stesso, poi con un
+altro id dispositivo sugli stessi dati: etichette in Oggi, Per raccolta, Raccolte, scheda e lettore
+del quiz, intestazione della sessione e Ultime sessioni (25 controlli). Non provati due dispositivi
+veri con la sync.
+
+Verifiche: `npm test` 1746/1746 (nuovo `tests/learnResumeMarks.test.mjs`), `npm run lint`,
+`npm run build`; prova nel browser (390 px) di pausa con Esc, ricaricamento e ripresa alla stessa
+scheda e domanda con risposte e dubbio ripristinati (17 controlli); simulazione d'esame da 20 minuti
+ripresa a 18:29 dopo 1:30 passati. Non eseguiti: `npm run
+e2e` (serve lo stack Supabase locale; `10-quiz` aggiornato ai riquadri del punteggio), Safari/WebKit
+e la ripresa vera fra due dispositivi (coperta solo dalla sync generica di `studyRuns`).
+
+## Ripasso: studio UX e correzioni di orientamento (18 novembre 2026, ramo `claude/flashcards-quiz`)
+
+Studio di prodotto della sezione (flussi in tocchi, problemi per gravità, codice colore, gerarchia)
+pubblicato come artifact privato «Studio UX del Ripasso». Correzioni applicate:
+
+- **Schede**: cinque (Oggi, Dubbi, Raccolte, Quiz, Andamento) in `LearnTabs`, tutte in vista sul
+  telefono (griglia a 5 colonne, icona sopra il nome, numero sull'icona; da 640 px in riga). Prima
+  la barra scorreva e Quiz, Andamento e Analisi AI erano fuori schermo. **Analisi AI** non è più una
+  scheda: sta in fondo ad Andamento («Analisi degli assistenti»). Nomi accessibili invariati.
+- **Un solo pulsante pieno per schermata.** Oggi: prima il ripasso del giorno, poi «Da riprendere»
+  con «Riprendi» secondario (principale solo se oggi non c'è niente da ripassare).
+- **Risultato del quiz**: «Ripassa i N errori» (modalità errori sulle sole sbagliate o vuote, anche
+  per i quiz misti dei dubbi), «Rifai il quiz», «Chiudi»; anello colorato con le soglie dei
+  punteggi (`scoreColor`, 60% e 85%), anche nel riepilogo della sessione.
+- **Quiz**: filtro per materia (`learn.quizGroup`) e gruppi con titolo; sopra il titolo del quiz solo
+  il capitolo se diverso dal gruppo; quiz vuoto con «Aggiungi domande».
+- **Raccolta (drawer)**: dati in una riga di testo, niente «0 flashcard in questa raccolta» quando le
+  schede sono nelle sotto-raccolte, «Nuova sotto-raccolta» nella sua sezione, quiz collegati che si
+  avviano dalla scheda Quiz (`onQuiz`), Elimina in testo rosso a sinistra, Ripassa a tutta larghezza
+  sul telefono. Legenda del numero e del pulsante sotto l'albero.
+- **Andamento**: «Ripassa queste N» sulle più difficili (`cardsSessionSpec`) e spiegazione della
+  percentuale.
+- **Dubbi**: «Ripassa» e «Chiarito» con testo anche sul telefono, nome accessibile che contiene il
+  testo visibile, riga che spiega la bandierina.
+- **Stato delle schede** in testo colorato (`CARD_STATUS_TONE`), non più pillola piena.
+- **Testi**: «Domanda (fronte)» / «Risposta (retro)», campi della raccolta in ordine (titolo, dentro,
+  materia, che cos'è, descrizione facoltativa), «Ancora da consolidare» al posto del secondo
+  significato di «Da riprendere», via i nomi degli strumenti del connettore dai testi.
+
+Non applicati (da decidere per tutta l'app): Ripasso nella barra in basso del telefono, scala dei
+pesi tipografici (oggi 70–100% del testo a 800–900 su molte schermate), flashcard/quiz/raccolte nella
+ricerca globale (`GlobalSearch` non li cerca), nome del timer «Studio» vicino a «Ripasso».
+
+Verifiche: `npm test` 1752/1752, `npm run lint`, `npm run build`; Playwright su 390, 320 e 1366 px
+(schede in vista, ordine di Oggi, legenda, drawer, quiz da raccolta, editor, gruppi dei quiz,
+ripasso degli errori, più difficili, nessuno sforamento) e di nuovo le etichette di ripresa. Non
+eseguito `npm run e2e` (serve lo stack Supabase locale); `09-share-flashcards` aggiornato ai nuovi
+nomi dei campi della flashcard.

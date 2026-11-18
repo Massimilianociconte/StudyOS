@@ -30,6 +30,7 @@ import type {
   QuizQuestion,
   StudyDeck,
   StudyRun,
+  StudyMark,
   Goal,
   GroupActivity,
   GroupInvite,
@@ -178,6 +179,7 @@ interface StudyState {
   studyRuns: StudyRun[];
   aiAnalyses: AiAnalysis[];
   aiRequests: AiRequest[];
+  studyMarks: StudyMark[];
   timer: TimerState;
   /** Riepilogo aperto di un Timer o Cronometro finito (Salva / Scarta); si riapre dal timer. */
   timerReview: boolean;

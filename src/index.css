@@ -279,6 +279,16 @@ summary:focus-visible,
   hyphens: auto;
 }
 
+/* Testi da studiare (schede, domande, titoli del ripasso): le parole lunghe vanno a capo solo se
+   non entrano, senza trattini automatici a metà parola, che rallentano la lettura. */
+.learn-read,
+.learn-blocks,
+.learn-blocks .safe-text {
+  min-width: 0;
+  overflow-wrap: break-word;
+  hyphens: manual;
+}
+
 .one-line-safe {
   min-width: 0;
   max-width: 100%;

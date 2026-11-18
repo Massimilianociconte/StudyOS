@@ -140,7 +140,7 @@ function CardImage({ url, alt, caption, width, height, external }: { url: string
             event.stopPropagation();
             setWanted(true);
           }}
-          className="motion-safe grid min-h-24 w-full place-items-center gap-1 rounded-[16px] border border-dashed border-[var(--border)] bg-[var(--surface-soft)] p-3 text-center text-sm font-bold text-[var(--muted)] hover:bg-[var(--surface)]"
+          className="motion-safe grid grid-cols-1 min-h-24 w-full place-items-center gap-1 rounded-[16px] border border-dashed border-[var(--border)] bg-[var(--surface-soft)] p-3 text-center text-sm font-bold text-[var(--muted)] hover:bg-[var(--surface)]"
           style={ratio ? { aspectRatio: ratio } : undefined}
         >
           <Icon name="Image" className="h-5 w-5" />
@@ -148,7 +148,7 @@ function CardImage({ url, alt, caption, width, height, external }: { url: string
           <span className="text-xs font-medium">{LEARN_TEXT.imageExternal(host)}</span>
         </button>
       ) : failed ? (
-        <div className="grid min-h-16 place-items-center rounded-[16px] bg-[var(--surface-soft)] p-3 text-sm text-[var(--muted)]">
+        <div className="grid grid-cols-1 min-h-16 place-items-center rounded-[16px] bg-[var(--surface-soft)] p-3 text-sm text-[var(--muted)]">
           {LEARN_TEXT.imageError} · {alt}
         </div>
       ) : (

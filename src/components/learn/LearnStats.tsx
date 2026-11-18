@@ -10,7 +10,7 @@ import { blocksPlainText } from "../../lib/cardBlocks";
 import { percent } from "../../lib/learnSession";
 import { LEARN_TEXT } from "../../lib/labels/learn";
 import { oneOf, useUiState } from "../../lib/uiState";
-import { EmptyState, HelpTip, Panel, Segmented, StatTile } from "../ui";
+import { Button, EmptyState, HelpTip, Panel, Segmented, StatTile } from "../ui";
 import { unionOf, type LearnData } from "./useLearnData";
 import { SubjectMark } from "../SubjectMark";
 
@@ -74,7 +74,18 @@ function BreakdownTable({ label, rows }: { label: string; rows: readonly Breakdo
   );
 }
 
-export function LearnStats({ data, today, onOpenCard }: { data: LearnData; today: string; onOpenCard: (cardId: string) => void }) {
+export function LearnStats({
+  data,
+  today,
+  onOpenCard,
+  onStudyCards
+}: {
+  data: LearnData;
+  today: string;
+  onOpenCard: (cardId: string) => void;
+  /** «Ripassa queste»: una sessione sulle schede dell'elenco. */
+  onStudyCards: (cardIds: string[]) => void;
+}) {
   const [period, setPeriod] = useUiState<Period>("learn.statsPeriod", "30", { validate: oneOf(...PERIODS) });
   const union = useMemo(() => unionOf(data), [data.own, data.shared]);
   const stats = useMemo(() => {
@@ -111,7 +122,7 @@ export function LearnStats({ data, today, onOpenCard }: { data: LearnData; today
     : LEARN_TEXT.trendMissing;
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Segmented<Period>
           label={LEARN_TEXT.period}
@@ -136,7 +147,7 @@ export function LearnStats({ data, today, onOpenCard }: { data: LearnData; today
         </div>
       </Panel>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel>
           <h3 className="mb-3 text-lg font-black">{LEARN_TEXT.chartDaily}</h3>
           <div className="h-56" role="img" aria-label={`${LEARN_TEXT.chartDaily}: ${stats.answers.total + stats.answers.skip} ${LEARN_TEXT.statAnswers.toLowerCase()}`}>
@@ -169,7 +180,7 @@ export function LearnStats({ data, today, onOpenCard }: { data: LearnData; today
         </Panel>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel>
           <h3 className="mb-2 text-lg font-black">{LEARN_TEXT.perDeck}</h3>
           <BreakdownTable
@@ -186,17 +197,31 @@ export function LearnStats({ data, today, onOpenCard }: { data: LearnData; today
         </Panel>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel>
-          <h3 className="mb-2 text-lg font-black">{LEARN_TEXT.hardest}</h3>
+          {/* Dato che porta a un'azione: l'elenco si ripassa con un tocco e la percentuale dice cosa misura. */}
+          <div className="mb-2 flex min-w-0 flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="text-lg font-black">{LEARN_TEXT.hardest}</h3>
+              <p className="text-xs font-semibold text-[var(--muted)]">{LEARN_TEXT.hardestHint}</p>
+            </div>
+            {stats.hardest.length ? (
+              <Button variant="soft" icon="PlayCircle" onClick={() => onStudyCards(stats.hardest.map((item) => item.cardId))}>
+                {LEARN_TEXT.hardestStudy(stats.hardest.length)}
+              </Button>
+            ) : null}
+          </div>
           {stats.hardest.length ? (
-            <ol className="grid gap-1">
+            <ol className="grid grid-cols-1 gap-1">
               {stats.hardest.map((item) => (
                 <li key={item.cardId}>
                   <button type="button" onClick={() => onOpenCard(item.cardId)} className="motion-safe flex w-full min-w-0 items-center gap-3 rounded-[14px] px-2 py-2 text-left hover:bg-[var(--surface-soft)]">
                     <SubjectMark subjectId={cardText.get(item.cardId)?.subjectId} size="sm" />
                     <span className="safe-text line-clamp-2 min-w-0 flex-1 text-sm font-bold">{blocksPlainText(cardText.get(item.cardId)?.front, 120) || "—"}</span>
-                    <span className="shrink-0 text-xs font-bold tabular-nums text-[var(--danger-text)]">{percent(item.errorRate)}</span>
+                    <span className="shrink-0 text-right text-xs font-bold tabular-nums text-[var(--danger-text)]">
+                      <span aria-hidden="true">{percent(item.errorRate)}</span>
+                      <span className="sr-only">{LEARN_TEXT.hardestRate(percent(item.errorRate))}</span>
+                    </span>
                   </button>
                 </li>
               ))}
@@ -213,7 +238,7 @@ export function LearnStats({ data, today, onOpenCard }: { data: LearnData; today
           {stats.quiz.missed.length ? (
             <>
               <h4 className="mb-1 text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.missedQuestions}</h4>
-              <ol className="grid gap-1">
+              <ol className="grid grid-cols-1 gap-1">
                 {stats.quiz.missed.map((item) => (
                   <li key={item.questionId} className="flex min-w-0 items-center gap-3 px-2 py-1.5">
                     <span className="safe-text line-clamp-2 min-w-0 flex-1 text-sm font-bold">{blocksPlainText(questionText.get(item.questionId)?.prompt, 120) || "—"}</span>

@@ -22,8 +22,8 @@ test("09 Alice crea una raccolta e la condivide; Bob la ripassa e le risposte re
   await expect(deck).toBeVisible();
   await deck.getByRole("button", { name: "Nuova flashcard" }).click();
   const cardEditor = alice.page.getByRole("dialog", { name: "Nuova flashcard" });
-  await cardEditor.getByRole("group", { name: "Fronte · Testo 1" }).getByRole("textbox", { name: "Testo" }).fill(front);
-  await cardEditor.getByRole("group", { name: "Retro · Testo 1" }).getByRole("textbox", { name: "Testo" }).fill(back);
+  await cardEditor.getByRole("group", { name: "Domanda (fronte) · Testo 1" }).getByRole("textbox", { name: "Testo" }).fill(front);
+  await cardEditor.getByRole("group", { name: "Risposta (retro) · Testo 1" }).getByRole("textbox", { name: "Testo" }).fill(back);
   await cardEditor.getByRole("button", { name: "Salva" }).click();
   await expect(cardEditor).toBeHidden();
   await expect(deck.getByText(front)).toBeVisible();

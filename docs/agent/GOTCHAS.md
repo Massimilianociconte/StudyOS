@@ -643,8 +643,35 @@
   (`changeCardAnswer`, cercato per id della scheda e istante `at`); le statistiche contano così una
   risposta per scheda e sessione. Lo stato si rifà da `before` solo se `updatedAt` è ancora quello
   scritto dalla risposta (`after`): se un altro dispositivo l'ha cambiato, la nuova risposta vale
-  sullo stato attuale. La sessione tiene le risposte salvate in memoria (`SavedAnswer`): chiusa la
-  sessione non si torna più indietro.
+  sullo stato attuale. La sessione tiene le risposte salvate in memoria (`SavedAnswer`); ripresa
+  dopo una pausa le ricostruisce dagli eventi della riga senza `before`/`after`, quindi cambiarne una
+  vale sullo stato attuale.
+- Pausa e ripresa (`src/lib/learnResume.ts`, `learnStarts.ts`): una riga di `studyRuns` si riprende
+  solo se non ha `endedAt` e ha `progress` (`isResumable`); le righe vecchie senza `progress` restano
+  chiuse. Flashcard: ogni `answerCard(…, resumeAt)` scrive anche `progress`; si riprende alla prima
+  scheda senza risposta della catena (`continuesId`), non da `progress.index`; `finishRun` toglie
+  `progress`. Quiz: le risposte stanno solo in `progress.answers` (gli eventi si scrivono alla fine,
+  così statistiche e connettore, che leggono i quiz con `endedAt`, non vedono tentativi a metà); la
+  riga nasce con il primo salvataggio (`saveRunProgress`, ~0,7 s dopo ogni cambiamento e alla pausa);
+  seme e mescolamento in `progress` rifanno lo stesso ordine delle risposte (`preparedFromIds`).
+  `discardRun` cancella un tentativo di quiz senza eventi e chiude le sessioni di flashcard.
+  Iniziare un quiz da capo scarta il tentativo in pausa di quel quiz.
+- Etichette di ripresa (`src/lib/learnDevice.ts`, `learnResumeTag.ts`, `ResumeTags.tsx`): ogni
+  salvataggio del punto di ripresa scrive `progress.device` (`thisDevice()`: id casuale per browser in
+  localStorage `studyos-device-id`, nome solo da user agent e piattaforma, iPad riconosciuto dal touch
+  perché si presenta come Mac). `markResumed` va chiamato prima di aprire il lettore e il lettore va
+  aperto con la riga che restituisce: scrive `resumed` (`count`, `at`, `elsewhere`, `from` = nome del
+  dispositivo dell'interruzione se diverso) e lascia `progress` com'era, così l'intestazione dice dove
+  ci si era fermati. `resumed` resta dopo `finishRun` e `saveQuizAttempt` (che lo recupera dalla riga
+  salvata se il lettore ha la copia di prima) e non passa alle righe di continuazione. Le pause salvate
+  prima non hanno `device`: niente etichetta del dispositivo. `pausedByDeck` vale solo per sessioni di
+  flashcard su una raccolta (`deckIds.length === 1`).
+- Dubbi (`studyMarks`, Dexie 10, `SYNC_SCHEMA` 6): l'id del segno è l'id della flashcard o della
+  domanda, quindi un segno per elemento; copia materia, raccolta e quiz per raggruppare anche gli
+  elementi altrui. Si tolgono con gli elementi propri eliminati, non con quelli condivisi.
+  Raggruppamento: materia, poi la raccolta di livello `topic` più vicina sopra l'elemento
+  (`topicDeck`), altrimenti la raccolta stessa. La valutazione SRS `doubt` si chiama «Incerta» nella
+  UI per non confondersi con i dubbi segnati.
 - Varianti Tailwind `short:` (orizzontale, altezza ≤ 520 px) e `wide:` (orizzontale, larghezza ≥
   1024 px e altezza ≥ 521 px) in `tailwind.config.js`: le usano ripasso e quiz. La scheda con `fill`
   vuole un contenitore con `container-type: size` (unità `cqh`).
@@ -665,6 +692,16 @@
 - Vite in sviluppo serve i moduli con `?t=`: per ispezionare uno store dalla console prendi l'URL
   del modulo da `performance.getEntriesByType('resource')`, un `import()` senza `?t=` crea
   un'altra istanza vuota.
+- Ripasso: le schede (`LearnTabs`) hanno nome accessibile «Oggi 16» anche sul telefono (il numero
+  è `sr-only` nel testo, `aria-hidden` sull'icona): i test le cercano per nome esatto senza numero
+  solo dove il numero non c'è (Raccolte, Quiz, Andamento). Le azioni con testo corto e
+  `aria-label` lungo (Elimina/«Elimina la raccolta», Chiarito/«Chiarito: togli…») devono iniziare
+  con la parola visibile (WCAG 2.5.3).
+- Editor flashcard: Esc dentro un campo di testo non chiude il drawer (protegge quanto scritto);
+  nei percorsi automatici chiudilo con «Annulla».
+- Avvia `vite` dalla cartella del checkout che vuoi provare (anche un worktree): Tailwind 3 legge
+  `content: ["./src/**"]` dalla cartella corrente, quindi un server avviato altrove serve il codice
+  giusto con il CSS generato dall'altro checkout (classi nuove mancanti, sfondi trasparenti).
 - Dopo `wrangler deploy` del Worker `studyos-agent`, `/health` (servito dal Durable Object «owner»)
   può dare la versione vecchia per 3–10 minuti, finché Cloudflare non riavvia il Durable Object;
   `wrangler tail` mostra già la versione nuova. Aspetta con un ciclo su `/health`, non ridistribuire.

@@ -3,6 +3,7 @@
 // Le schede delle raccolte condivise da altri si modificano da useSharedStore (vedi sharedLearning).
 import { createId } from "../lib/id";
 import { laterStamp } from "../lib/collections";
+import { thisDevice } from "../lib/learnDevice";
 import { applyReview, type CardRef } from "../lib/srs";
 import {
   appendRunEvent,
@@ -32,6 +33,9 @@ import type {
   QuizQuestion,
   ReviewResult,
   StudyDeck,
+  RunProgress,
+  StudyMark,
+  StudyMarkKind,
   StudyRun,
   StudyRunEvent,
   StudyRunMode
@@ -40,7 +44,7 @@ import { useStudyStore } from "./useStudyStore";
 
 type Learning = Pick<
   ReturnType<typeof useStudyStore.getState>,
-  "decks" | "flashcards" | "quizzes" | "quizQuestions" | "cardStates" | "studyRuns" | "aiAnalyses" | "aiRequests"
+  "decks" | "flashcards" | "quizzes" | "quizQuestions" | "cardStates" | "studyRuns" | "aiAnalyses" | "aiRequests" | "studyMarks"
 >;
 
 const state = () => useStudyStore.getState();
@@ -159,6 +163,7 @@ export const deleteDeck = async (id: string) => {
       quizzes: current.quizzes.filter((quiz) => !goneQuizzes.has(quiz.id)),
       quizQuestions: current.quizQuestions.filter((question) => !goneQuestions.has(question.id)),
       cardStates: current.cardStates.filter((item) => item.ownerId || !goneCards.has(item.id)),
+      studyMarks: current.studyMarks.filter((item) => item.ownerId || !(goneCards.has(item.id) || goneQuestions.has(item.id))),
       aiRequests: cancelOpenFor(current.aiRequests, new Set([...goneCards, ...goneQuestions]), now)
     };
   });
@@ -274,6 +279,7 @@ export const deleteCards = async (ids: readonly string[]) => {
   await commitLearning((current) => ({
     flashcards: current.flashcards.filter((card) => !set.has(card.id)),
     cardStates: current.cardStates.filter((item) => item.ownerId || !set.has(item.id)),
+    studyMarks: current.studyMarks.filter((item) => item.ownerId || !set.has(item.id)),
     aiRequests: cancelOpenFor(current.aiRequests, set, now)
   }));
 };
@@ -349,6 +355,7 @@ export const deleteQuiz = async (id: string) => {
     return {
       quizzes: current.quizzes.filter((quiz) => quiz.id !== id),
       quizQuestions: current.quizQuestions.filter((question) => question.quizId !== id),
+      studyMarks: current.studyMarks.filter((item) => item.ownerId || !gone.has(item.id)),
       aiRequests: cancelOpenFor(current.aiRequests, gone, now)
     };
   });
@@ -404,6 +411,7 @@ export const deleteQuestions = async (ids: readonly string[]) => {
   const now = new Date().toISOString();
   await commitLearning((current) => ({
     quizQuestions: current.quizQuestions.filter((question) => !set.has(question.id)),
+    studyMarks: current.studyMarks.filter((item) => item.ownerId || !set.has(item.id)),
     aiRequests: cancelOpenFor(current.aiRequests, set, now)
   }));
 };
@@ -470,6 +478,18 @@ const appendToRun = (runs: readonly StudyRun[], run: StudyRun, event: StudyRunEv
   return { runs: next ? [...list, next] : list, latest: next ?? updated };
 };
 
+/** Punto di ripresa sulla riga della sessione (le altre righe della catena non lo portano). */
+const withProgress = (runs: readonly StudyRun[], runId: string, progress: RunProgress): StudyRun[] => {
+  const previousId = runs.find((item) => item.id === runId)?.continuesId;
+  return runs.map((item) => (item.id === runId ? { ...item, progress } : item.id === previousId ? stripProgress(item) : item));
+};
+
+const stripProgress = (run: StudyRun): StudyRun => {
+  if (!run.progress) return run;
+  const { progress: _progress, ...rest } = run;
+  return rest;
+};
+
 const putState = (states: readonly FlashcardState[], state: FlashcardState) =>
   states.some((item) => item.id === state.id) ? states.map((item) => (item.id === state.id ? state : item)) : [...states, state];
 
@@ -477,7 +497,14 @@ const putState = (states: readonly FlashcardState[], state: FlashcardState) =>
  * Registra una risposta a una flashcard: evento nella sessione e nuovo stato di ripasso (salvo
  * «salta»). Restituisce la sessione aggiornata (o la continuazione oltre 400) e la risposta salvata.
  */
-export const answerCard = async (run: StudyRun, card: CardRef, result: ReviewResult, ms: number): Promise<{ run: StudyRun; saved: SavedAnswer }> => {
+export const answerCard = async (
+  run: StudyRun,
+  card: CardRef,
+  result: ReviewResult,
+  ms: number,
+  /** Posizione da cui riprendere se la sessione si interrompe (di solito la scheda dopo). */
+  resumeAt?: number
+): Promise<{ run: StudyRun; saved: SavedAnswer }> => {
   const now = new Date();
   const iso = now.toISOString();
   const event = answerEvent(card, result, iso, ms);
@@ -486,7 +513,9 @@ export const answerCard = async (run: StudyRun, card: CardRef, result: ReviewRes
   await commitLearning((current) => {
     const appended = appendToRun(current.studyRuns, run, event, iso);
     latest = appended.latest;
-    const patch: Partial<Learning> = { studyRuns: appended.runs };
+    const runs = resumeAt === undefined ? appended.runs : withProgress(appended.runs, appended.latest.id, { at: iso, index: resumeAt, device: thisDevice() });
+    latest = runs.find((item) => item.id === appended.latest.id) ?? latest;
+    const patch: Partial<Learning> = { studyRuns: runs };
     const previous = current.cardStates.find((item) => item.id === card.id);
     saved = { ...saved, runId: appended.latest.id, ...(previous ? { before: previous } : {}) };
     if (result !== "skip") {
@@ -559,9 +588,68 @@ export const finishRun = async (runId: string, score?: number) => {
   const iso = new Date().toISOString();
   await commitLearning((current) => ({
     studyRuns: current.studyRuns.map((item) =>
-      item.id === runId && !item.endedAt ? { ...item, endedAt: iso, ...(score !== undefined ? { score } : {}), updatedAt: laterStamp(item.updatedAt) } : item
+      item.id === runId && (!item.endedAt || item.progress)
+        ? { ...stripProgress(item), endedAt: item.endedAt ?? iso, ...(score !== undefined ? { score } : {}), updatedAt: laterStamp(item.updatedAt) }
+        : item
     )
   }));
+};
+
+/**
+ * Mette in pausa una sessione o un tentativo: salva il punto di ripresa sulla riga (che si
+ * sincronizza con gli altri dispositivi). Un tentativo di quiz senza riga la crea qui: le risposte
+ * stanno nel punto di ripresa, gli eventi si scrivono solo alla fine (le statistiche non li vedono).
+ */
+export const saveRunProgress = async (run: StudyRun, progress: Omit<RunProgress, "at">) => {
+  const iso = new Date().toISOString();
+  let saved = run;
+  await commitLearning((current) => {
+    const stored = current.studyRuns.find((item) => item.id === run.id);
+    if (stored?.endedAt) return {};
+    const base = stored ?? run;
+    saved = { ...base, progress: { ...progress, at: iso, device: thisDevice() }, updatedAt: laterStamp(base.updatedAt) };
+    return { studyRuns: stored ? current.studyRuns.map((item) => (item.id === run.id ? saved : item)) : [...current.studyRuns, saved] };
+  });
+  return saved;
+};
+
+/**
+ * Si riprende una sessione o un tentativo in pausa: lo segna come ripreso (quante volte, quando, e
+ * se almeno una volta su un dispositivo diverso da quello dell'interruzione). Il segno resta anche a
+ * sessione chiusa, così la si riconosce nello storico. Restituisce la riga aggiornata.
+ */
+export const markResumed = async (run: StudyRun): Promise<StudyRun> => {
+  const iso = new Date().toISOString();
+  let saved = run;
+  await commitLearning((current) => {
+    const stored = current.studyRuns.find((item) => item.id === run.id);
+    if (!stored || stored.endedAt || !stored.progress) return {};
+    const device = stored.progress.device;
+    const away = Boolean(device && device.id !== thisDevice().id);
+    const from = away ? device?.name : stored.resumed?.from;
+    const elsewhere = away || Boolean(stored.resumed?.elsewhere);
+    saved = {
+      ...stored,
+      resumed: { count: (stored.resumed?.count ?? 0) + 1, at: iso, ...(elsewhere ? { elsewhere } : {}), ...(from ? { from } : {}) },
+      updatedAt: laterStamp(stored.updatedAt)
+    };
+    return { studyRuns: current.studyRuns.map((item) => (item.id === run.id ? saved : item)) };
+  });
+  return saved;
+};
+
+/**
+ * Scarta una sessione in pausa. Un quiz (niente eventi salvati) sparisce; una sessione di flashcard
+ * si chiude: le risposte già date restano nello storico, come il ripasso che hanno aggiornato.
+ */
+export const discardRun = async (runId: string) => {
+  const iso = new Date().toISOString();
+  await commitLearning((current) => {
+    const stored = current.studyRuns.find((item) => item.id === runId);
+    if (!stored) return {};
+    if (stored.kind === "quiz" && !stored.events.length) return { studyRuns: current.studyRuns.filter((item) => item.id !== runId) };
+    return { studyRuns: current.studyRuns.map((item) => (item.id === runId ? { ...stripProgress(item), endedAt: item.endedAt ?? iso, updatedAt: laterStamp(item.updatedAt) } : item)) };
+  });
 };
 
 /**
@@ -576,8 +664,17 @@ export const saveQuizAttempt = async (run: StudyRun, events: StudyRunEvent[]) =>
   const limit = LEARNING_LIMITS.runEvents;
   const total = new Set([...run.itemIds, ...events.map((event) => event.i)]).size;
   const right = new Set(events.filter((event) => event.r === "correct").map((event) => event.i)).size;
-  const saved: StudyRun = { ...run, events: events.slice(0, limit), endedAt: iso, ...(total ? { score: Math.min(1, right / total) } : {}), updatedAt: laterStamp(run.updatedAt) };
-  const { score: _score, ...rest } = saved;
+  const stored = state().studyRuns.find((item) => item.id === run.id);
+  const saved: StudyRun = {
+    ...stripProgress(run),
+    // Ripreso: il segno sta sulla riga salvata (markResumed), anche se il lettore ha la copia di prima.
+    ...(stored?.resumed && !run.resumed ? { resumed: stored.resumed } : {}),
+    events: events.slice(0, limit),
+    endedAt: iso,
+    ...(total ? { score: Math.min(1, right / total) } : {}),
+    updatedAt: laterStamp(stored?.updatedAt ?? run.updatedAt)
+  };
+  const { score: _score, resumed: _resumed, ...rest } = saved;
   const rows: StudyRun[] = [saved];
   for (let start = limit; start < events.length; start += limit) {
     rows.push({ ...rest, id: createId("run"), createdAt: iso, updatedAt: iso, continuesId: rows[rows.length - 1].id, itemIds: [], startedAt: events[start].at, events: events.slice(start, start + limit) });
@@ -635,4 +732,48 @@ export const archiveAnalysis = async (id: string, archived: boolean) => {
 
 export const deleteAnalysis = async (id: string) => {
   await commitLearning((current) => ({ aiAnalyses: current.aiAnalyses.filter((item) => item.id !== id) }));
+};
+
+// ─── Dubbi segnati ───────────────────────────────────────────────────────────────────────
+
+export interface MarkTarget {
+  kind: StudyMarkKind;
+  /** Id della flashcard o della domanda (è anche l'id del segno). */
+  id: string;
+  ownerId?: string;
+  deckId?: string;
+  quizId?: string;
+  subjectId?: string;
+}
+
+/** Segno nuovo (puro): copia materia, raccolta e quiz per raggruppare anche gli elementi altrui. */
+export const buildMark = (target: MarkTarget, now: string): StudyMark => ({
+  id: target.id,
+  createdAt: now,
+  updatedAt: now,
+  archived: false,
+  tags: [],
+  kind: target.kind,
+  ...(target.ownerId ? { ownerId: target.ownerId } : {}),
+  ...(target.deckId ? { deckId: target.deckId } : {}),
+  ...(target.quizId ? { quizId: target.quizId } : {}),
+  ...(target.subjectId ? { subjectId: target.subjectId } : {})
+});
+
+/** Segna o toglie il dubbio su una flashcard o una domanda. `on` assente = inverte. Restituisce lo stato nuovo. */
+export const toggleMark = async (target: MarkTarget, on?: boolean): Promise<boolean> => {
+  const marked = state().studyMarks.some((item) => item.id === target.id);
+  const next = on ?? !marked;
+  if (next === marked) return marked;
+  await commitLearning((current) => ({
+    studyMarks: next ? [...current.studyMarks.filter((item) => item.id !== target.id), buildMark(target, new Date().toISOString())] : current.studyMarks.filter((item) => item.id !== target.id)
+  }));
+  return next;
+};
+
+/** Toglie il dubbio a più elementi insieme (un argomento chiarito). */
+export const clearMarks = async (ids: readonly string[]) => {
+  const set = new Set(ids);
+  if (!state().studyMarks.some((item) => set.has(item.id))) return;
+  await commitLearning((current) => ({ studyMarks: current.studyMarks.filter((item) => !set.has(item.id)) }));
 };

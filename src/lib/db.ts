@@ -9,6 +9,7 @@ import type {
   Exam,
   Flashcard,
   FlashcardState,
+  StudyMark,
   Goal,
   ExamPlan,
   GroupActivity,
@@ -153,6 +154,7 @@ class StudyOSDatabase extends Dexie {
   quizzes!: Table<Quiz, string>;
   quizQuestions!: Table<QuizQuestion, string>;
   cardStates!: Table<FlashcardState, string>;
+  studyMarks!: Table<StudyMark, string>;
   studyRuns!: Table<StudyRun, string>;
   aiAnalyses!: Table<AiAnalysis, string>;
   aiRequests!: Table<AiRequest, string>;
@@ -221,6 +223,11 @@ class StudyOSDatabase extends Dexie {
       studyRuns: "id, updatedAt, startedAt",
       aiAnalyses: "id, updatedAt",
       aiRequests: "id, updatedAt, status"
+    });
+    // v10: segni «dubbio» su flashcard e domande (collezione studyMarks, sync personale).
+    // Tabella nuova e vuota: niente da convertire.
+    this.version(10).stores({
+      studyMarks: "id, updatedAt, kind"
     });
   }
 }

@@ -19,6 +19,7 @@ export function useLearnData() {
       studyRuns: state.studyRuns,
       aiAnalyses: state.aiAnalyses,
       aiRequests: state.aiRequests,
+      studyMarks: state.studyMarks,
       subjects: state.subjects,
       locked: state.locked,
       loading: state.loading
@@ -32,7 +33,9 @@ export function useLearnData() {
     () => ({ decks: data.decks, flashcards: data.flashcards, quizzes: data.quizzes, quizQuestions: data.quizQuestions }),
     [data.decks, data.flashcards, data.quizzes, data.quizQuestions]
   );
-  return { ...data, own, shared, states };
+  // Elementi segnati come dubbio (id della flashcard o della domanda).
+  const marked = useMemo(() => new Set(data.studyMarks.map((mark) => mark.id)), [data.studyMarks]);
+  return { ...data, own, shared, states, marked };
 }
 
 export type LearnData = ReturnType<typeof useLearnData>;

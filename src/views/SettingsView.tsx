@@ -298,7 +298,8 @@ export function SettingsView() {
       cardStates: scope === "full" ? snapshot.cardStates : [],
       studyRuns: scope === "full" ? snapshot.studyRuns : [],
       aiAnalyses: scope === "full" ? snapshot.aiAnalyses : [],
-      aiRequests: scope === "full" ? snapshot.aiRequests : []
+      aiRequests: scope === "full" ? snapshot.aiRequests : [],
+      studyMarks: scope === "full" ? snapshot.studyMarks : []
       });
       const save = async (attachments: StudySnapshot["attachments"]) => {
         const envelope = await createBackupEnvelope(scopedFor(attachments), settings, exportEncrypted ? backupPassphrase : undefined, scope);

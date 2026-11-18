@@ -124,7 +124,7 @@ export function CardEditor({
             <BlockListEditor label={LEARN_TEXT.explanation} value={draft.explanation} onChange={(explanation) => setDraft((value) => ({ ...value, explanation }))} />
             <p className="mt-1 text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.explanationHint}</p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[10rem_1fr]">
             <Field label={LEARN_TEXT.difficulty}>
               <select className={inputClass} value={draft.difficulty} onChange={(event) => setDraft((value) => ({ ...value, difficulty: event.target.value }))}>
                 <option value="">—</option>

@@ -166,7 +166,7 @@ export function SessionBuilder({
 
         <fieldset className="min-w-0">
           <legend className="mb-1.5 text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.builderFilter}</legend>
-          <div className="grid gap-1.5">
+          <div className="grid grid-cols-1 gap-1.5">
             {SESSION_FILTERS.map((id) => {
               const empty = !counts[id];
               const active = filter === id;

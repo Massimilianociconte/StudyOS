@@ -619,6 +619,7 @@ export interface StudySnapshot {
   studyRuns: StudyRun[];
   aiAnalyses: AiAnalysis[];
   aiRequests: AiRequest[];
+  studyMarks: StudyMark[];
 }
 
 export interface BackupEnvelope {
@@ -812,6 +813,69 @@ export interface StudyRun extends BaseEntity {
   continuesId?: ID;
   /** Quiz: punteggio finale (corrette ÷ domande). */
   score?: number;
+  /**
+   * Sessione o tentativo interrotto, da riprendere da qui (anche da un altro dispositivo). Presente
+   * solo finché la sessione non è chiusa: «Termina», la fine o «Scarta» lo tolgono.
+   */
+  progress?: RunProgress;
+  /** Ripresa dopo un'interruzione (resta anche a sessione chiusa: la si riconosce nello storico). */
+  resumed?: RunResumed;
+}
+
+/** Dispositivo (browser) che ha salvato il punto di ripresa: id casuale del browser e nome leggibile. */
+export interface RunDevice {
+  id: string;
+  /** «iPhone · Safari», «Mac · Chrome». */
+  name: string;
+  kind: "phone" | "tablet" | "computer";
+}
+
+export interface RunResumed {
+  /** Quante volte è stata ripresa. */
+  count: number;
+  /** Ultima ripresa (ISO). */
+  at: string;
+  /** Almeno una volta ripresa su un dispositivo diverso da quello dell'interruzione. */
+  elsewhere?: boolean;
+  /** Nome del dispositivo dell'interruzione, l'ultima volta che era un altro («iPhone · Safari»). */
+  from?: string;
+}
+
+/** Punto di ripresa di una sessione di ripasso o di un tentativo di quiz in pausa. */
+export interface RunProgress {
+  /** Ultimo salvataggio (ISO). */
+  at: string;
+  /** Posizione in vista (0 = prima scheda o domanda). */
+  index: number;
+  /** Quiz: seme e mescolamento con cui sono state preparate le domande (l'ordine è in itemIds). */
+  seed?: number;
+  shuffle?: boolean;
+  /** Quiz: opzioni scelte finora, per domanda. Gli eventi si scrivono solo alla fine del tentativo. */
+  answers?: Record<string, string[]>;
+  /** Quiz in allenamento: domande già confermate (esito già visto). */
+  checked?: string[];
+  /** Quiz simulazione d'esame: millisecondi già passati (il tempo riparte da qui). */
+  elapsedMs?: number;
+  /** Dove è stata interrotta (ultimo salvataggio). Assente nelle righe salvate prima. */
+  device?: RunDevice;
+}
+
+export type StudyMarkKind = "card" | "question";
+
+/**
+ * Segno «dubbio» su una flashcard o una domanda di quiz: personale, si toglie quando si vuole
+ * (id = id dell'elemento). Materia, raccolta e quiz sono copiati per raggruppare e filtrare anche
+ * quando l'elemento è di un'altra persona.
+ */
+export interface StudyMark extends BaseEntity {
+  kind: StudyMarkKind;
+  /** Proprietario dell'elemento: assente = tuo; altrimenti id dell'account che lo condivide. */
+  ownerId?: string;
+  deckId?: ID;
+  quizId?: ID;
+  subjectId?: ID;
+  /** Nota facoltativa: cosa non è chiaro. */
+  note?: string;
 }
 
 export interface AiAnalysisSection {

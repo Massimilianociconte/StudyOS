@@ -63,7 +63,7 @@ export function ExplainSheet({ target, requests, onClose }: { target: ExplainTar
       <div className="grid grid-cols-1 gap-4">
         <fieldset>
           <legend className="mb-1.5 text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.explainStyle}</legend>
-          <div className="grid gap-1.5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
             {AI_STYLES.map((id) => (
               <label key={id} className={`flex min-h-11 cursor-pointer items-start gap-2 rounded-[16px] border p-2.5 ${style === id ? "border-[var(--accent-ink)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--surface-soft)]"}`}>
                 <input type="radio" name="explain-style" className="mt-1" checked={style === id} onChange={() => setStyle(id)} />
@@ -87,7 +87,7 @@ export function ExplainSheet({ target, requests, onClose }: { target: ExplainTar
         {previous.length ? (
           <section>
             <h3 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.explainResults}</h3>
-            <ul className="grid gap-2">
+            <ul className="grid grid-cols-1 gap-2">
               {previous.map((request) => (
                 <RequestItem key={request.id} request={request} />
               ))}
