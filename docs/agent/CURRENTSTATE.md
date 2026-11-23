@@ -983,3 +983,13 @@ aiuto nel modulo «Chiedi un'analisi»: corretti, con test.
 Verifiche: `npm test` (1823), `npm run lint`; schermate provate nella preview locale (desktop e
 telefono) con dati di prova poi tolti. Il pannello browser di Claude Code nega gli appunti: la copia si
 prova sul sito pubblicato.
+
+Pubblicato il 23 novembre 2026: commit `7f209d1` e `31449e3` su `main`, workflow Pages riuscito (nel
+sito: il messaggio e `chatgpt.com/?q=` nel chunk `LearnView`, `aiRequestsHint` in `catalog` ed
+`execute`); poi Worker `studyos-agent` versione `8a3fccfe` (prima `dcfcc78d`, per `wrangler rollback`),
+`/health` 1.12.1 dopo circa cinque minuti; i tre indirizzi remoti rispondono 401 senza token e con un
+token finto. Nessuno script SQL da eseguire.
+
+Da fare a mano: aggiornare l'elenco degli strumenti del connettore in ChatGPT e Claude (le descrizioni
+nuove arrivano così); ricaricare StudyOS; provare «Apri ChatGPT» e «Apri Claude» (il testo nella chat
+nuova non è garantito, la copia sì) e «Copia il messaggio» in una chat con StudyOS attivo.
