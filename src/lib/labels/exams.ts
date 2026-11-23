@@ -47,14 +47,11 @@ export const EXAMS_TEXT = {
   unsavedDiscard: "Scarta le modifiche",
   shareProgress: "Condividi i progressi",
   study: "Studia",
-  readiness: "Quanto sei pronto",
-  tasksLink: (count: number) => `${count} attività da fare`,
-  tasksAria: (name: string) => `Apri le attività di ${name}`,
+  programLabel: "Programma dell'esame",
+  programEmpty: "Programma non ancora inserito: aggiungilo modificando l'esame.",
   studyLink: (time: string) => `${time} di studio`,
   studyAria: (name: string) => `Studia ${name}: apre il timer con la materia già scelta`,
   studyTimeAria: (name: string) => `Tempo già studiato per ${name}: apri lo Studio con questa materia`,
-  topicsLink: (count: number) => `${count} ${count === 1 ? "argomento" : "argomenti"} da ripassare`,
-  topicsAria: "Apri gli argomenti da ripassare in Studio",
   riskHigh: "Sei indietro",
   riskMedium: "Un po' indietro",
   noSubjectsTitle: "Ancora nessuna materia",
@@ -132,11 +129,6 @@ export const EXAMS_HELP = {
     title: "Un po' indietro",
     text: "Mancano meno di 20 giorni e la preparazione è sotto il 55%.",
     example: "mancano 15 giorni e sei al 40%. Dopo ogni sessione di studio alza la preparazione con +."
-  },
-  readiness: {
-    title: "Quanto sei pronto",
-    text: "Quanto ti senti pronto, da 0 a 100%. Lo decidi tu: aggiornalo con + e − dopo lo studio.",
-    example: "hai finito metà del programma → 50%."
   },
   official: (covered: number, total: number, sessions: number, checked: string) => ({
     title: "Date ufficiali",

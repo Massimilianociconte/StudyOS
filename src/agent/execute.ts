@@ -22,7 +22,7 @@ import { splitPages } from "./pageSplit";
 import { checkConsistencyTool, createReminderTool, deleteReminderTool, deleteSubjectTool, listReminders, listTags, tagItems, updateReminderTool } from "./personalExtraTools";
 import { linkedCounts } from "../lib/subjectLinks";
 import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats, recordedSubjectIds } from "../lib/grades";
-import { isGradePending } from "../lib/subjectProgress";
+import { isGradePending, reviewStatus, subjectProgress, taskWeight } from "../lib/subjectProgress";
 import { examDateOut } from "../lib/examOutcome";
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
 import { createId, nowIso } from "../lib/id";
@@ -180,7 +180,7 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
       case "studyos_list_subjects":
         return listSubjects(args);
       case "studyos_get_subject":
-        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => ({ ...publicSubject(item, true), ...gradePendingOut(item, recordedSubjectIds(current.exams)), linkedCounts: linkedCounts(current, item.id) }));
+        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => ({ ...publicSubject(item, true), ...gradePendingOut(item, recordedSubjectIds(current.exams)), linkedCounts: linkedCounts(current, item.id), progress: progressOut(current, item.id) }));
       case "studyos_create_subject":
         return createSubject(args);
       case "studyos_update_subject":
@@ -579,6 +579,22 @@ const listSubjects = (args: Args): AgentCallResult => {
   return ok(page(items.map((item) => ({ ...publicSubject(item), ...gradePendingOut(item, recorded) })), args));
 };
 
+/**
+ * I tre indicatori della scheda della materia (src/lib/subjectProgress.ts): avanzamento delle attività
+ * (automatico, null senza attività che contano), preparazione del primo esame da sostenere (a mano, null
+ * senza esame) e ripasso (argomenti in tutto e da ripassare entro oggi).
+ */
+const progressOut = (current: ReturnType<typeof state>, subjectId: string) => {
+  const { progress, source, exam, activity } = subjectProgress(subjectId, current.tasks, current.exams);
+  return {
+    overall: progress,
+    overallFrom: source,
+    activity,
+    preparation: exam ? { examId: exam.id, percent: exam.preparation } : null,
+    review: reviewStatus(subjectId, current.topics)
+  };
+};
+
 /** Materia «completed» senza voto nel libretto: `gradePending: true` (si registra con studyos_record_grade). */
 const gradePendingOut = (subject: Subject, recorded: ReadonlySet<string>) => (isGradePending(subject, recorded) ? { gradePending: true } : {});
 
@@ -661,7 +677,8 @@ const createTask = async (args: Args): Promise<AgentCallResult> => {
     estimatedMinutes: Number(args.estimatedMinutes ?? 0),
     energy: (args.energy as Task["energy"]) ?? "medium",
     difficulty: Number(args.difficulty ?? 3) as Task["difficulty"],
-    importance: Number(args.importance ?? 3) as Task["importance"]
+    importance: Number(args.importance ?? 3) as Task["importance"],
+    ...(args.progressWeight !== undefined ? { progressWeight: taskWeight({ progressWeight: Number(args.progressWeight) }) } : {})
   }));
   return ok({ id, dueDate });
 };
@@ -677,7 +694,8 @@ const updateTask = async (args: Args): Promise<AgentCallResult> => {
     "Leggi il testo intero con studyos_get_task (o studyos_list_tasks con fullText=true) e manda quello, modificato."
   );
   if (clippedTask) return clippedTask;
-  const patch = blankToUndefined(pick(args, ["title", "description", "priority", "dueDate", "subjectId", "status", "notes", "estimatedMinutes", "energy", "difficulty", "importance"]), ["dueDate", "subjectId"]);
+  const patch = blankToUndefined(pick(args, ["title", "description", "priority", "dueDate", "subjectId", "status", "notes", "estimatedMinutes", "energy", "difficulty", "importance", "progressWeight"]), ["dueDate", "subjectId"]);
+  if (patch.progressWeight !== undefined) patch.progressWeight = taskWeight({ progressWeight: Number(patch.progressWeight) });
   if (typeof patch.dueDate === "string") {
     const dueDate = toIso(patch.dueDate, true);
     if (!dueDate) return fail("invalid", "dueDate non è una data valida. Usa ISO 8601 o una stringa vuota per toglierla.");

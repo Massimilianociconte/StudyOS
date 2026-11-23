@@ -59,7 +59,7 @@ import { isReminderNotificationId } from "../lib/reminderIds";
 import { makeGroupInviteCode } from "../lib/groups";
 import { ShareUserError, isRestorableEntity, restoredPayload, restoredUpdatedAt, type RestoreVersion } from "../lib/sharing";
 import { FILE_TEXT, RESTORE_TEXT, SUBJECT_FULL_TEXT, VAULT_BUSY_TEXT } from "../lib/labels";
-import { examProgressSubject, isGradePending, subjectsReachingFull, taskDoneSubject } from "../lib/subjectProgress";
+import { examProgressSubject, isGradePending, stepsStatus, subjectsReachingFull, taskDoneSubject, topicKey } from "../lib/subjectProgress";
 import { recordedSubjectIds } from "../lib/grades";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
@@ -498,7 +498,9 @@ const taskDefaults = (task: Partial<Task> & Pick<Task, "title">): Task => {
     energy: task.energy ?? "medium",
     difficulty: task.difficulty ?? 2,
     importance: task.importance ?? 3,
-    cover: task.cover
+    cover: task.cover,
+    // Peso 1 è il predefinito: non si scrive, così le attività di prima e quelle nuove restano uguali.
+    ...(task.progressWeight !== undefined && task.progressWeight !== 1 ? { progressWeight: task.progressWeight } : {})
   };
 };
 
@@ -922,9 +924,13 @@ export const useStudyStore = create<StudyState>((set, get) => {
     updateTask: async (id, patch) => {
       const before = get();
       set((state) => ({
-        tasks: state.tasks.map((task) =>
-          task.id === id ? { ...task, ...normalizeTaskPatch(task, patch), updatedAt: nowIso() } : task
-        )
+        tasks: state.tasks.map((task) => {
+          if (task.id !== id) return task;
+          // Passaggi tutti spuntati = attività fatta; uno tolto a un'attività fatta la riapre. Lo stato
+          // passa dalla transizione normale (completedAt, timer), come se lo avesse scelto la persona.
+          const status = stepsStatus(task, patch);
+          return { ...task, ...normalizeTaskPatch(task, status ? { ...patch, status } : patch), updatedAt: nowIso() };
+        })
       }));
       const full = completeFullSubjects(before, [taskDoneSubject(before.tasks.find((task) => task.id === id), get().tasks.find((task) => task.id === id))]);
       await commit();
@@ -1674,12 +1680,12 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     addTopics: async (items) => {
-      const existing = new Set(get().topics.map((topic) => `${topic.subjectId}:${topic.title.trim().toLowerCase()}`));
+      const existing = new Set(get().topics.map((topic) => topicKey(topic.subjectId, topic.title)));
       const now = nowIso();
       const created: StudyTopic[] = [];
       for (const item of items) {
         const title = item.title.trim();
-        const key = `${item.subjectId}:${title.toLowerCase()}`;
+        const key = topicKey(item.subjectId, title);
         if (!title || existing.has(key)) continue;
         existing.add(key);
         created.push({

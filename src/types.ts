@@ -287,6 +287,11 @@ export interface Task extends BaseEntity {
   difficulty: 1 | 2 | 3 | 4 | 5;
   importance: 1 | 2 | 3 | 4 | 5;
   cover?: string;
+  /**
+   * Peso nell'avanzamento della materia: 0 non conta (ripasso, organizzazione), 2 o 3 vale doppio o
+   * triplo. Assente = 1, cioè parti uguali tra le attività (src/lib/subjectProgress.ts).
+   */
+  progressWeight?: 0 | 1 | 2 | 3;
 }
 
 export interface StudySession extends BaseEntity {

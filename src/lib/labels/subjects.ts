@@ -45,6 +45,7 @@ export const SUBJECTS_TEXT = {
   noneInSemesterBody: "Scegli un altro semestre oppure torna a tutte le materie.",
   showAll: "Mostra tutte le materie",
   cardMenu: (name: string) => `Azioni per ${name}`,
+  progressTitle: "Progressi della materia",
   markAs: (status: string) => `Segna come ${status.toLowerCase()}`,
   /** «⋯» della scheda: apre «Registra il voto»; la materia è superata quando l'esito è salvato. */
   markPassed: "Superata: registra il voto",

@@ -13,10 +13,13 @@ import { readCoverImage } from "../lib/files";
 import { examDraftChanged, examFormDate, isDateToDecide, isPassingResult, markSubjectPassed, sameExamMinute, withoutDateToDecide } from "../lib/examOutcome";
 import { safeImageDataUrl } from "../lib/safeUrl";
 import { cloudConfigured } from "../lib/cloudSyncState";
-import { EXAMS_EDITING_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
+import { EXAMS_EDITING_KEY, EXAMS_NEW_FOR_KEY, examLinkPlan, examRisk, resolveExamEditing, type ExamLinkTarget } from "../lib/examsUi";
+import { activityProgress, programToAdd, reviewStatus, type ActivityProgress, type ReviewStatus } from "../lib/subjectProgress";
+import { PROGRESS_TEXT } from "../lib/labels/progress";
+import { SubjectProgressPanel } from "../components/SubjectProgressPanel";
 import { EXAMS_NEW_KEY, examPrefillFromEvent, findCalendarExam, isNullableCalendarExamRef, examTimeLabel, removeCalendarExam, replaceEventByDefault, type CalendarExamRef } from "../lib/calendarExams";
 import { UndoNotice } from "../components/StudySessionDrawers";
-import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useBackCloses, useDialogLayer } from "../components/ui";
+import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useBackCloses, useDialogLayer } from "../components/ui";
 import { DateTimeField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
@@ -102,16 +105,18 @@ export function ExamsView() {
   const editing = resolveExamEditing(editingId, exams);
   // Esame del calendario da aggiungere (Home, Statistiche): apre «Aggiungi esame» già compilato, poi si cancella.
   const [prefill, setPrefill] = useUiState<CalendarExamRef | null>(EXAMS_NEW_KEY, null, { scope: "tab", validate: isNullableCalendarExamRef });
+  // Materia senza esame (pannello dei progressi in Materie): apre «Aggiungi esame» con la materia scelta, poi si cancella.
+  const [newFor, setNewFor] = useUiState<string | null>(EXAMS_NEW_FOR_KEY, null, { scope: "tab", validate: isNullableString });
   // «Date ufficiali» sono gli appelli UNIMI di BARB: con «Corso di laurea» spento in Impostazioni la
   // scheda non c'è e si resta su «I miei esami» (la chiave salvata non cambia nome).
   const showBarb = preferences.showBarb;
-  const activeTab = editing.exam || prefill || !showBarb ? "personal" : tab;
+  const activeTab = editing.exam || prefill || newFor || !showBarb ? "personal" : tab;
 
   useEffect(() => {
     // Id di un esame che non c'è più: si ignora e si cancella. Altrimenti si passa a "I miei esami".
     if (editing.clear) setEditingId(null);
-    else if ((editing.exam || prefill || !showBarb) && tab !== "personal") setTab("personal");
-  }, [editing.clear, editing.exam, prefill, showBarb, tab, setEditingId, setTab]);
+    else if ((editing.exam || prefill || newFor || !showBarb) && tab !== "personal") setTab("personal");
+  }, [editing.clear, editing.exam, prefill, newFor, showBarb, tab, setEditingId, setTab]);
 
   const header: ExamsHeader = (actions) => (
     <>
@@ -136,7 +141,7 @@ export function ExamsView() {
       {activeTab === "barb" ? (
         <BarbExamCalendar header={header} />
       ) : (
-        <PersonalExamsView header={header} editingExam={editing.exam} onEditingChange={setEditingId} prefill={prefill} onPrefillUsed={() => setPrefill(null)} />
+        <PersonalExamsView header={header} editingExam={editing.exam} onEditingChange={setEditingId} prefill={prefill} onPrefillUsed={() => setPrefill(null)} newFor={newFor} onNewForUsed={() => setNewFor(null)} />
       )}
     </div>
   );
@@ -147,13 +152,18 @@ function PersonalExamsView({
   editingExam,
   onEditingChange,
   prefill = null,
-  onPrefillUsed
+  onPrefillUsed,
+  newFor = null,
+  onNewForUsed
 }: {
   header: ExamsHeader;
   editingExam: Exam | null;
   onEditingChange: (id: string | null) => void;
   prefill?: CalendarExamRef | null;
   onPrefillUsed?: () => void;
+  /** Id della materia per cui aprire «Aggiungi esame» (dal pannello dei progressi in Materie). */
+  newFor?: string | null;
+  onNewForUsed?: () => void;
 }) {
   const { exams, subjects, tasks, sessions, topics, addExam, updateExam, deleteExam, addTopics, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
@@ -224,6 +234,22 @@ function PersonalExamsView({
     // Solo quando arriva un esame dal calendario: le altre dipendenze non devono riaprire il modulo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill]);
+  useEffect(() => {
+    if (!newFor) return;
+    const choices = selectableSubjects(subjects);
+    // Materia non più selezionabile (archiviata, eliminata): il modulo parte dalla prima, come «Aggiungi esame».
+    const subjectId = choices.some((subject) => subject.id === newFor) ? newFor : (choices[0]?.id ?? "");
+    setMessage("");
+    once.release();
+    onEditingChange(null);
+    setFromCalendar(null);
+    startDraft(emptyDraft(subjectId));
+    setMoreOpen(false);
+    setCreating(true);
+    onNewForUsed?.();
+    // Solo quando arriva una materia da Materie: le altre dipendenze non devono riaprire il modulo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newFor]);
   const dialogRef = useRef<HTMLElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
 
@@ -257,11 +283,7 @@ function PersonalExamsView({
 
   const importProgram = async (exam: Exam) => {
     const added = await addTopics(exam.program.map((title) => ({ title, subjectId: exam.subjectId })));
-    setNotice(
-      added
-        ? `${added} ${added === 1 ? "argomento aggiunto" : "argomenti aggiunti"} al ripasso di ${subjectName(subjects, exam.subjectId)}: li trovi in Studio.`
-        : "Tutti gli argomenti del programma sono già nel ripasso."
-    );
+    setNotice(PROGRESS_TEXT.programAdded(added, subjectName(subjects, exam.subjectId)));
   };
 
   const openCreate = () => {
@@ -518,11 +540,12 @@ function PersonalExamsView({
                   dateToDecide={isDateToDecide(exam)}
                   color={subjectColor(subjects, exam.subjectId)}
                   name={subjectName(subjects, exam.subjectId)}
-                  openTasks={tasks.filter((task) => task.subjectId === exam.subjectId && task.status !== "done" && task.status !== "archived").length}
+                  activity={activityProgress(exam.subjectId, tasks)}
                   studiedMinutes={sessions
                     .filter((session) => session.subjectId === exam.subjectId && session.status === "completed")
                     .reduce((sum, session) => sum + session.actualMinutes, 0)}
-                  topics={topics.filter((topic) => topic.subjectId === exam.subjectId && !topic.archived).length}
+                  review={reviewStatus(exam.subjectId, topics)}
+                  programToAdd={programToAdd(exam.subjectId, exam.program, topics).length}
                   onPrep={(delta) => void updateExam(exam.id, { preparation: Math.max(0, Math.min(100, exam.preparation + delta)) })}
                   onEdit={() => openEdit(exam)}
                   onImportProgram={() => void importProgram(exam)}
@@ -767,9 +790,10 @@ function ExamCard({
   dateToDecide,
   color,
   name,
-  openTasks,
+  activity,
   studiedMinutes,
-  topics,
+  review,
+  programToAdd,
   onPrep,
   onEdit,
   onImportProgram,
@@ -780,9 +804,12 @@ function ExamCard({
   dateToDecide: boolean;
   color: string;
   name: string;
-  openTasks: number;
+  /** Avanzamento delle attività della materia (automatico). */
+  activity: ActivityProgress;
   studiedMinutes: number;
-  topics: number;
+  review: ReviewStatus;
+  /** Voci del programma non ancora nel ripasso: quante ne aggiunge «Aggiungi al ripasso». */
+  programToAdd: number;
   onPrep: (delta: number) => void;
   onEdit: () => void;
   onImportProgram: () => void;
@@ -842,53 +869,37 @@ function ExamCard({
         ) : null}
       </div>
 
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between gap-2 text-xs font-black">
-          <span className="flex items-center gap-1.5">
-            <span className="text-[var(--faint)] uppercase">{EXAMS_TEXT.readiness}</span>
-            <HelpTip title={EXAMS_HELP.readiness.title} text={EXAMS_HELP.readiness.text} example={EXAMS_HELP.readiness.example} />
-          </span>
-          <span className="flex items-center gap-1">
-            <button type="button" aria-label={`Abbassa la preparazione per ${name} del 5%`} onClick={() => onPrep(-5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2.5 after:content-[''] hover:bg-[var(--surface)]">
-              −
-            </button>
-            <span className="w-10 text-center tabular-nums">{exam.preparation}%</span>
-            <button type="button" aria-label={`Alza la preparazione per ${name} del 5%`} onClick={() => onPrep(5)} className="relative grid h-6 w-6 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] after:absolute after:-inset-2.5 after:content-[''] hover:bg-[var(--surface)]">
-              +
-            </button>
-          </span>
-        </div>
-        <ProgressBar value={exam.preparation} color={color} />
+      {/* Stesso pannello di Materie: avanzamento attività (automatico), preparazione (a mano), ripasso. */}
+      <div className="mt-3 border-t border-[var(--border)] pt-3">
+        <SubjectProgressPanel
+          name={name}
+          color={color}
+          activity={activity}
+          preparation={{ value: exam.preparation, onChange: onPrep }}
+          review={review}
+          program={exam.program.length ? { toAdd: programToAdd, total: exam.program.length, onAdd: onImportProgram } : null}
+          onOpenTasks={() => onLink("tasks")}
+          onOpenReview={() => onLink("topics")}
+        />
       </div>
 
-      {/* I conteggi portano a ciò che contano: attività della materia, timer, argomenti da ripassare. */}
-      <p className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-bold text-[var(--muted)]">
-        <CountLink label={EXAMS_TEXT.tasksLink(openTasks)} aria={EXAMS_TEXT.tasksAria(name)} onClick={() => onLink("tasks")} />
-        <span aria-hidden="true">·</span>
-        <CountLink label={EXAMS_TEXT.studyLink(formatMinutes(studiedMinutes))} aria={EXAMS_TEXT.studyTimeAria(name)} onClick={() => onLink("study")} />
-        <span aria-hidden="true">·</span>
-        <CountLink label={EXAMS_TEXT.topicsLink(topics)} aria={EXAMS_TEXT.topicsAria} onClick={() => onLink("topics")} />
-      </p>
-
       {program.length ? (
-        <div className="mt-3 flex flex-wrap gap-1">
+        <div className="mt-3 flex flex-wrap gap-1" aria-label={EXAMS_TEXT.programLabel}>
           {program.map((topic, index) => (
-            <Tag key={`${topic}-${index}`}>{topic}</Tag>
+            <Tag key={`${topic}-${index}`}>
+              <span className="block max-w-[16rem] truncate" title={topic}>
+                {topic}
+              </span>
+            </Tag>
           ))}
           {exam.program.length > program.length ? <Tag>+{exam.program.length - program.length}</Tag> : null}
         </div>
       ) : (
-        <p className="mt-3 text-xs font-bold text-[var(--faint)]">Programma non ancora inserito: aggiungilo modificando l'esame.</p>
+        <p className="mt-3 text-xs font-bold text-[var(--faint)]">{EXAMS_TEXT.programEmpty}</p>
       )}
 
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
-        {exam.program.length ? (
-          <button type="button" onClick={onImportProgram} title="Aggiunge ogni argomento del programma agli argomenti da ripassare" className="inline-flex min-h-11 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-            <Icon name="Brain" className="h-3.5 w-3.5" /> Aggiungi il programma al ripasso
-          </button>
-        ) : (
-          <span />
-        )}
+        <CountLink label={EXAMS_TEXT.studyLink(formatMinutes(studiedMinutes))} aria={EXAMS_TEXT.studyTimeAria(name)} onClick={() => onLink("study")} />
         <button type="button" onClick={() => onLink("study")} aria-label={EXAMS_TEXT.studyAria(name)} className="inline-flex min-h-11 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
           <Icon name="Timer" className="h-3.5 w-3.5" /> {EXAMS_TEXT.study}
         </button>

@@ -5,11 +5,14 @@ import { daysUntil, shortDate } from "../lib/selectors";
 import { readCoverImage } from "../lib/files";
 import { isDateToDecide } from "../lib/examOutcome";
 import { librettoEntries, recordedSubjectIds } from "../lib/grades";
-import { isGradePending, subjectProgress } from "../lib/subjectProgress";
+import { isGradePending, programToAdd, reviewStatus, subjectProgress } from "../lib/subjectProgress";
+import { EXAMS_NEW_FOR_KEY, examLinkPlan } from "../lib/examsUi";
+import { PROGRESS_TEXT } from "../lib/labels/progress";
+import { SubjectProgressPanel } from "../components/SubjectProgressPanel";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { ATTACHMENT_KIND_ICON, FILE_TEXT, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
 import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
-import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, ProgressBar, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
+import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
 import { HelpField } from "../components/HelpField";
 import { InlineConfirm } from "../components/InlineConfirm";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
@@ -66,18 +69,64 @@ const openExam = (examId: string) => goToView("exams", [["exams.editing", examId
 
 type StoreState = ReturnType<typeof useStudyStore.getState>;
 
-const subjectStats = (subject: Subject, state: Pick<StoreState, "tasks" | "sessions" | "exams" | "attachments">) => {
+/** Collegamenti del pannello dei progressi, come dalla scheda d'esame: attività della materia, argomenti in Studio. */
+const openLinked = (target: "tasks" | "topics", subjectId: string) => {
+  const plan = examLinkPlan(target, subjectId);
+  goToView(plan.view, plan.writes.map((write) => [write.key, write.value, write.scope] as const));
+};
+/** «Aggiungi l'esame» per una materia senza esame: Esami apre il modulo con la materia già scelta. */
+const addExamFor = (subjectId: string) => goToView("exams", [[EXAMS_NEW_FOR_KEY, subjectId, "tab"]]);
+
+const subjectStats = (subject: Subject, state: Pick<StoreState, "tasks" | "sessions" | "exams" | "attachments" | "topics">) => {
   const subjectTasks = state.tasks.filter((task) => task.subjectId === subject.id && task.status !== "archived");
   const openTasks = subjectTasks.filter((task) => task.status !== "done");
   const studyMinutes = state.sessions
     .filter((session) => session.subjectId === subject.id && session.status === "completed")
     .reduce((sum, session) => sum + session.actualMinutes, 0);
   const materials = state.attachments.filter((attachment) => attachment.linkedEntityType === "subject" && attachment.linkedEntityId === subject.id);
-  // Preparazione: quella dell'esame se esiste, altrimenti avanzamento delle task della materia. Stesso
-  // calcolo della regola dello store: quando qui si legge 100% la materia passa a «Completata».
-  const { progress, exam } = subjectProgress(subject.id, state.tasks, state.exams);
-  return { subjectTasks, openTasks, studyMinutes, exam, materials, progress };
+  // Tre indicatori distinti (src/lib/subjectProgress.ts): avanzamento delle attività, preparazione
+  // dell'esame da sostenere, ripasso. Stesso calcolo della regola dello store: al 100% del progresso
+  // (la preparazione con un esame, altrimenti le attività) la materia passa a «Completata».
+  const { progress, exam, activity } = subjectProgress(subject.id, state.tasks, state.exams);
+  const review = reviewStatus(subject.id, state.topics);
+  const program = exam?.program.length ? { toAdd: programToAdd(subject.id, exam.program, state.topics).length, total: exam.program.length } : null;
+  return { subjectTasks, openTasks, studyMinutes, exam, materials, progress, activity, review, program };
 };
+
+type ProgressActions = {
+  /** ± sulla preparazione dell'esame da sostenere (lo stesso numero di Esami). */
+  onPrep: (delta: number) => void;
+  onAddExam: () => void;
+  /** Argomenti del programma dell'esame nel ripasso (quelli già presenti non si duplicano). */
+  onImportProgram: () => void;
+  onOpenTasks: () => void;
+  onOpenReview: () => void;
+};
+
+/**
+ * Azioni del pannello dei progressi per una materia, uguali nella scheda e nel dettaglio: la
+ * preparazione si scrive sull'esame da sostenere (updateExam, quindi anche la regola del 100%), gli
+ * argomenti del programma con addTopics. `guard` avvolge gli spostamenti (il dettaglio chiede prima
+ * di perdere modifiche non salvate).
+ */
+const progressActionsFor = (onNotice: (text: string) => void, guard: (action: () => void) => void = (action) => action()) =>
+  (subject: Subject): ProgressActions => ({
+    onPrep: (delta) => {
+      const state = useStudyStore.getState();
+      const exam = subjectProgress(subject.id, state.tasks, state.exams).exam;
+      if (!exam) return;
+      void state.updateExam(exam.id, { preparation: Math.max(0, Math.min(100, exam.preparation + delta)) });
+    },
+    onAddExam: () => guard(() => addExamFor(subject.id)),
+    onImportProgram: () => {
+      const state = useStudyStore.getState();
+      const exam = subjectProgress(subject.id, state.tasks, state.exams).exam;
+      if (!exam) return;
+      void state.addTopics(exam.program.map((title) => ({ title, subjectId: subject.id }))).then((added) => onNotice(PROGRESS_TEXT.programAdded(added, subject.name)));
+    },
+    onOpenTasks: () => guard(() => openLinked("tasks", subject.id)),
+    onOpenReview: () => guard(() => openLinked("topics", subject.id))
+  });
 
 export function SubjectsView() {
   // Letta anche quando un'altra sezione porta qui una materia da aprire (es. dalla Home).
@@ -88,7 +137,10 @@ export function SubjectsView() {
   const [showPending, setShowPending] = useUiState("subjects.showPending", true);
   const { subjects, tasks, sessions, exams, topics, attachments, addSubject, updateSubject, deleteSubject, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
-  const state = { tasks, sessions, exams, attachments };
+  const state = { tasks, sessions, exams, attachments, topics };
+  // Esito di «Aggiungi al ripasso» dal pannello dei progressi.
+  const [reviewNotice, setReviewNotice] = useState("");
+  const progressActions = progressActionsFor(setReviewNotice);
   // Ultima materia archiviata (dalla scheda o dal dettaglio): «Annulla» le rende lo stato di prima per qualche secondo.
   const [archivedNotice, setArchivedNotice] = useState<{ id: string; name: string; previous: Subject["status"] } | null>(null);
   // La scheda archiviata sparisce col suo menu: il focus va su «Annulla», e finché resta lì l'avviso non si chiude.
@@ -176,6 +228,7 @@ export function SubjectsView() {
       onRestore={() => restoreSubject(subject)}
       deleteText={isArchivedSubject(subject) ? deleteText(subject) : ""}
       onDelete={() => deleteForever(subject)}
+      {...progressActions(subject)}
     />
   );
 
@@ -246,6 +299,9 @@ export function SubjectsView() {
         ) : null}
         {gradeNotice ? (
           <p className="mb-4 rounded-[18px] border border-[var(--success-border)] bg-[var(--success-bg)] p-3 text-sm font-bold text-[var(--success-text)]">{gradeNotice}</p>
+        ) : null}
+        {reviewNotice ? (
+          <p className="mb-4 rounded-[18px] border border-[var(--success-border)] bg-[var(--success-bg)] p-3 text-sm font-bold text-[var(--success-text)]">{reviewNotice}</p>
         ) : null}
       </div>
 
@@ -343,8 +399,9 @@ function SubjectCard({
   onArchive,
   onRestore,
   onDelete,
-  deleteText
-}: {
+  deleteText,
+  ...progress
+}: ProgressActions & {
   subject: Subject;
   stats: ReturnType<typeof subjectStats>;
   /** «Completata» senza voto nel libretto: etichetta «Voto da registrare» e pulsante «Registra il voto». */
@@ -434,7 +491,6 @@ function SubjectCard({
         {/* Semestre sconosciuto: nessuna etichetta «Da definire» (si sceglie nel dettaglio). */}
         {semester !== "non-definito" ? <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag> : null}
         <span>{subject.cfu} CFU</span>
-        <span>{stats.openTasks.length} attività da fare</span>
         {/* Come in Statistiche: «50 min», «1 h 15 min» (stesso formato, stessi numeri). */}
         <span>{formatMinutes(stats.studyMinutes)} di studio</span>
         {stats.materials.length ? (
@@ -446,12 +502,19 @@ function SubjectCard({
       </div>
 
       {course ? <BarbExamAvailability course={course} /> : null}
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between text-[11px] font-black">
-          <span className="text-[var(--faint)] uppercase">{exam ? "Preparazione all'esame" : "Attività completate"}</span>
-          <span>{stats.progress}%</span>
-        </div>
-        <ProgressBar value={stats.progress} color={color} />
+      {/* Tre indicatori distinti, modificabili sul posto (sopra il pulsante che apre la scheda). */}
+      <div className="mt-3 border-t border-[var(--border)] pt-3">
+        <SubjectProgressPanel
+          name={subject.name}
+          color={color}
+          activity={stats.activity}
+          preparation={exam ? { value: exam.preparation, onChange: progress.onPrep } : null}
+          onAddExam={isArchivedSubject(subject) ? undefined : progress.onAddExam}
+          review={stats.review}
+          program={stats.program ? { ...stats.program, onAdd: progress.onImportProgram } : null}
+          onOpenTasks={progress.onOpenTasks}
+          onOpenReview={progress.onOpenReview}
+        />
       </div>
 
       {gradePending ? (
@@ -546,7 +609,7 @@ function SubjectDrawer({
   onArchive: (subject: Subject) => void;
   onRestore: (subject: Subject) => void;
 }) {
-  const { tasks, sessions, exams, attachments, subjects, updateSubject, addAttachment, updateAttachment, deleteAttachment } = useStudyStore();
+  const { tasks, sessions, exams, attachments, topics, subjects, updateSubject, addAttachment, updateAttachment, deleteAttachment } = useStudyStore();
   const [draft, setDraft] = useState({ name: "", teacher: "", cfu: "6", semester: "", targetGrade: "", color: SWATCHES[0], notes: "" });
   // Dati come sono salvati: il confronto dice se chiudere perderebbe qualcosa.
   const [saved, setSaved] = useState(draft);
@@ -598,7 +661,7 @@ function SubjectDrawer({
   // «Aggiungi al gruppo» da un appello ufficiale: la sezione degli appelli del gruppo apre il modulo.
   const [groupDraft, setGroupDraft] = useState<SessionDraft | null>(null);
   const hasExamGroups = useGroupExamStore((state) => state.groups.length > 0);
-  const stats = subject ? subjectStats(subject, { tasks, sessions, exams, attachments }) : null;
+  const stats = subject ? subjectStats(subject, { tasks, sessions, exams, attachments, topics }) : null;
   const gradePending = subject ? isGradePending(subject, recordedSubjectIds(exams)) : false;
 
   const save = async () => {
@@ -646,6 +709,8 @@ function SubjectDrawer({
   const showExam = (examId: string) => guard(() => openExam(examId));
   const showMaterials = (id: string) =>
     guard(() => goToView("materials", [["materials.subject", id, "device"], ["materials.kind", "all", "device"], ["materials.query", "", "tab"]]));
+  // Stesso pannello della scheda: ± sulla preparazione, «Aggiungi al ripasso», collegamenti (con la guardia).
+  const progress = subject ? progressActionsFor(ok, guard)(subject) : null;
 
   return (
     <Drawer
@@ -730,6 +795,22 @@ function SubjectDrawer({
               <StatTile label={SUBJECTS_TEXT.examIn} value="—" />
             )}
           </div>
+
+          {progress ? (
+            <section className="quiet-panel p-3.5" aria-label={SUBJECTS_TEXT.progressTitle}>
+              <SubjectProgressPanel
+                name={subject.name}
+                color={subjectColor(subject)}
+                activity={stats.activity}
+                preparation={stats.exam ? { value: stats.exam.preparation, onChange: progress.onPrep } : null}
+                onAddExam={archived ? undefined : progress.onAddExam}
+                review={stats.review}
+                program={stats.program ? { ...stats.program, onAdd: progress.onImportProgram } : null}
+                onOpenTasks={progress.onOpenTasks}
+                onOpenReview={progress.onOpenReview}
+              />
+            </section>
+          ) : null}
 
           {course ? <BarbExamSessions course={course} onAddToGroup={hasExamGroups ? (session) => setGroupDraft(draftFromBarbForSubject(session, course.name, subject)) : undefined} /> : null}
           <SubjectGroupExams subject={subject} draft={groupDraft} onDraftUsed={() => setGroupDraft(null)} />

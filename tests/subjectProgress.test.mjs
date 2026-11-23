@@ -1,6 +1,19 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { examProgressSubject, isClosedForExams, isGradePending, subjectProgress, subjectsReachingFull, taskDoneSubject } from "../src/lib/subjectProgress.ts";
+import {
+  activityProgress,
+  examProgressSubject,
+  isClosedForExams,
+  isGradePending,
+  programToAdd,
+  reviewStatus,
+  stepsStatus,
+  subjectProgress,
+  subjectsReachingFull,
+  taskDoneSubject,
+  taskShare,
+  taskWeight
+} from "../src/lib/subjectProgress.ts";
 import { recordedSubjectIds } from "../src/lib/grades.ts";
 import { subjectMenuItems } from "../src/lib/subjectCards.ts";
 import { useStudyStore } from "../src/store/useStudyStore.ts";
@@ -8,11 +21,15 @@ import { useStudyStore } from "../src/store/useStudyStore.ts";
 const OLD = "2026-11-01T10:00:00.000Z";
 const base = { createdAt: OLD, updatedAt: OLD, archived: false, tags: [] };
 const subject = (id, status = "active", extra = {}) => ({ ...base, id, name: `Materia ${id}`, teacher: "", color: "#7CF7C8", icon: "BookOpen", cfu: 6, semester: "", status, notes: "", ...extra });
-const task = (id, subjectId, status = "todo") => ({ ...base, id, title: id, description: "", subjectId, status, priority: "medium", subtasks: [], notes: "" });
+const task = (id, subjectId, status = "todo", extra = {}) => ({ ...base, id, title: id, description: "", subjectId, status, priority: "medium", subtasks: [], notes: "", ...extra });
+const steps = (...done) => done.map((value, index) => ({ id: `st${index}`, text: `Passaggio ${index + 1}`, done: value }));
+const topic = (id, subjectId, nextReviewDate, extra = {}) => ({ ...base, id, subjectId, title: id, nextReviewDate, ...extra });
 const exam = (id, subjectId, extra = {}) => ({ ...base, id, subjectId, date: "2026-12-15T09:00:00.000Z", program: [], preparation: 40, targetGrade: 28, status: "studying", simulations: 0, frequentQuestions: [], ...extra });
 
 test("progresso: senza esami conta le attività (le archiviate no); 100 solo con tutto fatto", () => {
-  assert.equal(subjectProgress("s1", [], []).progress, 0);
+  // Senza attività né esami non c'è un numero: «nessuna attività», non 0%.
+  assert.equal(subjectProgress("s1", [], []).progress, null);
+  assert.equal(subjectProgress("s1", [], []).source, "none");
   assert.equal(subjectProgress("s1", [task("a", "s1", "done"), task("b", "s1"), task("x", "s1", "archived")], []).progress, 50);
   assert.equal(subjectProgress("s1", [task("a", "s1", "done"), task("b", "s1", "done"), task("c", "s2")], []).progress, 100);
   // 199 su 200 non arrotonda a 100: la barra e la regola dicono la stessa cosa.
@@ -30,6 +47,91 @@ test("progresso: con un esame da sostenere vale la sua preparazione (il primo pe
   assert.equal(subjectProgress("s1", tasks, [exam("e1", "s1", { preparation: 100 })]).progress, 100);
   // Esame già sostenuto: si torna alle attività.
   assert.equal(subjectProgress("s1", tasks, [exam("e0", "s1", { status: "done", preparation: 10 })]).progress, 100);
+});
+
+test("avanzamento attività: 5 attività al 20% l'una, una con 2 passaggi su 4 vale il 10%", () => {
+  const tasks = [
+    task("a", "s1", "done"),
+    task("b", "s1", "todo", { subtasks: steps(true, true, false, false) }),
+    task("c", "s1"),
+    task("d", "s1"),
+    task("e", "s1")
+  ];
+  const result = activityProgress("s1", tasks);
+  assert.equal(result.percent, 30);
+  assert.deepEqual({ counted: result.counted, done: result.done, partial: result.partial, excluded: result.excluded }, { counted: 5, done: 1, partial: 1, excluded: 0 });
+  // Fatta con i passaggi aperti: conta intera (lo stato decide), nessun doppio conteggio.
+  assert.equal(taskShare(task("x", "s1", "done", { subtasks: steps(false, false) })), 1);
+  assert.equal(taskShare(task("x", "s1", "todo", { subtasks: steps(true, false, false, false) })), 0.25);
+  assert.equal(taskShare(task("x", "s1")), 0);
+});
+
+test("avanzamento attività: tutti i passaggi spuntati senza la task fatta non arrivano al 100%", () => {
+  const result = activityProgress("s1", [task("a", "s1", "todo", { subtasks: steps(true, true) })]);
+  assert.equal(result.percent, 99);
+  assert.equal(activityProgress("s1", [task("a", "s1", "done", { subtasks: steps(true, true) })]).percent, 100);
+});
+
+test("avanzamento attività: pesi, attività che non contano e attività di altre materie o senza materia", () => {
+  assert.equal(taskWeight({}), 1);
+  assert.equal(taskWeight({ progressWeight: 0 }), 0);
+  assert.equal(taskWeight({ progressWeight: 3 }), 3);
+  assert.equal(taskWeight({ progressWeight: 7 }), 1);
+  assert.equal(taskWeight({ progressWeight: "2" }), 1);
+  const tasks = [
+    task("a", "s1", "done", { progressWeight: 3 }),
+    task("b", "s1"),
+    task("r", "s1", "todo", { progressWeight: 0 }),
+    task("o", "s2", "done"),
+    task("n", undefined, "done")
+  ];
+  const result = activityProgress("s1", tasks);
+  assert.equal(result.percent, 75);
+  assert.equal(result.excluded, 1);
+  // Solo attività che non contano: niente numero, e la barra non è 0% né 100%.
+  const onlyReview = activityProgress("s1", [task("r", "s1", "done", { progressWeight: 0 })]);
+  assert.equal(onlyReview.percent, null);
+  assert.equal(onlyReview.excluded, 1);
+  assert.equal(subjectProgress("s1", [task("r", "s1", "done", { progressWeight: 0 })], []).progress, null);
+});
+
+test("passaggi e stato: tutti spuntati = fatta, uno tolto = riaperta, lo stato scelto vince", () => {
+  const open = task("a", "s1", "todo", { subtasks: steps(true, false) });
+  assert.equal(stepsStatus(open, { subtasks: steps(true, true) }), "done");
+  // Il modulo dell'attività rimanda lo stato com'è a ogni salvataggio: non blocca la chiusura.
+  assert.equal(stepsStatus(open, { status: "todo", subtasks: steps(true, true) }), "done");
+  assert.equal(stepsStatus(open, { status: "doing", subtasks: steps(true, true) }), undefined);
+  assert.equal(stepsStatus(open, { subtasks: steps(true, false) }), undefined);
+  assert.equal(stepsStatus(open, { title: "x" }), undefined);
+  const done = task("a", "s1", "done", { subtasks: steps(true, true) });
+  assert.equal(stepsStatus(done, { subtasks: steps(true, false) }), "todo");
+  assert.equal(stepsStatus(done, { status: "done", subtasks: steps(true, false) }), "todo");
+  // Un passaggio nuovo, ancora da fare, non riapre una task fatta (nessun passaggio tolto).
+  assert.equal(stepsStatus(done, { subtasks: [...steps(true, true), { id: "n", text: "Nuovo", done: false }] }), undefined);
+  // Riaperta di proposito con i passaggi già tutti spuntati: modificarli non la richiude.
+  const reopened = task("a", "s1", "todo", { subtasks: steps(true, true) });
+  assert.equal(stepsStatus(reopened, { subtasks: [{ id: "st0", text: "Rinominato", done: true }, { id: "st1", text: "Passaggio 2", done: true }] }), undefined);
+  assert.equal(stepsStatus(task("a", "s1", "archived", { subtasks: steps(false) }), { subtasks: steps(true) }), undefined);
+  assert.equal(stepsStatus(task("a", "s1"), { subtasks: [] }), undefined);
+});
+
+test("ripasso: argomenti in tutto e da ripassare entro oggi (archiviati e altre materie esclusi)", () => {
+  const now = new Date(2026, 10, 23, 10, 0);
+  const topics = [
+    topic("t1", "s1", new Date(2026, 10, 20).toISOString()),
+    topic("t2", "s1", new Date(2026, 10, 23, 22, 0).toISOString()),
+    topic("t3", "s1", new Date(2026, 10, 25).toISOString()),
+    topic("t4", "s1", new Date(2026, 10, 20).toISOString(), { archived: true }),
+    topic("t5", "s2", new Date(2026, 10, 20).toISOString())
+  ];
+  assert.deepEqual(reviewStatus("s1", topics, now), { total: 3, due: 2 });
+  assert.deepEqual(reviewStatus("s3", topics, now), { total: 0, due: 0 });
+});
+
+test("programma al ripasso: conta solo i titoli nuovi, come li aggiunge lo store", () => {
+  const topics = [{ subjectId: "s1", title: "Cuore" }, { subjectId: "s2", title: "Rene" }];
+  assert.deepEqual(programToAdd("s1", ["  cuore ", "Rene", "Rene", "", "Polmone"], topics), ["Rene", "Polmone"]);
+  assert.deepEqual(programToAdd("s1", ["Cuore"], topics), []);
 });
 
 test("candidate: solo un'attività appena segnata fatta o un esame con preparazione o stato cambiati", () => {
@@ -66,6 +168,14 @@ test("regola: solo materie aperte; archiviate e già completate restano come son
   assert.deepEqual(subjectsReachingFull([subject("s1", "completed")], ["s1"], before, after), []);
   assert.deepEqual(subjectsReachingFull([subject("s1", "archived")], ["s1"], before, after), []);
   assert.deepEqual(subjectsReachingFull([subject("s1", "active", { archived: true })], ["s1"], before, after), []);
+});
+
+test("regola: da «nessuna attività che conta» al 100%; e i passaggi parziali non bastano", () => {
+  const before = { tasks: [task("r", "s1", "done", { progressWeight: 0 }), task("a", "s1", "todo")], exams: [] };
+  const after = { tasks: [task("r", "s1", "done", { progressWeight: 0 }), task("a", "s1", "done")], exams: [] };
+  assert.deepEqual(subjectsReachingFull([subject("s1")], ["s1"], before, after), ["s1"]);
+  const partial = { tasks: [task("a", "s1", "todo", { subtasks: steps(true, true) })], exams: [] };
+  assert.deepEqual(subjectsReachingFull([subject("s1")], ["s1"], before, partial), []);
 });
 
 test("regola: la preparazione dell'esame al 100% completa la materia anche con attività aperte", () => {
@@ -171,4 +281,30 @@ test("store: materia rimessa «In corso» col voto già registrato si completa s
   await store.getState().toggleTask("a");
   assert.equal(store.getState().subjects[0].status, "completed");
   assert.equal(store.getState().notifications.length, 0);
+});
+
+test("store: spuntare l'ultimo passaggio chiude l'attività (con completedAt) e può completare la materia", async () => {
+  store.setState({ subjects: [subject("s7")], tasks: [task("a", "s7", "todo", { subtasks: steps(true, false) })], exams: [] });
+  await store.getState().updateTask("a", { subtasks: steps(true, true) });
+  const [saved] = store.getState().tasks;
+  assert.equal(saved.status, "done");
+  assert.ok(saved.completedAt);
+  assert.equal(store.getState().subjects[0].status, "completed");
+  // Un passaggio tolto riapre l'attività; la materia resta come l'ha lasciata la regola (non torna indietro da sola).
+  await store.getState().updateTask("a", { subtasks: steps(true, false) });
+  assert.equal(store.getState().tasks[0].status, "todo");
+  assert.equal(store.getState().tasks[0].completedAt, undefined);
+});
+
+test("store: il peso si salva solo se diverso da 1; riaprire un'attività ricalcola subito", async () => {
+  store.setState({ subjects: [subject("s8")], tasks: [], exams: [] });
+  await store.getState().addTask({ title: "Ripasso", subjectId: "s8", progressWeight: 0 });
+  await store.getState().addTask({ title: "Capitolo", subjectId: "s8", progressWeight: 1 });
+  const [chapter, review] = store.getState().tasks;
+  assert.equal(review.progressWeight, 0);
+  assert.equal("progressWeight" in chapter, false);
+  await store.getState().toggleTask(chapter.id);
+  assert.equal(activityProgress("s8", store.getState().tasks).percent, 100);
+  await store.getState().toggleTask(chapter.id);
+  assert.equal(activityProgress("s8", store.getState().tasks).percent, 0);
 });

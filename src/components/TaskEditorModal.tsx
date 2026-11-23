@@ -14,6 +14,7 @@ import { selectableSubjects, shortDate } from "../lib/selectors";
 import { LinkedNotes } from "./NoteDrawer";
 import { addStep, draftChanged, editorCloseRequest, removeStep, renameStep, stepsDone, stepsToSave, toggleStep, type TaskStep } from "../lib/tasksUi";
 import { createId } from "../lib/id";
+import { TASK_WEIGHTS, stepsStatus, taskWeight, type TaskWeight } from "../lib/subjectProgress";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -60,6 +61,7 @@ export function TaskEditorModal({
     difficulty: String(task.difficulty),
     importance: String(task.importance),
     steps: task.subtasks,
+    weight: String(taskWeight(task)),
     // Testo di «Nuovo passaggio» non ancora aggiunto: nella bozza, così si salva e chiudere chiede prima.
     newStep: ""
   }));
@@ -70,7 +72,7 @@ export function TaskEditorModal({
   const [asking, setAsking] = useState(false);
   const footerRef = useRef<HTMLDivElement>(null);
   // "Altre opzioni" parte aperta solo se contiene già note o tag, così nulla di scritto resta nascosto.
-  const [moreOpenAtStart] = useState(() => Boolean(task.notes.trim() || task.tags.length));
+  const [moreOpenAtStart] = useState(() => Boolean(task.notes.trim() || task.tags.length || taskWeight(task) !== 1));
   const moreRef = useRef<HTMLDetailsElement>(null);
   const timerRunning = isTaskTimerRunning(task);
   const now = useNow(1000, timerRunning);
@@ -147,6 +149,8 @@ export function TaskEditorModal({
         priority: draft.priority,
         subjectId: draft.subjectId || undefined,
         subtasks: stepsToSave(draft.steps, draft.newStep, createId("subtask")),
+        // Il peso si scrive solo se cambiato; 1 (predefinito) non si salva.
+        ...(Number(draft.weight) !== taskWeight(task) ? { progressWeight: Number(draft.weight) === 1 ? undefined : (Number(draft.weight) as TaskWeight) } : {}),
         tags: parseTags(draft.tags),
         notes: draft.notes.trim(),
         difficulty: Math.max(1, Math.min(5, difficulty)) as Task["difficulty"],
@@ -281,7 +285,13 @@ export function TaskEditorModal({
 
           <TaskStepsField
             steps={draft.steps}
-            onChange={(steps) => setDraft((value) => ({ ...value, steps }))}
+            // Come nello store: spuntarli tutti segna l'attività fatta, toglierne uno a una fatta la riapre.
+            onChange={(steps) =>
+              setDraft((value) => {
+                const status = stepsStatus({ status: value.status, subtasks: value.steps }, { subtasks: steps });
+                return { ...value, steps, ...(status ? { status } : {}) };
+              })
+            }
             text={draft.newStep}
             onText={(newStep) => setDraft((value) => ({ ...value, newStep }))}
           />
@@ -342,6 +352,19 @@ export function TaskEditorModal({
                   </Field>
                   <p className="mt-1 text-xs font-bold text-[var(--faint)]">{timerRunning && draft.status === "doing" ? TASK_EDITOR_TEXT.minutesRunning : TASK_EDITOR_TEXT.minutesHint}</p>
                 </div>
+              </div>
+
+              <div className="min-w-0">
+                <Field label={TASK_EDITOR_TEXT.weight}>
+                  <select className={inputClass} value={draft.weight} onChange={(event) => setDraft((value) => ({ ...value, weight: event.target.value }))}>
+                    {TASK_WEIGHTS.map((weight) => (
+                      <option key={weight} value={String(weight)}>
+                        {TASK_EDITOR_TEXT.weightOption[weight]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <p className="mt-1 text-xs font-bold text-[var(--faint)]">{draft.subjectId ? TASK_EDITOR_TEXT.weightHint : TASK_EDITOR_TEXT.weightNoSubject}</p>
               </div>
 
               <Field label="Tag (facoltativo, separati da virgola)">

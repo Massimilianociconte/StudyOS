@@ -136,6 +136,18 @@ const REPLACES_TEXT = " description e notes sostituiscono il testo intero: parti
 // Regola dello store (src/lib/subjectProgress.ts): vale per l'app e per gli agenti.
 const FULL_SUBJECT_TEXT =
   " Se con questa modifica il progresso della materia arriva al 100% (preparazione del primo esame da sostenere o, senza esami, tutte le sue task fatte), l'app segna la materia completed, con il voto da registrare (gradePending in studyos_list_subjects).";
+/** Peso della task nell'avanzamento della materia (src/lib/subjectProgress.ts). */
+const PROGRESS_WEIGHT = {
+  type: "integer",
+  enum: [0, 1, 2, 3],
+  description: "Peso nell'avanzamento della materia: 1 normale (predefinito, parti uguali), 2 doppio, 3 triplo, 0 non conta (ripasso, organizzazione)."
+} as const satisfies JsonSchema;
+/** Programma d'esame: in app diventa una pillola per voce e «Aggiungi al ripasso» ne fa un argomento ciascuna. */
+const PROGRAM_TEXT =
+  "Argomenti del programma, uno per voce, come titoli brevi (es. «Sistema nervoso centrale»): ogni voce diventa un argomento da ripassare. Non scriverci note, stati o resoconti: per quelli usa note dell'esame, task o studyos_create_note.";
+/** Sottotask e stato: stessa regola dell'app. */
+const STEPS_TEXT =
+  " Le sottotask contano nell'avanzamento della materia in proporzione (2 su 4 = metà della task). Spuntarle tutte segna la task done; toglierne una a una task done la riporta a todo, salvo uno status diverso nella stessa chiamata.";
 
 const objectSchema = (properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema => ({
   type: "object",
@@ -215,7 +227,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_get_subject",
     title: "Dettaglio materia",
-    description: "Legge una materia, incluse le note. Serve l'id restituito da studyos_list_subjects o studyos_search.",
+    description: "Legge una materia, incluse le note. Serve l'id restituito da studyos_list_subjects o studyos_search. progress ha tre indicatori distinti: activity (avanzamento automatico delle task, con le sottotask in proporzione; percent null senza task che contano), preparation (preparazione a mano del primo esame da sostenere, null senza esame) e review (argomenti da ripassare: total e due entro oggi). overall è la barra della scheda: la preparazione se c'è un esame, altrimenti activity.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ id: ID }, ["id"]),
@@ -304,14 +316,15 @@ const CORE_TOOLS: readonly AgentTool[] = [
       estimatedMinutes: { type: "integer", minimum: 0, maximum: 24 * 60, default: 0 },
       energy: { type: "string", enum: ["low", "medium", "high"], default: "medium" },
       difficulty: { type: "integer", minimum: 1, maximum: 5, default: 3 },
-      importance: { type: "integer", minimum: 1, maximum: 5, default: 3 }
+      importance: { type: "integer", minimum: 1, maximum: 5, default: 3 },
+      progressWeight: PROGRESS_WEIGHT
     }, ["title"]),
     summary: (args) => `Creare la task «${text(args.title, "senza titolo")}»`
   }),
   tool({
     name: "studyos_update_task",
     title: "Aggiorna task",
-    description: "Aggiorna i campi indicati. Cambiare status in doing o done aggiorna anche il timer interno della task, come nell'app. dueDate vuota toglie la scadenza. subtasks, se presente, sostituisce l'elenco." + FULL_SUBJECT_TEXT + REPLACES_TEXT,
+    description: "Aggiorna i campi indicati. Cambiare status in doing o done aggiorna anche il timer interno della task, come nell'app. dueDate vuota toglie la scadenza. subtasks, se presente, sostituisce l'elenco." + STEPS_TEXT + FULL_SUBJECT_TEXT + REPLACES_TEXT,
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
@@ -327,6 +340,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
       energy: { type: "string", enum: ["low", "medium", "high"] },
       difficulty: { type: "integer", minimum: 1, maximum: 5 },
       importance: { type: "integer", minimum: 1, maximum: 5 },
+      progressWeight: PROGRESS_WEIGHT,
       subtasks: {
         type: "array",
         maxItems: 40,
@@ -490,7 +504,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
     inputSchema: objectSchema({
       subjectId: ID,
       date: { type: "string", format: "date-time", description: WHEN },
-      program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 }, description: "Argomenti del programma." },
+      program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 }, description: PROGRAM_TEXT },
       preparation: { type: "integer", minimum: 0, maximum: 100, default: 0 },
       targetGrade: { type: "integer", minimum: 18, maximum: 30, default: 24 },
       status: { type: "string", enum: ["planning", "studying", "reviewing", "ready", "done"], default: "planning" }
@@ -506,7 +520,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
     inputSchema: objectSchema({
       id: ID,
       date: { type: "string", format: "date-time", description: WHEN },
-      program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 } },
+      program: { type: "array", maxItems: 80, items: { type: "string", minLength: 1, maxLength: 300 }, description: `${PROGRAM_TEXT} Sostituisce l'elenco intero.` },
       preparation: { type: "integer", minimum: 0, maximum: 100 },
       targetGrade: { type: "integer", minimum: 18, maximum: 30 },
       status: { type: "string", enum: ["planning", "studying", "reviewing", "ready", "done"] },

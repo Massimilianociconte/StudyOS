@@ -126,7 +126,7 @@ const SHARED_FIELDS: Record<string, readonly string[]> = {
   // destinazione di una vacanza). Restano fuori gli id interni (seriesId, splitFrom), l'impronta
   // repeatLegacy e la chiave d'importazione sourceRecurrenceId.
   calendarEvent: ["title", "description", "category", "priority", "start", "end", "allDay", "recurrence", "recurrenceUntil", "status", "checklist", "notes", "repeat", "timeZone", "originalDate", "cancelled", "occasion", "reminders", "location"],
-  task: ["title", "description", "priority", "dueDate", "status", "subtasks", "notes", "estimatedMinutes", "actualMinutes", "completedAt", "energy", "difficulty", "importance"],
+  task: ["title", "description", "priority", "dueDate", "status", "subtasks", "notes", "estimatedMinutes", "actualMinutes", "completedAt", "energy", "difficulty", "importance", "progressWeight"],
   // Origine (timer, cronometro…) e argomento: con i controlli dell'app (publicSharedItem, planSharedUpdate).
   studySession: ["title", "template", "plannedMinutes", "actualMinutes", "start", "end", "topics", "perceivedDifficulty", "focusLevel", "status", "notes", "source", "topicId"],
   studyTopic: ["title", "firstStudiedAt", "comprehension", "memorization", "difficulty", "nextReviewDate", "completedReviews", "lastReviewedAt", "questions", "notes"],

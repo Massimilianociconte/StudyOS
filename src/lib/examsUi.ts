@@ -16,6 +16,12 @@ export const resolveExamEditing = <T extends { id: string }>(value: unknown, exa
   return { exam, clear: exam === null };
 };
 
+/**
+ * Chiave condivisa: id della materia per cui aprire «Aggiungi esame» in Esami (ambito scheda), o null.
+ * La scrive il pannello dei progressi di una materia senza esame; Esami apre il modulo e la cancella.
+ */
+export const EXAMS_NEW_FOR_KEY = "exams.newFor";
+
 export type ExamRisk = "alto" | "medio" | null;
 
 /** "Sei indietro": meno di 10 giorni e sotto il 70%; "Un po' indietro": meno di 20 giorni e sotto il 55%. */
