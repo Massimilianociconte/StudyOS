@@ -2,6 +2,7 @@
 // interrotto su un altro dispositivo) e il ripasso o il quiz dei soli dubbi.
 import { resumePoint } from "../../lib/learnResume";
 import { preparedFromIds, prepareQuiz } from "../../lib/learnSession";
+import { sortByPosition } from "../../lib/learningModel";
 import { LEARN_TEXT, type QuizMode } from "../../lib/labels/learn";
 import type { DoubtItem } from "../../lib/learnMarks";
 import type { SavedAnswer } from "../../store/learning";
@@ -12,6 +13,13 @@ import { findCard, type LearnData } from "./useLearnData";
 
 /** Id del quiz misto sui dubbi: non è un quiz salvato, il tentativo lo porta solo come riferimento. */
 export const DOUBTS_QUIZ_ID = "doubts";
+
+/**
+ * Tutte le parti di un quiz in parti fatte insieme: il tentativo porta `set:` più la chiave del gruppo
+ * («set:deck:<id del mazzo>»), così ultimo e miglior punteggio e la ripresa restano del gruppo.
+ */
+export const SET_QUIZ_PREFIX = "set:";
+export const setQuizId = (key: string) => `${SET_QUIZ_PREFIX}${key}`;
 
 const QUIZ_MODE_OF_RUN: Partial<Record<StudyRunMode, QuizMode>> = { training: "training", exam: "exam", errors: "mistakes", random: "random" };
 
@@ -70,6 +78,26 @@ const mixedQuiz = (id: string, title: string, now: string): Quiz => ({
   tags: []
 });
 
+/** Tempo della simulazione di tutte le parti: la somma, solo se ogni parte ne ha uno. */
+export const setTimeLimit = (quizzes: readonly Pick<Quiz, "timeLimitMinutes">[]): number | undefined =>
+  quizzes.length && quizzes.every((quiz) => quiz.timeLimitMinutes && quiz.timeLimitMinutes > 0)
+    ? quizzes.reduce((sum, quiz) => sum + (quiz.timeLimitMinutes as number), 0)
+    : undefined;
+
+/** Il quiz (non salvato) che fa tutte le parti insieme. Senza mazzo: i dubbi segnati restano della domanda. */
+export const setQuiz = (key: string, title: string, options: { subjectId?: string; timeLimitMinutes?: number } = {}, now = new Date()): Quiz => ({
+  ...mixedQuiz(setQuizId(key), title, now.toISOString()),
+  ...(options.subjectId ? { subjectId: options.subjectId } : {}),
+  ...(options.timeLimitMinutes ? { timeLimitMinutes: options.timeLimitMinutes } : {})
+});
+
+/**
+ * Domande di tutte le parti, una parte dopo l'altra: le posizioni ripartono da 0 in ogni quiz, quindi
+ * si rinumerano, altrimenti l'ordine del quiz (allenamento) alternerebbe la prima di ogni parte.
+ */
+export const setQuestions = (parts: readonly (readonly QuizQuestion[])[]): QuizQuestion[] =>
+  parts.flatMap((questions) => sortByPosition(questions)).map((question, index) => ({ ...question, position: index }));
+
 /** Tentativo di quiz in pausa: stesse domande, stesso ordine delle risposte, risposte date e posizione. */
 export const resumeQuizPlay = (data: LearnData, run: StudyRun): QuizPlay | null => {
   const point = resumePoint(data.studyRuns, run);
@@ -80,10 +108,17 @@ export const resumeQuizPlay = (data: LearnData, run: StudyRun): QuizPlay | null 
   const prepared = preparedFromIds(questions, point.itemIds, { seed, shuffle });
   if (!prepared.length) return null;
   const known = run.quizId ? quizzes.get(run.quizId) : undefined;
-  const quiz = known?.quiz ?? mixedQuiz(run.quizId ?? DOUBTS_QUIZ_ID, run.title, run.startedAt);
+  let quiz = known?.quiz ?? mixedQuiz(run.quizId ?? DOUBTS_QUIZ_ID, run.title, run.startedAt);
+  // Quiz in parti in simulazione: il tempo è la somma di quello delle parti, come all'avvio.
+  if (!known && run.quizId?.startsWith(SET_QUIZ_PREFIX) && run.mode === "exam") {
+    const parts = [...new Set(prepared.map((item) => item.question.quizId))].map((id) => quizzes.get(id)?.quiz);
+    const minutes = parts.every(Boolean) ? setTimeLimit(parts as Quiz[]) : undefined;
+    if (minutes) quiz = { ...quiz, timeLimitMinutes: minutes };
+  }
   return {
     quiz,
-    prepared,
+    // Quiz misto: le posizioni seguono l'ordine del tentativo («Rifai» non mescola le parti tra loro).
+    prepared: known ? prepared : prepared.map((item, index) => ({ ...item, question: { ...item.question, position: index } })),
     mode: QUIZ_MODE_OF_RUN[run.mode] ?? "training",
     seed,
     shuffle,

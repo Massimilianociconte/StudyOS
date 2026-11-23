@@ -31,7 +31,7 @@ import { ProfileOnlineCard } from "../components/ProfileOnlineCard";
 const palettes: { id: PaletteName; label: string; colors: string[] }[] = [
   { id: "aurora", label: "Aurora scuro", colors: ["#7CF7C8", "#8B7CFF", "#FF7A8A"] },
   { id: "milk", label: "Bianco latte", colors: ["#4361EE", "#F4A261", "#2A9D8F"] },
-  { id: "space", label: "Spazio profondo", colors: ["#B8F7FF", "#C084FC", "#FF8FAB"] },
+  { id: "space", label: "Spazio profondo", colors: ["#FF8FAB", "#C084FC", "#B8F7FF"] },
   { id: "university", label: "Università", colors: ["#38BDF8", "#F97316", "#22C55E"] },
   { id: "forest", label: "Bosco calmo", colors: ["#8BD8BD", "#C6C267", "#FF8F70"] },
   { id: "sunset", label: "Tramonto", colors: ["#FF9F6E", "#FF6F91", "#7DD3FC"] },

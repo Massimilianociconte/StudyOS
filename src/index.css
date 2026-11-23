@@ -88,11 +88,17 @@
   --accent-ink: color-mix(in srgb, var(--accent) 55%, white);
 }
 
+/* Rosa come colore primario; il viola e l'azzurro di prima restano come secondo e terzo colore. */
 [data-palette="space"] {
-  --accent: #b8f7ff;
+  --accent: #ff8fab;
   --accent-2: #c084fc;
-  --accent-3: #ff8fab;
+  --accent-3: #b8f7ff;
   --warning: #f9c74f;
+}
+
+/* Nel tema chiaro il rosa come testo è un rosa lampone scuro (il verde scuro della base lo rendeva fangoso). */
+[data-palette="space"][data-theme="light"] {
+  --accent-ink: color-mix(in srgb, var(--accent) 45%, #3b0718);
 }
 
 [data-palette="university"] {

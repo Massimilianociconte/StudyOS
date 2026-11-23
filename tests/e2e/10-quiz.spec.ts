@@ -48,14 +48,14 @@ test("10 Alice crea un quiz a risposta singola, lo fa in allenamento e il risult
   await expect(player.getByText("100%")).toBeVisible();
   await player.getByRole("button", { name: "Chiudi", exact: true }).last().click();
   await expect(player).toBeHidden();
-  // La scheda del quiz mostra l'ultimo punteggio in evidenza (riquadro «Ultimo»).
-  const lastScore = (scope: Page) => scope.getByRole("listitem").filter({ hasText: quizTitle }).getByRole("definition").first();
-  await expect(lastScore(page)).toHaveText("100%");
+  // La riga del quiz mostra l'ultimo punteggio sotto il titolo («Ultimo 100%»).
+  const lastScore = (scope: Page) => scope.getByRole("listitem").filter({ hasText: quizTitle }).getByText(/^Ultimo /).first();
+  await expect(lastScore(page)).toHaveText("Ultimo 100%");
   await waitSynced(page);
 
   // Il tentativo è salvato: dopo un ricaricamento il punteggio c'è ancora.
   await page.reload();
   await goTo(page, "Ripasso");
   await learnTab(page, "Quiz");
-  await expect(lastScore(page)).toHaveText("100%", ACROSS);
+  await expect(lastScore(page)).toHaveText("Ultimo 100%", ACROSS);
 });

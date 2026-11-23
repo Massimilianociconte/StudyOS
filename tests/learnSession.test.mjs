@@ -1,7 +1,7 @@
 // Logica pura della sezione Ripasso: albero, coda della sessione, quiz mescolati, ultimi errori.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDeckTree, buildQueue, cardsInDecks, clockText, filterCounts, flattenTree, lastMistakes, nextDueDay, nextWaits, percent, prepareQuiz, reviewAnswers, waitLabel } from "../src/lib/learnSession.ts";
+import { buildDeckTree, buildQueue, cardsInDecks, clockText, filterCounts, flattenTree, answeredQuestions, lastMistakes, latestMistakes, nextDueDay, nextWaits, percent, prepareQuiz, reviewAnswers, waitLabel } from "../src/lib/learnSession.ts";
 
 const stamp = { createdAt: "2026-11-01T08:00:00.000Z", updatedAt: "2026-11-01T08:00:00.000Z", archived: false, tags: [] };
 const now = new Date("2026-11-16T10:00:00");
@@ -126,4 +126,33 @@ test("quiz: opzioni malformate (righe scritte fuori dall'app) restano fuori da d
   const [noList] = prepareQuiz([{ ...question, options: "x" }], { seed: 1 });
   assert.deepEqual(noList.options, []);
   assert.equal(reviewAnswers([prepared], new Map([["q1", ["a"]]]))[0].outcome, "correct");
+});
+
+test("ultimi errori: un tentativo oltre 400 risposte continua in altre righe e si legge tutto", () => {
+  const ended = "2026-11-20T08:00:00.000Z";
+  const runs = [
+    // Prima riga del tentativo (con le domande) e la continuazione: stesso quiz, stessa fine, niente domande.
+    { id: "head", kind: "quiz", quizId: "big", itemIds: ["q1", "q2", "q3", "q4"], events: [{ i: "q1", r: "correct" }, { i: "q2", r: "wrong" }], endedAt: ended, score: 0.5, ...stamp },
+    { id: "tail", kind: "quiz", quizId: "big", continuesId: "head", itemIds: [], events: [{ i: "q3", r: "correct" }, { i: "q4", r: "skip" }], endedAt: ended, ...stamp }
+  ];
+  assert.deepEqual([...lastMistakes(runs, "big")].sort(), ["q2", "q4"]);
+  assert.deepEqual([...lastMistakes([...runs].reverse(), "big")].sort(), ["q2", "q4"], "l'ordine delle righe non conta");
+});
+
+test("errori delle parti insieme: l'ultima risposta a ogni domanda, in qualunque tentativo; le mai fatte non contano", () => {
+  const runs = [
+    { id: "p1", kind: "quiz", quizId: "parte1", itemIds: ["a", "b"], events: [{ i: "a", r: "wrong" }, { i: "b", r: "wrong" }], endedAt: "2026-11-10T08:00:00.000Z", ...stamp },
+    { id: "all", kind: "quiz", quizId: "set:deck:v", itemIds: ["a", "c"], events: [{ i: "a", r: "correct" }, { i: "c", r: "skip" }], endedAt: "2026-11-12T08:00:00.000Z", ...stamp },
+    { id: "open", kind: "quiz", quizId: "parte1", itemIds: ["b"], events: [{ i: "b", r: "correct" }], ...stamp }
+  ];
+  assert.deepEqual([...latestMistakes(runs, ["a", "b", "c", "d"])].sort(), ["b", "c"], "b: l'unica risposta conclusa è sbagliata; il tentativo aperto non conta");
+});
+
+test("domande fatte: risposte (giuste o sbagliate) in tentativi conclusi di qualunque quiz, anche tutte le parti insieme", () => {
+  const runs = [
+    { id: "all", kind: "quiz", quizId: "set:deck:v", itemIds: ["a", "b", "c"], events: [{ i: "a", r: "correct" }, { i: "b", r: "wrong" }, { i: "c", r: "skip" }], endedAt: "2026-11-12T08:00:00.000Z", ...stamp },
+    { id: "open", kind: "quiz", quizId: "parte", itemIds: ["d"], events: [{ i: "d", r: "correct" }], ...stamp },
+    { id: "cards", kind: "flashcards", itemIds: ["e"], events: [{ i: "e", r: "correct" }], endedAt: "2026-11-12T08:00:00.000Z", ...stamp }
+  ];
+  assert.deepEqual([...answeredQuestions(runs)].sort(), ["a", "b"], "saltate, tentativi aperti e flashcard non contano");
 });

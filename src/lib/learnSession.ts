@@ -241,15 +241,55 @@ export interface PreparedQuestion {
   options: QuizQuestion["options"];
 }
 
-/** Domande sbagliate o lasciate vuote nell'ultimo tentativo concluso di un quiz. */
+/**
+ * Domande sbagliate o lasciate vuote nell'ultimo tentativo concluso di un quiz. Un tentativo con più
+ * di 400 risposte continua in altre righe (`continuesId`, stesso quiz e stessa fine): l'ultimo
+ * tentativo è la sua prima riga, e le risposte si leggono su tutta la catena.
+ */
 export const lastMistakes = (runs: readonly StudyRun[], quizId: string): Set<string> => {
-  const last = runs
-    .filter((run) => run.kind === "quiz" && run.quizId === quizId && run.endedAt)
+  const mine = runs.filter((run) => run.kind === "quiz" && run.quizId === quizId && run.endedAt);
+  const last = mine
+    .filter((run) => !run.continuesId)
     .sort((a, b) => (a.endedAt as string).localeCompare(b.endedAt as string))
     .at(-1);
   if (!last) return new Set();
-  const right = new Set(last.events.filter((event) => event.r === "correct").map((event) => event.i));
+  const next = new Map(mine.filter((run) => run.continuesId).map((run) => [run.continuesId as string, run]));
+  const right = new Set<string>();
+  const seen = new Set<string>();
+  for (let row: StudyRun | undefined = last; row && !seen.has(row.id); row = next.get(row.id)) {
+    seen.add(row.id);
+    for (const event of row.events) if (event.r === "correct") right.add(event.i);
+  }
   return new Set(last.itemIds.filter((id) => !right.has(id)));
+};
+
+/**
+ * Domande che l'ultima volta (in qualunque tentativo concluso: la parte da sola o tutto il quiz in
+ * parti) sono state sbagliate o lasciate vuote. Quelle mai fatte non contano come errori.
+ */
+export const latestMistakes = (runs: readonly StudyRun[], questionIds: Iterable<string>): Set<string> => {
+  const wanted = new Set(questionIds);
+  const latest = new Map<string, { at: string; correct: boolean }>();
+  for (const run of runs) {
+    if (run.kind !== "quiz" || !run.endedAt) continue;
+    for (const event of run.events) {
+      if (!wanted.has(event.i)) continue;
+      const known = latest.get(event.i);
+      if (known && known.at > run.endedAt) continue;
+      latest.set(event.i, { at: run.endedAt, correct: event.r === "correct" });
+    }
+  }
+  return new Set([...latest].filter(([, entry]) => !entry.correct).map(([id]) => id));
+};
+
+/**
+ * Domande a cui hai risposto (giusto o sbagliato, non saltate) in un tentativo concluso, di qualunque
+ * quiz: una parte è fatta anche se l'hai fatta dentro tutte le parti insieme.
+ */
+export const answeredQuestions = (runs: readonly StudyRun[]): Set<string> => {
+  const out = new Set<string>();
+  for (const run of runs) if (run.kind === "quiz" && run.endedAt) for (const event of run.events) if (event.r !== "skip") out.add(event.i);
+  return out;
 };
 
 /** Domande di un tentativo: ordine e opzioni mescolati con lo stesso seme (riproducibile). */
