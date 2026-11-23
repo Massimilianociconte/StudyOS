@@ -37,7 +37,7 @@ export const AGENT_DESK_TEXT = {
     badge: "Consigliato, anche da telefono",
     what: "Fa lavorare ChatGPT o Claude sui dati del tuo account salvati nel cloud, anche quando StudyOS è chiuso, dal computer o dal telefono.",
     noConfirm:
-      "Non ti chiede conferma nell'app: modifiche ed eliminazioni partono subito, con i permessi che scegli la prima volta con «Consenti».",
+      "Sui tuoi dati non ti chiede conferma nell'app: modifiche ed eliminazioni partono subito, con i permessi che scegli la prima volta con «Consenti». Condividere qualcosa con altre persone, cambiare una condivisione o i dati che altri condividono con te chiede sempre la tua conferma qui: ti arriva una notifica.",
     howTo:
       "ChatGPT o Claude: aggiungi un connettore con questo indirizzo. La prima volta l'assistente apre una pagina: tocca «Conferma in StudyOS», fai l'accesso al tuo account se serve e premi «Consenti». Non serve collegare il browser né tenere l'app aperta.",
     noName: "Per avere il tuo indirizzo scrivi il tuo nome nel profilo: l'indirizzo finisce con /u/il-tuo-nome/mcp.",
@@ -86,7 +86,7 @@ export const AGENT_DESK_TEXT = {
   advancedHint: "Regole di conferma, modifiche senza conferma per 15 minuti, più persone e «Scollega gli assistenti di tutti», ultime azioni.",
   rulesTitle: "Cosa può fare un assistente",
   rulesBody:
-    "Con «Collega ChatGPT o Claude» l'assistente all'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero. Condividere i tuoi dati con altre persone, o cambiare una condivisione, chiede sempre la tua conferma. Il connettore remoto non segue queste regole: non chiede conferme.",
+    "Con «Collega ChatGPT o Claude» l'assistente all'inizio può leggere liberamente e ti chiede conferma per tutto il resto. Solo tu puoi cambiare queste regole, non l'assistente. Con «Consenti» sulle eliminazioni, cancella senza chiederti nulla: sceglilo solo se lo vuoi davvero. Condividere i tuoi dati con altre persone, o cambiare una condivisione, chiede sempre la tua conferma. Il connettore remoto non segue queste regole: chiede conferma solo per le condivisioni.",
   trustWrites: "Consenti le modifiche per 15 minuti",
   trustBack: "Torna a chiedere conferma",
   trustedUntil: (time: string) =>

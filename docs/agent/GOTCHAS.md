@@ -756,3 +756,23 @@
   prima: chiudere un drawer fa Indietro nella cronologia (`drawerHistory`) e annulla la navigazione.
   Il consenso dal sito toglie la richiesta con `clearSiteConsent(false)` e resta aperto fino all'hub.
 
+- Test con `node --import register-ts`: il caricatore non accetta le parameter properties di
+  TypeScript (`constructor(message: string, readonly code: string)`): dichiara il campo e assegnalo
+  nel costruttore. Un modulo che legge `import.meta.env` al primo livello (es. `cloudSyncState.ts`)
+  non si importa nei test: metti la logica pura in un file a parte (`timerCloudPlan.ts`).
+- Connettore remoto alla pari (`agent-parity.sql`): una funzione definer che scrive con una funzione
+  dell'app e poi rilegge la riga deve rileggerla in un'istruzione separata (funzione `volatile`):
+  una funzione `stable` o la stessa istruzione vede lo snapshot di prima della scrittura.
+- Controlli `jsonb_typeof(x) = 'object'` in SQL: con `x` null danno null, non false; avvolgili in
+  `coalesce(…, false)` prima di usarli in un `if not`.
+- Ogni nuova funzione chiamabile da `anon` va aggiunta alla lista degli ingressi permessi di
+  `supabase/verify.sql`, altrimenti `security_issues` la segnala; ogni nuova tabella con dati
+  dell'account va aggiunta alla cancellazione in `schema.sql` (con `to_regclass`, perché lo script
+  può essere eseguito prima di quello che la crea).
+- Il Worker dell'hub non ha IndexedDB: niente Dexie nei moduli che `cloudRunner.ts` importa; durante
+  una chiamata l'hub sostituisce `groupExamWriterLoader.load` e `groupSyncLoader.load` e li rimette
+  nel `finally`, insieme allo store condiviso e al timer: un nuovo store toccato dagli strumenti va
+  azzerato lì, o resta tra due account.
+- Gli strumenti di condivisione che il connettore remoto fa confermare nell'app sono elencati in due
+  posti: `studyos_agent_deferred_tool` (`agent-parity.sql`) e `CLOUD_DEFERRED`
+  (`src/agent/cloudDeferred.ts`). `tests/agentParity.test.mjs` li confronta: cambiali insieme.

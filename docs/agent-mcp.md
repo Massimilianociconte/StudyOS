@@ -60,7 +60,10 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.11.0 (`/health` la mostra dopo il deploy). La 1.11.0 fa confermare il connettore remoto
+versione 1.12.0 (`/health` la mostra dopo il deploy). La 1.12.0 porta il connettore remoto alla
+pari del principale: stessi strumenti (gruppi, bacheca e risorse, appelli dei gruppi, dati condivisi,
+cronometro, `studyos_approval_status`, `studyos_list_accounts`), con le condivisioni confermate
+nell'app (vedi «Connettore remoto di un solo account»). La 1.11.0 fa confermare il connettore remoto
 dal sito di StudyOS, su qualsiasi dispositivo e senza browser collegato all'hub (vedi «Connettore
 remoto di un solo account»), dà 60 secondi di tolleranza al rinnovo ripetuto dei token, mette un
 tetto agli esiti salvati nello snapshot dell'hub e nel messaggio «non collegato» di `/mcp` rimanda al
@@ -313,7 +316,7 @@ dove `<nome>` è il nome del profilo con i trattini al posto degli spazi, per es
 accenti e ordine delle parole non contano).
 
 In **Impostazioni → Agenti** del sito pubblicato il riquadro «Connettore remoto (app chiusa)»
-dice cosa fa, avvisa che non chiede conferme nell'app, mostra questo indirizzo con il nome
+dice cosa fa, avvisa che sui dati dell'account non chiede conferme nell'app (le condivisioni sì), mostra questo indirizzo con il nome
 del profilo, pronto da copiare, e ha «Scollega il connettore remoto». Senza nome nel profilo
 chiede di scriverlo; se `/health` dice `cloud: false` spiega che chi gestisce StudyOS deve
 attivarlo; nella finestra di sviluppo rimanda al sito pubblicato.
@@ -376,24 +379,62 @@ lezione alle 9 resta alle 9 dopo il cambio d'ora. L'app vede le modifiche alla s
 
 Differenze dal primo connettore:
 
-- Nessuna conferma nell'app: il consenso iniziale vale per tutte le azioni dello scope
-  scelto. Le eliminazioni chiedono comunque `confirm: true`.
+- Sui dati dell'account nessuna conferma nell'app: il consenso iniziale vale per tutte le azioni
+  dello scope scelto. Le eliminazioni chiedono comunque `confirm: true`. Le condivisioni chiedono
+  sempre conferma nell'app (vedi sotto).
 - Gli strumenti non hanno il parametro `account`: il connettore è già legato a un account.
-- Non ci sono gli strumenti dei dati condivisi, i gruppi (elenco, bacheca e risorse), il
-  cronometro, `studyos_approval_status` e `studyos_list_accounts`. `studyos_list_audit` c'è dalla
-  1.8.0, ma legge il registro del server (vedi sotto); in più c'è `studyos_restore_change`.
-  I gruppi condivisi stanno nelle tabelle dei gruppi e non nel cloud personale che l'hub legge:
-  da lì si vedrebbe una copia vecchia. Panoramica e ricerca remote non contano i gruppi.
-- Appelli dei gruppi: si leggono (snapshot del server a ogni chiamata, `studyos_agent_group_snapshot`),
-  si scelgono nel piano e si controllano; aggiungerli, modificarli, eliminarli, leggerne la cronologia e
-  correggere il catalogo (`CLOUD_UNAVAILABLE`) richiedono il connettore principale. Registro e
-  ripristino del piano d'esame riducono l'elemento a gruppo, data, tipo, ora e versione. Nel controllo di
-  coerenza i suggerimenti nominano solo strumenti che il remoto ha.
+  `studyos_list_accounts` risponde con quel solo account.
+- `studyos_list_audit` c'è dalla 1.8.0, ma legge il registro del server (vedi sotto); in più c'è
+  `studyos_restore_change`. Per il resto, dalla 1.12.0, gli strumenti sono gli stessi del principale
+  (`CLOUD_UNAVAILABLE` è vuoto).
 - File, copertine e foto non arrivano all'hub. Quando l'hub modifica un elemento, il
   database li rimette dalla riga attuale.
 - Se l'app ha cambiato lo stesso elemento dopo l'ultima lettura dell'hub, la scrittura è
   rifiutata: la risposta è un errore di conflitto, l'hub rilegge i dati e l'azione si può
   ripetere.
+
+### Alla pari del principale (1.12.0)
+
+Serve `supabase/agent-parity.sql` (vedi `supabase/README.md`). L'hub non ha la sessione della
+persona: le funzioni `studyos_agent_*` di quel file controllano il segreto del permesso e poi, con
+`studyos_agent_act_as`, impostano per la sola transazione l'identità della persona. Così le stesse
+funzioni dei gruppi che usa l'app girano invariate, con le stesse regole; le letture ripetono i
+filtri delle policy (membri senza email, gruppi senza codice di invito, dati condivisi filtrati da
+`studyos_item_access`, nessun indirizzo email di destinatari o inviti).
+
+- **Gruppi, bacheca e risorse.** `studyos_list_groups`, `studyos_list_group_board`,
+  `studyos_add_group_resource` e `studyos_delete_group_resource` leggono e scrivono le tabelle dei
+  gruppi (`studyos_agent_groups`, `studyos_agent_add_group_resource`…), non la copia vecchia del cloud
+  personale. Una risorsa che il server dei gruppi non accetta non viene salvata: la risposta lo dice.
+  Anche `studyos_status` e `studyos_add_link` leggono i gruppi, ma se la lettura non riesce rispondono
+  con i soli dati personali, come l'app.
+- **Appelli dei gruppi.** Creare, modificare ed eliminare appelli, leggerne la cronologia, ripristinare
+  una modifica e correggere il catalogo passano dalle funzioni dell'app (`save_group_exam_session`…)
+  con lo snapshot del server preso a ogni chiamata; `expectedVersion` e le regole di conflitto sono le
+  stesse.
+- **Dati condivisi.** `studyos_list_shares` e `studyos_list_shared_items` leggono
+  `studyos_agent_sharing`. Panoramica (eventi di oggi dei calendari condivisi) e flashcard/quiz (raccolte
+  condivise) li aggiungono quando ci sono. Dare, cambiare o togliere una condivisione e scrivere dati
+  che altre persone condividono (`studyos_share_with`, `studyos_update_share`, `studyos_revoke_share`,
+  `studyos_create_shared_item`, `studyos_update_shared_item`, `studyos_delete_shared_item`) diventano
+  una **richiesta da confermare nell'app**: l'hub la scrive in `studyos_agent_requests` e manda una
+  notifica push (tipo `agent`, apre `?apri=agenti`). StudyOS, aperto su qualsiasi dispositivo con
+  l'accesso fatto, mostra lo stesso dialogo del connettore principale e, se la persona consente,
+  esegue l'azione con la propria sessione e scrive l'esito. L'hub aspetta fino a circa 20 secondi;
+  poi risponde `pending_approval` con `approvalId`, e l'agente legge l'esito con
+  `studyos_approval_status`. Le richieste non confermate scadono dopo 30 minuti; una richiesta
+  consentita di cui l'app non riporta l'esito entro 15 minuti si chiude come fallita, con l'invito a
+  controllare nell'app prima di riprovare. Al più 20 richieste in attesa e 30 nuove all'ora per
+  account.
+- **Cronometro.** Il timer di studio sta anche nel cloud dell'account (`studyos_timer_states`, una
+  riga per persona): `studyos_timer_status` lo legge, `studyos_timer_control` lo cambia. Vince lo stato
+  con `changedAt` più recente, come tra due schede; se nel frattempo un dispositivo l'ha cambiato,
+  la risposta dice che c'è stato un conflitto e non scrive niente. L'app lo legge all'avvio, quando
+  torna visibile e ogni 30 secondi, e manda le sue modifiche dopo poco più di un secondo. Ogni
+  dispositivo ricorda di quale account è il suo timer: un timer di un altro account resta lì ma non
+  finisce nel cloud di questo.
+- Le chiamate dell'hub si eseguono una alla volta per tutti gli account; le richieste da confermare e
+  `studyos_approval_status` girano fuori da questa fila, per non bloccare gli altri.
 
 ### Registro e ripristino del connettore remoto
 
@@ -609,7 +650,9 @@ Free: circa 0,3 ms per iscrizione) e al massimo 40 per i promemoria (un account 
 iscrizioni). Tipi accettati: `invite`, `accepted`,
 `permission` (da `studyos_push_notify`, `people.sql`) e `reminder` (promemoria con l'app chiusa,
 da `studyos_push_due_reminders`, `push-reminders.sql`, una richiesta per promemoria e per
-account). Il corpo può arrivare a `MAX_PUSH_BODY_BYTES` (≈ 620 kB): ci sta sempre un lotto pieno
+account) e, dalla 1.12.0, `agent` (una condivisione chiesta dal connettore remoto da confermare,
+da `studyos_agent_request_push`, `agent-parity.sql`: «Conferma in StudyOS», apre `?apri=agenti`,
+al massimo 15 iscrizioni per volta). Il corpo può arrivare a `MAX_PUSH_BODY_BYTES` (≈ 620 kB): ci sta sempre un lotto pieno
 di iscrizioni al limite del database anche con l'escape JSON più lungo, così le iscrizioni
 strane di un account non fanno respingere (413) le notifiche degli altri dello stesso lotto;
 gli endpoint non `https://` o non ASCII si scartano uno per uno. Ogni iscrizione porta anche

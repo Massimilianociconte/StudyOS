@@ -29,6 +29,19 @@ avevi già applicato, **rieseguilo dopo la revisione dell'08/10/2026** (vedi
 passano dalla conferma email, tra i Redirect URLs aggiungi anche
 `https://massimilianociconte.github.io/StudyOS/**`.
 
+**Connettore remoto alla pari, 1.12.0 (23/11/2026): esegui `agent-parity.sql`, riesegui
+`schema.sql`, poi `agent-parity-verify.sql` e `verify.sql`.** `agent-parity.sql` va dopo
+`schema.sql`, `groups.sql`, `sharing.sql`, `people.sql`, `group-exams.sql` e `agent.sql`; è
+rieseguibile e aggiunge solo funzioni e due tabelle (`studyos_agent_requests`, le condivisioni chieste
+dal connettore remoto da confermare nell'app, e `studyos_timer_states`, il timer di studio
+dell'account), senza cambiare quelle esistenti. `schema.sql` rieseguito fa togliere anche queste due
+tabelle a «Elimina account e dati». Attesi: in `agent-parity-verify.sql` ogni `*_ready` `true`; in
+`verify.sql` ogni `*_ready` `true` e `security_issues` vuoto (la lista degli ingressi per `anon`
+comprende i 15 nuovi). Poi il sito, poi il Worker 1.12.0. Un Worker 1.12.0 senza
+`agent-parity.sql` risponde `not_connected` agli strumenti nuovi (gruppi, condivisioni, cronometro) e
+lavora come prima sul resto. Applicati al progetto reale il 23/11/2026. Dettagli in
+[docs/agent-mcp.md](../docs/agent-mcp.md) («Alla pari del principale»).
+
 **Flashcard, quiz e connettore 1.10.0 (16/11/2026): riesegui `sharing.sql`, `people.sql`,
 `agent.sql`, poi i verify.** Nessuna tabella nuova: raccolte, schede, quiz, stati di ripasso e
 richieste agli agenti sono righe di `studyos_items` come le altre. Cosa cambia:
