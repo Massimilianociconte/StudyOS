@@ -15,6 +15,7 @@ import { pushPrivateOf } from "./lib/pushLocal";
 import { useViewMemory } from "./lib/uiState";
 import { useGroupInviteLinks } from "./hooks/useGroupInviteLinks";
 import { useShareInviteLinks } from "./hooks/useShareInviteLinks";
+import { useSiteConsentLinks } from "./hooks/useSiteConsentLinks";
 import { useOpenLink } from "./hooks/useOpenLink";
 import type { AppView } from "./types";
 
@@ -73,6 +74,7 @@ export default function App() {
   useGroupInviteLinks(!loading && !locked && !error);
   // Link/QR di condivisione: apre Condivisione sulla scheda dell'invito.
   useShareInviteLinks(!loading && !locked && !error);
+  useSiteConsentLinks();
   // Notifica push toccata: ?apri=notifiche|condivisione|gruppi|calendario apre la pagina giusta.
   useOpenLink(!loading && !locked && !error);
 

@@ -68,6 +68,17 @@ const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Consenso in attesa: la pagina /authorize e il cookie durano altrettanto (httpHub). */
 export const REQUEST_TTL_MS = 5 * 60 * 1000;
 /**
+ * Consenso di un connettore remoto: si conferma anche dal sito di StudyOS, magari dal telefono e
+ * dopo l'accesso all'account, quindi resta aperto di più.
+ */
+export const CLOUD_REQUEST_TTL_MS = 15 * 60 * 1000;
+/**
+ * Un refresh token appena ruotato vale ancora per poco: un client che ripete il rinnovo (risposta
+ * persa, due richieste insieme) riceve una nuova coppia invece di `invalid_grant`, che chiederebbe
+ * un nuovo consenso. Scaduta la finestra, il token vecchio non vale più.
+ */
+export const REFRESH_GRACE_MS = 60_000;
+/**
  * /register e /authorize sono aperti a chiunque: limiti perché non si riempiano per sempre.
  * - Client registrati: al limite si tolgono quelli senza token, consensi o codici, dal più vecchio,
  *   ma non nei 2 minuti dopo la registrazione; una registrazione mai usata scade dopo 24 ore.
@@ -160,6 +171,8 @@ export interface PersistedOauth {
   clients: OAuthClient[];
   access: Array<{ hash: string; record: AccessRecord }>;
   refresh: Array<{ hash: string; record: RefreshRecord }>;
+  /** Refresh appena ruotati, validi fino a `until` (REFRESH_GRACE_MS). Assente negli stati di prima. */
+  rotated?: Array<{ hash: string; record: RefreshRecord; until: number }>;
 }
 
 /**
@@ -177,6 +190,7 @@ export class OauthServer {
   private codes = new Map<string, { request: AuthRequest; scopes: AgentDataScope[]; expiresAt: number; used: boolean }>();
   private access = new Map<string, AccessRecord>();
   private refresh = new Map<string, RefreshRecord>();
+  private rotated = new Map<string, { record: RefreshRecord; until: number }>();
 
   constructor(canonical: string, now: () => number = () => Date.now()) {
     this.canonical = canonical;
@@ -210,6 +224,7 @@ export class OauthServer {
     this.clients = new Map(state.clients.map((client) => [client.clientId, client]));
     this.access = new Map(state.access.map((item) => [item.hash, item.record]));
     this.refresh = new Map(state.refresh.map((item) => [item.hash, item.record]));
+    this.rotated = new Map((Array.isArray(state.rotated) ? state.rotated : []).map((item) => [item.hash, { record: item.record, until: item.until }]));
     // Stati salvati prima di `usedAt`: un client con token è stato usato.
     for (const record of [...this.access.values(), ...this.refresh.values()]) {
       const client = this.clients.get(record.clientId);
@@ -222,8 +237,14 @@ export class OauthServer {
     return {
       clients: [...this.clients.values()],
       access: [...this.access.entries()].map(([hash, record]) => ({ hash, record })),
-      refresh: [...this.refresh.entries()].map(([hash, record]) => ({ hash, record }))
+      refresh: [...this.refresh.entries()].map(([hash, record]) => ({ hash, record })),
+      rotated: [...this.rotated.entries()].map(([hash, item]) => ({ hash, record: item.record, until: item.until }))
     };
+  }
+
+  /** Durata di un consenso in attesa: più lunga per un connettore remoto (si conferma anche dal sito). */
+  requestTtl(resource: string) {
+    return this.isCloudResource(resource) ? CLOUD_REQUEST_TTL_MS : REQUEST_TTL_MS;
   }
 
   register(body: unknown, now = this.now()): { ok: true; client: OAuthClient } | { ok: false; error: string; status: number } {
@@ -299,7 +320,7 @@ export class OauthServer {
       state: query.get("state") ?? undefined,
       resource,
       scopes,
-      expiresAt: now + REQUEST_TTL_MS
+      expiresAt: now + this.requestTtl(resource)
     });
     return { ok: true, requestId, clientName: client.clientName, scopes, redirectHost: new URL(redirect).host, resource };
   }
@@ -312,7 +333,15 @@ export class OauthServer {
   pendingConsent(requestId: string, now = this.now()) {
     const request = this.requests.get(requestId);
     if (!request || request.expiresAt <= now) return null;
-    return { requestId, clientName: request.clientName, scopes: request.scopes, redirectHost: new URL(request.redirectUri).host, decided: Boolean(request.decision), resource: request.resource };
+    return {
+      requestId,
+      clientName: request.clientName,
+      scopes: request.scopes,
+      redirectHost: new URL(request.redirectUri).host,
+      decided: Boolean(request.decision),
+      resource: request.resource,
+      expiresAt: request.expiresAt
+    };
   }
 
   /**
@@ -387,6 +416,7 @@ export class OauthServer {
   revokeAll() {
     this.access.clear();
     this.refresh.clear();
+    this.rotated.clear();
     this.codes.clear();
     this.requests.clear();
     this.clients.clear();
@@ -413,10 +443,15 @@ export class OauthServer {
           store.delete(hash);
           touched.add(record.clientId);
           revoked.add(grant);
-        } else if (!record.approver) {
+        } else if (!record.approver && !record.cloud) {
+          // Connettore remoto confermato dal sito (senza browser collegato): si revoca togliendo il
+          // permesso cloud del suo account, non conta tra quelli «di prima».
           legacy.add(grant);
         }
       }
+    }
+    for (const [hash, item] of this.rotated) {
+      if (inScope(item.record.resource) && item.record.approver === approver) this.rotated.delete(hash);
     }
     for (const [code, stored] of this.codes) {
       if (!inScope(stored.request.resource) || stored.request.decision?.approver !== approver) continue;
@@ -437,13 +472,15 @@ export class OauthServer {
   async revokeToken(raw: string, clientId?: string) {
     if (!raw) return;
     const hash = await sha256Base64Url(raw);
-    const record = this.access.get(hash) ?? this.refresh.get(hash);
+    const record = this.access.get(hash) ?? this.refresh.get(hash) ?? this.rotated.get(hash)?.record;
     if (!record || (clientId && record.clientId !== clientId)) return;
     this.access.delete(hash);
     this.refresh.delete(hash);
+    this.rotated.delete(hash);
     if (!record.family) return;
     for (const [key, item] of this.access) if (item.family === record.family) this.access.delete(key);
     for (const [key, item] of this.refresh) if (item.family === record.family) this.refresh.delete(key);
+    for (const [key, item] of this.rotated) if (item.record.family === record.family) this.rotated.delete(key);
   }
 
   private async exchangeCode(form: URLSearchParams, client: OAuthClient, now: number, target: string | undefined) {
@@ -466,10 +503,12 @@ export class OauthServer {
   private async exchangeRefresh(form: URLSearchParams, client: OAuthClient, now: number, target: string | undefined) {
     const raw = form.get("refresh_token") ?? "";
     const hash = await sha256Base64Url(raw);
-    const stored = this.refresh.get(hash);
+    // Ruotato da meno di REFRESH_GRACE_MS (rinnovo ripetuto): una coppia nuova della stessa concessione.
+    const recent = this.refresh.has(hash) ? undefined : this.rotated.get(hash);
+    const stored = this.refresh.get(hash) ?? (recent && recent.until > now ? recent.record : undefined);
     if (!stored || stored.expiresAt <= now || stored.clientId !== client.clientId) return { ok: false as const, status: 400, error: "invalid_grant" };
     if (target && target !== (stored.resource || this.canonical)) return { ok: false as const, status: 400, error: "invalid_target" };
-    this.refresh.delete(hash);
+    if (this.refresh.delete(hash)) this.rotated.set(hash, { record: stored, until: now + REFRESH_GRACE_MS });
     return { ok: true as const, body: await this.issue(client, stored.scopes, now, stored.family, stored.resource || this.canonical, stored.cloud, stored.approver) };
   }
 
@@ -513,6 +552,7 @@ export class OauthServer {
     for (const [code, stored] of this.codes) if (stored.expiresAt <= now || stored.used) this.codes.delete(code);
     for (const [hash, record] of this.access) if (record.expiresAt <= now) this.access.delete(hash);
     for (const [hash, record] of this.refresh) if (record.expiresAt <= now) this.refresh.delete(hash);
+    for (const [hash, item] of this.rotated) if (item.until <= now || item.record.expiresAt <= now) this.rotated.delete(hash);
     const busy = this.busyClients();
     for (const [id, client] of this.clients) {
       if (!client.usedAt && !busy.has(id) && !(now - Date.parse(client.createdAt) < UNUSED_CLIENT_TTL_MS)) this.clients.delete(id);

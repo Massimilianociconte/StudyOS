@@ -34,12 +34,12 @@ export const AGENT_DESK_TEXT = {
 
   remote: {
     title: "Connettore remoto (app chiusa)",
-    what: "Fa lavorare ChatGPT o Claude sui dati del tuo account salvati nel cloud, anche quando StudyOS è chiuso.",
+    badge: "Consigliato, anche da telefono",
+    what: "Fa lavorare ChatGPT o Claude sui dati del tuo account salvati nel cloud, anche quando StudyOS è chiuso, dal computer o dal telefono.",
     noConfirm:
       "Non ti chiede conferma nell'app: modifiche ed eliminazioni partono subito, con i permessi che scegli la prima volta con «Consenti».",
     howTo:
-      "ChatGPT o Claude: aggiungi un connettore con questo indirizzo. La prima volta la richiesta di accesso compare qui, e serve l'accesso al tuo account (Impostazioni → Account e sincronizzazione).",
-    pairFirst: "Prima collega questo browser qui sopra: la richiesta di accesso arriva qui.",
+      "ChatGPT o Claude: aggiungi un connettore con questo indirizzo. La prima volta l'assistente apre una pagina: tocca «Conferma in StudyOS», fai l'accesso al tuo account se serve e premi «Consenti». Non serve collegare il browser né tenere l'app aperta.",
     noName: "Per avere il tuo indirizzo scrivi il tuo nome nel profilo: l'indirizzo finisce con /u/il-tuo-nome/mcp.",
     noHub: "L'indirizzo compare quando apri StudyOS dal sito pubblicato. In questa finestra di sviluppo il connettore remoto non si usa.",
     off: "Su questo collegamento il connettore remoto non è ancora attivo: chiedi a chi gestisce StudyOS di attivarlo.",
@@ -93,4 +93,35 @@ export const AGENT_DESK_TEXT = {
     `Modifiche senza conferma fino alle ${time}. Le eliminazioni e le condivisioni chiedono ancora conferma.`,
   activityTitle: "Ultime azioni",
   activityEmpty: "Ancora nessuna azione. Qui vedrai cosa fanno gli assistenti; l'elenco resta solo in questo browser."
+} as const;
+
+/** Conferma del connettore remoto dal sito (#collega=…), anche senza browser collegato all'hub. */
+export const SITE_CONSENT_TEXT = {
+  eyebrow: "Connettore remoto",
+  title: (client: string) => `${client} chiede di collegarsi`,
+  loading: "Sto leggendo la richiesta di collegamento…",
+  code: "Codice",
+  codeHint: "Deve essere lo stesso della pagina aperta dall'assistente. Se è diverso, rifiuta.",
+  /** Contro i link mandati da altri: chi apre /authorize per il tuo indirizzo può girarti il link. */
+  onlyYours: "Consenti solo se hai appena collegato tu StudyOS in ChatGPT o Claude. Se qualcuno ti ha mandato questo link, rifiuta: darebbe a lui i tuoi dati.",
+  returnTo: (host: string) => `Dopo la conferma torni a ${host}.`,
+  read: "Leggere materie, attività, esami e il resto dei tuoi dati",
+  write: "Anche creare, modificare ed eliminare",
+  approve: "Consenti",
+  deny: "Rifiuta",
+  later: "Non ora",
+  working: "Sto collegando…",
+  done: "Fatto: torno all'assistente…",
+  denied: "Richiesta rifiutata: torno all'assistente…",
+  offline: "Il collegamento per gli assistenti non risponde. Controlla la connessione e riprova.",
+  retry: "Riprova",
+  signIn: "Per confermare fai l'accesso al tuo account StudyOS: la richiesta resta qui per qualche minuto.",
+  toSignIn: "Vai all'accesso",
+  noName: "Per confermare serve il tuo nome nel profilo: è quello scritto nell'indirizzo del connettore.",
+  toProfile: "Vai al profilo",
+  loadingName: "Sto leggendo il tuo profilo…",
+  otherAccount: (account: string, mine: string) =>
+    `Questo collegamento è per l'account «${account}», ma qui hai fatto l'accesso come «${mine}». Rifiuta, oppure usa l'indirizzo che trovi in Impostazioni → Agenti di questo account.`,
+  expired: "La richiesta è scaduta. Ripeti il collegamento dall'assistente.",
+  decided: "Questa richiesta è già stata decisa. Se il collegamento non è riuscito, ripetilo dall'assistente."
 } as const;

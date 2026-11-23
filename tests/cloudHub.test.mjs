@@ -188,9 +188,10 @@ test("connettore remoto: account sconosciuto, hub senza cloud, sola lettura", as
   const token = await pair(hub);
   await bridge(hub, "/bridge/poll", { token, browser: CAMILLA });
   const clientId = await register(hub);
+  // Un nome che l'hub non ha mai visto: niente 404, si conferma dal sito con l'accesso all'account.
   const unknown = await authorize(hub, clientId, `${origin}/u/giulia-bianchi/mcp`);
-  assert.equal(unknown.response.status, 404);
-  assert.match(unknown.html, /Nessun account collegato si chiama/);
+  assert.equal(unknown.response.status, 200);
+  assert.match(unknown.html, /StudyOS di <b>Giulia Bianchi<\/b>/);
 
   const plain = makeHub(null);
   const plainClient = await register(plain);

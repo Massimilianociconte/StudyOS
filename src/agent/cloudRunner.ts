@@ -70,6 +70,11 @@ export interface CloudRunner {
   run: (grant: CloudGrant, name: string, args: Record<string, unknown>) => Promise<AgentCallResult>;
   /** Dimentica la cache di un permesso (revoca, nuovo consenso). */
   forget: (secret: string) => void;
+  /**
+   * Il permesso vale? Una lettura vuota (solo le righe cambiate da adesso, al più una): prima di
+   * emettere un codice dal consenso, così un permesso sbagliato non diventa un token che fallisce.
+   */
+  verify: (grant: CloudGrant) => Promise<"ok" | "revoked" | "offline">;
 }
 
 interface PulledRow {
@@ -594,6 +599,14 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     },
     forget: (secret) => {
       caches.delete(secret);
+    },
+    verify: async (grant) => {
+      try {
+        await rpc("studyos_agent_pull", { p_secret: grant.secret, p_since: new Date(now()).toISOString(), p_offset: 0, p_limit: 1 });
+        return "ok";
+      } catch (error) {
+        return error instanceof GrantError ? "revoked" : "offline";
+      }
     }
   };
 };

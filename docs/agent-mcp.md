@@ -60,7 +60,13 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.10.0 (`/health` la mostra dopo il deploy). La 1.8.0 aggiunge `studyos_split_pages` (vedi
+versione 1.11.0 (`/health` la mostra dopo il deploy). La 1.11.0 fa confermare il connettore remoto
+dal sito di StudyOS, su qualsiasi dispositivo e senza browser collegato all'hub (vedi «Connettore
+remoto di un solo account»), dà 60 secondi di tolleranza al rinnovo ripetuto dei token, mette un
+tetto agli esiti salvati nello snapshot dell'hub e nel messaggio «non collegato» di `/mcp` rimanda al
+connettore remoto. Aggiunge anche, nelle attività, `progressWeight` (0–3: quanto conta per
+l'avanzamento della materia) e, in `studyos_get_subject`, `progress` con i tre indicatori
+(avanzamento attività, livello di preparazione, stato del ripasso). La 1.8.0 aggiunge `studyos_split_pages` (vedi
 «Pagine da studiare») e, sul connettore remoto, il registro del server con il ripristino (vedi
 «Registro e ripristino del connettore remoto»). Dalla 1.7.0, negli elenchi di attività, eventi,
 sessioni, argomenti e obiettivi descrizioni e note oltre 300 caratteri arrivano accorciate con
@@ -326,17 +332,41 @@ Una volta sola, prima del primo collegamento:
    Senza, `/u/<nome>/mcp` risponde che il connettore remoto non è attivo.
 3. `npx wrangler deploy -c worker/wrangler.jsonc`.
 
-Collegamento, come per il primo connettore e senza password:
+Collegamento, senza password e (dalla 1.11.0) senza browser collegato all'hub:
 
-- In ChatGPT aggiungi un connettore con l'indirizzo `/u/<nome>/mcp`. ChatGPT apre la
-  pagina di autorizzazione dell'hub.
-- La richiesta compare solo nello StudyOS di quell'account (browser collegato in
-  Impostazioni → Agenti, con quel nome nel profilo), con l'etichetta «Connettore remoto».
-  Il browser deve aver fatto l'accesso al cloud (Impostazioni → Account e
-  sincronizzazione).
-- «Consenti» crea su Supabase un permesso per l'assistente e ne passa il segreto all'hub.
-  Nel database resta solo l'hash SHA-256 del segreto. Lettura e scrittura si scelgono
-  nella stessa richiesta, come per il primo connettore.
+- In ChatGPT o Claude aggiungi un connettore con l'indirizzo `/u/<nome>/mcp`. L'assistente apre
+  la pagina di autorizzazione dell'hub, con un codice (es. `K7M-Q2X`) e il pulsante «Conferma in
+  StudyOS».
+- «Conferma in StudyOS» apre il sito pubblicato con `#collega=<id della richiesta>`, nella stessa
+  finestra. Lì serve l'accesso all'account (Impostazioni → Account e sincronizzazione) e il nome del
+  profilo uguale a quello dell'indirizzo: altrimenti il dialogo lo dice e offre solo «Rifiuta». Il
+  dialogo mostra chi chiede, dove si torna (`chatgpt.com`, `claude.ai`…), lo stesso codice della
+  pagina dell'hub e l'avviso di consentire solo se il collegamento l'hai avviato tu.
+- «Consenti» crea su Supabase un permesso per l'assistente (`studyos_create_agent_grant`) e ne
+  passa il segreto all'hub (`POST /oauth/decide-cloud`, solo dall'origine del sito). L'hub lo prova
+  sul database (`studyos_agent_pull` con limite 1) prima di emettere il codice OAuth: un permesso
+  revocato dà 403, un cloud che non risponde 503, e la richiesta resta da decidere. Nel database
+  resta solo l'hash SHA-256 del segreto. Lettura e scrittura si scelgono nella stessa richiesta.
+- Poi il sito torna all'hub (`/authorize/continue`), che legge il cookie della pagina di
+  autorizzazione e rimanda all'assistente con il codice. Se la conferma arriva da un altro
+  dispositivo, la pagina dell'hub rimasta aperta si aggiorna da sola (`/oauth/wait`).
+- Se un browser di quell'account è collegato all'hub, la richiesta compare anche lì, come prima
+  della 1.11.0; vale la prima decisione.
+- La richiesta dura 15 minuti (quella di `/mcp` 5): il tempo di fare l'accesso.
+- Il sito usa solo l'hub della sua build (`VITE_AGENT_HUB_ORIGIN`), mai un indirizzo preso dal
+  link, e segue il ritorno solo verso quell'hub.
+
+Perché l'app chiusa funziona solo con questo connettore: `/mcp` esegue le azioni nel browser che ha
+StudyOS aperto (long polling su `/bridge/poll`); su telefono il sistema sospende la scheda o la PWA
+in background e le richieste restano senza risposta. Il connettore remoto non passa dal browser:
+l'hub legge e scrive i dati cloud dell'account. `/mcp` non ha un ripiego sul cloud perché il suo
+account è un nome dichiarato dal browser e le regole di conferma stanno nel browser: per lavorare
+con l'app chiusa si aggiunge l'indirizzo `/u/<nome>/mcp`, e il messaggio «non collegato» di `/mcp`
+lo dice.
+
+Token: l'accesso dura 1 ora, il rinnovo 30 giorni e ruota a ogni uso. Dalla 1.11.0 un rinnovo
+ripetuto con lo stesso refresh entro 60 secondi (due richieste insieme, una risposta persa) dà una
+coppia nuova della stessa concessione invece di `invalid_grant`, che costringeva a un nuovo consenso.
 
 Da quel momento StudyOS può restare chiuso. L'hub legge le righe dell'account con
 `studyos_agent_pull` e scrive con `studyos_agent_push`, con le stesse regole della

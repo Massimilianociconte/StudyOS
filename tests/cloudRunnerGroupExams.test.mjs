@@ -64,7 +64,7 @@ const fakeCloud = ({ missing = false } = {}) => {
 const runnerOn = (cloud) => createCloudRunner({ url: "http://cloud.test/", key: "sb_publishable_prova", fetch: cloud.fetch });
 
 test("1.9.0: istruzioni e strumenti che leggono lo snapshot dei gruppi", () => {
-  assert.equal(AGENT_SERVER_VERSION, "1.10.0");
+  assert.equal(AGENT_SERVER_VERSION, "1.11.0");
   assert.match(AGENT_INSTRUCTIONS, /studyos_check_consistency/);
   assert.match(cloudInstructions("Ada"), /Appelli dei gruppi/);
   assert.equal(GROUP_SNAPSHOT_TOOLS.size, 7);

@@ -373,13 +373,24 @@ test("OAuth: PKCE, redirect, audience, code usa e getta, refresh ruotato", async
     resource: canonical
   }));
   assert.equal(refreshed.ok, true);
-  const reused = await oauth.exchange(new URLSearchParams({
+  // Rinnovo ripetuto entro 60 s (due richieste insieme, una risposta persa): una coppia nuova, non un errore.
+  const retried = await oauth.exchange(new URLSearchParams({
     grant_type: "refresh_token",
     client_id: created.client.clientId,
     refresh_token: refresh,
     resource: canonical
   }));
+  assert.equal(retried.ok, true);
+  assert.notEqual(retried.body.refresh_token, refreshed.body.refresh_token);
+  // Passati i 60 s il vecchio refresh non vale più.
+  const reused = await oauth.exchange(new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: created.client.clientId,
+    refresh_token: refresh,
+    resource: canonical
+  }), now + 61_000);
   assert.equal(reused.ok, false);
+  assert.equal(reused.error, "invalid_grant");
   const again = await oauth.exchange(new URLSearchParams({
     grant_type: "refresh_token",
     client_id: created.client.clientId,

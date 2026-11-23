@@ -13,6 +13,7 @@ import { NotificationsBell } from "./NotificationsBell";
 import type { QuickAddMode } from "./QuickAddModal";
 import { DeferredPart } from "./DeferredPart";
 import { lazyView } from "../lib/lazyView";
+import { usePendingSiteConsent } from "../hooks/useSiteConsentLinks";
 import { CloudStatusBadge } from "./CloudStatusBadge";
 import { GlobalSearch } from "./GlobalSearch";
 import { TaskTimerReminder } from "./TaskTimerReminder";
@@ -70,6 +71,8 @@ const loadAgentDock = () => import("./AgentDesk");
 const QuickAddModal = lazyView(loadQuickAdd, "QuickAddModal");
 const NotificationsPanel = lazyView(loadNotificationsPanel, "NotificationsPanel");
 const AgentDock = lazyView(loadAgentDock, "AgentDock");
+// Conferma del connettore remoto dal sito (#collega=…): solo quando c'è una richiesta in attesa.
+const AgentSiteConsent = lazyView(() => import("./AgentSiteConsent"), "AgentSiteConsent");
 
 const mobileItems = navGroups[0].items.filter((item) => MOBILE_PRIMARY.includes(item.view));
 
@@ -77,6 +80,7 @@ const mobileItems = navGroups[0].items.filter((item) => MOBILE_PRIMARY.includes(
 const QUICK_ADD_DONE_MS = 5000;
 
 export function AppShell({ children }: PropsWithChildren) {
+  const siteConsentId = usePendingSiteConsent();
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   // Il modale si monta alla prima apertura e poi resta montato (come prima).
   const [quickAddMounted, setQuickAddMounted] = useState(false);
@@ -504,6 +508,11 @@ export function AppShell({ children }: PropsWithChildren) {
       <DeferredPart>
         <AgentDock />
       </DeferredPart>
+      {siteConsentId ? (
+        <DeferredPart>
+          <AgentSiteConsent key={siteConsentId} id={siteConsentId} />
+        </DeferredPart>
+      ) : null}
       <StudyTimerWatcher />
       {quickAddMounted || quickAddOpen ? (
         <DeferredPart>

@@ -145,14 +145,18 @@ export const toToolContent = (result: AgentCallResult) => ({
   isError: result.ok === false
 });
 
+/** Questo indirizzo vuole il browser aperto; il connettore remoto no (telefono, app chiusa). */
+const REMOTE_HINT =
+  "Per lavorare con StudyOS chiuso, anche dal telefono, usa invece il connettore remoto dell'account: l'indirizzo che finisce con /u/<nome>/mcp, in Impostazioni → Agenti → «Connettore remoto (app chiusa)».";
+
 const offlineStatus = (account = "") => ({
   ok: true as const,
   data: {
     connected: false,
     ...(account ? { account } : {}),
-    message: account
-      ? `StudyOS di ${account} non è aperto ora. ${account} deve aprire https://massimilianociconte.github.io/StudyOS/ nel browser collegato (va bene anche dal telefono) e tenerlo aperto: i dati restano lì.`
-      : "StudyOS non è collegato. Apri https://massimilianociconte.github.io/StudyOS/ (va bene anche dal telefono), vai in Impostazioni → Agenti e collega questo browser. Tieni la pagina aperta: i dati restano lì."
+    message: `${account
+      ? `StudyOS di ${account} non è aperto ora. ${account} deve aprire https://massimilianociconte.github.io/StudyOS/ nel browser collegato e tenerlo aperto: i dati restano lì.`
+      : "StudyOS non è collegato. Apri https://massimilianociconte.github.io/StudyOS/, vai in Impostazioni → Agenti e collega questo browser. Tieni la pagina aperta: i dati restano lì."} ${REMOTE_HINT}`
   }
 });
 

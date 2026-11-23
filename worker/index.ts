@@ -34,6 +34,8 @@ export class StudyHubObject extends DurableObject<Env> {
         secureCookies: origin.startsWith("https://"),
         pairMode: "key",
         pairKey: this.env.STUDYOS_PAIR_KEY ?? "",
+        // Consenso del connettore remoto dal sito, con l'accesso all'account: anche senza browser collegati.
+        siteUrl: `${PUBLISHED_ORIGIN}/StudyOS/`,
         disconnectedHint: "StudyOS non risulta collegato. Apri il sito pubblicato, anche dal telefono, vai in Impostazioni → Agenti e collega questo browser con la chiave.",
         allowHost: (host) => {
           try {

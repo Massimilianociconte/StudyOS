@@ -854,3 +854,44 @@ deploy); il bundle pubblicato contiene «al 100%: completata» (chunk labels) e 
 (chunk Materie). Nessuna modifica al database. **Il Worker non è stato ridistribuito**: ad app
 chiusa il connettore remoto usa ancora il codice di prima, quindi lì la regola non vale e
 `gradePending` non c'è finché non si fa `wrangler deploy`.
+
+## Progressi delle materie in tre indicatori e connettore remoto confermato dal sito (23 novembre 2026)
+
+Progressi (Materie, dettaglio della materia, Esami; stesso pannello su desktop e telefono):
+
+- «Avanzamento attività», automatico: somma dei pesi delle attività della materia, un'attività fatta
+  vale intera, una aperta la parte di passaggi fatti (5 attività = 20% l'una; 2 passaggi su 4 =
+  10%). 100% solo con ogni attività che conta segnata fatta. Senza attività che contano non mostra
+  «0%» ma «Nessuna attività che conta».
+- Spuntare l'ultimo passaggio segna l'attività fatta; togliere una spunta a un'attività fatta la
+  riapre. Nessun doppio conteggio: un'attività fatta vale 1 qualunque siano i passaggi.
+- Peso nell'editor dell'attività («Conta nell'avanzamento della materia»: non conta, normale,
+  doppio, triplo; campo `progressWeight`, scritto solo se diverso da 1). Archiviate e attività di
+  altre materie o senza materia non contano.
+- «Livello di preparazione», a mano con − / + (5%) sulla stessa riga della barra: è quello del primo
+  esame da sostenere; senza esame «Aggiungi l'esame» apre Esami con la materia scelta.
+- «Stato del ripasso»: argomenti da ripassare oggi e in tutto, «Ripassa» apre Studio. Il pulsante del
+  programma dice cosa fa («Aggiungi 4 argomenti al ripasso», con da dove e cosa succede) e poi
+  «Programma già nel ripasso (N voci)».
+- La regola «al 100% è completata» non cambia (preparazione dell'esame se c'è, altrimenti
+  avanzamento attività; conta il passaggio, non il livello).
+- Limite: StudyOS non ha attività ricorrenti (nessun campo di ricorrenza); le attività di solo
+  ripasso si escludono con il peso «non conta».
+
+Connettore (server 1.11.0):
+
+- Il connettore remoto (`/u/<nome>/mcp`) si conferma dal sito pubblicato, su qualsiasi dispositivo e
+  senza browser collegato all'hub: pagina dell'hub con codice e «Conferma in StudyOS» →
+  `#collega=<id>` → dialogo nell'app con accesso all'account → permesso cloud provato dall'hub →
+  ritorno all'assistente. Vedi `docs/agent-mcp.md` e l'ADR
+  `decisions/2026-11-23-consenso-remoto-dal-sito.md`.
+- Impostazioni → Agenti mostra per primo il connettore remoto, «Consigliato, anche da telefono».
+- Rinnovo dei token con 60 s di tolleranza; esiti nello snapshot dell'hub con tetto (256 KB, 32 KB
+  l'uno); `/mcp` «non collegato» rimanda al connettore remoto; un nome mai visto dall'hub non dà più
+  404 su `/authorize` del connettore remoto.
+
+Verifiche: `npm test` (1800, nuovi `tests/siteConsent.test.mjs` e casi in `subjectProgress`,
+`agent`, `cloudHub`, `agent-revoke`), `npm run lint`, `npm run build`. Nel browser (preview, 375 px
+e desktop): pannello dei progressi in Materie, dettaglio ed Esami; dialogo `#collega=` con codice,
+blocco «accesso» e passaggio ad Account; Impostazioni → Agenti con il remoto in alto.
+

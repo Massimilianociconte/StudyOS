@@ -224,7 +224,7 @@ function CopyAddress({ value }: { value: string }) {
  * Connettore remoto (`/u/<nome>/mcp`): lavora sui dati cloud con l'app chiusa e senza conferme.
  * Mostra cosa fa, l'indirizzo di questo account (o come averlo) e la sua revoca.
  */
-function RemoteConnector({ hub, accountName, paired }: { hub: string | null; accountName: string; paired: boolean }) {
+function RemoteConnector({ hub, accountName }: { hub: string | null; accountName: string }) {
   const link = useAgentLink();
   const signedIn = useSignedIn();
   const [busy, setBusy] = useState(false);
@@ -242,7 +242,10 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
   };
   return (
     <section aria-labelledby="agent-remote-title" className="grid grid-cols-1 gap-2 rounded-[20px] border border-[var(--border)] p-3">
-      <h4 id="agent-remote-title" className="text-sm font-black">{text.title}</h4>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 id="agent-remote-title" className="text-base font-black">{text.title}</h4>
+        <span className="inline-flex min-h-8 items-center rounded-full bg-[var(--surface-soft)] px-3 text-xs font-black text-[var(--accent-ink)]">{text.badge}</span>
+      </div>
       <p className="text-sm font-bold text-[var(--muted)]">{text.what}</p>
       <p className="flex items-start gap-2 text-sm font-black">
         <Icon name="AlertTriangle" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--danger-text)]" />
@@ -252,8 +255,7 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
         <>
           <p className="text-sm font-bold text-[var(--muted)]">{text.howTo}</p>
           <CopyAddress value={view.address} />
-          {!paired ? <p className="text-sm font-bold text-[var(--muted)]">{text.pairFirst}</p> : null}
-          {paired && !signedIn ? <p className="text-sm font-bold text-[var(--muted)]">{agentCloudLabels.signInHint}</p> : null}
+          {!signedIn ? <p className="text-sm font-bold text-[var(--muted)]">{agentCloudLabels.signInHint}</p> : null}
         </>
       ) : view.kind === "noName" ? (
         <p className="text-sm font-bold text-[var(--muted)]">
@@ -263,7 +265,7 @@ function RemoteConnector({ hub, accountName, paired }: { hub: string | null; acc
       ) : (
         <p className="text-sm font-bold text-[var(--muted)]">{view.kind === "noCloud" ? agentCloudLabels.noCloud : view.kind === "off" ? text.off : text.noHub}</p>
       )}
-      {cloudConfigured && (paired || signedIn) ? (
+      {cloudConfigured && (link.paired || signedIn) ? (
         outcome?.kind === "failed" ? (
           <div className="grid grid-cols-1 gap-2">
             <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{outcome.text}</p>
@@ -345,6 +347,9 @@ export function AgentSettings() {
 
   return (
     <div className="grid grid-cols-1 gap-4">
+      {/* Prima il connettore remoto: va anche dal telefono e con l'app chiusa, senza collegare il browser. */}
+      <RemoteConnector hub={hostedHub} accountName={accountName} />
+
       <section aria-labelledby="agent-connect-title" className="grid grid-cols-1 gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 id="agent-connect-title" className="text-base font-black">{AGENT_DESK_TEXT.connectTitle}</h4>
@@ -417,8 +422,6 @@ export function AgentSettings() {
           <Button variant="ghost" onClick={() => clearTrustedWrites()}>{AGENT_DESK_TEXT.trustBack}</Button>
         </div>
       ) : null}
-
-      <RemoteConnector hub={hostedHub} accountName={accountName} paired={link.paired} />
 
       {link.paired || (cloudConfigured && signedIn) ? (
         <div className="grid grid-cols-1 gap-2">

@@ -740,3 +740,16 @@
 - Dopo `wrangler deploy` del Worker `studyos-agent`, `/health` (servito dal Durable Object «owner»)
   può dare la versione vecchia per 3–10 minuti, finché Cloudflare non riavvia il Durable Object;
   `wrangler tail` mostra già la versione nuova. Aspetta con un ciclo su `/health`, non ridistribuire.
+- Connettore remoto, consenso dal sito: pubblica prima Pages e poi il Worker. Un Worker 1.11.0 con
+  il sito vecchio mette nella pagina di autorizzazione «Conferma in StudyOS», ma il sito vecchio
+  ignora `#collega=` (resta solo la conferma da un browser collegato). Controlla che il bundle
+  pubblicato contenga `studyos.agent.siteConsent` prima di `wrangler deploy`.
+- Le app di ChatGPT e Claude sul telefono aprono l'autorizzazione in un browser interno con la
+  sua memoria: lì StudyOS di solito non ha l'accesso fatto e la persona deve accedere dentro quel
+  browser (parte anche una sincronizzazione completa). Non è un errore del connettore.
+- Un «Consenti» dal sito che fallisce dopo aver creato il permesso cloud (hub giù tra le due
+  chiamate) lascia un permesso orfano che conta nel tetto di 20: si toglie con «Scollega il
+  connettore remoto».
+- `revokeApprover` non conta tra gli accessi «di prima» (`legacy`) le concessioni remote senza
+  approvatore: si revocano togliendo il permesso cloud dell'account, che l'app toglie insieme.
+

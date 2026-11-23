@@ -202,7 +202,10 @@ test("revoca: gli accessi di prima, senza segreto, restano e si contano; «tutti
   const mine = await bridge(hub, "/oauth/revoke", { token, secret: camillaSecret });
   assert.equal(mine.status, 200);
   assert.equal(mine.json.revoked, 1);
-  assert.equal(mine.json.legacy, 2, "gli accessi di prima non dicono chi li ha approvati: restano, e la risposta lo dice");
+  // Gli accessi di prima del connettore principale non dicono chi li ha approvati: restano, e la risposta
+  // lo dice. Un connettore remoto senza approvatore (di prima, o confermato dal sito) non conta: si
+  // revoca togliendo il permesso cloud del suo account, che l'app toglie insieme.
+  assert.equal(mine.json.legacy, 1, "solo quello del connettore principale");
   assert.equal(await listTools(hub, "/mcp", legacy.access), 200);
   assert.equal(await listTools(hub, "/u/camilla-rossi/mcp", legacyRemote.access), 200, "nemmeno l'indirizzo col nome basta");
   assert.equal(await listTools(hub, "/mcp", camillaClaude.access), 401);

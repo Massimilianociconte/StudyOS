@@ -1,6 +1,13 @@
 import type { AgentCallResult } from "./types";
 
 const TTL_MS = 30 * 60 * 1000;
+/**
+ * Tetto di ciò che finisce nello snapshot dell'hub (un solo valore nello storage del Durable Object):
+ * gli esiti più recenti fino a 256 KB, ognuno al massimo 32 KB. Quelli fuori restano in memoria
+ * finché l'hub è acceso; dopo un riavvio `studyos_approval_status` dice «Esito non disponibile».
+ */
+const PERSIST_ITEM_MAX = 32 * 1024;
+const PERSIST_TOTAL_MAX = 256 * 1024;
 
 /** Esiti delle chiamate, così un agente può rileggere una conferma ancora in corso o appena chiusa. */
 export class ResultLedger {
@@ -18,7 +25,15 @@ export class ResultLedger {
 
   exportState(now = Date.now()) {
     this.prune(now);
-    return [...this.results.entries()].map(([id, item]) => ({ id, at: item.at, result: item.result }));
+    const kept: Array<{ id: string; at: number; result: AgentCallResult }> = [];
+    let total = 0;
+    for (const [id, item] of [...this.results.entries()].sort((a, b) => b[1].at - a[1].at)) {
+      const size = JSON.stringify(item.result).length;
+      if (size > PERSIST_ITEM_MAX || total + size > PERSIST_TOTAL_MAX) continue;
+      total += size;
+      kept.push({ id, at: item.at, result: item.result });
+    }
+    return kept.reverse();
   }
 
   importState(items: Array<{ id: string; at: number; result: AgentCallResult }>) {
