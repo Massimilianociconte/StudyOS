@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { AGENT_TOOLS, CLOUD_DEFERRED, CLOUD_ONLY, CLOUD_UNAVAILABLE, mcpToolDefinition } from "../src/agent/catalog.ts";
+import { CLOUD_DEFERRED as APP_DEFERRED } from "../src/agent/cloudDeferred.ts";
 import { CLOUD_TEXT, GROUP_TABLE_TOOLS, createCloudRunner, plannedRows, sharedTypesFor } from "../src/agent/cloudRunner.ts";
 import { ResultLedger } from "../src/agent/ledger.ts";
 import { cloudInstructions, handleMcpRpc } from "../src/agent/mcp.ts";
@@ -136,6 +137,7 @@ const runnerOn = (cloud) => createCloudRunner({ url: "http://cloud.test/", key: 
 
 test("catalogo: sul remoto tutti gli strumenti del principale, più il ripristino dal registro del server", async () => {
   assert.equal(CLOUD_UNAVAILABLE.size, 0);
+  assert.equal(APP_DEFERRED, CLOUD_DEFERRED, "un elenco solo, per hub e app");
   assert.deepEqual([...CLOUD_DEFERRED].sort(), ["studyos_create_shared_item", "studyos_delete_shared_item", "studyos_revoke_share", "studyos_share_with", "studyos_update_share", "studyos_update_shared_item"]);
   const actor = { name: "Prova", source: "oauth", scopes: ["studyos:read", "studyos:write"] };
   const local = { actor, ledger: new ResultLedger(), connected: () => true, invoke: async () => ({ ok: true, data: {} }) };
@@ -149,7 +151,11 @@ test("catalogo: sul remoto tutti gli strumenti del principale, più il ripristin
     const remoteDef = mcpToolDefinition(tool, { cloud: true });
     assert.equal(/la conferma nell'app StudyOS/.test(remoteDef.description), CLOUD_DEFERRED.has(tool.name), tool.name);
     assert.ok(!("account" in (remoteDef.inputSchema.properties ?? {})), tool.name);
+    // Sul remoto solo le condivisioni chiedono conferma nell'app.
+    if (!CLOUD_DEFERRED.has(tool.name)) assert.doesNotMatch(remoteDef.description, /conferma in StudyOS/, tool.name);
   }
+  assert.match(mcpToolDefinition(AGENT_TOOLS.find((tool) => tool.name === "studyos_delete_note")).description, /e la conferma in StudyOS/, "sul principale resta");
+  assert.match(mcpToolDefinition(AGENT_TOOLS.find((tool) => tool.name === "studyos_add_group_resource"), { cloud: true }).description, /non viene salvata/);
   // Il deposito delle condivisioni dei dati personali rimanda a studyos_list_shared_items, che ora c'è.
   assert.match(mcpToolDefinition(AGENT_TOOLS.find((tool) => tool.name === "studyos_list_tasks"), { cloud: true }).description, /studyos_list_shared_items/);
   const instructions = cloudInstructions("Ada");
@@ -351,11 +357,16 @@ test("tipi dei dati condivisi per strumento", () => {
 
 test("app: timer del cloud adottato se più recente, inviato solo se è di questo account", () => {
   const timer = (changedAt) => ({ mode: "pomodoro", kind: "pomodoro", phase: "focus", running: false, remainingSeconds: 1500, durationSeconds: 1500, cycle: 0, accumulatedSeconds: 0, changedAt });
-  assert.equal(timerCloudPlan(timer(1), timer(2), "u1", "u1"), "adopt");
-  assert.equal(timerCloudPlan(timer(2), timer(1), "u1", "u1"), "push");
-  assert.equal(timerCloudPlan(timer(2), null, null, "u1"), "push");
-  assert.equal(timerCloudPlan(timer(2), null, "u0", "u1"), "none", "timer di un altro account su questo dispositivo");
-  assert.equal(timerCloudPlan(timer(2), timer(2), "u1", "u1"), "none");
+  assert.deepEqual(timerCloudPlan(timer(1), timer(2), "u1", "u1"), { action: "adopt", owner: "u1" });
+  assert.deepEqual(timerCloudPlan(timer(2), timer(1), "u1", "u1"), { action: "push", owner: "u1" });
+  assert.deepEqual(timerCloudPlan(timer(2), null, null, "u1"), { action: "push", owner: "u1" });
+  // Timer di un altro account su questo dispositivo: non va nel cloud, nemmeno al controllo dopo.
+  const first = timerCloudPlan(timer(2), null, "u0", "u1");
+  assert.deepEqual(first, { action: "none", owner: "u0" });
+  assert.deepEqual(timerCloudPlan(timer(2), null, first.owner, "u1"), { action: "none", owner: "u0" });
+  // Il cloud dell'account ha un timer più recente: diventa quello di questo dispositivo.
+  assert.deepEqual(timerCloudPlan(timer(2), timer(3), "u0", "u1"), { action: "adopt", owner: "u1" });
+  assert.deepEqual(timerCloudPlan(timer(2), timer(2), "u1", "u1"), { action: "none", owner: "u1" });
   assert.equal(parseOpenTarget("?apri=agenti"), "agenti");
 });
 

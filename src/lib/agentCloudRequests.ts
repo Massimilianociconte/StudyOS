@@ -7,11 +7,13 @@
 // Si controlla all'avvio, quando la pagina torna visibile, ogni 30 secondi con la pagina in vista e
 // quando si tocca la notifica. Modulo pigro: lo carica App dopo l'avvio, solo con il cloud configurato.
 
+import { CLOUD_DEFERRED } from "../agent/cloudDeferred";
 import type { AgentCallResult } from "../agent/types";
 import { dismissPendingCall, handleRemoteRequest } from "./agentLink";
 import { cloudConfigured, getCloudSyncState, subscribeCloudSync } from "./cloudSyncState";
 import { AGENT_REQUESTS_EVENT } from "./openLink";
 import { supabase } from "./supabase";
+import { useSharedStore } from "../store/useSharedStore";
 
 const CHECK_MS = 30_000;
 /** Richieste lette per controllo: il database ne tiene al più 20 in attesa per account. */
@@ -49,6 +51,11 @@ export const startCloudRequests = () => {
   const handle = async (row: RequestRow) => {
     handling.add(row.id);
     try {
+      // Solo gli strumenti che il database accetta come richiesta: qualsiasi altro si rifiuta.
+      if (!CLOUD_DEFERRED.has(row.tool)) {
+        await client.rpc("studyos_agent_request_decide", { p_id: row.id, p_approve: false });
+        return;
+      }
       await handleRemoteRequest(
         { id: remoteCallId(row.id), name: row.tool, args: isRecord(row.args) ? row.args : {}, actorName: row.client_label?.trim() || FALLBACK_ACTOR },
         {
@@ -76,7 +83,9 @@ export const startCloudRequests = () => {
   };
 
   const check = async () => {
-    if (stopped || missing || !getCloudSyncState().session) return;
+    // Le condivisioni vogliono la sessione della condivisione già pronta (viewerId): prima, una conferma
+    // eseguita subito fallirebbe e l'agente dovrebbe ripetere la richiesta.
+    if (stopped || missing || !getCloudSyncState().session || !useSharedStore.getState().viewerId) return;
     if (checking) {
       again = true;
       return;
@@ -124,6 +133,9 @@ export const startCloudRequests = () => {
     if (user) void check();
   });
   const onRequest = () => void check();
+  const unsubscribeShared = useSharedStore.subscribe((state, previous) => {
+    if (state.viewerId && state.viewerId !== previous.viewerId) void check();
+  });
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("focus", onVisible);
   window.addEventListener("online", onVisible);
@@ -133,6 +145,7 @@ export const startCloudRequests = () => {
     stopped = true;
     window.clearInterval(interval);
     unsubscribe();
+    unsubscribeShared();
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("focus", onVisible);
     window.removeEventListener("online", onVisible);

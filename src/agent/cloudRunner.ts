@@ -818,9 +818,11 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     // Leggere il timer non salva niente: i blocchi finiti li chiude l'app (stesse sessioni, stessi id).
     if (name === "studyos_timer_status") return result;
     if (timer && timerAfter !== timer) {
-      const saved = await rpc<unknown>("studyos_agent_timer_put", { p_secret: grant.secret, p_state: timerAfter });
-      // Un altro dispositivo l'ha cambiato dopo (changedAt più recente): niente sessioni salvate da qui.
-      if (!isRecord(saved) || saved.changedAt !== timerAfter.changedAt) return fail("failed", CLOUD_TEXT.timerConflict);
+      // Sempre dopo lo stato letto, anche se l'orologio di un dispositivo è avanti rispetto al server.
+      const stamped = { ...timerAfter, changedAt: Math.max(timerAfter.changedAt ?? 0, (timer.changedAt ?? 0) + 1) };
+      const saved = await rpc<unknown>("studyos_agent_timer_put", { p_secret: grant.secret, p_state: stamped });
+      // Un altro dispositivo l'ha cambiato dopo la lettura: niente sessioni salvate da qui.
+      if (!isRecord(saved) || saved.changedAt !== stamped.changedAt) return fail("failed", CLOUD_TEXT.timerConflict);
     }
     if (!rows.length) return result;
 

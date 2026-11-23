@@ -1,3 +1,4 @@
+import { CLOUD_DEFERRED } from "./cloudDeferred";
 import type { AgentRisk } from "./policy";
 import type { JsonSchema } from "./schema";
 import { SHARE_SCOPE_LABEL } from "../lib/labels";
@@ -1258,14 +1259,12 @@ export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set<string>();
  * richiesta (studyos_agent_request_create, con notifica push) che la persona conferma nell'app;
  * l'app li esegue con la sua sessione, come una conferma del connettore principale.
  */
-export const CLOUD_DEFERRED: ReadonlySet<string> = new Set([
-  "studyos_share_with",
-  "studyos_update_share",
-  "studyos_revoke_share",
-  "studyos_create_shared_item",
-  "studyos_update_shared_item",
-  "studyos_delete_shared_item"
-]);
+export { CLOUD_DEFERRED };
+
+/** Note in più sul connettore remoto, dove lo strumento si comporta diversamente. */
+const CLOUD_NOTES: Readonly<Record<string, string>> = {
+  studyos_add_group_resource: " Se il server dei gruppi non la accetta (rete, permessi) non viene salvata e la risposta è un errore: riprova più tardi."
+};
 
 const CLOUD_CONFIRM_NOTE =
   " Sul connettore remoto non parte da sola: la persona riceve una notifica e la conferma nell'app StudyOS (basta aprirla, anche dal telefono). Se la risposta ha status=pending_approval non ripetere la chiamata: chiama studyos_approval_status con approvalId.";
@@ -1277,13 +1276,23 @@ const CLOUD_CONFIRM_NOTE =
 export const CLOUD_ONLY: ReadonlySet<string> = new Set(["studyos_restore_change"]);
 
 /**
+ * Descrizione sul connettore remoto: le modifiche dei dati personali partono senza conferma nell'app
+ * (si toglie «e la conferma in StudyOS»), le condivisioni la chiedono.
+ */
+const cloudText = (item: AgentTool) => {
+  const base = item.cloudDescription ?? item.description;
+  if (CLOUD_DEFERRED.has(item.name)) return base + CLOUD_CONFIRM_NOTE;
+  return base.replaceAll(" e la conferma in StudyOS", "") + (CLOUD_NOTES[item.name] ?? "");
+};
+
+/**
  * Definizione MCP. Sul connettore remoto non c'è `account` (l'account è nell'indirizzo) e gli
  * strumenti da confermare nell'app lo dicono nella descrizione.
  */
 export const mcpToolDefinition = (item: AgentTool, options: { cloud?: boolean } = {}) => ({
   name: item.name,
   title: item.title,
-  description: options.cloud ? (item.cloudDescription ?? item.description) + (CLOUD_DEFERRED.has(item.name) ? CLOUD_CONFIRM_NOTE : "") : item.description,
+  description: options.cloud ? cloudText(item) : item.description,
   inputSchema: HUB_TOOLS.has(item.name) || options.cloud ? item.inputSchema : withAccountParam(item.inputSchema),
   annotations: {
     // title anche qui: i client 2025-03-26 lo leggono solo dalle annotazioni.

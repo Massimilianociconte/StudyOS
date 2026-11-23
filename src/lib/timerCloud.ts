@@ -95,11 +95,14 @@ export const startTimerCloud = () => {
       const raw = (data as { state?: unknown } | null)?.state;
       const remote = raw && typeof raw === "object" ? normalizeTimer(raw) : null;
       if (remote) synced = Math.max(synced, stampOf(remote));
-      const plan = timerCloudPlan(useStudyStore.getState().timer, remote, readOwner(), current);
+      const local = useStudyStore.getState().timer;
+      const step = timerCloudPlan(local, remote, readOwner(), current);
       user = current;
-      writeOwner(current);
-      if (plan === "adopt" && remote) adopt(remote);
-      else if (plan === "push") schedulePush();
+      if (step.owner) writeOwner(step.owner);
+      if (step.action === "adopt" && remote) adopt(remote);
+      else if (step.action === "push") schedulePush();
+      // Timer di un altro account: resta qui ma non si manda; parte solo una modifica fatta da ora.
+      else synced = Math.max(synced, stampOf(local));
     } catch {
       // Rete assente: al prossimo controllo.
     } finally {
