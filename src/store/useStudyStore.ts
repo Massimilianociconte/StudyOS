@@ -58,7 +58,9 @@ import { createId, nowIso } from "../lib/id";
 import { isReminderNotificationId } from "../lib/reminderIds";
 import { makeGroupInviteCode } from "../lib/groups";
 import { ShareUserError, isRestorableEntity, restoredPayload, restoredUpdatedAt, type RestoreVersion } from "../lib/sharing";
-import { FILE_TEXT, RESTORE_TEXT, VAULT_BUSY_TEXT } from "../lib/labels";
+import { FILE_TEXT, RESTORE_TEXT, SUBJECT_FULL_TEXT, VAULT_BUSY_TEXT } from "../lib/labels";
+import { examProgressSubject, isGradePending, subjectsReachingFull, taskDoneSubject } from "../lib/subjectProgress";
+import { recordedSubjectIds } from "../lib/grades";
 import { collectionTable, dataTables, db, readSnapshotFromDb } from "../lib/db";
 import { decryptWithKey, deriveVaultKey, encryptWithKey, makePassphraseVerifier, verifyPassphrase } from "../lib/crypto";
 import { checkNewFile, withStoredFile } from "../lib/attachments";
@@ -598,6 +600,36 @@ export const useStudyStore = create<StudyState>((set, get) => {
         ? { ...item, linkedEntityType: undefined, linkedEntityId: undefined, updatedAt: nowIso() }
         : item;
 
+  /**
+   * Materie che la modifica appena fatta porta al 100% (vedi `subjectsReachingFull`): diventano
+   * «Completata», con il voto da registrare, nello stesso salvataggio della modifica. Vale per l'app e
+   * per gli agenti (anche il connettore remoto esegue queste azioni). Restituisce le materie cambiate.
+   */
+  const completeFullSubjects = (before: Pick<StoreState, "tasks" | "exams">, candidates: Array<string | undefined>) => {
+    const after = get();
+    const ids = subjectsReachingFull(after.subjects, candidates, before, after);
+    if (!ids.length) return [];
+    const now = nowIso();
+    set((state) => ({ subjects: state.subjects.map((subject) => (ids.includes(subject.id) ? { ...subject, status: "completed" as const, updatedAt: now } : subject)) }));
+    return ids;
+  };
+
+  /**
+   * Avviso nelle notifiche per ogni materia completata da sola: si vede anche se l'ha fatto un agente.
+   * Solo se il voto manca davvero: una materia con il voto già nel libretto non è «da registrare».
+   */
+  const notifyFullSubjects = async (ids: readonly string[]) => {
+    if (!ids.length) return;
+    const recorded = recordedSubjectIds(get().exams);
+    for (const id of ids) {
+      const subject = get().subjects.find((item) => item.id === id);
+      if (!subject || !isGradePending(subject, recorded)) continue;
+      await get()
+        .addNotification({ kind: "system", title: SUBJECT_FULL_TEXT.title(subject.name), body: SUBJECT_FULL_TEXT.body, linkView: "subjects" })
+        .catch(() => undefined);
+    }
+  };
+
   const rollbackCollections = (before: CollectionsState, applied: Partial<CollectionsState>) => {
     const rollback: Partial<CollectionsState> = {};
     const current = get();
@@ -888,15 +920,19 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     updateTask: async (id, patch) => {
+      const before = get();
       set((state) => ({
         tasks: state.tasks.map((task) =>
           task.id === id ? { ...task, ...normalizeTaskPatch(task, patch), updatedAt: nowIso() } : task
         )
       }));
+      const full = completeFullSubjects(before, [taskDoneSubject(before.tasks.find((task) => task.id === id), get().tasks.find((task) => task.id === id))]);
       await commit();
+      await notifyFullSubjects(full);
     },
 
     toggleTask: async (id) => {
+      const before = get();
       set((state) => ({
         tasks: state.tasks.map((task) =>
           task.id === id
@@ -904,7 +940,9 @@ export const useStudyStore = create<StudyState>((set, get) => {
             : task
         )
       }));
+      const full = completeFullSubjects(before, [taskDoneSubject(before.tasks.find((task) => task.id === id), get().tasks.find((task) => task.id === id))]);
       await commit();
+      await notifyFullSubjects(full);
     },
 
     deleteTask: async (id) => {
@@ -1249,7 +1287,7 @@ export const useStudyStore = create<StudyState>((set, get) => {
       });
       const current = get();
       // Tutti gli appelli: un appello già nel calendario con un'altra iscrizione non si aggiunge di nuovo.
-      const batch = prepareBarbExamImport(selected, BARB_EXAM_COURSES, current.subjects, current.events, BARB_EXAM_SESSIONS);
+      const batch = prepareBarbExamImport(selected, BARB_EXAM_COURSES, current.subjects, current.events, BARB_EXAM_SESSIONS, undefined, recordedSubjectIds(current.exams));
       if (!batch.events.length) return { added: 0, skipped: incoming.length };
       const now = nowIso();
       const created: CalendarEvent[] = batch.events.map((event) => ({
@@ -1471,10 +1509,13 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     updateExam: async (id, patch) => {
+      const before = get();
       set((state) => ({
         exams: state.exams.map((exam) => (exam.id === id ? { ...exam, ...patch, updatedAt: nowIso() } : exam))
       }));
+      const full = completeFullSubjects(before, [examProgressSubject(before.exams.find((exam) => exam.id === id), get().exams.find((exam) => exam.id === id))]);
       await commit();
+      await notifyFullSubjects(full);
     },
 
     deleteExam: async (id) => {

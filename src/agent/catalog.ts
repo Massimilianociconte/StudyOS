@@ -133,6 +133,9 @@ export const PAGE_RULE = "Conta le pagine includendo prima e ultima (10–20 = 1
 export const PAGE_INSTRUCTION = `${PAGE_RULE} Per dividere un intervallo usa studyos_split_pages invece di calcolare.`;
 /** Aggiornamenti dei testi: sostituiscono il testo intero. */
 const REPLACES_TEXT = " description e notes sostituiscono il testo intero: partire da quello intero, mai dalla copia accorciata di un elenco.";
+// Regola dello store (src/lib/subjectProgress.ts): vale per l'app e per gli agenti.
+const FULL_SUBJECT_TEXT =
+  " Se con questa modifica il progresso della materia arriva al 100% (preparazione del primo esame da sostenere o, senza esami, tutte le sue task fatte), l'app segna la materia completed, con il voto da registrare (gradePending in studyos_list_subjects).";
 
 const objectSchema = (properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema => ({
   type: "object",
@@ -203,7 +206,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_subjects",
     title: "Elenco materie",
-    description: "Elenca le materie personali con id, nome, docente, CFU, semestre, stato e voto obiettivo. Le archiviate sono escluse salvo includeArchived=true o status=archived.",
+    description: "Elenca le materie personali con id, nome, docente, CFU, semestre, stato e voto obiettivo. Le archiviate sono escluse salvo includeArchived=true o status=archived. gradePending=true: materia completed senza voto nel libretto, da registrare con studyos_record_grade quando la persona lo conosce.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ ...page, includeArchived: { type: "boolean", default: false, description: "Include le materie archiviate." }, status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed", "archived"], description: "Filtra per stato." } }),
@@ -308,7 +311,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_update_task",
     title: "Aggiorna task",
-    description: "Aggiorna i campi indicati. Cambiare status in doing o done aggiorna anche il timer interno della task, come nell'app. dueDate vuota toglie la scadenza. subtasks, se presente, sostituisce l'elenco." + REPLACES_TEXT,
+    description: "Aggiorna i campi indicati. Cambiare status in doing o done aggiorna anche il timer interno della task, come nell'app. dueDate vuota toglie la scadenza. subtasks, se presente, sostituisce l'elenco." + FULL_SUBJECT_TEXT + REPLACES_TEXT,
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
@@ -497,7 +500,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_update_exam",
     title: "Aggiorna esame",
-    description: "Aggiorna preparazione, data, stato o programma di un esame personale. Il voto si registra con studyos_record_grade.",
+    description: "Aggiorna preparazione, data, stato o programma di un esame personale. Il voto si registra con studyos_record_grade." + FULL_SUBJECT_TEXT,
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({

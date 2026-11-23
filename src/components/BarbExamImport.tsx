@@ -8,6 +8,8 @@ import { barbSessionDate, barbSessionType, barbToday } from "./BarbExamSessions"
 import { Button, Drawer, EmptyState, inputClass } from "./ui";
 import { EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
 import { groupExamSlots, slotDifference, slotTwins, type BarbExamSlot } from "../lib/barbExamSlots";
+import { recordedSubjectIds } from "../lib/grades";
+import { isClosedForExams } from "../lib/subjectProgress";
 
 /** Appelli gemelli (Inglese B2: test online e in aula, stessa ora): ognuno dice cosa lo distingue. */
 function twinHint(slot: BarbExamSlot, slots: readonly BarbExamSlot[]): string {
@@ -24,7 +26,7 @@ function CourseCheckbox({ checked, mixed, disabled, onChange, label }: { checked
 }
 
 export function BarbExamImport({ onClose }: { onClose: () => void }) {
-  const { subjects, events, importBarbExamSessions, setActiveView, preferences } = useStudyStore();
+  const { subjects, exams, events, importBarbExamSessions, setActiveView, preferences } = useStudyStore();
   // Corso di laurea spento in Impostazioni: la sezione non è nel menu, quindi niente link che ci porta.
   const showBarb = selectPreferences({ preferences }).showBarb;
   // Il giorno di Roma, come le date ufficiali: un appello di ieri non si aggiunge più.
@@ -34,7 +36,11 @@ export function BarbExamImport({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const eligibleIds = useMemo(() => new Set(subjects.filter((subject) => !subject.archived && subject.status !== "archived" && subject.status !== "completed").map((subject) => resolveBarbCourse(subject, BARB_EXAM_COURSES)?.id).filter(Boolean)), [subjects]);
+  // Come nello store: fuori le archiviate e le superate col voto; una completata col voto da registrare resta.
+  const eligibleIds = useMemo(() => {
+    const recorded = recordedSubjectIds(exams);
+    return new Set(subjects.filter((subject) => !isClosedForExams(subject, recorded)).map((subject) => resolveBarbCourse(subject, BARB_EXAM_COURSES)?.id).filter(Boolean));
+  }, [subjects, exams]);
   const imported = useMemo(() => new Set(events.flatMap((event) => (event.sourceUid ? [event.sourceUid] : []))), [events]);
   // Un appello per giorno, tipo e ora (come in Materie): le iscrizioni diverse dello stesso appello
   // sono una riga sola, si aggiungono una volta e risultano già nel calendario se una lo è.

@@ -62,6 +62,11 @@ export const SUBJECTS_TEXT = {
   restoreSubject: "Ripristina materia",
   archiveSubject: "Archivia materia",
   completed: "Superate",
+  /** Materie «Completata» (al 100% o segnate a mano) senza voto nel libretto: gruppo in alto, aperto. */
+  pendingGroup: "Voto da registrare",
+  pendingTag: "Voto da registrare",
+  recordGrade: "Registra il voto",
+  recordGradeAria: (name: string) => `Registra il voto di ${name}`,
   archivedGroup: "Archiviate",
   days: daysText,
   /** Pillola dell'esame sulla scheda: "12 dic · 30 giorni"; oggi "oggi"; già passato senza esito "esito da registrare". */
@@ -93,6 +98,11 @@ export const SUBJECTS_TEXT = {
 } as const;
 
 export const SUBJECTS_HELP = {
+  pendingGrade: {
+    title: "Voto da registrare",
+    text: "Materie completate (al 100% o segnate da te) che nel libretto non hanno ancora il voto. Quando lo registri passano tra le Superate. Se non hai finito, dal menu ⋯ scegli «Segna come in corso».",
+    example: "finisci l'ultima attività di Biochimica: la materia arriva al 100% e compare qui."
+  },
   cfu: {
     title: "CFU",
     text: "I crediti dell'esame: dicono quanto pesa.",

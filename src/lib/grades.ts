@@ -33,6 +33,9 @@ export const isValidGrade = (grade: unknown): grade is number =>
 /** Esame superato con voto valido o idoneità: è una riga del libretto. */
 const isRecorded = (exam: Exam) => !exam.archived && exam.status === "done" && (Boolean(exam.passFail) || isValidGrade(exam.grade));
 
+/** Materie con un voto o un'idoneità nel libretto (le altre «Completata» hanno il voto da registrare). */
+export const recordedSubjectIds = (exams: readonly Exam[]): Set<string> => new Set(exams.filter(isRecorded).map((exam) => exam.subjectId));
+
 /** «Sostenuto» con «Non ancora registrato»: superato, ma il voto manca. */
 export const isDoneWithoutGrade = (exam: Exam) => !exam.archived && exam.status === "done" && !exam.passFail && !isValidGrade(exam.grade);
 

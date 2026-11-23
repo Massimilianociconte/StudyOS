@@ -53,13 +53,14 @@ export const otherStatuses = (subject: Pick<Subject, "status">): Subject["status
 /**
  * Voci del menu "⋯" di una scheda: «In corso», «Superata» (chiede il voto), «Altro stato…» (gli
  * altri stati, sul posto: ogni stato resta a due passi) e «Archivia» (subito, con Annulla).
+ * Completata col voto da registrare (`gradePending`): «Registra il voto» al posto di «Superata».
  * Archiviata: "Ripristina" ed "Elimina per sempre" (con la conferma sul posto).
  */
-export function subjectMenuItems(subject: Pick<Subject, "status" | "archived">): SubjectMenuItem[] {
+export function subjectMenuItems(subject: Pick<Subject, "status" | "archived">, gradePending = false): SubjectMenuItem[] {
   if (isArchivedSubject(subject)) return [{ kind: "restore" }, { kind: "delete" }];
   return [
     ...(subject.status !== "active" ? [{ kind: "status" as const, status: "active" as const }] : []),
-    ...(subject.status !== "completed" ? [{ kind: "complete" as const }] : []),
+    ...(subject.status !== "completed" || gradePending ? [{ kind: "complete" as const }] : []),
     ...(otherStatuses(subject).length ? [{ kind: "other" as const }] : []),
     { kind: "archive" }
   ];

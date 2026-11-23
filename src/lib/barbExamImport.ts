@@ -4,6 +4,7 @@ import type { BarbExamSession } from './university/examTypes';
 import { BARB_EXAMS_PAGE_URL, barbCheckedDay, barbExamSourceUid, isTechnicalFeedUrl, resolveBarbCourse } from './university/examSessions';
 import { isOfficialUnimiUrl } from './university/officialSources';
 import { courseSlotKey } from './barbExamSlots';
+import { isClosedForExams } from './subjectProgress';
 
 /** Oggi a Roma (yyyy-MM-dd), il giorno delle date ufficiali: un appello di un giorno prima è passato. */
 export const barbTodayKey = (now: Date = new Date()) =>
@@ -28,11 +29,13 @@ export type ImportedExamEvent = Pick<CalendarEvent, 'title' | 'description' | 'c
 export function prepareBarbExamImport(
   sessions: BarbExamSession[], courses: BarbCourse[], subjects: Subject[],
   existingEvents: Pick<CalendarEvent, 'sourceUid'>[], allSessions: readonly BarbExamSession[] = sessions,
-  today: string = barbTodayKey()
+  today: string = barbTodayKey(),
+  /** Materie con il voto nel libretto (`recordedSubjectIds`): una completata senza voto può ancora aggiungere l'appello. */
+  recorded?: ReadonlySet<string>
 ): { events: ImportedExamEvent[]; skipped: number } {
   const byCourse = new Map<string, Subject>();
   for (const subject of subjects) {
-    if (subject.archived || subject.status === 'archived' || subject.status === 'completed') continue;
+    if (isClosedForExams(subject, recorded)) continue;
     const course = resolveBarbCourse(subject, courses);
     if (course && !byCourse.has(course.id)) byCourse.set(course.id, subject);
   }

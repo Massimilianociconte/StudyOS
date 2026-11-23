@@ -1,10 +1,11 @@
-import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { daysUntil, shortDate } from "../lib/selectors";
 import { readCoverImage } from "../lib/files";
 import { isDateToDecide } from "../lib/examOutcome";
-import { librettoEntries } from "../lib/grades";
+import { librettoEntries, recordedSubjectIds } from "../lib/grades";
+import { isGradePending, subjectProgress } from "../lib/subjectProgress";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { ATTACHMENT_KIND_ICON, FILE_TEXT, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
 import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
@@ -68,16 +69,13 @@ type StoreState = ReturnType<typeof useStudyStore.getState>;
 const subjectStats = (subject: Subject, state: Pick<StoreState, "tasks" | "sessions" | "exams" | "attachments">) => {
   const subjectTasks = state.tasks.filter((task) => task.subjectId === subject.id && task.status !== "archived");
   const openTasks = subjectTasks.filter((task) => task.status !== "done");
-  const completed = subjectTasks.length - openTasks.length;
   const studyMinutes = state.sessions
     .filter((session) => session.subjectId === subject.id && session.status === "completed")
     .reduce((sum, session) => sum + session.actualMinutes, 0);
-  const exam = state.exams
-    .filter((item) => item.subjectId === subject.id && item.status !== "done")
-    .sort((a, b) => a.date.localeCompare(b.date))[0];
   const materials = state.attachments.filter((attachment) => attachment.linkedEntityType === "subject" && attachment.linkedEntityId === subject.id);
-  // Preparazione: quella dell'esame se esiste, altrimenti avanzamento delle task della materia.
-  const progress = exam ? exam.preparation : subjectTasks.length ? Math.round((completed / subjectTasks.length) * 100) : 0;
+  // Preparazione: quella dell'esame se esiste, altrimenti avanzamento delle task della materia. Stesso
+  // calcolo della regola dello store: quando qui si legge 100% la materia passa a «Completata».
+  const { progress, exam } = subjectProgress(subject.id, state.tasks, state.exams);
   return { subjectTasks, openTasks, studyMinutes, exam, materials, progress };
 };
 
@@ -87,6 +85,7 @@ export function SubjectsView() {
   const [showArchived, setShowArchived] = useUiState("subjects.showArchived", false);
   const [semester, setSemester] = useUiState<SemesterFilter>("subjects.semester", "tutti", { validate: oneOf("tutti", ...SEMESTER_IDS) });
   const [showCompleted, setShowCompleted] = useUiState("subjects.showCompleted", false);
+  const [showPending, setShowPending] = useUiState("subjects.showPending", true);
   const { subjects, tasks, sessions, exams, topics, attachments, addSubject, updateSubject, deleteSubject, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
   const state = { tasks, sessions, exams, attachments };
@@ -153,8 +152,11 @@ export function SubjectsView() {
   };
 
   const active = subjects.filter((subject) => !isArchivedSubject(subject) && subject.status !== "completed");
+  // Completate senza voto nel libretto (al 100% o segnate a mano): in alto, finché il voto non c'è.
+  const recorded = useMemo(() => recordedSubjectIds(exams), [exams]);
+  const pendingGrade = subjects.filter((subject) => !isArchivedSubject(subject) && isGradePending(subject, recorded));
   // Materie superate (anche quelle registrate dal libretto): fuori dalla griglia principale.
-  const completed = subjects.filter((subject) => !isArchivedSubject(subject) && subject.status === "completed");
+  const completed = subjects.filter((subject) => !isArchivedSubject(subject) && subject.status === "completed" && !isGradePending(subject, recorded));
   const archived = subjects.filter(isArchivedSubject);
   const visible = active.filter((subject) => semester === "tutti" || subjectSemester(subject) === semester);
   const totalCfu = active.reduce((sum, subject) => sum + (subject.cfu || 0), 0);
@@ -166,6 +168,7 @@ export function SubjectsView() {
       key={subject.id}
       subject={subject}
       stats={subjectStats(subject, state)}
+      gradePending={isGradePending(subject, recorded)}
       onOpen={() => setOpenId(subject.id)}
       onStatus={(status) => void updateSubject(subject.id, { status })}
       onComplete={() => completeSubject(subject)}
@@ -176,9 +179,9 @@ export function SubjectsView() {
     />
   );
 
-  const group = (label: string, items: Subject[], expanded: boolean, toggle: () => void, help?: { title: string; text: string }) =>
+  const group = (label: string, items: Subject[], expanded: boolean, toggle: () => void, help?: { title: string; text: string }, top = false) =>
     items.length ? (
-      <div className="mt-6">
+      <div className={top ? "mb-4" : "mt-6"}>
         <div className="mb-2 flex items-center gap-1.5">
           <button
             type="button"
@@ -192,7 +195,8 @@ export function SubjectsView() {
           {help ? <HelpTip {...help} /> : null}
         </div>
         {expanded ? (
-          <div className="grid grid-cols-1 gap-3 opacity-75 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">{items.map(card)}</div>
+          // In alto (voto da registrare) le schede sono da usare: niente velatura.
+          <div className={`grid grid-cols-1 gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))] ${top ? "" : "opacity-75"}`}>{items.map(card)}</div>
         ) : null}
       </div>
     ) : null;
@@ -214,6 +218,8 @@ export function SubjectsView() {
       />
 
       <NewSubjectBar onAdd={async (name) => void (await addSubject({ name, color: nextSubjectColor(subjects, SWATCHES), status: "active", icon: "BookOpen" }))} />
+
+      {group(SUBJECTS_TEXT.pendingGroup, pendingGrade, showPending, () => setShowPending((value) => !value), SUBJECTS_HELP.pendingGrade, true)}
 
       {/* Un solo filtro, con i conteggi: compare solo quando c'è davvero da scegliere fra più semestri. */}
       {active.length > 0 && (semesterOptions.length > 2 || semester !== "tutti") ? (
@@ -243,7 +249,7 @@ export function SubjectsView() {
         ) : null}
       </div>
 
-      {active.length === 0 ? (
+      {active.length === 0 && pendingGrade.length ? null : active.length === 0 ? (
         <EmptyState
           icon="BookOpen"
           title={SUBJECTS_TEXT.emptyTitle}
@@ -330,6 +336,7 @@ function NewSubjectBar({ onAdd }: { onAdd: (name: string) => Promise<void> }) {
 function SubjectCard({
   subject,
   stats,
+  gradePending,
   onOpen,
   onStatus,
   onComplete,
@@ -340,6 +347,8 @@ function SubjectCard({
 }: {
   subject: Subject;
   stats: ReturnType<typeof subjectStats>;
+  /** «Completata» senza voto nel libretto: etichetta «Voto da registrare» e pulsante «Registra il voto». */
+  gradePending: boolean;
   onOpen: () => void;
   onStatus: (status: Subject["status"]) => void;
   /** «Superata»: chiede il voto (la materia diventa superata quando l'esito è salvato). */
@@ -367,12 +376,12 @@ function SubjectCard({
     // Il riquadro sparisce: il focus torna al menu da cui era partito.
     backToMenu();
   };
-  const menu = subjectMenuItems(subject).map((item): PageAction => {
+  const menu = subjectMenuItems(subject, gradePending).map((item): PageAction => {
     switch (item.kind) {
       case "status":
         return { label: SUBJECTS_TEXT.markAs(SUBJECT_STATUS_LABEL[item.status]), icon: STATUS_ICON[item.status], onClick: () => onStatus(item.status) };
       case "complete":
-        return { label: SUBJECTS_TEXT.markPassed, icon: STATUS_ICON.completed, onClick: onComplete };
+        return { label: gradePending ? SUBJECTS_TEXT.recordGrade : SUBJECTS_TEXT.markPassed, icon: STATUS_ICON.completed, onClick: onComplete };
       case "other":
         return {
           label: SUBJECTS_TEXT.otherStatus,
@@ -421,6 +430,7 @@ function SubjectCard({
 
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold text-[var(--muted)]">
         <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
+        {gradePending ? <Tag color="var(--warning)">{SUBJECTS_TEXT.pendingTag}</Tag> : null}
         {/* Semestre sconosciuto: nessuna etichetta «Da definire» (si sceglie nel dettaglio). */}
         {semester !== "non-definito" ? <Tag color={SEMESTER_TONE[semester]}>{SEMESTER_LABEL[semester]}</Tag> : null}
         <span>{subject.cfu} CFU</span>
@@ -443,6 +453,14 @@ function SubjectCard({
         </div>
         <ProgressBar value={stats.progress} color={color} />
       </div>
+
+      {gradePending ? (
+        <div className="mt-3">
+          <Button variant="primary" icon="GraduationCap" className="relative z-10" onClick={onComplete} aria-label={SUBJECTS_TEXT.recordGradeAria(subject.name)}>
+            {SUBJECTS_TEXT.recordGrade}
+          </Button>
+        </div>
+      ) : null}
 
       {exam ? (
         <div className="mt-3 border-t border-[var(--border)] pt-3">
@@ -581,6 +599,7 @@ function SubjectDrawer({
   const [groupDraft, setGroupDraft] = useState<SessionDraft | null>(null);
   const hasExamGroups = useGroupExamStore((state) => state.groups.length > 0);
   const stats = subject ? subjectStats(subject, { tasks, sessions, exams, attachments }) : null;
+  const gradePending = subject ? isGradePending(subject, recordedSubjectIds(exams)) : false;
 
   const save = async () => {
     if (!subject) return;
@@ -639,6 +658,7 @@ function SubjectDrawer({
             {course ? <span className="grid h-10 w-10 grid-cols-1 place-items-center rounded-xl" style={{ background: subjectColor(subject), color: iconInk(subject, true) }}><CourseIcon course={course} className="h-8 w-8" /></span> : <span className="h-3 w-3 rounded-full" style={{ background: subjectColor(subject) }} />}
             {subjectSemester(subject) !== "non-definito" ? <Tag color={SEMESTER_TONE[subjectSemester(subject)]}>{SEMESTER_LABEL[subjectSemester(subject)]}</Tag> : null}
             <Tag>{SUBJECT_STATUS_LABEL[subject.status]}</Tag>
+            {gradePending ? <Tag color="var(--warning)">{SUBJECTS_TEXT.pendingTag}</Tag> : null}
             <Tag>{subject.cfu} CFU</Tag>
           </>
         ) : null

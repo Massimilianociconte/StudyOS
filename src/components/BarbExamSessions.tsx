@@ -15,6 +15,8 @@ import { CourseIcon } from "./CourseIcon";
 import { Icon } from "./Icon";
 import { Button, Drawer, EmptyState, HelpTip, Tag } from "./ui";
 import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
+import { recordedSubjectIds } from "../lib/grades";
+import { isClosedForExams } from "../lib/subjectProgress";
 
 export const barbToday = (now: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 export const barbSessionDate = (date: string) => format(parseISO(date), "d MMMM yyyy", { locale: it });
@@ -33,12 +35,16 @@ export function BarbExamAvailability({ course }: { course: BarbCourse }) {
 function AddSessionToCalendar({ session, course }: { session: BarbExamSession; course: BarbCourse }) {
   const today = barbToday(useNow(60_000));
   const subjects = useStudyStore((state) => state.subjects);
+  const exams = useStudyStore((state) => state.exams);
   const events = useStudyStore((state) => state.events);
   const importBarbExamSessions = useStudyStore((state) => state.importBarbExamSessions);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
   const [problem, setProblem] = useState("");
-  const eligible = useMemo(() => subjects.some((subject) => !subject.archived && subject.status !== "archived" && subject.status !== "completed" && resolveBarbCourse(subject, BARB_EXAM_COURSES)?.id === course.id), [subjects, course.id]);
+  const eligible = useMemo(() => {
+    const recorded = recordedSubjectIds(exams);
+    return subjects.some((subject) => !isClosedForExams(subject, recorded) && resolveBarbCourse(subject, BARB_EXAM_COURSES)?.id === course.id);
+  }, [subjects, exams, course.id]);
   // Già nel calendario con una qualsiasi iscrizione dello stesso appello, come nella scelta degli appelli.
   const inCalendar = useMemo(() => {
     const uids = new Set(events.flatMap((event) => (event.sourceUid ? [event.sourceUid] : [])));

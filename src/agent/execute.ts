@@ -21,7 +21,8 @@ import { readAudit, readStoredPolicy } from "../lib/agentLocal";
 import { splitPages } from "./pageSplit";
 import { checkConsistencyTool, createReminderTool, deleteReminderTool, deleteSubjectTool, listReminders, listTags, tagItems, updateReminderTool } from "./personalExtraTools";
 import { linkedCounts } from "../lib/subjectLinks";
-import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats } from "../lib/grades";
+import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats, recordedSubjectIds } from "../lib/grades";
+import { isGradePending } from "../lib/subjectProgress";
 import { examDateOut } from "../lib/examOutcome";
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
 import { createId, nowIso } from "../lib/id";
@@ -179,7 +180,7 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
       case "studyos_list_subjects":
         return listSubjects(args);
       case "studyos_get_subject":
-        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => ({ ...publicSubject(item, true), linkedCounts: linkedCounts(current, item.id) }));
+        return one(current.subjects, text(args.id), "Materia non trovata.", (item) => ({ ...publicSubject(item, true), ...gradePendingOut(item, recordedSubjectIds(current.exams)), linkedCounts: linkedCounts(current, item.id) }));
       case "studyos_create_subject":
         return createSubject(args);
       case "studyos_update_subject":
@@ -574,8 +575,12 @@ const listSubjects = (args: Args): AgentCallResult => {
     if (typeof args.status === "string" && item.status !== args.status) return false;
     return includes(query, item.name, item.teacher);
   });
-  return ok(page(items.map((item) => publicSubject(item)), args));
+  const recorded = recordedSubjectIds(state().exams);
+  return ok(page(items.map((item) => ({ ...publicSubject(item), ...gradePendingOut(item, recorded) })), args));
 };
+
+/** Materia «completed» senza voto nel libretto: `gradePending: true` (si registra con studyos_record_grade). */
+const gradePendingOut = (subject: Subject, recorded: ReadonlySet<string>) => (isGradePending(subject, recorded) ? { gradePending: true } : {});
 
 const createSubject = async (args: Args): Promise<AgentCallResult> => {
   const id = await state().addSubject({

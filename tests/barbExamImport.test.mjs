@@ -41,6 +41,12 @@ test('Import: ignora corsi fuori dal piano, archiviati e superati', () => {
   }
 });
 
+test('Import: una materia completata col voto da registrare può ancora aggiungere l\'appello', () => {
+  const completed = { ...subject, status: 'completed' };
+  assert.equal(prepareBarbExamImport([session], [course], [completed], [], [session], TODAY, new Set()).events.length, 1);
+  assert.equal(prepareBarbExamImport([session], [course], [completed], [], [session], TODAY, new Set([subject.id])).events.length, 0);
+});
+
 test('Import: mantiene orari e sede ufficiali nei dettagli senza inventare una fine', () => {
   const official = { ...session, time: '14:30', location: 'Aula B8', notes: 'Portare documento', registrationCloses: '2027-01-14' };
   const event = prepare([official]).events[0];

@@ -172,6 +172,21 @@
   Dexie in `db.ts`, backup parziali in SettingsView e incrementare `SYNC_SCHEMA`.
 - I menu di scelta della materia usano `selectableSubjects` (niente materie archiviate o già
   superate, tranne quella selezionata). Le materie create dal libretto hanno stato "completed".
+- Materia al 100% → "completed" da sola (`src/lib/subjectProgress.ts`): la regola è nello store
+  (`updateTask`, `toggleTask`, `updateExam`), così vale per l'app, per gli agenti nel browser e
+  per il connettore remoto, che eseguono le stesse azioni. Scatta solo sul **passaggio** da sotto
+  100 a 100 e solo per un'attività appena segnata fatta o per la preparazione cambiata di un esame
+  ancora da sostenere. Lo stato dell'esame da solo non conta: registrare il voto mette l'esame su
+  «Sostenuto», la barra passa alle attività e senza questa esclusione la materia «arrivava al 100%»
+  con l'avviso «voto da registrare». Mai al caricamento o alla sincronizzazione, né creando o
+  eliminando attività ed esami. La notifica parte solo se il voto manca davvero.
+  Una materia rimessa «In corso» a mano resta tale. Il progresso è lo stesso della barra in
+  Materie (`subjectProgress`: preparazione del primo esame non sostenuto, altrimenti attività
+  fatte; 100 solo con tutto fatto, mai per arrotondamento). Ogni completamento crea una notifica.
+- «Voto da registrare» non è uno stato salvato: è "completed" senza riga nel libretto
+  (`isGradePending` con `recordedSubjectIds`). Queste materie restano idonee per gli appelli
+  (`isClosedForExams`); i ripassi invece vanno in pausa come per ogni "completed". Il connettore
+  le segnala con `gradePending: true` in `studyos_list_subjects` e `studyos_get_subject`.
 - Libretto: voto 18–30 con lode (vale 30 nella media) o idoneità (solo CFU). La media
   ponderata usa i CFU della materia; base di laurea = media × 110 / 30.
 - Import .ics: `sourceUid` sull'evento evita i duplicati a ogni nuovo import; una regola
@@ -672,6 +687,18 @@
   Raggruppamento: materia, poi la raccolta di livello `topic` più vicina sopra l'elemento
   (`topicDeck`), altrimenti la raccolta stessa. La valutazione SRS `doubt` si chiama «Incerta» nella
   UI per non confondersi con i dubbi segnati.
+- Quiz in parti (`quizTree` in `src/lib/learnGroups.ts`, `QuizTab`): la forma segue i mazzi; un
+  mazzo con due o più quiz nel suo ramo è una riga sola che si apre sulle parti. «Tutte le parti» è un
+  quiz non salvato con id `set:deck:<id del mazzo>` (`setQuiz`, `SET_QUIZ_PREFIX` in `learnStarts.ts`):
+  ultimo e miglior punteggio e la pausa della riga leggono i tentativi con quell'id; `learningStats`
+  lo salta nei punteggi per quiz (come il quiz dei dubbi) ma conta le risposte per domanda. Le
+  posizioni delle domande ripartono da 0 in ogni quiz: unendo le parti vanno rinumerate
+  (`setQuestions`; alla ripresa `resumeQuizPlay` le rinumera nell'ordine del tentativo), altrimenti
+  l'allenamento alterna la prima domanda di ogni parte. «Ripasso degli errori» delle parti insieme
+  usa l'ultima risposta a ogni domanda in qualunque tentativo (`latestMistakes`).
+- Un tentativo oltre 400 risposte continua in righe con lo stesso `quizId` e la stessa `endedAt` ma
+  `itemIds` vuoto: l'ultimo tentativo è la riga senza `continuesId` e le risposte si leggono su tutta
+  la catena (`lastMistakes`), altrimenti «solo errori» risulta vuoto.
 - Varianti Tailwind `short:` (orizzontale, altezza ≤ 520 px) e `wide:` (orizzontale, larghezza ≥
   1024 px e altezza ≥ 521 px) in `tailwind.config.js`: le usano ripasso e quiz. La scheda con `fill`
   vuole un contenitore con `container-type: size` (unità `cqh`).

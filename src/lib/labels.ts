@@ -706,6 +706,15 @@ export const UNKNOWN_PERSON = "Un'altra persona";
 export const UNKNOWN_PERSON_IN_SENTENCE = "un'altra persona";
 
 /** Ripristino di una versione dalla cronologia "Modifiche di altri". */
+/**
+ * Materia portata al 100% (ultima attività fatta, preparazione dell'esame al 100%): passa da sola a
+ * «Completata», con il voto da registrare. Notifica, anche quando la modifica viene da un agente.
+ */
+export const SUBJECT_FULL_TEXT = {
+  title: (name: string) => `«${name}» è al 100%: completata`,
+  body: "Ora il voto è da registrare: lo trovi in Materie, in «Voto da registrare». Se non hai finito, nel menu ⋯ della materia scegli «Segna come in corso»."
+} as const;
+
 export const RESTORE_TEXT = {
   notRestorable: "Questo elemento non si può ripristinare.",
   missing: "Questa versione non c'è più nella cronologia: aggiorna l'elenco.",

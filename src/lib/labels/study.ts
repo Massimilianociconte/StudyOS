@@ -71,7 +71,7 @@ export const TOPIC_FILTER_TEXT = {
 /** Elenco degli argomenti: argomenti in pausa, eliminazione, modifica. */
 export const TOPIC_TEXT = {
   /** Materia superata o archiviata: l'argomento resta nell'elenco ma non torna nei ripassi. */
-  paused: { completed: "In pausa: materia superata", archived: "In pausa: materia archiviata" },
+  paused: { completed: "In pausa: materia completata", archived: "In pausa: materia archiviata" },
   removeAria: (title: string) => `Elimina l'argomento «${title}»`,
   removeConfirm: (title: string) => `Eliminare l'argomento «${title}»? Perderai anche i ripassi fatti e le domande guida. Non si può annullare.`,
   remove: "Elimina argomento",

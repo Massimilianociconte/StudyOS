@@ -781,3 +781,68 @@ vecchie né scorrimento orizzontale. `09-share-flashcards` e `10-quiz` aggiornat
 Pubblicato il 18 novembre 2026: commit `c81c1f9` su `main`, workflow Pages riuscito (build e deploy);
 il bundle pubblicato contiene «Nuovo mazzo», «Per materia», «vengono da», «mai studiate» e «domande
 in tutto». Nessuna modifica al database né al Worker (il connettore dice ancora «raccolta»).
+
+## Quiz compatti come i mazzi e rosa in «Spazio profondo» (23 novembre 2026, ramo `claude/flashcards-quiz`)
+
+Richiesta della persona: la scheda Quiz mostrava un riquadro grande per ogni quiz, anche quando 17
+quiz (uno per argomento, ciascuno nel suo sotto-mazzo) erano le parti di un'unica verifica; nella
+scheda Flashcard invece la verifica è una riga sola che si apre sui sotto-mazzi. Il gruppo «quiz in
+parti» del 18 novembre non scattava, perché univa solo i quiz dello **stesso** mazzo.
+
+- **Quiz** (`QuizTab.tsx`, `quizTree` in `learnGroups.ts`): stessa forma dei mazzi. Per materia il
+  titolo con il segno («N quiz · N domande») e un riquadro con una riga per mazzo principale. Un
+  mazzo con un quiz solo è quel quiz (sopra il nome del mazzo, nel titolo solo ciò che lo distingue);
+  con due o più quiz, anche nei sotto-mazzi, è un **quiz in parti**: freccia, titolo del mazzo, «8
+  parti · 240 domande · 3 di 8 fatte · Migliore 82%»; toccandolo si aprono le parti appese a una
+  linea, con titolo corto («Cervelletto e circuiti cerebellari», senza «Quiz — » e «· 30 domande»),
+  domande, ultimo e miglior punteggio e ▶. Una parte è «fatta» se ha un suo punteggio o se tutte le
+  sue domande hanno avuto risposta in un tentativo concluso, anche del quiz intero
+  (`answeredQuestions`). Aperti di partenza solo i gruppi con una parte in pausa;
+  chiusi dicono «1 parte da riprendere». Quiz senza mazzo dopo i mazzi, con «Parte 1/2» come prima.
+- **Tutte le parti insieme**: ▶ sulla riga del gruppo apre l'avvio con le quattro modalità e l'elenco
+  delle parti (ognuna si apre da sola). Le domande vanno una parte dopo l'altra; simulazione con la
+  somma dei tempi se ogni parte ne ha uno; casuale anche da 100; «Ripasso degli errori» sull'ultima
+  risposta a ogni domanda. Il tentativo porta l'id `set:deck:<mazzo>`: pausa, ripresa (anche da Oggi
+  e da un altro dispositivo) e punteggio del gruppo.
+- **Avvio di un quiz**: Modifica ed Elimina sono in fondo all'avvio (prima nel menu ⋯ del
+  riquadro); con un tentativo in pausa l'avvio ha anche «Riprendi».
+- **Correzione**: `lastMistakes` leggeva solo l'ultima riga di un tentativo oltre 400 risposte (la
+  continuazione, senza `itemIds`), quindi «solo errori» risultava vuoto nei quiz molto lunghi.
+- **Spazio profondo**: primario rosa `#ff8fab` (pulsanti, scheda attiva, anello del focus), viola
+  secondo, azzurro terzo; nel tema chiaro il testo in accento è un lampone scuro
+  (`color-mix(… 45%, #3b0718)`) al posto del mix con il verde scuro, che faceva un rosa fangoso.
+
+Verifiche: `npm test` (nuovi `tests/quizSets.test.mjs` e casi in `learnGroups` e `learnSession`,
+compreso il caso degli screenshot), `npm run lint`, `npm run build`, contrasto di tutte le palette
+(`themeContrast`). Nel browser con dati come quelli della persona (mazzo con un quiz, mazzo con 8
+sotto-mazzi e un quiz ciascuno, due simulazioni nello stesso mazzo, un quiz senza mazzo): riga
+compatta, apertura delle parti, tutte le parti in allenamento nell'ordine giusto, pausa e ripresa
+dalla riga, punteggi del gruppo e della parte, «solo errori» delle parti insieme, tempo sommato,
+apertura di una parte dall'elenco, dopo un ricaricamento punteggio e pausa del gruppo ancora sulla
+riga e ripresa da Oggi al punto giusto, palette in tema scuro e chiaro, 375 px senza scorrimento
+orizzontale. `10-quiz` aggiornato (punteggio «Ultimo 100%» nella riga); `npm run e2e` non eseguito
+(Docker spento). Non pubblicato.
+
+### Materia al 100%: completata, voto da registrare (23 novembre 2026)
+
+- Quando il progresso di una materia arriva al 100% (l'ultima attività segnata fatta o la
+  preparazione dell'esame portata al 100%), la materia passa da sola a «Completata». Vale se lo fa
+  la persona nell'app o un agente AI, anche dal connettore remoto ad app chiusa (dopo il deploy del
+  Worker). Arriva una notifica con il link a Materie e con come annullare («Segna come in corso»).
+- In Materie le completate senza voto nel libretto stanno in alto in «Voto da registrare», aperto,
+  con l'etichetta «Voto da registrare» e il pulsante «Registra il voto», che apre il modulo del voto
+  già sulla materia. Con il voto salvato la materia passa tra le Superate. Anche il menu ⋯ ha
+  «Registra il voto».
+- Queste materie possono ancora aggiungere gli appelli ufficiali. I ripassi dei loro argomenti vanno
+  in pausa («In pausa: materia completata», prima «materia superata»).
+- Connettore: `gradePending: true` nelle materie in attesa del voto; le descrizioni di
+  `studyos_update_task` e `studyos_update_exam` spiegano la regola.
+
+Verifiche: `npm test` (1781, nuovo `tests/subjectProgress.test.mjs` con regola, casi limite e
+store; caso in `barbExamImport`), `npm run lint`, `npm run build`. Nel browser: ultima attività
+spuntata in Attività → materia completata con notifica; «Apri» porta a Materie; «Registra il voto»
+→ voto 27 → la materia passa tra le Superate; preparazione 95 → 100 in Esami → completata;
+«Segna come in corso» la riporta nella griglia e un cambio di data non la ricompleta; da
+`studyos_update_exam` lo stesso, con `gradePending` nelle risposte; 375 px senza scorrimento
+orizzontale. `npm run e2e` non eseguito (Docker spento). Non pubblicato; il Worker non è stato
+ridistribuito.
