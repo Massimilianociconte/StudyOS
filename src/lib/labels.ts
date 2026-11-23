@@ -791,7 +791,7 @@ export const peopleLabels = {
   groupNotOnline: "Il gruppo non è ancora online: riapri questa finestra tra poco.",
   groupInvited: (name: string) => `Invito mandato a ${name}: lo vede nelle notifiche e in Gruppi.`,
   groupActivity: (name: string) => `ha invitato ${name}`,
-  adminRoleHint: "come un membro, ma può anche invitare una persona trovata con la ricerca (email o @nome).",
+  adminRoleHint: "come un membro, ma può anche invitare una persona trovata con la ricerca (email o @nome) e modificare o togliere ogni contenuto della bacheca.",
   shareTarget: "Una persona (cerca per email o @nome)",
   shareInvited: (name: string, scopes: string) =>
     `Invito mandato a ${name}: lo vede nelle notifiche e in Condivisione → Inviti. Quando accetta, vede ${scopes}.`,

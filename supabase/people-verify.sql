@@ -138,6 +138,19 @@ select
       like '%when v_private%Hai una nuova notifica.%', false)
     and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_push_notify(uuid[],text,text,text,text,text)'))
       like '%group by s.private, (s.rn - 1) / 15%', false) as push_private_ready,
+  -- Revisione del 23/11/2026: annunci della bacheca modificabili. Le versioni precedenti le scrivono
+  -- solo i trigger di groups.sql (va rieseguito prima di questo file), l'avviso agli altri membri parte
+  -- da qui (studyos_push_board_edit).
+  exists (select 1 from information_schema.columns where table_schema = 'public'
+      and table_name = 'studyos_group_resources' and column_name = 'revisions')
+    and coalesce(pg_get_functiondef(to_regprocedure('public.studyos_group_resources_guard()'))
+      like '%new.revisions := coalesce(old.revisions%', false)
+    and (select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'D'
+      and tgrelid = to_regclass('public.studyos_group_resources')
+      and tgname in ('studyos_group_resources_insert_guard', 'studyos_group_resources_edit_push')) = 2
+    and not coalesce(has_function_privilege('authenticated', to_regprocedure('public.studyos_push_board_edit()'), 'EXECUTE')
+      or has_function_privilege('anon', to_regprocedure('public.studyos_push_board_edit()'), 'EXECUTE'), true)
+    as board_edit_ready,
   -- Facoltativo: false se il progetto non permette trigger su auth.sessions; allora le iscrizioni
   -- delle sessioni finite si tolgono alla prima notifica respinta (push_gone).
   exists (select 1 from pg_trigger where not tgisinternal

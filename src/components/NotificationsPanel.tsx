@@ -5,6 +5,7 @@ import { useStudyStore } from "../store/useStudyStore";
 import { writeUiState } from "../lib/uiState";
 import { notificationJump } from "../lib/notificationJump";
 import { NOTIFICATIONS_TEXT } from "../lib/labels/notifications";
+import { isBoardEditNotification } from "../lib/groups";
 import { Button, Drawer, EmptyState } from "./ui";
 import { Icon } from "./Icon";
 import { StandaloneReminders } from "./StandaloneReminders";
@@ -15,6 +16,9 @@ const KIND_ICON: Record<AppNotification["kind"], string> = {
   share: "Share2",
   system: "Info"
 };
+
+/** Logo dell'app per gli avvisi che arrivano da altri membri (annuncio della bacheca modificato). */
+const APP_LOGO = `${import.meta.env.BASE_URL}icons/studyos.svg`;
 
 export const formatNotificationTime = (iso: string) => {
   const date = parseISO(iso);
@@ -67,9 +71,13 @@ export function NotificationsPanel({ onClose }: { onClose: () => void }) {
               key={item.id}
               className={`quiet-panel flex min-w-0 items-start gap-3 p-3 ${item.readAt ? "opacity-70" : ""}`}
             >
-              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${item.readAt ? "bg-[var(--surface-strong)] text-[var(--muted)]" : "bg-[var(--accent)] text-[#10131d]"}`}>
-                <Icon name={KIND_ICON[item.kind]} className="h-4.5 w-4.5" />
-              </span>
+              {isBoardEditNotification(item) ? (
+                <img src={APP_LOGO} alt="" width={40} height={40} className={`h-10 w-10 shrink-0 rounded-full ${item.readAt ? "opacity-80" : ""}`} />
+              ) : (
+                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${item.readAt ? "bg-[var(--surface-strong)] text-[var(--muted)]" : "bg-[var(--accent)] text-[#10131d]"}`}>
+                  <Icon name={KIND_ICON[item.kind]} className="h-4.5 w-4.5" />
+                </span>
+              )}
               <div className="min-w-0 flex-1">
                 <p className="safe-text text-sm font-extrabold">{item.title}</p>
                 {item.body ? <p className="safe-text mt-0.5 text-xs text-[var(--muted)]">{item.body}</p> : null}

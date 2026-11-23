@@ -37,3 +37,31 @@ export const GROUP_SYNC_TEXT = {
   notPublished: "Non ancora condiviso: partirà appena il server risponde.",
   nameTooLong: "Nome troppo lungo: il server accetta al massimo 120 caratteri, quindi questo gruppo non è online e gli inviti non funzionano. Per invitare altre persone crea un nuovo gruppo con un nome più corto."
 } as const;
+
+/** Modifica degli annunci della bacheca, versioni precedenti e ripristino. */
+export const GROUP_BOARD_TEXT = {
+  edit: "Modifica",
+  editAria: (title: string) => `Modifica "${title}"`,
+  editTitle: "Modifica l'annuncio",
+  editNote: "La versione attuale resterà tra le versioni precedenti e gli altri membri riceveranno un avviso.",
+  save: "Salva le modifiche",
+  saving: "Salvo…",
+  unsavedEditText: "Hai cambiato l'annuncio senza salvare.",
+  editedBy: (name: string, when: string) => `modificato da ${name}${when ? `, ${when}` : ""}`,
+  showHistory: (count: number) => `Versioni precedenti · ${count}`,
+  hideHistory: "Nascondi versioni",
+  historyHeading: (name: string, when: string) => `Prima della modifica di ${name}${when ? ` · ${when}` : ""}`,
+  historyChanged: (changes: string) => `Cambiati: ${changes}`,
+  restore: "Ripristina questa versione",
+  restoreAria: (title: string) => `Ripristina la versione "${title}"`,
+  restored: "Versione ripristinata.",
+  alreadySame: "L'annuncio è già uguale a questa versione.",
+  missingTitle: "Scrivi un titolo per continuare.",
+  missingLink: "Incolla il link da condividere.",
+  gone: "Questo annuncio non è più in bacheca.",
+  goneOrLeft: "Questo annuncio non è più in bacheca, oppure non fai più parte del gruppo.",
+  denied: "Puoi modificare solo i tuoi annunci, a meno che tu sia proprietario o amministratore del gruppo.",
+  failed: "Non è stato possibile salvare la modifica. Controlla la connessione e riprova.",
+  activityEdited: (title: string) => `ha modificato "${title}"`,
+  activityRestored: (title: string) => `ha ripristinato una versione precedente di "${title}"`
+} as const;

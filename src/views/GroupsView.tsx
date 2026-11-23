@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GroupMember, GroupResource, StudyGroup } from "../types";
+import type { GroupMember, GroupResource, GroupResourceRevision, StudyGroup } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { Button, Drawer, Field, Panel, SectionTitle, Segmented, Tag, inputClass } from "../components/ui";
 import { Icon } from "../components/Icon";
@@ -13,6 +13,7 @@ import {
   declineInviteRemote,
   deleteSharedGroup,
   deleteSharedResource,
+  editGroupResource,
   ensureSharedMailbox,
   getActor,
   joinGroupWithCode,
@@ -33,11 +34,11 @@ import { GroupExamsTab } from "../components/groupExams/GroupExamsTab";
 import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
 // «Docenti e aule» porta i dati BARB: si carica solo quando si apre la scheda.
 const GroupCatalogTab = lazy(() => import("../components/groupExams/GroupCatalogTab"));
-import { GROUP_FORM_TEXT, GROUP_SYNC_TEXT } from "../lib/labels/groups";
+import { GROUP_BOARD_TEXT, GROUP_FORM_TEXT, GROUP_SYNC_TEXT } from "../lib/labels/groups";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
 import { peopleLabels } from "../lib/labels";
 import { groupInviteRecipient, isExpiredEmailInvite } from "../lib/people";
-import { GROUP_NAME_MAX, isReceivedInvite } from "../lib/groups";
+import { GROUP_NAME_MAX, contentAfterRevision, isReceivedInvite, resourceChanges } from "../lib/groups";
 
 type DetailTab = "bacheca" | "membri" | "attivita" | "appelli" | "catalogo";
 
@@ -504,6 +505,7 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
   // Collegata: «Apri» di una notifica degli appelli scrive "appelli" anche con il gruppo già aperto.
   const [tab, setTab] = useLinkedUiState<DetailTab>("groups.detailTab", "bacheca", { scope: "tab", validate: oneOf("bacheca", "membri", "attivita", "appelli", "catalogo") });
   const [resourceOpen, setResourceOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const resources = useMemo(
     () => groupResources.filter((r) => r.groupId === group.id).sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt.localeCompare(a.createdAt)),
@@ -516,6 +518,9 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
   const sentInvites = groupInvites.filter((i) => i.groupId === group.id && i.status === "pending");
   const myRole = actor ? group.members.find((m) => m.userId === actor.userId)?.role : undefined;
   const isOwner = myRole === "owner";
+  // Come il server (studyos_group_resources_guard e policy di eliminazione): autore, proprietario o amministratore.
+  const canManageAll = myRole === "owner" || myRole === "admin";
+  const editing = editingId ? resources.find((resource) => resource.id === editingId) ?? null : null;
   // Esiti delle azioni sui membri: qui dentro, non nel messaggio della pagina coperto dal pannello.
   const [memberNotice, setMemberNotice] = useState("");
 
@@ -562,7 +567,14 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
           ) : (
             <ul className="grid grid-cols-1 gap-2">
               {resources.map((resource) => (
-                <ResourceRow key={resource.id} resource={resource} canManage={isOwner || resource.addedByUserId === actor?.userId} shared={Boolean(group.sharedAt)} />
+                <ResourceRow
+                  key={resource.id}
+                  resource={resource}
+                  actor={actor}
+                  canManage={Boolean(actor) && (canManageAll || resource.addedByUserId === actor?.userId)}
+                  shared={Boolean(group.sharedAt)}
+                  onEdit={() => setEditingId(resource.id)}
+                />
               ))}
             </ul>
           )}
@@ -588,9 +600,9 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
           <details className="quiet-panel mt-3 p-3">
             <summary className="cursor-pointer text-sm font-extrabold">Cosa può fare ogni ruolo?</summary>
             <ul className="mt-2 grid grid-cols-1 gap-1.5 text-xs text-[var(--muted)]">
-              <li><strong>Proprietario</strong>: ha creato il gruppo. Sceglie i ruoli, può togliere persone e contenuti dalla bacheca ed eliminare il gruppo.</li>
+              <li><strong>Proprietario</strong>: ha creato il gruppo. Sceglie i ruoli, può togliere persone, modificare o togliere ogni contenuto della bacheca ed eliminare il gruppo.</li>
               <li><strong>Amministratore</strong>: {peopleLabels.adminRoleHint}</li>
-              <li><strong>Membro</strong>: aggiunge link, note e file in bacheca e invita altri con link, QR o codice.</li>
+              <li><strong>Membro</strong>: aggiunge link, note e file in bacheca, modifica quelli che ha aggiunto e invita altri con link, QR o codice. Ogni modifica resta tra le versioni precedenti dell'annuncio e viene segnalata agli altri membri.</li>
             </ul>
           </details>
           {sentInvites.length ? (
@@ -646,14 +658,18 @@ function GroupDetail({ group, actor, onClose, onNotice, onLogin }: { group: Stud
       ) : null}
 
       {resourceOpen && actor ? <ResourceModal group={group} actor={actor} onClose={() => setResourceOpen(false)} /> : null}
+      {editing && actor ? <ResourceModal key={editing.id} group={group} actor={actor} resource={editing} onClose={() => setEditingId(null)} /> : null}
       {inviteOpen && actor ? <InviteSheet group={group} actor={actor} onClose={() => setInviteOpen(false)} onNotice={onNotice} onLogin={onLogin} /> : null}
     </Drawer>
   );
 }
 
-function ResourceRow({ resource, canManage, shared }: { resource: GroupResource; canManage: boolean; shared: boolean }) {
+function ResourceRow({ resource, actor, canManage, shared, onEdit }: { resource: GroupResource; actor: Actor | null; canManage: boolean; shared: boolean; onEdit: () => void }) {
   const store = useStudyStore();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const revisions = resource.revisions ?? [];
+  const lastEdit = revisions[revisions.length - 1];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // In un gruppo condiviso decide il server: prima la scrittura lì, poi qui. Un errore lasciava una
@@ -705,19 +721,32 @@ function ResourceRow({ resource, canManage, shared }: { resource: GroupResource;
             {resource.pinned ? <Icon name="Pin" className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-[var(--accent-ink)]" /> : null}
             {resource.title}
           </p>
-          {resource.url ? (
-            <a href={safeHref(resource.url)} target="_blank" rel="noreferrer" className="block truncate text-xs font-bold text-[var(--accent-ink)] underline">
-              {resource.url}
-            </a>
+          <ResourceContentView resource={resource} />
+          <p className="mt-1 text-[11px] font-bold text-[var(--faint)]">
+            {RESOURCE_LABEL[resource.kind]} · aggiunto da {resource.addedByDisplayName}
+            {lastEdit ? ` · ${GROUP_BOARD_TEXT.editedBy(lastEdit.byDisplayName, formatNotificationTime(lastEdit.at))}` : ""}
+          </p>
+          {revisions.length ? (
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((value) => !value)}
+              aria-expanded={historyOpen}
+              className="mt-1.5 inline-flex min-h-11 items-center whitespace-nowrap gap-1.5 rounded-full bg-[var(--surface-soft)] px-3 text-xs font-black hover:bg-[var(--surface-strong)]"
+            >
+              <Icon name="History" className="h-3.5 w-3.5 shrink-0" />
+              {historyOpen ? GROUP_BOARD_TEXT.hideHistory : GROUP_BOARD_TEXT.showHistory(revisions.length)}
+            </button>
           ) : null}
-          {resource.body ? <p className="safe-text mt-0.5 whitespace-pre-line text-xs text-[var(--muted)]">{resource.body}</p> : null}
-          <p className="mt-1 text-[11px] font-bold text-[var(--faint)]">{RESOURCE_LABEL[resource.kind]} · aggiunto da {resource.addedByDisplayName}</p>
           {shared && !resource.sharedAt ? <p className="mt-1 text-[11px] font-bold text-[var(--muted)]">{GROUP_SYNC_TEXT.notPublished}</p> : null}
           {error ? <p role="alert" className="mt-1 text-xs font-bold text-[var(--danger-text)]">{error}</p> : null}
         </div>
         {canManage ? (
           // Cerchi da 32 px con area di tocco da 44 (after:-inset-1.5); gap-3 = le due aree non si sovrappongono.
           <span className="flex shrink-0 gap-3">
+            <button type="button" onClick={onEdit} disabled={busy} aria-label={GROUP_BOARD_TEXT.editAria(resource.title)} title={GROUP_BOARD_TEXT.edit}
+              className="relative grid h-8 w-8 grid-cols-1 place-items-center rounded-full after:absolute after:-inset-1.5 after:content-[''] hover:bg-[var(--surface-strong)]">
+              <Icon name="PenLine" className="h-4 w-4" />
+            </button>
             <button type="button" onClick={() => void togglePin()} disabled={busy} aria-label={resource.pinned ? "Togli dai fissati" : "Fissa in alto"} title={resource.pinned ? "Togli dai fissati" : "Fissa in alto"}
               className={`relative grid h-8 w-8 grid-cols-1 place-items-center rounded-full after:absolute after:-inset-1.5 after:content-[''] ${resource.pinned ? "bg-[var(--accent)] text-[#10131d]" : "hover:bg-[var(--surface-strong)]"}`}>
               <Icon name="Pin" className="h-4 w-4" />
@@ -728,10 +757,11 @@ function ResourceRow({ resource, canManage, shared }: { resource: GroupResource;
           </span>
         ) : null}
       </div>
+      {historyOpen && revisions.length ? <ResourceHistory resource={resource} actor={actor} canRestore={canManage} /> : null}
       {confirmDelete ? (
         <div className="mt-3">
           <InlineConfirm
-            text={`Eliminare "${resource.title}" dalla bacheca? Sparirà per tutti i membri e non si può annullare.`}
+            text={`Eliminare "${resource.title}" dalla bacheca? Sparirà per tutti i membri${revisions.length ? ", con le versioni precedenti," : ""} e non si può annullare.`}
             confirmLabel="Elimina dalla bacheca"
             icon="Trash2"
             onCancel={() => setConfirmDelete(false)}
@@ -740,6 +770,74 @@ function ResourceRow({ resource, canManage, shared }: { resource: GroupResource;
         </div>
       ) : null}
     </li>
+  );
+}
+
+/** Link e testo di un annuncio o di una sua versione precedente. */
+function ResourceContentView({ resource }: { resource: { url?: string; body?: string } }) {
+  return (
+    <>
+      {resource.url ? (
+        <a href={safeHref(resource.url)} target="_blank" rel="noreferrer" className="block truncate text-xs font-bold text-[var(--accent-ink)] underline">
+          {resource.url}
+        </a>
+      ) : null}
+      {resource.body ? <p className="safe-text mt-0.5 whitespace-pre-line text-xs text-[var(--muted)]">{resource.body}</p> : null}
+    </>
+  );
+}
+
+/**
+ * Versioni precedenti, dalla più recente: com'era l'annuncio prima di ogni modifica, chi l'ha cambiato
+ * e quando. Ripristinare è una modifica nuova: la versione attuale finisce a sua volta qui.
+ */
+function ResourceHistory({ resource, actor, canRestore }: { resource: GroupResource; actor: Actor | null; canRestore: boolean }) {
+  const revisions = resource.revisions ?? [];
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const restore = async (revision: GroupResourceRevision) => {
+    if (!actor || busyId) return;
+    setBusyId(revision.id);
+    setMessage("");
+    try {
+      const changed = await editGroupResource(resource.id, { title: revision.title, url: revision.url, body: revision.body }, actor, { restoring: true });
+      setMessage(changed ? GROUP_BOARD_TEXT.restored : GROUP_BOARD_TEXT.alreadySame);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : GROUP_BOARD_TEXT.failed);
+    } finally {
+      setBusyId(null);
+    }
+  };
+  return (
+    <div className="mt-3 border-t border-[var(--border)] pt-3">
+      {message ? (
+        <p role="status" className="mb-2 rounded-[14px] bg-[var(--surface-soft)] px-3 py-2 text-xs font-bold text-[var(--muted)]">
+          {message}
+        </p>
+      ) : null}
+      <ol className="grid grid-cols-1 gap-2">
+        {revisions
+          .map((revision, index) => ({ revision, changes: resourceChanges(revision, contentAfterRevision(resource, index)) }))
+          .reverse()
+          .map(({ revision, changes }) => (
+            <li key={revision.id} className="min-w-0 rounded-[14px] bg-[var(--surface-soft)] p-3">
+              <p className="text-[11px] font-bold text-[var(--faint)]">
+                {GROUP_BOARD_TEXT.historyHeading(revision.byDisplayName, formatNotificationTime(revision.at))}
+                {changes.length ? ` · ${GROUP_BOARD_TEXT.historyChanged(changes.join(", "))}` : ""}
+              </p>
+              <p className="safe-text mt-1 text-xs font-extrabold">{revision.title}</p>
+              <ResourceContentView resource={revision} />
+              {canRestore ? (
+                <div className="mt-2 flex justify-end">
+                  <Button variant="ghost" icon="RotateCcw" onClick={() => void restore(revision)} disabled={!actor || busyId !== null} aria-label={GROUP_BOARD_TEXT.restoreAria(revision.title)}>
+                    {busyId === revision.id ? GROUP_BOARD_TEXT.saving : GROUP_BOARD_TEXT.restore}
+                  </Button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+      </ol>
+    </div>
   );
 }
 
@@ -978,18 +1076,34 @@ function GroupDetailFooter({ group, actor, isOwner, onClose, onNotice }: { group
   );
 }
 
-function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Actor; onClose: () => void }) {
-  const [kind, setKind] = useState<GroupResource["kind"]>("link");
-  const [title, setTitle] = useState("");
-  const [url, setUrl] = useState("");
-  const [body, setBody] = useState("");
+/** Un file in bacheca è solo un nome: sta nella prima riga del testo ("File: …"). */
+const FILE_LINE = /^File: (.*)(?:\n|$)/;
+
+const splitFileBody = (body = "") => {
+  const match = FILE_LINE.exec(body);
+  return match ? { fileName: match[1].trim(), rest: body.slice(match[0].length) } : { fileName: "", rest: body };
+};
+
+/** Nuovo annuncio, oppure (con `resource`) modifica di uno esistente: il tipo resta quello scelto all'inizio. */
+function ResourceModal({ group, actor, resource, onClose }: { group: StudyGroup; actor: Actor; resource?: GroupResource; onClose: () => void }) {
+  const editing = Boolean(resource);
+  const [initial] = useState(() => {
+    const file = resource?.kind === "file" ? splitFileBody(resource.body) : { fileName: "", rest: resource?.body ?? "" };
+    return { title: resource?.title ?? "", url: resource?.url ?? "", body: file.rest, fileName: file.fileName };
+  });
+  const [kind, setKind] = useState<GroupResource["kind"]>(resource?.kind ?? "link");
+  const [title, setTitle] = useState(initial.title);
+  const [url, setUrl] = useState(initial.url);
+  const [body, setBody] = useState(initial.body);
   const [pinned, setPinned] = useState(false);
-  const [fileName, setFileName] = useState("");
+  const [fileName, setFileName] = useState(initial.fileName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Chiusura in attesa della risposta a «Scartare le modifiche?».
   const [asking, setAsking] = useState(false);
-  const dirty = Boolean(title.trim() || url.trim() || body.trim() || fileName);
+  const dirty = editing
+    ? title !== initial.title || url !== initial.url || body !== initial.body || fileName !== initial.fileName
+    : Boolean(title.trim() || url.trim() || body.trim() || fileName);
   const requestClose = () => {
     if (busy) return;
     if (dirty) setAsking(true);
@@ -1000,22 +1114,32 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
     if (busy) return;
     setAsking(false);
     if (!title.trim()) {
-      setError("Scrivi un titolo per continuare.");
+      setError(GROUP_BOARD_TEXT.missingTitle);
       return;
     }
     if (kind === "link" && !url.trim()) {
-      setError("Incolla il link da condividere.");
+      setError(GROUP_BOARD_TEXT.missingLink);
       return;
     }
     setBusy(true);
+    setError("");
+    const content = {
+      title,
+      url: kind === "link" ? url : undefined,
+      body: kind === "file" ? `${fileName ? `File: ${fileName}\n` : ""}${body}` : body || undefined
+    };
     try {
+      if (resource) {
+        // Gruppo condiviso: prima il server (permessi, versione precedente, avviso agli altri membri).
+        await editGroupResource(resource.id, content, actor);
+        onClose();
+        return;
+      }
       const store = useStudyStore.getState();
       const id = await store.addGroupResource({
         groupId: group.id,
         kind,
-        title,
-        url: kind === "link" ? url : undefined,
-        body: kind === "file" ? `${fileName ? `File: ${fileName}\n` : ""}${body}` : body || undefined,
+        ...content,
         pinned,
         addedByUserId: actor.userId,
         addedByDisplayName: actor.displayName
@@ -1026,7 +1150,7 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
       await logSharedActivity(group.id, actor.displayName, `ha aggiunto "${title.trim()}"`).catch(() => undefined);
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Non è stato possibile aggiungere alla bacheca. Riprova.");
+      setError(cause instanceof Error ? cause.message : editing ? GROUP_BOARD_TEXT.failed : "Non è stato possibile aggiungere alla bacheca. Riprova.");
     } finally {
       setBusy(false);
     }
@@ -1045,13 +1169,13 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
       open
       onClose={requestClose}
       eyebrow={<span className="safe-text text-xs font-black uppercase text-[var(--faint)]">{GROUP_FORM_TEXT.resourceEyebrow(group.name)}</span>}
-      title={GROUP_FORM_TEXT.resourceTitle}
+      title={editing ? GROUP_BOARD_TEXT.editTitle : GROUP_FORM_TEXT.resourceTitle}
       width="max-w-[560px]"
       footer={
         asking ? (
           <UnsavedPrompt
             title={GROUP_FORM_TEXT.unsavedTitle}
-            text={GROUP_FORM_TEXT.unsavedResourceText}
+            text={editing ? GROUP_BOARD_TEXT.unsavedEditText : GROUP_FORM_TEXT.unsavedResourceText}
             keep={GROUP_FORM_TEXT.unsavedKeep}
             discard={GROUP_FORM_TEXT.unsavedDiscard}
             onKeep={() => setAsking(false)}
@@ -1063,15 +1187,23 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
         ) : (
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="soft" onClick={onClose} disabled={busy}>Annulla</Button>
-            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>{busy ? "Aggiungo…" : "Aggiungi alla bacheca"}</Button>
+            <Button variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>
+              {editing ? (busy ? GROUP_BOARD_TEXT.saving : GROUP_BOARD_TEXT.save) : busy ? "Aggiungo…" : "Aggiungi alla bacheca"}
+            </Button>
           </div>
         )
       }
     >
-      <div>
-        <Segmented label="Cosa aggiungi" size="sm" value={kind} onChange={setKind}
-          options={[{ id: "link", label: "Link", icon: "Globe" }, { id: "note", label: "Nota", icon: "FileText" }, { id: "file", label: "File", icon: "Paperclip" }, { id: "task", label: "Attività", icon: "Check" }]} />
-      </div>
+      {editing ? (
+        <p className="text-sm font-bold text-[var(--muted)]">
+          <span className="text-[var(--text)]">{RESOURCE_LABEL[kind]}.</span> {GROUP_BOARD_TEXT.editNote}
+        </p>
+      ) : (
+        <div>
+          <Segmented label="Cosa aggiungi" size="sm" value={kind} onChange={setKind}
+            options={[{ id: "link", label: "Link", icon: "Globe" }, { id: "note", label: "Nota", icon: "FileText" }, { id: "file", label: "File", icon: "Paperclip" }, { id: "task", label: "Attività", icon: "Check" }]} />
+        </div>
+      )}
       <div className="mt-3 grid grid-cols-1 gap-3">
         <Field label="Titolo">
           <input className={inputClass} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Es. Appunti capitolo 4" data-autofocus />
@@ -1082,9 +1214,11 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
           </Field>
         ) : null}
         {kind === "file" ? (
-          <Field label="File">
-            <input className={inputClass} type="file" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? "")} />
-            <p className="mt-1 text-xs text-[var(--faint)]">Gli altri vedranno solo il nome del file, che resta sul tuo dispositivo. Per farlo scaricare, aggiungi invece un link (es. Google Drive).</p>
+          <Field label={editing && fileName ? `File: ${fileName}` : "File"}>
+            <input className={inputClass} type="file" onChange={(event) => setFileName(event.target.files?.[0]?.name ?? (editing ? fileName : ""))} />
+            <p className="mt-1 text-xs text-[var(--faint)]">
+              {editing ? "Scegli un file solo per sostituire il nome indicato. " : ""}Gli altri vedranno solo il nome del file, che resta sul tuo dispositivo. Per farlo scaricare, aggiungi invece un link (es. Google Drive).
+            </p>
           </Field>
         ) : null}
         {kind !== "link" ? (
@@ -1092,10 +1226,12 @@ function ResourceModal({ group, actor, onClose }: { group: StudyGroup; actor: Ac
             <textarea className={`${inputClass} min-h-20 py-3`} value={body} onChange={(event) => setBody(event.target.value)} placeholder={bodyField[kind].placeholder} />
           </Field>
         ) : null}
-        <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
-          <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={pinned} onChange={(event) => setPinned(event.target.checked)} />
-          <span className="min-w-0 flex-1">Fissa in alto nella bacheca</span>
-        </label>
+        {editing ? null : (
+          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[18px] bg-[var(--surface-soft)] px-3 text-sm font-bold">
+            <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={pinned} onChange={(event) => setPinned(event.target.checked)} />
+            <span className="min-w-0 flex-1">Fissa in alto nella bacheca</span>
+          </label>
+        )}
         {error ? <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{error}</p> : null}
       </div>
     </Drawer>

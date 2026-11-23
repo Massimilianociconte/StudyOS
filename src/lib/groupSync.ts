@@ -2,7 +2,9 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
 import { getMeta, setMeta } from "./db";
 import {
+  boardEditNotices,
   classifyGroupRpcError,
+  cleanResourceContent,
   inviteNotificationId,
   invitesToNotify,
   isCodeOnlyInvite,
@@ -11,18 +13,24 @@ import {
   mergeSharedSnapshot,
   normalizeInviteCode,
   realtimeGroupIds,
+  resourceChanges,
   serverGroupName,
   serverStampOf,
   settleInviteNotifications,
   visibleMemberName,
+  withResourceRevision,
   withServerStamp,
   activityFromRow as toActivity,
   groupFromRow as toGroup,
   memberFromRow,
   resourceFromRow as toResource,
+  type BoardEditNotice,
   type GroupRpcOutcome,
+  type ResourceContent,
   type SharedSnapshot
 } from "./groups";
+import { createId } from "./id";
+import { GROUP_BOARD_TEXT } from "./labels/groups";
 import { GROUP_JOINED_EVENT, clearPendingInvite, readPendingInvite } from "./groupInvite";
 import { getSession, isCloudConfigured, supabase } from "./supabase";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
@@ -176,6 +184,13 @@ const applyShared = async (patch: SharedPatch) => {
 
 const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds: string[]) => {
   const state = useStudyStore.getState();
+  // Prima del merge: servono le versioni che questo dispositivo conosceva già.
+  const boardEdits = boardEditNotices({
+    current: state.groupResources,
+    incoming: snapshot.resources,
+    groups: [...state.studyGroups, ...snapshot.groups],
+    me
+  });
   // La lettura degli inviti ricevuti (recipient_user_id = me) è sempre completa: quelli spariti dal
   // server sono stati ritirati. Il legame all'account dato dalla migrazione resta (mergeSharedSnapshot).
   const merged = mergeSharedSnapshot(
@@ -193,7 +208,28 @@ const mergeShared = async (snapshot: SharedSnapshot, me: string, queriedGroupIds
     // Inviti risposti altrove o ritirati: la loro notifica «accetta o rifiuta» non resta da leggere.
     notifications: settleInviteNotifications(state.notifications, merged.invites, me, new Date().toISOString())
   });
-  return { freshInvites: merged.freshInvites, freshGroups: merged.freshGroups };
+  return { freshInvites: merged.freshInvites, freshGroups: merged.freshGroups, boardEdits };
+};
+
+/**
+ * Annunci modificati da altri membri: un avviso per modifica, con id stabile (più dispositivi dello
+ * stesso account non lo duplicano) e l'ora della modifica. La notifica push la manda il server.
+ */
+const notifyBoardEdits = async (notices: BoardEditNotice[]) => {
+  for (const notice of notices) {
+    await useStudyStore
+      .getState()
+      .addNotification({
+        id: notice.id,
+        kind: "group",
+        title: notice.title,
+        body: notice.body,
+        linkView: "groups",
+        linkGroupId: notice.groupId,
+        createdAt: notice.at
+      })
+      .catch(() => undefined);
+  }
 };
 
 /** Notifica di un invito ricevuto: id stabile, quindi una sola su tutti i dispositivi dell'account. */
@@ -345,9 +381,10 @@ const pullOnce = async (): Promise<boolean> => {
     // Uscita («Esci e togli i dati») o cambio account durante le letture: i dati di prima non devono
     // finire nel profilo svuotato (e da lì nel cloud del prossimo account).
     if (!(await stillSignedInAs(me))) return false;
-    const { freshInvites } = await mergeShared(snapshot, me, myGroupIds);
+    const { freshInvites, boardEdits } = await mergeShared(snapshot, me, myGroupIds);
     if (!(await stillSignedInAs(me))) return false;
     await notifyFreshInvites(freshInvites, me);
+    await notifyBoardEdits(boardEdits);
     lastGroupPullAt = Date.now();
     watchedMe = me;
     await repairOwnership(ownerless, me, email);
@@ -626,6 +663,73 @@ export const pushSharedMemberRole = async (groupId: string, userId: string, role
 /** Fissaggio sul server; il timbro restituito va adottato dopo il cambio locale (adoptServerStamp). */
 export const pushSharedResourcePin = (resource: GroupResource) =>
   updateRows("studyos_group_resources", { pinned: resource.pinned, updated_at: resource.updatedAt }, { id: resource.id });
+
+type ContentUpdate = { status: "ok"; row: Record<string, unknown> } | { status: "denied" | "gone" | "failed" };
+
+/**
+ * Nuovo contenuto sul server con un update mirato (un upsert rifiuterebbe l'annuncio di un altro, vedi
+ * sopra). Il server controlla chi può modificare (P0001 dal trigger), aggiunge la versione sostituita
+ * con il nome di chi modifica e scrive il timbro: la riga restituita è la copia da tenere.
+ * Zero righe = annuncio eliminato, oppure non sono più nel gruppo.
+ */
+const updateSharedResourceContent = async (id: string, content: ResourceContent): Promise<ContentUpdate> => {
+  if (!(await isSharedAvailable()) || !supabase) return { status: "failed" };
+  try {
+    const { data, error } = await supabase
+      .from("studyos_group_resources")
+      .update({ title: content.title, url: content.url ?? null, body: content.body ?? null })
+      .eq("id", id)
+      .select("*");
+    if (error) return { status: error.code === "P0001" ? "denied" : "failed" };
+    const row = data?.[0] as Record<string, unknown> | undefined;
+    return row ? { status: "ok", row } : { status: "gone" };
+  } catch {
+    return { status: "failed" };
+  }
+};
+
+/**
+ * Modifica (o ripristino) del contenuto di un annuncio. In un gruppo condiviso decide il server
+ * (permessi, versione precedente, nome di chi modifica, avviso agli altri membri): prima la scrittura
+ * lì, poi qui la copia salvata dal server. Se non riesce non cambia nulla qui e l'errore dice perché.
+ * Un annuncio non ancora pubblicato si modifica qui e parte con la pubblicazione. false = nulla da cambiare.
+ */
+export const editGroupResource = async (
+  resourceId: string,
+  content: ResourceContent,
+  actor: Actor,
+  options: { restoring?: boolean } = {}
+): Promise<boolean> => {
+  const state = useStudyStore.getState();
+  const resource = state.groupResources.find((item) => item.id === resourceId);
+  if (!resource) throw new Error(GROUP_BOARD_TEXT.gone);
+  const group = state.studyGroups.find((item) => item.id === resource.groupId);
+  const next = cleanResourceContent(content);
+  if (!next.title) throw new Error(GROUP_BOARD_TEXT.missingTitle);
+  if (!resourceChanges(resource, next).length) return false;
+  if (group?.sharedAt && resource.sharedAt) {
+    const result = await updateSharedResourceContent(resource.id, next);
+    if (result.status !== "ok") {
+      if (result.status === "gone") void pullSharedUpdates();
+      throw new Error(result.status === "denied" ? GROUP_BOARD_TEXT.denied : result.status === "gone" ? GROUP_BOARD_TEXT.goneOrLeft : GROUP_BOARD_TEXT.failed);
+    }
+    const saved = toResource(result.row);
+    const latest = useStudyStore.getState().groupResources;
+    const local = latest.find((item) => item.id === resourceId) ?? resource;
+    // Server con groups.sql precedente (senza la colonna): la versione sostituita si tiene qui.
+    const revisions = saved.revisions ?? withResourceRevision(local, actor, saved.updatedAt, createId("groupResourceRevision"));
+    await applyShared({
+      groupResources: latest.map((item) => (item.id === resourceId ? { ...saved, revisions, sharedAt: item.sharedAt ?? saved.updatedAt } : item))
+    });
+  } else {
+    if (!(await useStudyStore.getState().updateGroupResource(resourceId, next, actor))) return false;
+    const updated = useStudyStore.getState().groupResources.find((item) => item.id === resourceId);
+    if (updated && group && (group.sharedAt || group.ownerId === actor.userId)) await publishResource(updated);
+  }
+  const text = options.restoring ? GROUP_BOARD_TEXT.activityRestored(next.title) : GROUP_BOARD_TEXT.activityEdited(next.title);
+  await logSharedActivity(resource.groupId, actor.displayName, text).catch(() => undefined);
+  return true;
+};
 
 export const deleteSharedGroup = (groupId: string) => deleteRow("studyos_groups", groupId);
 

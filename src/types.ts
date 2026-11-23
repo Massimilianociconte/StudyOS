@@ -525,6 +525,22 @@ export interface GroupInvite extends BaseEntity {
 }
 
 /** Risorsa condivisa nella bacheca del gruppo. */
+/**
+ * Versione precedente di un annuncio della bacheca: il contenuto sostituito, con chi l'ha cambiato e
+ * quando. Nei gruppi condivisi la scrive solo il server (studyos_group_resources_guard, groups.sql).
+ */
+export interface GroupResourceRevision {
+  id: string;
+  /** Ora della modifica che ha sostituito questa versione. */
+  at: string;
+  byUserId: string;
+  byDisplayName: string;
+  kind: GroupResource["kind"];
+  title: string;
+  url?: string;
+  body?: string;
+}
+
 export interface GroupResource extends BaseEntity {
   groupId: string;
   kind: "link" | "note" | "file" | "task";
@@ -534,6 +550,8 @@ export interface GroupResource extends BaseEntity {
   pinned: boolean;
   addedByUserId: string;
   addedByDisplayName: string;
+  /** Versioni precedenti, dalla più vecchia; l'ultima dice chi ha fatto l'ultima modifica e quando. */
+  revisions?: GroupResourceRevision[];
   /** Visto almeno una volta sul backend condiviso: se poi sparisce, è stata cancellata. */
   sharedAt?: string;
 }

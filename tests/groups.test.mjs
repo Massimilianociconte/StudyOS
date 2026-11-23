@@ -2,11 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import {
+  MAX_RESOURCE_REVISIONS,
+  boardEditNotices,
+  boardEditText,
   classifyGroupRpcError,
+  cleanResourceContent,
+  contentAfterRevision,
   groupInviteLink,
   groupInviteMessage,
   inviteNotificationId,
   invitesToNotify,
+  isBoardEditNotification,
   isCodeOnlyInvite,
   isLegacyEmailInvite,
   isReceivedInvite,
@@ -14,11 +20,16 @@ import {
   makeGroupInviteCode,
   mergeSharedSnapshot,
   normalizeInviteCode,
+  parseResourceRevisions,
   realtimeGroupIds,
+  resourceChanges,
+  resourceChangesText,
+  resourceFromRow,
   serverStampOf,
   settleInviteNotifications,
   NEUTRAL_MEMBER_NAME,
   visibleMemberName,
+  withResourceRevision,
   withServerStamp
 } from "../src/lib/groups.ts";
 import { durationToMinutes, minutesToDuration } from "../src/lib/duration.ts";
@@ -441,4 +452,137 @@ test("nessun nome ricavato dall'email nel client: gruppi, inviti e condivisioni"
   const view = readFileSync(new URL("../src/views/GroupsView.tsx", import.meta.url), "utf8");
   assert.match(view, /await acceptInviteRemote\(invite\.id\)/);
   assert.doesNotMatch(view, /acceptInviteRemote\(invite\.id, actor\.displayName\)/);
+});
+
+// ——— Annunci della bacheca: modifiche, versioni precedenti, avvisi agli altri membri ———
+
+const revision = (id, byUserId, at, previous = {}) => ({
+  id,
+  at,
+  byUserId,
+  byDisplayName: byUserId === "birillo" ? "Birillo" : byUserId,
+  kind: "note",
+  title: "Lezioni",
+  ...previous
+});
+const NOW = Date.parse("2026-11-23T12:00:00.000Z");
+
+test("bacheca: versioni dal server lette con prudenza", () => {
+  // Colonna assente (groups.sql precedente): undefined, così chi riceve tiene le versioni che ha.
+  assert.equal(parseResourceRevisions(undefined), undefined);
+  assert.equal(parseResourceRevisions(null), undefined);
+  const parsed = parseResourceRevisions([
+    { id: "rev_1", at: "2026-11-23T10:00:00.123456+00:00", byUserId: "u1", byDisplayName: " Birillo ", kind: "note", title: "Lezioni", url: null, body: "Aula 3" },
+    { id: "rev_2", at: "non è una data", title: "x" },
+    { at: "2026-11-23T10:00:00Z", title: "senza id" },
+    { id: "rev_3", at: "2026-11-23T11:00:00Z", title: "Tipo strano", kind: "script", byDisplayName: "" },
+    "testo",
+    null
+  ]);
+  assert.deepEqual(parsed.map((item) => item.id), ["rev_1", "rev_3"]);
+  assert.equal(parsed[0].byDisplayName, "Birillo");
+  assert.equal(parsed[0].url, undefined);
+  assert.equal(parsed[0].body, "Aula 3");
+  assert.equal(parsed[1].kind, "note");
+  assert.equal(parsed[1].byDisplayName, "Un membro");
+  // Dalla riga del server: con la colonna le versioni, senza nessun campo (non un elenco vuoto).
+  assert.deepEqual(resourceFromRow({ id: "r1", revisions: [] }).revisions, []);
+  assert.equal(resourceFromRow({ id: "r1" }).revisions, undefined);
+});
+
+test("bacheca: cosa cambia e versione locale con tetto", () => {
+  assert.deepEqual(cleanResourceContent({ title: "  Lezioni ", url: " ", body: " Aula 3\n" }), { title: "Lezioni", url: undefined, body: "Aula 3" });
+  assert.deepEqual(resourceChanges({ title: "A", body: "x" }, { title: "B", body: "y", url: "https://a.it" }), ["titolo", "link", "testo"]);
+  assert.deepEqual(resourceChanges({ title: "A", body: undefined }, { title: "A", body: "" }), []);
+  assert.equal(resourceChangesText([]), "modificato il contenuto");
+  assert.equal(resourceChangesText(["testo"]), "modificato il testo");
+  assert.equal(resourceChangesText(["titolo", "link", "testo"]), "modificati titolo, link e testo");
+  let current = { ...resource("r1", "alice"), body: "v0" };
+  for (let i = 1; i <= MAX_RESOURCE_REVISIONS + 3; i += 1) {
+    current = { ...current, revisions: withResourceRevision(current, { userId: "alice", displayName: "Alice" }, `2026-11-23T10:${String(i).padStart(2, "0")}:00.000Z`, `rev_${i}`), body: `v${i}` };
+  }
+  assert.equal(current.revisions.length, MAX_RESOURCE_REVISIONS);
+  // Si tengono le più recenti: la prima rimasta è la quarta modifica (versione v3).
+  assert.equal(current.revisions[0].id, "rev_4");
+  assert.equal(current.revisions[0].body, "v3");
+  assert.equal(current.revisions.at(-1).body, `v${MAX_RESOURCE_REVISIONS + 2}`);
+  // Dopo una versione viene la successiva; dopo l'ultima, l'annuncio attuale.
+  assert.equal(contentAfterRevision(current, 0).body, "v4");
+  assert.equal(contentAfterRevision(current, MAX_RESOURCE_REVISIONS - 1).body, current.body);
+});
+
+test("bacheca: testo dell'avviso con chi, dove e cosa (come la push del server)", () => {
+  const text = boardEditText(revision("rev_1", "birillo", "2026-11-23T10:00:00Z", { title: "Lezioni", body: "Aula 3" }), { title: "Lezioni di giovedì", body: "Aula 5" }, "Fisiologia");
+  assert.equal(text.title, 'Modifica annuncio in bacheca "Fisiologia" da parte di Birillo');
+  assert.equal(text.body, '"Lezioni di giovedì" (prima "Lezioni"): modificati titolo e testo.');
+  const bodyOnly = boardEditText(revision("rev_1", "birillo", "2026-11-23T10:00:00Z", { body: "Aula 3" }), { title: "Lezioni", body: "Aula 5" }, " ");
+  assert.equal(bodyOnly.title, 'Modifica annuncio in bacheca "senza nome" da parte di Birillo');
+  assert.equal(bodyOnly.body, '"Lezioni": modificato il testo.');
+  // people.sql (studyos_push_board_edit) usa le stesse frasi: se cambiano qui vanno cambiate anche lì.
+  const sql = readFileSync(new URL("../supabase/people.sql", import.meta.url), "utf8");
+  for (const phrase of ["'Modifica annuncio in bacheca \"'", "'\" da parte di '", "' (prima \"'", "'modificato il contenuto'", "'modificato il '", "'modificati '"]) {
+    assert.ok(sql.includes(phrase), phrase);
+  }
+});
+
+test("bacheca: un avviso per ogni modifica di altri, una volta sola", () => {
+  const local = { ...resource("r1", "alice"), title: "Lezioni", body: "Aula 3", revisions: [] };
+  const edited = {
+    ...local,
+    body: "Aula 5",
+    updatedAt: "2026-11-23T10:00:00.100000+00:00",
+    revisions: [revision("rev_b", "birillo", "2026-11-23T10:00:00.100000+00:00", { body: "Aula 3" })]
+  };
+  const groups = [{ id: "g1", name: "Fisiologia" }];
+  const notices = boardEditNotices({ current: [local], incoming: [edited], groups, me: "alice", now: NOW });
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].id, "notif-board-edit-rev_b");
+  assert.equal(notices[0].groupId, "g1");
+  assert.equal(notices[0].at, "2026-11-23T10:00:00.100000+00:00");
+  assert.equal(notices[0].title, 'Modifica annuncio in bacheca "Fisiologia" da parte di Birillo');
+  assert.equal(notices[0].body, '"Lezioni": modificato il testo.');
+  assert.ok(isBoardEditNotification({ id: notices[0].id }));
+  assert.ok(!isBoardEditNotification({ id: "notif-share-1" }));
+  // Già vista (copia locale aggiornata): niente doppione.
+  assert.equal(boardEditNotices({ current: [edited], incoming: [edited], groups, me: "alice", now: NOW }).length, 0);
+  // La propria modifica non si segnala a sé stessi (nemmeno dagli altri dispositivi dello stesso account).
+  assert.equal(boardEditNotices({ current: [local], incoming: [edited], groups, me: "birillo", now: NOW }).length, 0);
+});
+
+test("bacheca: niente avvisi sul passato di annunci mai visti o troppo vecchi", () => {
+  const edited = { ...resource("r1", "alice"), revisions: [revision("rev_b", "birillo", "2026-11-23T10:00:00Z")] };
+  // Dispositivo nuovo o gruppo appena raggiunto: l'annuncio non c'era.
+  assert.equal(boardEditNotices({ current: [], incoming: [edited], groups: [], me: "alice", now: NOW }).length, 0);
+  // Modifica di due mesi fa (dispositivo rimasto spento).
+  const old = { ...edited, revisions: [revision("rev_old", "birillo", "2026-09-20T10:00:00Z")] };
+  assert.equal(boardEditNotices({ current: [resource("r1", "alice")], incoming: [old], groups: [], me: "alice", now: NOW }).length, 0);
+  // Copia senza versioni (app o server di prima): solo le modifiche dopo quella copia.
+  const before = resource("r1", "alice", "2026-11-23T09:00:00.000Z");
+  const mixed = { ...edited, revisions: [revision("rev_prima", "birillo", "2026-11-23T08:00:00Z"), revision("rev_dopo", "birillo", "2026-11-23T10:00:00Z")] };
+  assert.deepEqual(boardEditNotices({ current: [before], incoming: [mixed], groups: [], me: "alice", now: NOW }).map((n) => n.id), ["notif-board-edit-rev_dopo"]);
+});
+
+test("bacheca: più modifiche tra due aggiornamenti, ognuna con il suo testo, al più 5", () => {
+  const local = { ...resource("r1", "alice"), title: "T0", revisions: [] };
+  const revisions = Array.from({ length: 7 }, (_, i) => revision(`rev_${i}`, i % 2 ? "carla" : "birillo", `2026-11-23T10:0${i}:00Z`, { title: `T${i}` }));
+  const incoming = { ...local, title: "T7", revisions };
+  const notices = boardEditNotices({ current: [local], incoming: [incoming], groups: [], me: "alice", now: NOW });
+  assert.deepEqual(notices.map((n) => n.id), ["rev_2", "rev_3", "rev_4", "rev_5", "rev_6"].map((id) => `notif-board-edit-${id}`));
+  // Ogni avviso confronta la versione con quella che l'ha sostituita.
+  assert.equal(notices[0].body, '"T3" (prima "T2"): modificato il titolo.');
+  assert.equal(notices.at(-1).body, '"T7" (prima "T6"): modificato il titolo.');
+  assert.ok(notices[1].title.endsWith("da parte di carla"));
+});
+
+test("merge condiviso: un server senza la colonna delle versioni non le cancella", () => {
+  const kept = [revision("rev_1", "birillo", "2026-11-23T10:00:00Z")];
+  const local = { ...empty, resources: [{ ...resource("r1", "alice"), sharedAt: "2026-10-06T10:00:00.000Z", revisions: kept }] };
+  const server = { ...empty, resources: [{ ...resource("r1", "alice", "2026-11-23T11:00:00+00:00"), title: "nuovo" }] };
+  const merged = mergeSharedSnapshot(local, server, "alice");
+  assert.equal(merged.resources[0].title, "nuovo");
+  assert.equal(merged.resources[0].revisions, kept);
+  assert.ok(merged.resources[0].sharedAt);
+  // Con la colonna, valgono le versioni del server.
+  const withColumn = { ...empty, resources: [{ ...resource("r1", "alice", "2026-11-23T12:00:00+00:00"), revisions: [] }] };
+  assert.deepEqual(mergeSharedSnapshot(local, withColumn, "alice").resources[0].revisions, []);
 });

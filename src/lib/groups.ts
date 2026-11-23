@@ -1,6 +1,6 @@
 /** Logica pura dei gruppi: codici di invito, normalizzazione, link condivisibili, merge col server. */
 
-import type { GroupActivity, GroupInvite, GroupResource, StudyGroup } from "../types";
+import type { GroupActivity, GroupInvite, GroupResource, GroupResourceRevision, StudyGroup } from "../types";
 import { bindInviteRecipients } from "./people";
 import { cutAtRunBoundary, redactEmails } from "./institutionalEmail";
 
@@ -299,6 +299,7 @@ export const mergeSharedSnapshot = (
   );
 
   const serverResources = new Map(incoming.resources.map((resource) => [resource.id, resource]));
+  const localResources = new Map(current.resources.map((resource) => [resource.id, resource]));
   const resources = newerWins(current.resources, incoming.resources);
   const nextResources = resources.next
     .filter((resource) => !gone.has(resource.groupId))
@@ -310,7 +311,10 @@ export const mergeSharedSnapshot = (
     )
     .map((resource) => {
       const remote = serverResources.get(resource.id);
-      return remote && !resource.sharedAt ? { ...resource, sharedAt: remote.updatedAt, updatedAt: nudged(resource.updatedAt) } : resource;
+      const local = localResources.get(resource.id);
+      // Server con groups.sql precedente (senza la colonna delle versioni): quelle già note qui restano.
+      const kept = resource === remote && remote.revisions === undefined && local?.revisions ? { ...resource, revisions: local.revisions } : resource;
+      return remote && !kept.sharedAt ? { ...kept, sharedAt: remote.updatedAt, updatedAt: nudged(kept.updatedAt) } : kept;
     });
 
   const activities = newerWins(current.activities, incoming.activities);
@@ -365,7 +369,8 @@ export const resourceFromRow = (row: Record<string, unknown>): GroupResource => 
   body: (row.body as string | null) ?? undefined,
   pinned: Boolean(row.pinned),
   addedByUserId: String(row.added_by_user_id ?? ""),
-  addedByDisplayName: String(row.added_by_display_name ?? "")
+  addedByDisplayName: String(row.added_by_display_name ?? ""),
+  revisions: parseResourceRevisions(row.revisions)
 });
 
 export const activityFromRow = (row: Record<string, unknown>): GroupActivity => ({
@@ -378,3 +383,185 @@ export const activityFromRow = (row: Record<string, unknown>): GroupActivity => 
   actorDisplayName: String(row.actor_display_name ?? ""),
   text: String(row.text ?? "")
 });
+
+// ——— Annunci della bacheca: modifiche, versioni precedenti, avvisi agli altri membri ———
+
+/** Versioni precedenti conservate per annuncio: uguale a v_keep in supabase/groups.sql. */
+export const MAX_RESOURCE_REVISIONS = 20;
+
+const RESOURCE_KINDS: readonly GroupResource["kind"][] = ["link", "note", "file", "task"];
+
+/** Nome di chi ha modificato quando manca: lo stesso del server (studyos_group_resources_guard). */
+export const UNKNOWN_EDITOR = "Un membro";
+
+const optionalText = (value: unknown) => (typeof value === "string" && value ? value : undefined);
+
+/**
+ * Versioni arrivate dal server (colonna jsonb `revisions`): solo voci complete. `undefined` se la
+ * colonna non c'è (groups.sql precedente): chi riceve tiene allora le versioni che conosce.
+ */
+export const parseResourceRevisions = (value: unknown): GroupResourceRevision[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((entry): GroupResourceRevision[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const id = optionalText(row.id);
+    const at = optionalText(row.at);
+    if (!id || !at || typeof row.title !== "string" || Number.isNaN(Date.parse(at))) return [];
+    const kind = RESOURCE_KINDS.includes(row.kind as GroupResource["kind"]) ? (row.kind as GroupResource["kind"]) : "note";
+    return [
+      {
+        id,
+        at,
+        byUserId: optionalText(row.byUserId) ?? "",
+        byDisplayName: optionalText(row.byDisplayName)?.trim() || UNKNOWN_EDITOR,
+        kind,
+        title: row.title,
+        url: optionalText(row.url),
+        body: optionalText(row.body)
+      }
+    ];
+  });
+};
+
+/** Le parti di un annuncio che si possono modificare (il tipo resta quello scelto all'inizio). */
+export interface ResourceContent {
+  title: string;
+  url?: string;
+  body?: string;
+}
+
+/** Testi ripuliti come in addGroupResource: spazi esterni tolti, vuoto = assente. */
+export const cleanResourceContent = (content: ResourceContent): ResourceContent => ({
+  title: content.title.trim(),
+  url: content.url?.trim() || undefined,
+  body: content.body?.trim() || undefined
+});
+
+export type ResourceChange = "titolo" | "link" | "testo";
+
+/** Cosa cambia passando da una versione all'altra, con le parole dell'interfaccia. */
+export const resourceChanges = (before: ResourceContent, after: ResourceContent): ResourceChange[] => {
+  const changes: ResourceChange[] = [];
+  if (before.title !== after.title) changes.push("titolo");
+  if ((before.url ?? "") !== (after.url ?? "")) changes.push("link");
+  if ((before.body ?? "") !== (after.body ?? "")) changes.push("testo");
+  return changes;
+};
+
+/**
+ * Modifica fatta sul dispositivo (gruppo solo locale, o server senza la colonna delle versioni): la
+ * versione sostituita va in fondo, con chi l'ha cambiata. Nei gruppi condivisi la scrive il server.
+ */
+export const withResourceRevision = (
+  resource: GroupResource,
+  editor: { userId: string; displayName: string },
+  at: string,
+  id: string
+): GroupResourceRevision[] =>
+  [
+    ...(resource.revisions ?? []),
+    {
+      id,
+      at,
+      byUserId: editor.userId,
+      byDisplayName: editor.displayName.trim() || UNKNOWN_EDITOR,
+      kind: resource.kind,
+      title: resource.title,
+      url: resource.url,
+      body: resource.body
+    }
+  ].slice(-MAX_RESOURCE_REVISIONS);
+
+/** Contenuto subito dopo la versione `index`: la versione successiva o l'annuncio attuale. */
+export const contentAfterRevision = (resource: GroupResource, index: number): ResourceContent =>
+  resource.revisions?.[index + 1] ?? resource;
+
+/** «modificato il testo», «modificati titolo e testo»: le stesse parole del server (people.sql). */
+export const resourceChangesText = (changes: ResourceChange[]) => {
+  if (!changes.length) return "modificato il contenuto";
+  if (changes.length === 1) return `modificato il ${changes[0]}`;
+  return `modificati ${changes.slice(0, -1).join(", ")} e ${changes[changes.length - 1]}`;
+};
+
+/**
+ * Testo dell'avviso: dove, da parte di chi e cosa è cambiato. Lo stesso della notifica push
+ * (studyos_push_board_edit in supabase/people.sql); il nome lo scrive il server.
+ */
+export const boardEditText = (revision: GroupResourceRevision, after: ResourceContent, groupName: string) => {
+  const editor = revision.byDisplayName.trim() || UNKNOWN_EDITOR;
+  const group = groupName.trim() || "senza nome";
+  const changes = resourceChanges(revision, after);
+  const renamed = changes.includes("titolo") ? ` (prima "${revision.title}")` : "";
+  return {
+    title: `Modifica annuncio in bacheca "${group}" da parte di ${editor}`,
+    body: `"${after.title}"${renamed}: ${resourceChangesText(changes)}.`
+  };
+};
+
+export const BOARD_EDIT_NOTIFICATION_PREFIX = "notif-board-edit-";
+
+export interface BoardEditNotice {
+  /** Id stabile: più dispositivi dello stesso account non duplicano l'avviso. */
+  id: string;
+  groupId: string;
+  resourceId: string;
+  at: string;
+  title: string;
+  body: string;
+}
+
+/** Oltre questa età una modifica non diventa più un avviso (es. dispositivo rimasto spento a lungo). */
+const NOTICE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/** Al più tanti avvisi per annuncio in un solo aggiornamento. */
+const NOTICES_PER_RESOURCE = 5;
+
+/**
+ * Modifiche di altri membri arrivate con lo scaricamento: una per ogni versione nuova di un annuncio
+ * che questo dispositivo conosceva già. Un annuncio mai visto (dispositivo nuovo, gruppo appena
+ * raggiunto) non dà avvisi sul suo passato; le proprie modifiche nemmeno.
+ */
+export const boardEditNotices = ({
+  current,
+  incoming,
+  groups,
+  me,
+  now = Date.now()
+}: {
+  current: readonly GroupResource[];
+  incoming: readonly GroupResource[];
+  groups: readonly Pick<StudyGroup, "id" | "name">[];
+  me: string;
+  now?: number;
+}): BoardEditNotice[] => {
+  const local = new Map(current.map((resource) => [resource.id, resource]));
+  const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+  const notices: BoardEditNotice[] = [];
+  for (const resource of incoming) {
+    const before = local.get(resource.id);
+    if (!before || !resource.revisions?.length) continue;
+    const seen = new Set((before.revisions ?? []).map((revision) => revision.id));
+    // Copia senza versioni (app o server di prima): conta solo ciò che è successo dopo quella copia.
+    const since = before.revisions ? Number.NEGATIVE_INFINITY : instant(before.updatedAt);
+    const fresh = resource.revisions
+      .map((revision, index) => ({ revision, index }))
+      .filter(({ revision }) => {
+        const at = instant(revision.at);
+        return !seen.has(revision.id) && revision.byUserId !== me && at > since && now - at <= NOTICE_WINDOW_MS;
+      })
+      .slice(-NOTICES_PER_RESOURCE);
+    for (const { revision, index } of fresh) {
+      notices.push({
+        id: `${BOARD_EDIT_NOTIFICATION_PREFIX}${revision.id}`,
+        groupId: resource.groupId,
+        resourceId: resource.id,
+        at: revision.at,
+        ...boardEditText(revision, contentAfterRevision(resource, index), groupNames.get(resource.groupId) ?? "")
+      });
+    }
+  }
+  return notices.sort((a, b) => instant(a.at) - instant(b.at));
+};
+
+/** Avviso di modifica della bacheca (nel pannello delle notifiche con il logo di StudyOS). */
+export const isBoardEditNotification = (notification: { id: string }) => notification.id.startsWith(BOARD_EDIT_NOTIFICATION_PREFIX);

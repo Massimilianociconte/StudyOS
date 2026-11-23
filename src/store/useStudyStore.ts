@@ -56,7 +56,7 @@ import { resetPushLocal } from "../lib/pushLocal";
 import { scheduleReview, type ReviewRating } from "../lib/review";
 import { createId, nowIso } from "../lib/id";
 import { isReminderNotificationId } from "../lib/reminderIds";
-import { makeGroupInviteCode } from "../lib/groups";
+import { cleanResourceContent, makeGroupInviteCode, resourceChanges, withResourceRevision, type ResourceContent } from "../lib/groups";
 import { ShareUserError, isRestorableEntity, restoredPayload, restoredUpdatedAt, type RestoreVersion } from "../lib/sharing";
 import { FILE_TEXT, RESTORE_TEXT, SUBJECT_FULL_TEXT, VAULT_BUSY_TEXT } from "../lib/labels";
 import { examProgressSubject, isGradePending, stepsStatus, subjectsReachingFull, taskDoneSubject, topicKey } from "../lib/subjectProgress";
@@ -292,6 +292,11 @@ interface StudyState {
   /** Entra in un gruppo tramite codice di invito; errore se il codice non esiste. */
   joinGroupByCode: (code: string, member: Pick<GroupMember, "userId" | "displayName" | "email">) => Promise<string>;
   addGroupResource: (resource: Partial<GroupResource> & Pick<GroupResource, "groupId" | "kind" | "title" | "addedByUserId" | "addedByDisplayName">) => Promise<string>;
+  /**
+   * Nuovo contenuto di un annuncio, con la versione sostituita tra le precedenti (gruppi solo locali o
+   * server senza la colonna delle versioni). false se non cambia nulla.
+   */
+  updateGroupResource: (id: string, content: ResourceContent, editor: { userId: string; displayName: string }) => Promise<boolean>;
   toggleResourcePin: (id: string) => Promise<void>;
   deleteGroupResource: (id: string) => Promise<void>;
   logGroupActivity: (groupId: string, actorDisplayName: string, text: string) => Promise<GroupActivity>;
@@ -1196,6 +1201,21 @@ export const useStudyStore = create<StudyState>((set, get) => {
       set((state) => ({ groupResources: [created, ...state.groupResources] }));
       await commit();
       return created.id;
+    },
+
+    updateGroupResource: async (id, content, editor) => {
+      const resource = get().groupResources.find((item) => item.id === id);
+      if (!resource) throw new Error("Questo annuncio non è più in bacheca.");
+      const next = cleanResourceContent(content);
+      if (!next.title) throw new Error("L'annuncio deve avere un titolo.");
+      if (!resourceChanges(resource, next).length) return false;
+      const now = nowIso();
+      const revisions = withResourceRevision(resource, editor, now, createId("groupResourceRevision"));
+      set((state) => ({
+        groupResources: state.groupResources.map((item) => (item.id === id ? { ...item, ...next, revisions, updatedAt: now } : item))
+      }));
+      await commit();
+      return true;
     },
 
     toggleResourcePin: async (id) => {

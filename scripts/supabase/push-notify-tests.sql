@@ -173,6 +173,89 @@ select pg_temp.expect('M1 segreto e account in ogni richiesta',
     where c.headers ->> 'x-studyos-push-secret' is distinct from 'segreto-di-prova'
       or exists (select 1 from jsonb_array_elements(c.body -> 'subscriptions') e where not e ? 'account')));
 
+-- Bacheca (revisione del 23/11/2026): versioni precedenti scritte dal server e avviso agli altri membri.
+-- Bea (membro) pubblica e modifica il suo annuncio, Ada (amministratrice) lo modifica, Bea non può
+-- toccare quello di Ada, nessuno riscrive la cronologia, fissare non è una modifica.
+delete from net.captured;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
+insert into public.studyos_group_resources (id, group_id, kind, title, body, added_by_user_id, added_by_display_name, revisions)
+  values ('res-bea', 'gp-push', 'note', 'Lezioni', 'Aula 3', :'bea', 'Bea',
+    '[{"id": "rev_finta", "at": "2026-01-01T00:00:00Z", "byUserId": "x", "byDisplayName": "Olga", "kind": "note", "title": "falso"}]');
+update public.studyos_group_resources set pinned = true where id = 'res-bea';
+update public.studyos_group_resources set body = 'Aula 5' where id = 'res-bea';
+select set_config('request.jwt.claim.sub', :'ada', true) \g /dev/null
+update public.studyos_group_resources set title = 'Lezioni di giovedì' where id = 'res-bea';
+insert into public.studyos_group_resources (id, group_id, kind, title, added_by_user_id, added_by_display_name)
+  values ('res-ada', 'gp-push', 'note', 'Regole', :'ada', 'Ada');
+select set_config('request.jwt.claim.sub', :'bea', true) \g /dev/null
+-- Cronologia riscritta a mano: il server la ignora (e non è una modifica: nessun avviso).
+update public.studyos_group_resources set revisions = '[]'::jsonb, pinned = false where id = 'res-bea';
+do $$
+begin
+  update public.studyos_group_resources set title = 'rubato' where id = 'res-ada';
+  raise exception 'FALLITO: Bea ha modificato l''annuncio di Ada';
+exception when raise_exception then
+  if sqlerrm not like 'Solo l''autore%' then
+    raise;
+  end if;
+end $$;
+-- Mallory non è nel gruppo: la RLS non le mostra la riga (zero righe, nessun errore).
+select set_config('request.jwt.claim.sub', :'mallory', true) \g /dev/null
+update public.studyos_group_resources set title = 'rubato' where id = 'res-bea';
+reset role;
+select set_config('request.jwt.claim.sub', '', true) \g /dev/null
+
+select pg_temp.expect('B1 annuncio nuovo senza versioni (quelle mandate dal client non contano)',
+  (select revisions from public.studyos_group_resources where id = 'res-ada') = '[]'::jsonb);
+select pg_temp.expect('B1 due modifiche, due versioni: fissare e riscrivere la cronologia non contano',
+  (select jsonb_agg(jsonb_build_array(e ->> 'byDisplayName', e ->> 'title', e ->> 'body', e ->> 'byUserId') order by o)
+     from public.studyos_group_resources r cross join jsonb_array_elements(r.revisions) with ordinality as t (e, o)
+     where r.id = 'res-bea')
+  = jsonb_build_array(jsonb_build_array('Bea', 'Lezioni', 'Aula 3', :'bea'), jsonb_build_array('Ada', 'Lezioni', 'Aula 5', :'ada')));
+select pg_temp.expect('B1 contenuto attuale e titolo non rubato',
+  (select title || '|' || body || '|' || pinned::text from public.studyos_group_resources where id = 'res-bea') = 'Lezioni di giovedì|Aula 5|false'
+  and (select title from public.studyos_group_resources where id = 'res-ada') = 'Regole');
+select pg_temp.expect('B1 ora della versione = timbro del server della modifica',
+  (select (r.revisions -> -1 ->> 'at')::timestamptz = r.updated_at from public.studyos_group_resources r where r.id = 'res-bea'));
+select rev ->> 'id' as bea_rev from public.studyos_group_resources r, jsonb_array_elements(r.revisions) rev
+  where r.id = 'res-bea' and rev ->> 'byDisplayName' = 'Bea' \gset
+select rev ->> 'id' as ada_rev from public.studyos_group_resources r, jsonb_array_elements(r.revisions) rev
+  where r.id = 'res-bea' and rev ->> 'byDisplayName' = 'Ada' \gset
+select pg_temp.expect('B1 solo due avvisi (le due modifiche), ognuno con completa e generica',
+  (select count(*) from net.captured c where c.body #>> '{notification,tag}' like 'board-edit:%') = 4
+  and (select count(distinct c.body #>> '{notification,tag}') from net.captured c) = 2);
+select pg_temp.pair('B1 modifica di Bea: a Olga e Ada', 'board-edit:' || md5(:'bea_rev'),
+  array['https://push.esempio.test/ada-pub', 'https://push.esempio.test/olga-pub'],
+  array['https://push.esempio.test/ada-priv', 'https://push.esempio.test/olga-priv'],
+  '"Lezioni": modificato il testo.');
+select pg_temp.pair('B1 modifica di Ada: a Olga e Bea', 'board-edit:' || md5(:'ada_rev'),
+  array['https://push.esempio.test/bea-pub', 'https://push.esempio.test/olga-pub'],
+  array['https://push.esempio.test/bea-priv', 'https://push.esempio.test/olga-priv'],
+  '"Lezioni di giovedì" (prima "Lezioni"): modificato il titolo.');
+select pg_temp.expect('B1 titolo con dove e chi, tipo e url ammessi dal Worker',
+  (select count(*) from net.captured c
+    where c.body #>> '{notification,title}' = 'Modifica annuncio in bacheca "Visite Dr. Rossi" da parte di Ada'
+      and c.body #>> '{notification,kind}' = 'accepted' and c.body #>> '{notification,url}' = '?apri=gruppi') = 1
+  and (select count(*) from net.captured c
+    where c.body #>> '{notification,title}' = 'Modifica annuncio in bacheca "Visite Dr. Rossi" da parte di Bea') = 1);
+
+-- Tetto di 20 versioni: le più vecchie escono, ogni modifica avvisa lo stesso (anche oltre il tetto).
+-- Senza account (come lo script SQL): nessun limite di invio per chi agisce.
+delete from net.captured;
+do $$
+begin
+  for i in 1..22 loop
+    update public.studyos_group_resources set body = 'Aula ' || (100 + i) where id = 'res-bea';
+  end loop;
+end $$;
+select pg_temp.expect('B2 al massimo 20 versioni, le più recenti',
+  (select jsonb_array_length(revisions) from public.studyos_group_resources where id = 'res-bea') = 20
+  and (select revisions -> 0 ->> 'body' from public.studyos_group_resources where id = 'res-bea') = 'Aula 102'
+  and (select revisions -> -1 ->> 'body' from public.studyos_group_resources where id = 'res-bea') = 'Aula 121');
+select pg_temp.expect('B2 un avviso per modifica, anche oltre il tetto',
+  (select count(distinct c.body #>> '{notification,tag}') from net.captured c where c.body #>> '{notification,tag}' like 'board-edit:%') = 22);
+
 -- L-1: 17 iscrizioni senza password (9 di Olga, 8 di Bea) e 2 con la password (Ada) → richieste da 15 e 2,
 -- più una da 2 per i dispositivi con la password.
 delete from net.captured;

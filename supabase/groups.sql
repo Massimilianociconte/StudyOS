@@ -15,7 +15,9 @@
 -- riapre l'accettazione per email. Rieseguilo anche dopo la revisione del 12/11/2026: timbri del
 -- server sui gruppi, una sola voce per ingresso, uscite e rimozioni scritte dal server. Se usi
 -- anche la condivisione dei dati e la ricerca persone, dopo questo file riesegui sharing.sql e
--- people.sql, in quest'ordine.
+-- people.sql, in quest'ordine. Rieseguilo (e poi people.sql) anche dopo la revisione del
+-- 23/11/2026: gli annunci della bacheca si modificano, il server ne conserva le versioni precedenti
+-- (colonna revisions, scritta solo dai trigger) e people.sql avvisa gli altri membri.
 
 -- ─── Tabelle ────────────────────────────────────────────────────────────────
 
@@ -79,6 +81,11 @@ create table if not exists public.studyos_group_resources (
 );
 create index if not exists studyos_group_resources_group_idx
   on public.studyos_group_resources (group_id, pinned);
+-- Versioni precedenti di un annuncio (revisione del 23/11/2026), dalla più vecchia: a ogni modifica
+-- del contenuto il server aggiunge quella sostituita, con chi l'ha cambiata e quando. Le scrivono
+-- solo i trigger studyos_group_resources_guard e _insert_guard: ciò che manda il client non conta.
+alter table public.studyos_group_resources
+  add column if not exists revisions jsonb not null default '[]'::jsonb;
 
 create table if not exists public.studyos_group_activity (
   id text primary key,
@@ -259,11 +266,20 @@ create policy studyos_group_activity_insert on public.studyos_group_activity for
 
 -- Senza questo controllo un membro potrebbe intestarsi la risorsa di un altro (update di
 -- added_by_user_id) e poi cancellarla, o riscriverne il contenuto.
+-- Dalla revisione del 23/11/2026 tiene anche le versioni precedenti: a ogni modifica di tipo,
+-- titolo, link o testo aggiunge in fondo a revisions la versione sostituita (al massimo 20). `at` è
+-- now(), lo stesso istante che studyos_group_resources_stamp scrive in updated_at (i trigger BEFORE
+-- partono in ordine di nome: prima questo). Il nome di chi modifica viene dai membri del gruppo,
+-- mai dal client: è quello che leggono le notifiche agli altri membri (people.sql).
 create or replace function public.studyos_group_resources_guard()
 returns trigger
 language plpgsql
 set search_path = public
 as $$
+declare
+  v_editor text;
+  v_history jsonb;
+  v_keep constant integer := 20;
 begin
   if new.group_id is distinct from old.group_id
      or new.added_by_user_id is distinct from old.added_by_user_id then
@@ -271,10 +287,32 @@ begin
   end if;
   new.added_by_display_name := old.added_by_display_name;
   new.created_at := old.created_at;
-  if (new.kind, new.title, new.url, new.body) is distinct from (old.kind, old.title, old.url, old.body)
-     and old.added_by_user_id <> auth.uid()::text
-     and coalesce(public.studyos_group_role(old.group_id), '') not in ('owner', 'admin') then
-    raise exception 'Solo l''autore o un amministratore può modificare il contenuto';
+  -- La cronologia la scrive solo il server: un client non può riscriverla né inventarla.
+  new.revisions := coalesce(old.revisions, '[]'::jsonb);
+  if (new.kind, new.title, new.url, new.body) is distinct from (old.kind, old.title, old.url, old.body) then
+    if old.added_by_user_id <> auth.uid()::text
+       and coalesce(public.studyos_group_role(old.group_id), '') not in ('owner', 'admin') then
+      raise exception 'Solo l''autore o un amministratore può modificare il contenuto';
+    end if;
+    select m.display_name into v_editor
+      from public.studyos_group_members m
+      where m.group_id = old.group_id and m.user_id = auth.uid()::text;
+    v_history := new.revisions || jsonb_build_array(jsonb_build_object(
+      'id', 'rev_' || replace(gen_random_uuid()::text, '-', ''),
+      'at', now(),
+      'byUserId', coalesce(auth.uid()::text, ''),
+      'byDisplayName', left(coalesce(nullif(btrim(v_editor), ''), 'Un membro'), 80),
+      'kind', old.kind,
+      'title', old.title,
+      'url', old.url,
+      'body', old.body
+    ));
+    if jsonb_array_length(v_history) > v_keep then
+      select coalesce(jsonb_agg(t.entry order by t.position), '[]'::jsonb) into v_history
+        from jsonb_array_elements(v_history) with ordinality as t (entry, position)
+        where t.position > jsonb_array_length(v_history) - v_keep;
+    end if;
+    new.revisions := v_history;
   end if;
   return new;
 end;
@@ -286,6 +324,25 @@ drop trigger if exists studyos_group_resources_guard on public.studyos_group_res
 create trigger studyos_group_resources_guard
   before update on public.studyos_group_resources
   for each row execute function public.studyos_group_resources_guard();
+
+-- Una risorsa nuova parte senza versioni precedenti, qualunque cosa mandi il client.
+create or replace function public.studyos_group_resources_insert_guard()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.revisions := '[]'::jsonb;
+  return new;
+end;
+$$;
+
+revoke all on function public.studyos_group_resources_insert_guard() from public, anon, authenticated;
+
+drop trigger if exists studyos_group_resources_insert_guard on public.studyos_group_resources;
+create trigger studyos_group_resources_insert_guard
+  before insert on public.studyos_group_resources
+  for each row execute function public.studyos_group_resources_insert_guard();
 
 -- ─── Timbri e cronologia scritti dal server (revisione del 12/11/2026) ─────
 

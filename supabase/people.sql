@@ -1292,6 +1292,67 @@ after insert on public.studyos_group_members
 for each row when (new.role <> 'owner')
 execute function public.studyos_push_group_join();
 
+-- Annuncio della bacheca modificato (revisione del 23/11/2026) → tutti gli altri membri del gruppo:
+-- dove, chi e cosa è cambiato. Una modifica del contenuto è una voce nuova in fondo a revisions,
+-- scritta con il nome di chi modifica da studyos_group_resources_guard (groups.sql), anche quando le
+-- versioni sono già 20 e la più vecchia esce; fissare o sfissare non ne aggiunge. Stesso testo
+-- dell'avviso in app (boardEditText in src/lib/groups.ts). Un tag per modifica (dall'id della voce):
+-- con un tag per annuncio la seconda modifica sostituiva la prima senza suonare. La colonna si
+-- aggiunge anche qui, così il trigger si crea pure se groups.sql non è ancora stato rieseguito
+-- (allora non scatta mai).
+alter table public.studyos_group_resources
+  add column if not exists revisions jsonb not null default '[]'::jsonb;
+
+create or replace function public.studyos_push_board_edit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_group_name text;
+  v_editor text;
+  v_changes text[];
+  v_count integer;
+begin
+  begin
+    select g.name into v_group_name from public.studyos_groups g where g.id = new.group_id;
+    v_editor := left(coalesce(nullif(btrim(new.revisions -> -1 ->> 'byDisplayName'), ''), 'Un membro'), 36);
+    v_changes := array_remove(array[
+      case when new.title is distinct from old.title then 'titolo' end,
+      case when coalesce(new.url, '') is distinct from coalesce(old.url, '') then 'link' end,
+      case when coalesce(new.body, '') is distinct from coalesce(old.body, '') then 'testo' end
+    ], null);
+    v_count := coalesce(cardinality(v_changes), 0);
+    perform public.studyos_push_notify(
+      array(select public.studyos_uuid(m.user_id) from public.studyos_group_members m where m.group_id = new.group_id),
+      'accepted',
+      'Modifica annuncio in bacheca "' || left(coalesce(nullif(btrim(v_group_name), ''), 'senza nome'), 40)
+        || '" da parte di ' || v_editor,
+      '"' || left(new.title, 80) || '"'
+        || case when new.title is distinct from old.title then ' (prima "' || left(old.title, 60) || '")' else '' end
+        || ': '
+        || case
+          when v_count = 0 then 'modificato il contenuto'
+          when v_count = 1 then 'modificato il ' || v_changes[1]
+          else 'modificati ' || array_to_string(v_changes[1:v_count - 1], ', ') || ' e ' || v_changes[v_count]
+        end || '.',
+      '?apri=gruppi',
+      'board-edit:' || md5(coalesce(new.revisions -> -1 ->> 'id', new.id))
+    );
+  exception when others then
+    raise warning 'studyos_push_board_edit: %', sqlerrm;
+  end;
+  return null;
+end;
+$$;
+
+drop trigger if exists studyos_group_resources_edit_push on public.studyos_group_resources;
+create trigger studyos_group_resources_edit_push
+after update on public.studyos_group_resources
+for each row when ((new.revisions -> -1 ->> 'id') is distinct from (old.revisions -> -1 ->> 'id'))
+execute function public.studyos_push_board_edit();
+
 -- Permesso cambiato ("Può vedere" ↔ "Può modificare") → chi riceve. Trigger per istruzione: un
 -- aggiornamento di più sezioni verso la stessa persona o lo stesso gruppo dà una sola notifica.
 create or replace function public.studyos_push_share_permission()
@@ -1418,5 +1479,6 @@ revoke all on function public.studyos_push_group_invite() from public, anon, aut
 revoke all on function public.studyos_push_share_invite() from public, anon, authenticated;
 revoke all on function public.studyos_push_share_accepted() from public, anon, authenticated;
 revoke all on function public.studyos_push_group_join() from public, anon, authenticated;
+revoke all on function public.studyos_push_board_edit() from public, anon, authenticated;
 revoke all on function public.studyos_push_share_permission() from public, anon, authenticated;
 revoke all on function public.studyos_push_share_removed() from public, anon, authenticated;
