@@ -57,7 +57,11 @@ export const readSiteConsent = (now = Date.now()) => {
   return "";
 };
 
-export const clearSiteConsent = () => {
+/**
+ * Toglie la richiesta. `notify: false` la toglie senza chiudere il dialogo: serve prima di tornare
+ * all'hub, perché chiudere un drawer fa Indietro nella cronologia e annullerebbe la navigazione.
+ */
+export const clearSiteConsent = (notify = true) => {
   storage()?.removeItem(STORAGE_KEY);
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(SITE_CONSENT_EVENT));
+  if (notify && typeof window !== "undefined") window.dispatchEvent(new Event(SITE_CONSENT_EVENT));
 };

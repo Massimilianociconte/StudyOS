@@ -752,4 +752,7 @@
   connettore remoto».
 - `revokeApprover` non conta tra gli accessi «di prima» (`legacy`) le concessioni remote senza
   approvatore: si revocano togliendo il permesso cloud dell'account, che l'app toglie insieme.
+- Un dialogo in un `Drawer` che naviga verso un'altra pagina (`location.assign`) non deve chiudersi
+  prima: chiudere un drawer fa Indietro nella cronologia (`drawerHistory`) e annulla la navigazione.
+  Il consenso dal sito toglie la richiesta con `clearSiteConsent(false)` e resta aperto fino all'hub.
 

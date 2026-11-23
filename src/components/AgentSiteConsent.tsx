@@ -73,7 +73,9 @@ export function AgentSiteConsent({ id }: { id: string }) {
     setPhase({ kind: "working", request });
     try {
       const { continueUrl } = await decideSiteConsent(id, { approve, write, clientName: request.clientName }, { offline: SITE_CONSENT_TEXT.offline });
-      clearSiteConsent();
+      // Il dialogo resta aperto fino alla pagina dell'hub: chiuderlo farebbe Indietro nella cronologia
+      // (drawer) e annullerebbe la navigazione. La richiesta si toglie subito, senza chiuderlo.
+      clearSiteConsent(false);
       setPhase({ kind: "leaving", text: approve ? SITE_CONSENT_TEXT.done : SITE_CONSENT_TEXT.denied });
       window.location.assign(continueUrl);
     } catch (reason) {
@@ -87,7 +89,7 @@ export function AgentSiteConsent({ id }: { id: string }) {
   const title = request ? SITE_CONSENT_TEXT.title(request.clientName) : SITE_CONSENT_TEXT.eyebrow;
 
   return (
-    <Drawer open={!away} onClose={clearSiteConsent} title={title} eyebrow={SITE_CONSENT_TEXT.eyebrow} width="max-w-[520px]" dismissOutside={false}>
+    <Drawer open={!away} onClose={() => clearSiteConsent()} title={title} eyebrow={SITE_CONSENT_TEXT.eyebrow} width="max-w-[520px]" dismissOutside={false}>
       <div className="grid grid-cols-1 gap-3">
         {phase.kind === "loading" ? <p role="status" className={MUTED}>{SITE_CONSENT_TEXT.loading}</p> : null}
         {phase.kind === "leaving" ? <p role="status" className="text-sm font-black">{phase.text}</p> : null}
@@ -96,7 +98,7 @@ export function AgentSiteConsent({ id }: { id: string }) {
             <p role="alert" className="rounded-[18px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm font-bold text-[var(--danger-text)]">{phase.text}</p>
             <div className="flex flex-wrap gap-2">
               <Button variant="soft" icon="RotateCcw" onClick={() => setAttempt((value) => value + 1)}>{SITE_CONSENT_TEXT.retry}</Button>
-              <Button variant="ghost" onClick={clearSiteConsent}>{SITE_CONSENT_TEXT.later}</Button>
+              <Button variant="ghost" onClick={() => clearSiteConsent()}>{SITE_CONSENT_TEXT.later}</Button>
             </div>
           </>
         ) : null}
@@ -153,7 +155,7 @@ export function AgentSiteConsent({ id }: { id: string }) {
               {check.ok || check.reason === "otherAccount" || check.reason === "signIn" || check.reason === "noName" ? (
                 <Button variant="soft" disabled={phase.kind === "working"} onClick={() => void decide(request, false)}>{SITE_CONSENT_TEXT.deny}</Button>
               ) : (
-                <Button variant="soft" onClick={clearSiteConsent}>{SITE_CONSENT_TEXT.later}</Button>
+                <Button variant="soft" onClick={() => clearSiteConsent()}>{SITE_CONSENT_TEXT.later}</Button>
               )}
             </div>
           </>
