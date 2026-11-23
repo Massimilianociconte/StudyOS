@@ -31,6 +31,18 @@ database, lo raggiunge come `host.docker.internal:55428`. I segreti di prova res
 dello stack locale; il Worker finto si chiude alla fine dello script. Tra due esecuzioni di
 `people-check.mjs` aspetta più di un minuto: le prove sui limiti per IP usano IP fissi.
 
+Annunci della bacheca modificabili (dopo `groups.sql` e `people.sql`): `board-edit-check.mjs` crea
+un gruppo con alice (proprietaria), birillo (membro, autore dell'annuncio), carla (amministratrice),
+dave (membro) e mallory (esterna), prova chi può modificare, che le versioni non si falsificano, l'evento Realtime e una
+push al Worker finto (`127.0.0.1:55428`, stessi segreti di prova in Vault) per ogni membro tranne
+chi modifica; alla fine toglie gruppo e iscrizioni di prova:
+
+```bash
+eval "$(supabase status -o env --workdir .cache/ai/supabase-sharing | grep -E '^(API_URL|PUBLISHABLE_KEY)=')"
+SUPABASE_URL=$API_URL SUPABASE_KEY=$PUBLISHABLE_KEY PGURL="$PGURL" \
+  node --import ./scripts/lib/register-ts.mjs scripts/supabase/board-edit-check.mjs
+```
+
 Connettore remoto e flashcard (dopo `agent.sql`, `psql "$PGURL" -v ON_ERROR_STOP=1 -f
 supabase/agent.sql`): `agent-check.mjs` (permessi, registro, `p_types`, controllo di revisione,
 creazione simultanea della stessa scheda) e `learning-stress.mjs` (scenari A–F: 1000 schede in

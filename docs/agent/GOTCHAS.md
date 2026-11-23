@@ -795,3 +795,17 @@
   `studyos_overview` e `studyos_list_ai_requests`.
 - Il pannello browser di Claude Code nega la scrittura negli appunti (`NotAllowedError`) su ogni pagina:
   lì «Copia» mostra sempre l'errore. La copia va provata sul sito pubblicato in un browser normale.
+- Versioni degli annunci della bacheca (`studyos_group_resources.revisions`): le scrive solo il
+  trigger guard, il valore mandato dal client si ignora (e all'inserimento diventa `[]`). Non
+  aggiungere `revisions` a un `upsert`/`update` del client pensando di salvarle. I trigger `BEFORE`
+  sulla stessa tabella partono in ordine alfabetico: `studyos_group_resources_guard` prima di
+  `studyos_group_resources_stamp`, quindi `at` della versione e `updated_at` hanno lo stesso `now()`.
+  Se rinomini uno dei due, controlla che l'ordine resti questo.
+- Modificare la riga di un altro membro (amministratore che corregge un annuncio): usa
+  `update(...).eq("id").select()`, non `upsert`. Con `upsert` PostgREST prova l'`INSERT` e la policy
+  (`added_by_user_id = auth.uid()`) lo rifiuta anche se la riga esiste già. Zero righe restituite
+  dall'`update` = annuncio tolto o non più membro, non un errore.
+- Prove con Realtime (`postgres_changes`): `SUBSCRIBED` arriva prima che il canale riceva davvero le
+  modifiche. Aspetta anche il messaggio di sistema «Subscribed to PostgreSQL» (`extension`
+  `postgres_changes`, stato `ok`) prima di scrivere, altrimenti l'evento si perde e il test sembra
+  rotto (`scripts/supabase/board-edit-check.mjs`).

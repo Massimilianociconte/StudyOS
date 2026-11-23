@@ -29,6 +29,19 @@ avevi già applicato, **rieseguilo dopo la revisione dell'08/10/2026** (vedi
 passano dalla conferma email, tra i Redirect URLs aggiungi anche
 `https://massimilianociconte.github.io/StudyOS/**`.
 
+**Annunci della bacheca modificabili (23/11/2026, sera): riesegui `groups.sql`, poi `people.sql`,
+poi `people-verify.sql`.** Entrambi si possono rieseguire. `groups.sql` aggiunge la colonna
+`revisions` a `studyos_group_resources` (versioni precedenti, al massimo 20, scritte solo dal
+trigger: un client non le può falsare né riscrivere) e il trigger `studyos_group_resources_insert_guard`;
+`people.sql` aggiunge `studyos_push_board_edit` e il trigger `studyos_group_resources_edit_push` (push
+«Modifica annuncio in bacheca …» a tutti i membri tranne chi modifica, con `pg_net` e i segreti in
+Vault già configurati; nessun nuovo tipo di notifica, il Worker non va ripubblicato). Atteso in
+`people-verify.sql`: `board_edit_ready` `true` (e le altre colonne come prima). Esegui gli script
+**prima** di pubblicare il client: un client nuovo con il database vecchio salva lo stesso la
+modifica, ma la versione precedente resta solo sul dispositivo di chi modifica e agli altri non
+arriva nessun avviso. Un client vecchio con il database nuovo non perde le versioni (le conserva il
+trigger). Dettagli in [docs/groups-sync.md](../docs/groups-sync.md) («Modifica degli annunci»).
+
 **Connettore remoto alla pari, 1.12.0 (23/11/2026): esegui `agent-parity.sql`, riesegui
 `schema.sql`, poi `agent-parity-verify.sql` e `verify.sql`.** `agent-parity.sql` va dopo
 `schema.sql`, `groups.sql`, `sharing.sql`, `people.sql`, `group-exams.sql` e `agent.sql`; è

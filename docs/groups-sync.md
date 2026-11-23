@@ -72,8 +72,9 @@ alcun errore.
   `actor_user_id` compilato dal server.
 - Bacheca: ogni membro può fissare/sfissare; contenuto, gruppo e autore li
   protegge il trigger `studyos_group_resources_guard` (solo autore o
-  owner/admin cambiano il contenuto; gruppo e autore mai). Cancellazione:
-  autore o owner/admin.
+  owner/admin cambiano il contenuto; gruppo e autore mai). Lo stesso trigger
+  scrive le versioni precedenti in `revisions`: vedi «Modifica degli annunci».
+  Cancellazione: autore o owner/admin.
 - Membri: il proprietario promuove/retrocede (admin/membro) ma non cede né
   perde la proprietà da qui; un membro può uscire, il proprietario no (elimina
   il gruppo). Codici di invito univoci (`upper(invite_code)`), generati con
@@ -415,6 +416,49 @@ la colonna si ferma la sincronizzazione dei gruppi e anche il caricamento delle 
 Prova automatica sullo stack locale: `scripts/supabase/local-stack.md` e
 `scripts/supabase/people-check.mjs` (ricerca esatta, non trovabile = inesistente, limiti, inviti
 solo al destinatario, email rifiutate, migrazione, trigger push verso un Worker finto).
+
+## Modifica degli annunci e versioni precedenti (revisione del 23/11/2026)
+
+Prima gli annunci della bacheca, una volta pubblicati, non si potevano cambiare. Ora l'autore, il
+proprietario e gli amministratori li modificano (matita sulla riga, stesso modulo dell'aggiunta;
+il tipo non cambia e «fissa in alto» resta sulla riga). Tutti i membri vedono «modificato da X, ora»
+e «Versioni precedenti · N»; chi può modificare ha anche «Ripristina questa versione». Script:
+`groups.sql`, poi `people.sql` (vedi [supabase/README.md](../supabase/README.md)).
+
+- **Server.** Colonna `revisions jsonb` in `studyos_group_resources`, scritta solo dai trigger. Il
+  guard `BEFORE UPDATE` parte da `old.revisions` (quello che manda il client si ignora) e, se cambia
+  il contenuto (`kind`, `title`, `url`, `body`), aggiunge la versione sostituita
+  (`id` `rev_…`, `at` = `now()`, `byUserId`, `byDisplayName` dal nome del membro nel gruppo,
+  contenuto di prima) e tiene le ultime 20. `studyos_group_resources_insert_guard` mette `[]`
+  all'inserimento. Fissare o sfissare non crea versioni.
+- **Push.** `studyos_group_resources_edit_push` (`AFTER UPDATE`, solo quando cambia l'`id`
+  dell'ultima versione) chiama `studyos_push_board_edit`, che passa da `studyos_push_notify` a tutti
+  i membri (chi modifica escluso, limite di 30 all'ora per chi agisce) con tipo `accepted` e link
+  `?apri=gruppi`. Titolo «Modifica annuncio in bacheca "<gruppo>" da parte di <nome>», testo
+  «"<titolo>": modificato il testo.» (o titolo, link, contenuto; con «(prima "…")» se è cambiato il
+  titolo). Il tag è per versione (`board-edit:<md5 dell'id>`): due modifiche di fila sono due
+  notifiche, non una che sostituisce l'altra in silenzio. L'icona della notifica è quella di
+  StudyOS (`sw.js`). Ai dispositivi `private` va il solito «Hai una nuova notifica.».
+- **Avviso in app.** Al pull, `boardEditNotices` (`src/lib/groups.ts`) confronta le versioni arrivate
+  con quelle già note: una notifica per versione nuova (`notif-board-edit-<id>`), mai per le proprie,
+  solo per annunci già visti su questo dispositivo, entro 30 giorni e al massimo 5 per annuncio
+  (chi entra in un gruppo non riceve lo storico intero). Il testo è lo stesso della push (testo
+  confrontato con `people.sql` in `tests/groups.test.mjs`); nel pannello Notifiche ha il logo
+  StudyOS e «Apri» porta al gruppo.
+- **Client.** `editGroupResource` (`src/lib/groupSync.ts`): nei gruppi condivisi prima il server
+  (`update … select`, non `upsert`: l'`INSERT` di un upsert sulla riga di un altro membro viene
+  rifiutato dalla policy); `P0001` = non autorizzato, zero righe = annuncio tolto o non sei più
+  membro (parte un pull). Il client adotta la riga del server con le sue versioni. Database senza
+  la colonna: la modifica riesce lo stesso, la versione resta solo locale e gli altri non ricevono
+  avvisi. Gruppo solo locale: versione locale e attività «ha modificato» nella cronologia. Un
+  annuncio modificato prima di essere mai arrivato al server (creato offline) parte sul server senza
+  versioni: quelle locali spariscono al pull successivo (nessun altro le aveva viste). Fissare manda
+  solo `pinned` (`pushSharedResourcePin`), quindi non crea versioni né riporta indietro il contenuto.
+  L'hub del connettore remoto non esegue il pull dei gruppi: niente avvisi creati lì.
+- **Prova.** `scripts/supabase/push-notify-tests.sql` (sezioni B1/B2, Postgres temporaneo) e
+  `scripts/supabase/board-edit-check.mjs` (stack locale: permessi, versioni non falsificabili,
+  realtime, push al Worker finto per ogni membro tranne chi modifica). Provato anche nell'app con due
+  account su due origini (modifica, notifica con logo, storico, ripristino).
 
 ## Appelli condivisi e correzioni al catalogo (`group-exams.sql`)
 

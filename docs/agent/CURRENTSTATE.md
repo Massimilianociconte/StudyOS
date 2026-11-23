@@ -993,3 +993,29 @@ token finto. Nessuno script SQL da eseguire.
 Da fare a mano: aggiornare l'elenco degli strumenti del connettore in ChatGPT e Claude (le descrizioni
 nuove arrivano così); ricaricare StudyOS; provare «Apri ChatGPT» e «Apri Claude» (il testo nella chat
 nuova non è garantito, la copia sì) e «Copia il messaggio» in una chat con StudyOS attivo.
+
+## Annunci della bacheca modificabili, con versioni e avvisi (23 novembre 2026, sera)
+
+Segnalazione: nei gruppi gli annunci della bacheca, una volta pubblicati, non si potevano modificare.
+Richiesta: modificarli, tenere lo storico delle modifiche e avvisare ogni membro con una notifica che
+dice cosa è successo e chi l'ha fatto, con il logo StudyOS.
+
+- App: matita sulla riga dell'annuncio per autore, proprietario e amministratori (stesso modulo
+  dell'aggiunta, «Salva le modifiche», avviso prima di scartare); «modificato da X, ora»; «Versioni
+  precedenti · N» per tutti i membri, con cosa è cambiato; «Ripristina questa versione» per chi può
+  modificare. Codice: `src/views/GroupsView.tsx`, `editGroupResource` in `src/lib/groupSync.ts`,
+  funzioni pure in `src/lib/groups.ts`, testi in `GROUP_BOARD_TEXT`.
+- Database: colonna `revisions` scritta solo dai trigger di `groups.sql` (al massimo 20 versioni,
+  non falsificabili); push «Modifica annuncio in bacheca "<gruppo>" da parte di <nome>» a ogni
+  membro tranne chi modifica (`people.sql`, `studyos_push_board_edit`, tipo `accepted`: nessun
+  Worker da ripubblicare). Nell'app lo stesso testo arriva nel pannello Notifiche con il logo.
+- Dettagli: [docs/groups-sync.md](../groups-sync.md) («Modifica degli annunci»).
+
+Verifiche: `npm test` (1830), `npm run lint`, `npm run build`; `push-notify-tests.sql` (B1/B2) su un
+Postgres temporaneo, due esecuzioni di fila, locale C ed en_US.UTF-8; `board-edit-check.mjs` sullo
+stack locale (38 controlli); `people-verify.sql` con `board_edit_ready` `true`; prova nell'app con
+due account su due origini (modifica, Realtime, notifica con logo e «Apri», storico, ripristino,
+telefono).
+
+Da fare: eseguire sul progetto reale `groups.sql`, poi `people.sql`, poi `people-verify.sql`
+(`board_edit_ready` `true`), **poi** pubblicare il client. Non ancora fatto, niente commit.
