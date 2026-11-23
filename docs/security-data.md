@@ -28,7 +28,8 @@ La «Password dell'app» cifra solo la copia sul dispositivo (vedi sotto).
 | Profilo online | `studyos_profiles` | Nome, @nome e «Gli altri possono trovarmi» |
 | Notifiche | `studyos_push_subscriptions`, `studyos_push_reminders` | Indirizzo del servizio di notifiche del browser e le sue chiavi; titolo e testo dei promemoria finché non partono (poi un giorno) |
 | Registri dei limiti | `studyos_person_lookups`, `studyos_push_sends`, `studyos_push_reminder_sends` | Account e ora (per le ricerche anche l'indirizzo IP). Le righe più vecchie di un'ora si cancellano alla ricerca o all'invio successivo: restano circa un'ora, di più se non ne arrivano altri. Nessun contenuto |
-| Connettore remoto degli assistenti | `studyos_agent_grants`, `studyos_agent_audit` | Del segreto solo l'impronta (hash). Il registro tiene le versioni prima e dopo di ogni modifica dell'assistente per 90 giorni, per poterla annullare |
+| Connettore remoto degli assistenti | `studyos_agent_grants`, `studyos_agent_audit`, `studyos_agent_requests` | Del segreto solo l'impronta (hash). Il registro tiene le versioni prima e dopo di ogni modifica dell'assistente per 90 giorni, per poterla annullare. Le condivisioni chieste dall'assistente (strumento, dati ed esito) restano almeno 7 giorni: si cancellano alla richiesta successiva |
+| Timer di studio | `studyos_timer_states` | Lo stato del timer dell'account (una riga): materia, modalità, tempi. Leggibile solo da te |
 | Account | Supabase Auth (`auth.users`, `auth.sessions`) | Email, impronta della password, sessioni aperte |
 | Copia di sicurezza scaricata | File sul tuo dispositivo | Cifrata solo se scegli una password quando la scarichi |
 
@@ -87,7 +88,8 @@ In Impostazioni → Spazio e dati. Non si può annullare.
 | Promemoria con l'app chiusa | Tolti |
 | Versioni precedenti delle modifiche fatte da altri | Tolte |
 | Condivisioni e link di condivisione che hai mandato | Tolti: chi li riceveva non vede più nulla |
-| Connettore remoto: permessi e registro | Tolti: l'assistente collegato smette di funzionare |
+| Connettore remoto: permessi, registro e richieste da confermare | Tolti: l'assistente collegato smette di funzionare |
+| Timer di studio nel cloud | Tolto |
 | Profilo online | Nome e @nome svuotati. «Gli altri possono trovarmi» resta com'era |
 | Resoconti della sincronizzazione BARB (`university.sql`, oggi non usato) | Tolti |
 | Gruppi: tuo nome di membro, risorse e attività che hai scritto | **Restano**: sono anche degli altri membri. Il nome resta quello che avevi scelto (mai l'email). Per andartene usa «Esci dal gruppo» |
