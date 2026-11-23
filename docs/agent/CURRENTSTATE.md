@@ -895,3 +895,22 @@ Verifiche: `npm test` (1800, nuovi `tests/siteConsent.test.mjs` e casi in `subje
 e desktop): pannello dei progressi in Materie, dettaglio ed Esami; dialogo `#collega=` con codice,
 blocco «accesso» e passaggio ad Account; Impostazioni → Agenti con il remoto in alto.
 
+Pubblicato il 23 novembre 2026: commit `f5b4dc2`, `5d4f160` e `951d02d` su `main`, workflow Pages
+riuscito (bundle con `studyos.agent.siteConsent` e il chunk `AgentSiteConsent`); poi Worker
+`studyos-agent` versione `c5391cb3` (prima `dd16d208`, per `wrangler rollback`), `/health` 1.11.0 con
+`cloud: true` dopo circa 6 minuti. Il Worker include anche la regola «al 100% è completata» e i
+progressi pesati, finora solo nell'app.
+
+Controlli dal vivo eseguiti (nessun dato personale, nessun «Consenti»): metadata OAuth e della risorsa
+remota; 401 senza token e con token finto su `/mcp` e `/u/<nome>/mcp`; CORS del sito ammesso, altre
+origini senza CORS e 403 anche in `text/plain`; `/oauth/request` sconosciuta 404; pagina di
+autorizzazione con «Conferma in StudyOS» e codice uguale a quello di `/oauth/request` (senza
+`redirect_uri` né `state`); `/oauth/wait` `connected: true`; percorso completo nel browser
+(pagina dell'hub → sito → «Rifiuta» → `/authorize/continue` → client con `error=access_denied`).
+Il primo giro ha trovato il bug del drawer che annullava il ritorno (corretto in `951d02d`) e ha
+mostrato che una scheda con il service worker vecchio usa il codice di prima finché non si ricarica.
+
+Da fare a mano (serve l'account della persona): un «Consenti» vero dal telefono e dal computer, poi
+creare, leggere, modificare ed eliminare un'attività di prova da ChatGPT e da Claude con StudyOS
+chiuso, e controllare che le modifiche arrivino nell'app alla sincronizzazione.
+
