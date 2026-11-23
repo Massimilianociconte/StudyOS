@@ -959,3 +959,27 @@ Da fare a mano (serve l'account della persona, non si preme «Consenti» per lei
 degli strumenti del connettore in ChatGPT e Claude; una condivisione chiesta dal remoto e confermata
 dal telefono toccando la notifica; il timer avviato da ChatGPT con l'app chiusa e ritrovato nell'app
 (e il contrario); bacheca e appelli dei gruppi scritti dal remoto e visti dagli altri membri.
+
+## Richieste agli assistenti: messaggio da mandare (1.12.1, 23 novembre 2026)
+
+Segnalazione: una richiesta «Spiegami meglio» restava «In attesa di un assistente» anche tenendo aperta
+la chat di ChatGPT. Causa: nessun assistente la prende da solo; ChatGPT e Claude chiamano StudyOS solo
+quando la persona gli scrive. Nel cloud le richieste in attesa avevano `attempts` 0, e il connettore le
+mostrava correttamente con `studyos_list_ai_requests`: il collegamento funzionava, mancava il messaggio.
+
+- App: con richieste in attesa, «Spiegami meglio» e «Richieste agli assistenti» mostrano il messaggio
+  pronto (`src/components/learn/AssistantHandoff.tsx`, `src/lib/assistantHandoff.ts`) con «Copia il
+  messaggio», «Apri ChatGPT» e «Apri Claude» (il clic copia anche il messaggio). I testi non dicono più
+  che l'assistente vedrà la richiesta da solo.
+- Server: `studyos_status` e `studyos_overview` aggiungono `aiRequestsHint` quando ci sono richieste in
+  attesa; le descrizioni di questi due strumenti e di `studyos_list_ai_requests` dicono all'assistente
+  che non riceve avvisi e di proporre di elaborarle (le istruzioni del server lo ripetono, ma Claude Code
+  le taglia a 2048 caratteri). Versione 1.12.1.
+
+Una revisione indipendente ha trovato il taglio delle istruzioni (la frase nuova non arrivava), un invito
+ambiguo («proponile»), i link senza avviso di nuova scheda per i lettori di schermo e il doppio testo di
+aiuto nel modulo «Chiedi un'analisi»: corretti, con test.
+
+Verifiche: `npm test` (1823), `npm run lint`; schermate provate nella preview locale (desktop e
+telefono) con dati di prova poi tolti. Il pannello browser di Claude Code nega gli appunti: la copia si
+prova sul sito pubblicato.

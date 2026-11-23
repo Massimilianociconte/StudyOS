@@ -783,3 +783,15 @@
 - Richieste del connettore remoto: «Scollega il connettore remoto» segna `revoked_at` e non cancella
   la riga del permesso, quindi `on delete cascade` non scatta. Ogni lettura o decisione sulle
   richieste deve controllare che il permesso sia ancora attivo (policy e `studyos_agent_request_decide`).
+- Richieste «Spiegami meglio» e analisi: ChatGPT e Claude non controllano StudyOS da soli, neanche con
+  la chat aperta (con MCP è l'assistente che chiama gli strumenti, il server non può avviare un turno).
+  Una richiesta con `attempts` 0 da giorni di solito vuol dire che nessuno ha scritto all'assistente, non
+  che il collegamento è rotto: prova `studyos_list_ai_requests` prima di cercare un bug. Testi dell'app
+  che promettono «la vedrà il prossimo assistente» confondono: `tests/assistantHandoff.test.mjs` controlla
+  quelli delle richieste.
+- Istruzioni del server MCP: Claude Code ne mostra solo i primi 2048 caratteri e `AGENT_INSTRUCTIONS` è
+  più lungo (circa 2850). Una regola che l'assistente deve seguire va anche nella descrizione dello
+  strumento (che arriva intera), come l'invito a elaborare le richieste in `studyos_status`,
+  `studyos_overview` e `studyos_list_ai_requests`.
+- Il pannello browser di Claude Code nega la scrittura negli appunti (`NotAllowedError`) su ogni pagina:
+  lì «Copia» mostra sempre l'errore. La copia va provata sul sito pubblicato in un browser normale.

@@ -60,7 +60,10 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.12.0 (`/health` la mostra dopo il deploy). La 1.12.0 porta il connettore remoto alla
+versione 1.12.1 (`/health` la mostra dopo il deploy). La 1.12.1 dice all'assistente che non riceve
+avvisi per le richieste «Spiegami meglio» e le analisi: `studyos_status` e `studyos_overview` aggiungono
+`aiRequestsHint` quando ce ne sono in attesa, e l'app dà il messaggio da mandargli (vedi «Flashcard e
+quiz»). La 1.12.0 porta il connettore remoto alla
 pari del principale: stessi strumenti (gruppi, bacheca e risorse, appelli dei gruppi, dati condivisi,
 cronometro, `studyos_approval_status`, `studyos_list_accounts`), con le condivisioni confermate
 nell'app (vedi «Connettore remoto di un solo account»). La 1.11.0 fa confermare il connettore remoto
@@ -140,7 +143,20 @@ Ricrea il connettore dopo il deploy.
   richiesta presa. Sul connettore remoto anche due prese nello stesso istante si escludono (la
   `revision` della richiesta sale a ogni presa e il database rifiuta la seconda). Nessun client MCP
   avvia da solo un turno per un evento del server: la coda la elabora un assistente collegato
-  quando lo si chiede (o un'attività pianificata).
+  quando lo si chiede (o un'attività pianificata), anche con la chat aperta non succede nulla.
+  Per questo, con richieste in attesa, l'app mostra il messaggio da mandare all'assistente
+  (`AssistantHandoff`: «Copia il messaggio», «Apri ChatGPT», «Apri Claude»). Il messaggio è generico
+  («Elabora tutte le richieste in attesa in StudyOS…», con il nome del profilo se c'è) e non porta la
+  scheda né il dubbio, che finirebbero nell'indirizzo: l'assistente li legge con
+  `studyos_list_ai_requests`. I link usano `chatgpt.com/?q=` e `claude.ai/new?q=`, che non sono
+  documentati e possono non inserire il testo: il clic copia comunque il messaggio negli appunti.
+  `studyos_status` (fuori da `counts`) e `studyos_overview` (in `learning`) aggiungono
+  `aiRequestsHint` quando `aiRequestsWaiting` è maggiore di 0, così l'assistente propone di
+  elaborarle appena la persona gli scrive per altro. L'invito sta anche nelle descrizioni di questi
+  due strumenti e di `studyos_list_ai_requests`: Claude Code legge solo i primi 2048 caratteri delle
+  istruzioni del server, e la frase di `LEARNING_INSTRUCTION` cade dopo. Le «MCP Events» di ChatGPT (webhook verso una
+  chat che si è iscritta) avvierebbero il turno da sole, ma a novembre 2026 sono una bozza, solo nelle
+  chat Work e descritte per i plugin, e Claude non ha nulla di simile: non sono usate.
 - Risposte oltre 24 000 caratteri: elementi in coda tolti (`has_more`), poi i disegni SVG
   (`omitted: "svg"`), infine un errore leggibile; mai JSON troncato. Una scheda con un SVG grande
   si legge per intero solo nell'app.
