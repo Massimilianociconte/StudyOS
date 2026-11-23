@@ -79,9 +79,10 @@ test("catalogo: otto strumenti degli appelli, effetti sul gruppo dichiarati", ()
   for (const name of GROUP_EXAM_TOOL_NAMES) assert.ok(findAgentTool(name), name);
   for (const name of ["studyos_create_group_exam_session", "studyos_update_group_exam_session", "studyos_delete_group_exam_session", "studyos_restore_group_change"]) {
     assert.equal(findAgentTool(name).openWorld, true, name);
-    assert.equal(CLOUD_UNAVAILABLE.has(name), true, name);
+    // 1.12.0: anche sul connettore remoto (agent-parity.sql).
+    assert.equal(CLOUD_UNAVAILABLE.has(name), false, name);
   }
-  assert.equal(CLOUD_UNAVAILABLE.has("studyos_list_group_history"), true);
+  assert.equal(CLOUD_UNAVAILABLE.has("studyos_list_group_history"), false);
   assert.equal(CLOUD_UNAVAILABLE.has("studyos_plan_exam"), false);
   assert.deepEqual(EVENT_REMINDERS, findAgentTool("studyos_create_event").inputSchema.properties.reminders);
   const source = readFileSync(new URL("../src/agent/execute.ts", import.meta.url), "utf8");

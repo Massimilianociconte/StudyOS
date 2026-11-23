@@ -64,10 +64,12 @@ const fakeCloud = ({ missing = false } = {}) => {
 const runnerOn = (cloud) => createCloudRunner({ url: "http://cloud.test/", key: "sb_publishable_prova", fetch: cloud.fetch });
 
 test("1.9.0: istruzioni e strumenti che leggono lo snapshot dei gruppi", () => {
-  assert.equal(AGENT_SERVER_VERSION, "1.11.0");
+  assert.equal(AGENT_SERVER_VERSION, "1.12.0");
   assert.match(AGENT_INSTRUCTIONS, /studyos_check_consistency/);
   assert.match(cloudInstructions("Ada"), /Appelli dei gruppi/);
-  assert.equal(GROUP_SNAPSHOT_TOOLS.size, 7);
+  assert.match(cloudInstructions("Ada"), /studyos_check_consistency/);
+  // 1.12.0: anche scrivere, ripristinare e leggere la cronologia partono dallo snapshot.
+  assert.equal(GROUP_SNAPSHOT_TOOLS.size, 14);
   for (const name of GROUP_SNAPSHOT_TOOLS) assert.equal(CLOUD_UNAVAILABLE.has(name), false, name);
 });
 
@@ -94,13 +96,13 @@ test("remoto: scegliere un appello scrive il piano personale nel cloud", async (
   assert.equal(row.payload.selected, true);
 });
 
-test("remoto: script non eseguito → not_connected; le scritture sul gruppo non ci sono", async () => {
+test("remoto: script non eseguito → not_connected, anche per le scritture sul gruppo", async () => {
   const cloud = fakeCloud({ missing: true });
   const runner = runnerOn(cloud);
   const result = await runner.run(grant, "studyos_list_group_exam_sessions", {});
   assert.equal(result.code, "not_connected");
   assert.equal(result.error, "Gli appelli del gruppo non sono ancora attivi.");
   const write = await runner.run(grant, "studyos_create_group_exam_session", { groupId: "g1", date: "2027-01-12", kind: "appello", courseName: "Chimica" });
-  assert.equal(write.code, "invalid");
+  assert.equal(write.code, "not_connected");
   assert.equal(useGroupExamStore.getState().available, true);
 });

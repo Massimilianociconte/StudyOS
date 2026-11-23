@@ -93,6 +93,9 @@ test("«Cancella anche dall'account»: definer, limitata all'account, copre ogni
     "delete from public.studyos_share_invites where owner_id = auth.uid();",
     "delete from public.studyos_agent_audit where user_id = auth.uid();",
     "delete from public.studyos_agent_grants where user_id = auth.uid();",
+    // 1.12.0: richieste da confermare e timer del connettore remoto (agent-parity.sql).
+    "delete from public.studyos_agent_requests where user_id = auth.uid();",
+    "delete from public.studyos_timer_states where user_id = auth.uid();",
     "update public.studyos_profiles set display_name = '', handle = null",
     "delete from public.university_sync_reports where user_id = auth.uid();",
     "delete from public.studyos_items where user_id = auth.uid() and entity_type = 'snapshot';"
@@ -101,7 +104,7 @@ test("«Cancella anche dall'account»: definer, limitata all'account, copre ogni
   }
   // Tabelle facoltative: ogni istruzione fuori da studyos_items solo se lo script è stato eseguito.
   const optional = erase.body.match(/to_regclass\('public\.\w+'\)/g) ?? [];
-  assert.equal(optional.length, 8);
+  assert.equal(optional.length, 10);
   // I gruppi restano: sono anche degli altri membri.
   assert.doesNotMatch(erase.body, /studyos_group/);
   // Nessun parametro: non si può cancellare un altro account.

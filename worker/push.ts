@@ -14,7 +14,7 @@ export interface PushEnv {
 
 export type PushNotification = {
   /** `reminder`: promemoria di un evento con l'app chiusa (supabase/push-reminders.sql). */
-  kind: "invite" | "accepted" | "permission" | "reminder";
+  kind: "invite" | "accepted" | "permission" | "reminder" | "agent";
   title: string;
   body: string;
   url: string;
@@ -44,7 +44,7 @@ export const PUSH_CONCURRENCY = 6;
 export const MAX_TITLE_CHARS = 120;
 export const MAX_BODY_CHARS = 400;
 
-const KINDS = new Set(["invite", "accepted", "permission", "reminder"]);
+const KINDS = new Set(["invite", "accepted", "permission", "reminder", "agent"]);
 const OPEN_URL = /^\?apri=[a-z]{1,30}$/;
 const TAG = /^[\x21-\x7e]{1,200}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;

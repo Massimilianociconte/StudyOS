@@ -1135,6 +1135,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),
+    cloudDescription: "Legge il timer di studio dell'account, lo stesso che l'app mostra su ogni dispositivo con l'accesso fatto. kind = pomodoro (blocchi di studio e pause), timer (conto alla rovescia di durata scelta) o stopwatch (cronometro); phase = focus (studio), short o long (pausa). remainingSeconds è arrotondato per eccesso ed elapsedSeconds per difetto, come in app; per il cronometro durationSeconds è l'obiettivo (0 = nessuno). awaitingReview = Timer o cronometro finiti che aspettano il riepilogo nell'app (Salva o Scarta); topicId = argomento scelto. mode e label restano per compatibilità. Non salva niente: i blocchi Pomodoro finiti li salva l'app o studyos_timer_control.",
     summary: () => "Leggere il timer di studio"
   }),
   tool({
@@ -1150,6 +1151,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
       minutes: { type: "integer", minimum: 1, maximum: 600, description: "Solo con action=start e kind=timer: durata in minuti (1–600, es. 90 = 1 h 30). Senza, la durata ricordata per la materia (60 se mai scelta)." },
       subjectId: { ...ID, description: "Solo con action=start: id della materia (studyos_list_subjects). Senza, resta la materia già scelta nel timer." }
     }, ["action"]),
+    cloudDescription: "Avvia, mette in pausa, azzera o termina il timer di studio dell'account (lo stesso dell'app su ogni dispositivo con l'accesso fatto: l'app aperta lo riprende entro pochi secondi). action=start avvia un Pomodoro (richiede mode) oppure, con kind=timer, un conto alla rovescia (minutes facoltativo) o, con kind=stopwatch, il cronometro; subjectId facoltativo sceglie la materia. Se c'è una sessione in corso da almeno un minuto, start rifiuta: prima usa finish o reset. action=toggle mette in pausa o riprende; action=reset scarta il tempo non salvato; action=finish salva come sessione il tempo di studio fatto (almeno un minuto, pause escluse), anche un Timer finito che aspetta il riepilogo. Ogni blocco Pomodoro finito si salva già da solo come sessione; Timer e cronometro, nell'app, passano da un riepilogo modificabile. Se intanto il timer è cambiato su un dispositivo, la modifica non si fa: rileggi con studyos_timer_status.",
     summary: (args) => `Controllare il timer (${text(args.action, "")})`
   }),
   tool({
@@ -1161,6 +1163,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
     inputSchema: objectSchema({
       approvalId: { type: "string", minLength: 8, maxLength: 80, description: "Id restituito insieme a status=pending_approval." }
     }, ["approvalId"]),
+    cloudDescription: "Recupera l'esito di un'azione che era in attesa di conferma nell'app. Passa approvalId restituito quando lo stato era pending_approval. Se la persona non ha ancora deciso aspetta fino a 20 secondi, poi risponde di nuovo pending_approval. Una richiesta non confermata entro 30 minuti scade. Non crea una nuova azione.",
     summary: () => "Controllare l'esito di una conferma"
   }),
   tool({
@@ -1170,6 +1173,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),
+    cloudDescription: "Dice di quale account StudyOS è questo connettore remoto: uno solo, quello nell'indirizzo, sempre collegato (i dati sono nel cloud, l'app può essere chiusa). Gli strumenti non hanno il parametro account.",
     summary: () => "Vedere gli account collegati"
   }),
   // --- Registro e ripristino (1.8.0). Sul connettore principale è il registro di questo browser; sul
@@ -1241,39 +1245,30 @@ const withAccountParam = (schema: JsonSchema): JsonSchema => ({
 });
 
 /**
- * Strumenti che il connettore remoto (un account, dati cloud, app chiusa) non offre: condivisioni
- * e risorse dei gruppi vogliono la sessione della persona, il cronometro vive nel browser, conferme
- * ed elenco account non hanno senso senza app collegata. studyos_list_audit c'è (dalla 1.8.0): lì
- * legge il registro del server invece di quello del browser.
+ * Strumenti che il connettore remoto non offre. Dalla 1.12.0 nessuno: gruppi, bacheca, appelli e
+ * cronologia passano dalle funzioni del segreto (supabase/agent-parity.sql), il timer è quello
+ * dell'account nel cloud, le condivisioni sono richieste da confermare nell'app (CLOUD_DEFERRED).
+ * Resta l'insieme, vuoto, per chi controlla prima di offrire uno strumento (personalExtraTools).
  */
-export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
-  "studyos_list_shares",
-  "studyos_list_shared_items",
-  "studyos_create_shared_item",
-  "studyos_update_shared_item",
-  "studyos_delete_shared_item",
+export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Sul connettore remoto questi strumenti scrivono dati che altre persone vedono (condivisioni,
+ * dati condivisi): l'hub non ha la sessione della persona e non li esegue da sé. Ne fa una
+ * richiesta (studyos_agent_request_create, con notifica push) che la persona conferma nell'app;
+ * l'app li esegue con la sua sessione, come una conferma del connettore principale.
+ */
+export const CLOUD_DEFERRED: ReadonlySet<string> = new Set([
   "studyos_share_with",
   "studyos_update_share",
   "studyos_revoke_share",
-  "studyos_add_group_resource",
-  "studyos_delete_group_resource",
-  // I gruppi condivisi stanno nelle tabelle dei gruppi, non più nel cloud personale (lib/syncScope):
-  // dal cloud personale si leggerebbe una copia vecchia.
-  "studyos_list_groups",
-  "studyos_list_group_board",
-  // Appelli dei gruppi: scrivere sul gruppo e leggerne la cronologia vuole la sessione della persona
-  // (spec §9.5, domanda 1). Elenco, piano e controllo ci sono: cloudRunner legge lo snapshot.
-  "studyos_create_group_exam_session",
-  "studyos_update_group_exam_session",
-  "studyos_delete_group_exam_session",
-  "studyos_list_group_history",
-  "studyos_restore_group_change",
-  "studyos_save_catalog_override",
-  "studyos_delete_catalog_override",
-  "studyos_timer_status",
-  "studyos_timer_control",
-  ...HUB_TOOLS
+  "studyos_create_shared_item",
+  "studyos_update_shared_item",
+  "studyos_delete_shared_item"
 ]);
+
+const CLOUD_CONFIRM_NOTE =
+  " Sul connettore remoto non parte da sola: la persona riceve una notifica e la conferma nell'app StudyOS (basta aprirla, anche dal telefono). Se la risposta ha status=pending_approval non ripetere la chiamata: chiama studyos_approval_status con approvalId.";
 
 /**
  * Strumenti solo del connettore remoto: il ripristino usa il registro del server (prima e dopo di
@@ -1282,13 +1277,13 @@ export const CLOUD_UNAVAILABLE: ReadonlySet<string> = new Set([
 export const CLOUD_ONLY: ReadonlySet<string> = new Set(["studyos_restore_change"]);
 
 /**
- * Definizione MCP. Sul connettore remoto non c'è `account` (l'account è nell'indirizzo) e le
- * descrizioni non rimandano agli strumenti delle condivisioni, che lì non ci sono.
+ * Definizione MCP. Sul connettore remoto non c'è `account` (l'account è nell'indirizzo) e gli
+ * strumenti da confermare nell'app lo dicono nella descrizione.
  */
 export const mcpToolDefinition = (item: AgentTool, options: { cloud?: boolean } = {}) => ({
   name: item.name,
   title: item.title,
-  description: options.cloud ? (item.cloudDescription ?? item.description).replace(MINE, "") : item.description,
+  description: options.cloud ? (item.cloudDescription ?? item.description) + (CLOUD_DEFERRED.has(item.name) ? CLOUD_CONFIRM_NOTE : "") : item.description,
   inputSchema: HUB_TOOLS.has(item.name) || options.cloud ? item.inputSchema : withAccountParam(item.inputSchema),
   annotations: {
     // title anche qui: i client 2025-03-26 lo leggono solo dalle annotazioni.

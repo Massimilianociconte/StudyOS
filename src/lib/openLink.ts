@@ -2,10 +2,16 @@
 // Logica pura e senza dipendenze: la usano l'hook useOpenLink e i test.
 
 /** Gli unici valori accettati: i parametri `url` che il server mette nelle notifiche. */
-export type OpenTarget = "notifiche" | "condivisione" | "gruppi" | "calendario";
+export type OpenTarget = "notifiche" | "condivisione" | "gruppi" | "calendario" | "agenti";
 
-/** "calendario": promemoria di un evento (push con l'app chiusa o notifica della scheda aperta). */
-const TARGETS: readonly OpenTarget[] = ["notifiche", "condivisione", "gruppi", "calendario"];
+/**
+ * "calendario": promemoria di un evento (push con l'app chiusa o notifica della scheda aperta).
+ * "agenti": un assistente collegato da remoto chiede una conferma (supabase/agent-parity.sql).
+ */
+const TARGETS: readonly OpenTarget[] = ["notifiche", "condivisione", "gruppi", "calendario", "agenti"];
+
+/** Controlla subito le richieste del connettore remoto da confermare (agentCloudRequests.ts). */
+export const AGENT_REQUESTS_EVENT = "studyos:agent-requests";
 
 /** Il pannello Notifiche non è una sezione ma un cassetto della shell: si apre con questo evento. */
 export const OPEN_NOTIFICATIONS_EVENT = "studyos:open-notifications";
@@ -24,4 +30,8 @@ export const urlWithoutOpen = (href: string): string => {
 
 export const requestOpenNotifications = () => {
   window.dispatchEvent(new Event(OPEN_NOTIFICATIONS_EVENT));
+};
+
+export const requestAgentRequestsCheck = () => {
+  window.dispatchEvent(new Event(AGENT_REQUESTS_EVENT));
 };

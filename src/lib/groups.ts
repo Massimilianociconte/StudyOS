@@ -324,3 +324,57 @@ export const mergeSharedSnapshot = (
     freshGroups: groups.fresh
   };
 };
+
+// ——— Righe delle tabelle dei gruppi (supabase/groups.sql) → entità dell'app ———
+// Qui e non in groupSync.ts: le usa anche il connettore remoto (agent/cloudRunner.ts), che gira
+// nell'hub senza il client Supabase del browser.
+
+export const groupFromRow = (row: Record<string, unknown>): StudyGroup => ({
+  id: String(row.id),
+  createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
+  updatedAt: String(row.updated_at ?? row.updatedAt ?? new Date().toISOString()),
+  archived: false,
+  tags: [],
+  name: String(row.name ?? ""),
+  description: String(row.description ?? ""),
+  ownerId: String(row.owner_id ?? ""),
+  ownerDisplayName: String(row.owner_display_name ?? ""),
+  members: [],
+  inviteCode: String(row.invite_code ?? "")
+});
+
+/** Membro di un gruppo; `email` c'è solo se la riga la porta (il connettore remoto la riceve senza). */
+export const memberFromRow = (row: Record<string, unknown>): StudyGroup["members"][number] => ({
+  userId: String(row.user_id),
+  email: (row.email as string | null) ?? undefined,
+  displayName: String(row.display_name ?? ""),
+  role: (row.role as StudyGroup["members"][number]["role"]) ?? "member",
+  joinedAt: String(row.joined_at ?? new Date().toISOString())
+});
+
+export const resourceFromRow = (row: Record<string, unknown>): GroupResource => ({
+  id: String(row.id),
+  createdAt: String(row.created_at ?? new Date().toISOString()),
+  updatedAt: String(row.updated_at ?? new Date().toISOString()),
+  archived: false,
+  tags: [],
+  groupId: String(row.group_id ?? ""),
+  kind: (row.kind as GroupResource["kind"]) ?? "note",
+  title: String(row.title ?? ""),
+  url: (row.url as string | null) ?? undefined,
+  body: (row.body as string | null) ?? undefined,
+  pinned: Boolean(row.pinned),
+  addedByUserId: String(row.added_by_user_id ?? ""),
+  addedByDisplayName: String(row.added_by_display_name ?? "")
+});
+
+export const activityFromRow = (row: Record<string, unknown>): GroupActivity => ({
+  id: String(row.id),
+  createdAt: String(row.created_at ?? new Date().toISOString()),
+  updatedAt: String(row.updated_at ?? row.created_at ?? new Date().toISOString()),
+  archived: false,
+  tags: [],
+  groupId: String(row.group_id ?? ""),
+  actorDisplayName: String(row.actor_display_name ?? ""),
+  text: String(row.text ?? "")
+});

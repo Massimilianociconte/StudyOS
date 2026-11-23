@@ -1202,7 +1202,7 @@ export const deleteAnalysisTool = (args: Args) =>
 const requestTarget = (request: AiRequest) => {
   if (!request.targetId) return undefined;
   const source = request.targetOwnerId ? learningSharedSources().find((item) => item.owner?.id === request.targetOwnerId) : ownSource();
-  if (!source) return { missing: true, note: "La scheda è in una raccolta condivisa che ora non si legge (serve StudyOS aperto con il connettore principale)." };
+  if (!source) return { missing: true, note: "La scheda è in una raccolta condivisa che ora non si legge: forse la persona non la condivide più." };
   const { decks, flashcards, quizQuestions, quizzes } = source.bundle;
   if (request.kind === "explain_card") {
     const card = flashcards.find((item) => item.id === request.targetId);

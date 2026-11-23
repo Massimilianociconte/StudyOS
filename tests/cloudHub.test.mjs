@@ -151,8 +151,11 @@ test("connettore remoto: consenso solo a Camilla, token legato al suo indirizzo 
   const names = listed.result.tools.map((tool) => tool.name);
   for (const name of CLOUD_UNAVAILABLE) assert.ok(!names.includes(name), name);
   assert.ok(names.includes("studyos_create_task"));
+  // 1.12.0: gli stessi strumenti del connettore principale, più il ripristino dal registro del server.
+  for (const name of ["studyos_list_shared_items", "studyos_share_with", "studyos_list_groups", "studyos_timer_control", "studyos_approval_status", "studyos_list_accounts"]) assert.ok(names.includes(name), name);
   assert.ok(listed.result.tools.every((tool) => !("account" in (tool.inputSchema.properties ?? {}))));
-  assert.ok(listed.result.tools.every((tool) => !tool.description.includes("studyos_list_shared_items")));
+  const share = listed.result.tools.find((tool) => tool.name === "studyos_share_with");
+  assert.match(share.description, /la conferma nell'app StudyOS/);
   const init = await (await rpc(hub, "/u/camilla-rossi/mcp", access, "initialize", { protocolVersion: "2025-06-18" })).json();
   assert.match(init.result.instructions, /StudyOS di Camilla Rossi/);
   assert.match(init.result.instructions, /anche con StudyOS chiuso/);

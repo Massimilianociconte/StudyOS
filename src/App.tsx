@@ -75,7 +75,7 @@ export default function App() {
   // Link/QR di condivisione: apre Condivisione sulla scheda dell'invito.
   useShareInviteLinks(!loading && !locked && !error);
   useSiteConsentLinks();
-  // Notifica push toccata: ?apri=notifiche|condivisione|gruppi|calendario apre la pagina giusta.
+  // Notifica push toccata: ?apri=notifiche|condivisione|gruppi|calendario|agenti apre la pagina giusta.
   useOpenLink(!loading && !locked && !error);
 
   useEffect(() => {
@@ -142,6 +142,24 @@ export default function App() {
     return () => {
       cancelled = true;
       stop?.();
+    };
+  }, [loading]);
+
+  // Connettore remoto (1.12.0): conferme chieste da un assistente con l'app chiusa e timer di studio
+  // dell'account nel cloud. Con l'accesso fatto; in differita come il resto degli agenti.
+  useEffect(() => {
+    if (loading || !cloudConfigured) return;
+    const stops: Array<() => void> = [];
+    let cancelled = false;
+    void import("./lib/agentCloudRequests").then((module) => {
+      if (!cancelled) stops.push(module.startCloudRequests());
+    }).catch(() => undefined);
+    void import("./lib/timerCloud").then((module) => {
+      if (!cancelled) stops.push(module.startTimerCloud());
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      for (const stop of stops) stop();
     };
   }, [loading]);
 

@@ -140,7 +140,7 @@ test("H2: ripristino remoto: l'elemento e il conflitto passano da auditImage", (
   assert.match(source, /auditImage\(conflict\.entityType, conflict\.current\)/);
 });
 
-test("L1: sul remoto il controllo non propone strumenti che non ci sono; counts seguono i filtri", async () => {
+test("L1: sul remoto il controllo propone gli stessi strumenti (1.12.0); counts seguono i filtri", async () => {
   const dup = (id, created) => session({ id, courseKey: "name:chimica", courseId: null, courseName: "Chimica", date: "2027-01-12", kind: "appello", createdAt: created });
   seed([dup("a", "2026-11-01T10:00:00Z"), dup("b", "2026-11-02T10:00:00Z")]);
   const local = await executeAgentTool("studyos_check_consistency", {});
@@ -149,8 +149,9 @@ test("L1: sul remoto il controllo non propone strumenti che non ci sono; counts 
   try {
     const remote = await executeAgentTool("studyos_check_consistency", {});
     const issue = remote.data.items.find((i) => i.code === "duplicate_session");
-    assert.equal(issue.fix, undefined);
-    assert.match(issue.fixInApp, /nell'app/);
+    // Dalla 1.12.0 eliminare un appello si fa anche dal connettore remoto: nessun rimando all'app.
+    assert.equal(issue.fix.tool, "studyos_delete_group_exam_session");
+    assert.equal(issue.fixInApp, undefined);
     const errors = await executeAgentTool("studyos_check_consistency", { minSeverity: "error" });
     assert.equal(errors.data.counts.error, errors.data.total);
     assert.equal(errors.data.counts.warning + errors.data.counts.info, 0);

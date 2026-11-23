@@ -1,5 +1,5 @@
 // Raccolte di flashcard e quiz che altre persone condividono (sezione «flashcards»): righe originali
-// lette da useSharedStore. Sul connettore remoto lo store condiviso è vuoto: nessuna fonte.
+// lette da useSharedStore. Sul connettore remoto lo store lo riempie cloudRunner per la chiamata (1.12.0).
 import { SCOPE_ENTITY_TYPES, typeAccess, type SharePermission } from "../lib/sharing";
 import type { DeckBundle } from "../lib/learningModel";
 import { useSharedStore } from "../store/useSharedStore";

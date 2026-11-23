@@ -12,14 +12,15 @@
 -- - anon_closed_ready: anon (la chiave publishable senza accesso) non ha privilegi su quelle tabelle
 --   e nessuna policy (nemmeno sui file di studyos-files) vale per anon o per public.
 -- - definer_functions_ready: ogni funzione SECURITY DEFINER fissa il search_path e anon non la può
---   eseguire, tranne gli otto ingressi protetti da un segreto (connettore remoto, push_gone) o senza dati
---   (studyos_keepalive).
+--   eseguire, tranne gli ingressi protetti da un segreto (connettore remoto, anche agent-parity.sql,
+--   push_gone) o senza dati (studyos_keepalive): elenco in anon_entry.
 -- - security_issues: vuota (null) quando le tre colonne sopra sono true; altrimenti dice quali oggetti
 --   sistemare (solo nomi, mai dati).
 -- - emails_hidden_ready (dopo groups.sql, sharing.sql e people.sql): nessuna email visibile agli altri
 --   nelle righe dei membri, degli inviti di gruppo e delle condivisioni.
 -- - erase_all_ready: «Cancella anche dall'account» toglie anche cronologia, condivisioni mandate,
---   registro e permessi del connettore remoto, il profilo online e i resoconti BARB.
+--   registro, permessi e richieste del connettore remoto, timer nel cloud, il profilo online e i
+--   resoconti BARB.
 with
 client_role (name) as (values ('anon'), ('authenticated')),
 rel as (
@@ -60,6 +61,22 @@ anon_entry (fn_oid) as (
     (to_regprocedure('public.studyos_agent_restore(text,uuid)')),
     (to_regprocedure('public.studyos_agent_restore_call(text,uuid)')),
     (to_regprocedure('public.studyos_agent_group_snapshot(text)')),
+    -- agent-parity.sql (1.12.0): il connettore remoto alla pari di quello principale.
+    (to_regprocedure('public.studyos_agent_save_group_exam_session(text,text,text,integer,jsonb)')),
+    (to_regprocedure('public.studyos_agent_delete_group_exam_session(text,text,integer)')),
+    (to_regprocedure('public.studyos_agent_save_catalog_override(text,text,text,integer,text,text,text,jsonb)')),
+    (to_regprocedure('public.studyos_agent_delete_catalog_override(text,text,integer)')),
+    (to_regprocedure('public.studyos_agent_restore_group_record(text,bigint,integer)')),
+    (to_regprocedure('public.studyos_agent_group_history(text,text,text,text,bigint,integer)')),
+    (to_regprocedure('public.studyos_agent_groups(text)')),
+    (to_regprocedure('public.studyos_agent_add_group_resource(text,jsonb)')),
+    (to_regprocedure('public.studyos_agent_delete_group_resource(text,text)')),
+    (to_regprocedure('public.studyos_agent_log_group_activity(text,jsonb)')),
+    (to_regprocedure('public.studyos_agent_sharing(text,integer,text[])')),
+    (to_regprocedure('public.studyos_agent_request_create(text,text,jsonb,text,text)')),
+    (to_regprocedure('public.studyos_agent_request_status(text,uuid)')),
+    (to_regprocedure('public.studyos_agent_timer_get(text)')),
+    (to_regprocedure('public.studyos_agent_timer_put(text,jsonb)')),
     (to_regprocedure('public.push_gone(text,text[])')),
     (to_regprocedure('public.studyos_keepalive(text)'))
   ) as allowed (fn)
@@ -185,6 +202,8 @@ select
       and pg_get_functiondef(p.oid) like '%update public.studyos_profiles set display_name = '''', handle = null%'
       and pg_get_functiondef(p.oid) like '%delete from public.studyos_push_reminders where user_id = auth.uid()%'
       and pg_get_functiondef(p.oid) like '%delete from public.university_sync_reports where user_id = auth.uid()%'
+      and pg_get_functiondef(p.oid) like '%delete from public.studyos_agent_requests where user_id = auth.uid()%'
+      and pg_get_functiondef(p.oid) like '%delete from public.studyos_timer_states where user_id = auth.uid()%'
     from pg_proc p
     where p.oid = to_regprocedure('public.erase_studyos_account_items()')
   ), false) as erase_all_ready;

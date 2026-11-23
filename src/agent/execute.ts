@@ -1387,6 +1387,17 @@ const groupBoard = (args: Args): AgentCallResult => {
   });
 };
 
+type GroupSyncApi = Pick<typeof import("../lib/groupSync"), "getActor" | "publishResource" | "logSharedActivity" | "deleteSharedResource">;
+
+/**
+ * Bacheca dei gruppi sul server (lib/groupSync, Supabase con la sessione della persona), caricata solo
+ * quando serve. È un oggetto per le prove e per il connettore remoto (cloudRunner.ts), che durante una
+ * chiamata la sostituisce con le funzioni di supabase/agent-parity.sql.
+ */
+export const groupSyncLoader: { load: () => Promise<GroupSyncApi> } = {
+  load: () => import("../lib/groupSync")
+};
+
 const addGroupResource = async (args: Args): Promise<AgentCallResult> => {
   const group = state().studyGroups.find((item) => item.id === text(args.groupId));
   if (!group) return fail("not_found", "Gruppo non trovato.");
@@ -1396,7 +1407,7 @@ const addGroupResource = async (args: Args): Promise<AgentCallResult> => {
     if (!safe) return fail("invalid", "Per un link serve un indirizzo http, https o mailto.");
     url = safe;
   }
-  const { getActor, publishResource, logSharedActivity } = await import("../lib/groupSync");
+  const { getActor, publishResource, logSharedActivity } = await groupSyncLoader.load();
   const actor = await getActor();
   const id = await state().addGroupResource({
     groupId: group.id,
@@ -1421,7 +1432,7 @@ const deleteGroupResource = async (id: string): Promise<AgentCallResult> => {
   // In un gruppo condiviso prima il server: se non riesce (rete, o risorsa di un altro membro) la
   // risorsa resta per tutti, anche qui. Prima spariva solo qui e tornava al pull successivo.
   if (group?.sharedAt && resource.sharedAt) {
-    const { deleteSharedResource } = await import("../lib/groupSync");
+    const { deleteSharedResource } = await groupSyncLoader.load();
     if (!(await deleteSharedResource(id).catch(() => false))) {
       return fail("failed", "Eliminazione non riuscita: il server dei gruppi non risponde o la risorsa è di un altro membro.");
     }

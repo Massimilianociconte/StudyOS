@@ -16,6 +16,10 @@ import {
   settleInviteNotifications,
   visibleMemberName,
   withServerStamp,
+  activityFromRow as toActivity,
+  groupFromRow as toGroup,
+  memberFromRow,
+  resourceFromRow as toResource,
   type GroupRpcOutcome,
   type SharedSnapshot
 } from "./groups";
@@ -140,20 +144,6 @@ export const resetSharedCache = async () => {
   stopGroupExams();
 };
 
-const toGroup = (row: Record<string, unknown>): StudyGroup => ({
-  id: String(row.id),
-  createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
-  updatedAt: String(row.updated_at ?? row.updatedAt ?? new Date().toISOString()),
-  archived: false,
-  tags: [],
-  name: String(row.name ?? ""),
-  description: String(row.description ?? ""),
-  ownerId: String(row.owner_id ?? ""),
-  ownerDisplayName: String(row.owner_display_name ?? ""),
-  members: [],
-  inviteCode: String(row.invite_code ?? "")
-});
-
 const toInvite = (row: Record<string, unknown>): GroupInvite => ({
   id: String(row.id),
   createdAt: String(row.created_at ?? new Date().toISOString()),
@@ -169,33 +159,6 @@ const toInvite = (row: Record<string, unknown>): GroupInvite => ({
   recipientUserId: (row.recipient_user_id as string | null) ?? undefined,
   code: String(row.code ?? ""),
   status: (row.status as GroupInvite["status"]) ?? "pending"
-});
-
-const toResource = (row: Record<string, unknown>): GroupResource => ({
-  id: String(row.id),
-  createdAt: String(row.created_at ?? new Date().toISOString()),
-  updatedAt: String(row.updated_at ?? new Date().toISOString()),
-  archived: false,
-  tags: [],
-  groupId: String(row.group_id ?? ""),
-  kind: (row.kind as GroupResource["kind"]) ?? "note",
-  title: String(row.title ?? ""),
-  url: (row.url as string | null) ?? undefined,
-  body: (row.body as string | null) ?? undefined,
-  pinned: Boolean(row.pinned),
-  addedByUserId: String(row.added_by_user_id ?? ""),
-  addedByDisplayName: String(row.added_by_display_name ?? "")
-});
-
-const toActivity = (row: Record<string, unknown>): GroupActivity => ({
-  id: String(row.id),
-  createdAt: String(row.created_at ?? new Date().toISOString()),
-  updatedAt: String(row.updated_at ?? row.created_at ?? new Date().toISOString()),
-  archived: false,
-  tags: [],
-  groupId: String(row.group_id ?? ""),
-  actorDisplayName: String(row.actor_display_name ?? ""),
-  text: String(row.text ?? "")
 });
 
 type SharedPatch = Partial<
@@ -346,13 +309,7 @@ const pullOnce = async (): Promise<boolean> => {
       const byGroup = new Map<string, StudyGroup["members"]>();
       for (const row of members ?? []) {
         const list = byGroup.get(String(row.group_id)) ?? [];
-        list.push({
-          userId: String(row.user_id),
-          email: (row.email as string | null) ?? undefined,
-          displayName: String(row.display_name ?? ""),
-          role: (row.role as StudyGroup["members"][number]["role"]) ?? "member",
-          joinedAt: String(row.joined_at ?? new Date().toISOString())
-        });
+        list.push(memberFromRow(row));
         byGroup.set(String(row.group_id), list);
       }
       for (const row of groups ?? []) {

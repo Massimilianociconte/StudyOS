@@ -81,7 +81,7 @@ test("catalogo: cinque strumenti, le correzioni toccano il gruppo", () => {
   for (const name of UNIVERSITY_TOOL_NAMES) assert.ok(findAgentTool(name), name);
   for (const name of ["studyos_save_catalog_override", "studyos_delete_catalog_override"]) {
     assert.equal(findAgentTool(name).openWorld, true, name);
-    assert.equal(CLOUD_UNAVAILABLE.has(name), true, name);
+    assert.equal(CLOUD_UNAVAILABLE.has(name), false, name);
   }
   assert.equal(CLOUD_UNAVAILABLE.has("studyos_list_barb_teachers"), false);
 });

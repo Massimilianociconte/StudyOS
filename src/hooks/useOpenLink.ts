@@ -1,16 +1,22 @@
 import { useEffect, useRef } from "react";
-import { parseOpenTarget, requestOpenNotifications, urlWithoutOpen, type OpenTarget } from "../lib/openLink";
+import { parseOpenTarget, requestAgentRequestsCheck, requestOpenNotifications, urlWithoutOpen, type OpenTarget } from "../lib/openLink";
+import { requestSettingsSection } from "../lib/settingsJump";
 import { useStudyStore } from "../store/useStudyStore";
 
 const openTarget = (target: OpenTarget) => {
   if (target === "gruppi") useStudyStore.getState().setActiveView("groups");
   else if (target === "condivisione") useStudyStore.getState().setActiveView("sharing");
   else if (target === "calendario") useStudyStore.getState().setActiveView("calendar");
-  else requestOpenNotifications();
+  else if (target === "agenti") {
+    // La conferma compare nel dialogo degli agenti, sopra ogni pagina: Impostazioni → Agenti fa da contesto.
+    requestSettingsSection("agenti");
+    useStudyStore.getState().setActiveView("settings");
+    requestAgentRequestsCheck();
+  } else requestOpenNotifications();
 };
 
 /**
- * Collegamento profondo ?apri=notifiche|condivisione|gruppi|calendario (lo mette il service worker quando si
+ * Collegamento profondo ?apri=notifiche|condivisione|gruppi|calendario|agenti (lo mette il service worker quando si
  * tocca una notifica push). Legge il parametro all'avvio, lo toglie dall'URL e apre la pagina giusta
  * appena l'app è pronta (dopo lo sblocco della password, se attiva).
  */

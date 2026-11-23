@@ -19,6 +19,8 @@ export interface PendingAgentCall {
   actorName: string;
   summary: string;
   risk: AgentRisk;
+  /** Richiesta del connettore remoto (agentCloudRequests.ts): resta sul server se il dialogo si chiude da solo. */
+  remote?: boolean;
 }
 
 export interface PendingAgentConsent {
@@ -266,6 +268,9 @@ const loadAgentTools = loadOnce<AgentTools>(() =>
   }))
 );
 
+const POLICY_DENIED = "Bloccato dalla policy di StudyOS. Puoi cambiarla in Impostazioni → Agenti.";
+const UNKNOWN_TOOL = "Strumento non riconosciuto da questa versione di StudyOS.";
+
 const TOOLS_UNAVAILABLE = "StudyOS non è riuscito a caricare gli strumenti per gli agenti (rete assente o app aggiornata): ricarica la pagina e riprova.";
 
 const handleCall = async (job: { id: string; name: string; args: Record<string, unknown>; actorName: string }) => {
@@ -288,7 +293,7 @@ const handleCall = async (job: { id: string; name: string; args: Record<string, 
     await deliver(job.id, result);
   };
   if (!tool) {
-    await finish({ ok: false, code: "denied", error: "Strumento non riconosciuto da questa versione di StudyOS." }, "deny");
+    await finish({ ok: false, code: "denied", error: UNKNOWN_TOOL }, "deny");
     return;
   }
   // Vault chiuso: l'esecuzione risponde «bloccato» senza toccare i dati e senza dialogo.
@@ -298,7 +303,7 @@ const handleCall = async (job: { id: string; name: string; args: Record<string, 
   }
   const decision = policyFor(tool);
   if (decision === "deny") {
-    await finish({ ok: false, code: "denied", error: "Bloccato dalla policy di StudyOS. Puoi cambiarla in Impostazioni → Agenti." }, "deny");
+    await finish({ ok: false, code: "denied", error: POLICY_DENIED }, "deny");
     return;
   }
   if (decision === "ask") {
@@ -314,6 +319,69 @@ const handleCall = async (job: { id: string; name: string; args: Record<string, 
   }
   const result = await serial(() => executeAgentTool(job.name, job.args));
   await finish(result, decision);
+};
+
+/** Toglie dal dialogo una conferma che non vale più (richiesta remota decisa altrove o scaduta). */
+export const dismissPendingCall = (id: string) => {
+  callQueue.find((entry) => entry.call.id === id)?.decide("expired");
+};
+
+/** Il server delle richieste remote (studyos_agent_requests), visto da handleRemoteRequest. */
+export interface RemoteRequestServer {
+  /** Decide sul server: true = vale da qui (con Approva questa scheda esegue lo strumento). */
+  claim: (approve: boolean) => Promise<boolean>;
+  /** Esito dopo l'esecuzione. */
+  report: (result: AgentCallResult) => Promise<void>;
+}
+
+/**
+ * Richiesta del connettore remoto da confermare qui (agentCloudRequests.ts): stessa policy, stesso
+ * dialogo, stessa esecuzione e stesso registro delle chiamate del connettore principale. La decisione
+ * passa dal server (claim): con più schede o dispositivi aperti la esegue uno solo.
+ * "left" = lasciata in attesa (vault chiuso, strumenti non caricati): torna al controllo successivo.
+ */
+export const handleRemoteRequest = async (
+  job: { id: string; name: string; args: Record<string, unknown>; actorName: string },
+  server: RemoteRequestServer
+): Promise<"done" | "left"> => {
+  let tools: AgentTools;
+  try {
+    tools = await loadAgentTools();
+  } catch {
+    return "left";
+  }
+  if (vaultClosed()) return "left";
+  const { findAgentTool, describeAgentCall, executeAgentTool } = tools;
+  const tool = findAgentTool(job.name);
+  const auditSummary = await describeAgentCall(job.name, job.args, { audit: true });
+  const close = async (result: AgentCallResult, decision: PolicyChoice) => {
+    record({ tool: job.name, risk: tool?.risk ?? "write", decision, status: outcome(result), summary: auditSummary, actor: job.actorName });
+    await server.report(result);
+  };
+  if (!tool) {
+    if (await server.claim(true)) await close({ ok: false, code: "denied", error: UNKNOWN_TOOL }, "deny");
+    return "done";
+  }
+  const decision = policyFor(tool);
+  if (decision === "deny") {
+    if (await server.claim(true)) await close({ ok: false, code: "denied", error: POLICY_DENIED }, "deny");
+    return "done";
+  }
+  if (decision === "ask") {
+    const summary = await describeAgentCall(job.name, job.args);
+    const choice = await askPerson({ id: job.id, name: job.name, title: tool.title, args: job.args, actorName: job.actorName, summary, risk: tool.risk, remote: true });
+    if (choice === "locked") return "left";
+    // Scaduta o decisa altrove: il server ha già l'esito.
+    if (choice === "expired") return "done";
+    if (choice === "deny") {
+      if (await server.claim(false)) record({ tool: job.name, risk: tool.risk, decision, status: "denied", summary: auditSummary, actor: job.actorName });
+      return "done";
+    }
+  }
+  if (!(await server.claim(true))) return "done";
+  const result = await serial(() => executeAgentTool(job.name, job.args));
+  await close(result, decision);
+  return "done";
 };
 
 const handleConsent = async (job: PendingAgentConsent) => {
@@ -365,7 +433,8 @@ const handleConsent = async (job: PendingAgentConsent) => {
 };
 
 const dropQueues = () => {
-  for (const entry of [...callQueue]) entry.decide("deny");
+  // Una richiesta remota non si rifiuta da sola: resta in attesa sul server e torna al controllo dopo.
+  for (const entry of [...callQueue]) entry.decide(entry.call.remote ? "locked" : "deny");
   for (const entry of [...consentQueue]) entry.decide({ approve: false, scopes: [] });
 };
 

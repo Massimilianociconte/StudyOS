@@ -13,10 +13,20 @@
 // push della stessa richiesta): il database scrive il registro (studyos_agent_audit), che
 // studyos_list_audit legge per chiamate e studyos_restore_change annulla, una chiamata intera o una voce.
 // studyos_split_pages è puro: si risponde subito, senza leggere né scrivere il cloud.
+//
+// Dalla 1.12.0 il connettore remoto ha gli stessi strumenti del principale (supabase/agent-parity.sql):
+// - gruppi, bacheca, appelli e correzioni dei gruppi: letture e scritture con le funzioni del segreto,
+//   che fanno valere auth.uid() = l'account del permesso e ripetono i controlli dell'app;
+// - dati condivisi da altre persone: letti come li legge l'app (stessa RLS, ripetuta nella funzione);
+// - dare, cambiare o togliere condivisioni e scrivere dati di altri: diventano una richiesta che la
+//   persona conferma nell'app (notifica push), come le conferme del connettore principale; l'esito
+//   si legge con studyos_approval_status;
+// - timer di studio: lo stato dell'account nel cloud (studyos_timer_states), lo stesso dell'app.
 
-import { CLOUD_UNAVAILABLE } from "./catalog";
+import { CLOUD_DEFERRED, CLOUD_UNAVAILABLE, findAgentTool, toolSummary } from "./catalog";
 import { ALL_GROUPS, GROUP_TYPES, groupOfType, groupsForTool, type DataGroup } from "./cloudGroups";
-import { configureAgentRuntime, executeAgentTool, splitPagesResult } from "./execute";
+import { configureAgentRuntime, executeAgentTool, groupSyncLoader, splitPagesResult } from "./execute";
+import { groupExamWriterLoader } from "./groupExamTools";
 import {
   AUDIT_UUID_RE,
   auditImage,
@@ -43,10 +53,24 @@ import {
 import { baselineFrom, diffCollections, setPersistenceSuspended } from "../lib/persistence";
 import { chunkBySize } from "../lib/syncMerge";
 import { GROUP_COLLECTIONS } from "../lib/syncScope";
-import { useSharedStore } from "../store/useSharedStore";
-import { useStudyStore } from "../store/useStudyStore";
-import { overrideFromRow, sessionFromRow, type CatalogOverride, type GroupExamSession } from "../lib/groupExams";
+import { selectPreferences, useStudyStore } from "../store/useStudyStore";
+import {
+  historyFromRow,
+  overrideFromRow,
+  sessionFromRow,
+  writeResultFrom,
+  type CatalogOverride,
+  type GroupExamSession,
+  type GroupExamWriter,
+  type GroupHistoryEntry
+} from "../lib/groupExams";
+import { activityFromRow, groupFromRow, memberFromRow, resourceFromRow, visibleMemberName } from "../lib/groups";
+import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
+import { SCOPE_ENTITY_TYPES, grantFromRow, inviteFromRow, mergeSharedRows, safeCssColor, type RemoteSharedRow, type ShareGrant, type SharedItem } from "../lib/sharing";
+import { defaultTimer, normalizeTimer, type TimerState } from "../lib/studyTimer";
 import { useGroupExamStore } from "../store/useGroupExamStore";
+import { useSharedStore } from "../store/useSharedStore";
+import type { GroupResource, StudyGroup } from "../types";
 
 /** Permesso di un connettore remoto: segreto di `studyos_create_agent_grant` e fuso del browser. */
 export interface CloudGrant {
@@ -64,6 +88,8 @@ export interface CloudBackend {
   now?: () => number;
   /** Id di una chiamata (prove). */
   newCallId?: () => string;
+  /** Attesa tra due letture dell'esito di una conferma (prove). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface CloudRunner {
@@ -135,13 +161,30 @@ export const CLOUD_TEXT = {
     action === "delete" ? "Modifica annullata: l'elemento creato è stato eliminato."
       : action === "create" ? "Modifica annullata: l'elemento è di nuovo tra i dati."
         : "Modifica annullata: l'elemento è tornato com'era prima.",
-  restoredCall: (count: number) => `Azione annullata: ${count} elementi sono tornati com'erano prima.`
+  restoredCall: (count: number) => `Azione annullata: ${count} elementi sono tornati com'erano prima.`,
+  /** Stesse parole del connettore principale (httpHub.ts). */
+  pending: "L'azione aspetta la conferma della persona in StudyOS. Non ripeterla: avvisa la persona e chiama studyos_approval_status con questo approvalId.",
+  approvalNotFound: "Nessuna azione con questo approvalId per questo account. Le conferme durano 30 minuti e il loro esito 7 giorni.",
+  approvalDenied: "Rifiutato in StudyOS.",
+  approvalExpired: "Nessuna conferma in StudyOS entro 30 minuti: l'azione non è stata eseguita.",
+  parityMissing: "Questa funzione del connettore remoto non è ancora attiva: chi gestisce StudyOS deve eseguire supabase/agent-parity.sql.",
+  resourceNotSaved: "Risorsa non pubblicata: il server dei gruppi non l'ha accettata (rete o permessi). Non è stata salvata: riprova tra poco.",
+  timerConflict: "Il timer è stato cambiato nel frattempo in StudyOS: niente è stato salvato. Rileggilo con studyos_timer_status e riprova."
 } as const;
 
 class GrantError extends Error {}
 
 /** Funzione RPC assente (agent.sql di prima): PostgREST risponde PGRST202. */
 class MissingFunctionError extends Error {}
+
+/** Errore del database con il suo codice (es. 54000: troppe richieste da confermare). */
+class RpcError extends Error {
+  readonly code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 /**
  * Strumenti che leggono appelli o correzioni dei gruppi: prima si chiede lo snapshot al server
@@ -154,14 +197,91 @@ export const GROUP_SNAPSHOT_TOOLS: ReadonlySet<string> = new Set([
   "studyos_check_consistency",
   "studyos_list_barb_teachers",
   "studyos_get_barb_course",
-  "studyos_list_barb_contacts"
+  "studyos_list_barb_contacts",
+  // 1.12.0: scrivere e ripristinare partono dalla versione attuale, come nell'app.
+  "studyos_create_group_exam_session",
+  "studyos_update_group_exam_session",
+  "studyos_delete_group_exam_session",
+  "studyos_list_group_history",
+  "studyos_restore_group_change",
+  "studyos_save_catalog_override",
+  "studyos_delete_catalog_override"
 ]);
+
+/**
+ * Strumenti che leggono gruppi, membri, bacheca e attività dalle tabelle dei gruppi (studyos_agent_groups):
+ * nel cloud personale ce n'è solo una copia vecchia. Anche studyos_status (quanti gruppi), i collegamenti
+ * (un id di gruppo o di risorsa) e le condivisioni (persone dei gruppi, gruppi destinatari).
+ */
+export const GROUP_TABLE_TOOLS: ReadonlySet<string> = new Set([
+  "studyos_list_groups",
+  "studyos_list_group_board",
+  "studyos_add_group_resource",
+  "studyos_delete_group_resource",
+  "studyos_list_shares",
+  "studyos_status",
+  "studyos_add_link"
+]);
+
+/**
+ * Strumenti per cui gruppi o dati condivisi sono il contenuto: se non si leggono, la chiamata fallisce.
+ * Per gli altri (panoramica, stato, collegamenti, flashcard) sono un'aggiunta, come nell'app: senza,
+ * lo strumento risponde con i soli dati personali.
+ */
+const GROUPS_REQUIRED: ReadonlySet<string> = new Set([
+  "studyos_list_groups",
+  "studyos_list_group_board",
+  "studyos_add_group_resource",
+  "studyos_delete_group_resource",
+  "studyos_list_shares"
+]);
+const SHARING_REQUIRED: ReadonlySet<string> = new Set(["studyos_list_shares", "studyos_list_shared_items"]);
+
+/** Strumenti di flashcard e quiz che leggono anche le raccolte condivise da altre persone (learningShared.ts). */
+const LEARNING_SHARED_TOOLS: ReadonlySet<string> = new Set([
+  "studyos_list_ai_requests",
+  "studyos_take_ai_request",
+  "studyos_finish_ai_request"
+]);
+
+/**
+ * Tipi dei dati di altre persone da leggere per uno strumento (studyos_agent_sharing): null = tutti,
+ * [] = solo le condivisioni, undefined = niente (lo strumento non li usa).
+ */
+export const sharedTypesFor = (name: string, groups: readonly DataGroup[]): string[] | null | undefined => {
+  if (name === "studyos_list_shares") return [];
+  if (name === "studyos_list_shared_items") return null;
+  // Eventi di oggi dei calendari condivisi (sharedTodayEvents).
+  if (name === "studyos_overview") return [...SCOPE_ENTITY_TYPES.calendar];
+  if (LEARNING_SHARED_TOOLS.has(name) || groups.some((group) => group === "decks" || group === "cards" || group === "questions")) {
+    return [...SCOPE_ENTITY_TYPES.flashcards];
+  }
+  return undefined;
+};
+
+export const TIMER_TOOLS: ReadonlySet<string> = new Set(["studyos_timer_status", "studyos_timer_control"]);
+
+/** Attesa di una conferma nell'app: come il connettore principale, ma entro i limiti di una richiesta del Worker. */
+const APPROVAL_POLL_MS = 2_500;
+/** Letture dell'esito dopo la prima: al più 20 secondi, poche sotto-richieste per chiamata. */
+const APPROVAL_POLLS = 8;
+/** Righe di dati di altre persone lette per chiamata (le più recenti). */
+const SHARED_ROWS_MAX = 5000;
+const APPROVAL_PREFIX = "req_";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Le righe dello snapshot non hanno id degli account: `mine` dice se l'ha aggiunta la persona ("remote"). */
 const withRemoteAuthor = (row: unknown) =>
   row && typeof row === "object" ? { ...(row as Record<string, unknown>), created_by: (row as { mine?: unknown }).mine === true ? "remote" : "" } : row;
 
 const listOf = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const isCallResult = (value: unknown): value is AgentCallResult =>
+  isRecord(value) && typeof value.ok === "boolean" && (value.ok ? isRecord(value.data) : typeof value.error === "string");
+
+type GroupSyncApi = Awaited<ReturnType<(typeof groupSyncLoader)["load"]>>;
 
 const keyOf = (type: string, id: string) => `${type}:${id}`;
 
@@ -204,6 +324,8 @@ export const plannedRows = (before: CollectionsState, after: CollectionsState, c
   const diff = diffCollections(after, baselineFrom(before));
   const rows: PushRow[] = [];
   for (const collection of COLLECTIONS) {
+    // Gruppi, bacheca e attività stanno nelle tabelle dei gruppi: le scrive groupSyncLoader, mai il cloud personale.
+    if (GROUP_COLLECTIONS.has(collection)) continue;
     const type = ENTITY_TYPES[collection];
     for (const item of diff.puts[collection] ?? []) {
       const previous = rowStamp(cached(type, item.id));
@@ -218,7 +340,10 @@ export const plannedRows = (before: CollectionsState, after: CollectionsState, c
   return rows;
 };
 
-let sharedReset = false;
+/** Lo store condiviso vuoto: nessun dato di altre persone resta tra una chiamata e l'altra. */
+const resetShared = () =>
+  useSharedStore.setState({ viewerId: null, availability: "unknown", items: [], given: [], received: [], invites: [], labels: [], outbox: [], hiddenOwners: [], notice: null, syncError: null, persistent: false });
+
 /** Lo store è uno solo: un'esecuzione alla volta, per qualsiasi account. */
 let chain: Promise<unknown> = Promise.resolve();
 const exclusive = <T>(task: () => Promise<T>): Promise<T> => {
@@ -257,6 +382,7 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
   const doFetch = backend.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
   const now = backend.now ?? (() => Date.now());
   const newCallId = backend.newCallId ?? (() => crypto.randomUUID());
+  const sleep = backend.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const caches = new Map<string, AccountCache>();
 
   const rpc = async <T>(fn: string, body: Record<string, unknown>): Promise<T> => {
@@ -278,7 +404,7 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
       const error = (data ?? {}) as { code?: string; message?: string };
       if (error.code === "28000") throw new GrantError(error.message ?? "revoked");
       if (error.code === "PGRST202") throw new MissingFunctionError(error.message ?? fn);
-      throw new Error(error.message ?? `HTTP ${response.status}`);
+      throw new RpcError(error.message ?? `HTTP ${response.status}`, error.code ?? "");
     }
     return data as T;
   };
@@ -443,35 +569,259 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     }
   };
 
+  /**
+   * Appelli e correzioni dei gruppi scritti con le funzioni del segreto (agent-parity.sql): stesse funzioni
+   * dell'app sul server, righe dell'esito come nello snapshot (senza indirizzi né id degli account).
+   * Gli errori sono quelli di lib/groupExamSync, che groupExamTools riconosce.
+   */
+  const remoteGroupExamWriter = (secret: string, lost: () => void): GroupExamWriter => {
+    const call = async (fn: string, body: Record<string, unknown>): Promise<unknown> => {
+      try {
+        return await rpc<unknown>(fn, { p_secret: secret, ...body });
+      } catch (error) {
+        if (error instanceof GrantError) lost();
+        throw new Error(error instanceof MissingFunctionError ? GROUP_EXAM_TEXT.notActive : GROUP_EXAM_TEXT.offline);
+      }
+    };
+    const session = (row: unknown) => sessionFromRow(withRemoteAuthor(row));
+    const override = (row: unknown) => overrideFromRow(withRemoteAuthor(row));
+    const either = (row: unknown): GroupExamSession | CatalogOverride | null => session(row) ?? override(row);
+    return {
+      saveSession: async (groupId, id, expectedVersion, fields) =>
+        writeResultFrom(await call("studyos_agent_save_group_exam_session", { p_group_id: groupId, p_id: id, p_expected_version: expectedVersion, p_fields: fields }), session),
+      deleteSession: async (id, expectedVersion) =>
+        writeResultFrom(await call("studyos_agent_delete_group_exam_session", { p_id: id, p_expected_version: expectedVersion }), session),
+      restore: async (historyId, expectedVersion) =>
+        writeResultFrom(await call("studyos_agent_restore_group_record", { p_history_id: historyId, p_expected_version: expectedVersion }), either),
+      listHistory: async ({ groupId, recordKind, recordId, limit, beforeId }) => {
+        const rows = await call("studyos_agent_group_history", {
+          p_group_id: groupId,
+          p_record_kind: recordKind ?? null,
+          p_record_id: recordId ?? null,
+          p_before_id: beforeId ?? null,
+          p_limit: limit
+        });
+        if (!Array.isArray(rows)) return null;
+        return rows.map(historyFromRow).filter((entry): entry is GroupHistoryEntry => entry !== null);
+      },
+      saveOverride: async (groupId, id, expectedVersion, targetKind, targetId, targetLabel, fields) =>
+        writeResultFrom(
+          await call("studyos_agent_save_catalog_override", {
+            p_group_id: groupId,
+            p_id: id,
+            p_expected_version: expectedVersion,
+            p_target_kind: targetKind,
+            p_target_id: targetId,
+            p_target_label: targetLabel,
+            p_fields: fields
+          }),
+          override
+        ),
+      deleteOverride: async (id, expectedVersion) =>
+        writeResultFrom(await call("studyos_agent_delete_catalog_override", { p_id: id, p_expected_version: expectedVersion }), override)
+    };
+  };
+
+  /**
+   * Bacheca dei gruppi con le funzioni del segreto, al posto di lib/groupSync. Nessuna coda: se il server
+   * non accetta la risorsa non resta da nessuna parte (execute lo dice all'agente) e l'attività non parte.
+   */
+  const remoteGroupSync = (secret: string, me: string, lost: () => void): GroupSyncApi => {
+    let publishFailed = false;
+    const call = async <T>(fn: string, body: Record<string, unknown>): Promise<T> => {
+      try {
+        return await rpc<T>(fn, { p_secret: secret, ...body });
+      } catch (error) {
+        if (error instanceof GrantError) lost();
+        throw error;
+      }
+    };
+    return {
+      // Come getActor dell'app: il nome del profilo, mai l'email.
+      getActor: async () => ({ userId: me, displayName: visibleMemberName(selectPreferences(useStudyStore.getState()).displayName) }),
+      publishResource: async (resource: GroupResource) => {
+        const out = await call<{ status?: unknown; updated_at?: unknown } | null>("studyos_agent_add_group_resource", {
+          p_resource: {
+            id: resource.id,
+            group_id: resource.groupId,
+            kind: resource.kind,
+            title: resource.title,
+            url: resource.url ?? null,
+            body: resource.body ?? null,
+            pinned: resource.pinned,
+            added_by_display_name: resource.addedByDisplayName
+          }
+        }).catch(() => null);
+        if (out?.status !== "ok") {
+          publishFailed = true;
+          return false;
+        }
+        const stamp = typeof out.updated_at === "string" ? out.updated_at : new Date(now()).toISOString();
+        useStudyStore.setState((current) => ({
+          groupResources: current.groupResources.map((item) => (item.id === resource.id ? { ...item, sharedAt: stamp, updatedAt: stamp } : item))
+        }));
+        return true;
+      },
+      logSharedActivity: async (groupId: string, actorDisplayName: string, text: string) => {
+        if (publishFailed) return;
+        const entry = await useStudyStore.getState().logGroupActivity(groupId, actorDisplayName, text);
+        await call("studyos_agent_log_group_activity", {
+          p_activity: { id: entry.id, group_id: groupId, actor_display_name: entry.actorDisplayName, text: entry.text }
+        });
+      },
+      deleteSharedResource: async (resourceId: string) => (await call<unknown>("studyos_agent_delete_group_resource", { p_id: resourceId })) === true
+    };
+  };
+
+  /** Gruppi dell'account, membri (senza email), bacheca e ultime attività nello store, come il pull dell'app. Ritorna l'id dell'account. */
+  const loadGroups = async (secret: string) => {
+    const raw = await rpc<Record<string, unknown> | null>("studyos_agent_groups", { p_secret: secret });
+    const me = typeof raw?.me === "string" ? raw.me : "";
+    const members = new Map<string, StudyGroup["members"]>();
+    for (const row of listOf(raw?.members)) {
+      if (!isRecord(row)) continue;
+      const list = members.get(String(row.group_id)) ?? [];
+      list.push(memberFromRow(row));
+      members.set(String(row.group_id), list);
+    }
+    // Righe del server: già pubblicate (sharedAt), come dopo il pull dell'app.
+    const studyGroups = listOf(raw?.groups).filter(isRecord).map((row) => {
+      const group = groupFromRow(row);
+      return { ...group, sharedAt: group.updatedAt, members: members.get(group.id) ?? [] };
+    });
+    const groupResources = listOf(raw?.resources).filter(isRecord).map((row) => {
+      const resource = resourceFromRow(row);
+      return { ...resource, sharedAt: resource.updatedAt };
+    });
+    const groupActivities = listOf(raw?.activities).filter(isRecord).map(activityFromRow);
+    useStudyStore.setState({ studyGroups, groupResources, groupActivities });
+    return me;
+  };
+
+  /** Condivisioni, inviti, materie condivise e dati di altre persone (dei tipi chiesti) nello store condiviso, solo in memoria. */
+  const loadSharing = async (secret: string, types: string[] | null) => {
+    const raw = await rpc<Record<string, unknown> | null>("studyos_agent_sharing", { p_secret: secret, p_limit: SHARED_ROWS_MAX, p_types: types });
+    const me = typeof raw?.me === "string" ? raw.me : "";
+    if (!me) return;
+    const grants = listOf(raw?.shares)
+      .filter(isRecord)
+      .map((row) => grantFromRow(row))
+      .filter((grant): grant is ShareGrant => grant !== null);
+    const byOwner = new Map<string, RemoteSharedRow[]>();
+    for (const row of listOf(raw?.items)) {
+      if (!isRecord(row) || typeof row.owner_id !== "string" || !isRecord(row.payload)) continue;
+      const list = byOwner.get(row.owner_id) ?? [];
+      list.push({
+        entity_type: String(row.entity_type),
+        entity_id: String(row.entity_id),
+        payload: row.payload,
+        deleted: row.deleted === true,
+        updated_at: String(row.updated_at ?? ""),
+        id: String(row.id ?? "")
+      });
+      byOwner.set(row.owner_id, list);
+    }
+    let items: SharedItem[] = [];
+    for (const [ownerId, rows] of byOwner) items = mergeSharedRows(items, ownerId, rows, new Set());
+    useSharedStore.setState({
+      viewerId: me,
+      availability: "ready",
+      persistent: false,
+      given: grants.filter((grant) => grant.ownerId === me),
+      received: grants.filter((grant) => grant.ownerId !== me),
+      invites: listOf(raw?.invites).filter(isRecord).map((row) => inviteFromRow(row, now())),
+      labels: listOf(raw?.labels)
+        .filter(isRecord)
+        .map((row) => ({
+          ownerId: String(row.owner_id),
+          id: String(row.subject_id),
+          name: String(row.name ?? ""),
+          // Colore scelto da un'altra persona: solo esadecimale, come nell'app.
+          color: safeCssColor(row.color),
+          icon: String(row.icon ?? "")
+        })),
+      items,
+      outbox: [],
+      hiddenOwners: []
+    });
+  };
+
+  /**
+   * Timer dell'account dal cloud nello store e, come fa l'app aperta, i blocchi finiti chiusi in sessioni.
+   * Ritorna lo stato letto (prima di chiuderli): se dopo lo strumento è un altro, va salvato.
+   */
+  const loadTimer = async (secret: string): Promise<TimerState> => {
+    const raw = await rpc<unknown>("studyos_agent_timer_get", { p_secret: secret });
+    const timer = isRecord(raw) ? normalizeTimer(raw) : defaultTimer();
+    useStudyStore.setState({ timer, timerReview: false });
+    useStudyStore.getState().settleStudyTimer();
+    return timer;
+  };
+
+  /** Lettura facoltativa: un errore (rete, script non eseguito) lascia lo store vuoto, salvo il permesso revocato. */
+  const optional = async <T>(required: boolean, task: () => Promise<T>, fallback: T): Promise<T> => {
+    if (required) return task();
+    try {
+      return await task();
+    } catch (error) {
+      if (error instanceof GrantError) throw error;
+      return fallback;
+    }
+  };
+
   const execute = async (grant: CloudGrant, name: string, args: Record<string, unknown>): Promise<AgentCallResult> => {
     const cache = cacheFor(grant.secret);
     const groups = groupsForTool(name, args);
     await refresh(grant.secret, cache, groups);
     const before = collectionsFrom(cache, new Set(groups));
 
-    if (!sharedReset) {
-      // Nessun dato di altre persone sul connettore remoto.
-      useSharedStore.setState({ viewerId: null, items: [], given: [], received: [], invites: [], labels: [], outbox: [], persistent: false });
-      sharedReset = true;
-    }
+    // Nessun dato di altre persone da una chiamata all'altra: lo store condiviso si riempie solo qui.
+    resetShared();
     setPersistenceSuspended(true);
-    useStudyStore.setState({ loading: false, locked: false, persistError: undefined, ...before });
+    useStudyStore.setState({ loading: false, locked: false, persistError: undefined, ...before, timer: defaultTimer(), timerReview: false });
     configureAgentRuntime({ timeZone: grant.timeZone, remote: true });
+    const original = { exams: groupExamWriterLoader.load, groups: groupSyncLoader.load };
+    let lost = false;
+    const markLost = () => {
+      lost = true;
+    };
+    let timer: TimerState | null = null;
     let result: AgentCallResult;
     try {
       // Appelli dei gruppi solo per gli strumenti che li leggono, solo per questa chiamata: il reset nel
       // finally vale anche se il caricamento si interrompe.
       if (GROUP_SNAPSHOT_TOOLS.has(name)) await loadGroupSnapshot(grant.secret);
+      const me = GROUP_TABLE_TOOLS.has(name) ? await optional(GROUPS_REQUIRED.has(name), () => loadGroups(grant.secret), "") : "";
+      const sharedTypes = sharedTypesFor(name, groups);
+      if (sharedTypes !== undefined) await optional(SHARING_REQUIRED.has(name), () => loadSharing(grant.secret, sharedTypes), undefined);
+      if (TIMER_TOOLS.has(name)) timer = await loadTimer(grant.secret);
+      const writer = remoteGroupExamWriter(grant.secret, markLost);
+      const board = remoteGroupSync(grant.secret, me, markLost);
+      groupExamWriterLoader.load = async () => writer;
+      groupSyncLoader.load = async () => board;
       result = await withZonedDate(grant.timeZone, () => executeAgentTool(name, args));
     } finally {
+      groupExamWriterLoader.load = original.exams;
+      groupSyncLoader.load = original.groups;
       configureAgentRuntime({ remote: false });
       useGroupExamStore.getState().reset();
+      resetShared();
     }
 
-    const after = useStudyStore.getState() as unknown as CollectionsState;
-    const rows = plannedRows(before, after, (type, id) => cache.rows.get(keyOf(type, id)));
+    const after = useStudyStore.getState();
+    const rows = plannedRows(before, after as unknown as CollectionsState, (type, id) => cache.rows.get(keyOf(type, id)));
+    const timerAfter = after.timer;
     // Lo store torna vuoto: niente dati dell'account restano visibili alla prossima esecuzione.
-    useStudyStore.setState({ ...emptyCollections() });
+    useStudyStore.setState({ ...emptyCollections(), timer: defaultTimer(), timerReview: false });
+    if (lost) throw new GrantError("revoked");
+    if (name === "studyos_add_group_resource" && result.ok && result.data.shared === false) return fail("failed", CLOUD_TEXT.resourceNotSaved);
+    // Leggere il timer non salva niente: i blocchi finiti li chiude l'app (stesse sessioni, stessi id).
+    if (name === "studyos_timer_status") return result;
+    if (timer && timerAfter !== timer) {
+      const saved = await rpc<unknown>("studyos_agent_timer_put", { p_secret: grant.secret, p_state: timerAfter });
+      // Un altro dispositivo l'ha cambiato dopo (changedAt più recente): niente sessioni salvate da qui.
+      if (!isRecord(saved) || saved.changedAt !== timerAfter.changedAt) return fail("failed", CLOUD_TEXT.timerConflict);
+    }
     if (!rows.length) return result;
 
     // Un id per richiesta: tutte le push di questa chiamata finiscono nella stessa voce del registro.
@@ -479,6 +829,80 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     if (!refused) return result;
     await refresh(grant.secret, cache, groups).catch(() => caches.delete(grant.secret));
     return perItemConflicts(result, refusedIds) ?? fail("failed", CLOUD_TEXT.conflict(refused, accepted > 0));
+  };
+
+  const pendingResult = (id: string): AgentCallResult => ({
+    ok: true,
+    data: { status: "pending_approval", approvalId: `${APPROVAL_PREFIX}${id}`, message: CLOUD_TEXT.pending }
+  });
+
+  /** Esito di una richiesta da confermare: null = non c'è, undefined = la persona non ha ancora deciso (o l'app la sta eseguendo). */
+  const requestOutcome = (raw: unknown): AgentCallResult | null | undefined => {
+    if (!isRecord(raw)) return null;
+    if (raw.status === "pending" || raw.status === "running") return undefined;
+    if (raw.status === "expired") return { ok: false, code: "denied", error: CLOUD_TEXT.approvalExpired };
+    if (isCallResult(raw.result)) return raw.result;
+    if (raw.status === "denied") return { ok: false, code: "denied", error: CLOUD_TEXT.approvalDenied };
+    return { ok: false, code: "failed", error: CLOUD_TEXT.offline };
+  };
+
+  /** Come il connettore principale: aspetta un poco la decisione, poi risponde pending_approval. */
+  const waitRequest = async (secret: string, id: string) => {
+    for (let attempt = 0; ; attempt += 1) {
+      const outcome = requestOutcome(await rpc<unknown>("studyos_agent_request_status", { p_secret: secret, p_id: id }));
+      if (outcome !== undefined || attempt >= APPROVAL_POLLS) return outcome;
+      await sleep(APPROVAL_POLL_MS);
+    }
+  };
+
+  /**
+   * Condividere o scrivere dati di altre persone: l'hub non ha la sessione della persona e non lo fa da sé.
+   * Nasce una richiesta (notifica push), la persona la conferma nell'app, che esegue lo strumento.
+   */
+  const deferred = async (grant: CloudGrant, name: string, args: Record<string, unknown>): Promise<AgentCallResult> => {
+    let id: unknown;
+    try {
+      id = await rpc<unknown>("studyos_agent_request_create", {
+        p_secret: grant.secret,
+        p_tool: name,
+        p_args: args,
+        p_summary: toolSummary(name, args),
+        p_risk: findAgentTool(name)?.risk === "destructive" ? "destructive" : "write"
+      });
+    } catch (error) {
+      // Troppe richieste aperte: il testo del database dice cosa fare.
+      if (error instanceof RpcError && error.code === "54000") return fail("failed", error.message);
+      throw error;
+    }
+    if (typeof id !== "string" || !UUID_RE.test(id)) throw new Error("Risposta del cloud non valida.");
+    // La richiesta c'è già: un errore durante l'attesa non deve farla ripetere all'agente.
+    const outcome = await waitRequest(grant.secret, id).catch(() => undefined);
+    return outcome ?? pendingResult(id);
+  };
+
+  const approvalStatus = async (grant: CloudGrant, args: Record<string, unknown>): Promise<AgentCallResult> => {
+    const raw = String(args.approvalId ?? "").trim().toLowerCase();
+    const id = raw.startsWith(APPROVAL_PREFIX) ? raw.slice(APPROVAL_PREFIX.length) : raw;
+    if (!UUID_RE.test(id)) return fail("not_found", CLOUD_TEXT.approvalNotFound);
+    const outcome = await waitRequest(grant.secret, id);
+    if (outcome === null) return fail("not_found", CLOUD_TEXT.approvalNotFound);
+    return outcome ?? pendingResult(id);
+  };
+
+  /** Errori comuni a ogni chiamata: permesso revocato, script non eseguito, rete. */
+  const guarded = async (grant: CloudGrant, task: () => Promise<AgentCallResult>): Promise<AgentCallResult> => {
+    try {
+      return await task();
+    } catch (error) {
+      if (error instanceof GrantError) {
+        caches.delete(grant.secret);
+        return fail("denied", CLOUD_TEXT.revoked);
+      }
+      if (error instanceof MissingFunctionError) return fail("not_connected", CLOUD_TEXT.parityMissing);
+      // Una cache a metà non deve sopravvivere a un errore: la prossima chiamata rilegge tutto.
+      caches.delete(grant.secret);
+      return fail("failed", CLOUD_TEXT.offline);
+    }
   };
 
   /** studyos_list_audit sul connettore remoto: il registro del server per chiamate, non quello di un browser. */
@@ -581,21 +1005,16 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
       if (CLOUD_UNAVAILABLE.has(name)) return Promise.resolve(fail("invalid", CLOUD_TEXT.unavailable));
       // Calcolo puro: nessun dato da leggere, nessuna attesa sugli altri account.
       if (name === "studyos_split_pages") return Promise.resolve(splitPagesResult(args));
-      return exclusive(async () => {
-        try {
-          if (name === "studyos_list_audit") return await listAudit(grant, args);
-          if (name === "studyos_restore_change") return await restoreChange(grant, args);
-          return await execute(grant, name, args);
-        } catch (error) {
-          if (error instanceof GrantError) {
-            caches.delete(grant.secret);
-            return fail("denied", CLOUD_TEXT.revoked);
-          }
-          // Una cache a metà non deve sopravvivere a un errore: la prossima chiamata rilegge tutto.
-          caches.delete(grant.secret);
-          return fail("failed", CLOUD_TEXT.offline);
-        }
-      });
+      // Richieste da confermare nell'app: fuori dalla coda, l'attesa della persona non ferma gli altri account.
+      if (CLOUD_DEFERRED.has(name)) return guarded(grant, () => deferred(grant, name, args));
+      if (name === "studyos_approval_status") return guarded(grant, () => approvalStatus(grant, args));
+      return exclusive(() =>
+        guarded(grant, () => {
+          if (name === "studyos_list_audit") return listAudit(grant, args);
+          if (name === "studyos_restore_change") return restoreChange(grant, args);
+          return execute(grant, name, args);
+        })
+      );
     },
     forget: (secret) => {
       caches.delete(secret);

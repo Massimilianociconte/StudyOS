@@ -232,6 +232,7 @@ grant execute on function public.push_studyos_rows(uuid, text, jsonb) to authent
 --   nuovo non deve arrivare da solo a chi li riceveva (che riceve l'avviso «Accesso tolto»);
 -- - registro e permessi del connettore remoto (agent.sql): il registro ha copie prima e dopo dei dati,
 --   e un assistente ancora collegato riempirebbe di nuovo l'account appena svuotato;
+-- - richieste del connettore remoto da confermare e timer di studio nel cloud (agent-parity.sql);
 -- - nome e @nome del profilo online (people.sql). «Gli altri possono trovarmi» resta com'è: senza la
 --   riga varrebbe «sì», e chi aveva scelto «no» diventerebbe trovabile;
 -- - i resoconti della sincronizzazione BARB (university.sql, facoltativo e oggi non usato).
@@ -271,6 +272,12 @@ begin
   end if;
   if to_regclass('public.studyos_agent_grants') is not null then
     delete from public.studyos_agent_grants where user_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_agent_requests') is not null then
+    delete from public.studyos_agent_requests where user_id = auth.uid();
+  end if;
+  if to_regclass('public.studyos_timer_states') is not null then
+    delete from public.studyos_timer_states where user_id = auth.uid();
   end if;
   if to_regclass('public.studyos_profiles') is not null then
     update public.studyos_profiles set display_name = '', handle = null
