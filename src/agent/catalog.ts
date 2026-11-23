@@ -192,7 +192,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_status",
     title: "Stato di StudyOS",
-    description: "Dice se l'app è collegata, se il vault è bloccato, quanti elementi ci sono, qual è la policy di conferma e l'ora locale della persona (now, today, timeZone). Non modifica nulla. Usalo all'inizio se non sai se i dati sono raggiungibili.",
+    description: "Dice se l'app è collegata, se il vault è bloccato, quanti elementi ci sono, qual è la policy di conferma e l'ora locale della persona (now, today, timeZone). Non modifica nulla. Usalo all'inizio se non sai se i dati sono raggiungibili. Se c'è aiRequestsHint, la persona ha fatto nell'app richieste «Spiegami meglio» o di analisi che aspettano te (non ricevi avvisi): proponi di elaborarle (studyos_list_ai_requests).",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),
@@ -201,7 +201,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_overview",
     title: "Panoramica di studio",
-    description: "Riassume la giornata: data e ora locali, eventi di oggi (ripetuti inclusi), task urgenti, prossimi esami con materia, argomenti da ripassare, notifiche non lette, minuti studiati nella settimana, streak e obiettivo settimanale. Sola lettura. È il punto di partenza consigliato.",
+    description: "Riassume la giornata: data e ora locali, eventi di oggi (ripetuti inclusi), task urgenti, prossimi esami con materia, argomenti da ripassare, notifiche non lette, minuti studiati nella settimana, streak e obiettivo settimanale. Sola lettura. È il punto di partenza consigliato. Se learning.aiRequestsHint c'è, la persona ha fatto nell'app richieste «Spiegami meglio» o di analisi che aspettano te (non ricevi avvisi): proponi di elaborarle (studyos_list_ai_requests).",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({}),

@@ -494,9 +494,10 @@ export const describeAgentCall = async (name: string, args: Args, options: { aud
   return (target ? `${base}: «${target}»` : base).slice(0, 240);
 };
 
-const statusResult = (learning?: { flashcardsDueToday: number; aiRequestsWaiting: number }): AgentCallResult => {
+const statusResult = (learning?: { flashcardsDueToday: number; aiRequestsWaiting: number; aiRequestsHint?: string }): AgentCallResult => {
   const current = state();
   const preferences = selectPreferences(current);
+  const { aiRequestsHint, ...learningCounters } = learning ?? {};
   return ok({
     connected: true,
     locked: false,
@@ -517,8 +518,9 @@ const statusResult = (learning?: { flashcardsDueToday: number; aiRequestsWaiting
       goals: current.goals.length,
       groups: current.studyGroups.length,
       unreadNotifications: current.notifications.filter((item) => !item.readAt).length,
-      ...(learning ?? {})
-    }
+      ...learningCounters
+    },
+    ...(aiRequestsHint ? { aiRequestsHint } : {})
   });
 };
 

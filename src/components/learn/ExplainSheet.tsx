@@ -1,13 +1,16 @@
 // «Spiegami meglio»: richiesta persistente a un agente collegato (StudyOS non genera testi). Scegli lo
-// stile, scrivi il dubbio se serve; la richiesta resta in coda finché un agente la elabora. Qui sotto
-// le richieste già fatte per la stessa scheda, con le spiegazioni arrivate.
+// stile, scrivi il dubbio se serve; la richiesta resta in coda finché la persona non scrive all'assistente
+// (AssistantHandoff: messaggio pronto). Qui sotto le richieste già fatte per la stessa scheda, con le
+// spiegazioni arrivate.
 import { useEffect, useState } from "react";
 import { createAiRequest } from "../../store/learning";
 import { AI_STYLES, AI_STYLE_LABEL } from "../../lib/learningModel";
+import { waitingRequests } from "../../lib/assistantHandoff";
 import { LEARN_TEXT, STYLE_HINT } from "../../lib/labels/learn";
 import type { AiRequest, AiRequestStyle } from "../../types";
 import { Button, Drawer, Field, inputClass } from "../ui";
 import { RequestItem } from "./AiPanel";
+import { AssistantHandoff } from "./AssistantHandoff";
 import type { ExplainTarget } from "./CardDrawer";
 import { errorText } from "./useLearnData";
 
@@ -83,7 +86,7 @@ export function ExplainSheet({ target, requests, onClose }: { target: ExplainTar
             {message}
           </p>
         ) : null}
-        <p className="text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.requestWaitHelp}</p>
+        {waitingRequests(previous) ? <AssistantHandoff /> : <p className="text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.requestWaitHelp}</p>}
         {previous.length ? (
           <section>
             <h3 className="mb-2 text-xs font-black uppercase text-[var(--faint)]">{LEARN_TEXT.explainResults}</h3>

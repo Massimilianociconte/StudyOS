@@ -465,3 +465,24 @@ test("righe rifiutate dal database: esito conflict sul loro elemento, gli altri 
   assert.equal(perItemConflicts(result, new Set(["card_c"])), null, "un elemento invariato non ha scritto nulla");
   assert.equal(perItemConflicts({ ok: true, data: { id: "quiz_1" } }, new Set(["quiz_1"])), null);
 });
+
+test("connettore remoto: stato e panoramica invitano a elaborare le richieste in attesa (1.12.1)", async () => {
+  const { cloud, runner } = setup();
+  const status0 = await runner.run(rome(A), "studyos_status", {});
+  assert.equal(status0.ok, true, JSON.stringify(status0));
+  assert.equal(status0.data.counts.aiRequestsWaiting, 0);
+  assert.equal("aiRequestsHint" in status0.data, false);
+  // Richiesta fatta nell'app (riga come la sincronizza il browser): nessun assistente l'ha presa.
+  cloud.seed("alice", "aiRequest", {
+    id: "aireq_9", kind: "explain_question", targetId: "qq_1", style: "simple", prompt: "", status: "pending",
+    expiresAt: "2099-01-01T00:00:00.000Z", attempts: 0, archived: false, tags: [], ...stamp("2026-11-01T08:00:00.000Z")
+  });
+  const status = await runner.run(rome(A), "studyos_status", {});
+  assert.equal(status.data.counts.aiRequestsWaiting, 1);
+  assert.match(status.data.aiRequestsHint, /studyos_list_ai_requests/);
+  const overview = await runner.run(rome(A), "studyos_overview", {});
+  assert.equal(overview.ok, true, JSON.stringify(overview));
+  assert.match(overview.data.learning.aiRequestsHint, /studyos_list_ai_requests/);
+  // Leggere stato e panoramica non scrive nulla nel cloud.
+  assert.equal(cloud.row("alice", "aiRequest", "aireq_9").payload.status, "pending");
+});

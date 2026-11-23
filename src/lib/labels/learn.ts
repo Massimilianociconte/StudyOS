@@ -470,7 +470,7 @@ export const LEARN_TEXT = {
   aiIntro:
     "Qui arrivano le analisi scritte dagli assistenti collegati a StudyOS, basate sui tuoi dati di ripasso. StudyOS non genera testi da solo.",
   aiEmptyTitle: "Nessuna analisi",
-  aiEmptyBody: "Chiedi un'analisi: la vedrà il prossimo assistente collegato che controlla le richieste.",
+  aiEmptyBody: "Chiedi un'analisi, poi manda all'assistente il messaggio che compare: la scrive lui e arriva qui.",
   askAnalysis: "Chiedi un'analisi",
   askAnalysisPrompt: "Cosa vuoi sapere (facoltativo)",
   askAnalysisPlaceholder: "Es. su cosa concentrarmi per l'esame di chimica",
@@ -494,7 +494,20 @@ export const LEARN_TEXT = {
     cancelled: "Annullata"
   } as Record<string, string>,
   requestWaitHelp:
-    "Le richieste restano in attesa finché un assistente collegato le elabora: aprilo e chiedigli di controllare le richieste di StudyOS, oppure imposta un'attività pianificata che lo faccia da sola. Scadono dopo 14 giorni.",
+    "ChatGPT e Claude non controllano StudyOS da soli, neanche con la chat aperta: si muovono solo quando gli scrivi. Dopo l'invio compare il messaggio da mandargli. Le richieste scadono dopo 14 giorni.",
+  // Messaggio da mandare all'assistente: niente testo della scheda né del dubbio (li legge con gli strumenti).
+  handoffHelp:
+    "ChatGPT e Claude non controllano StudyOS da soli, neanche con la chat aperta: si muovono solo quando gli scrivi. Manda questo messaggio in una chat dove StudyOS è attivo: prende tutte le richieste in attesa.",
+  handoffTitle: "Messaggio per l'assistente",
+  handoffMessage: (account: string) =>
+    `Elabora tutte le richieste in attesa in StudyOS («Spiegami meglio» e analisi)${account ? `, nell'account di ${account}` : ""}.`,
+  handoffCopy: "Copia il messaggio",
+  handoffCopied: "Messaggio copiato: incollalo nella chat dove StudyOS è attivo e invialo.",
+  handoffCopyFailed: "Copia non riuscita: seleziona il messaggio e copialo a mano.",
+  handoffOpenChatGpt: "Apri ChatGPT",
+  handoffOpenClaude: "Apri Claude",
+  newTab: "(si apre in una nuova scheda)",
+  handoffOpened: "Messaggio copiato. Se nella chat non compare già, incollalo e invialo; StudyOS deve essere attivo in quella chat.",
   cancelRequest: "Annulla la richiesta",
   deleteRequest: "Togli dall'elenco",
   // Spiegami meglio
@@ -504,7 +517,8 @@ export const LEARN_TEXT = {
   explainPrompt: "Il tuo dubbio (facoltativo)",
   explainPromptRequired: "Scrivi il dubbio o cosa vuoi",
   explainSend: "Invia la richiesta",
-  explainSent: "Richiesta inviata. La vedrà il prossimo assistente collegato.",
+  explainSent: "Richiesta salvata. Ora mandala all'assistente con il messaggio qui sotto: da solo non la vede.",
+  analysisSent: "Richiesta salvata. Ora mandala all'assistente con il messaggio in «Richieste agli assistenti»: da solo non la vede.",
   explainResults: "Spiegazioni ricevute",
   explainPublish: "Usala come spiegazione della flashcard",
   explainPublished: "Spiegazione aggiunta alla flashcard.",

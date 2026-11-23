@@ -6,11 +6,13 @@ import { format, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import { archiveAnalysis, cancelAiRequest, createAiRequest, deleteAiRequest, deleteAnalysis, publishExplanation } from "../../store/learning";
 import { editableSource, publishSharedExplanation } from "../../store/sharedLearning";
+import { waitingRequests } from "../../lib/assistantHandoff";
 import { AI_STYLE_LABEL, requestStatusAt, resultBlocks } from "../../lib/learningModel";
 import { LEARN_TEXT } from "../../lib/labels/learn";
 import type { AiAnalysis, AiRequest } from "../../types";
 import { ConfirmWithError } from "../ConfirmWithError";
 import { Button, EmptyState, Field, Panel, Pill, inputClass } from "../ui";
+import { AssistantHandoff } from "./AssistantHandoff";
 import { Blocks } from "./Blocks";
 import { errorText, type LearnData } from "./useLearnData";
 
@@ -179,7 +181,7 @@ export function AiPanel({ data, targetTitle }: { data: LearnData; targetTitle: (
       await createAiRequest({ kind: "analysis", style: prompt.trim() ? "custom" : "deep", prompt, scope: { subjectIds: subjectId ? [subjectId] : [], deckIds: [], days } });
       setPrompt("");
       setAsking(false);
-      setMessage(LEARN_TEXT.explainSent);
+      setMessage(LEARN_TEXT.analysisSent);
     } catch (failure) {
       setMessage(errorText(failure));
     } finally {
@@ -235,7 +237,7 @@ export function AiPanel({ data, targetTitle }: { data: LearnData; targetTitle: (
                 </select>
               </Field>
             </div>
-            <p className="text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.requestWaitHelp}</p>
+            {waitingRequests(data.aiRequests) ? null : <p className="text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.requestWaitHelp}</p>}
             <div className="flex justify-end gap-2">
               <Button onClick={() => setAsking(false)}>{LEARN_TEXT.cancel}</Button>
               <Button variant="primary" icon="Send" onClick={() => void ask()} disabled={sending}>
@@ -248,7 +250,13 @@ export function AiPanel({ data, targetTitle }: { data: LearnData; targetTitle: (
       </div>
       <Panel className="content-start">
         <h3 className="mb-1 text-lg font-black">{LEARN_TEXT.requests}</h3>
-        <p className="mb-3 text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.requestWaitHelp}</p>
+        {waitingRequests(data.aiRequests) ? (
+          <div className="mb-3">
+            <AssistantHandoff />
+          </div>
+        ) : (
+          <p className="mb-3 text-xs font-medium text-[var(--faint)]">{LEARN_TEXT.requestWaitHelp}</p>
+        )}
         {requests.length ? (
           <ul className="grid grid-cols-1 gap-2">
             {requests.map((request) => (

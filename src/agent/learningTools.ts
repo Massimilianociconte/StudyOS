@@ -1348,13 +1348,20 @@ export const finishRequest = (args: Args) =>
     return ok({ id, status: "completed" });
   });
 
-/** Contatori per studyos_status e studyos_overview (solo stati di ripasso e richieste: leggeri). */
+/** Contatori per studyos_status e studyos_overview (solo stati di ripasso e richieste: leggeri), con l'invito a elaborare le richieste in attesa. */
 export const learningCounters = (at = new Date()) => {
   const current = state();
   let dueToday = 0;
   for (const review of current.cardStates) if (classifyCard(review, at).due) dueToday++;
   const open = current.aiRequests.filter((request) => requestStatusAt(request, at) === "pending").length;
-  return { flashcardsDueToday: dueToday, aiRequestsWaiting: open };
+  // L'assistente non riceve avvisi: lo scopre qui, quando la persona gli scrive per qualsiasi motivo.
+  return {
+    flashcardsDueToday: dueToday,
+    aiRequestsWaiting: open,
+    ...(open
+      ? { aiRequestsHint: `${open === 1 ? "C'è 1 richiesta" : `Ci sono ${open} richieste`} della persona in attesa («Spiegami meglio» o analisi): proponi alla persona di elaborarle ora (studyos_list_ai_requests).` }
+      : {})
+  };
 };
 
 export { normalizeTags };
