@@ -510,9 +510,17 @@ create index if not exists studyos_agent_requests_user_idx on public.studyos_age
 alter table public.studyos_agent_requests enable row level security;
 
 -- La persona legge le proprie richieste (l'app le mostra da confermare); si scrivono solo con le funzioni.
+-- Solo quelle di un permesso ancora attivo: dopo «Scollega il connettore remoto» le richieste già in
+-- attesa non compaiono più (la revoca segna revoked_at, la riga del permesso resta).
 drop policy if exists studyos_agent_requests_select_own on public.studyos_agent_requests;
 create policy studyos_agent_requests_select_own on public.studyos_agent_requests
-  for select to authenticated using (user_id = (select auth.uid()));
+  for select to authenticated using (
+    user_id = (select auth.uid())
+    and exists (
+      select 1 from public.studyos_agent_grants as g
+      where g.id = studyos_agent_requests.grant_id and g.user_id = (select auth.uid()) and g.revoked_at is null
+    )
+  );
 
 revoke all on public.studyos_agent_requests from public, anon, authenticated;
 grant select on public.studyos_agent_requests to authenticated;
@@ -684,6 +692,17 @@ begin
   if auth.uid() is null then
     raise exception 'Accedi con il tuo account.' using errcode = '28000';
   end if;
+  -- Permesso scollegato dopo la richiesta: non si esegue più niente, nemmeno con una regola «Consenti».
+  update public.studyos_agent_requests as r
+  set status = 'expired', finished_at = now()
+  where r.id = p_id and r.user_id = auth.uid() and r.status = 'pending'
+    and not exists (
+      select 1 from public.studyos_agent_grants as g
+      where g.id = r.grant_id and g.user_id = r.user_id and g.revoked_at is null
+    );
+  if found then
+    return false;
+  end if;
   update public.studyos_agent_requests as r
   set status = case when p_approve then 'running' else 'denied' end,
       decided_at = now(),
@@ -798,7 +817,13 @@ begin
 end;
 $$;
 
-create or replace function public.studyos_agent_timer_put(p_secret text, p_state jsonb)
+-- Scrittura condizionale: il connettore calcola il nuovo stato da quello letto (p_expected = il suo
+-- changedAt, null se non c'era una riga) e scrive solo se nel frattempo nessuno l'ha cambiato. Un
+-- changedAt più recente non basta: l'hub timbra con il proprio orologio, che può essere avanti
+-- rispetto a una pausa fatta nell'app dopo la lettura. Ritorna lo stato che vale dopo la chiamata:
+-- se non è quello mandato, l'hub risponde con un conflitto.
+drop function if exists public.studyos_agent_timer_put(text, jsonb);
+create or replace function public.studyos_agent_timer_put(p_secret text, p_state jsonb, p_expected bigint)
 returns jsonb
 language plpgsql
 security definer
@@ -806,11 +831,28 @@ set search_path = public
 as $$
 declare
   v_user uuid := public.studyos_agent_user(p_secret);
+  v_changed bigint;
+  v_state jsonb;
 begin
   if v_user is null then
     raise exception 'Collegamento dell''assistente non valido o revocato.' using errcode = '28000';
   end if;
-  return public.studyos_timer_write(v_user, p_state);
+  if coalesce(jsonb_typeof(p_state), '') <> 'object' or octet_length(p_state::text) > 8192
+     or coalesce(jsonb_typeof(p_state->'changedAt'), '') <> 'number' then
+    raise exception 'Stato del timer non valido.' using errcode = '22023';
+  end if;
+  v_changed := floor((p_state->>'changedAt')::numeric)::bigint;
+  if p_expected is null then
+    insert into public.studyos_timer_states as t (user_id, state, changed_at, updated_at)
+    values (v_user, p_state, v_changed, now())
+    on conflict (user_id) do nothing;
+  else
+    update public.studyos_timer_states as t
+    set state = p_state, changed_at = v_changed, updated_at = now()
+    where t.user_id = v_user and t.changed_at = p_expected and v_changed > p_expected;
+  end if;
+  select t.state into v_state from public.studyos_timer_states as t where t.user_id = v_user;
+  return v_state;
 end;
 $$;
 
@@ -834,7 +876,7 @@ revoke all on function public.studyos_agent_sharing(text, integer, text[]) from 
 revoke all on function public.studyos_agent_request_create(text, text, jsonb, text, text) from public, anon, authenticated;
 revoke all on function public.studyos_agent_request_status(text, uuid) from public, anon, authenticated;
 revoke all on function public.studyos_agent_timer_get(text) from public, anon, authenticated;
-revoke all on function public.studyos_agent_timer_put(text, jsonb) from public, anon, authenticated;
+revoke all on function public.studyos_agent_timer_put(text, jsonb, bigint) from public, anon, authenticated;
 revoke all on function public.studyos_agent_request_decide(uuid, boolean) from public, anon, authenticated;
 revoke all on function public.studyos_agent_request_finish(uuid, jsonb) from public, anon, authenticated;
 revoke all on function public.studyos_timer_put(jsonb) from public, anon, authenticated;
@@ -853,7 +895,7 @@ grant execute on function public.studyos_agent_sharing(text, integer, text[]) to
 grant execute on function public.studyos_agent_request_create(text, text, jsonb, text, text) to anon, authenticated;
 grant execute on function public.studyos_agent_request_status(text, uuid) to anon, authenticated;
 grant execute on function public.studyos_agent_timer_get(text) to anon, authenticated;
-grant execute on function public.studyos_agent_timer_put(text, jsonb) to anon, authenticated;
+grant execute on function public.studyos_agent_timer_put(text, jsonb, bigint) to anon, authenticated;
 grant execute on function public.studyos_agent_request_decide(uuid, boolean) to authenticated;
 grant execute on function public.studyos_agent_request_finish(uuid, jsonb) to authenticated;
 grant execute on function public.studyos_timer_put(jsonb) to authenticated;

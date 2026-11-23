@@ -358,13 +358,15 @@ export const handleRemoteRequest = async (
     record({ tool: job.name, risk: tool?.risk ?? "write", decision, status: outcome(result), summary: auditSummary, actor: job.actorName });
     await server.report(result);
   };
+  // Rifiuti senza esecuzione: una sola chiamata atomica (claim(false)), così una rete persa dopo la
+  // decisione non lascia l'agente con «controlla se è stato fatto» per qualcosa che non è partito.
   if (!tool) {
-    if (await server.claim(true)) await close({ ok: false, code: "denied", error: UNKNOWN_TOOL }, "deny");
+    if (await server.claim(false)) record({ tool: job.name, risk: "write", decision: "deny", status: "denied", summary: auditSummary, actor: job.actorName });
     return "done";
   }
   const decision = policyFor(tool);
   if (decision === "deny") {
-    if (await server.claim(true)) await close({ ok: false, code: "denied", error: POLICY_DENIED }, "deny");
+    if (await server.claim(false)) record({ tool: job.name, risk: tool.risk, decision, status: "denied", summary: auditSummary, actor: job.actorName });
     return "done";
   }
   if (decision === "ask") {

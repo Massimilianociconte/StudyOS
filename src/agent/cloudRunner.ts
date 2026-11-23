@@ -120,6 +120,12 @@ interface AccountCache {
   cursors: Map<DataGroup, string | null>;
 }
 
+/** Timer letto dal cloud per una chiamata: lo stato e il changedAt della riga (null = nessuna riga). */
+interface TimerRead {
+  timer: TimerState;
+  expected: number | null;
+}
+
 interface PushRow {
   entity_type: string;
   entity_id: string;
@@ -164,6 +170,7 @@ export const CLOUD_TEXT = {
   restoredCall: (count: number) => `Azione annullata: ${count} elementi sono tornati com'erano prima.`,
   /** Stesse parole del connettore principale (httpHub.ts). */
   pending: "L'azione aspetta la conferma della persona in StudyOS. Non ripeterla: avvisa la persona e chiama studyos_approval_status con questo approvalId.",
+  running: "La persona l'ha confermata in StudyOS e l'app la sta eseguendo. Non ripeterla: richiama tra poco studyos_approval_status con questo approvalId.",
   approvalNotFound: "Nessuna azione con questo approvalId per questo account. Le conferme durano 30 minuti e il loro esito 7 giorni.",
   approvalDenied: "Rifiutato in StudyOS.",
   approvalExpired: "Nessuna conferma in StudyOS entro 30 minuti: l'azione non è stata eseguita.",
@@ -748,14 +755,25 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
 
   /**
    * Timer dell'account dal cloud nello store e, come fa l'app aperta, i blocchi finiti chiusi in sessioni.
-   * Ritorna lo stato letto (prima di chiuderli): se dopo lo strumento è un altro, va salvato.
+   * Ritorna lo stato letto (prima di chiuderli), che se dopo lo strumento è un altro va salvato, e il suo
+   * changedAt nel database (null = nessuna riga): la scrittura vale solo se è ancora quello.
    */
-  const loadTimer = async (secret: string): Promise<TimerState> => {
+  const loadTimer = async (secret: string): Promise<TimerRead> => {
     const raw = await rpc<unknown>("studyos_agent_timer_get", { p_secret: secret });
     const timer = isRecord(raw) ? normalizeTimer(raw) : defaultTimer();
     useStudyStore.setState({ timer, timerReview: false });
     useStudyStore.getState().settleStudyTimer();
-    return timer;
+    const expected = isRecord(raw) ? (typeof raw.changedAt === "number" && Number.isFinite(raw.changedAt) ? Math.floor(raw.changedAt) : 0) : null;
+    return { timer, expected };
+  };
+
+  /**
+   * Scrittura del timer dell'hub: solo se nessuno l'ha cambiato dopo la lettura. Ritorna lo stato salvato
+   * o null se nel frattempo è cambiato (o la risposta non è leggibile).
+   */
+  const putTimer = async (secret: string, state: TimerState, expected: number | null) => {
+    const saved = await rpc<unknown>("studyos_agent_timer_put", { p_secret: secret, p_state: state, p_expected: expected });
+    return isRecord(saved) && saved.changedAt === state.changedAt ? state : null;
   };
 
   /** Lettura facoltativa: un errore (rete, script non eseguito) lascia lo store vuoto, salvo il permesso revocato. */
@@ -785,8 +803,9 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     const markLost = () => {
       lost = true;
     };
-    let timer: TimerState | null = null;
+    let timer: TimerRead | null = null;
     let result: AgentCallResult;
+    let after: CollectionsState & { timer: TimerState };
     try {
       // Appelli dei gruppi solo per gli strumenti che li leggono, solo per questa chiamata: il reset nel
       // finally vale anche se il caricamento si interrompe.
@@ -800,48 +819,68 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
       groupExamWriterLoader.load = async () => writer;
       groupSyncLoader.load = async () => board;
       result = await withZonedDate(grant.timeZone, () => executeAgentTool(name, args));
+      after = useStudyStore.getState() as unknown as CollectionsState & { timer: TimerState };
     } finally {
       groupExamWriterLoader.load = original.exams;
       groupSyncLoader.load = original.groups;
       configureAgentRuntime({ remote: false });
       useGroupExamStore.getState().reset();
       resetShared();
+      // Lo store torna vuoto anche se la lettura o lo strumento si sono interrotti: niente dati
+      // dell'account restano in memoria fino alla prossima esecuzione.
+      useStudyStore.setState({ ...emptyCollections(), timer: defaultTimer(), timerReview: false });
     }
 
-    const after = useStudyStore.getState();
-    const rows = plannedRows(before, after as unknown as CollectionsState, (type, id) => cache.rows.get(keyOf(type, id)));
+    const rows = plannedRows(before, after, (type, id) => cache.rows.get(keyOf(type, id)));
     const timerAfter = after.timer;
-    // Lo store torna vuoto: niente dati dell'account restano visibili alla prossima esecuzione.
-    useStudyStore.setState({ ...emptyCollections(), timer: defaultTimer(), timerReview: false });
     if (lost) throw new GrantError("revoked");
     if (name === "studyos_add_group_resource" && result.ok && result.data.shared === false) return fail("failed", CLOUD_TEXT.resourceNotSaved);
     // Leggere il timer non salva niente: i blocchi finiti li chiude l'app (stesse sessioni, stessi id).
     if (name === "studyos_timer_status") return result;
-    if (timer && timerAfter !== timer) {
+    let written: TimerState | null = null;
+    if (timer && timerAfter !== timer.timer) {
       // Sempre dopo lo stato letto, anche se l'orologio di un dispositivo è avanti rispetto al server.
-      const stamped = { ...timerAfter, changedAt: Math.max(timerAfter.changedAt ?? 0, (timer.changedAt ?? 0) + 1) };
-      const saved = await rpc<unknown>("studyos_agent_timer_put", { p_secret: grant.secret, p_state: stamped });
-      // Un altro dispositivo l'ha cambiato dopo la lettura: niente sessioni salvate da qui.
-      if (!isRecord(saved) || saved.changedAt !== stamped.changedAt) return fail("failed", CLOUD_TEXT.timerConflict);
+      const stamped = { ...timerAfter, changedAt: Math.max(timerAfter.changedAt ?? 0, (timer.timer.changedAt ?? 0) + 1, (timer.expected ?? 0) + 1) };
+      // Un dispositivo l'ha cambiato dopo la lettura: niente sessioni salvate da qui.
+      written = await putTimer(grant.secret, stamped, timer.expected);
+      if (!written) return fail("failed", CLOUD_TEXT.timerConflict);
     }
     if (!rows.length) return result;
 
+    // Il timer è già cambiato ma le sessioni non sono arrivate: si rimette com'era, così l'azione si può
+    // ripetere (altrimenti un «finish» perso lascerebbe il timer azzerato senza la sessione).
+    const restoreTimer = async () => {
+      if (!timer || !written) return;
+      const changedAt = (written.changedAt ?? 0) + 1;
+      await putTimer(grant.secret, { ...timer.timer, changedAt }, Math.floor(written.changedAt ?? 0)).catch(() => null);
+    };
     // Un id per richiesta: tutte le push di questa chiamata finiscono nella stessa voce del registro.
-    const { accepted, refused, refusedIds } = await push(grant.secret, cache, rows, name, newCallId());
+    let pushed: Awaited<ReturnType<typeof push>>;
+    try {
+      pushed = await push(grant.secret, cache, rows, name, newCallId());
+    } catch (error) {
+      await restoreTimer();
+      throw error;
+    }
+    const { accepted, refused, refusedIds } = pushed;
     if (!refused) return result;
+    if (!accepted) await restoreTimer();
     await refresh(grant.secret, cache, groups).catch(() => caches.delete(grant.secret));
     return perItemConflicts(result, refusedIds) ?? fail("failed", CLOUD_TEXT.conflict(refused, accepted > 0));
   };
 
-  const pendingResult = (id: string): AgentCallResult => ({
+  const pendingResult = (id: string, running = false): AgentCallResult => ({
     ok: true,
-    data: { status: "pending_approval", approvalId: `${APPROVAL_PREFIX}${id}`, message: CLOUD_TEXT.pending }
+    data: { status: "pending_approval", approvalId: `${APPROVAL_PREFIX}${id}`, message: running ? CLOUD_TEXT.running : CLOUD_TEXT.pending }
   });
 
-  /** Esito di una richiesta da confermare: null = non c'è, undefined = la persona non ha ancora deciso (o l'app la sta eseguendo). */
-  const requestOutcome = (raw: unknown): AgentCallResult | null | undefined => {
+  /**
+   * Esito di una richiesta da confermare: null = non c'è, "pending" = la persona non ha ancora deciso,
+   * "running" = confermata, l'app la sta eseguendo.
+   */
+  const requestOutcome = (raw: unknown): AgentCallResult | null | "pending" | "running" => {
     if (!isRecord(raw)) return null;
-    if (raw.status === "pending" || raw.status === "running") return undefined;
+    if (raw.status === "pending" || raw.status === "running") return raw.status;
     if (raw.status === "expired") return { ok: false, code: "denied", error: CLOUD_TEXT.approvalExpired };
     if (isCallResult(raw.result)) return raw.result;
     if (raw.status === "denied") return { ok: false, code: "denied", error: CLOUD_TEXT.approvalDenied };
@@ -852,7 +891,7 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
   const waitRequest = async (secret: string, id: string) => {
     for (let attempt = 0; ; attempt += 1) {
       const outcome = requestOutcome(await rpc<unknown>("studyos_agent_request_status", { p_secret: secret, p_id: id }));
-      if (outcome !== undefined || attempt >= APPROVAL_POLLS) return outcome;
+      if ((outcome !== "pending" && outcome !== "running") || attempt >= APPROVAL_POLLS) return outcome;
       await sleep(APPROVAL_POLL_MS);
     }
   };
@@ -878,8 +917,9 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     }
     if (typeof id !== "string" || !UUID_RE.test(id)) throw new Error("Risposta del cloud non valida.");
     // La richiesta c'è già: un errore durante l'attesa non deve farla ripetere all'agente.
-    const outcome = await waitRequest(grant.secret, id).catch(() => undefined);
-    return outcome ?? pendingResult(id);
+    const outcome = await waitRequest(grant.secret, id).catch(() => "pending" as const);
+    if (outcome === null || outcome === "pending" || outcome === "running") return pendingResult(id, outcome === "running");
+    return outcome;
   };
 
   const approvalStatus = async (grant: CloudGrant, args: Record<string, unknown>): Promise<AgentCallResult> => {
@@ -888,7 +928,8 @@ export const createCloudRunner = (backend: CloudBackend): CloudRunner => {
     if (!UUID_RE.test(id)) return fail("not_found", CLOUD_TEXT.approvalNotFound);
     const outcome = await waitRequest(grant.secret, id);
     if (outcome === null) return fail("not_found", CLOUD_TEXT.approvalNotFound);
-    return outcome ?? pendingResult(id);
+    if (outcome === "pending" || outcome === "running") return pendingResult(id, outcome === "running");
+    return outcome;
   };
 
   /** Errori comuni a ogni chiamata: permesso revocato, script non eseguito, rete. */

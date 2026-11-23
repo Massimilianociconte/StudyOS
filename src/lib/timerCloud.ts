@@ -68,7 +68,8 @@ export const startTimerCloud = () => {
     const timer = useStudyStore.getState().timer;
     if (stampOf(timer) <= synced) return;
     const { data, error } = await client.rpc("studyos_timer_put", { p_state: timer });
-    if (error) return;
+    // Uscita o cambio di account durante l'invio: la risposta è dell'account di prima.
+    if (error || stopped || signedInUser() !== user) return;
     const saved = data && typeof data === "object" ? normalizeTimer(data) : null;
     if (!saved) return;
     synced = Math.max(synced, stampOf(saved));

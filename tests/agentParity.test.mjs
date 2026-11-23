@@ -46,6 +46,7 @@ const fakeCloud = (options = {}) => {
         if (gate) await gate;
         return reply(200, me === ADA && !body.p_since ? [{ entity_type: "subject", entity_id: "sub_1", payload: { id: "sub_1", name: "Chimica", color: "#123456", createdAt: AT, updatedAt: AT, archived: false, tags: [] }, deleted: false, updated_at: AT }] : []);
       case "studyos_agent_push":
+        if (options.pushFails) return reply(503, { message: "cloud non raggiungibile" });
         pushed.push(...body.p_rows.map((row) => ({ ...row, me })));
         return reply(200, body.p_rows.map((row) => ({ entity_type: row.entity_type, entity_id: row.entity_id, accepted: true })));
       case "studyos_agent_groups":
@@ -87,15 +88,22 @@ const fakeCloud = (options = {}) => {
         if (!row || row.me !== me) return reply(200, null);
         return reply(200, { status: row.status, tool: row.tool, result: row.result });
       }
-      case "studyos_agent_timer_get":
-        return reply(200, timers.get(me) ?? null);
+      case "studyos_agent_timer_get": {
+        const state = timers.get(me) ?? null;
+        // Un dispositivo cambia il timer dopo la lettura dell'hub.
+        options.afterTimerGet?.(me, timers);
+        return reply(200, state);
+      }
       case "studyos_agent_timer_put": {
-        const current = options.newerTimer ?? timers.get(me);
-        if (!current || body.p_state.changedAt > current.changedAt) {
+        // Come agent-parity.sql: si scrive solo se la riga ha ancora il changedAt letto (null = nessuna riga).
+        const current = timers.get(me);
+        const expected = body.p_expected;
+        if (expected === null || expected === undefined) {
+          if (!current) timers.set(me, body.p_state);
+        } else if (current && Math.floor(current.changedAt) === expected && body.p_state.changedAt > expected) {
           timers.set(me, body.p_state);
-          return reply(200, body.p_state);
         }
-        return reply(200, current);
+        return reply(200, timers.get(me) ?? null);
       }
       case "studyos_agent_group_snapshot":
         return reply(200, { groups: me === ADA ? [{ id: "g1", name: "Chimica insieme" }] : [], sessions: [], overrides: [] });
@@ -274,6 +282,10 @@ test("condivisioni: richiesta da confermare nell'app, poi l'esito con studyos_ap
 
   const still = await runner.run(grant(A), "studyos_approval_status", { approvalId: asked.data.approvalId });
   assert.equal(still.data.status, "pending_approval");
+  row.status = "running";
+  const running = await runner.run(grant(A), "studyos_approval_status", { approvalId: asked.data.approvalId });
+  assert.equal(running.data.status, "pending_approval");
+  assert.equal(running.data.message, CLOUD_TEXT.running, "confermata: l'app la sta eseguendo");
   row.status = "done";
   row.result = { ok: true, data: { shared: true } };
   assert.deepEqual(await runner.run(grant(A), "studyos_approval_status", { approvalId: asked.data.approvalId }), { ok: true, data: { shared: true } });
@@ -325,18 +337,58 @@ test("timer: quello dell'account nel cloud; leggere non salva, controllarlo sì;
   // Cronometro avviato 20 minuti fa: «finish» salva la sessione, ma il timer intanto è cambiato su un dispositivo.
   const since = Date.now() - 20 * 60_000;
   const running = { mode: "pomodoro", kind: "stopwatch", phase: "focus", running: true, remainingSeconds: 0, durationSeconds: 0, cycle: 0, accumulatedSeconds: 0, runningSince: since, startedAt: since, sessionId: "session_sw", changedAt: since };
-  const conflicting = fakeCloud({ newerTimer: { ...running, running: false, changedAt: Date.now() + 60_000 } });
+  // La pausa arriva dopo la lettura dell'hub con un changedAt più vecchio dell'orologio dell'hub (un
+  // dispositivo con l'orologio indietro): vince lo stesso, perché la riga non è più quella letta.
+  const conflicting = fakeCloud({
+    afterTimerGet: (me, timers) => timers.set(me, { ...running, running: false, changedAt: since + 1 })
+  });
   conflicting.timers.set(ADA, running);
   const blocked = await runnerOn(conflicting).run(grant(A), "studyos_timer_control", { action: "finish" });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.error, CLOUD_TEXT.timerConflict);
   assert.equal(conflicting.pushed.length, 0, "nessuna sessione salvata");
+  assert.equal(conflicting.timers.get(ADA).running, false, "la pausa resta");
 
   const free = fakeCloud();
   free.timers.set(ADA, running);
   const finished = await runnerOn(free).run(grant(A), "studyos_timer_control", { action: "finish" });
   assert.equal(finished.ok, true, JSON.stringify(finished));
   assert.ok(free.pushed.some((row) => row.entity_type === "studySession" && row.entity_id === "session_sw"));
+  const put = free.calls.find((call) => call.fn === "studyos_agent_timer_put");
+  assert.equal(put.body.p_expected, since, "scrive solo sullo stato letto");
+
+  // Nessuna riga nel cloud: si crea solo se intanto non l'ha creata un dispositivo.
+  const fresh = fakeCloud();
+  await runnerOn(fresh).run(grant(A), "studyos_timer_control", { action: "start", mode: "pomodoro" });
+  assert.equal(fresh.calls.find((call) => call.fn === "studyos_agent_timer_put").body.p_expected, null);
+});
+
+test("timer: se le sessioni non arrivano al cloud il timer torna com'era, così «finish» si può ripetere", async () => {
+  const since = Date.now() - 20 * 60_000;
+  const running = { mode: "pomodoro", kind: "stopwatch", phase: "focus", running: true, remainingSeconds: 0, durationSeconds: 0, cycle: 0, accumulatedSeconds: 0, runningSince: since, startedAt: since, sessionId: "session_sw", changedAt: since };
+  const cloud = fakeCloud({ pushFails: true });
+  cloud.timers.set(ADA, running);
+  const lost = await runnerOn(cloud).run(grant(A), "studyos_timer_control", { action: "finish" });
+  assert.equal(lost.ok, false);
+  const puts = cloud.calls.filter((call) => call.fn === "studyos_agent_timer_put");
+  assert.equal(puts.length, 2, "scrittura e ripristino");
+  const back = cloud.timers.get(ADA);
+  assert.equal(back.running, true, "il cronometro corre ancora");
+  assert.equal(back.sessionId, "session_sw");
+  assert.ok(back.changedAt > puts[0].body.p_state.changedAt, "più recente dello stato scritto, che sostituisce");
+  assert.equal(puts[1].body.p_expected, Math.floor(puts[0].body.p_state.changedAt));
+});
+
+test("app: una modifica del timer è sempre dopo lo stato attuale, anche con l'orologio indietro", () => {
+  const ahead = Date.now() + 3_600_000;
+  useStudyStore.setState({ timer: { mode: "pomodoro", kind: "pomodoro", phase: "focus", running: false, remainingSeconds: 1500, durationSeconds: 1500, cycle: 0, accumulatedSeconds: 0, changedAt: ahead } });
+  useStudyStore.getState().toggleStudyTimer();
+  const after = useStudyStore.getState().timer;
+  assert.equal(after.running, true);
+  assert.ok(after.changedAt > ahead, "vince sullo stato adottato da un dispositivo con l'orologio avanti");
+  useStudyStore.getState().toggleStudyTimer();
+  assert.ok(useStudyStore.getState().timer.changedAt > after.changedAt);
+  useStudyStore.getState().resetStudyTimer("pomodoro");
 });
 
 test("plannedRows non scrive mai gruppi, bacheca e attività nel cloud personale", () => {
@@ -379,9 +431,20 @@ test("SQL: richieste solo per gli strumenti differiti, email mai all'hub, tabell
   assert.match(parity, /r\.status = 'running' and r\.decided_at <= now\(\) - interval '15 minutes'/);
   assert.match(parity, /'url', '\?apri=agenti'/);
   const verify = read("../supabase/verify.sql");
-  for (const fn of ["studyos_agent_groups(text)", "studyos_agent_sharing(text,integer,text[])", "studyos_agent_request_create(text,text,jsonb,text,text)", "studyos_agent_timer_put(text,jsonb)"]) {
+  for (const fn of ["studyos_agent_groups(text)", "studyos_agent_sharing(text,integer,text[])", "studyos_agent_request_create(text,text,jsonb,text,text)", "studyos_agent_timer_put(text,jsonb,bigint)"]) {
     assert.ok(verify.includes(`public.${fn}`), fn);
   }
+  // Un permesso scollegato: le richieste in attesa non si eseguono né si mostrano.
+  const decide = parity.slice(parity.indexOf("create or replace function public.studyos_agent_request_decide"), parity.indexOf("$$;", parity.indexOf("create or replace function public.studyos_agent_request_decide")));
+  assert.match(decide, /set status = 'expired'[\s\S]*g\.revoked_at is null[\s\S]*return false/);
+  assert.match(parity, /create policy studyos_agent_requests_select_own[\s\S]{0,400}g\.revoked_at is null/);
+  // Timer del connettore: scrittura condizionale sullo stato letto, la firma vecchia tolta.
+  assert.match(parity, /drop function if exists public\.studyos_agent_timer_put\(text, jsonb\);/);
+  assert.match(parity, /where t\.user_id = v_user and t\.changed_at = p_expected/);
+  // L'app rifiuta senza eseguire con una sola chiamata (claim(false)), mai claim(true) e poi un errore.
+  const link = read("../src/lib/agentLink.ts");
+  const remote = link.slice(link.indexOf("export const handleRemoteRequest"));
+  assert.doesNotMatch(remote.slice(0, remote.indexOf("const handleConsent")), /claim\(true\)\) await close\(\{ ok: false/);
   const push = read("../worker/push.ts");
   assert.match(push, /const KINDS = new Set\(\[[^\]]*"agent"/);
 });

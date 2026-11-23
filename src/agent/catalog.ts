@@ -1282,7 +1282,7 @@ export const CLOUD_ONLY: ReadonlySet<string> = new Set(["studyos_restore_change"
 const cloudText = (item: AgentTool) => {
   const base = item.cloudDescription ?? item.description;
   if (CLOUD_DEFERRED.has(item.name)) return base + CLOUD_CONFIRM_NOTE;
-  return base.replaceAll(" e la conferma in StudyOS", "") + (CLOUD_NOTES[item.name] ?? "");
+  return base.replace(/ e la conferma(?: della persona)? in StudyOS/g, "") + (CLOUD_NOTES[item.name] ?? "");
 };
 
 /**

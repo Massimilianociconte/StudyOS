@@ -76,7 +76,7 @@ anon_entry (fn_oid) as (
     (to_regprocedure('public.studyos_agent_request_create(text,text,jsonb,text,text)')),
     (to_regprocedure('public.studyos_agent_request_status(text,uuid)')),
     (to_regprocedure('public.studyos_agent_timer_get(text)')),
-    (to_regprocedure('public.studyos_agent_timer_put(text,jsonb)')),
+    (to_regprocedure('public.studyos_agent_timer_put(text,jsonb,bigint)')),
     (to_regprocedure('public.push_gone(text,text[])')),
     (to_regprocedure('public.studyos_keepalive(text)'))
   ) as allowed (fn)

@@ -16,7 +16,7 @@ anon_rpc (sig) as (values
   ('public.studyos_agent_request_create(text,text,jsonb,text,text)'),
   ('public.studyos_agent_request_status(text,uuid)'),
   ('public.studyos_agent_timer_get(text)'),
-  ('public.studyos_agent_timer_put(text,jsonb)')
+  ('public.studyos_agent_timer_put(text,jsonb,bigint)')
 ),
 app_rpc (sig) as (values
   ('public.studyos_agent_request_decide(uuid,boolean)'),
@@ -81,6 +81,15 @@ select
       and has_table_privilege('authenticated', to_regclass('public.' || name), 'SELECT')
       and not has_table_privilege('authenticated', to_regclass('public.' || name), 'INSERT, UPDATE, DELETE, TRUNCATE'))
     from tables) as tables_ready,
+  -- Un permesso scollegato non fa più eseguire le richieste già in attesa (né le mostra all'app); il
+  -- timer del connettore si scrive solo se nessuno l'ha cambiato dopo la lettura.
+  coalesce(position('g.revoked_at is null' in
+      pg_get_functiondef(to_regprocedure('public.studyos_agent_request_decide(uuid,boolean)'))) > 0
+    and exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'studyos_agent_requests'
+      and qual like '%revoked_at IS NULL%')
+    and position('t.changed_at = p_expected' in
+      pg_get_functiondef(to_regprocedure('public.studyos_agent_timer_put(text,jsonb,bigint)'))) > 0
+    and to_regprocedure('public.studyos_agent_timer_put(text,jsonb)') is null, false) as revoke_and_timer_ready,
   -- Solo gli strumenti di condivisione diventano richieste da confermare nell'app.
   coalesce(public.studyos_agent_deferred_tool('studyos_share_with')
     and public.studyos_agent_deferred_tool('studyos_delete_shared_item')

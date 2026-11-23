@@ -85,7 +85,10 @@ export const startCloudRequests = () => {
   const check = async () => {
     // Le condivisioni vogliono la sessione della condivisione già pronta (viewerId): prima, una conferma
     // eseguita subito fallirebbe e l'agente dovrebbe ripetere la richiesta.
-    if (stopped || missing || !getCloudSyncState().session || !useSharedStore.getState().viewerId) return;
+    // Con un account diverso da quello dei dati di questo dispositivo (accountChoice) il dialogo e i
+    // controlli degli argomenti userebbero i dati sbagliati: si aspetta la scelta.
+    const sync = getCloudSyncState();
+    if (stopped || missing || !sync.session || sync.accountChoice || !useSharedStore.getState().viewerId) return;
     if (checking) {
       again = true;
       return;
@@ -126,11 +129,14 @@ export const startCloudRequests = () => {
     if (document.visibilityState === "visible") void check();
   }, CHECK_MS);
   let signedInAs: string | null = null;
+  let choosing = false;
   const unsubscribe = subscribeCloudSync((sync) => {
     const user = sync.session?.user.id ?? null;
-    if (user === signedInAs) return;
+    const choice = Boolean(sync.accountChoice);
+    if (user === signedInAs && choice === choosing) return;
     signedInAs = user;
-    if (user) void check();
+    choosing = choice;
+    if (user && !choice) void check();
   });
   const onRequest = () => void check();
   const unsubscribeShared = useSharedStore.subscribe((state, previous) => {

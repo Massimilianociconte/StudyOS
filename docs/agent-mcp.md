@@ -425,11 +425,15 @@ filtri delle policy (membri senza email, gruppi senza codice di invito, dati con
   `studyos_approval_status`. Le richieste non confermate scadono dopo 30 minuti; una richiesta
   consentita di cui l'app non riporta l'esito entro 15 minuti si chiude come fallita, con l'invito a
   controllare nell'app prima di riprovare. Al più 20 richieste in attesa e 30 nuove all'ora per
-  account.
+  account. Con «Scollega il connettore remoto» le richieste ancora in attesa spariscono dall'app e
+  non si eseguono più (scadono), nemmeno con una regola «Consenti».
 - **Cronometro.** Il timer di studio sta anche nel cloud dell'account (`studyos_timer_states`, una
-  riga per persona): `studyos_timer_status` lo legge, `studyos_timer_control` lo cambia. Vince lo stato
-  con `changedAt` più recente, come tra due schede; se nel frattempo un dispositivo l'ha cambiato,
-  la risposta dice che c'è stato un conflitto e non scrive niente. L'app lo legge all'avvio, quando
+  riga per persona): `studyos_timer_status` lo legge, `studyos_timer_control` lo cambia. Tra i
+  dispositivi vince lo stato con `changedAt` più recente, come tra due schede, e ogni modifica è
+  sempre dopo lo stato attuale anche con l'orologio indietro. L'hub invece scrive solo se la riga è
+  ancora quella letta (`p_expected`): se nel frattempo un dispositivo l'ha cambiato, la risposta dice
+  che c'è stato un conflitto e non scrive niente. Se le sessioni di un `finish` non arrivano al
+  cloud, l'hub rimette il timer com'era e l'azione si può ripetere. L'app lo legge all'avvio, quando
   torna visibile e ogni 30 secondi, e manda le sue modifiche dopo poco più di un secondo. Ogni
   dispositivo ricorda di quale account è il suo timer: un timer di un altro account resta lì ma non
   finisce nel cloud di questo.

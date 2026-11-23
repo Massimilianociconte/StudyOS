@@ -503,7 +503,7 @@ const statusResult = (learning?: { flashcardsDueToday: number; aiRequestsWaiting
     displayName: preferences.displayName,
     ...clock(),
     ...(runtime.remote
-      ? { remote: true, message: "Connettore remoto: lavora sui dati cloud dell'account anche con StudyOS chiuso, senza conferme nell'app." }
+      ? { remote: true, message: "Connettore remoto: lavora sui dati cloud dell'account anche con StudyOS chiuso. Non chiede conferme nell'app, salvo per dare, cambiare o togliere condivisioni e scrivere dati condivisi da altre persone." }
       : { policy: readStoredPolicy() }),
     counts: {
       subjects: current.subjects.length,

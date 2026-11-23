@@ -776,3 +776,10 @@
 - Gli strumenti di condivisione che il connettore remoto fa confermare nell'app sono elencati in due
   posti: `studyos_agent_deferred_tool` (`agent-parity.sql`) e `CLOUD_DEFERRED`
   (`src/agent/cloudDeferred.ts`). `tests/agentParity.test.mjs` li confronta: cambiali insieme.
+- Timer nel cloud (`studyos_timer_states`): non timbrare con `Date.now()` da solo. Tra dispositivi
+  l'orologio può essere indietro di un minuto e una pausa fatta subito dopo aver adottato lo stato di
+  un altro perderebbe il confronto: `setTimerState` usa `max(ora, attuale + 1)`. L'hub non si fida del
+  LWW (il suo orologio è un altro): scrive con `p_expected`, il `changedAt` letto.
+- Richieste del connettore remoto: «Scollega il connettore remoto» segna `revoked_at` e non cancella
+  la riga del permesso, quindi `on delete cascade` non scatta. Ogni lettura o decisione sulle
+  richieste deve controllare che il permesso sia ancora attivo (policy e `studyos_agent_request_decide`).

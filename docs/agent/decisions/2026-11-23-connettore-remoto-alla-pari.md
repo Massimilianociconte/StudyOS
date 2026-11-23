@@ -37,10 +37,15 @@ La richiesta: gli stessi strumenti e le stesse capacità del connettore principa
   (atomico: vale la prima decisione), le esegue con la propria sessione e scrive l'esito con
   `finish`. L'hub aspetta circa 20 s, poi risponde `pending_approval`; l'agente usa
   `studyos_approval_status`. Scadenza 30 minuti; una richiesta presa senza esito si chiude come
-  fallita dopo 15 minuti, con l'invito a controllare prima di riprovare.
+  fallita dopo 15 minuti, con l'invito a controllare prima di riprovare. Le richieste di un permesso
+  scollegato non si vedono (policy) e non si eseguono (`decide` le fa scadere).
 - **Timer dell'account.** `studyos_timer_states` (una riga per persona, LWW su `changedAt`). L'app
-  lo allinea (lettura all'avvio, alla visibilità e ogni 30 s; scrittura dopo 1,2 s); ogni
-  dispositivo ricorda di quale account è il suo timer, per non mandarlo nel cloud di un altro.
+  lo allinea (lettura all'avvio, alla visibilità e ogni 30 s; scrittura dopo 1,2 s) e timbra ogni
+  modifica dopo lo stato attuale (`max(ora, attuale + 1)`), così un orologio indietro non perde una
+  pausa; ogni dispositivo ricorda di quale account è il suo timer, per non mandarlo nel cloud di un
+  altro. L'hub scrive con un confronto sullo stato letto (`p_expected`): il suo orologio può essere
+  avanti rispetto a una pausa fatta dopo la lettura, e il solo LWW la cancellerebbe. Se le sessioni
+  non arrivano al cloud dopo la scrittura del timer, l'hub lo rimette com'era.
 - **Letture facoltative.** Per panoramica, stato, collegamenti e flashcard gruppi e condivisioni
   sono un'aggiunta: se non si leggono la chiamata risponde con i dati personali, come l'app. Per gli
   strumenti dei gruppi e delle condivisioni sono obbligatorie.

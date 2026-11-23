@@ -543,9 +543,12 @@ const commit = async () => {
   }
 };
 
-// Ogni modifica porta l'ora: tra due schede vince lo stato più recente (vedi settleStudyTimer).
+// Ogni modifica porta l'ora: tra due schede vince lo stato più recente (vedi settleStudyTimer). Mai
+// prima dello stato attuale: l'ha potuto scrivere un altro dispositivo, o l'assistente remoto, con
+// l'orologio avanti, e una modifica fatta qui subito dopo deve comunque vincere (src/lib/timerCloud.ts).
 const setTimerState = (set: (partial: Partial<StoreState>) => void, timer: TimerState) => {
-  const stamped = { ...timer, changedAt: Date.now() };
+  const current = useStudyStore.getState().timer.changedAt ?? 0;
+  const stamped = { ...timer, changedAt: Math.max(Date.now(), Math.floor(current) + 1) };
   saveTimer(stamped);
   set({ timer: stamped });
 };

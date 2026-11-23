@@ -39,7 +39,10 @@ tabelle a «Elimina account e dati». Attesi: in `agent-parity-verify.sql` ogni 
 `verify.sql` ogni `*_ready` `true` e `security_issues` vuoto (la lista degli ingressi per `anon`
 comprende i 15 nuovi). Poi il sito, poi il Worker 1.12.0. Un Worker 1.12.0 senza
 `agent-parity.sql` risponde `not_connected` agli strumenti nuovi (gruppi, condivisioni, cronometro) e
-lavora come prima sul resto. Applicati al progetto reale il 23/11/2026. Dettagli in
+lavora come prima sul resto. Rieseguito dopo la seconda revisione, `agent-parity.sql` toglie la
+firma a due argomenti di `studyos_agent_timer_put` (era solo del Worker 1.12.0, non ancora
+pubblicato) e mette quella con `p_expected`; `revoke_and_timer_ready` lo controlla. Applicati al
+progetto reale il 23/11/2026. Dettagli in
 [docs/agent-mcp.md](../docs/agent-mcp.md) («Alla pari del principale»).
 
 **Flashcard, quiz e connettore 1.10.0 (16/11/2026): riesegui `sharing.sql`, `people.sql`,
