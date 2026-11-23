@@ -821,7 +821,10 @@ dalla riga, punteggi del gruppo e della parte, «solo errori» delle parti insie
 apertura di una parte dall'elenco, dopo un ricaricamento punteggio e pausa del gruppo ancora sulla
 riga e ripresa da Oggi al punto giusto, palette in tema scuro e chiaro, 375 px senza scorrimento
 orizzontale. `10-quiz` aggiornato (punteggio «Ultimo 100%» nella riga); `npm run e2e` non eseguito
-(Docker spento). Non pubblicato.
+(Docker spento).
+
+Pubblicato il 23 novembre 2026: commit `a451bc8` su `main`, insieme alla regola delle materie al
+100% qui sotto (workflow Pages riuscito, build e deploy).
 
 ### Materia al 100%: completata, voto da registrare (23 novembre 2026)
 
@@ -844,5 +847,10 @@ spuntata in Attività → materia completata con notifica; «Apri» porta a Mate
 → voto 27 → la materia passa tra le Superate; preparazione 95 → 100 in Esami → completata;
 «Segna come in corso» la riporta nella griglia e un cambio di data non la ricompleta; da
 `studyos_update_exam` lo stesso, con `gradePending` nelle risposte; 375 px senza scorrimento
-orizzontale. `npm run e2e` non eseguito (Docker spento). Non pubblicato; il Worker non è stato
-ridistribuito.
+orizzontale. `npm run e2e` non eseguito (Docker spento).
+
+Pubblicato il 23 novembre 2026: commit `c4c6263` su `main`, workflow Pages riuscito (build e
+deploy); il bundle pubblicato contiene «al 100%: completata» (chunk labels) e «Voto da registrare»
+(chunk Materie). Nessuna modifica al database. **Il Worker non è stato ridistribuito**: ad app
+chiusa il connettore remoto usa ancora il codice di prima, quindi lì la regola non vale e
+`gradePending` non c'è finché non si fa `wrangler deploy`.
