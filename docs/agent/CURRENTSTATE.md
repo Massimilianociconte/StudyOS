@@ -914,3 +914,48 @@ Da fare a mano (serve l'account della persona): un «Consenti» vero dal telefon
 creare, leggere, modificare ed eliminare un'attività di prova da ChatGPT e da Claude con StudyOS
 chiuso, e controllare che le modifiche arrivino nell'app alla sincronizzazione.
 
+
+## Connettore remoto alla pari del principale (23 novembre 2026, 1.12.0)
+
+Il connettore remoto (`/u/<nome>/mcp`) ha ora gli stessi strumenti del principale: gruppi, bacheca e
+risorse, scrittura, cronologia e ripristino degli appelli dei gruppi, correzioni del catalogo, dati
+condivisi, cronometro, `studyos_approval_status` e `studyos_list_accounts`. Decisione in
+`decisions/2026-11-23-connettore-remoto-alla-pari.md`, dettagli in `../agent-mcp.md` («Alla pari del
+principale»).
+
+- `supabase/agent-parity.sql`: identità del permesso per la sola transazione (`studyos_agent_act_as`),
+  letture con i filtri delle policy (niente email né codici di invito), tabelle
+  `studyos_agent_requests` (condivisioni da confermare nell'app) e `studyos_timer_states` (timer
+  dell'account). `schema.sql`: la cancellazione dell'account toglie anche queste due tabelle.
+- Condivisioni dal remoto: richiesta + notifica push `agent` (`?apri=agenti`), conferma con lo stesso
+  dialogo del principale, esito con `studyos_approval_status`. Un permesso scollegato non fa più
+  eseguire né mostrare le richieste in attesa.
+- Timer: l'app lo allinea con il cloud (avvio, visibilità, ogni 30 s); timbri monotoni; l'hub scrive
+  con un confronto sul `changedAt` letto e rimette il timer se le sessioni non arrivano.
+
+Due revisioni indipendenti: la prima ha trovato il timer di un altro account mandato nel cloud e le
+conferme partite prima della sessione delle condivisioni; la seconda la revoca che non fermava le
+richieste in attesa, la scrittura del timer dell'hub che poteva cancellare una pausa, il timbro con
+l'orologio del dispositivo e un «finish» perso se la push falliva. Tutto corretto con test.
+
+Verifiche: `npm test` (1816), `npm run lint`, `npm run build` (anche con variabili Supabase finte, per
+controllare che i moduli pigri non siano vuoti). Database reale: `agent-parity.sql` applicato e
+riapplicato dopo la seconda revisione; `agent-parity-verify.sql` e `verify.sql` tutti `true`,
+`security_issues` vuoto; funzione di cancellazione con le due tabelle nuove; prova completa delle
+funzioni con un permesso di prova in una transazione annullata (gruppi, bacheca, appelli, ripristino,
+richieste e stati, richiesta bloccata chiusa dopo 15 minuti, nessuna email, timer condizionale,
+permesso scollegato → richiesta invisibile, `decide` false, `expired`), nessun residuo. PostgREST: le
+funzioni nuove rispondono 28000 a un segreto finto, la firma vecchia di `studyos_agent_timer_put` non
+esiste più (PGRST202), `anon` non chiama le funzioni dell'app né legge le tabelle nuove (42501).
+
+Pubblicato il 23 novembre 2026: commit `4d0d48c`, `a986b32`, `fcab252`, `0228e30`, `e0efefc` su
+`main`, workflow Pages riuscito (bundle con `studyos:agent-requests`, `studyos-timer-cloud-user` nel
+chunk `timerCloud`, `studyos_agent_request_decide` nel chunk `agentCloudRequests`); poi Worker
+`studyos-agent` versione `dcfcc78d` (prima `c5391cb3`, per `wrangler rollback`), `/health` 1.12.0 con
+`cloud: true` dopo circa un minuto. I tre indirizzi
+remoti rispondono 401 senza token e con un token finto; metadata OAuth della risorsa 200.
+
+Da fare a mano (serve l'account della persona, non si preme «Consenti» per lei): aggiornare l'elenco
+degli strumenti del connettore in ChatGPT e Claude; una condivisione chiesta dal remoto e confermata
+dal telefono toccando la notifica; il timer avviato da ChatGPT con l'app chiusa e ritrovato nell'app
+(e il contrario); bacheca e appelli dei gruppi scritti dal remoto e visti dagli altri membri.
