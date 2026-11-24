@@ -809,3 +809,29 @@
   modifiche. Aspetta anche il messaggio di sistema «Subscribed to PostgreSQL» (`extension`
   `postgres_changes`, stato `ok`) prima di scrivere, altrimenti l'evento si perde e il test sembra
   rotto (`scripts/supabase/board-edit-check.mjs`).
+- Materie doppie: il blocco sta nello store (`addSubject`/`updateSubject` lanciano
+  `SubjectDuplicateError`, regole in `src/lib/subjectIdentity.ts`), non nel database: le righe hanno un
+  `payload` generico e un vincolo `unique` su nome o insegnamento non è possibile. Ogni nuovo percorso
+  che crea materie deve passare dallo store (o da `executeAgentTool`), mai scrivere `subjects` a mano.
+  Agli agenti il conflitto arriva come `code: "conflict"` con `data.reason` `duplicate` o `similar`;
+  solo `similar` si supera con `confirmDistinct`.
+- `src/lib/subjectFields.ts` è usato anche dal catalogo degli strumenti (Worker): non deve importare
+  `src/lib/semesters` né altro che porti dietro il dataset BARB (`tests/entryBundle.test.mjs`).
+- Filtro materie del calendario (`calendar.subject`): più id separati da virgola, stringa vuota =
+  tutte. Chi legge la chiave usa `parseSubjectFilter` di `src/lib/calendarFilter.ts`, non il valore
+  grezzo come un solo id.
+- `PageActions` con una sola azione mostra il pulsante diretto, non il menu «Altre azioni»: i test che
+  aprono ⋯ per arrivare a un'azione unica (es. «Condividi» in Attività) devono cliccare il pulsante.
+- «Aggiungi» apre evento e materiale con chiavi collegate una tantum (`calendar.create`,
+  `materials.add`, ambito `tab`): la vista le azzera appena le legge, così un ricaricamento non riapre
+  il modulo. Per aggiungere un'altra voce usa lo stesso schema con `goToView`.
+- `IconSelect`/`SubjectSelect` dentro `Field` o `HelpField` prendono il nome dall'etichetta del campo
+  (`FieldLabelProvider`); fuori da un campo serve `label`. I test e2e non possono usare `selectOption`
+  su queste tendine: si clicca il campo e poi l'`option` con il nome.
+- Prove nel browser con Vite: importare `/src/store/useStudyStore.ts` senza il `?t=` dell'HMR crea un
+  secondo store separato (sembra che i controlli non valgano). Prendi l'URL da
+  `performance.getEntriesByType("resource")`. L'azione `type` del pannello browser scrive nel campo
+  di testo e non nell'elenco a fuoco: per la tastiera delle tendine usa `key`.
+- `npm run e2e` da un worktree: lo stack Supabase locale sta nella cartella del repo principale, quindi
+  serve `E2E_SUPABASE_DIR=<repo>/.cache/ai/supabase-sharing`. Dopo l'avvio di Docker il container del
+  database resta «starting» per un po': aspetta che `supabase status` risponda.

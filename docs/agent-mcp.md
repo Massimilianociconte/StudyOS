@@ -60,7 +60,26 @@ elementi di persone nascoste non si vedono nemmeno all'agente. Le risposte sui d
 condivisi contengono solo campi consentiti: niente file, copertine, cronometri,
 `sourceUid` né link non sicuri. Gli strumenti condivisi si caricano solo quando servono.
 Gli elenchi personali (attività, eventi, esami…) restano solo tuoi. Il server è alla
-versione 1.12.1 (`/health` la mostra dopo il deploy). La 1.12.1 dice all'assistente che non riceve
+versione 1.13.0 (`/health` la mostra dopo il deploy). La 1.13.0 impedisce le materie doppie anche
+quando l'agente non cerca prima: `studyos_create_subject` risponde `code: "conflict"` con
+`data.reason: "duplicate"` e `data.existing` (stesso nome a meno di maiuscole, accenti e spazi, o
+stesso insegnamento del catalogo: si usa quell'id) oppure `data.reason: "similar"` e
+`data.candidates` (stesso docente e una parola in comune, o le stesse parole con sinonimi: «umana» e
+«dell'uomo»); dopo che la persona ha detto che è un'altra materia si ripete con
+`confirmDistinct: true`. Le somiglianze leggere non bloccano e tornano in `similar`. Crea e modifica
+usano le regole dei campi dell'app (`src/lib/subjectFields.ts`: CFU 0–60, predefiniti 6 come
+l'app, voto obiettivo 18–31, colore esadecimale, `icon` da un elenco, `semesterOverride`);
+`studyos_update_subject` rifiuta un nome uguale a un'altra materia (stesso `conflict`). Il blocco dei
+doppioni certi è nello store (`addSubject`/`updateSubject`), quindi vale anche per l'app e il
+connettore remoto. Nuovo `studyos_merge_subjects` (gli strumenti diventano 116; distruttivo, con `confirm`): unisce due copie della
+stessa materia spostando su quella che resta ogni collegamento (attività, esami, eventi, sessioni,
+argomenti, materiali, note, promemoria, piani, mazzi, schede, quiz, analisi) e completando i campi
+vuoti; rifiuta insegnamenti diversi del catalogo e una materia data in condivisione.
+`studyos_add_barb_courses` collega la materia personale con lo stesso nome invece di crearne
+un'altra (`linked`) e per quelle solo simili risponde `needsChoice`: si ripete con
+`links: [{courseId, subjectId}]` (o `subjectId: "new"`). Le materie hanno `icon` e `linkedToCatalog`;
+`studyos_get_subject` dà `progress.pendingOutcome` per un esame passato senza esito (la preparazione
+non conta più). Ricrea il connettore dopo il deploy. La 1.12.1 dice all'assistente che non riceve
 avvisi per le richieste «Spiegami meglio» e le analisi: `studyos_status` e `studyos_overview` aggiungono
 `aiRequestsHint` quando ce ne sono in attesa, e l'app dà il messaggio da mandargli (vedi «Flashcard e
 quiz»). La 1.12.0 porta il connettore remoto alla

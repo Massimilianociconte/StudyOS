@@ -16,4 +16,5 @@
 - Prove end-to-end con due account sullo stack Supabase locale (`npm run e2e`) → [../../tests/e2e/README.md](../../tests/e2e/README.md)
 - Protezione dei dati: cosa si salva dove, chi legge, cifratura a riposo, cosa toglie «Cancella anche dall'account», dispositivo perso, controlli RLS generici di `verify.sql` e perché niente FORCE RLS → [../security-data.md](../security-data.md)
 - File dei materiali (Supabase Storage, copia locale, migrazione dei file incorporati) → [../superpowers/specs/2026-11-12-attachments-storage-design.md](../superpowers/specs/2026-11-12-attachments-storage-design.md)
+- Materie doppie: regola di identità, blocco nello store, unione e conflitto per gli agenti → [decisions/2026-11-24-materie-uniche-nello-store.md](decisions/2026-11-24-materie-uniche-nello-store.md); strumenti in [../agent-mcp.md](../agent-mcp.md)
 - Domande aperte → [OPENQUESTIONS.md](OPENQUESTIONS.md)

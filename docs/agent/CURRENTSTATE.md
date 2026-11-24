@@ -1019,3 +1019,48 @@ telefono).
 
 Da fare: eseguire sul progetto reale `groups.sql`, poi `people.sql`, poi `people-verify.sql`
 (`board_edit_ready` `true`), **poi** pubblicare il client. Non ancora fatto, niente commit.
+
+## Coerenza dell'interfaccia e materie doppie (24 novembre 2026, ramo `claude/ui-coherence`)
+
+Segnalazione: «Aggiungi» del calendario ridondante (senza «tutto il giorno»), filtro per una sola
+materia, quattro pulsanti separati per evento, attività, ricorrenza e vacanza, tendine senza icone,
+menu ⋯ con una sola voce in Attività, Anatomia e Fisiologia doppie con i progressi pre-esame divisi.
+
+- Materie doppie. Causa: `create_subject` non controllava le materie esistenti (e metteva CFU 0), così
+  un assistente ha creato «Anatomia Umana» accanto a «Anatomia dell'uomo» e «Principi di Fisiologia»
+  accanto a «Principi di fisiologia».
+  Ora `src/lib/subjectIdentity.ts` decide se due materie sono la stessa (nome normalizzato o stesso
+  insegnamento del catalogo: blocco, `SubjectDuplicateError` in `addSubject`/`updateSubject`) o simili
+  (stesso docente e una parola significativa in comune, o stesse parole con sinonimi: avviso). Nella
+  sezione Materie il pannello «Una materia sembra doppia» unisce le copie (`mergeSubjects`, piano in
+  `src/lib/subjectMerge.ts`, caricato solo quando serve) spostando ogni collegamento sulla materia che
+  resta; «Sono materie diverse» salva la coppia in `distinctSubjectPairs`. Dopo l'unione attività,
+  esame e preparazione stanno su una sola materia. Progresso pre-esame (`src/lib/subjectProgress.ts`):
+  un esame con la data passata e senza esito non conta più come preparazione in corso (prima la barra
+  restava ferma su quell'esame); il pannello dice «manca l'esito» con «Registra l'esito».
+- Agenti (1.13.0): conflitto `duplicate`/`similar` su crea e modifica, `confirmDistinct`,
+  `studyos_merge_subjects`, `studyos_add_barb_courses` con `linked`/`needsChoice`/`links`, campi e
+  limiti delle materie uguali all'app (`src/lib/subjectFields.ts`). Dettagli in
+  [docs/agent-mcp.md](../agent-mcp.md).
+- Modulo della materia: `SubjectFields` uguale in «Nuova materia» (`SubjectFormModal`) e in «Dati
+  della materia» (nome, CFU, semestre, docente; icona, colore, stato, voto obiettivo e note in «Altri
+  dettagli»), con l'avviso dei doppioni mentre si scrive e «Apri «X»» per andare a quella che c'è già.
+- Calendario: un solo «Nuovo evento» con la scelta del tipo (`CreateTypeSwitch`: evento, attività,
+  ricorrenza, vacanza) nello stesso pannello; filtro con più materie a pillole e «Tutte» per azzerare
+  (`calendar.subject` salva gli id separati da virgola), uguale in mese, settimana, giorno e agenda.
+- «Aggiungi» nell'intestazione (e il pulsante tondo sul telefono) è ora un menu che apre i moduli
+  canonici: attività (`TaskModal`, con «Quando la fai?»: da fare, inizia ora con il cronometro, già
+  fatta), evento (il creatore del calendario, chiave `calendar.create`), materia (`SubjectFormModal`),
+  materiale (campo del link in Materiali, chiave `materials.add`). `QuickAddModal` tolto.
+- Tendine con icone: `IconSelect` (popover sul computer, pannello dal basso sotto 640 px, tastiera come
+  un `<select>`) e `SubjectSelect` (segno e colore della materia) in evento, attività, esami, materiali,
+  mazzi, studio, piano d'esame, analisi AI, sessioni e libretto.
+- `PageActions` con una sola azione mostra il pulsante diretto (Attività: «Condividi»); il menu ⋯ resta
+  da due azioni in su (`ActionsMenu`).
+
+Verifiche: `npm test` (1861), `npm run lint`, `npm run build` (chunk principale 683,86 kB, +11,8 kB;
+gzip +4,1 kB), `npm run e2e` (11 su 11, stack locale); prove nel browser locale (tendine su computer e telefono con tastiera e tema scuro,
+menu «Aggiungi» nei quattro casi, unione di due materie, filtro calendario).
+
+Da fare: commit e pubblicazione; ripubblicare il Worker `studyos-agent` (1.13.0) e ricreare il
+connettore in ChatGPT e Claude; unire le materie doppie reali dall'app («Una materia sembra doppia»).
