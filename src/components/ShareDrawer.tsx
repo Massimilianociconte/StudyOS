@@ -310,7 +310,8 @@ export function ShareDrawer({ open, onClose, initialScopes = ["calendar"] }: { o
                   { id: "edit", label: SHARE_PERMISSION_LABEL.edit }
                 ]}
               />
-              <p className="text-xs font-semibold text-[var(--muted)]">
+              {/* Altezza fissa: passando da «Può vedere» a «Può modificare» quello che segue non si sposta. */}
+              <p className="min-h-12 text-xs font-semibold text-[var(--muted)] sm:min-h-8">
                 {permission === "edit"
                   ? "Può aggiungere, modificare ed eliminare. Ogni modifica resta nella cronologia e puoi ripristinarla."
                   : "Vede i tuoi dati ma non può cambiarli."}

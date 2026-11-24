@@ -200,3 +200,32 @@ export const SUBJECT_FORM_TEXT = {
   created: (name: string) => `Materia «${name}» creata.`,
   saveError: "Non è stato possibile salvare la materia. Riprova tra qualche secondo."
 } as const;
+
+/** Ordine delle materie (menu «Ordina» e pannello «Riordina»). */
+export const SUBJECT_SORT_TEXT = {
+  label: "Ordina",
+  selectLabel: "Ordina le materie",
+  options: {
+    custom: "Il mio ordine",
+    exam: "Esame più vicino",
+    name: "Nome (A–Z)",
+    "cfu-desc": "CFU, dal più alto",
+    "cfu-asc": "CFU, dal più basso",
+    progress: "Meno avanzate prima"
+  },
+  reorder: "Riordina",
+  reorderTitle: "Riordina le materie",
+  reorderHint: "Trascina dalla maniglia o usa le frecce. L'ordine vale su ogni dispositivo e diventa «Il mio ordine».",
+  startFrom: "Parti da",
+  moveUp: (name: string) => `Sposta su ${name}`,
+  moveDown: (name: string) => `Sposta giù ${name}`,
+  handle: (name: string) => `Trascina ${name}, oppure usa le frecce su e giù`,
+  moved: (name: string, position: number, total: number) => `${name}: posizione ${position} di ${total}`,
+  save: "Salva l'ordine",
+  cancel: "Annulla",
+  unsavedText: "Hai spostato delle materie senza salvare il nuovo ordine.",
+  position: (position: number) => `${position}.`,
+  seeded: (criterion: string) => `Materie messe per «${criterion}»: ora puoi ritoccare l'ordine.`,
+  noExam: "Nessun esame",
+  cfu: (cfu: number) => `${cfu} CFU`
+} as const;

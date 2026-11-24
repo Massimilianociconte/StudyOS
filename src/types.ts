@@ -469,6 +469,13 @@ export interface Preferences extends BaseEntity {
    */
   distinctSubjectPairs?: string[];
   /**
+   * Ordine delle materie in Materie (src/lib/subjectSort.ts): «custom» (il proprio, `subjectOrder`),
+   * esame più vicino, nome, CFU, avanzamento. Arriva dalla sincronizzazione: leggerlo con `validSubjectSort`.
+   */
+  subjectSort?: string;
+  /** Ordine proprio delle materie (id), da «Riordina». Leggerlo con `validSubjectOrder`. */
+  subjectOrder?: string[];
+  /**
    * Tema e colori (Impostazioni › Aspetto): seguono l'account su ogni dispositivo. Assenti = quelli
    * del dispositivo (account di prima). Arrivano dalla sincronizzazione: leggerli con `validLook`.
    */

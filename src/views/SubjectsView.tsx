@@ -5,13 +5,13 @@ import { daysUntil, shortDate } from "../lib/selectors";
 import { readCoverImage } from "../lib/files";
 import { isDateToDecide } from "../lib/examOutcome";
 import { librettoEntries, recordedSubjectIds } from "../lib/grades";
-import { isGradePending, programToAdd, reviewStatus, subjectProgress } from "../lib/subjectProgress";
+import { isGradePending, openExamOf, programToAdd, reviewStatus, subjectProgress } from "../lib/subjectProgress";
 import { EXAMS_NEW_FOR_KEY, examLinkPlan } from "../lib/examsUi";
 import { PROGRESS_TEXT } from "../lib/labels/progress";
 import { SubjectProgressPanel } from "../components/SubjectProgressPanel";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { ATTACHMENT_KIND_ICON, FILE_TEXT, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
-import { SUBJECT_FORM_TEXT, SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
+import { SUBJECT_FORM_TEXT, SUBJECT_REMOVE_TEXT, SUBJECT_SORT_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
 import { Button, Drawer, EmptyState, HelpTip, IconButton, PageActions, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
 import { InlineConfirm } from "../components/InlineConfirm";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
@@ -39,6 +39,9 @@ import { safeHref } from "../lib/safeUrl";
 import { FILE_STATES, fileStateText, useMaterialFiles, useOpenMaterial } from "../components/MaterialFile";
 import { FILE_ACCEPT } from "../lib/attachments";
 import { COURSE_INK, DARK_INK, inkOn } from "../lib/subjectInk";
+import { EXAM_DATE_LATER, SUBJECT_SORTS, mergeSubsetOrder, sortSubjects, validSubjectOrder, validSubjectSort, type SubjectSort, type SubjectSortKeys } from "../lib/subjectSort";
+import { IconMark, IconSelect } from "../components/IconSelect";
+import { SubjectOrderDrawer } from "../components/SubjectOrderDrawer";
 
 // Icona di ogni stato nel menu "⋯" della scheda.
 const STATUS_ICON: Record<Subject["status"], string> = {
@@ -52,6 +55,17 @@ const STATUS_ICON: Record<Subject["status"], string> = {
 const subjectColor = (subject: Subject) => safeCssColor(subject.color) || "var(--accent)";
 /** Inchiostro dell'icona sul colore della materia (anche un colore scuro scelto a mano); le icone del corso hanno il loro blu scuro. */
 const iconInk = (subject: Subject, course: boolean) => inkOn(subject.color, course ? COURSE_INK : DARK_INK);
+// Icona di ogni criterio nella tendina «Ordina».
+const SORT_ICON: Record<SubjectSort, string> = {
+  custom: "ListOrdered",
+  exam: "CalendarClock",
+  name: "ArrowDownAZ",
+  "cfu-desc": "ArrowDownWideNarrow",
+  "cfu-asc": "ArrowUpNarrowWide",
+  progress: "Gauge"
+};
+const SORT_OPTIONS = SUBJECT_SORTS.map((mode) => ({ value: mode, label: SUBJECT_SORT_TEXT.options[mode], mark: <IconMark name={SORT_ICON[mode]} /> }));
+const idsOf = (list: readonly Subject[]) => list.map((subject) => subject.id);
 // Studio della materia (grafico con recharts): si carica solo aprendo il dettaglio.
 const SubjectStudyStats = lazy(() => import("../components/SubjectStudyStats"));
 
@@ -129,6 +143,13 @@ export function SubjectsView() {
   const [showPending, setShowPending] = useUiState("subjects.showPending", true);
   const { subjects, tasks, sessions, exams, topics, attachments, updateSubject, deleteSubject, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
+  // Ordine delle materie (preferenze dell'account): un criterio o l'ordine proprio, fatto in «Riordina».
+  const sortPref = useStudyStore((state) => selectPreferences(state).subjectSort);
+  const orderPref = useStudyStore((state) => selectPreferences(state).subjectOrder);
+  const updatePreferences = useStudyStore((state) => state.updatePreferences);
+  const sortMode = validSubjectSort(sortPref);
+  const order = useMemo(() => validSubjectOrder(orderPref), [orderPref]);
+  const [reordering, setReordering] = useState(false);
   const state = { tasks, sessions, exams, attachments, topics };
   // Esito di «Aggiungi al ripasso» dal pannello dei progressi.
   const [reviewNotice, setReviewNotice] = useState("");
@@ -197,16 +218,27 @@ export function SubjectsView() {
     await deleteSubject(subject.id);
   };
 
-  const active = subjects.filter((subject) => !isArchivedSubject(subject) && subject.status !== "completed");
+  // Chiavi dei criteri: esame da preparare (data da decidere dopo le date) e avanzamento.
+  const sortKeys: SubjectSortKeys = {
+    order,
+    examDate: (id) => {
+      const exam = openExamOf(id, exams);
+      return exam ? (isDateToDecide(exam) ? EXAM_DATE_LATER : exam.date) : undefined;
+    },
+    progress: (id) => subjectProgress(id, tasks, exams).progress
+  };
+  const sorted = (list: readonly Subject[], mode: SubjectSort = sortMode) => sortSubjects(list, mode, sortKeys);
+  const active = sorted(subjects.filter((subject) => !isArchivedSubject(subject) && subject.status !== "completed"));
   // Completate senza voto nel libretto (al 100% o segnate a mano): in alto, finché il voto non c'è.
   const recorded = useMemo(() => recordedSubjectIds(exams), [exams]);
-  const pendingGrade = subjects.filter((subject) => !isArchivedSubject(subject) && isGradePending(subject, recorded));
+  const pendingGrade = sorted(subjects.filter((subject) => !isArchivedSubject(subject) && isGradePending(subject, recorded)));
   // Materie superate (anche quelle registrate dal libretto): fuori dalla griglia principale.
-  const completed = subjects.filter((subject) => !isArchivedSubject(subject) && subject.status === "completed" && !isGradePending(subject, recorded));
-  const archived = subjects.filter(isArchivedSubject);
+  const completed = sorted(subjects.filter((subject) => !isArchivedSubject(subject) && subject.status === "completed" && !isGradePending(subject, recorded)));
+  const archived = sorted(subjects.filter(isArchivedSubject));
   const visible = active.filter((subject) => semester === "tutti" || subjectSemester(subject) === semester);
   const totalCfu = active.reduce((sum, subject) => sum + (subject.cfu || 0), 0);
   const semesterOptions = semesterFilterOptions(active.map((subject) => subjectSemester(subject)), semester);
+  const showSemester = active.length > 0 && (semesterOptions.length > 2 || semester !== "tutti");
   const bySemester = cfuBySemester(active.map((subject) => ({ semester: subjectSemester(subject), cfu: subject.cfu })));
 
   const card = (subject: Subject) => (
@@ -273,9 +305,35 @@ export function SubjectsView() {
 
       {group(SUBJECTS_TEXT.pendingGroup, pendingGrade, showPending, () => setShowPending((value) => !value), SUBJECTS_HELP.pendingGrade, true)}
 
-      {/* Un solo filtro, con i conteggi: compare solo quando c'è davvero da scegliere fra più semestri. */}
-      {active.length > 0 && (semesterOptions.length > 2 || semester !== "tutti") ? (
-        <Segmented className="mb-4" label={SUBJECTS_TEXT.semesterFilter} value={semester} options={semesterOptions} onChange={setSemester} />
+      {/* Semestre (un solo filtro, con i conteggi: solo quando c'è davvero da scegliere) e ordine delle materie. */}
+      {showSemester || active.length > 1 ? (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+          {showSemester ? <Segmented label={SUBJECTS_TEXT.semesterFilter} value={semester} options={semesterOptions} onChange={setSemester} /> : null}
+          {active.length > 1 ? (
+            <div className="flex w-full min-w-0 items-center gap-2 sm:ml-auto sm:w-auto">
+              <span aria-hidden="true" className="shrink-0 text-xs font-black uppercase text-[var(--faint)]">
+                {SUBJECT_SORT_TEXT.label}
+              </span>
+              <div className="min-w-0 flex-1 sm:w-60 sm:flex-none">
+                <IconSelect
+                  value={sortMode}
+                  options={SORT_OPTIONS}
+                  label={SUBJECT_SORT_TEXT.selectLabel}
+                  onChange={(value) => void updatePreferences({ subjectSort: validSubjectSort(value) })}
+                />
+              </div>
+              {/* Sul telefono solo l'icona, per lasciare il posto alla tendina. */}
+              <span className="sm:hidden">
+                <IconButton icon="GripVertical" label={SUBJECT_SORT_TEXT.reorderTitle} onClick={() => setReordering(true)} />
+              </span>
+              <span className="hidden sm:block">
+                <Button variant="soft" icon="GripVertical" onClick={() => setReordering(true)}>
+                  {SUBJECT_SORT_TEXT.reorder}
+                </Button>
+              </span>
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       {/* Sempre presente: il lettore di schermo annuncia l'archiviazione appena compare il testo. */}
@@ -335,6 +393,26 @@ export function SubjectsView() {
 
       {group(SUBJECTS_TEXT.completed, completed, showCompleted, () => setShowCompleted((value) => !value))}
       {group(SUBJECTS_TEXT.archivedGroup, archived, showArchived, () => setShowArchived((value) => !value), SUBJECTS_HELP.archive)}
+
+      {reordering ? (
+        <SubjectOrderDrawer
+          subjects={active}
+          initial={idsOf(active)}
+          seed={(mode) => idsOf(sorted(active, mode))}
+          detail={(subject) => {
+            const exam = openExamOf(subject.id, exams);
+            const when = !exam ? SUBJECT_SORT_TEXT.noExam : isDateToDecide(exam) ? SUBJECTS_TEXT.examPillToDecide : SUBJECTS_TEXT.examPill(shortDate(exam.date), daysUntil(exam.date));
+            return `${SUBJECT_SORT_TEXT.cfu(subject.cfu || 0)} · ${when}`;
+          }}
+          onClose={() => setReordering(false)}
+          onSave={(ids) => {
+            // Le materie superate e archiviate tengono il loro posto nell'ordine completo.
+            const full = idsOf(sortSubjects(subjects, "custom", { order }));
+            void updatePreferences({ subjectOrder: mergeSubsetOrder(full, ids), subjectSort: "custom" });
+            setReordering(false);
+          }}
+        />
+      ) : null}
 
       {creating ? <SubjectFormModal onClose={() => setCreating(false)} onCreated={() => undefined} onOpenExisting={(id) => setOpenId(id)} /> : null}
 

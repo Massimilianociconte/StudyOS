@@ -28,6 +28,7 @@ export function SimpleFormDrawer({
   onDelete,
   onFullForm,
   top,
+  appear = true,
   children
 }: {
   title: string;
@@ -44,6 +45,8 @@ export function SimpleFormDrawer({
   onFullForm?: () => void;
   /** In cima, prima dei campi: la scelta del tipo («Cosa vuoi aggiungere») quando si crea. */
   top?: ReactNode;
+  /** false: prende il posto di un altro pannello (cambio di tipo) e compare senza animazione. */
+  appear?: boolean;
   children: ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
@@ -123,7 +126,7 @@ export function SimpleFormDrawer({
   );
 
   return (
-    <Drawer open onClose={requestClose} title={title} footer={footer}>
+    <Drawer open appear={appear} fullHeight={Boolean(top)} onClose={requestClose} title={title} footer={footer}>
       <div className="grid grid-cols-1 gap-5">
         {top}
         {children}
@@ -169,7 +172,8 @@ export function OccasionForm({
   onSave,
   onDelete,
   onFullForm,
-  onSwitchType
+  onSwitchType,
+  appear = true
 }: {
   initial: OccasionDraft;
   editing: boolean;
@@ -185,6 +189,8 @@ export function OccasionForm({
   onFullForm?: (draft: OccasionDraft) => void;
   /** Creazione dal calendario: «Cosa vuoi aggiungere» in cima, per passare a un altro tipo con il nome già scritto. */
   onSwitchType?: (type: CreateType, title: string) => void;
+  /** false: il modulo prende il posto di un altro (cambio di tipo): niente animazione, focus sulla scelta. */
+  appear?: boolean;
 }) {
   const [draft, setDraft] = useState(initial);
   const [yearTouched, setYearTouched] = useState(false);
@@ -201,7 +207,8 @@ export function OccasionForm({
   return (
     <SimpleFormDrawer
       title={editing ? OCCASION_FORM_TEXT.editTitle : OCCASION_FORM_TEXT.newTitle}
-      top={!editing && onSwitchType ? <CreateTypeSwitch value="occasion" onChange={(type) => type !== "occasion" && onSwitchType(type, draft.name.trim())} /> : undefined}
+      appear={appear}
+      top={!editing && onSwitchType ? <CreateTypeSwitch value="occasion" autoFocus={!appear} onChange={(type) => type !== "occasion" && onSwitchType(type, draft.name.trim())} /> : undefined}
       dirty={dirty}
       changeKey={key}
       saveLabel={OCCASION_FORM_TEXT.save}

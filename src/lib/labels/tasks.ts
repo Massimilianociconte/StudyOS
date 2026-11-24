@@ -58,13 +58,16 @@ export const TASK_START_TEXT = {
   todo: "Da fare",
   timer: "Inizio ora",
   done: "Già fatta",
+  todoHint: "Resta in Attività finché non la segni fatta.",
   timerHint: "Parte il cronometro appena la crei.",
-  doneHint: "Resta nello storico come fatta, con il tempo impiegato se lo scrivi.",
   dueDone: "Quando l'hai fatta (facoltativo)",
-  spent: "Tempo impiegato (minuti, facoltativo)",
+  /** Riga sotto la scelta, al posto della nota: «Minuti impiegati [ ]». */
+  spent: "Minuti impiegati",
+  spentPlaceholder: "Facoltativo",
   spentInvalid: "Tempo impiegato non valido: scrivi i minuti, da 0 in su.",
   create: "Crea attività",
-  createTimer: "Crea e avvia il cronometro",
+  /** Corto: sul telefono sta in una riga accanto ad «Annulla» (la finestra non cambia altezza). */
+  createTimer: "Avvia il cronometro",
   createDone: "Salva come fatta"
 } as const;
 

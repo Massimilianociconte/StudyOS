@@ -1075,3 +1075,31 @@ Regola provata sulle 14 materie reali dell'account (solo lettura): escono solo �
 Da fare a mano: eliminare e ricreare il connettore in ChatGPT e Claude (strumenti 116, schemi nuovi);
 ricaricare StudyOS; unire le due coppie da Materie («Una materia sembra doppia»), tenendo le copie del
 catalogo; registrare l'esito dell'esame di Anatomia del 23/11.
+
+## Pannelli senza salti, ordine delle materie, scelta nel calendario (24 novembre 2026, sera)
+
+- Calendario, «Nuovo evento»: passare tra evento, attività, ricorrenza e vacanza non riapre più il
+  pannello (prima ricorrenza e vacanza si chiudevano e riaprivano con l'animazione). Il pannello nuovo
+  prende il posto del vecchio con `Drawer appear={false}` (flag `swap` in `CalendarView`); lo stesso
+  per «Modulo completo». La riga del tipo resta in alto e alla stessa altezza in tutti e quattro i
+  moduli (`CreateTypeSwitch` con la spiegazione su una riga di altezza fissa, `fullHeight` sul telefono,
+  `scrollbar-gutter: stable` nel corpo del `Drawer`); il focus resta sul tipo scelto.
+- Stesso controllo sugli altri pannelli con una scelta interna: `TaskModal` («Quando la fai?»: riga
+  della spiegazione o dei minuti di altezza fissa, «Avvia il cronometro» più corto) e `ShareDrawer`
+  (spiegazione del permesso). `SessionBuilder` era già fermo.
+- Materie: «Ordina» (tendina con icone: il mio ordine, esame più vicino, nome, CFU dal più alto o dal
+  più basso, meno avanzate prima) e «Riordina» (`SubjectOrderDrawer`: maniglia da trascinare con
+  mouse, dito o penna, frecce e Home/Fine sulla maniglia, pulsanti su e giù, «Parti da» un criterio,
+  annuncio della posizione). Scelta e ordine sono preferenze dell'account (`subjectSort`,
+  `subjectOrder`, logica in `src/lib/subjectSort.ts`), quindi uguali su ogni dispositivo; valgono anche
+  per «Voto da registrare», «Superate» e «Archiviate».
+- Calendario: «Scegli» prima delle pillole apre «Cosa vedere nel calendario» (tutte le materie, una o
+  più con la casella, «Solo» per una sola, interruttore delle festività); ogni scelta vale subito.
+  «Festività» è ora nella riga anche sul telefono (resta anche in «Altre azioni»).
+- Agenti: `studyos_update_preferences` non scrive `subjectSort`/`subjectOrder` (le lascia come sono:
+  lo store unisce le preferenze). Nessun cambio al Worker.
+
+Verifiche: `npm test` (1871), `npm run lint`, `npm run build`; prove nel browser locale su computer e
+telefono (cambio di tipo nei quattro moduli, trascinamento reale, tastiera, ordine dopo un
+ricaricamento, pannello «Cosa vedere»). `npm run e2e` non rieseguito (Docker spento; le prove e2e non
+toccano queste schermate).

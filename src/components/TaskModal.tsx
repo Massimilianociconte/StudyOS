@@ -179,7 +179,26 @@ export function TaskModal({
               {TASK_START_TEXT.label}
             </span>
             <Segmented label={TASK_START_TEXT.label} value={start} options={START_OPTIONS} onChange={setStart} size="sm" />
-            {start !== "todo" ? <p className="text-xs font-bold text-[var(--muted)]">{start === "timer" ? TASK_START_TEXT.timerHint : TASK_START_TEXT.doneHint}</p> : null}
+            {/* Riga di altezza fissa (nota o minuti impiegati): cambiando scelta la finestra non cambia altezza e niente si sposta. */}
+            <div className="flex min-h-11 items-center">
+              {start === "done" ? (
+                <label className="flex items-center gap-2 text-xs font-bold text-[var(--muted)]">
+                  <span>{TASK_START_TEXT.spent}</span>
+                  <input
+                    className={inputClass.replace("w-full", "w-28")}
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    step={5}
+                    value={spent}
+                    onChange={(event) => setSpent(event.target.value)}
+                    placeholder={TASK_START_TEXT.spentPlaceholder}
+                  />
+                </label>
+              ) : (
+                <p className="text-xs font-bold text-[var(--muted)]">{start === "timer" ? TASK_START_TEXT.timerHint : TASK_START_TEXT.todoHint}</p>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -187,11 +206,6 @@ export function TaskModal({
             <Field label="Materia (facoltativa)">
               <SubjectSelect value={subjectId} onChange={setSubjectId} subjects={selectableSubjects(subjects, subjectId)} none="Nessuna materia" />
             </Field>
-            {start === "done" ? (
-              <Field label={TASK_START_TEXT.spent}>
-                <input className={inputClass} type="number" inputMode="numeric" min={0} step={5} value={spent} onChange={(event) => setSpent(event.target.value)} placeholder="Es. 75" />
-              </Field>
-            ) : null}
           </div>
 
           <details ref={moreRef} className="quiet-panel p-4">
@@ -247,7 +261,7 @@ export function TaskModal({
               <Button variant="soft" onClick={requestClose} disabled={busy}>
                 Annulla
               </Button>
-              <Button data-save variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>
+              <Button data-save variant="primary" icon={start === "timer" ? "Timer" : "Check"} onClick={() => void save()} disabled={busy}>
                 {busy ? "Creazione…" : start === "timer" ? TASK_START_TEXT.createTimer : start === "done" ? TASK_START_TEXT.createDone : TASK_START_TEXT.create}
               </Button>
             </div>

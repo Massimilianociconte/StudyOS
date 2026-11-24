@@ -501,6 +501,26 @@ export const HOLIDAY_KIND_LABEL: Record<"national" | "celebration" | "clock", st
 
 export const HOLIDAYS_TOGGLE_LABEL = "Festività";
 
+/** «Scegli»: pannello con cosa vedere nel calendario (materie, una o più, e festività). */
+export const CALENDAR_PICKER_TEXT = {
+  open: "Scegli",
+  openAria: (summary: string) => `Scegli cosa vedere nel calendario. Ora: ${summary}`,
+  title: "Cosa vedere nel calendario",
+  subjects: "Materie",
+  hint: "Tocca le materie da vedere: anche più di una. «Solo» mostra quella e basta.",
+  all: "Tutte le materie",
+  summaryAll: "tutte le materie",
+  summaryOne: (name: string) => name,
+  summaryMany: (count: number, total: number) => `${count} materie su ${total}`,
+  only: "Solo",
+  onlyAria: (name: string) => `Mostra solo ${name}`,
+  toggleAria: (name: string) => `Impegni di ${name}`,
+  holidays: "Festività e ricorrenze italiane",
+  holidaysHint: "Natale, Pasqua, 25 aprile, ponti… Solo da vedere: non si salvano e non contano negli impegni.",
+  done: "Fatto",
+  countBadge: (count: number, total: number) => `${count}/${total}`
+} as const;
+
 /**
  * Testo di un link di un appello: «ufficiale UniMi» solo se porta davvero a unimi.it (o a un suo
  * sottodominio); gli altri mostrano dove portano, così un link cambiato non si spaccia per l'ateneo.

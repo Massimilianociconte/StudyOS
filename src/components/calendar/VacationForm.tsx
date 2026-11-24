@@ -22,7 +22,8 @@ export function VacationForm({
   onSave,
   onDelete,
   onFullForm,
-  onSwitchType
+  onSwitchType,
+  appear = true
 }: {
   initial: VacationDraft;
   editing: boolean;
@@ -36,6 +37,8 @@ export function VacationForm({
   onFullForm?: (draft: VacationDraft) => void;
   /** Creazione dal calendario: «Cosa vuoi aggiungere» in cima, per passare a un altro tipo con il nome già scritto. */
   onSwitchType?: (type: CreateType, title: string) => void;
+  /** false: il modulo prende il posto di un altro (cambio di tipo): niente animazione, focus sulla scelta. */
+  appear?: boolean;
 }) {
   const [draft, setDraft] = useState(initial);
   const update = (patch: Partial<VacationDraft>) => setDraft((value) => ({ ...value, ...patch }));
@@ -46,7 +49,8 @@ export function VacationForm({
   return (
     <SimpleFormDrawer
       title={editing ? VACATION_FORM_TEXT.editTitle : VACATION_FORM_TEXT.newTitle}
-      top={!editing && onSwitchType ? <CreateTypeSwitch value="vacation" onChange={(type) => type !== "vacation" && onSwitchType(type, draft.title.trim())} /> : undefined}
+      appear={appear}
+      top={!editing && onSwitchType ? <CreateTypeSwitch value="vacation" autoFocus={!appear} onChange={(type) => type !== "vacation" && onSwitchType(type, draft.title.trim())} /> : undefined}
       dirty={key !== JSON.stringify(initial)}
       changeKey={key}
       saveLabel={VACATION_FORM_TEXT.save}

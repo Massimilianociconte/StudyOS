@@ -260,9 +260,11 @@ export function CalendarView() {
   const [editingTaskId, setEditingTaskId] = useLinkedUiState<string | null>("calendar.editingTask", null, { scope: "tab", validate: isNullableString });
   const [barbImportOpen, setBarbImportOpen] = useState(false);
   // `draft` / `occasion`: dal modulo semplice ("Modulo completo"), con ciò che si era già scritto.
-  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string; draft?: EventDraft; occasion?: EventOccasion } | null>(null);
+  // `swap`: il pannello prende il posto di un altro (cambio di tipo, «Modulo completo») e compare già al
+  // suo posto, senza animazione: sembra lo stesso pannello che cambia contenuto.
+  const [creator, setCreator] = useState<{ at: Date; kind: "event" | "task"; subjectId?: string; draft?: EventDraft; occasion?: EventOccasion; swap?: boolean } | null>(null);
   // Percorsi semplici nuovi: ricorrenza (compleanno, anniversario…) o vacanza.
-  const [simpleNew, setSimpleNew] = useState<{ form: "occasion"; kind?: OccasionKind; name?: string } | { form: "vacation"; title?: string } | null>(null);
+  const [simpleNew, setSimpleNew] = useState<({ form: "occasion"; kind?: OccasionKind; name?: string } | { form: "vacation"; title?: string }) & { swap?: boolean } | null>(null);
   // Ricorrenza o vacanza aperta nel modulo completo, con le modifiche fatte nel modulo semplice.
   const [fullForm, setFullForm] = useState<{ id: string; draft: EventDraft } | null>(null);
   const [typeColorsOpen, setTypeColorsOpen] = useState(false);
@@ -344,13 +346,13 @@ export function CalendarView() {
   const switchCreateType = (type: CreateType, title: string, at?: Date) => {
     if (type === "occasion" || type === "vacation") {
       setCreator(null);
-      setSimpleNew(type === "occasion" ? { form: "occasion", name: title } : { form: "vacation", title });
+      setSimpleNew(type === "occasion" ? { form: "occasion", name: title, swap: true } : { form: "vacation", title, swap: true });
       return;
     }
     setSimpleNew(null);
     const start = at ?? defaultStartFor(dayForNewEvent(range.from, range.to));
     const draft = title ? { ...newEventDraft({ start: defaultStartFor(start), subjectId: prefillSubject ?? "", ...ownColorContext(prefillSubject) }), title } : undefined;
-    setCreator({ at: start, kind: type, subjectId: prefillSubject, draft });
+    setCreator({ at: start, kind: type, subjectId: prefillSubject, draft, swap: true });
   };
   const openExam = (id: string) => {
     writeUiState("exams.editing", id, "tab");
@@ -860,7 +862,8 @@ export function CalendarView() {
             active={subjectFilters}
             onChange={setSubjectFilters}
             showHolidays={showHolidays}
-            onToggleHolidays={narrow ? undefined : () => setShowHolidays((value) => !value)}
+            // Anche sul telefono: le festività si accendono e spengono dalla riga, non solo da «Altre azioni».
+            onToggleHolidays={() => setShowHolidays((value) => !value)}
             undatedCount={undated.length}
             // In ogni vista (anche Settimana, quella di partenza, e Mese): le attività senza data non spariscono.
             onOpenUndated={() => setUndatedOpen(true)}
@@ -1122,6 +1125,7 @@ export function CalendarView() {
         <OccasionForm
           overrides={typeOverrides}
           initial={newOccasionDraft({ today: todayCivil, kind: simpleNew.kind, name: simpleNew.name })}
+          appear={!simpleNew.swap}
           editing={false}
           today={todayCivil}
           onSwitchType={(type, title) => switchCreateType(type, title)}
@@ -1133,7 +1137,7 @@ export function CalendarView() {
           onFullForm={(draft) => {
             const { occasion, ...fields } = occasionFields(draft, { today: todayCivil, overrides: typeOverrides });
             setSimpleNew(null);
-            setCreator({ at: new Date(), kind: "event", draft: draftFromFields({ ...fields, occasion }), occasion });
+            setCreator({ at: new Date(), kind: "event", draft: draftFromFields({ ...fields, occasion }), occasion, swap: true });
           }}
         />
       ) : null}
@@ -1142,6 +1146,7 @@ export function CalendarView() {
         <VacationForm
           overrides={typeOverrides}
           initial={newVacationDraft(todayCivil, simpleNew.title)}
+          appear={!simpleNew.swap}
           editing={false}
           onSwitchType={(type, title) => switchCreateType(type, title)}
           onClose={() => setSimpleNew(null)}
@@ -1151,7 +1156,7 @@ export function CalendarView() {
           }}
           onFullForm={(draft) => {
             setSimpleNew(null);
-            setCreator({ at: new Date(), kind: "event", draft: draftFromFields(vacationFields(draft, { overrides: typeOverrides })) });
+            setCreator({ at: new Date(), kind: "event", draft: draftFromFields(vacationFields(draft, { overrides: typeOverrides })), swap: true });
           }}
         />
       ) : null}
@@ -1162,6 +1167,7 @@ export function CalendarView() {
           key={editingEvent.id}
           heading={EVENT_EDITOR_TEXT.editEvent}
           initial={fullForm?.id === editingEvent.id ? fullForm.draft : draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
+          appear={fullForm?.id !== editingEvent.id}
           base={draftFromEvent(editingEvent, ownColorContext(editingEvent.subjectId))}
           event={editingEvent}
           subjects={subjects}
@@ -1231,6 +1237,7 @@ export function CalendarView() {
           occasionKind={creator.occasion?.kind}
           initial={creator.draft ?? newEventDraft({ start: defaultStartFor(creator.at), subjectId: creator.subjectId ?? "", ...ownColorContext(creator.subjectId) })}
           onSwitchType={(type, title) => switchCreateType(type, title, creator.at)}
+          appear={!creator.swap}
           subjects={subjects}
           calendars={writableCalendars}
           createKind={creator.kind}

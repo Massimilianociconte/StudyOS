@@ -284,7 +284,8 @@ export function Segmented<T extends string>({
   onChange,
   label,
   size = "md",
-  className = ""
+  className = "",
+  autoFocusActive = false
 }: {
   value: T;
   options: readonly { id: T; label: string; count?: number; icon?: string; title?: string }[];
@@ -292,6 +293,8 @@ export function Segmented<T extends string>({
   label: string;
   size?: "sm" | "md";
   className?: string;
+  /** La voce attiva prende il focus all'apertura della finestra che la contiene (data-autofocus). */
+  autoFocusActive?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ left: false, right: false });
@@ -356,6 +359,7 @@ export function Segmented<T extends string>({
             type="button"
             aria-pressed={active}
             tabIndex={active ? 0 : -1}
+            data-autofocus={active && autoFocusActive ? true : undefined}
             title={option.title}
             onClick={() => onChange(option.id)}
             // Area di tocco alta 44 px; la pillola visibile resta compatta (before:) e sta dietro al testo.
@@ -600,7 +604,9 @@ export function Drawer({
   footer,
   children,
   width = "max-w-[640px]",
-  dismissOutside = true
+  dismissOutside = true,
+  appear = true,
+  fullHeight = false
 }: PropsWithChildren<{
   open: boolean;
   onClose: () => void;
@@ -611,6 +617,16 @@ export function Drawer({
   width?: string;
   /** false: click fuori ed Esc non chiudono (resta la X): per contenuti che non si possono rivedere. */
   dismissOutside?: boolean;
+  /**
+   * false: compare già al suo posto, senza dissolvenza né scorrimento. Per un pannello che prende il
+   * posto di un altro (cambio di tipo nello stesso modulo): il passaggio non si vede.
+   */
+  appear?: boolean;
+  /**
+   * Sul telefono il foglio è sempre alto quanto può (92% dello schermo) invece di seguire il contenuto:
+   * nei moduli che cambiano contenuto (tipo di elemento) il bordo in alto non si sposta.
+   */
+  fullHeight?: boolean;
 }>) {
   const titleId = useId();
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -656,7 +672,7 @@ export function Drawer({
           aria-modal="true"
           aria-labelledby={titleId}
           className="fixed inset-0 z-50 flex items-end justify-end bg-black/45 backdrop-blur-sm sm:items-stretch sm:p-3"
-          initial={{ opacity: 0 }}
+          initial={appear ? { opacity: 0 } : false}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
@@ -670,8 +686,8 @@ export function Drawer({
           <m.div
             ref={panelRef}
             tabIndex={-1}
-            className={`soft-panel flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-b-none outline-none sm:max-h-none sm:rounded-b-[var(--radius)] ${width}`}
-            initial={{ ...offset, opacity: 0 }}
+            className={`soft-panel flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-b-none outline-none sm:max-h-none sm:rounded-b-[var(--radius)] ${fullHeight ? "h-[92dvh] sm:h-auto" : ""} ${width}`}
+            initial={appear ? { ...offset, opacity: 0 } : false}
             animate={{ x: 0, y: 0, opacity: 1 }}
             exit={{ ...offset, opacity: 0 }}
             transition={{ duration: 0.22, ease: "easeOut" }}
@@ -686,7 +702,8 @@ export function Drawer({
               </div>
               <IconButton icon="X" label="Chiudi" onClick={onClose} className="h-10 w-10" />
             </header>
-            <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">{children}</div>
+            {/* Spazio della barra sempre riservato: un modulo corto e uno lungo hanno i campi allineati. */}
+            <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 [scrollbar-gutter:stable] sm:p-5">{children}</div>
             {/* Spazio sotto = padding + area sicura (`safe-bottom` da solo lo azzerava sui telefoni senza tacca). */}
             {footer ? <footer className="border-t border-[var(--border)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">{footer}</footer> : null}
           </m.div>

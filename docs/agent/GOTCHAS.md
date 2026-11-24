@@ -835,3 +835,16 @@
 - `npm run e2e` da un worktree: lo stack Supabase locale sta nella cartella del repo principale, quindi
   serve `E2E_SUPABASE_DIR=<repo>/.cache/ai/supabase-sharing`. Dopo l'avvio di Docker il container del
   database resta «starting» per un po': aspetta che `supabase status` risponda.
+- Un pannello che ne sostituisce un altro (cambio di tipo nello stesso modulo) si monta con
+  `Drawer appear={false}`: montare un `Drawer` nuovo lo fa entrare con l'animazione e sembra un
+  ricaricamento. Le righe di spiegazione che cambiano testo con la scelta hanno un'altezza minima
+  fissa, sennò il contenuto sotto scala.
+- Pannello del browser nascosto: animazioni e `requestAnimationFrame` sono rallentati o fermi. Le
+  misure prese subito dopo l'apertura di un `Drawer` sono a metà animazione (posizioni sbagliate per i
+  clic) e un focus rimesso con `requestAnimationFrame` non arriva: nel codice rimettilo in un effetto
+  dopo il render (come `SubjectOrderDrawer`).
+- Trascinare voci di un elenco React: ascolta `pointermove`/`pointerup` su `window`, non
+  `setPointerCapture` sulla maniglia. Spostando la voce React può spostare il nodo nel DOM e il browser
+  perde la cattura a metà gesto. La maniglia vuole `touch-action: none`.
+- Preferenze nuove (es. `subjectSort`, `subjectOrder`): libere nel tipo `Preferences`, validate in
+  lettura (`validSubjectSort`, `validSubjectOrder`); vanno aggiunte a `PreferencesPatch` nello store.

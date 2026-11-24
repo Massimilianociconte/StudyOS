@@ -86,6 +86,7 @@ export function EventEditor({
   createKind,
   repeatNote,
   onSwitchType,
+  appear = true,
   deleteConfirmText,
   onClose,
   onSubmit,
@@ -116,6 +117,8 @@ export function EventEditor({
   repeatNote?: string;
   /** Creazione: «Ricorrenza» o «Vacanza o assenza» in cima passano al loro modulo, con il titolo già scritto. */
   onSwitchType?: (type: "occasion" | "vacation", title: string) => void;
+  /** false: il pannello prende il posto di un altro (cambio di tipo, «Modulo completo») e compare senza animazione. */
+  appear?: boolean;
   /** Testo della conferma prima di `onDelete`; assente = `onDelete` chiede da sé (es. scelta della portata). */
   deleteConfirmText?: string;
   onClose: () => void;
@@ -398,6 +401,8 @@ export function EventEditor({
   return (
     <Drawer
       open
+      appear={appear}
+      fullHeight={creating}
       onClose={requestClose}
       title={creating ? (kind === "task" ? EVENT_EDITOR_TEXT.newTask : EVENT_EDITOR_TEXT.newEvent) : heading}
       headerExtra={
@@ -405,13 +410,29 @@ export function EventEditor({
           <p className="text-sm font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.occurrenceOf(occurrenceDayText(occurrenceDate))}</p>
         ) : sharedFrom && draft.repeat ? (
           <p className="text-sm font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.sharedSeries}</p>
-        ) : creating && kind === "task" ? (
-          <p className="text-sm font-bold text-[var(--muted)]">{EVENT_EDITOR_TEXT.taskHint}</p>
         ) : undefined
       }
       footer={footer}
     >
       <div className="grid grid-cols-1 gap-5">
+        {creating ? (
+          // Prima riga del pannello, come in ricorrenza e vacanza: cambiando tipo resta ferma.
+          <CreateTypeSwitch
+            value={kind}
+            types={onSwitchType ? undefined : ["event", "task"]}
+            autoFocus={!appear}
+            onChange={(next) => {
+              if (next === "occasion" || next === "vacation") {
+                onSwitchType?.(next, draft.title.trim());
+                return;
+              }
+              setKind(next);
+              setError("");
+              // Una materia di un'altra persona non resta su un'attività mia (né viceversa).
+              if (ownerId) setDraft((value) => ({ ...value, subjectId: "" }));
+            }}
+          />
+        ) : null}
         {sharedFrom ? (
           <p className="flex flex-wrap items-center gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3 text-sm font-bold text-[var(--muted)]">
             <SharedMark origin={sharedFrom} />
@@ -457,22 +478,6 @@ export function EventEditor({
         <fieldset disabled={readOnly} className={`m-0 grid min-w-0 grid-cols-1 gap-5 border-0 p-0 ${DIMMED_DISABLED_FIELDS}`}>
           <section className="grid grid-cols-1 gap-3" aria-label={EVENT_EDITOR_TEXT.sectionMain}>
             {sectionTitle(EVENT_EDITOR_TEXT.sectionMain)}
-            {creating ? (
-              <CreateTypeSwitch
-                value={kind}
-                types={onSwitchType ? undefined : ["event", "task"]}
-                onChange={(next) => {
-                  if (next === "occasion" || next === "vacation") {
-                    onSwitchType?.(next, draft.title.trim());
-                    return;
-                  }
-                  setKind(next);
-                  setError("");
-                  // Una materia di un'altra persona non resta su un'attività mia (né viceversa).
-                  if (ownerId) setDraft((value) => ({ ...value, subjectId: "" }));
-                }}
-              />
-            ) : null}
             {creating && kind === "event" && calendars.length ? (
               <Field label={EVENT_EDITOR_TEXT.calendarOf}>
                 <select

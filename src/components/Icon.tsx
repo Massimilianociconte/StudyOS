@@ -117,7 +117,13 @@ import {
   Languages,
   Scale,
   Coins,
-  Music
+  Music,
+  ArrowDownAZ,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
+  GripVertical,
+  ListOrdered,
+  SlidersHorizontal
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Suspense } from "react";
@@ -247,7 +253,13 @@ const icons = {
   Languages,
   Scale,
   Coins,
-  Music
+  Music,
+  ArrowDownAZ,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
+  GripVertical,
+  ListOrdered,
+  SlidersHorizontal
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof icons;
