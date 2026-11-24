@@ -212,8 +212,9 @@ export function CalendarView() {
   const [storedMode, setMode] = useUiState<StoredCalendarMode>("calendar.mode", "week", { validate: oneOf(...STORED_CALENDAR_MODES) });
   const [storedDayFocus, setDayFocus] = useUiState<boolean>("calendar.dayFocus", false, { validate: (value) => typeof value === "boolean" });
   const { mode, dayFocus } = resolveCalendarMode(storedMode, storedDayFocus);
-  // Sotto 768 px "Solo 8–19" e "Festività" vanno in «Altre azioni»; sotto 640 px (dove c'è il + fisso
-  // in basso) si crea solo da lì. Stesse preferenze salvate; sul computer non cambia nulla.
+  // Sotto 768 px "Solo 8–19" va in «Altre azioni» («Festività» resta nella riga dei filtri); sotto
+  // 640 px (dove c'è il + fisso in basso) si crea solo da lì. Stesse preferenze salvate; sul computer
+  // non cambia nulla.
   const narrow = useMediaQuery(NARROW_QUERY);
   const phone = useMediaQuery(PHONE_QUERY);
   useEffect(() => {
@@ -553,18 +554,33 @@ export function CalendarView() {
     });
   };
 
-  // Maiuscola solo all'inizio («Lunedì 9 novembre 2026», «9 nov – 15 nov 2026»): i mesi restano minuscoli.
+  // Maiuscola solo all'inizio («Lunedì 9 novembre 2026», «16–22 nov 2026»): i mesi restano minuscoli.
+  // Settimana nello stesso mese senza il mese ripetuto; sul telefono il giorno è abbreviato, così il
+  // titolo sta su una riga e le frecce accanto non si spostano da un giorno all'altro.
+  const sameMonthWeek = format(weekDays[0], "M yyyy") === format(weekDays[6], "M yyyy");
   const periodLabel = capitalizeFirst(
     mode === "month"
       ? format(cursor, "MMMM yyyy", { locale: it })
       : mode === "week"
-        ? `${format(weekDays[0], "d MMM", { locale: it })} – ${format(weekDays[6], "d MMM yyyy", { locale: it })}`
+        ? sameMonthWeek
+          ? `${format(weekDays[0], "d", { locale: it })}–${format(weekDays[6], "d MMM yyyy", { locale: it })}`
+          : `${format(weekDays[0], "d MMM", { locale: it })} – ${format(weekDays[6], "d MMM yyyy", { locale: it })}`
         : mode === "agenda"
           ? `${format(range.from, "d MMM", { locale: it })} – ${format(addDays(range.to, -1), "d MMM", { locale: it })}`
           : mode === "day"
-            ? format(cursor, "EEEE d MMMM yyyy", { locale: it })
+            ? format(cursor, narrow ? "EEE d MMM yyyy" : "EEEE d MMMM yyyy", { locale: it })
             : ""
   );
+  // «Oggi» si accende quando il periodo mostrato non contiene oggi: dice come tornare.
+  const todayKey = format(new Date(), "yyyy-MM-dd");
+  const showsToday =
+    mode === "month"
+      ? format(cursor, "yyyy-MM") === todayKey.slice(0, 7)
+      : mode === "week"
+        ? weekDays.some((day) => format(day, "yyyy-MM-dd") === todayKey)
+        : mode === "day"
+          ? format(cursor, "yyyy-MM-dd") === todayKey
+          : format(range.from, "yyyy-MM-dd") <= todayKey && todayKey < format(range.to, "yyyy-MM-dd");
   const summary = isCalendarSummary(mode);
 
   /** La serie di un mio evento che si ripete (non la riga di un giorno) e il fuso che la modifica le fisserà. */
@@ -765,15 +781,6 @@ export function CalendarView() {
               ...(narrow && mode === "day" && !summary
                 ? [{ label: dayFocus ? CALENDAR_TEXT.dayFocusOff : CALENDAR_TEXT.dayFocus, icon: "Clock", onClick: () => setDayFocus((value) => !value) } satisfies PageAction]
                 : []),
-              ...(narrow && !summary
-                ? [
-                    {
-                      label: showHolidays ? CALENDAR_TEXT.holidaysHide : CALENDAR_TEXT.holidaysShow,
-                      icon: "PartyPopper",
-                      onClick: () => setShowHolidays((value) => !value)
-                    } satisfies PageAction
-                  ]
-                : []),
               transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
               // Una voce sola per gli appelli ufficiali: apre subito la scelta delle date da aggiungere
@@ -825,7 +832,28 @@ export function CalendarView() {
         </div>
       ) : (
         <>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          {/* Il periodo mostrato, grande; le frecce stanno a destra, sempre nello stesso punto (un mese
+              dal nome lungo non le sposta mentre si scorre). Il titolo si annuncia a ogni cambio. */}
+          <div className="mb-3 flex min-w-0 items-center gap-3">
+            <h3 aria-live="polite" title={periodLabel} className="min-w-0 flex-1 truncate text-xl font-black leading-tight tracking-tight sm:text-2xl">
+              {periodLabel}
+            </h3>
+            <div role="group" aria-label={CALENDAR_TEXT.periodNav} className="flex shrink-0 items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--surface-soft)] p-0.5">
+              <IconButton icon="ChevronLeft" label="Periodo precedente" className="bg-transparent hover:bg-[var(--surface)]" onClick={() => navigate(-1)} />
+              <button
+                type="button"
+                onClick={() => setCursor(new Date())}
+                title={showsToday ? undefined : CALENDAR_TEXT.backToToday}
+                className={`motion-safe min-h-11 rounded-full px-3.5 text-xs font-black ${
+                  showsToday ? "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]" : "bg-[var(--accent)] text-[#10131d] hover:scale-[1.02]"
+                }`}
+              >
+                Oggi
+              </button>
+              <IconButton icon="ChevronRight" label="Periodo successivo" className="bg-transparent hover:bg-[var(--surface)]" onClick={() => navigate(1)} />
+            </div>
+          </div>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <div className="flex min-w-0 max-w-full items-center gap-2">
               <Segmented label={CALENDAR_TEXT.viewsLabel} value={mode as CalendarViewId} onChange={setMode} options={modes} className="min-w-0 max-sm:[&>button]:px-2.5" />
               <HelpTip {...CALENDAR_HELP.views} />
@@ -844,30 +872,19 @@ export function CalendarView() {
                 {CALENDAR_TEXT.dayFocus}
               </button>
             ) : null}
-            <div className="flex min-w-0 items-center gap-1.5 sm:ml-auto">
-              <p className="mr-1 min-w-0 truncate text-sm font-black">{periodLabel}</p>
-              <IconButton icon="ChevronLeft" label="Periodo precedente" onClick={() => navigate(-1)} />
-              <button
-                type="button"
-                onClick={() => setCursor(new Date())}
-                className="min-h-11 rounded-full bg-[var(--surface-strong)] px-3.5 text-xs font-black hover:bg-[var(--surface)]"
-              >
-                Oggi
-              </button>
-              <IconButton icon="ChevronRight" label="Periodo successivo" onClick={() => navigate(1)} />
-            </div>
+            <CalendarFilterRow
+              className="sm:ml-auto"
+              subjects={subjects}
+              active={subjectFilters}
+              onChange={setSubjectFilters}
+              showHolidays={showHolidays}
+              // Anche sul telefono: le festività si accendono e spengono solo da qui (e dal pannello «Materie»).
+              onToggleHolidays={() => setShowHolidays((value) => !value)}
+              undatedCount={undated.length}
+              // In ogni vista (anche Settimana, quella di partenza, e Mese): le attività senza data non spariscono.
+              onOpenUndated={() => setUndatedOpen(true)}
+            />
           </div>
-          <CalendarFilterRow
-            subjects={subjects}
-            active={subjectFilters}
-            onChange={setSubjectFilters}
-            showHolidays={showHolidays}
-            // Anche sul telefono: le festività si accendono e spengono dalla riga, non solo da «Altre azioni».
-            onToggleHolidays={() => setShowHolidays((value) => !value)}
-            undatedCount={undated.length}
-            // In ogni vista (anche Settimana, quella di partenza, e Mese): le attività senza data non spariscono.
-            onOpenUndated={() => setUndatedOpen(true)}
-          />
         </>
       )}
 

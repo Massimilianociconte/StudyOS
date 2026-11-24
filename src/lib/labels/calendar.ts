@@ -15,16 +15,10 @@ export const CALENDAR_TEXT = {
   viewsLabel: "Vista calendario",
   dayFocus: "Solo 8–19, ore grandi",
   dayFocusTitle: "Mostra il giorno dalle 8 alle 19, con le ore più grandi",
-  /** Sul telefono "Solo 8–19" e "Festività" stanno in «Altre azioni»: la voce dice cosa fa. */
+  /** Sul telefono "Solo 8–19" sta in «Altre azioni»: la voce dice cosa fa. */
   dayFocusOff: "Mostra tutte le ore",
-  holidaysShow: "Mostra le festività",
-  holidaysHide: "Nascondi le festività",
-  filterLabel: "Mostra gli impegni di una o più materie",
-  allSubjects: "Tutte",
-  onlySubject: (name: string) => `Solo: ${name}`,
-  clearFilter: (name: string) => `Togli ${name} dal filtro`,
-  addFilter: (name: string) => `Mostra anche gli impegni di ${name}`,
-  clearFilters: (count: number) => (count === 1 ? "Togli il filtro e mostra tutte le materie" : `Togli i ${count} filtri e mostra tutte le materie`),
+  periodNav: "Cambia periodo",
+  backToToday: "Torna al periodo di oggi",
   showAll: "Mostra tutte le materie",
   addEvent: "Aggiungi un evento",
   emptySubject: (names: string[]) =>
@@ -501,10 +495,12 @@ export const HOLIDAY_KIND_LABEL: Record<"national" | "celebration" | "clock", st
 
 export const HOLIDAYS_TOGGLE_LABEL = "Festività";
 
-/** «Scegli»: pannello con cosa vedere nel calendario (materie, una o più, e festività). */
+/** «Materie»: pulsante sopra il calendario e pannello con cosa vedere (materie, una o più, e festività). */
 export const CALENDAR_PICKER_TEXT = {
-  open: "Scegli",
-  openAria: (summary: string) => `Scegli cosa vedere nel calendario. Ora: ${summary}`,
+  button: "Materie",
+  allShort: "Tutte",
+  countShort: (count: number) => `${count} materie`,
+  openAria: (summary: string) => `Materie da vedere nel calendario: ${summary}. Cambia`,
   title: "Cosa vedere nel calendario",
   subjects: "Materie",
   hint: "Tocca le materie da vedere: anche più di una. «Solo» mostra quella e basta.",
@@ -512,13 +508,13 @@ export const CALENDAR_PICKER_TEXT = {
   summaryAll: "tutte le materie",
   summaryOne: (name: string) => name,
   summaryMany: (count: number, total: number) => `${count} materie su ${total}`,
+  countOf: (count: number, total: number) => `${count} di ${total}`,
   only: "Solo",
   onlyAria: (name: string) => `Mostra solo ${name}`,
   toggleAria: (name: string) => `Impegni di ${name}`,
   holidays: "Festività e ricorrenze italiane",
   holidaysHint: "Natale, Pasqua, 25 aprile, ponti… Solo da vedere: non si salvano e non contano negli impegni.",
-  done: "Fatto",
-  countBadge: (count: number, total: number) => `${count}/${total}`
+  done: "Fatto"
 } as const;
 
 /**

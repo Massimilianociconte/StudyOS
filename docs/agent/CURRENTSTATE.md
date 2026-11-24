@@ -1103,3 +1103,32 @@ Verifiche: `npm test` (1871), `npm run lint`, `npm run build`; prove nel browser
 telefono (cambio di tipo nei quattro moduli, trascinamento reale, tastiera, ordine dopo un
 ricaricamento, pannello «Cosa vedere»). `npm run e2e` non rieseguito (Docker spento; le prove e2e non
 toccano queste schermate).
+
+## Filtro del calendario, intestazione del periodo, azioni di Esami (24 novembre 2026, notte)
+
+- Calendario: tolta la striscia delle materie (e «Scegli»). Resta un solo pulsante «Materie» che dice
+  cosa si vede («Tutte», il nome della materia o «N materie» con i pallini dei colori) e con un filtro
+  attivo cambia colore. Apre lo stesso pannello «Cosa vedere nel calendario». Nel pannello la scelta
+  vale subito e niente si sposta: in alto c'è un conteggio corto su una riga («2 di 4», non il nome,
+  che andava a capo), la casella cambia dallo stato del pannello e il calendario dietro si aggiorna
+  con `startTransition`.
+- «Festività» sta solo nella riga dei filtri (anche sul telefono) e nel pannello: tolta la voce da
+  «Altre azioni».
+- Intestazione del periodo: titolo più grande e più marcato (`text-xl`, da `sm` `text-2xl`, nero),
+  date corte sul telefono («30 nov – 6 dic 2026», «Mar 1 dic 2026»); frecce e «Oggi» in un gruppo
+  fisso a destra. «Oggi» è colorato solo quando il periodo mostrato non contiene oggi.
+- Esami, «I miei esami»: in alto «Registra un voto» (secondario), «Aggiungi esame» (principale) e
+  l'icona «Condividi i progressi» al posto del menu ⋯ (con il cloud configurato). Senza materie
+  «Aggiungi esame» non compare (il modulo vuole una materia esistente) e il principale è «Vai a
+  Materie»; «Registra un voto» resta, perché crea la materia da sé. «Aggiungi appelli
+  ufficiali» solo nella scheda «Date ufficiali». Lo stato vuoto senza esami in arrivo non ha più
+  pulsanti (rimanda a quello in alto). La riga di un esame passato tiene «Registra l'esito». Nella
+  scheda d'esame il tempo studiato è testo e «Studia» è l'unico pulsante che apre lo Studio.
+- `SectionTitle` ha `aside`: un pulsante a icona che dal tablet sta in fondo alla riga delle azioni
+  e sul telefono in alto a destra accanto al titolo.
+
+Verifiche: `npm test` (1871), `npm run lint`, `npm run build`; prove nel browser locale a 375, 768 e
+computer (posizioni del pannello «Materie» ferme su più scelte, titoli del periodo senza tagli, Esami
+vuoto, con esame in arrivo e con esame passato). `npm run e2e` non rieseguito (Docker spento): in
+`tests/e2e` nessun selettore usa i controlli cambiati, e il «Oggi» del selettore di data (prova 08,
+`.last()`) non cambia né di numero né di ordine.

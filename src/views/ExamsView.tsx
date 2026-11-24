@@ -6,7 +6,7 @@ import type { Exam } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, studyDaysUntil, subjectColor, subjectName } from "../lib/selectors";
 import { EXAM_STATUS_LABEL, capitalizeFirst, formatMinutes } from "../lib/labels";
-import { EXAMS_HELP, EXAMS_TEXT, OFFICIAL_EXAMS_ADD_LABEL } from "../lib/labels/exams";
+import { EXAMS_HELP, EXAMS_TEXT } from "../lib/labels/exams";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { MAX_GRADE, MIN_GRADE, formatAverage, gradeStats, isValidGrade, librettoEntries } from "../lib/grades";
 import { readCoverImage } from "../lib/files";
@@ -19,12 +19,11 @@ import { PROGRESS_TEXT } from "../lib/labels/progress";
 import { SubjectProgressPanel } from "../components/SubjectProgressPanel";
 import { EXAMS_NEW_KEY, examPrefillFromEvent, findCalendarExam, isNullableCalendarExamRef, examTimeLabel, removeCalendarExam, replaceEventByDefault, type CalendarExamRef } from "../lib/calendarExams";
 import { UndoNotice } from "../components/StudySessionDrawers";
-import { Button, EmptyState, Field, HelpTip, IconButton, PageActions, SectionTitle, Segmented, Tag, fileInputClass, inputClass, type PageAction, useBackCloses, useDialogLayer } from "../components/ui";
+import { Button, EmptyState, Field, HelpTip, IconButton, SectionTitle, Segmented, Tag, fileInputClass, inputClass, useBackCloses, useDialogLayer } from "../components/ui";
 import { DateTimeField } from "../components/DatePicker";
 import { Icon } from "../components/Icon";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { BarbExamCalendar } from "../components/BarbExamCalendar";
-import { BarbExamImport } from "../components/BarbExamImport";
 import { SharedSection } from "../components/SharedSection";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { useOnce } from "../hooks/useOnce";
@@ -87,8 +86,11 @@ const lines = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-/** Titolo della sezione con le azioni della scheda aperta, poi le schede: lo disegna ogni scheda. */
-type ExamsHeader = (actions: ReactNode) => ReactNode;
+/**
+ * Titolo della sezione con le azioni della scheda aperta (e, a parte, un pulsante a icona come
+ * condividi), poi le schede: lo disegna ogni scheda.
+ */
+type ExamsHeader = (actions: ReactNode, aside?: ReactNode) => ReactNode;
 
 export function ExamsView() {
   const preferences = useStudyStore(selectPreferences);
@@ -119,9 +121,9 @@ export function ExamsView() {
     else if ((editing.exam || prefill || newFor || !showBarb) && tab !== "personal") setTab("personal");
   }, [editing.clear, editing.exam, prefill, newFor, showBarb, tab, setEditingId, setTab]);
 
-  const header: ExamsHeader = (actions) => (
+  const header: ExamsHeader = (actions, aside) => (
     <>
-      <SectionTitle title={EXAMS_TEXT.title} subtitle={showBarb ? EXAMS_TEXT.subtitle : EXAMS_TEXT.subtitlePersonal} action={actions} />
+      <SectionTitle title={EXAMS_TEXT.title} subtitle={showBarb ? EXAMS_TEXT.subtitle : EXAMS_TEXT.subtitlePersonal} action={actions} aside={aside} />
       {showBarb ? (
         <Segmented
           value={activeTab}
@@ -193,7 +195,6 @@ function PersonalExamsView({
     setGradeExam(exam);
     setGradeOpen(true);
   };
-  const [importOpen, setImportOpen] = useState(false);
   const [share, setShare] = useState<"idle" | "loading" | "open" | "failed">("idle");
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState("");
@@ -412,26 +413,27 @@ function PersonalExamsView({
     if (editingExam?.id === exam.id) closeForm();
   };
 
-  // Un solo pulsante principale per schermata: quando sotto c'è già l'invito ad aggiungere
-  // (nessuna materia o nessun esame in arrivo), quello in alto diventa secondario.
-  const headerPrimary = subjects.length > 0 && upcoming.length > 0;
-  const moreActions: PageAction[] = [
-    { label: EXAMS_TEXT.recordGrade, icon: "Award", onClick: () => openGrade(null) },
-    ...(showBarb ? [{ label: OFFICIAL_EXAMS_ADD_LABEL, icon: "CalendarPlus", onClick: () => setImportOpen(true) }] : []),
-    ...(cloudConfigured ? [{ label: EXAMS_TEXT.shareProgress, icon: "Share2", onClick: openShare }] : [])
-  ];
+  // Ogni azione in un posto solo: in alto «Registra un voto» e «Aggiungi esame» (il principale), più
+  // l'icona per condividere; l'esito di un esame passato anche sulla sua riga, gli appelli ufficiali
+  // solo in «Date ufficiali». Senza materie «Aggiungi esame» non c'è (il modulo chiede una materia
+  // esistente) e il principale è «Vai a Materie» qui sotto; «Registra un voto» resta, perché crea
+  // la materia da sé (esami degli anni prima).
+  const hasSubjects = subjects.length > 0;
 
   return (
     <div>
       {header(
-        <PageActions
-          primary={
-            <Button icon="Plus" variant={headerPrimary ? "primary" : "soft"} onClick={openCreate}>
+        <>
+          <Button icon="Award" variant="soft" onClick={() => openGrade(null)}>
+            {EXAMS_TEXT.recordGrade}
+          </Button>
+          {hasSubjects ? (
+            <Button icon="Plus" variant="primary" onClick={openCreate}>
               {EXAMS_TEXT.addExam}
             </Button>
-          }
-          more={moreActions}
-        />
+          ) : null}
+        </>,
+        cloudConfigured ? <IconButton icon="Share2" label={EXAMS_TEXT.shareProgress} onClick={openShare} /> : null
       )}
 
       {share === "loading" ? (
@@ -555,28 +557,16 @@ function PersonalExamsView({
               ))}
             </div>
           ) : (
+            // Niente pulsanti qui: «Aggiungi esame» è già in alto, gli appelli ufficiali in «Date ufficiali».
             <EmptyState
               icon="GraduationCap"
               title={EXAMS_TEXT.noUpcomingTitle}
-              body={EXAMS_TEXT.noUpcomingBody}
-              action={
-                <>
-                  <Button icon="Plus" variant="primary" onClick={openCreate}>
-                    {EXAMS_TEXT.addExam}
-                  </Button>
-                  {showBarb ? (
-                    <Button icon="CalendarPlus" variant="soft" onClick={() => setImportOpen(true)}>
-                      {OFFICIAL_EXAMS_ADD_LABEL}
-                    </Button>
-                  ) : null}
-                </>
-              }
+              body={showBarb ? `${EXAMS_TEXT.noUpcomingBody} ${EXAMS_TEXT.noUpcomingOfficial}` : EXAMS_TEXT.noUpcomingBody}
             />
           )}
         </>
       )}
 
-      {importOpen && <BarbExamImport onClose={() => setImportOpen(false)} />}
       <GradeDrawer
         open={gradeOpen}
         exam={gradeExam}
@@ -897,26 +887,13 @@ function ExamCard({
         <p className="mt-3 text-xs font-bold text-[var(--faint)]">{EXAMS_TEXT.programEmpty}</p>
       )}
 
+      {/* Il tempo studiato si legge e basta; «Studia» è l'unico che apre lo Studio con la materia. */}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
-        <CountLink label={EXAMS_TEXT.studyLink(formatMinutes(studiedMinutes))} aria={EXAMS_TEXT.studyTimeAria(name)} onClick={() => onLink("study")} />
-        <button type="button" onClick={() => onLink("study")} aria-label={EXAMS_TEXT.studyAria(name)} className="inline-flex min-h-11 items-center gap-1.5 text-xs font-black text-[var(--muted)] hover:text-[var(--text)]">
-          <Icon name="Timer" className="h-3.5 w-3.5" /> {EXAMS_TEXT.study}
-        </button>
+        <span className="text-xs font-bold text-[var(--muted)]">{EXAMS_TEXT.studyLink(formatMinutes(studiedMinutes))}</span>
+        <Button variant="soft" icon="Timer" onClick={() => onLink("study")} aria-label={EXAMS_TEXT.studyAria(name)}>
+          {EXAMS_TEXT.study}
+        </Button>
       </div>
     </article>
-  );
-}
-
-/** Numero della scheda d'esame che porta a un'altra sezione: aspetto da collegamento, area di tocco di 44 px. */
-function CountLink({ label, aria, onClick }: { label: string; aria: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={`${label}. ${aria}`}
-      className="relative inline-flex min-h-8 items-center text-[var(--accent-ink)] underline decoration-[color-mix(in_srgb,var(--accent-ink)_40%,transparent)] underline-offset-2 after:absolute after:-inset-x-1 after:-inset-y-1.5 after:content-[''] hover:decoration-[var(--accent-ink)]"
-    >
-      {label}
-    </button>
   );
 }

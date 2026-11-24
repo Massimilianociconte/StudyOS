@@ -848,3 +848,11 @@
   perde la cattura a metà gesto. La maniglia vuole `touch-action: none`.
 - Preferenze nuove (es. `subjectSort`, `subjectOrder`): libere nel tipo `Preferences`, validate in
   lettura (`validSubjectSort`, `validSubjectOrder`); vanno aggiunte a `PreferencesPatch` nello store.
+- Pannelli con scelte che valgono subito (es. «Materie» del calendario): nessun testo variabile che
+  possa andare a capo sopra l'elenco (un nome lungo spingeva giù le righe). Lo stato delle caselle sta
+  nel pannello, preso all'apertura, e il resto della pagina si aggiorna con `startTransition`; non
+  risincronizzarlo dalle props con un effetto, sennò tocchi veloci fanno tremolare le caselle.
+- `cloudConfigured` è falso nel Vite locale senza `.env`: i pulsanti «Condividi» non compaiono. Per
+  provarne la posizione forzalo per poco nel codice e rimettilo prima di finire.
+- Intestazione di pagina con due pulsanti con testo e un'icona: sul telefono non stanno in 343 px. Usa
+  `SectionTitle aside` per l'icona invece di lasciarla andare a capo da sola.
