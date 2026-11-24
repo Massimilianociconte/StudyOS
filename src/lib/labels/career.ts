@@ -89,6 +89,9 @@ export const CAREER_TEXT = {
 
 /** Modulo breve del voto (GradeDrawer): esito dell'esame, voto, idoneità o non superato. */
 export const GRADE_TEXT = {
+  /** «Nuova materia» con il nome di una che c'è già: si sceglie quella. */
+  existingPicked: (name: string) => `«${name}» è già tra le tue materie: l'ho scelta nell'elenco. Controlla e premi di nuovo Registra.`,
+  existingUnavailable: (name: string) => `«${name}» è già tra le tue materie (archiviata o con un voto): riprendila da Materie invece di crearne un'altra.`,
   outcome: "Esito",
   outcomeAsk: "Com'è andata?",
   outcomeGrade: "Superato con voto",

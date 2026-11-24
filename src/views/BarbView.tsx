@@ -25,7 +25,8 @@ import { SEMESTER_LABEL, SEMESTER_SHORT, SEMESTER_TONE, SEMESTER_IDS } from "../
 import { resolveBarbCourse } from "../lib/university/examSessions";
 import { weekdayLabel } from "../lib/university/normalize";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
-import { BARB_CHARACTER_LABEL, BARB_HELP, BARB_TEXT, UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels/barb";
+import { BARB_CHARACTER_LABEL, BARB_HELP, BARB_LINK_TEXT, BARB_TEXT, UNIVERSITY_SOURCE_KIND_LABEL } from "../lib/labels/barb";
+import { catalogLinkChoice, catalogLinkPatch, type CatalogSubjectFields } from "../lib/catalogLink";
 import {
   NO_BARB_FILTER,
   isBarbSemesterFilter,
@@ -532,11 +533,31 @@ function CourseCard({
   );
 }
 
+/** Campi della materia che nasce (o che si collega) da un insegnamento del catalogo. */
+const courseSubjectFields = (course: BarbCourse, teacher: BarbTeacher | null): CatalogSubjectFields => ({
+  universityCourseId: course.id,
+  teacher: teacher?.displayName ?? "",
+  cfu: course.cfu,
+  semester: course.semester,
+  icon: `barb:${course.id}`,
+  color: courseColor(course),
+  tags: ["barb", ...course.ssd],
+  notes: [
+    course.officialPageUrl ? `Scheda ufficiale: ${course.officialPageUrl}` : null,
+    course.arielUrl ? `Ariel: ${course.arielUrl}` : null,
+    teacher?.email ? `Docente: ${teacher.displayName} <${teacher.email}>` : null,
+    course.examMode ? `Esame: ${course.examMode}${course.grading ? ` (${course.grading})` : ""}` : null
+  ]
+    .filter(Boolean)
+    .join("\n")
+});
+
 function AddToSubjects({ course, teacher }: { course: BarbCourse; teacher: BarbTeacher | null }) {
-  const { subjects, addSubject, setActiveView } = useStudyStore(
-    useShallow((state) => ({ subjects: state.subjects, addSubject: state.addSubject, setActiveView: state.setActiveView }))
+  const { subjects, addSubject, updateSubject, setActiveView } = useStudyStore(
+    useShallow((state) => ({ subjects: state.subjects, addSubject: state.addSubject, updateSubject: state.updateSubject, setActiveView: state.setActiveView }))
   );
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const exists = subjects.some((subject) => resolveBarbCourse(subject, BARB_DATASET.courses)?.id === course.id);
   if (exists) {
     return (
@@ -550,40 +571,51 @@ function AddToSubjects({ course, teacher }: { course: BarbCourse; teacher: BarbT
       </>
     );
   }
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await action();
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : String(problem));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const fields = courseSubjectFields(course, teacher);
+  const create = () => run(() => addSubject({ name: course.name, status: "active", ...fields }));
+  // Una materia personale simile (stesso docente e nome simile): la persona dice se è la stessa.
+  const choice = catalogLinkChoice({ name: course.name, teacher: fields.teacher }, subjects);
+  const errorLine = error ? (
+    <p role="alert" className="w-full text-sm font-bold text-[var(--danger-text)]">
+      {error}
+    </p>
+  ) : null;
+  if (choice.kind === "choose") {
+    return (
+      <div className="grid w-full gap-2 rounded-[18px] bg-[var(--surface-soft)] p-3">
+        <p className="safe-text text-sm font-bold">{BARB_LINK_TEXT.similar(choice.candidates.map((subject) => subject.name))}</p>
+        <div className="flex flex-wrap gap-2">
+          {choice.candidates.slice(0, 3).map((subject) => (
+            <Button key={subject.id} icon="Link" variant="primary" disabled={busy} onClick={() => run(() => updateSubject(subject.id, catalogLinkPatch(subject, fields)))}>
+              {BARB_LINK_TEXT.link(subject.name)}
+            </Button>
+          ))}
+          <Button icon="Plus" variant="ghost" disabled={busy} onClick={create}>
+            {BARB_LINK_TEXT.addNew}
+          </Button>
+        </div>
+        {errorLine}
+      </div>
+    );
+  }
   return (
-    <Button
-      icon="Plus"
-      variant="primary"
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          await addSubject({
-            name: course.name,
-            teacher: teacher?.displayName ?? "",
-            cfu: course.cfu,
-            semester: course.semester,
-            universityCourseId: course.id,
-            icon: `barb:${course.id}`,
-            color: courseColor(course),
-            status: "active",
-            tags: ["barb", ...course.ssd],
-            notes: [
-              course.officialPageUrl ? `Scheda ufficiale: ${course.officialPageUrl}` : null,
-              course.arielUrl ? `Ariel: ${course.arielUrl}` : null,
-              teacher?.email ? `Docente: ${teacher.displayName} <${teacher.email}>` : null,
-              course.examMode ? `Esame: ${course.examMode}${course.grading ? ` (${course.grading})` : ""}` : null
-            ]
-              .filter(Boolean)
-              .join("\n")
-          });
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? "Aggiunta in corso…" : "Aggiungi alle mie materie"}
-    </Button>
+    <>
+      <Button icon="Plus" variant="primary" disabled={busy} onClick={create}>
+        {busy ? "Aggiunta in corso…" : "Aggiungi alle mie materie"}
+      </Button>
+      {errorLine}
+    </>
   );
 }
 

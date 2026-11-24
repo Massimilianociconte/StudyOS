@@ -65,6 +65,7 @@ import {
   systemNotificationState,
   type SystemNotificationState
 } from "../lib/timerAlerts";
+import { SubjectSelect } from "../components/SubjectSelect";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
 
@@ -688,14 +689,7 @@ function TimerPanel({ notice, setNotice }: { notice: string; setNotice: (text: s
       <div className="mt-4 grid grid-cols-1 gap-3 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
         <div className="min-w-0">
           <Field label={TIMER_TEXT.subject}>
-            <select className={inputClass} value={subjectId} onChange={(event) => chooseSubject(event.target.value)}>
-              <option value="">{TIMER_TEXT.noSubject}</option>
-              {selectableSubjects(subjects, subjectId).map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+            <SubjectSelect value={subjectId} onChange={chooseSubject} subjects={selectableSubjects(subjects, subjectId)} none={TIMER_TEXT.noSubject} />
           </Field>
           {!selectableSubjects(subjects).length ? (
             <p className="mt-1 text-xs font-bold text-[var(--muted)]">

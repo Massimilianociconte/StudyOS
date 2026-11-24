@@ -21,6 +21,10 @@ export const PROGRESS_TEXT = {
   preparationDown: (name: string) => `Abbassa del 5% la preparazione per ${name}`,
   preparationUp: (name: string) => `Alza del 5% la preparazione per ${name}`,
   preparationNone: "Nessun esame in programma",
+  /** Esame passato senza esito: la preparazione è conclusa, manca solo com'è andato. */
+  preparationPast: (date: string) => `Esame del ${date} concluso: manca l'esito`,
+  outcomeLink: "Registra l'esito",
+  outcomeLinkAria: (name: string) => `Registra l'esito dell'esame di ${name}`,
   preparationNoneHint: "Il livello di preparazione si segna sull'esame: aggiungi la data quando la sai.",
   addExam: "Aggiungi l'esame",
   addExamAria: (name: string) => `Aggiungi l'esame di ${name}`,

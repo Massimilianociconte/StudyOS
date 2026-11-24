@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, Subject } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 import { daysUntil, shortDate } from "../lib/selectors";
@@ -11,9 +11,8 @@ import { PROGRESS_TEXT } from "../lib/labels/progress";
 import { SubjectProgressPanel } from "../components/SubjectProgressPanel";
 import { GradeDrawer } from "../components/GradeDrawer";
 import { ATTACHMENT_KIND_ICON, FILE_TEXT, SUBJECT_STATUS_LABEL, attachmentKind, formatMinutes } from "../lib/labels";
-import { SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
-import { Button, Drawer, EmptyState, Field, HelpTip, IconButton, PageActions, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
-import { HelpField } from "../components/HelpField";
+import { SUBJECT_FORM_TEXT, SUBJECT_REMOVE_TEXT, SUBJECTS_HELP, SUBJECTS_TEXT } from "../lib/labels/subjects";
+import { Button, Drawer, EmptyState, HelpTip, IconButton, PageActions, SectionTitle, Segmented, StatTile, Tag, inputClass, type PageAction } from "../components/ui";
 import { InlineConfirm } from "../components/InlineConfirm";
 import { UnsavedPrompt } from "../components/UnsavedPrompt";
 import { LinkedNotes } from "../components/NoteDrawer";
@@ -25,30 +24,22 @@ import { draftFromBarbForSubject, type SessionDraft } from "../lib/groupExamForm
 import { useGroupExamStore } from "../store/useGroupExamStore";
 import { BARB_DATASET } from "../data/university/barb.dataset";
 import { resolveBarbCourse } from "../lib/university/examSessions";
-import { subjectSemester, SEMESTER_LABEL, SEMESTER_TONE, SEMESTER_IDS, type SemesterId } from "../lib/semesters";
+import { subjectSemester, SEMESTER_LABEL, SEMESTER_TONE, SEMESTER_IDS } from "../lib/semesters";
 import { TopicManager } from "../components/TopicManager";
 import { isNullableString, oneOf, useUiState } from "../lib/uiState";
 import { goToView, useLinkedUiState } from "../hooks/useLinkedUiState";
-import { cfuBySemester, isArchivedSubject, nextSubjectColor, otherStatuses, semesterFilterOptions, subjectMenuItems, type SemesterFilter } from "../lib/subjectCards";
+import { SubjectDuplicates } from "../components/SubjectDuplicates";
+import { SubjectFields } from "../components/SubjectFields";
+import { SubjectFormModal } from "../components/SubjectFormModal";
+import { SUBJECT_FORM_STATUSES, SUBJECT_SWATCHES, newSubjectDraft, subjectDraftOf, subjectDraftProblem, subjectFieldsFromDraft, type SubjectDraft } from "../lib/subjectFields";
+import { SubjectDuplicateError } from "../lib/subjectIdentity";
+import { cfuBySemester, isArchivedSubject, otherStatuses, semesterFilterOptions, subjectMenuItems, type SemesterFilter } from "../lib/subjectCards";
 import { safeCssColor } from "../lib/sharing";
 import { safeHref } from "../lib/safeUrl";
 import { FILE_STATES, fileStateText, useMaterialFiles, useOpenMaterial } from "../components/MaterialFile";
 import { FILE_ACCEPT } from "../lib/attachments";
 import { COURSE_INK, DARK_INK, inkOn } from "../lib/subjectInk";
 
-const SWATCHES = ["#7CF7C8", "#9FB7FF", "#F7A8C4", "#FFD37C", "#C8A2FF", "#7FE3F5", "#FFAE7C", "#A6E3A1"];
-// Nomi leggibili dei colori per i lettori di schermo (i codici esadecimali non dicono nulla).
-const SWATCH_NAMES: Record<string, string> = {
-  "#7CF7C8": "verde acqua",
-  "#9FB7FF": "blu",
-  "#F7A8C4": "rosa",
-  "#FFD37C": "giallo",
-  "#C8A2FF": "lilla",
-  "#7FE3F5": "azzurro",
-  "#FFAE7C": "arancione",
-  "#A6E3A1": "verde"
-};
-const swatchLabel = (swatch: string) => `Colore ${SWATCH_NAMES[swatch] ?? swatch}`;
 // Icona di ogni stato nel menu "⋯" della scheda.
 const STATUS_ICON: Record<Subject["status"], string> = {
   "not-started": "CircleDot",
@@ -87,10 +78,11 @@ const subjectStats = (subject: Subject, state: Pick<StoreState, "tasks" | "sessi
   // Tre indicatori distinti (src/lib/subjectProgress.ts): avanzamento delle attività, preparazione
   // dell'esame da sostenere, ripasso. Stesso calcolo della regola dello store: al 100% del progresso
   // (la preparazione con un esame, altrimenti le attività) la materia passa a «Completata».
-  const { progress, exam, activity } = subjectProgress(subject.id, state.tasks, state.exams);
+  // `exam`: l'esame da preparare; `pendingExam`: uno già passato senza esito (niente barra, «da registrare»).
+  const { progress, exam, pendingExam, activity } = subjectProgress(subject.id, state.tasks, state.exams);
   const review = reviewStatus(subject.id, state.topics);
   const program = exam?.program.length ? { toAdd: programToAdd(subject.id, exam.program, state.topics).length, total: exam.program.length } : null;
-  return { subjectTasks, openTasks, studyMinutes, exam, materials, progress, activity, review, program };
+  return { subjectTasks, openTasks, studyMinutes, exam, pendingExam, materials, progress, activity, review, program };
 };
 
 type ProgressActions = {
@@ -135,7 +127,7 @@ export function SubjectsView() {
   const [semester, setSemester] = useUiState<SemesterFilter>("subjects.semester", "tutti", { validate: oneOf("tutti", ...SEMESTER_IDS) });
   const [showCompleted, setShowCompleted] = useUiState("subjects.showCompleted", false);
   const [showPending, setShowPending] = useUiState("subjects.showPending", true);
-  const { subjects, tasks, sessions, exams, topics, attachments, addSubject, updateSubject, deleteSubject, setActiveView } = useStudyStore();
+  const { subjects, tasks, sessions, exams, topics, attachments, updateSubject, deleteSubject, setActiveView } = useStudyStore();
   const showBarb = useStudyStore((state) => selectPreferences(state).showBarb);
   const state = { tasks, sessions, exams, attachments, topics };
   // Esito di «Aggiungi al ripasso» dal pannello dei progressi.
@@ -160,6 +152,8 @@ export function SubjectsView() {
     return () => window.cancelAnimationFrame(frame);
   }, [archivedNotice]);
 
+  // «Nuova materia»: il modulo completo (nome e Invio bastano, il resto in «Altri dettagli»).
+  const [creating, setCreating] = useState(false);
   const open = subjects.find((subject) => subject.id === openId) ?? null;
   // Materia da aprire che non c'è più (eliminata altrove): si dimentica invece di restare in memoria.
   useEffect(() => {
@@ -260,17 +254,22 @@ export function SubjectsView() {
         title="Materie"
         subtitle={active.length ? SUBJECTS_TEXT.subtitle(active.length, totalCfu, bySemester) : SUBJECTS_TEXT.subtitleEmpty}
         action={
-          // Secondo modo per aggiungere materie: sceglierle dal piano del corso. Quando l'elenco è
-          // vuoto lo stesso invito è nel riquadro sotto, per non mostrarlo due volte.
-          showBarb && active.length ? (
-            <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
-              {SUBJECTS_TEXT.chooseFromCourse}
+          <>
+            {/* Secondo modo per aggiungere materie: sceglierle dal piano del corso. Quando l'elenco è
+                vuoto lo stesso invito è nel riquadro sotto, per non mostrarlo due volte. */}
+            {showBarb && active.length ? (
+              <Button variant="soft" icon="Landmark" onClick={() => setActiveView("barb")}>
+                {SUBJECTS_TEXT.chooseFromCourse}
+              </Button>
+            ) : null}
+            <Button variant="primary" icon="Plus" onClick={() => setCreating(true)}>
+              {SUBJECTS_TEXT.add}
             </Button>
-          ) : undefined
+          </>
         }
       />
 
-      <NewSubjectBar onAdd={async (name) => void (await addSubject({ name, color: nextSubjectColor(subjects, SWATCHES), status: "active", icon: "BookOpen" }))} />
+      <SubjectDuplicates onMerged={(keepId, dropId) => (openId === dropId ? setOpenId(keepId) : undefined)} />
 
       {group(SUBJECTS_TEXT.pendingGroup, pendingGrade, showPending, () => setShowPending((value) => !value), SUBJECTS_HELP.pendingGrade, true)}
 
@@ -310,8 +309,7 @@ export function SubjectsView() {
           icon="BookOpen"
           title={SUBJECTS_TEXT.emptyTitle}
           body={showBarb ? SUBJECTS_TEXT.emptyBodyCourse : SUBJECTS_TEXT.emptyBody}
-          // Un'azione sola: il nome si scrive nella barra qui sopra («Aggiungi materia»), qui resta
-          // solo l'altro modo, il piano del corso.
+          // «Nuova materia» è già in alto: qui resta solo l'altro modo, il piano del corso.
           action={
             showBarb ? (
               <Button variant="primary" icon="Landmark" onClick={() => setActiveView("barb")}>
@@ -338,6 +336,8 @@ export function SubjectsView() {
       {group(SUBJECTS_TEXT.completed, completed, showCompleted, () => setShowCompleted((value) => !value))}
       {group(SUBJECTS_TEXT.archivedGroup, archived, showArchived, () => setShowArchived((value) => !value), SUBJECTS_HELP.archive)}
 
+      {creating ? <SubjectFormModal onClose={() => setCreating(false)} onCreated={() => undefined} onOpenExisting={(id) => setOpenId(id)} /> : null}
+
       <SubjectDrawer
         subject={open}
         onClose={() => setOpenId(null)}
@@ -359,29 +359,6 @@ export function SubjectsView() {
         }}
       />
     </div>
-  );
-}
-
-/** Solo il nome: il colore lo sceglie l'app (il primo libero) e si cambia nel dettaglio della materia. */
-function NewSubjectBar({ onAdd }: { onAdd: (name: string) => Promise<void> }) {
-  const [name, setName] = useState("");
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!name.trim()) return;
-    await onAdd(name.trim());
-    setName("");
-  };
-  return (
-    <form onSubmit={submit} className="soft-panel mb-4 flex flex-col gap-2 p-2.5 sm:flex-row sm:items-center">
-      <label className="relative block min-w-0 flex-1">
-        <span className="sr-only">{SUBJECTS_TEXT.nameField}</span>
-        <Icon name="Plus" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--accent-ink)]" />
-        <input id="new-subject-name" className={`${inputClass} pl-10`} value={name} onChange={(event) => setName(event.target.value)} placeholder={SUBJECTS_TEXT.namePlaceholder} />
-      </label>
-      <Button type="submit" variant="primary" icon="Plus" disabled={!name.trim()}>
-        {SUBJECTS_TEXT.add}
-      </Button>
-    </form>
   );
 }
 
@@ -423,7 +400,8 @@ function SubjectCard({
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const exam = stats.exam;
+  // La pillola porta all'esame da preparare o, se non c'è, a quello passato con l'esito da registrare.
+  const exam = stats.exam ?? stats.pendingExam;
   const examPill = exam ? (isDateToDecide(exam) ? SUBJECTS_TEXT.examPillToDecide : SUBJECTS_TEXT.examPill(shortDate(exam.date), daysUntil(exam.date))) : "";
 
   const [choosing, setChoosing] = useState(false);
@@ -508,7 +486,8 @@ function SubjectCard({
           name={subject.name}
           color={color}
           activity={stats.activity}
-          preparation={exam ? { value: exam.preparation, onChange: progress.onPrep } : null}
+          preparation={stats.exam ? { value: stats.exam.preparation, onChange: progress.onPrep } : null}
+          pendingOutcome={!stats.exam && stats.pendingExam ? { date: shortDate(stats.pendingExam.date), onOpen: () => openExam(stats.pendingExam!.id) } : null}
           onAddExam={isArchivedSubject(subject) ? undefined : progress.onAddExam}
           review={stats.review}
           program={stats.program ? { ...stats.program, onAdd: progress.onImportProgram } : null}
@@ -610,7 +589,7 @@ function SubjectDrawer({
   onRestore: (subject: Subject) => void;
 }) {
   const { tasks, sessions, exams, attachments, topics, subjects, updateSubject, addAttachment, updateAttachment, deleteAttachment } = useStudyStore();
-  const [draft, setDraft] = useState({ name: "", teacher: "", cfu: "6", semester: "", targetGrade: "", color: SWATCHES[0], notes: "" });
+  const [draft, setDraft] = useState<SubjectDraft>(() => newSubjectDraft(SUBJECT_SWATCHES[0]));
   // Dati come sono salvati: il confronto dice se chiudere perderebbe qualcosa.
   const [saved, setSaved] = useState(draft);
   // Chiusura (✕, Esc, tocco fuori, Archivia) in attesa della risposta a «Scartare le modifiche?».
@@ -632,15 +611,7 @@ function SubjectDrawer({
 
   useEffect(() => {
     if (!subject) return;
-    const next = {
-      name: subject.name,
-      teacher: subject.teacher,
-      cfu: String(subject.cfu ?? 6),
-      semester: subject.semesterOverride ?? "ufficiale",
-      targetGrade: subject.targetGrade ? String(subject.targetGrade) : "",
-      color: subject.color,
-      notes: subject.notes
-    };
+    const next = subjectDraftOf(subject);
     setDraft(next);
     setSaved(next);
     setPending(null);
@@ -666,36 +637,24 @@ function SubjectDrawer({
 
   const save = async () => {
     if (!subject) return;
-    if (!draft.name.trim()) {
-      fail("Scrivi il nome della materia.");
+    // Stesse regole di «Nuova materia» e degli strumenti degli agenti (src/lib/subjectFields.ts).
+    const problem = subjectDraftProblem(draft);
+    if (problem) {
+      fail(problem);
       return;
     }
-    // Campo vuoto (o testo che il campo numerico non accetta): non vale 0, che cambierebbe le medie del libretto.
-    if (!draft.cfu.trim()) {
-      fail(SUBJECTS_TEXT.cfuMissing);
+    const fields = subjectFieldsFromDraft(draft, { officialSemester: course?.semester, currentSemester: subject.semester });
+    try {
+      await updateSubject(subject.id, {
+        ...fields,
+        universityCourseId: course?.id ?? subject.universityCourseId,
+        // Completata o archiviata: lo stato si cambia dalla scheda (Superata chiede il voto), non da qui.
+        status: (SUBJECT_FORM_STATUSES as readonly string[]).includes(subject.status) ? fields.status : subject.status
+      });
+    } catch (problem) {
+      fail(problem instanceof SubjectDuplicateError ? problem.message : SUBJECT_FORM_TEXT.saveError);
       return;
     }
-    const cfu = Number(draft.cfu);
-    const targetGrade = draft.targetGrade.trim() ? Number(draft.targetGrade) : undefined;
-    if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) {
-      fail(SUBJECTS_TEXT.cfuInvalid);
-      return;
-    }
-    if (targetGrade !== undefined && (!Number.isFinite(targetGrade) || targetGrade < 18 || targetGrade > 31)) {
-      fail("Voto obiettivo non valido: da 18 a 30 (31 = 30 e lode).");
-      return;
-    }
-    await updateSubject(subject.id, {
-      name: draft.name.trim(),
-      teacher: draft.teacher.trim(),
-      universityCourseId: course?.id ?? subject.universityCourseId,
-      cfu,
-      semester: draft.semester === "ufficiale" ? (course?.semester ?? subject.semester) : draft.semester,
-      semesterOverride: draft.semester === "ufficiale" ? undefined : draft.semester as SemesterId,
-      targetGrade,
-      color: draft.color,
-      notes: draft.notes
-    });
     const next = { ...draft, name: draft.name.trim(), teacher: draft.teacher.trim() };
     setDraft(next);
     setSaved(next);
@@ -784,12 +743,12 @@ function SubjectDrawer({
             <StatTile label="Da fare" value={stats.openTasks.length} onClick={() => showTasks(subject.id)} />
             {stats.exam && isDateToDecide(stats.exam) ? (
               <StatTile label={SUBJECTS_TEXT.examIn} value={SUBJECTS_TEXT.examToDecide} onClick={() => showExam(stats.exam!.id)} />
-            ) : stats.exam ? (
+            ) : stats.exam ?? stats.pendingExam ? (
               <StatTile
-                label={daysUntil(stats.exam.date) < 0 ? SUBJECTS_TEXT.examPast : SUBJECTS_TEXT.examIn}
-                value={SUBJECTS_TEXT.examInValue(daysUntil(stats.exam.date))}
-                hint={shortDate(stats.exam.date)}
-                onClick={() => showExam(stats.exam!.id)}
+                label={daysUntil((stats.exam ?? stats.pendingExam)!.date) < 0 ? SUBJECTS_TEXT.examPast : SUBJECTS_TEXT.examIn}
+                value={SUBJECTS_TEXT.examInValue(daysUntil((stats.exam ?? stats.pendingExam)!.date))}
+                hint={shortDate((stats.exam ?? stats.pendingExam)!.date)}
+                onClick={() => showExam((stats.exam ?? stats.pendingExam)!.id)}
               />
             ) : (
               <StatTile label={SUBJECTS_TEXT.examIn} value="—" />
@@ -803,6 +762,7 @@ function SubjectDrawer({
                 color={subjectColor(subject)}
                 activity={stats.activity}
                 preparation={stats.exam ? { value: stats.exam.preparation, onChange: progress.onPrep } : null}
+                pendingOutcome={!stats.exam && stats.pendingExam ? { date: shortDate(stats.pendingExam.date), onOpen: () => showExam(stats.pendingExam!.id) } : null}
                 onAddExam={archived ? undefined : progress.onAddExam}
                 review={stats.review}
                 program={stats.program ? { ...stats.program, onAdd: progress.onImportProgram } : null}
@@ -821,69 +781,15 @@ function SubjectDrawer({
 
           <section className="grid grid-cols-1 gap-3">
             <h4 className="text-xs font-black uppercase text-[var(--faint)]">Dati della materia</h4>
-            <Field label="Nome">
-              <input className={inputClass} value={draft.name} onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} />
-            </Field>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Docente (facoltativo)">
-                <input className={inputClass} value={draft.teacher} onChange={(event) => setDraft((value) => ({ ...value, teacher: event.target.value }))} placeholder="Es. Mario Rossi" />
-              </Field>
-              <HelpField label="Semestre" help={SUBJECTS_HELP.semester}>
-                {(id) => (
-                  <select id={id} className={inputClass} value={draft.semester} onChange={(event) => setDraft((value) => ({ ...value, semester: event.target.value }))}>
-                    <option value="ufficiale">{course ? `Dal piano ufficiale: ${SEMESTER_LABEL[course.semester]}` : `Periodo attuale: ${SEMESTER_LABEL[subjectSemester(subject)]}`}</option>
-                    {SEMESTER_IDS.map((semesterId) => <option key={semesterId} value={semesterId}>{SEMESTER_LABEL[semesterId]}</option>)}
-                  </select>
-                )}
-              </HelpField>
-              <HelpField label="CFU" help={SUBJECTS_HELP.cfu}>
-                {(id) => <input id={id} className={inputClass} type="number" min={0} max={60} value={draft.cfu} onChange={(event) => setDraft((value) => ({ ...value, cfu: event.target.value }))} />}
-              </HelpField>
-              <Field label="Voto obiettivo (facoltativo)">
-                <input
-                  className={inputClass}
-                  type="number"
-                  min={18}
-                  max={31}
-                  value={draft.targetGrade}
-                  onChange={(event) => setDraft((value) => ({ ...value, targetGrade: event.target.value }))}
-                  placeholder="Es. 28"
-                />
-              </Field>
-            </div>
-            {/* fieldset e non label: dentro un label il primo colore diventerebbe "il" campo e un tocco sulla scritta lo sceglierebbe. */}
-            <fieldset className="min-w-0">
-              <legend className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">Colore</legend>
-              {/* Pulsanti da 44 px con il cerchio colorato da 32 dentro: si toccano bene senza sembrare più grandi. */}
-              <div className="flex flex-wrap items-center gap-0.5">
-                {SWATCHES.map((swatch) => {
-                  const chosen = draft.color.toLowerCase() === swatch.toLowerCase();
-                  return (
-                    <button
-                      key={swatch}
-                      type="button"
-                      aria-label={swatchLabel(swatch)}
-                      title={swatchLabel(swatch)}
-                      aria-pressed={chosen}
-                      onClick={() => setDraft((value) => ({ ...value, color: swatch }))}
-                      className="grid h-11 w-11 grid-cols-1 place-items-center rounded-full"
-                    >
-                      <span className={`h-8 w-8 rounded-full border-2 ${chosen ? "border-[var(--text)]" : "border-transparent"}`} style={{ background: swatch }} />
-                    </button>
-                  );
-                })}
-                <input
-                  type="color"
-                  aria-label="Colore personalizzato"
-                  value={draft.color.startsWith("#") ? draft.color : "#7CF7C8"}
-                  onChange={(event) => setDraft((value) => ({ ...value, color: event.target.value }))}
-                  className="h-11 w-11 rounded-full border border-[var(--border)] bg-transparent p-1"
-                />
-              </div>
-            </fieldset>
-            <Field label="Note (facoltative)">
-              <textarea className={`${inputClass} min-h-20 py-3`} value={draft.notes} onChange={(event) => setDraft((value) => ({ ...value, notes: event.target.value }))} placeholder="Es. Ricevimento il martedì alle 14" />
-            </Field>
+            <SubjectFields
+              idPrefix={`subject-${subject.id}`}
+              draft={draft}
+              onChange={(patch) => setDraft((value) => ({ ...value, ...patch }))}
+              officialSemesterLabel={course ? `Dal piano ufficiale: ${SEMESTER_LABEL[course.semester]}` : `Periodo attuale: ${SEMESTER_LABEL[subjectSemester({ ...subject, semesterOverride: undefined })]}`}
+              collapsed={false}
+              courseIcon={course ? <CourseIcon course={course} className="h-8 w-8" /> : undefined}
+              showStatus={(SUBJECT_FORM_STATUSES as readonly string[]).includes(subject.status)}
+            />
           </section>
 
           <section>

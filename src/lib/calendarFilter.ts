@@ -1,4 +1,4 @@
-// Stato della vista Calendario senza DOM: filtro per materia, riepilogo "Per materia", periodo vuoto
+// Stato della vista Calendario senza DOM: filtro per materia (una o più), riepilogo "Per materia", periodo vuoto
 // e viste (da 7 a 4, con i valori salvati di prima ancora validi).
 //
 // Il filtro lavora su qualunque elenco di voci mostrate (occorrenze, attività, esami, sessioni…)
@@ -21,36 +21,55 @@ type SubjectState = Pick<Subject, "id" | "archived" | "status">;
 export const isArchivedSubject = (subject: Pick<Subject, "archived" | "status">) => subject.archived || subject.status === "archived";
 
 /**
- * La voce va mostrata con il filtro `subjectId` (null = tutte le materie)? Le voci di un'altra
- * persona usano le sue materie, mai le mie: con un filtro attivo non passano.
+ * Filtro per materia: nessuna (tutte le materie), una o più. Si salva come testo ("calendar.subject":
+ * gli id separati da virgola; gli id non hanno virgole) così il valore di prima, un id solo, vale ancora.
  */
-export const itemMatchesSubject = (item: SubjectLinked, subjectId: string | null) => {
-  if (!subjectId) return true;
+export type SubjectFilter = string | readonly string[] | null;
+
+const filterIds = (filter: SubjectFilter): readonly string[] => (filter === null ? [] : typeof filter === "string" ? (filter ? [filter] : []) : filter);
+
+/**
+ * La voce va mostrata con il filtro (nessuna materia = tutte)? Le voci di un'altra persona usano le
+ * sue materie, mai le mie: con un filtro attivo non passano.
+ */
+export const itemMatchesSubject = (item: SubjectLinked, filter: SubjectFilter) => {
+  const ids = filterIds(filter);
+  if (!ids.length) return true;
   if (item.sharedFrom) return false;
-  return item.subjectId === subjectId;
+  return typeof item.subjectId === "string" && ids.includes(item.subjectId);
 };
 
 /** Elenco filtrato; senza filtro è lo stesso elenco (stesso riferimento: niente render inutili). */
-export const filterBySubject = <T extends SubjectLinked>(items: readonly T[], subjectId: string | null): T[] =>
-  subjectId ? items.filter((item) => itemMatchesSubject(item, subjectId)) : (items as T[]);
+export const filterBySubject = <T extends SubjectLinked>(items: readonly T[], filter: SubjectFilter): T[] =>
+  filterIds(filter).length ? items.filter((item) => itemMatchesSubject(item, filter)) : (items as T[]);
 
 /** Filtra insieme tutti gli elenchi che una vista mostra (stesse chiavi in uscita). */
-export const filterCalendarItems = <T extends Record<string, readonly SubjectLinked[]>>(groups: T, subjectId: string | null): T => {
-  if (!subjectId) return groups;
+export const filterCalendarItems = <T extends Record<string, readonly SubjectLinked[]>>(groups: T, filter: SubjectFilter): T => {
+  if (!filterIds(filter).length) return groups;
   const result: Record<string, SubjectLinked[]> = {};
-  for (const [key, items] of Object.entries(groups)) result[key] = filterBySubject(items, subjectId);
+  for (const [key, items] of Object.entries(groups)) result[key] = filterBySubject(items, filter);
   return result as unknown as T;
 };
 
+/** Id del filtro salvato, senza ripetizioni (qualunque testo: si controlla dopo con le materie). */
+export const parseSubjectFilter = (stored: unknown): string[] =>
+  typeof stored === "string" && stored ? [...new Set(stored.split(",").map((id) => id.trim()).filter(Boolean))] : [];
+
+/** Valore da salvare: null = tutte le materie. */
+export const subjectFilterValue = (ids: readonly string[]): string | null => (ids.length ? [...new Set(ids)].join(",") : null);
+
+/** Un tocco sulla pillola di una materia: la aggiunge o la toglie dalle scelte. */
+export const toggleSubjectFilter = (ids: readonly string[], id: string): string[] => (ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
+
 /**
- * Filtro salvato ("calendar.subject") ancora valido: una materia che esiste e non è archiviata.
- * Altrimenti nessun filtro (null).
+ * Filtro salvato ancora valido: solo le materie che esistono e non sono archiviate, nell'ordine
+ * scelto. Nessuna = tutte le materie ([]).
  */
-export const resolveSubjectFilter = (stored: unknown, subjects: readonly SubjectState[]): string | null => {
-  if (typeof stored !== "string" || !stored) return null;
-  const subject = subjects.find((entry) => entry.id === stored);
-  return subject && !isArchivedSubject(subject) ? subject.id : null;
-};
+export const resolveSubjectFilters = (stored: unknown, subjects: readonly SubjectState[]): string[] =>
+  parseSubjectFilter(stored).filter((id) => {
+    const subject = subjects.find((entry) => entry.id === id);
+    return Boolean(subject && !isArchivedSubject(subject));
+  });
 
 /* ------------------------------------------------------------------ */
 /* Riepilogo "Per materia"                                              */

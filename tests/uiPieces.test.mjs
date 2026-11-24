@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const { placeFloating, menuIndexForKey, FLOATING_MARGIN, FLOATING_GAP } = await import("../src/lib/uiPieces.ts");
-const { quickAddDefaults, quickAddTaskDates } = await import("../src/lib/quickAdd.ts");
 const { UI_TEXT } = await import("../src/lib/labels.ts");
 const { OFFICIAL_EXAMS_ADD_LABEL } = await import("../src/lib/labels/exams.ts");
 
@@ -56,29 +55,38 @@ test("menuIndexForKey: frecce in giro continuo, Home/End, altri tasti ignorati",
   assert.equal(menuIndexForKey("ArrowDown", 0, 0), null);
 });
 
-test("aggiunta rapida: l'attività parte senza scadenza, eventi e studio alla prossima mezz'ora", () => {
-  const defaults = quickAddDefaults(new Date(2026, 10, 11, 10, 10));
-  assert.equal(defaults.taskDue, "");
-  assert.equal(defaults.start, "2026-11-11T10:30");
-});
-
-test("aggiunta rapida: date dell'attività dal campo", () => {
-  const now = new Date("2026-11-11T09:00:00.000Z");
-  // Campo vuoto: nessuna scadenza.
-  assert.deepEqual(quickAddTaskDates("", "normal", now), { dueDate: undefined, completedAt: undefined });
-  assert.deepEqual(quickAddTaskDates("  ", "timer", now), { dueDate: undefined, completedAt: undefined });
-  // Già fatta senza data: fatta adesso, sempre senza scadenza.
-  assert.deepEqual(quickAddTaskDates("", "completed", now), { dueDate: undefined, completedAt: now.toISOString() });
-  // Data scelta: diventa la scadenza (e, se già fatta, anche il momento in cui l'hai fatta).
-  const picked = new Date("2026-11-12T09:00").toISOString();
-  assert.deepEqual(quickAddTaskDates("2026-11-12T09:00", "normal", now), { dueDate: picked, completedAt: undefined });
-  assert.deepEqual(quickAddTaskDates("2026-11-12T09:00", "completed", now), { dueDate: picked, completedAt: picked });
-  // Data non valida: errore, non un'attività senza scadenza.
-  assert.equal(quickAddTaskDates("non è una data", "normal", now), null);
-});
-
 test("testi comuni: nome accessibile dell'aiuto e nome unico degli appelli ufficiali", () => {
   assert.equal(UI_TEXT.helpAria("Password dell'app"), "Aiuto: Password dell'app");
   assert.equal(UI_TEXT.moreActions, "Altre azioni");
   assert.equal(OFFICIAL_EXAMS_ADD_LABEL, "Aggiungi appelli ufficiali");
+});
+
+const { listboxIndexForKey, typeaheadIndex } = await import("../src/lib/uiPieces.ts");
+
+test("tendina: frecce senza giro, voci non disponibili saltate, Home/End, Pagina su/giù", () => {
+  const disabled = [true, false, false, true, false];
+  assert.equal(listboxIndexForKey("ArrowDown", -1, disabled), 1, "si parte dalla prima disponibile");
+  assert.equal(listboxIndexForKey("ArrowDown", 2, disabled), 4, "salta la voce non disponibile");
+  assert.equal(listboxIndexForKey("ArrowDown", 4, disabled), 4, "in fondo resta lì");
+  assert.equal(listboxIndexForKey("ArrowUp", 1, disabled), 1, "in cima resta lì");
+  assert.equal(listboxIndexForKey("ArrowUp", -1, disabled), 4);
+  assert.equal(listboxIndexForKey("Home", 4, disabled), 1);
+  assert.equal(listboxIndexForKey("End", 1, disabled), 4);
+  assert.equal(listboxIndexForKey("PageDown", 1, disabled, 2), 4);
+  assert.equal(listboxIndexForKey("PageUp", 4, disabled, 8), 1);
+  assert.equal(listboxIndexForKey("a", 1, disabled), null);
+  assert.equal(listboxIndexForKey("ArrowDown", -1, [true, true]), null, "nessuna voce disponibile");
+});
+
+test("tendina: lettere per saltare alla voce, accenti e maiuscole non contano", () => {
+  const labels = ["Nessuna materia", "Anatomia", "Analisi", "Fisiologia", "Àrte"];
+  const none = labels.map(() => false);
+  assert.equal(typeaheadIndex(labels, none, 0, "a"), 1);
+  assert.equal(typeaheadIndex(labels, none, 1, "a"), 2, "la stessa lettera passa alla voce dopo");
+  assert.equal(typeaheadIndex(labels, none, 2, "aa"), 4, "anche ripetuta; «À» vale «a»");
+  assert.equal(typeaheadIndex(labels, none, 1, "anal"), 2, "più lettere: la prima che comincia così");
+  assert.equal(typeaheadIndex(labels, none, 1, "ana"), 1, "la voce attiva resta se va ancora bene");
+  assert.equal(typeaheadIndex(labels, [false, true, false, false, false], -1, "a"), 2, "salta le non disponibili");
+  assert.equal(typeaheadIndex(labels, none, 0, "z"), null);
+  assert.equal(typeaheadIndex(labels, none, 0, " "), null);
 });

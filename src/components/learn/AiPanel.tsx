@@ -15,6 +15,7 @@ import { Button, EmptyState, Field, Panel, Pill, inputClass } from "../ui";
 import { AssistantHandoff } from "./AssistantHandoff";
 import { Blocks } from "./Blocks";
 import { errorText, type LearnData } from "./useLearnData";
+import { SubjectSelect } from "../SubjectSelect";
 
 const KIND_LABEL: Record<AiRequest["kind"], string> = {
   explain_card: "Spiegazione di una flashcard",
@@ -216,16 +217,7 @@ export function AiPanel({ data, targetTitle }: { data: LearnData; targetTitle: (
             </Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label={LEARN_TEXT.deckSubject}>
-                <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
-                  <option value="">Tutte</option>
-                  {data.subjects
-                    .filter((subject) => !subject.archived)
-                    .map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                </select>
+                <SubjectSelect value={subjectId} onChange={setSubjectId} subjects={data.subjects.filter((subject) => !subject.archived)} none="Tutte" />
               </Field>
               <Field label={LEARN_TEXT.period}>
                 <select className={inputClass} value={days} onChange={(event) => setDays(Number(event.target.value))}>

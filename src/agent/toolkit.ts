@@ -29,7 +29,9 @@ export const page = <T>(items: T[], args: Args) => {
   return { total: items.length, count: slice.length, offset, limit, has_more: hasMore, ...(hasMore ? { next_offset: offset + slice.length } : {}), items: slice };
 };
 
-export const fail = (code: Extract<AgentCallResult, { ok: false }>["code"], error: string): AgentCallResult => ({ ok: false, code, error });
+/** Errore per l'agente; `data` porta i dettagli che servono a correggere la chiamata (es. la materia già presente). */
+export const fail = (code: Extract<AgentCallResult, { ok: false }>["code"], error: string, data?: Record<string, unknown>): AgentCallResult =>
+  data ? { ok: false, code, error, data } : { ok: false, code, error };
 
 export const ok = (data: Record<string, unknown>): AgentCallResult => {
   const warning = useStudyStore.getState().persistError;

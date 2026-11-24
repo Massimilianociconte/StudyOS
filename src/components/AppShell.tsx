@@ -6,11 +6,10 @@ import type { AppView } from "../types";
 import { selectPreferences, useStudyStore } from "../store/useStudyStore";
 // Già nel bundle iniziale (lo importa useStudyStore): solo lo stato, mai shareSync o supabase.
 import { useSharedStore } from "../store/useSharedStore";
-import { SHARE_NOTICE_TEXT, SHELL_TEXT } from "../lib/labels";
+import { QUICK_ADD_TEXT, SHARE_NOTICE_TEXT, SHELL_TEXT } from "../lib/labels";
 import { Icon } from "./Icon";
-import { Button, Drawer, IconButton } from "./ui";
+import { ActionsMenu, Button, Drawer, IconButton, type PageAction } from "./ui";
 import { NotificationsBell } from "./NotificationsBell";
-import type { QuickAddMode } from "./QuickAddModal";
 import { DeferredPart } from "./DeferredPart";
 import { lazyView } from "../lib/lazyView";
 import { usePendingSiteConsent } from "../hooks/useSiteConsentLinks";
@@ -20,7 +19,8 @@ import { TaskTimerReminder } from "./TaskTimerReminder";
 import { StudyTimerWatcher } from "./StudyTimerWatcher";
 import { PeopleNotice } from "./PeopleNotice";
 import { requestSettingsSection } from "../lib/settingsJump";
-import { QUICK_ADD_EVENT } from "../lib/quickAdd";
+import { QUICK_ADD_EVENT, type QuickAddRequest } from "../lib/quickAdd";
+import { goToView } from "../hooks/useLinkedUiState";
 import { OPEN_NOTIFICATIONS_EVENT } from "../lib/openLink";
 import { PushPrompt } from "./PushPrompt";
 
@@ -65,10 +65,13 @@ const settingsItem: NavItem = { view: "settings", label: "Impostazioni", short: 
 
 const MOBILE_PRIMARY: AppView[] = ["dashboard", "calendar", "tasks", "study"];
 // Pannelli e modali che non servono al primo disegno: arrivano in differita (e si scaldano a riposo).
-const loadQuickAdd = () => import("./QuickAddModal");
+// «Aggiungi» apre gli stessi moduli delle sezioni: «Nuova attività» e «Nuova materia».
+const loadTaskModal = () => import("./TaskModal");
+const loadSubjectForm = () => import("./SubjectFormModal");
 const loadNotificationsPanel = () => import("./NotificationsPanel");
 const loadAgentDock = () => import("./AgentDesk");
-const QuickAddModal = lazyView(loadQuickAdd, "QuickAddModal");
+const TaskModal = lazyView(loadTaskModal, "TaskModal");
+const SubjectFormModal = lazyView(loadSubjectForm, "SubjectFormModal");
 const NotificationsPanel = lazyView(loadNotificationsPanel, "NotificationsPanel");
 const AgentDock = lazyView(loadAgentDock, "AgentDock");
 // Conferma del connettore remoto dal sito (#collega=…): solo quando c'è una richiesta in attesa.
@@ -79,17 +82,27 @@ const mobileItems = navGroups[0].items.filter((item) => MOBILE_PRIMARY.includes(
 /** Per quanto resta in vista la conferma dell'aggiunta rapida. */
 const QUICK_ADD_DONE_MS = 5000;
 
+/**
+ * «Aggiungi» porta ai moduli di ogni sezione, senza moduli suoi: attività e materia si aprono qui
+ * sopra la pagina; evento e materiale nella loro sezione (Calendario con «Nuovo evento» aperto,
+ * Materiali con il campo del link pronto), dove hanno tutte le opzioni.
+ */
+const goToAdd = (mode: "event" | "material") =>
+  mode === "event"
+    ? goToView("calendar", [
+        ["calendar.cursor", new Date().toISOString(), "tab"],
+        ["calendar.create", "event", "tab"]
+      ])
+    : goToView("materials", [["materials.add", "link", "tab"]]);
+
 export function AppShell({ children }: PropsWithChildren) {
   const siteConsentId = usePendingSiteConsent();
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
-  // Il modale si monta alla prima apertura e poi resta montato (come prima).
-  const [quickAddMounted, setQuickAddMounted] = useState(false);
-  useEffect(() => {
-    if (quickAddOpen) setQuickAddMounted(true);
-  }, [quickAddOpen]);
+  // Modulo aperto da «Aggiungi» (o dalla Home): quello di Attività o di Materie.
+  const [adding, setAdding] = useState<"task" | "subject" | null>(null);
   useEffect(() => {
     const warm = () => {
-      void loadQuickAdd().catch(() => undefined);
+      void loadTaskModal().catch(() => undefined);
+      void loadSubjectForm().catch(() => undefined);
       void loadNotificationsPanel().catch(() => undefined);
     };
     if (typeof window.requestIdleCallback === "function") {
@@ -99,7 +112,6 @@ export function AppShell({ children }: PropsWithChildren) {
     const id = window.setTimeout(warm, 1500);
     return () => window.clearTimeout(id);
   }, []);
-  const [quickAddMode, setQuickAddMode] = useState<QuickAddMode>("task");
   const [moreOpen, setMoreOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   // Conferma dell'aggiunta rapida (cosa si è creato e dove). Oggetto, non testo: la stessa frase detta
@@ -111,12 +123,25 @@ export function AppShell({ children }: PropsWithChildren) {
     return () => window.clearTimeout(timer);
   }, [quickAddDone]);
 
-  // Le viste (es. i primi passi della Home) aprono l'aggiunta rapida già sul tipo giusto.
+  const startAdd = (mode: QuickAddRequest) => {
+    if (mode === "task" || mode === "subject") setAdding(mode);
+    // Lo «studio pianificato» è un evento di tipo Studio: lo stesso modulo, che parte già da Studio.
+    else goToAdd(mode === "material" ? "material" : "event");
+  };
+  const addItems: PageAction[] = [
+    { label: QUICK_ADD_TEXT.task, hint: QUICK_ADD_TEXT.taskHint, icon: "Check", onClick: () => startAdd("task") },
+    { label: QUICK_ADD_TEXT.event, hint: QUICK_ADD_TEXT.eventHint, icon: "CalendarDays", onClick: () => startAdd("event") },
+    { label: QUICK_ADD_TEXT.subject, hint: QUICK_ADD_TEXT.subjectHint, icon: "BookOpen", onClick: () => startAdd("subject") },
+    { label: QUICK_ADD_TEXT.material, hint: QUICK_ADD_TEXT.materialHint, icon: "Paperclip", onClick: () => startAdd("material") }
+  ];
+
+  // Le viste (es. i primi passi della Home) aprono direttamente il modulo giusto.
   useEffect(() => {
     const onRequest = (event: Event) => {
-      const mode = (event as CustomEvent<QuickAddMode | undefined>).detail;
-      setQuickAddMode(mode ?? "task");
-      setQuickAddOpen(true);
+      const mode = (event as CustomEvent<QuickAddRequest | undefined>).detail;
+      const run = mode ?? "task";
+      if (run === "task" || run === "subject") setAdding(run);
+      else goToAdd(run === "material" ? "material" : "event");
     };
     window.addEventListener(QUICK_ADD_EVENT, onRequest);
     return () => window.removeEventListener(QUICK_ADD_EVENT, onRequest);
@@ -129,10 +154,6 @@ export function AppShell({ children }: PropsWithChildren) {
     return () => window.removeEventListener(OPEN_NOTIFICATIONS_EVENT, onOpen);
   }, []);
 
-  const openQuickAdd = () => {
-    setQuickAddMode("task");
-    setQuickAddOpen(true);
-  };
   const { activeView, setActiveView, settings, updateAppearance, lockVault, vaultBusy, persistError, retryPersist } = useStudyStore(
     useShallow((state) => ({
       activeView: state.activeView,
@@ -335,15 +356,23 @@ export function AppShell({ children }: PropsWithChildren) {
                   <Icon name="User" className="h-4.5 w-4.5" />
                 )}
               </button>
-              <Button
-                icon="Plus"
-                variant="primary"
-                className="hidden shrink-0 sm:inline-flex"
-                title="Aggiungi un'attività, un evento, una materia o un materiale"
-                onClick={openQuickAdd}
-              >
-                Aggiungi
-              </Button>
+              <span className="hidden shrink-0 sm:inline-flex">
+                <ActionsMenu
+                  items={addItems}
+                  label={QUICK_ADD_TEXT.menu}
+                  trigger={{
+                    className:
+                      "motion-safe inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[var(--accent)] px-4 text-sm font-extrabold text-[#10131d] shadow-lift hover:scale-[1.02]",
+                    content: (
+                      <>
+                        <Icon name="Plus" className="h-4 w-4 shrink-0" />
+                        <span>{QUICK_ADD_TEXT.button}</span>
+                      </>
+                    ),
+                    title: QUICK_ADD_TEXT.buttonTitle
+                  }}
+                />
+              </span>
             </div>
           </header>
 
@@ -398,15 +427,17 @@ export function AppShell({ children }: PropsWithChildren) {
         </section>
       </div>
 
-      <button
-        type="button"
-        onClick={openQuickAdd}
-        aria-label="Aggiungi un'attività, un evento, una materia o un materiale"
-        style={{ bottom: "calc(6.5rem + env(safe-area-inset-bottom))" }}
-        className="fixed right-5 z-40 grid h-16 w-16 place-items-center rounded-super bg-[var(--accent)] text-[#10131d] shadow-soft sm:hidden"
-      >
-        <Icon name="Plus" className="h-7 w-7" />
-      </button>
+      <div style={{ bottom: "calc(6.5rem + env(safe-area-inset-bottom))" }} className="fixed right-5 z-40 sm:hidden">
+        <ActionsMenu
+          items={addItems}
+          label={QUICK_ADD_TEXT.menu}
+          trigger={{
+            className: "grid h-16 w-16 place-items-center rounded-super bg-[var(--accent)] text-[#10131d] shadow-soft",
+            content: <Icon name="Plus" className="h-7 w-7" />,
+            ariaLabel: QUICK_ADD_TEXT.buttonTitle
+          }}
+        />
+      </div>
 
       <nav
         style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
@@ -514,13 +545,24 @@ export function AppShell({ children }: PropsWithChildren) {
         </DeferredPart>
       ) : null}
       <StudyTimerWatcher />
-      {quickAddMounted || quickAddOpen ? (
+      {adding === "task" ? (
         <DeferredPart>
-          <QuickAddModal
-            open={quickAddOpen}
-            initialMode={quickAddMode}
-            onClose={() => setQuickAddOpen(false)}
-            onSaved={(text) => setQuickAddDone({ text })}
+          <TaskModal
+            onClose={() => setAdding(null)}
+            onCreate={async (draft) => {
+              await useStudyStore.getState().addTask(draft);
+              const kind = draft.status === "doing" ? "taskTimer" : draft.status === "done" ? "taskDone" : "task";
+              setQuickAddDone({ text: QUICK_ADD_TEXT.saved(kind, draft.title) });
+            }}
+          />
+        </DeferredPart>
+      ) : null}
+      {adding === "subject" ? (
+        <DeferredPart>
+          <SubjectFormModal
+            onClose={() => setAdding(null)}
+            onCreated={(subject) => setQuickAddDone({ text: QUICK_ADD_TEXT.saved("subject", subject.name) })}
+            onOpenExisting={(id) => goToView("subjects", [["subjects.open", id, "tab"]])}
           />
         </DeferredPart>
       ) : null}

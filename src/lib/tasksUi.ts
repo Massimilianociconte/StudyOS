@@ -93,3 +93,24 @@ export const draftChanged = <T>(initial: T, draft: T) => JSON.stringify(initial)
  */
 export const editorCloseRequest = (changed: boolean, asking: boolean): "close" | "ask" | "keep" =>
   !changed ? "close" : asking ? "keep" : "ask";
+
+/** Come nasce un'attività: da fare, iniziata adesso (parte il cronometro) o già fatta. */
+export type TaskStart = "todo" | "timer" | "done";
+
+/**
+ * Stato di un'attività nuova (modulo «Nuova attività», da Attività e da «Aggiungi»). Inizio ora: in
+ * corso, con il cronometro che parte adesso. Già fatta: fatta il giorno scelto (o adesso), con il
+ * tempo impiegato se c'è. Da fare: nessun campo in più (lo stato predefinito dello store).
+ */
+export function taskStartFields(
+  start: TaskStart,
+  { due, actualMinutes, now = new Date() }: { due?: string; actualMinutes?: number; now?: Date } = {}
+): Partial<Task> {
+  const at = now.toISOString();
+  if (start === "timer") return { status: "doing", actualMinutes: 0, timerAccumulatedSeconds: 0, timerStartedAt: at, timerLastReminderAt: at };
+  if (start === "done") {
+    const spent = actualMinutes !== undefined ? { actualMinutes, timerAccumulatedSeconds: Math.round(actualMinutes * 60) } : {};
+    return { status: "done", completedAt: due ?? at, ...spent };
+  }
+  return {};
+}

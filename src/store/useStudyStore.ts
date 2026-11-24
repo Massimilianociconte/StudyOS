@@ -124,6 +124,9 @@ import { applyPlanPatch, newExamPlan, normalizeExamPlan, unlinkPlans, type ExamP
 import { retag, type TaggableType } from "../lib/itemTags";
 import type { GroupExamSession } from "../lib/groupExams";
 import { useSharedStore } from "./useSharedStore";
+import { SubjectDuplicateError, exactDuplicate } from "../lib/subjectIdentity";
+// L'unione si carica solo quando serve (fuori dal bundle iniziale): qui basta il tipo.
+import type { MovedCounts } from "../lib/subjectMerge";
 import { lookFromAccount, validLook, type AppearancePatch } from "../lib/accountLook";
 
 let sessionPassphrase: string | undefined;
@@ -222,9 +225,20 @@ interface StudyState {
    * che continuano dopo; `includeSplits` serve solo con "all" (tutta la famiglia, madre compresa).
    */
   deleteOccurrence: (seriesId: string, originalDate: string, scope: OccurrenceScope, options?: { includeSplits?: boolean }) => Promise<void>;
-  /** Crea una materia e ne restituisce l'id. */
+  /**
+   * Crea una materia e ne restituisce l'id. Un doppione certo (stesso nome a meno di maiuscole, accenti
+   * e spazi, o lo stesso insegnamento del catalogo) non si crea: lancia `SubjectDuplicateError` con la
+   * materia già presente (src/lib/subjectIdentity.ts). Vale per l'app, gli agenti e il connettore remoto.
+   */
   addSubject: (subject: Partial<Subject> & Pick<Subject, "name">) => Promise<string>;
+  /** Come `addSubject`: rinominare una materia come un'altra (o collegarla a un insegnamento già usato) lancia `SubjectDuplicateError`. */
   updateSubject: (id: string, patch: Partial<Subject>) => Promise<void>;
+  /**
+   * Unisce `dropId` in `keepId` (doppioni): ogni riferimento passa alla materia che resta, nessun dato
+   * si perde, poi `dropId` sparisce (src/lib/subjectMerge.ts). `name`: uno dei due nomi. Lancia un
+   * errore con il motivo se l'unione non si può fare (insegnamenti diversi, materia condivisa).
+   */
+  mergeSubjects: (keepId: string, dropId: string, options?: { name?: string }) => Promise<{ subjectId: string; moved: MovedCounts }>;
   /**
    * Elimina per sempre una materia con i suoi esami (voti compresi) e argomenti; attività, eventi,
    * sessioni e widget restano senza materia, materiali/note/promemoria collegati si staccano.
@@ -379,7 +393,7 @@ type StoreState = StudyState;
 export type PreferencesPatch = Partial<
   Pick<
     Preferences,
-    "displayName" | "avatarDataUrl" | "weeklyTargetMinutes" | "degreeCfu" | "showBarb" | "degreeProgram" | "sbThesisGrade" | "barbThesisPoints" | "abroad" | "timer" | "eventTypeColors" | "pushReminders"
+    "displayName" | "avatarDataUrl" | "weeklyTargetMinutes" | "degreeCfu" | "showBarb" | "degreeProgram" | "sbThesisGrade" | "barbThesisPoints" | "abroad" | "timer" | "eventTypeColors" | "pushReminders" | "distinctSubjectPairs"
   >
 >;
 
@@ -1440,6 +1454,8 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     addSubject: async (subject) => {
+      const twin = exactDuplicate({ name: subject.name, teacher: subject.teacher, universityCourseId: subject.universityCourseId }, get().subjects);
+      if (twin) throw new SubjectDuplicateError(twin.subject, twin.reason);
       const created: Subject = {
         id: createId("subject"),
         createdAt: nowIso(),
@@ -1467,12 +1483,34 @@ export const useStudyStore = create<StudyState>((set, get) => {
     },
 
     updateSubject: async (id, patch) => {
+      const current = get().subjects.find((subject) => subject.id === id);
+      // Solo se cambiano nome o insegnamento: i doppioni già salvati si possono ancora modificare (e unire).
+      if (current && ((patch.name !== undefined && patch.name !== current.name) || (patch.universityCourseId && patch.universityCourseId !== current.universityCourseId))) {
+        const candidate = { name: patch.name ?? current.name, universityCourseId: patch.universityCourseId ?? current.universityCourseId };
+        const twin = exactDuplicate(candidate, get().subjects, id);
+        if (twin) throw new SubjectDuplicateError(twin.subject, twin.reason);
+      }
       set((state) => ({
         subjects: state.subjects.map((subject) =>
           subject.id === id ? { ...subject, ...patch, updatedAt: nowIso() } : subject
         )
       }));
       await commit();
+    },
+
+    mergeSubjects: async (keepId, dropId, options = {}) => {
+      const { planSubjectMerge, repointSubject } = await import("../lib/subjectMerge");
+      const state = get();
+      // Una materia data in condivisione decide cosa vedono gli altri: toglierla cambierebbe la condivisione.
+      const sharedSubjectIds = new Set(useSharedStore.getState().given.flatMap((grant) => grant.subjectIds));
+      const plan = planSubjectMerge(state, keepId, dropId, { now: nowIso(), name: options.name, sharedSubjectIds });
+      set(plan.next);
+      // Il timer in corso sulla materia tolta continua su quella che resta.
+      const timer = get().timer;
+      const movedTimer = repointSubject(timer, dropId, keepId);
+      if (movedTimer !== timer) setTimerState(set, movedTimer);
+      await commit();
+      return { subjectId: keepId, moved: plan.moved };
     },
 
     deleteSubject: async (id) => {

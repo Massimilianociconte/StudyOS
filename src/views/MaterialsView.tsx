@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 import type { Attachment, Note } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects, shortDate, subjectColor, subjectName } from "../lib/selectors";
@@ -20,6 +20,7 @@ import { FILE_STATES, MaterialThumb, fileStateText, useMaterialFiles, useOpenMat
 import { FILE_ACCEPT } from "../lib/attachments";
 import { oneOf } from "../lib/uiState";
 import { MATERIAL_KIND_FILTERS, materialMatches, type MaterialKindFilter } from "../lib/materialFilters";
+import { SubjectSelect } from "../components/SubjectSelect";
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return "";
@@ -60,6 +61,18 @@ export function MaterialsView() {
   const [query, setQuery] = useLinkedUiState("materials.query", "", { scope: "tab", validate: isString });
   const [kind, setKind] = useLinkedUiState<KindFilter>("materials.kind", "all", { scope: "device", validate: isKindFilter });
   const [savedSubjectFilter, setSubjectFilter] = useLinkedUiState("materials.subject", "", { scope: "device", validate: isString });
+  // «Aggiungi → Materiale» porta qui: il campo del link prende il focus (accanto c'è «Carica un file»).
+  // Una volta sola: la chiave si svuota subito.
+  const [addRequest, setAddRequest] = useLinkedUiState<"link" | null>("materials.add", null, { scope: "tab", validate: (value) => value === null || value === "link" });
+  const linkInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (addRequest !== "link") return;
+    setAddRequest(null);
+    const input = linkInputRef.current;
+    if (!input) return;
+    input.scrollIntoView({ block: "center" });
+    input.focus({ preventScroll: true });
+  }, [addRequest, setAddRequest]);
   const [uploadError, setUploadError] = useState("");
   const [editorError, setEditorError] = useState("");
   const [editingAttachment, setEditingAttachment] = useState<Attachment | null>(null);
@@ -262,6 +275,7 @@ export function MaterialsView() {
       />
 
       <AddBar
+        linkInputRef={linkInputRef}
         onFile={uploadFile}
         onLink={async (rawUrl, name) => {
           const safe = normalizeExternalUrl(rawUrl);
@@ -520,14 +534,13 @@ export function MaterialsView() {
             {!editingAttachment.linkedEntityType || editingAttachment.linkedEntityType === "subject" ? (
               <HelpField label="Materia" help={MATERIALS_HELP.subject}>
                 {(id) => (
-                  <select id={id} className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-                    <option value="">Nessuna materia</option>
-                    {selectableSubjects(subjects, draft.subjectId).map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                  </select>
+                  <SubjectSelect
+                    id={id}
+                    value={draft.subjectId}
+                    onChange={(subjectId) => setDraft((value) => ({ ...value, subjectId }))}
+                    subjects={selectableSubjects(subjects, draft.subjectId)}
+                    none="Nessuna materia"
+                  />
                 )}
               </HelpField>
             ) : (
@@ -558,7 +571,15 @@ export function MaterialsView() {
   );
 }
 
-function AddBar({ onFile, onLink }: { onFile: (file: File) => Promise<void>; onLink: (url: string, name: string) => Promise<boolean> }) {
+function AddBar({
+  onFile,
+  onLink,
+  linkInputRef
+}: {
+  onFile: (file: File) => Promise<void>;
+  onLink: (url: string, name: string) => Promise<boolean>;
+  linkInputRef: RefObject<HTMLInputElement | null>;
+}) {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const submit = async (event: FormEvent) => {
@@ -590,7 +611,7 @@ function AddBar({ onFile, onLink }: { onFile: (file: File) => Promise<void>; onL
         <label className="relative block min-w-0 flex-[2]">
           <span className="sr-only">Indirizzo del link (https://…)</span>
           <Icon name="Link" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--faint)]" />
-          <input className={`${inputClass} pl-10`} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Indirizzo del link (https://…)" inputMode="url" />
+          <input ref={linkInputRef} className={`${inputClass} pl-10`} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Indirizzo del link (https://…)" inputMode="url" />
         </label>
         <input className={`${inputClass} min-w-0 flex-1`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome (facoltativo)" aria-label="Nome del link (facoltativo)" />
         <Button type="submit" variant="soft" icon="Plus" disabled={!url.trim()} className="shrink-0">

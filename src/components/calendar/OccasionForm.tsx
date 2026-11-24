@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { CreateTypeSwitch, type CreateType } from "./CreateTypeSwitch";
 import { Button, Drawer, Field, inputClass } from "../ui";
 import { Icon } from "../Icon";
 import { ColorPreview } from "./ColorPalette";
@@ -26,6 +27,7 @@ export function SimpleFormDrawer({
   onSave,
   onDelete,
   onFullForm,
+  top,
   children
 }: {
   title: string;
@@ -40,6 +42,8 @@ export function SimpleFormDrawer({
   onDelete?: () => Promise<string | void>;
   /** "Modulo completo": stessi dati nel modulo evento. */
   onFullForm?: () => void;
+  /** In cima, prima dei campi: la scelta del tipo («Cosa vuoi aggiungere») quando si crea. */
+  top?: ReactNode;
   children: ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
@@ -121,6 +125,7 @@ export function SimpleFormDrawer({
   return (
     <Drawer open onClose={requestClose} title={title} footer={footer}>
       <div className="grid grid-cols-1 gap-5">
+        {top}
         {children}
         {onFullForm ? (
           <button
@@ -163,7 +168,8 @@ export function OccasionForm({
   onClose,
   onSave,
   onDelete,
-  onFullForm
+  onFullForm,
+  onSwitchType
 }: {
   initial: OccasionDraft;
   editing: boolean;
@@ -177,6 +183,8 @@ export function OccasionForm({
   onSave: (draft: OccasionDraft) => Promise<string | void>;
   onDelete?: () => Promise<string | void>;
   onFullForm?: (draft: OccasionDraft) => void;
+  /** Creazione dal calendario: «Cosa vuoi aggiungere» in cima, per passare a un altro tipo con il nome già scritto. */
+  onSwitchType?: (type: CreateType, title: string) => void;
 }) {
   const [draft, setDraft] = useState(initial);
   const [yearTouched, setYearTouched] = useState(false);
@@ -193,6 +201,7 @@ export function OccasionForm({
   return (
     <SimpleFormDrawer
       title={editing ? OCCASION_FORM_TEXT.editTitle : OCCASION_FORM_TEXT.newTitle}
+      top={!editing && onSwitchType ? <CreateTypeSwitch value="occasion" onChange={(type) => type !== "occasion" && onSwitchType(type, draft.name.trim())} /> : undefined}
       dirty={dirty}
       changeKey={key}
       saveLabel={OCCASION_FORM_TEXT.save}

@@ -15,6 +15,7 @@ import { LinkedNotes } from "./NoteDrawer";
 import { addStep, draftChanged, editorCloseRequest, removeStep, renameStep, stepsDone, stepsToSave, toggleStep, type TaskStep } from "../lib/tasksUi";
 import { createId } from "../lib/id";
 import { TASK_WEIGHTS, stepsStatus, taskWeight, type TaskWeight } from "../lib/subjectProgress";
+import { SubjectSelect } from "./SubjectSelect";
 
 const toDatetimeLocal = (date?: string) => {
   if (!date) return "";
@@ -258,14 +259,12 @@ export function TaskEditorModal({
               defaultTime="18:00"
             />
             <Field label="Materia (facoltativa)">
-              <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-                <option value="">Nessuna materia</option>
-                {selectableSubjects(subjects, draft.subjectId).map((subject) => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </option>
-                ))}
-              </select>
+              <SubjectSelect
+                value={draft.subjectId}
+                onChange={(subjectId) => setDraft((value) => ({ ...value, subjectId }))}
+                subjects={selectableSubjects(subjects, draft.subjectId)}
+                none="Nessuna materia"
+              />
             </Field>
             <div className="min-w-0">
               <HelpField label="Stato" help={TASKS_HELP.status}>

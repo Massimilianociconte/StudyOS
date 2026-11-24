@@ -148,11 +148,21 @@ test("catalogo: nomi unici, schemi chiusi, eliminazioni con confirm", () => {
               ? ["confirm", "ids"]
               : tool.name === "studyos_delete_quiz_items"
                 ? ["confirm", "questionIds", "quizId"]
-                : ["confirm", "id"];
+                // Un'unione indica le due materie e quale nome resta (uno dei due, niente di nuovo).
+                : tool.name === "studyos_merge_subjects"
+                  ? ["confirm", "dropId", "keepId", "name"]
+                  : ["confirm", "id"];
       assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), what, tool.name);
       assert.equal(tool.inputSchema.required.includes("confirm"), true, tool.name);
       assert.deepEqual(tool.inputSchema.properties.confirm.enum, [true], tool.name);
-      const target = tool.name === "studyos_delete_flashcards" ? { ids: ["card_1"] } : tool.name === "studyos_delete_quiz_items" ? { quizId: "quiz_1" } : { id: "task_1" };
+      const target =
+        tool.name === "studyos_delete_flashcards"
+          ? { ids: ["card_1"] }
+          : tool.name === "studyos_delete_quiz_items"
+            ? { quizId: "quiz_1" }
+            : tool.name === "studyos_merge_subjects"
+              ? { keepId: "subject_1", dropId: "subject_2" }
+              : { id: "task_1" };
       assert.equal(parseToolArgs(tool.inputSchema, { ...target, confirm: false }).ok, false);
       assert.equal(parseToolArgs(tool.inputSchema, { ...target, confirm: true }).ok, true);
     }

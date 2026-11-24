@@ -10,6 +10,7 @@ import { LEARN_TEXT } from "../../lib/labels/learn";
 import type { DeckKind, StudyDeck, Subject } from "../../types";
 import { Button, Drawer, Field, inputClass } from "../ui";
 import { errorText } from "./useLearnData";
+import { SubjectSelect } from "../SubjectSelect";
 
 interface Draft {
   title: string;
@@ -151,16 +152,12 @@ export function DeckEditor({
         )}
         {draft.parentId || shared ? null : (
           <Field label={LEARN_TEXT.deckSubject}>
-            <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-              <option value="">{LEARN_TEXT.noSubject}</option>
-              {subjects
-                .filter((subject) => !subject.archived)
-                .map((subject) => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </option>
-                ))}
-            </select>
+            <SubjectSelect
+              value={draft.subjectId}
+              onChange={(subjectId) => setDraft((value) => ({ ...value, subjectId }))}
+              subjects={subjects.filter((subject) => !subject.archived)}
+              none={LEARN_TEXT.noSubject}
+            />
           </Field>
         )}
         <Field label={LEARN_TEXT.deckKind}>

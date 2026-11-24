@@ -14,7 +14,10 @@
 import type { Exam, StudyTopic, Subject, Task } from "../types";
 
 type TaskLike = Pick<Task, "subjectId" | "status"> & { subtasks?: ReadonlyArray<Pick<Task["subtasks"][number], "done">>; progressWeight?: number };
-type ExamLike = Pick<Exam, "subjectId" | "status" | "date" | "preparation">;
+type ExamLike = Pick<Exam, "subjectId" | "status" | "date" | "preparation"> & { tags?: readonly string[] };
+
+/** Prefisso dell'etichetta «data da decidere» (src/lib/examOutcome.ts), qui senza importarlo. */
+const DATE_TO_DECIDE_TAG = "data-da-decidere:";
 type SubjectLike = Pick<Subject, "id" | "status" | "archived">;
 type TopicLike = Pick<StudyTopic, "subjectId" | "archived" | "nextReviewDate">;
 
@@ -77,22 +80,58 @@ export const activityProgress = (subjectId: string, tasks: readonly TaskLike[]):
   return { percent: value, counted: counted.length, done, partial, excluded };
 };
 
-/** Primo esame da sostenere della materia (per data), se c'è. */
-export const openExamOf = <E extends ExamLike>(subjectId: string, exams: readonly E[]): E | undefined =>
-  exams.filter((item) => item.subjectId === subjectId && item.status !== "done").sort((a, b) => a.date.localeCompare(b.date))[0];
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** Giorno civile locale (YYYY-MM-DD) di una data ISO; le date senza ora restano com'erano. */
+const civilDay = (iso: string) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const date = new Date(iso);
+  return Number.isFinite(date.getTime()) ? `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` : iso.slice(0, 10);
+};
+
+/** Esame non superato senza una data nuova («data da decidere»): resta da preparare anche se la data è passata. */
+const dateToDecide = (exam: ExamLike) => (exam.tags ?? []).includes(`${DATE_TO_DECIDE_TAG}${exam.date}`);
+
+/** Esami non sostenuti della materia: quelli ancora davanti (oggi compreso) e quelli già passati senza esito. */
+const undoneExams = <E extends ExamLike>(subjectId: string, exams: readonly E[], now: Date) => {
+  const day = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const open = exams.filter((item) => item.subjectId === subjectId && item.status !== "done").sort((a, b) => a.date.localeCompare(b.date));
+  const ahead = open.filter((item) => civilDay(item.date) >= day || dateToDecide(item));
+  const past = open.filter((item) => !ahead.includes(item));
+  return { ahead, past };
+};
+
+/**
+ * Primo esame da preparare della materia (per data): da oggi in avanti, o con la data da decidere. Un
+ * esame già passato senza esito non si prepara più: è «da registrare» (`pendingExamOf`).
+ */
+export const openExamOf = <E extends ExamLike>(subjectId: string, exams: readonly E[], now: Date = new Date()): E | undefined =>
+  undoneExams(subjectId, exams, now).ahead[0];
+
+/** Ultimo esame già passato e non ancora segnato sostenuto: l'esito è da registrare. */
+export const pendingExamOf = <E extends ExamLike>(subjectId: string, exams: readonly E[], now: Date = new Date()): E | undefined => {
+  const { past } = undoneExams(subjectId, exams, now);
+  return past[past.length - 1];
+};
 
 /**
  * Progresso della materia (la barra e la regola del 100%): la preparazione del primo esame da
- * sostenere, se c'è; altrimenti l'avanzamento delle attività. `null` senza esame né attività che contano.
+ * preparare, se c'è; con solo un esame passato senza esito nessun numero («pending»: la preparazione è
+ * finita, manca l'esito, e la materia non si completa da sola); altrimenti l'avanzamento delle
+ * attività. `null` senza esame né attività che contano.
  */
 export const subjectProgress = <E extends ExamLike>(
   subjectId: string,
   tasks: readonly TaskLike[],
-  exams: readonly E[]
-): { progress: number | null; source: "exam" | "tasks" | "none"; exam?: E; activity: ActivityProgress } => {
+  exams: readonly E[],
+  now: Date = new Date()
+): { progress: number | null; source: "exam" | "pending" | "tasks" | "none"; exam?: E; pendingExam?: E; activity: ActivityProgress } => {
   const activity = activityProgress(subjectId, tasks);
-  const exam = openExamOf(subjectId, exams);
+  const { ahead, past } = undoneExams(subjectId, exams, now);
+  const exam = ahead[0];
   if (exam) return { progress: percent(exam.preparation, 100), source: "exam", exam, activity };
+  const pendingExam = past[past.length - 1];
+  if (pendingExam) return { progress: null, source: "pending", pendingExam, activity };
   return activity.percent === null ? { progress: null, source: "none", activity } : { progress: activity.percent, source: "tasks", activity };
 };
 

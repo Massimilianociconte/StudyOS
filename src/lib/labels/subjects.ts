@@ -34,13 +34,11 @@ export const SUBJECTS_TEXT = {
   noSemester: "senza semestre",
   noSemesterFilter: "Senza semestre",
   allSemesters: "Tutte",
-  add: "Aggiungi materia",
-  nameField: "Nome della nuova materia",
-  namePlaceholder: "Nome della materia (Es. Biochimica)",
+  add: "Nuova materia",
   chooseFromCourse: "Scegli dal corso di laurea",
   emptyTitle: "Ancora nessuna materia",
-  emptyBodyCourse: "Scegli le materie dal piano del tuo corso di laurea, oppure scrivi il nome qui sopra. Es.: «Biochimica».",
-  emptyBody: "Scrivi il nome qui sopra e premi «Aggiungi materia»: qui vedrai CFU, esami e ore di studio. Es.: «Biochimica».",
+  emptyBodyCourse: "Scegli le materie dal piano del tuo corso di laurea, oppure premi «Nuova materia» qui sopra. Es.: «Biochimica».",
+  emptyBody: "Premi «Nuova materia» qui sopra e scrivi il nome: qui vedrai CFU, esami e ore di studio. Es.: «Biochimica».",
   noneInSemesterTitle: "Nessuna materia in questo periodo",
   noneInSemesterBody: "Scegli un altro semestre oppure torna a tutte le materie.",
   showAll: "Mostra tutte le materie",
@@ -118,4 +116,87 @@ export const SUBJECTS_HELP = {
     text: "Se la segui in un periodo diverso da quello del piano ufficiale, sceglilo qui.",
     example: "la recuperi nel secondo semestre."
   }
+} as const;
+
+/** Riquadro «Possibili doppioni» di Materie e unione di due materie. */
+export const SUBJECT_DUPLICATE_TEXT = {
+  title: (count: number) => (count === 1 ? "Una materia sembra doppia" : `${count} materie sembrano doppie`),
+  intro: "Attività, esami ed eventi divisi su due copie non contano insieme nei progressi. Unisci le copie, oppure di' che sono materie diverse.",
+  pair: (a: string, b: string) => `«${a}» e «${b}»`,
+  reason: {
+    name: "stesso nome",
+    course: "stesso insegnamento del corso",
+    teacher: "stesso docente e nome simile",
+    words: "stesso nome detto in modo diverso",
+    partial: "nome simile"
+  } as Record<string, string>,
+  merge: "Unisci…",
+  mergeAria: (a: string, b: string) => `Unisci ${a} e ${b}`,
+  distinct: "Sono diverse",
+  distinctAria: (a: string, b: string) => `${a} e ${b} sono materie diverse: non proporle più`,
+  nameLegend: "Nome da tenere",
+  catalogNote: (name: string) => `Resta «${name}», collegata al corso di laurea: CFU, docente e appelli ufficiali continuano a funzionare.`,
+  moves: (name: string, list: string) => (list ? `Passano a «${name}»: ${list}.` : `L'altra copia non ha niente di collegato.`),
+  fields: "I campi vuoti si completano con quelli dell'altra copia; le note si uniscono senza ripetersi.",
+  confirm: "Unisci le materie",
+  cancel: "Annulla",
+  merged: (name: string, list: string) => `Fatto: ora tutto è in «${name}»${list ? ` (${list})` : ""}.`,
+  more: (count: number) => `Altre ${count} coppie: le vedi dopo aver sistemato queste.`
+} as const;
+
+/** Nomi per «Passano a …»: le collezioni che la persona riconosce. Le altre (stato interno) non si elencano. */
+export const MOVED_LABELS: Record<string, [string, string]> = {
+  tasks: ["attività", "attività"],
+  exams: ["esame", "esami"],
+  events: ["evento", "eventi"],
+  sessions: ["sessione di studio", "sessioni di studio"],
+  topics: ["argomento", "argomenti"],
+  attachments: ["materiale", "materiali"],
+  notes: ["nota", "note"],
+  reminders: ["promemoria", "promemoria"],
+  examPlans: ["piano d'esame", "piani d'esame"],
+  goals: ["obiettivo", "obiettivi"],
+  decks: ["mazzo", "mazzi"],
+  flashcards: ["scheda", "schede"],
+  quizzes: ["quiz", "quiz"],
+  quizQuestions: ["domanda", "domande"],
+  aiAnalyses: ["analisi", "analisi"]
+};
+
+export const movedList = (moved: Partial<Record<string, number>>): string =>
+  Object.entries(MOVED_LABELS)
+    .filter(([key]) => (moved[key] ?? 0) > 0)
+    .map(([key, [one, many]]) => `${moved[key]} ${moved[key] === 1 ? one : many}`)
+    .join(", ");
+
+/** Modulo di una materia: «Nuova materia» e «Dati della materia» nel dettaglio. */
+export const SUBJECT_FORM_TEXT = {
+  eyebrow: "Nuova materia",
+  title: "Che materia segui?",
+  intro: "Bastano nome e CFU: il resto è facoltativo e puoi aggiungerlo anche dopo.",
+  name: "Nome",
+  namePlaceholder: "Es. Biochimica",
+  teacher: "Docente (facoltativo)",
+  icon: "Icona",
+  iconOption: (label: string) => `Icona ${label}`,
+  courseIcon: "Icona del corso di laurea",
+  color: "Colore",
+  customColor: "Colore personalizzato",
+  status: "Stato",
+  targetGrade: "Voto obiettivo (facoltativo)",
+  notes: "Note (facoltative)",
+  moreDetails: "Altri dettagli: icona, colore, stato, voto obiettivo, note",
+  officialNew: "Da definire",
+  create: "Crea materia",
+  createAnyway: "Crea comunque",
+  creating: "Creazione…",
+  cancel: "Annulla",
+  /** Avvisi sotto il nome mentre si scrive. */
+  exists: (name: string) => `Hai già «${name}»: usa quella invece di crearne un'altra.`,
+  similar: (names: string[]) =>
+    names.length === 1 ? `Forse è «${names[0]}», che hai già.` : `Forse è una di queste, che hai già: ${names.map((name) => `«${name}»`).join(", ")}.`,
+  similarHint: "Se è un'altra materia, crea pure.",
+  open: (name: string) => `Apri «${name}»`,
+  created: (name: string) => `Materia «${name}» creata.`,
+  saveError: "Non è stato possibile salvare la materia. Riprova tra qualche secondo."
 } as const;

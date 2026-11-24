@@ -7,6 +7,13 @@ import { ResultLedger } from "./ledger";
 import { parseToolArgs } from "./schema";
 import type { AgentActor, AgentCallResult } from "./types";
 
+/**
+ * Materie: una sola per insegnamento. Lo strumento rifiuta comunque i doppioni (vedi studyos_create_subject),
+ * ma l'agente che cerca prima non arriva nemmeno al rifiuto.
+ */
+const SUBJECT_INSTRUCTION =
+  "Materie: attività, esami, eventi, mazzi e materiali si collegano con subjectId, mai con il nome. Prima di creare una materia cercala con studyos_list_subjects (query) e, se c'è, usa il suo id. Se studyos_create_subject risponde conflict non crearla: con reason=duplicate usa data.existing.id, con reason=similar chiedi alla persona. Due copie della stessa materia si uniscono con studyos_merge_subjects, solo se la persona lo chiede.";
+
 export const AGENT_INSTRUCTIONS = [
   "StudyOS è il workspace di studio della persona. I dati stanno nel browser che ha il sito aperto (anche dal telefono, sulla copia pubblicata) e non vanno copiati altrove. Non chiedere segreti (passphrase, codici di invito, token, chiave di collegamento).",
   "Più persone possono collegare il proprio StudyOS a questo stesso connettore. Se chi scrive nomina un account (per esempio «nell'account di Camilla Rossi» o «sono Camilla»), passa account con quel nome a ogni strumento della richiesta. studyos_list_accounts elenca gli account collegati. Se ce n'è più di uno e la persona non ha detto quale, chiediglielo prima di leggere o modificare. Con più account ogni risposta riporta in account quello usato: dillo alla persona quando confermi una modifica.",
@@ -14,6 +21,7 @@ export const AGENT_INSTRUCTIONS = [
   "Le letture rispondono subito. Le modifiche e le eliminazioni restano in attesa finché la persona le conferma nell'app, salvo una policy diversa.",
   "Se la risposta contiene status=pending_approval, non ripetere l'azione: di' alla persona di confermarla in StudyOS e chiama studyos_approval_status con approvalId.",
   "Prima di aggiornare o eliminare, leggi l'id con uno strumento di elenco o con studyos_search. Non inventare id, date di esami ufficiali o voti. Le liste sono paginate: se has_more=true usa next_offset.",
+  SUBJECT_INSTRUCTION,
   "Le eliminazioni richiedono confirm=true e vanno usate solo se la persona ha chiesto di cancellare quell'elemento. Per chiudere una task imposta status=done.",
   PAGE_INSTRUCTION,
   GROUP_EXAM_INSTRUCTION,
@@ -31,6 +39,7 @@ export const cloudInstructions = (account: string) => [
   "Inizia con studyos_overview o studyos_status: danno data, ora locale e fuso orario della persona. Scrivi le date in ISO 8601; senza offset valgono nell'ora locale della persona.",
   `Letture e modifiche dei dati di ${account} vengono eseguite subito, senza conferma nell'app: modifica o elimina solo ciò che ${account} ha chiesto. Fanno eccezione le condivisioni con altre persone e le modifiche ai dati che altre persone condividono: la persona le conferma nell'app (riceve una notifica). Se la risposta contiene status=pending_approval, non ripetere l'azione: di' alla persona di confermarla in StudyOS e chiama studyos_approval_status con approvalId.`,
   "Prima di aggiornare o eliminare, leggi l'id con uno strumento di elenco o con studyos_search. Non inventare id, date di esami ufficiali o voti. Le liste sono paginate: se has_more=true usa next_offset.",
+  SUBJECT_INSTRUCTION,
   "Le eliminazioni richiedono confirm=true e vanno usate solo se la persona ha chiesto di cancellare quell'elemento. Per chiudere una task imposta status=done.",
   PAGE_INSTRUCTION,
   GROUP_EXAM_INSTRUCTION,

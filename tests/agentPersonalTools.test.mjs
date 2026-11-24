@@ -31,8 +31,9 @@ const seed = (patch = {}) => {
   useGroupExamStore.getState().reset();
 };
 
-test("catalogo: otto strumenti, eliminazioni con confirm", () => {
-  assert.equal(EXTRA_TOOL_NAMES.length, 8);
+test("catalogo: nove strumenti, eliminazioni e unioni con confirm", () => {
+  assert.equal(EXTRA_TOOL_NAMES.length, 9);
+  assert.equal(findAgentTool("studyos_merge_subjects").risk, "destructive");
   for (const name of EXTRA_TOOL_NAMES) assert.ok(findAgentTool(name), name);
   assert.equal(findAgentTool("studyos_delete_subject").risk, "destructive");
   assert.equal(findAgentTool("studyos_create_reminder").additive, true);

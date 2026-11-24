@@ -52,6 +52,22 @@ export const TASKS_TEXT = {
 } as const;
 
 /** Editor di un'attività (anche quello aperto dal calendario). */
+/** «Quando la fai?» nel modulo «Nuova attività» (anche da «Aggiungi»). */
+export const TASK_START_TEXT = {
+  label: "Quando la fai?",
+  todo: "Da fare",
+  timer: "Inizio ora",
+  done: "Già fatta",
+  timerHint: "Parte il cronometro appena la crei.",
+  doneHint: "Resta nello storico come fatta, con il tempo impiegato se lo scrivi.",
+  dueDone: "Quando l'hai fatta (facoltativo)",
+  spent: "Tempo impiegato (minuti, facoltativo)",
+  spentInvalid: "Tempo impiegato non valido: scrivi i minuti, da 0 in su.",
+  create: "Crea attività",
+  createTimer: "Crea e avvia il cronometro",
+  createDone: "Salva come fatta"
+} as const;
+
 export const TASK_EDITOR_TEXT = {
   eyebrow: "Attività",
   title: "Modifica attività",

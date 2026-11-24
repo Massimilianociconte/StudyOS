@@ -19,10 +19,13 @@ import {
 } from "./project";
 import { readAudit, readStoredPolicy } from "../lib/agentLocal";
 import { splitPages } from "./pageSplit";
-import { checkConsistencyTool, createReminderTool, deleteReminderTool, deleteSubjectTool, listReminders, listTags, tagItems, updateReminderTool } from "./personalExtraTools";
+import { checkConsistencyTool, createReminderTool, deleteReminderTool, deleteSubjectTool, listReminders, listTags, mergeSubjectsTool, tagItems, updateReminderTool } from "./personalExtraTools";
 import { linkedCounts } from "../lib/subjectLinks";
 import { gradeStats, isValidGrade, librettoEntries, missingGrades, projectedStats, recordedSubjectIds } from "../lib/grades";
 import { isGradePending, reviewStatus, subjectProgress, taskWeight } from "../lib/subjectProgress";
+import { SubjectDuplicateError, subjectMatches } from "../lib/subjectIdentity";
+import { subjectFieldsProblem } from "../lib/subjectFields";
+import { catalogLinkChoice, catalogLinkPatch, type CatalogSubjectFields } from "../lib/catalogLink";
 import { examDateOut } from "../lib/examOutcome";
 import { DEGREE_PROGRAMS, isDegreeProgramId, projectGraduation } from "../lib/graduation";
 import { createId, nowIso } from "../lib/id";
@@ -299,6 +302,8 @@ export const executeAgentTool = async (name: string, args: Args): Promise<AgentC
         return sharedCall((tools) => tools.revokeOwnShare(text(args.id)));
       case "studyos_delete_subject":
         return deleteSubjectTool(args);
+      case "studyos_merge_subjects":
+        return mergeSubjectsTool(args);
       case "studyos_list_tags":
         return listTags(args);
       case "studyos_tag_items":
@@ -587,12 +592,14 @@ const listSubjects = (args: Args): AgentCallResult => {
  * senza esame) e ripasso (argomenti in tutto e da ripassare entro oggi).
  */
 const progressOut = (current: ReturnType<typeof state>, subjectId: string) => {
-  const { progress, source, exam, activity } = subjectProgress(subjectId, current.tasks, current.exams);
+  const { progress, source, exam, pendingExam, activity } = subjectProgress(subjectId, current.tasks, current.exams);
   return {
     overall: progress,
     overallFrom: source,
     activity,
     preparation: exam ? { examId: exam.id, percent: exam.preparation } : null,
+    // Esame già passato senza esito: niente preparazione in corso, l'esito si registra (studyos_update_exam / studyos_record_grade).
+    pendingOutcome: !exam && pendingExam ? { examId: pendingExam.id, date: pendingExam.date } : null,
     review: reviewStatus(subjectId, current.topics)
   };
 };
@@ -600,18 +607,65 @@ const progressOut = (current: ReturnType<typeof state>, subjectId: string) => {
 /** Materia «completed» senza voto nel libretto: `gradePending: true` (si registra con studyos_record_grade). */
 const gradePendingOut = (subject: Subject, recorded: ReadonlySet<string>) => (isGradePending(subject, recorded) ? { gradePending: true } : {});
 
+/** Una materia in breve, per dire all'agente quale usare al posto di crearne un'altra. */
+const subjectBrief = (subject: Subject) => ({
+  id: subject.id,
+  name: subject.name,
+  teacher: subject.teacher,
+  cfu: subject.cfu,
+  linkedToCatalog: Boolean(subject.universityCourseId),
+  archived: subject.archived || subject.status === "archived"
+});
+
+const duplicateFail = (error: SubjectDuplicateError): AgentCallResult => {
+  const existing = state().subjects.find((subject) => subject.id === error.existingId);
+  return fail("conflict", `${error.message} Usa l'id ${error.existingId}.`, { reason: "duplicate", existing: existing ? subjectBrief(existing) : { id: error.existingId, name: error.existingName } });
+};
+
+/**
+ * Crea una materia solo se non c'è già. Stesse regole dell'app (`subjectFieldsProblem`) e stesso blocco dei
+ * doppioni certi dello store; in più i probabili doppioni («Anatomia umana» con «Anatomia dell'uomo» dello
+ * stesso docente) si fermano finché l'agente non conferma con `confirmDistinct` che sono materie diverse.
+ */
 const createSubject = async (args: Args): Promise<AgentCallResult> => {
-  const id = await state().addSubject({
-    name: text(args.name).trim(),
-    teacher: text(args.teacher),
-    cfu: Number(args.cfu ?? 0),
-    semester: text(args.semester),
-    status: (args.status as Subject["status"]) ?? "active",
-    targetGrade: typeof args.targetGrade === "number" ? args.targetGrade : undefined,
-    notes: text(args.notes),
-    color: optional(args.color)
-  });
-  return ok({ id });
+  const problem = subjectFieldsProblem(args, { requireName: true });
+  if (problem) return fail("invalid", problem);
+  const name = text(args.name).trim();
+  const teacher = text(args.teacher).trim();
+  const matches = subjectMatches({ name, teacher }, state().subjects);
+  const same = matches.find((match) => match.level === "same");
+  if (same)
+    return fail("conflict", `Esiste già la materia «${same.subject.name}»: usa l'id ${same.subject.id} invece di crearne un'altra.`, {
+      reason: "duplicate",
+      existing: subjectBrief(same.subject)
+    });
+  const likely = matches.filter((match) => match.level === "likely");
+  if (likely.length && args.confirmDistinct !== true)
+    return fail(
+      "conflict",
+      `Forse la materia c'è già: ${likely.map((match) => `«${match.subject.name}»`).join(", ")}. Chiedi alla persona se è la stessa (allora usa quell'id) o una materia diversa (allora ripeti con confirmDistinct=true).`,
+      { reason: "similar", candidates: likely.map((match) => subjectBrief(match.subject)) }
+    );
+  try {
+    const id = await state().addSubject({
+      name,
+      teacher,
+      cfu: args.cfu === undefined ? 6 : Number(args.cfu),
+      semester: text(args.semester).trim() || undefined,
+      semesterOverride: args.semesterOverride as Subject["semesterOverride"],
+      status: (args.status as Subject["status"]) ?? "active",
+      targetGrade: typeof args.targetGrade === "number" ? args.targetGrade : undefined,
+      notes: text(args.notes),
+      color: optional(args.color),
+      icon: optional(args.icon)
+    });
+    // Le semplici somiglianze non bloccano, ma l'agente le vede (e le riferisce se servono).
+    const similar = matches.filter((match) => match.level !== "same").map((match) => subjectBrief(match.subject));
+    return ok({ id, ...(similar.length ? { similar } : {}) });
+  } catch (error) {
+    if (error instanceof SubjectDuplicateError) return duplicateFail(error);
+    throw error;
+  }
 };
 
 const updateSubject = async (args: Args): Promise<AgentCallResult> => {
@@ -624,8 +678,18 @@ const updateSubject = async (args: Args): Promise<AgentCallResult> => {
     "notesPreview è solo un'anteprima: leggi le note intere con studyos_get_subject e manda quelle, modificate."
   );
   if (clippedSubject) return clippedSubject;
-  const patch = blankToUndefined(pick(args, ["name", "teacher", "cfu", "semester", "status", "targetGrade", "notes", "color", "archived", "semesterOverride"]), ["color"]);
-  await state().updateSubject(id, patch);
+  const problem = subjectFieldsProblem(args);
+  if (problem) return fail("invalid", problem);
+  const patch = blankToUndefined(pick(args, ["name", "teacher", "cfu", "semester", "status", "targetGrade", "notes", "color", "icon", "archived", "semesterOverride"]), ["color"]);
+  // Icona vuota: resta quella che c'è (una materia ha sempre un'icona).
+  if (patch.icon === "") delete patch.icon;
+  if (typeof patch.name === "string") patch.name = patch.name.trim();
+  try {
+    await state().updateSubject(id, patch);
+  } catch (error) {
+    if (error instanceof SubjectDuplicateError) return duplicateFail(error);
+    throw error;
+  }
   return ok({ id });
 };
 
@@ -1517,42 +1581,90 @@ const listBarbCourses = async (args: Args): Promise<AgentCallResult> => {
 const addBarbCourses = async (args: Args): Promise<AgentCallResult> => {
   const { courses, teachers, linked } = await barbCatalog();
   const { courseColor } = await import("../lib/barbCourseVisuals");
+  // Scelte della persona per gli insegnamenti con una materia simile: collega quella indicata.
+  const chosen = new Map<string, string>();
+  for (const link of Array.isArray(args.links) ? (args.links as Array<{ courseId?: unknown; subjectId?: unknown }>) : []) {
+    if (typeof link?.courseId === "string" && typeof link.subjectId === "string") chosen.set(link.courseId, link.subjectId);
+  }
   const added: Array<{ courseId: string; subjectId: string }> = [];
+  const linkedNow: Array<{ courseId: string; subjectId: string; name: string }> = [];
+  const needsChoice: Array<{ courseId: string; name: string; candidates: ReturnType<typeof subjectBrief>[] }> = [];
   const skipped: string[] = [];
   const unknown: string[] = [];
-  for (const courseId of new Set(args.ids as string[])) {
+  const ids = [...new Set([...(Array.isArray(args.ids) ? (args.ids as string[]) : []), ...chosen.keys()])];
+  for (const courseId of ids) {
     const course = courses.find((item) => item.id === courseId);
     if (!course) {
       unknown.push(courseId);
       continue;
     }
-    if (linked.has(course.id)) {
+    // Già nelle materie: collegata davvero, oppure solo con lo stesso nome (allora si collega ora).
+    const sameName = linked.has(course.id) ? state().subjects.find((subject) => subject.id === linked.get(course.id) && !subject.universityCourseId) : undefined;
+    if (linked.has(course.id) && !sameName) {
       skipped.push(course.id);
       continue;
     }
     const teacher = (course.responsibleTeacherId ? teachers.get(course.responsibleTeacherId) : undefined) ?? (course.teacherIds[0] ? teachers.get(course.teacherIds[0]) : undefined);
     // Come il pulsante di BARB, ma senza email del docente: agli agenti non vanno indirizzi email.
-    const subjectId = await state().addSubject({
-      name: course.name,
+    const fields: CatalogSubjectFields = {
+      universityCourseId: course.id,
       teacher: teacher?.displayName ?? "",
       cfu: course.cfu,
       semester: course.semester,
-      universityCourseId: course.id,
       icon: `barb:${course.id}`,
       color: courseColor(course),
-      status: "active",
       tags: ["barb", ...course.ssd],
       notes: [
         course.officialPageUrl ? `Scheda ufficiale: ${course.officialPageUrl}` : null,
         course.arielUrl ? `Ariel: ${course.arielUrl}` : null,
         course.examMode ? `Esame: ${course.examMode}${course.grading ? ` (${course.grading})` : ""}` : null
       ].filter(Boolean).join("\n")
-    });
-    linked.set(course.id, subjectId);
-    added.push({ courseId: course.id, subjectId });
+    };
+    const subjects = state().subjects;
+    const choiceId = chosen.get(course.id);
+    let target: Subject | undefined = sameName;
+    if (target) {
+      // Stesso nome di una materia personale: è quella.
+    } else if (choiceId && choiceId !== "new") {
+      target = subjects.find((subject) => subject.id === choiceId);
+      if (!target) return fail("not_found", `Materia ${choiceId} non trovata (links di ${course.id}). Leggi gli id da studyos_list_subjects.`);
+      if (target.universityCourseId) return fail("invalid", `«${target.name}» è già collegata a un altro insegnamento.`);
+    } else if (choiceId !== "new") {
+      const choice = catalogLinkChoice({ name: course.name, teacher: fields.teacher }, subjects);
+      if (choice.kind === "link") target = choice.subject;
+      else if (choice.kind === "choose") {
+        needsChoice.push({ courseId: course.id, name: course.name, candidates: choice.candidates.map(subjectBrief) });
+        continue;
+      }
+    }
+    try {
+      if (target) {
+        await state().updateSubject(target.id, catalogLinkPatch(target, fields));
+        linkedNow.push({ courseId: course.id, subjectId: target.id, name: target.name });
+        linked.set(course.id, target.id);
+        continue;
+      }
+      const subjectId = await state().addSubject({ name: course.name, status: "active", ...fields });
+      linked.set(course.id, subjectId);
+      added.push({ courseId: course.id, subjectId });
+    } catch (error) {
+      if (error instanceof SubjectDuplicateError) return duplicateFail(error);
+      throw error;
+    }
   }
-  if (!added.length && !skipped.length) return fail("not_found", "Nessun insegnamento con questi id. Leggili da studyos_list_barb_courses.");
-  return ok({ added, skipped, unknown });
+  if (!added.length && !linkedNow.length && !skipped.length && !needsChoice.length) return fail("not_found", "Nessun insegnamento con questi id. Leggili da studyos_list_barb_courses.");
+  return ok({
+    added,
+    linked: linkedNow,
+    skipped,
+    unknown,
+    ...(needsChoice.length
+      ? {
+          needsChoice,
+          hint: "Per questi insegnamenti c'è già una materia simile: chiedi alla persona se è la stessa. Poi ripeti con links=[{courseId, subjectId}] per collegarla, o subjectId=\"new\" per crearne una nuova."
+        }
+      : {})
+  });
 };
 
 // Stessi arrotondamenti dell'app: il tempo che resta per eccesso, quello passato per difetto.

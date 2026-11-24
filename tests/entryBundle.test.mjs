@@ -93,7 +93,7 @@ test("bundle iniziale: sync, supabase, dati BARB, ICS e grafici restano dietro i
     "views/CalendarView.tsx",
     "views/BarbView.tsx",
     "views/SettingsView.tsx",
-    "components/QuickAddModal.tsx",
+    "components/SubjectFormModal.tsx",
     "components/NotificationsPanel.tsx",
     "components/AgentDesk.tsx",
     "components/NoteDrawer.tsx",

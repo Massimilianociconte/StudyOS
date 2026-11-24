@@ -11,6 +11,7 @@ import { planChanges } from "../../lib/groupExamUi";
 import { sessionMatchesSubject, type GroupExamSession } from "../../lib/groupExams";
 import { useStudyStore } from "../../store/useStudyStore";
 import type { ExamPlanStatus } from "../../types";
+import { SubjectSelect } from "../SubjectSelect";
 
 const NOTES_SAVE_DELAY_MS = 800;
 
@@ -93,14 +94,7 @@ export function MyPlanSection({
           </select>
         </Field>
         <Field label={T.subject}>
-          <select className={inputClass} value={plan?.subjectId ?? ""} onChange={(event) => patch({ subjectId: event.target.value || null })}>
-            <option value="">{T.noSubject}</option>
-            {mySubjects.map((subject) => (
-              <option key={subject.id} value={subject.id}>
-                {subject.name}
-              </option>
-            ))}
-          </select>
+          <SubjectSelect value={plan?.subjectId ?? ""} onChange={(subjectId) => patch({ subjectId: subjectId || null })} subjects={mySubjects} none={T.noSubject} />
         </Field>
       </div>
       <Field label={T.notes}>

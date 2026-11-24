@@ -31,7 +31,7 @@ import { groupNamesOf, useGroupExamStore } from "../store/useGroupExamStore";
 import { GROUP_EXAM_TEXT } from "../lib/labels/groupExams";
 import { groupExamEvents, sessionIdOfEventId, type GroupExamCalendarMode } from "../lib/groupExamCalendar";
 import { sessionDraftFromEvent, type SessionDraft } from "../lib/groupExamForm";
-import type { CalendarEvent, EventOccasion, Exam, OccasionKind } from "../types";
+import type { CalendarEvent, EventOccasion, Exam, OccasionKind, Subject } from "../types";
 import {
   Button,
   EmptyState,
@@ -51,7 +51,8 @@ import { takeCalendarTransfer } from "../lib/calendarJump";
 import { TaskEditorModal } from "../components/TaskEditorModal";
 import { EventEditor } from "../components/calendar/EventEditor";
 import { ScopeChoice } from "../components/calendar/ScopeChoice";
-import { OccasionForm, occasionIcon } from "../components/calendar/OccasionForm";
+import { OccasionForm } from "../components/calendar/OccasionForm";
+import type { CreateType } from "../components/calendar/CreateTypeSwitch";
 import { VacationForm } from "../components/calendar/VacationForm";
 import { TypeColorsDrawer } from "../components/calendar/TypeColorsDrawer";
 import { sanitizeTypeColorOverrides } from "../lib/eventColors";
@@ -60,7 +61,6 @@ import { draggedTimes, occurrenceEditCalls, scopeImpact, seriesMovePatch, series
 import {
   newOccasionDraft,
   newVacationDraft,
-  OCCASION_KINDS,
   occasionChanges,
   occasionDraftFromEvent,
   occasionFields,
@@ -80,11 +80,8 @@ import {
   CALENDAR_TEXT,
   CALENDAR_VIEW_TEXT,
   EVENT_EDITOR_TEXT,
-  OCCASION_FORM_TEXT,
-  OCCASION_KIND_LABEL,
   SCOPE_TEXT,
-  TYPE_COLORS_TEXT,
-  VACATION_FORM_TEXT
+  TYPE_COLORS_TEXT
 } from "../lib/labels/calendar";
 import { SHARE_TEXT } from "../lib/labels/sharing";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
@@ -104,7 +101,8 @@ import {
   hasItemsInRange,
   isCalendarSummary,
   resolveCalendarMode,
-  resolveSubjectFilter,
+  resolveSubjectFilters,
+  subjectFilterValue,
   subjectCalendarSummary,
   subjectJumpDay,
   type CalendarViewId,
@@ -312,16 +310,48 @@ export function CalendarView() {
   const typeOverrides = useMemo(() => sanitizeTypeColorOverrides(selectPreferences({ preferences }).eventTypeColors), [preferences]);
   // Appelli ufficiali UNIMI di BARB: solo con «Corso di laurea» acceso in Impostazioni.
   const showBarb = selectPreferences({ preferences }).showBarb;
-  // Filtro per materia: vale solo per una materia che esiste e non è archiviata. Un id non più
-  // valido si toglie, ma solo a dati caricati (prima l'elenco delle materie è ancora vuoto).
+  // Filtro per materia: nessuna (tutte), una o più. Valgono solo le materie che esistono e non sono
+  // archiviate; gli id non più validi si tolgono, ma solo a dati caricati (prima l'elenco è vuoto).
+  // Si salva come testo con gli id separati da virgola: il valore di prima (un id) vale ancora.
   const [storedSubject, setStoredSubject] = useLinkedUiState<string | null>("calendar.subject", null, { scope: "tab", validate: isNullableString });
-  const subjectFilter = resolveSubjectFilter(storedSubject, subjects);
-  const filterSubject = subjectFilter ? subjects.find((subject) => subject.id === subjectFilter) ?? null : null;
+  const subjectFilters = useMemo(() => resolveSubjectFilters(storedSubject, subjects), [storedSubject, subjects]);
+  const setSubjectFilters = (ids: readonly string[]) => setStoredSubject(subjectFilterValue(ids));
+  const filterSubjects = subjectFilters.map((id) => subjects.find((subject) => subject.id === id)).filter((subject): subject is Subject => Boolean(subject));
+  const filterValue = subjectFilterValue(subjectFilters);
   useEffect(() => {
-    if (storedSubject && !subjectFilter && !loading && !locked) setStoredSubject(null);
-  }, [storedSubject, subjectFilter, loading, locked, setStoredSubject]);
-  /** Nuovo evento o attività: con un filtro attivo, già legato a quella materia (altrimenti sparirebbe dalla vista). */
-  const openCreator = (at: Date, kind: "event" | "task" = "event") => setCreator({ at, kind, subjectId: subjectFilter ?? undefined });
+    if (storedSubject !== filterValue && !loading && !locked) setStoredSubject(filterValue);
+  }, [storedSubject, filterValue, loading, locked, setStoredSubject]);
+  /** Con una sola materia scelta, un evento o un'attività nuovi nascono già legati a quella (altrimenti sparirebbero dalla vista). */
+  const prefillSubject = subjectFilters.length === 1 ? subjectFilters[0] : undefined;
+  const openCreator = (at: Date, kind: "event" | "task" = "event") => setCreator({ at, kind, subjectId: prefillSubject });
+  // «Aggiungi → Evento» (in alto, il «+» del telefono, la Home) porta qui con il modulo da aprire: lo
+  // stesso di «Nuovo evento». Una volta sola: la chiave si svuota subito, un refresh non lo riapre.
+  const [createRequest, setCreateRequest] = useLinkedUiState<"event" | null>("calendar.create", null, {
+    scope: "tab",
+    validate: (value) => value === null || value === "event"
+  });
+  useEffect(() => {
+    if (!createRequest || loading || locked) return;
+    setCreateRequest(null);
+    setSimpleNew(null);
+    openCreator(defaultStartFor(startOfDay(new Date())));
+    // openCreator legge solo la materia filtrata di questo disegno.
+  }, [createRequest, loading, locked, setCreateRequest]);
+  /**
+   * «Cosa vuoi aggiungere» in cima ai moduli di creazione: si passa da un modulo all'altro con il titolo
+   * già scritto. Evento e attività sono il modulo completo; ricorrenza e vacanza i loro percorsi semplici.
+   */
+  const switchCreateType = (type: CreateType, title: string, at?: Date) => {
+    if (type === "occasion" || type === "vacation") {
+      setCreator(null);
+      setSimpleNew(type === "occasion" ? { form: "occasion", name: title } : { form: "vacation", title });
+      return;
+    }
+    setSimpleNew(null);
+    const start = at ?? defaultStartFor(dayForNewEvent(range.from, range.to));
+    const draft = title ? { ...newEventDraft({ start: defaultStartFor(start), subjectId: prefillSubject ?? "", ...ownColorContext(prefillSubject) }), title } : undefined;
+    setCreator({ at: start, kind: type, subjectId: prefillSubject, draft });
+  };
   const openExam = (id: string) => {
     writeUiState("exams.editing", id, "tab");
     setActiveView("exams");
@@ -433,7 +463,7 @@ export function CalendarView() {
   });
   // Attività senza data ("Senza data · N", in ogni vista), con lo stesso filtro per materia.
   const [undatedOpen, setUndatedOpen] = useState(false);
-  const undated = useMemo(() => filterCalendarItems({ tasks: undatedTasks(tasks) }, subjectFilter).tasks, [tasks, subjectFilter]);
+  const undated = useMemo(() => filterCalendarItems({ tasks: undatedTasks(tasks) }, subjectFilters).tasks, [tasks, subjectFilters]);
   const placeUndated = (taskId: string, day: string) => {
     const dueDate = undatedDueDate(day);
     if (dueDate) void updateTask(taskId, { dueDate });
@@ -497,8 +527,8 @@ export function CalendarView() {
 
   // Ciò che le quattro viste mostrano, filtrato per materia (senza filtro: gli stessi elenchi).
   const visible = useMemo(
-    () => filterCalendarItems({ occurrences, tasks: calendarTasks, exams }, subjectFilter),
-    [occurrences, calendarTasks, exams, subjectFilter]
+    () => filterCalendarItems({ occurrences, tasks: calendarTasks, exams }, subjectFilters),
+    [occurrences, calendarTasks, exams, subjectFilters]
   );
   const holidays = useMemo(() => (showHolidays ? holidaysInRange(todayYmd(range.from), todayYmd(range.to)) : []), [showHolidays, range]);
   const rangeEmpty = !hasItemsInRange(visible, range.from, range.to);
@@ -508,8 +538,8 @@ export function CalendarView() {
     [subjects, events, exams, tasks]
   );
   const addForSubject = () => openCreator(defaultStartFor(dayForNewEvent(range.from, range.to)));
-  const subjectEmpty = filterSubject ? (
-    <SubjectEmptyNotice name={filterSubject.name} onAdd={addForSubject} onClear={() => setStoredSubject(null)} />
+  const subjectEmpty = filterSubjects.length ? (
+    <SubjectEmptyNotice names={filterSubjects.map((subject) => subject.name)} onAdd={addForSubject} onClear={() => setSubjectFilters([])} />
   ) : null;
 
   const navigate = (direction: -1 | 1) => {
@@ -742,8 +772,6 @@ export function CalendarView() {
                     } satisfies PageAction
                   ]
                 : []),
-              { label: OCCASION_FORM_TEXT.menu, icon: "Cake", onClick: () => setSimpleNew({ form: "occasion" }) },
-              { label: VACATION_FORM_TEXT.menu, icon: "Luggage", onClick: () => setSimpleNew({ form: "vacation" }) },
               transferMenuItem(() => transfer.current?.open()),
               ...(cloudConfigured ? [{ label: CALENDAR_TEXT.share, icon: "Share2", onClick: openShare } satisfies PageAction] : []),
               // Una voce sola per gli appelli ufficiali: apre subito la scelta delle date da aggiungere
@@ -829,8 +857,8 @@ export function CalendarView() {
           </div>
           <CalendarFilterRow
             subjects={subjects}
-            active={filterSubject}
-            onChange={setStoredSubject}
+            active={subjectFilters}
+            onChange={setSubjectFilters}
             showHolidays={showHolidays}
             onToggleHolidays={narrow ? undefined : () => setShowHolidays((value) => !value)}
             undatedCount={undated.length}
@@ -856,8 +884,8 @@ export function CalendarView() {
                 key={owner.id}
                 type="button"
                 aria-pressed={!hidden}
-                disabled={Boolean(filterSubject)}
-                aria-describedby={filterSubject ? "calendar-shared-filtered" : undefined}
+                disabled={subjectFilters.length > 0}
+                aria-describedby={subjectFilters.length ? "calendar-shared-filtered" : undefined}
                 onClick={() => useSharedStore.getState().toggleOwner(owner.id)}
                 className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border border-dashed px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40 ${hidden ? "opacity-50" : ""}`}
                 style={{ borderColor: ownerColor(owner.id) }}
@@ -868,7 +896,7 @@ export function CalendarView() {
               </button>
             );
           })}
-          {filterSubject ? (
+          {subjectFilters.length ? (
             <p id="calendar-shared-filtered" className="basis-full text-xs font-bold text-[var(--muted)]">
               {CALENDAR_VIEW_TEXT.sharedFiltered}
             </p>
@@ -965,7 +993,7 @@ export function CalendarView() {
               // Si apre dove la materia ha qualcosa (la prossima voce, o l'ultima passata), nella vista
               // da cui si era aperto il riepilogo: mai una settimana vuota con "1 impegno" nella scheda.
               const day = subjectJumpDay({ subjectId: id, events, exams, tasks });
-              setStoredSubject(id);
+              setSubjectFilters([id]);
               if (day) setCursor(day);
               setMode(returnMode.current);
             }}
@@ -1096,6 +1124,7 @@ export function CalendarView() {
           initial={newOccasionDraft({ today: todayCivil, kind: simpleNew.kind, name: simpleNew.name })}
           editing={false}
           today={todayCivil}
+          onSwitchType={(type, title) => switchCreateType(type, title)}
           onClose={() => setSimpleNew(null)}
           onSave={async (draft) => {
             await addEvent(newEventFields(occasionFields(draft, { today: todayCivil, overrides: typeOverrides })));
@@ -1114,6 +1143,7 @@ export function CalendarView() {
           overrides={typeOverrides}
           initial={newVacationDraft(todayCivil, simpleNew.title)}
           editing={false}
+          onSwitchType={(type, title) => switchCreateType(type, title)}
           onClose={() => setSimpleNew(null)}
           onSave={async (draft) => {
             await addEvent(newEventFields(vacationFields(draft, { overrides: typeOverrides })));
@@ -1200,28 +1230,7 @@ export function CalendarView() {
           heading={EVENT_EDITOR_TEXT.newEvent}
           occasionKind={creator.occasion?.kind}
           initial={creator.draft ?? newEventDraft({ start: defaultStartFor(creator.at), subjectId: creator.subjectId ?? "", ...ownColorContext(creator.subjectId) })}
-          typeExtra={(draft) => (
-            <div className="min-w-0">
-              <span className="mb-1.5 block text-xs font-black uppercase text-[var(--faint)]">{EVENT_EDITOR_TEXT.typeOccasions}</span>
-              <div className="flex flex-wrap gap-1.5">
-                {OCCASION_KINDS.map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    onClick={() => {
-                      // Percorso semplice della ricorrenza, con il titolo già scritto.
-                      setCreator(null);
-                      setSimpleNew({ form: "occasion", kind, name: draft.title.trim() });
-                    }}
-                    className="inline-flex min-h-11 items-center gap-2 rounded-full border border-[var(--border)] px-3 text-sm font-extrabold text-[var(--muted)] hover:text-[var(--text)]"
-                  >
-                    <Icon name={occasionIcon(kind)} className="h-4 w-4 shrink-0" />
-                    {OCCASION_KIND_LABEL[kind]}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          onSwitchType={(type, title) => switchCreateType(type, title, creator.at)}
           subjects={subjects}
           calendars={writableCalendars}
           createKind={creator.kind}
@@ -1498,11 +1507,11 @@ function SemesterMap({
 /* ------------------------------------------------------------------ */
 
 /** Filtro per materia senza impegni nel periodo: un evento già legato alla materia, o tutte le materie. */
-function SubjectEmptyNotice({ name, onAdd, onClear }: { name: string; onAdd: () => void; onClear: () => void }) {
+function SubjectEmptyNotice({ names, onAdd, onClear }: { names: string[]; onAdd: () => void; onClear: () => void }) {
   return (
     <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[18px] border border-dashed border-[var(--border)] p-3">
       <Icon name="CalendarDays" className="h-5 w-5 shrink-0 text-[var(--accent-ink)]" />
-      <p className="safe-text min-w-0 flex-1 basis-48 text-sm font-bold">{CALENDAR_TEXT.emptySubject(name)}</p>
+      <p className="safe-text min-w-0 flex-1 basis-48 text-sm font-bold">{CALENDAR_TEXT.emptySubject(names)}</p>
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" icon="Plus" onClick={onAdd}>
           {CALENDAR_TEXT.addEvent}

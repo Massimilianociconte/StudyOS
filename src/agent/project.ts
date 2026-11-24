@@ -66,6 +66,8 @@ export const publicSubject = (item: {
   targetGrade?: number;
   examDate?: string;
   color: string;
+  icon?: string;
+  universityCourseId?: string;
   archived: boolean;
   notes: string;
   updatedAt: string;
@@ -80,6 +82,9 @@ export const publicSubject = (item: {
   targetGrade: item.targetGrade,
   examDate: item.examDate,
   color: item.color,
+  icon: item.icon,
+  // Collegata a un insegnamento del catalogo del corso di laurea (CFU, docente e appelli ufficiali).
+  linkedToCatalog: Boolean(item.universityCourseId),
   archived: item.archived,
   updatedAt: item.updatedAt,
   ...(withNotes

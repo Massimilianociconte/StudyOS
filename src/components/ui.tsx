@@ -191,6 +191,11 @@ export function ProgressRing({
 /** Il testo dell'etichetta di Field: chi ha un pulsante dentro l'etichetta lo usa per non prenderne il nome. */
 const FieldLabelContext = createContext<string | undefined>(undefined);
 
+/** Id dell'etichetta del Field che contiene il campo (undefined fuori da un Field). */
+export const useFieldLabelId = () => useContext(FieldLabelContext);
+/** Per i campi con un'etichetta propria (HelpField): stesso ruolo del contesto di Field. */
+export const FieldLabelProvider = FieldLabelContext.Provider;
+
 export function Field({
   label,
   children,
@@ -911,24 +916,50 @@ export function HelpTip({ title, text, example, label }: { title: string; text: 
   );
 }
 
-export type PageAction = { label: string; icon?: string; onClick: () => void; danger?: boolean };
+export type PageAction = { label: string; icon?: string; onClick: () => void; danger?: boolean; /** Seconda riga, più piccola: cosa fa la voce. */ hint?: string };
 
 /**
  * Azioni di una pagina: una sola primaria più il menu "Altre azioni" (⋯) con il resto. Il menu è
  * in portal su body come `Drawer`; frecce e Home/End per muoversi, Esc o Tab chiudono e il focus
  * torna al pulsante, un tocco fuori chiude. `label`: nome del pulsante ⋯ (predefinito "Altre azioni").
+ * Un'azione sola non ha bisogno di un menu: diventa un pulsante secondario accanto alla primaria
+ * (un tocco invece di due, e si vede cosa fa).
  */
 export function PageActions({ primary, more = [], label }: { primary?: ReactNode; more?: PageAction[]; label?: string }) {
   if (!primary && !more.length) return null;
+  const [only] = more;
   return (
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+      {more.length === 1 ? (
+        <Button variant={only.danger ? "danger" : "soft"} icon={only.icon} onClick={only.onClick}>
+          {only.label}
+        </Button>
+      ) : null}
       {primary}
-      {more.length ? <MoreActionsMenu items={more} label={label || UI_TEXT.moreActions} /> : null}
+      {more.length > 1 ? <ActionsMenu items={more} label={label || UI_TEXT.moreActions} /> : null}
     </div>
   );
 }
 
-function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string }) {
+const MORE_TRIGGER_CLASS =
+  "motion-safe grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)] aria-expanded:bg-[var(--surface)]";
+
+/**
+ * Menu di azioni ancorato a un pulsante: il ⋯ di `PageActions` e, con `trigger`, altri pulsanti (es.
+ * «Aggiungi»). Stessa tastiera e chiusura del ⋯; `align` sceglie da che lato del pulsante si apre.
+ */
+export function ActionsMenu({
+  items,
+  label,
+  align = "end",
+  trigger
+}: {
+  items: PageAction[];
+  label: string;
+  align?: FloatingAlign;
+  /** Pulsante diverso dal ⋯: classi, contenuto e, se il contenuto non lo dice già, il nome. */
+  trigger?: { className: string; content: ReactNode; ariaLabel?: string; title?: string };
+}) {
   const [open, setOpen] = useState(false);
   const [host, setHost] = useState<HTMLElement | null>(null);
   const startAt = useRef<"first" | "last">("first");
@@ -940,7 +971,7 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
     setOpen(false);
     if (refocus) buttonRef.current?.focus({ preventScroll: true });
   }, []);
-  const position = useFloatingLayer(open, close, buttonRef, menuRef, "end");
+  const position = useFloatingLayer(open, close, buttonRef, menuRef, align);
 
   const menuItems = () => [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
 
@@ -975,8 +1006,8 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
         ref={buttonRef}
         id={`${id}-button`}
         type="button"
-        aria-label={label}
-        title={label}
+        aria-label={trigger ? trigger.ariaLabel : label}
+        title={trigger ? trigger.title : label}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={id}
@@ -986,9 +1017,9 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
           event.preventDefault();
           openMenu(event.key === "ArrowUp" ? "last" : "first");
         }}
-        className="motion-safe grid h-11 w-11 shrink-0 grid-cols-1 place-items-center rounded-full bg-[var(--surface-strong)] text-[var(--text)] hover:bg-[var(--surface)] aria-expanded:bg-[var(--surface)]"
+        className={trigger?.className ?? MORE_TRIGGER_CLASS}
       >
-        <Icon name="MoreHorizontal" className="h-[18px] w-[18px]" />
+        {trigger ? trigger.content : <Icon name="MoreHorizontal" className="h-[18px] w-[18px]" />}
       </button>
       {createPortal(
         <AnimatePresence>
@@ -998,11 +1029,12 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
               key="more-actions"
               id={id}
               role="menu"
-              aria-labelledby={`${id}-button`}
+              aria-labelledby={trigger?.ariaLabel || trigger?.title ? undefined : `${id}-button`}
+              aria-label={trigger?.ariaLabel || trigger?.title ? label : undefined}
               aria-orientation="vertical"
               onKeyDown={onMenuKeyDown}
               className="soft-panel fixed z-[60] overflow-y-auto p-1.5"
-              style={{ ...floatingStyle(position, "max-content"), minWidth: "13rem" }}
+              style={{ ...floatingStyle(position, "max-content"), minWidth: "13rem", maxWidth: "min(22rem, calc(100vw - 32px))" }}
               initial={{ opacity: 0, y: reduceMotion ? 0 : position?.side === "top" ? 4 : -4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
@@ -1014,6 +1046,8 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
                   type="button"
                   role="menuitem"
                   tabIndex={-1}
+                  aria-labelledby={item.hint ? `${id}-item-${index}` : undefined}
+                  aria-describedby={item.hint ? `${id}-item-${index}-hint` : undefined}
                   onClick={() => {
                     // Prima il focus al pulsante: un Drawer aperto dall'azione lo riporta lì alla chiusura.
                     close(true);
@@ -1026,7 +1060,18 @@ function MoreActionsMenu({ items, label }: { items: PageAction[]; label: string 
                   }`}
                 >
                   {item.icon ? <Icon name={item.icon} className="h-4 w-4 shrink-0" /> : null}
-                  <span className="safe-text min-w-0">{item.label}</span>
+                  {item.hint ? (
+                    <span className="min-w-0 py-1.5">
+                      <span id={`${id}-item-${index}`} className="safe-text block">
+                        {item.label}
+                      </span>
+                      <span id={`${id}-item-${index}-hint`} className="safe-text block text-xs font-bold text-[var(--muted)]">
+                        {item.hint}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="safe-text min-w-0">{item.label}</span>
+                  )}
                 </button>
               ))}
             </m.div>

@@ -101,7 +101,23 @@ import {
   Smartphone,
   MonitorSmartphone,
   Tablet,
-  Monitor
+  Monitor,
+  Dna,
+  Microscope,
+  Merge,
+  TestTube,
+  Atom,
+  Stethoscope,
+  HeartPulse,
+  Pill,
+  Bone,
+  Leaf,
+  Binary,
+  Code,
+  Languages,
+  Scale,
+  Coins,
+  Music
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Suspense } from "react";
@@ -214,7 +230,24 @@ const icons = {
   Smartphone,
   MonitorSmartphone,
   Tablet,
-  Monitor
+  Monitor,
+  // Icone delle materie (src/lib/subjectFields.ts, SUBJECT_ICONS).
+  Dna,
+  Microscope,
+  Merge,
+  TestTube,
+  Atom,
+  Stethoscope,
+  HeartPulse,
+  Pill,
+  Bone,
+  Leaf,
+  Binary,
+  Code,
+  Languages,
+  Scale,
+  Coins,
+  Music
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof icons;

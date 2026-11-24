@@ -47,3 +47,50 @@ export function menuIndexForKey(key: string, current: number, count: number): nu
   if (key === "End") return count - 1;
   return null;
 }
+
+/**
+ * Voce attiva di un elenco a scelta (tendina) dopo un tasto: come un <select>, niente giro continuo e
+ * le voci non disponibili si saltano. Frecce di una voce, Pagina su/giù di `page` voci, Home/End agli
+ * estremi. `current` -1 = nessuna voce attiva. null = tasto che l'elenco non gestisce (o nessuna voce).
+ */
+export function listboxIndexForKey(key: string, current: number, disabled: readonly boolean[], page = 8): number | null {
+  const count = disabled.length;
+  const scan = (from: number, step: 1 | -1): number | null => {
+    for (let index = from; index >= 0 && index < count; index += step) if (!disabled[index]) return index;
+    return null;
+  };
+  if (key === "ArrowDown") return current < 0 ? scan(0, 1) : (scan(current + 1, 1) ?? current);
+  if (key === "ArrowUp") return current < 0 ? scan(count - 1, -1) : (scan(current - 1, -1) ?? current);
+  if (key === "Home") return scan(0, 1);
+  if (key === "End") return scan(count - 1, -1);
+  if (key === "PageDown" || key === "PageUp") {
+    let index = current;
+    for (let step = 0; step < page; step += 1) {
+      const next = listboxIndexForKey(key === "PageDown" ? "ArrowDown" : "ArrowUp", index, disabled);
+      if (next === null || next === index) break;
+      index = next;
+    }
+    return index < 0 ? null : index;
+  }
+  return null;
+}
+
+const typeaheadText = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase("it");
+
+/**
+ * Lettere scritte con l'elenco aperto: la prima voce disponibile che comincia così, dopo quella attiva
+ * (in giro). Una lettera ripetuta («aaa») passa da una voce in «a» alla successiva; più lettere diverse
+ * («an») restano sulla voce attiva finché va bene. Accenti e maiuscole non contano. null = nessuna.
+ */
+export function typeaheadIndex(labels: readonly string[], disabled: readonly boolean[], current: number, query: string): number | null {
+  const typed = typeaheadText(query);
+  if (!typed.trim() || !labels.length) return null;
+  const repeated = [...typed].every((char) => char === typed[0]);
+  const needle = repeated ? typed[0] : typed;
+  const start = repeated ? current + 1 : Math.max(current, 0);
+  for (let step = 0; step < labels.length; step += 1) {
+    const index = (start + step) % labels.length;
+    if (!disabled[index] && typeaheadText(labels[index]).startsWith(needle)) return index;
+  }
+  return null;
+}

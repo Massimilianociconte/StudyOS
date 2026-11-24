@@ -10,8 +10,11 @@ import {
   isCalendarSummary,
   itemMatchesSubject,
   resolveCalendarMode,
-  resolveSubjectFilter,
+  parseSubjectFilter,
+  resolveSubjectFilters,
   subjectCalendarSummary,
+  subjectFilterValue,
+  toggleSubjectFilter,
   subjectJumpDay
 } from "../src/lib/calendarFilter.ts";
 import { expandEvents } from "../src/lib/recurrence.ts";
@@ -111,18 +114,29 @@ test("filterCalendarItems: senza filtro i gruppi restano quelli di partenza", ()
   assert.equal(result.exams, groups.exams);
 });
 
-test("resolveSubjectFilter: un id salvato vale solo se la materia esiste e non è archiviata", () => {
+test("resolveSubjectFilters: valgono solo le materie che esistono e non sono archiviate", () => {
   const subjects = [subject("s1"), subject("s2", { archived: true }), subject("s3", { status: "archived" }), subject("s4", { status: "completed" })];
-  assert.equal(resolveSubjectFilter("s1", subjects), "s1");
-  assert.equal(resolveSubjectFilter("s2", subjects), null);
-  assert.equal(resolveSubjectFilter("s3", subjects), null);
+  // Il valore di prima (un id solo) vale ancora.
+  assert.deepEqual(resolveSubjectFilters("s1", subjects), ["s1"]);
+  assert.deepEqual(resolveSubjectFilters("s2", subjects), []);
+  assert.deepEqual(resolveSubjectFilters("s3", subjects), []);
   // Superata ma non archiviata: resta nel piano di studio, il filtro vale.
-  assert.equal(resolveSubjectFilter("s4", subjects), "s4");
-  assert.equal(resolveSubjectFilter("sparita", subjects), null);
-  assert.equal(resolveSubjectFilter(null, subjects), null);
-  assert.equal(resolveSubjectFilter("", subjects), null);
-  assert.equal(resolveSubjectFilter(42, subjects), null);
-  assert.equal(resolveSubjectFilter(undefined, subjects), null);
+  assert.deepEqual(resolveSubjectFilters("s4", subjects), ["s4"]);
+  assert.deepEqual(resolveSubjectFilters("s4,sparita,s1,s2,s1", subjects), ["s4", "s1"], "nell'ordine scelto, senza doppioni né materie non valide");
+  for (const empty of [null, "", 42, undefined, ","]) assert.deepEqual(resolveSubjectFilters(empty, subjects), []);
+});
+
+test("filtro per più materie: si salva come testo, si accende e si spegne una materia alla volta", () => {
+  assert.equal(subjectFilterValue([]), null);
+  assert.equal(subjectFilterValue(["a", "b", "a"]), "a,b");
+  assert.deepEqual(parseSubjectFilter(" a , b,,a"), ["a", "b"]);
+  assert.deepEqual(toggleSubjectFilter(["a"], "b"), ["a", "b"]);
+  assert.deepEqual(toggleSubjectFilter(["a", "b"], "a"), ["b"]);
+  const items = [{ subjectId: "a" }, { subjectId: "b" }, { subjectId: "c" }, {}, { subjectId: "a", sharedFrom: { ownerId: "u2" } }];
+  assert.deepEqual(filterBySubject(items, ["a", "c"]), [{ subjectId: "a" }, { subjectId: "c" }]);
+  assert.equal(filterBySubject(items, []), items, "nessuna scelta = tutte, stesso elenco");
+  assert.equal(itemMatchesSubject({ subjectId: "b" }, ["a", "b"]), true);
+  assert.equal(itemMatchesSubject({}, ["a"]), false);
 });
 
 /* ------------------------------------------------------------------ */

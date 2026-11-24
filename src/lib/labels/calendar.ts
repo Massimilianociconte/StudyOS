@@ -19,13 +19,16 @@ export const CALENDAR_TEXT = {
   dayFocusOff: "Mostra tutte le ore",
   holidaysShow: "Mostra le festività",
   holidaysHide: "Nascondi le festività",
-  filterLabel: "Mostra gli impegni di una materia",
+  filterLabel: "Mostra gli impegni di una o più materie",
   allSubjects: "Tutte",
   onlySubject: (name: string) => `Solo: ${name}`,
-  clearFilter: (name: string) => `Togli «Solo: ${name}» e mostra tutte le materie`,
+  clearFilter: (name: string) => `Togli ${name} dal filtro`,
+  addFilter: (name: string) => `Mostra anche gli impegni di ${name}`,
+  clearFilters: (count: number) => (count === 1 ? "Togli il filtro e mostra tutte le materie" : `Togli i ${count} filtri e mostra tutte le materie`),
   showAll: "Mostra tutte le materie",
   addEvent: "Aggiungi un evento",
-  emptySubject: (name: string) => `Nessun impegno di ${name} in questo periodo`,
+  emptySubject: (names: string[]) =>
+    names.length === 1 ? `Nessun impegno di ${names[0]} in questo periodo` : `Nessun impegno di ${names.slice(0, -1).join(", ")} e ${names[names.length - 1]} in questo periodo`,
   emptyWeek: "Settimana senza impegni",
   sharedCalendars: "Calendari condivisi:",
   summaryCounts: (planned: number, withItems: number) =>
@@ -89,8 +92,14 @@ export const EVENT_EDITOR_TEXT = {
   kindLabel: "Cosa vuoi aggiungere",
   kindEvent: "Evento",
   kindEventTitle: "Un impegno con giorno e orario: lezione, studio, laboratorio…",
-  kindTask: "Attività con scadenza",
+  kindTask: "Attività",
   kindTaskTitle: "Una cosa da fare entro una data, da spuntare quando è fatta",
+  kindOccasion: "Ricorrenza",
+  kindOccasionTitle: "Compleanni, anniversari e altre date che tornano ogni anno, tutto il giorno",
+  kindVacation: "Vacanza o assenza",
+  kindVacationTitle: "Ferie, viaggi o giorni di assenza: tutto il giorno, dal… al…",
+  /** Sotto la scelta del tipo: dove stanno gli altri tipi di evento. */
+  kindEventHint: "Lezioni, sessioni di studio, esami, impegni di tutto il giorno o che si ripetono: scegli la tipologia qui sotto.",
   taskHint: "Comparirà nel calendario il giorno della scadenza e nella sezione Attività.",
   calendarOf: "Nel calendario di",
   myCalendar: "Il mio calendario",
@@ -132,7 +141,6 @@ export const EVENT_EDITOR_TEXT = {
   /** Regola «fino al» un giorno che non è una delle volte (es. domenica 22): l'ultima volta vera. */
   repeatLastTime: (day: string) => `(ultima volta ${day})`,
   type: "Tipologia",
-  typeOccasions: "Ogni anno",
   color: "Colore",
   colorAuto: (type: string) => `Colore di «${type}»`,
   colorAutoHint: "Segue la tipologia e la materia",
@@ -306,7 +314,6 @@ export const REMINDER_PICKER_TEXT = {
 
 /** Percorso "Nuova ricorrenza": compleanni, anniversari e altre date di ogni anno. */
 export const OCCASION_FORM_TEXT = {
-  menu: "Nuova ricorrenza",
   newTitle: "Nuova ricorrenza",
   editTitle: "Modifica ricorrenza",
   kind: "Che cosa ricordi",
@@ -335,7 +342,6 @@ export const OCCASION_FORM_TEXT = {
 
 /** Percorso "Nuova vacanza": un solo evento su più giorni. */
 export const VACATION_FORM_TEXT = {
-  menu: "Nuova vacanza",
   newTitle: "Nuova vacanza",
   editTitle: "Modifica vacanza",
   name: "Nome",
@@ -445,7 +451,7 @@ export const CALENDAR_VIEW_TEXT = {
   sharedGroup: "Calendari di altre persone",
   showOwner: (name: string) => `Mostra gli eventi di ${name}`,
   hideOwner: (name: string) => `Nascondi gli eventi di ${name}`,
-  sharedFiltered: "Con «Solo» attivo gli eventi di altre persone non si vedono: usano le loro materie.",
+  sharedFiltered: "Con il filtro per materia attivo gli eventi di altre persone non si vedono: usano le loro materie.",
   unknownOwner: "Un'altra persona"
 } as const;
 

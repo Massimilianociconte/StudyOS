@@ -82,6 +82,9 @@ export const groupsForTool = (name: string, args: Record<string, unknown>): Data
     // Eliminare una materia toglie la materia anche da raccolte, schede e quiz.
     case "studyos_delete_subject":
       return [...BASE, "decks", "cards", "questions"];
+    // Unire due materie sposta ogni riferimento alla materia tolta: servono tutti i gruppi.
+    case "studyos_merge_subjects":
+      return [...ALL_GROUPS];
     default:
       return BASE;
   }

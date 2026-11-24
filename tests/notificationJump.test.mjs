@@ -56,9 +56,10 @@ test("notificationJump: senza sezione collegata non porta da nessuna parte", () 
 });
 
 test("testi condivisi: conferma dell'aggiunta rapida, esame da decidere, errore di sezione", () => {
-  assert.equal(QUICK_ADD_TEXT.saved("event", "  Lezione di Anatomia "), "Evento aggiunto al Calendario («Lezione di Anatomia»).");
+  assert.equal(QUICK_ADD_TEXT.saved("task", "  Esercizi di Fisica "), "Attività creata: la trovi in Attività («Esercizi di Fisica»).");
   assert.equal(QUICK_ADD_TEXT.saved("subject", ""), "Materia creata: la trovi in Materie.");
-  assert.match(QUICK_ADD_TEXT.saved("file", "slide.pdf"), /Materiali/);
+  assert.match(QUICK_ADD_TEXT.saved("taskTimer", "Ripasso"), /cronometro avviato/);
+  assert.match(QUICK_ADD_TEXT.saved("taskDone", "Ripasso"), /come fatta/);
   assert.match(SEARCH_TEXT.examDateToDecide, /da decidere/);
   // La categoria delle Impostazioni si chiama «Copia di sicurezza», non «Backup».
   assert.match(VIEW_ERROR_TEXT.body, /Impostazioni → Copia di sicurezza/);

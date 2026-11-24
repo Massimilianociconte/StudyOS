@@ -160,11 +160,11 @@ test("L1: sul remoto il controllo propone gli stessi strumenti (1.12.0); counts 
   }
 });
 
-test("L2: 115 strumenti in tutto, 73 nel catalogo di base", () => {
+test("L2: 116 strumenti in tutto, 73 nel catalogo di base", () => {
   const core = AGENT_TOOLS.length - GROUP_EXAM_TOOL_NAMES.length - EXTRA_TOOL_NAMES.length - UNIVERSITY_TOOL_NAMES.length - LEARNING_TOOL_NAMES.length;
-  assert.equal(AGENT_TOOLS.length, 115, `Strumenti: ${AGENT_TOOLS.length}, attesi 115 (73 di base + 8 + 8 + 5 + 21). Se ne hai aggiunti, aggiorna spec e documenti.`);
+  assert.equal(AGENT_TOOLS.length, 116, `Strumenti: ${AGENT_TOOLS.length}, attesi 116 (73 di base + 8 + 9 + 5 + 21). Se ne hai aggiunti, aggiorna spec e documenti.`);
   assert.equal(core, 73, `Catalogo di base: ${core}, atteso 73: i nuovi strumenti vanno nei file catalog*.ts.`);
-  assert.equal(new Set(AGENT_TOOLS.map((tool) => tool.name)).size, 115, "Nomi di strumenti ripetuti.");
+  assert.equal(new Set(AGENT_TOOLS.map((tool) => tool.name)).size, 116, "Nomi di strumenti ripetuti.");
 });
 
 test("L3: il caricamento dello snapshot sta dentro il try che azzera lo store", () => {

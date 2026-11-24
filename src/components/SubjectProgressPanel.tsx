@@ -15,6 +15,11 @@ export interface SubjectProgressPanelProps {
   activity: ActivityProgress;
   /** Preparazione dell'esame da sostenere; `null` = nessun esame (si offre «Aggiungi l'esame»). */
   preparation: { value: number; onChange: (delta: number) => void } | null;
+  /**
+   * Nessun esame da preparare, ma uno già passato senza esito: la preparazione è finita, si registra
+   * com'è andato (apre l'esame). Niente barra: non è una preparazione in corso.
+   */
+  pendingOutcome?: { date: string; onOpen: () => void } | null;
   onAddExam?: () => void;
   review: ReviewStatus;
   /** Programma dell'esame: quanti argomenti «Aggiungi al ripasso» aggiungerebbe e quante voci ha. */
@@ -72,7 +77,7 @@ function Stepper({ name, value, onChange }: { name: string; value: number; onCha
   );
 }
 
-export function SubjectProgressPanel({ name, color, activity, preparation, onAddExam, review, program, onOpenTasks, onOpenReview }: SubjectProgressPanelProps) {
+export function SubjectProgressPanel({ name, color, activity, preparation, pendingOutcome, onAddExam, review, program, onOpenTasks, onOpenReview }: SubjectProgressPanelProps) {
   const details = [
     activity.partial ? PROGRESS_TEXT.activityPartial(activity.partial) : "",
     activity.excluded ? PROGRESS_TEXT.activityExcluded(activity.excluded) : ""
@@ -117,6 +122,11 @@ export function SubjectProgressPanel({ name, color, activity, preparation, onAdd
               <ProgressBar value={preparation.value} color={color} label={PROGRESS_TEXT.preparationAria(name)} />
             </div>
             <Stepper name={name} value={preparation.value} onChange={preparation.onChange} />
+          </div>
+        ) : pendingOutcome ? (
+          <div className="flex items-center justify-between gap-2">
+            <p className="min-w-0 text-xs font-bold text-[var(--muted)]">{PROGRESS_TEXT.preparationPast(pendingOutcome.date)}</p>
+            <LinkButton label={PROGRESS_TEXT.outcomeLink} aria={PROGRESS_TEXT.outcomeLinkAria(name)} onClick={pendingOutcome.onOpen} />
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2">

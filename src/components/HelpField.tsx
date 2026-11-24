@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { HelpTip } from "./ui";
+import { FieldLabelProvider, HelpTip } from "./ui";
 
 type Help = { title: string; text: string; example?: string };
 
@@ -23,7 +23,7 @@ export function HelpField({
   return (
     <div className={`block min-w-0 ${className}`}>
       <div className="mb-1.5 flex min-h-4 items-center gap-1.5">
-        <label htmlFor={id} className="safe-text min-w-0 text-xs font-black uppercase text-[var(--faint)]">
+        <label id={`${id}-label`} htmlFor={id} className="safe-text min-w-0 text-xs font-black uppercase text-[var(--faint)]">
           {label}
         </label>
         {/* -my-1: il "?" da 24 px non allunga la riga dell'etichetta, i campi accanto restano allineati. */}
@@ -31,7 +31,7 @@ export function HelpField({
           <HelpTip {...help} />
         </span>
       </div>
-      {children(id)}
+      <FieldLabelProvider value={`${id}-label`}>{children(id)}</FieldLabelProvider>
     </div>
   );
 }

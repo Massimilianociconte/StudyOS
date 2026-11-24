@@ -4,12 +4,13 @@ import type { Task } from "../types";
 import { useStudyStore } from "../store/useStudyStore";
 import { selectableSubjects } from "../lib/selectors";
 import { PRIORITY_LABEL } from "../lib/labels";
-import { TASK_EDITOR_TEXT } from "../lib/labels/tasks";
-import { defaultImportance, draftChanged, editorCloseRequest } from "../lib/tasksUi";
-import { Button, Field, inputClass, useBackCloses, useDialogLayer } from "./ui";
+import { TASK_EDITOR_TEXT, TASK_START_TEXT } from "../lib/labels/tasks";
+import { defaultImportance, draftChanged, editorCloseRequest, taskStartFields, type TaskStart } from "../lib/tasksUi";
+import { Button, Field, Segmented, inputClass, useBackCloses, useDialogLayer } from "./ui";
 import { DateField } from "./DatePicker";
 import { DurationField, type DurationUnit } from "./DurationField";
 import { durationToMinutes } from "../lib/duration";
+import { SubjectSelect } from "./SubjectSelect";
 
 export type NewTaskDraft = Partial<Task> & Pick<Task, "title">;
 
@@ -21,12 +22,20 @@ const INITIAL_FIELDS = {
   priority: "medium" as Task["priority"],
   dueDate: "",
   durationValue: "45",
-  durationUnit: "minutes" as DurationUnit
+  durationUnit: "minutes" as DurationUnit,
+  start: "todo" as TaskStart,
+  spent: ""
 };
 
+const START_OPTIONS = [
+  { id: "todo", label: TASK_START_TEXT.todo, icon: "Check" },
+  { id: "timer", label: TASK_START_TEXT.timer, icon: "Timer" },
+  { id: "done", label: TASK_START_TEXT.done, icon: "CheckCheck" }
+] as const;
+
 /**
- * Creazione guidata di un'attività: un solo ingresso ("Nuova attività"), un solo
- * invito finale ("Crea attività"). In vista solo titolo, scadenza e materia;
+ * Creazione guidata di un'attività, la stessa da Attività («Nuova attività») e da «Aggiungi»: in vista
+ * titolo, «Quando la fai?» (da fare, inizio ora con il cronometro, già fatta), scadenza e materia;
  * priorità, durata (valore + unità di tempo) e descrizione stanno in "Altre opzioni".
  */
 export function TaskModal({
@@ -44,6 +53,8 @@ export function TaskModal({
   const [dueDate, setDueDate] = useState(INITIAL_FIELDS.dueDate);
   const [durationValue, setDurationValue] = useState(INITIAL_FIELDS.durationValue);
   const [durationUnit, setDurationUnit] = useState<DurationUnit>(INITIAL_FIELDS.durationUnit);
+  const [start, setStart] = useState<TaskStart>(INITIAL_FIELDS.start);
+  const [spent, setSpent] = useState(INITIAL_FIELDS.spent);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // «Scartare le modifiche?» sul posto, come nell'editor: tocco fuori, Esc, Indietro o «Annulla» non perdono il testo.
@@ -52,7 +63,7 @@ export function TaskModal({
   const moreRef = useRef<HTMLDetailsElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
-  const changed = draftChanged(INITIAL_FIELDS, { title, subjectId, description, priority, dueDate, durationValue, durationUnit });
+  const changed = draftChanged(INITIAL_FIELDS, { title, subjectId, description, priority, dueDate, durationValue, durationUnit, start, spent });
 
   const keepEditing = () => {
     setAsking(false);
@@ -99,6 +110,11 @@ export function TaskModal({
       setError("La scadenza non è valida: sceglila di nuovo dal calendario.");
       return;
     }
+    const spentMinutes = start === "done" && spent.trim() ? Number(spent.replace(",", ".")) : undefined;
+    if (spentMinutes !== undefined && (!Number.isFinite(spentMinutes) || spentMinutes < 0)) {
+      setError(TASK_START_TEXT.spentInvalid);
+      return;
+    }
     setBusy(true);
     try {
       await onCreate({
@@ -108,7 +124,8 @@ export function TaskModal({
         priority,
         importance: defaultImportance(priority),
         dueDate: due?.toISOString(),
-        estimatedMinutes: durationToMinutes(parsed, durationUnit)
+        estimatedMinutes: durationToMinutes(parsed, durationUnit),
+        ...taskStartFields(start, { due: due?.toISOString(), actualMinutes: spentMinutes })
       });
       onClose();
     } catch {
@@ -156,18 +173,25 @@ export function TaskModal({
             />
           </Field>
 
+          <div className="grid gap-1.5">
+            {/* Nome visibile come le etichette dei campi; il gruppo ha lo stesso nome per i lettori di schermo. */}
+            <span aria-hidden="true" className="text-xs font-black uppercase text-[var(--faint)]">
+              {TASK_START_TEXT.label}
+            </span>
+            <Segmented label={TASK_START_TEXT.label} value={start} options={START_OPTIONS} onChange={setStart} size="sm" />
+            {start !== "todo" ? <p className="text-xs font-bold text-[var(--muted)]">{start === "timer" ? TASK_START_TEXT.timerHint : TASK_START_TEXT.doneHint}</p> : null}
+          </div>
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <DateField label="Scadenza (facoltativa)" value={dueDate} onChange={setDueDate} optional />
+            <DateField label={start === "done" ? TASK_START_TEXT.dueDone : "Scadenza (facoltativa)"} value={dueDate} onChange={setDueDate} optional />
             <Field label="Materia (facoltativa)">
-              <select className={inputClass} value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
-                <option value="">Nessuna materia</option>
-                {selectableSubjects(subjects, subjectId).map((subject) => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </option>
-                ))}
-              </select>
+              <SubjectSelect value={subjectId} onChange={setSubjectId} subjects={selectableSubjects(subjects, subjectId)} none="Nessuna materia" />
             </Field>
+            {start === "done" ? (
+              <Field label={TASK_START_TEXT.spent}>
+                <input className={inputClass} type="number" inputMode="numeric" min={0} step={5} value={spent} onChange={(event) => setSpent(event.target.value)} placeholder="Es. 75" />
+              </Field>
+            ) : null}
           </div>
 
           <details ref={moreRef} className="quiet-panel p-4">
@@ -224,7 +248,7 @@ export function TaskModal({
                 Annulla
               </Button>
               <Button data-save variant="primary" icon="Check" onClick={() => void save()} disabled={busy}>
-                {busy ? "Creazione…" : "Crea attività"}
+                {busy ? "Creazione…" : start === "timer" ? TASK_START_TEXT.createTimer : start === "done" ? TASK_START_TEXT.createDone : TASK_START_TEXT.create}
               </Button>
             </div>
           )}

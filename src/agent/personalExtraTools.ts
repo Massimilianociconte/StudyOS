@@ -35,6 +35,21 @@ export const deleteSubjectTool = async (args: Args): Promise<AgentCallResult> =>
   });
 };
 
+export const mergeSubjectsTool = async (args: Args): Promise<AgentCallResult> => {
+  const keepId = text(args.keepId);
+  const dropId = text(args.dropId);
+  const keep = state().subjects.find((item) => item.id === keepId);
+  const drop = state().subjects.find((item) => item.id === dropId);
+  if (!keep || !drop) return fail("not_found", "Materia non trovata: leggi gli id da studyos_list_subjects.");
+  const name = args.name === "drop" ? drop.name : keep.name;
+  try {
+    const { moved } = await state().mergeSubjects(keepId, dropId, { name });
+    return ok({ id: keepId, name, merged: true, removedId: dropId, removedName: drop.name, moved });
+  } catch (error) {
+    return fail("invalid", error instanceof Error ? error.message : "Unione non riuscita.");
+  }
+};
+
 const taggable = (type: TaggableType): ReadonlyArray<{ id: string }> => {
   const current = state();
   return type === "task" ? current.tasks : type === "material" ? current.attachments : type === "note" ? current.notes : current.events;

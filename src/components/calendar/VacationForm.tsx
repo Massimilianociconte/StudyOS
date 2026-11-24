@@ -4,6 +4,7 @@ import { DateRangeField } from "../DatePicker";
 import { ColorPreview } from "./ColorPalette";
 import { ReminderList } from "./ReminderList";
 import { SimpleFormDrawer } from "./OccasionForm";
+import { CreateTypeSwitch, type CreateType } from "./CreateTypeSwitch";
 import { eventTypeIcon, typeDefaultColor, type TypeColorOverrides } from "../../lib/eventColors";
 import { vacationDays, vacationError, type VacationDraft } from "../../lib/occasionForms";
 import { EVENT_EDITOR_TEXT, VACATION_FORM_TEXT } from "../../lib/labels/calendar";
@@ -20,7 +21,8 @@ export function VacationForm({
   onClose,
   onSave,
   onDelete,
-  onFullForm
+  onFullForm,
+  onSwitchType
 }: {
   initial: VacationDraft;
   editing: boolean;
@@ -32,6 +34,8 @@ export function VacationForm({
   onSave: (draft: VacationDraft) => Promise<string | void>;
   onDelete?: () => Promise<string | void>;
   onFullForm?: (draft: VacationDraft) => void;
+  /** Creazione dal calendario: «Cosa vuoi aggiungere» in cima, per passare a un altro tipo con il nome già scritto. */
+  onSwitchType?: (type: CreateType, title: string) => void;
 }) {
   const [draft, setDraft] = useState(initial);
   const update = (patch: Partial<VacationDraft>) => setDraft((value) => ({ ...value, ...patch }));
@@ -42,6 +46,7 @@ export function VacationForm({
   return (
     <SimpleFormDrawer
       title={editing ? VACATION_FORM_TEXT.editTitle : VACATION_FORM_TEXT.newTitle}
+      top={!editing && onSwitchType ? <CreateTypeSwitch value="vacation" onChange={(type) => type !== "vacation" && onSwitchType(type, draft.title.trim())} /> : undefined}
       dirty={key !== JSON.stringify(initial)}
       changeKey={key}
       saveLabel={VACATION_FORM_TEXT.save}

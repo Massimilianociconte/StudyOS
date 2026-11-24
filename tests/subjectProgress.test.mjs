@@ -308,3 +308,20 @@ test("store: il peso si salva solo se diverso da 1; riaprire un'attività ricalc
   await store.getState().toggleTask(chapter.id);
   assert.equal(activityProgress("s8", store.getState().tasks).percent, 0);
 });
+
+test("esame passato senza esito: niente preparazione in corso, niente completamento da solo", () => {
+  const now = new Date(2026, 10, 24, 10, 0);
+  const past = exam("e-parziale", "s1", { date: new Date(2026, 10, 23, 9, 0).toISOString(), preparation: 100 });
+  const next = exam("e-orale", "s1", { date: new Date(2027, 0, 22, 9, 30).toISOString(), preparation: 10 });
+  const today = exam("e-oggi", "s1", { date: new Date(2026, 10, 24, 18, 0).toISOString(), preparation: 60 });
+  const tasks = [task("a", "s1", "done")];
+  // Solo l'esame passato: la barra non c'è (null), l'esito è da registrare; le attività al 100% non completano.
+  const pending = subjectProgress("s1", tasks, [past], now);
+  assert.deepEqual([pending.progress, pending.source, pending.exam, pending.pendingExam?.id], [null, "pending", undefined, "e-parziale"]);
+  // Con l'orale davanti si prepara quello; l'esame di oggi conta ancora come da preparare.
+  assert.equal(subjectProgress("s1", tasks, [past, next], now).exam.id, "e-orale");
+  assert.equal(subjectProgress("s1", tasks, [past, next, today], now).exam.id, "e-oggi");
+  // Non superato con la data da decidere: resta da preparare anche se la data è passata.
+  const toDecide = { ...past, tags: [`data-da-decidere:${past.date}`] };
+  assert.equal(subjectProgress("s1", tasks, [toDecide], now).exam.id, "e-parziale");
+});

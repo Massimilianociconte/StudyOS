@@ -5,6 +5,7 @@ import { SHARE_SCOPE_LABEL } from "../lib/labels";
 // Stesse costanti che usa execute.ts: azioni, durate e tipi del timer restano allineati.
 import { TIMER_CONTROL_ACTIONS, TIMER_KINDS, TIMER_MODES } from "../lib/studyTimer";
 import { SESSION_SOURCE_VALUES } from "../lib/studySessions";
+import { SUBJECT_ICON_IDS } from "../lib/subjectFields";
 import type { ShareScope } from "../lib/sharing";
 import { GROUP_EXAM_TOOLS } from "./catalogGroupExams";
 import { EXTRA_TOOLS } from "./catalogExtras";
@@ -219,7 +220,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_list_subjects",
     title: "Elenco materie",
-    description: "Elenca le materie personali con id, nome, docente, CFU, semestre, stato e voto obiettivo. Le archiviate sono escluse salvo includeArchived=true o status=archived. gradePending=true: materia completed senza voto nel libretto, da registrare con studyos_record_grade quando la persona lo conosce.",
+    description: "Elenca le materie personali con id, nome, docente, CFU, semestre, stato, voto obiettivo e linkedToCatalog (collegata al catalogo del corso). Usa query per cercare una materia prima di crearla o di collegarci qualcosa. Le archiviate sono escluse salvo includeArchived=true o status=archived. gradePending=true: materia completed senza voto nel libretto, da registrare con studyos_record_grade quando la persona lo conosce.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ ...page, includeArchived: { type: "boolean", default: false, description: "Include le materie archiviate." }, status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed", "archived"], description: "Filtra per stato." } }),
@@ -228,7 +229,7 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_get_subject",
     title: "Dettaglio materia",
-    description: "Legge una materia, incluse le note. Serve l'id restituito da studyos_list_subjects o studyos_search. progress ha tre indicatori distinti: activity (avanzamento automatico delle task, con le sottotask in proporzione; percent null senza task che contano), preparation (preparazione a mano del primo esame da sostenere, null senza esame) e review (argomenti da ripassare: total e due entro oggi). overall è la barra della scheda: la preparazione se c'è un esame, altrimenti activity.",
+    description: "Legge una materia, incluse le note. Serve l'id restituito da studyos_list_subjects o studyos_search. progress ha tre indicatori distinti: activity (avanzamento automatico delle task, con le sottotask in proporzione; percent null senza task che contano), preparation (preparazione a mano del primo esame da preparare, da oggi in avanti; null senza esame), pendingOutcome (esame già passato senza esito: la preparazione è conclusa, l'esito si registra con studyos_update_exam o studyos_record_grade) e review (argomenti da ripassare: total e due entro oggi). overall è la barra della scheda: la preparazione se c'è un esame, altrimenti activity.",
     risk: "read",
     idempotent: true,
     inputSchema: objectSchema({ id: ID }, ["id"]),
@@ -237,26 +238,30 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_create_subject",
     title: "Crea materia",
-    description: "Crea una materia personale. name è obbligatorio. Per un insegnamento ufficiale del corso BARB usa invece studyos_add_barb_courses, che collega il catalogo e compila CFU, docente e semestre.",
+    description:
+      "Crea una materia personale. PRIMA cerca se esiste già: studyos_list_subjects con query (anche includeArchived) e, se c'è, usa quell'id invece di crearne un'altra; ogni attività, evento, esame o mazzo si collega con subjectId, mai con il nome. Lo strumento rifiuta i doppioni: code conflict con data.reason=duplicate (stesso nome a meno di maiuscole e accenti: data.existing.id è la materia da usare) o data.reason=similar (data.candidates: stessa materia probabile, per esempio una parola in comune e lo stesso docente, o «umana»/«dell'uomo»). Con similar chiedi alla persona: se è la stessa usa quell'id; solo se è davvero un'altra materia ripeti con confirmDistinct=true. Per un insegnamento ufficiale del corso BARB usa invece studyos_add_barb_courses, che collega il catalogo e compila CFU, docente e semestre. Due doppioni già presenti si uniscono con studyos_merge_subjects.",
     risk: "write",
     idempotent: false,
     additive: true,
     inputSchema: objectSchema({
-      name: { type: "string", minLength: 1, maxLength: 160, description: "Nome della materia." },
-      teacher: { type: "string", maxLength: 160, default: "", description: "Docente." },
-      cfu: { type: "integer", minimum: 0, maximum: 60, default: 0, description: "Crediti." },
-      semester: { type: "string", maxLength: 80, default: "", description: "Semestre o periodo, testo libero." },
+      name: { type: "string", minLength: 1, maxLength: 160, description: "Nome della materia, come lo usa la persona." },
+      teacher: { type: "string", maxLength: 160, default: "", description: "Docente o docenti." },
+      cfu: { type: "integer", minimum: 0, maximum: 60, default: 6, description: "Crediti (6 se non li sai: come l'app; chiedili se contano per il libretto)." },
+      semester: { type: "string", maxLength: 80, default: "", description: "Periodo come testo libero (es. «1° semestre 2026/2027»)." },
+      semesterOverride: { type: "string", enum: ["primo", "secondo", "annuale", "non-definito"], description: "Semestre scelto, se noto: lo usano i filtri di Materie." },
       status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed"], default: "active", description: "Stato iniziale." },
-      targetGrade: { type: "integer", minimum: 18, maximum: 30, description: "Voto obiettivo, se noto." },
+      targetGrade: { type: "integer", minimum: 18, maximum: 31, description: "Voto obiettivo, se noto (31 = 30 e lode)." },
       notes: { type: "string", maxLength: 8000, default: "", description: "Note." },
-      color: { type: "string", maxLength: 40, default: "", description: "Colore CSS opzionale, es. #38BDF8." }
+      color: { type: "string", maxLength: 40, default: "", description: "Colore esadecimale opzionale, es. #38BDF8." },
+      icon: { type: "string", enum: [...SUBJECT_ICON_IDS], description: "Icona opzionale della materia." },
+      confirmDistinct: { type: "boolean", default: false, description: "true solo dopo che la persona ha confermato che è una materia diversa da quelle simili restituite (data.reason=similar)." }
     }, ["name"]),
     summary: (args) => `Creare la materia «${text(args.name, "senza nome")}»`
   }),
   tool({
     name: "studyos_update_subject",
     title: "Aggiorna materia",
-    description: "Aggiorna i campi indicati di una materia esistente. I campi omessi restano invariati. archived=true la archivia senza eliminarla.",
+    description: "Aggiorna i campi indicati di una materia esistente. I campi omessi restano invariati. archived=true la archivia senza eliminarla. Un nome uguale a quello di un'altra materia è rifiutato (code conflict, data.reason=duplicate): in quel caso sono doppioni da unire con studyos_merge_subjects.",
     risk: "write",
     idempotent: true,
     inputSchema: objectSchema({
@@ -266,9 +271,10 @@ const CORE_TOOLS: readonly AgentTool[] = [
       cfu: { type: "integer", minimum: 0, maximum: 60 },
       semester: { type: "string", maxLength: 80 },
       status: { type: "string", enum: ["not-started", "active", "review", "exam-ready", "completed", "archived"] },
-      targetGrade: { type: "integer", minimum: 18, maximum: 30 },
+      targetGrade: { type: "integer", minimum: 18, maximum: 31, description: "31 = 30 e lode." },
       notes: { type: "string", maxLength: 8000 },
       color: { type: "string", maxLength: 40 },
+      icon: { type: "string", enum: [...SUBJECT_ICON_IDS] },
       archived: { type: "boolean" },
       semesterOverride: { type: "string", enum: ["primo", "secondo", "annuale", "non-definito"] }
     }, ["id"]),
@@ -1120,13 +1126,20 @@ const CORE_TOOLS: readonly AgentTool[] = [
   tool({
     name: "studyos_add_barb_courses",
     title: "Aggiungi insegnamenti alle materie",
-    description: "Aggiunge alle materie gli insegnamenti BARB indicati per id, come il pulsante dell'app: nome, CFU, docente, semestre e collegamento al catalogo ufficiale. Quelli già presenti vengono saltati. Gli id si ottengono da studyos_list_barb_courses.",
+    description: "Aggiunge alle materie gli insegnamenti BARB indicati per id, come il pulsante dell'app: nome, CFU, docente, semestre e collegamento al catalogo ufficiale. Quelli già collegati vengono saltati (skipped). Se la persona ha già una materia personale con lo stesso nome la collega invece di crearne un'altra (linked: CFU, docente e semestre si completano solo dove mancano). Se ce n'è una solo simile (stesso docente e una parola in comune, «umana»/«dell'uomo») non crea niente e la restituisce in needsChoice: chiedi alla persona e ripeti con links=[{courseId, subjectId}] (collega quella) o subjectId=\"new\" (crea una materia nuova). Gli id si ottengono da studyos_list_barb_courses.",
     risk: "write",
     idempotent: true,
     additive: true,
     inputSchema: objectSchema({
-      ids: { type: "array", minItems: 1, maxItems: 40, items: ID, description: "Id degli insegnamenti da aggiungere." }
-    }, ["ids"]),
+      ids: { type: "array", minItems: 0, maxItems: 40, items: ID, default: [], description: "Id degli insegnamenti da aggiungere." },
+      links: {
+        type: "array",
+        maxItems: 40,
+        default: [],
+        description: "Scelte della persona per gli insegnamenti in needsChoice: subjectId della materia esistente da collegare, oppure \"new\" per crearne una nuova.",
+        items: objectSchema({ courseId: ID, subjectId: ID }, ["courseId", "subjectId"])
+      }
+    }),
     summary: (args) => `Aggiungere ${Array.isArray(args.ids) ? args.ids.length : ""} insegnamenti BARB alle materie`.trim()
   }),
   tool({

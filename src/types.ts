@@ -463,6 +463,12 @@ export interface Preferences extends BaseEntity {
    */
   pushReminders?: boolean;
   /**
+   * Coppie di materie che la persona ha detto diverse nel riquadro «Possibili doppioni» di Materie
+   * (chiavi di `subjectPairKey`): non vengono più proposte. Arriva dalla sincronizzazione: leggerle
+   * con `dismissedSubjectPairs`.
+   */
+  distinctSubjectPairs?: string[];
+  /**
    * Tema e colori (Impostazioni › Aspetto): seguono l'account su ogni dispositivo. Assenti = quelli
    * del dispositivo (account di prima). Arrivano dalla sincronizzazione: leggerli con `validLook`.
    */

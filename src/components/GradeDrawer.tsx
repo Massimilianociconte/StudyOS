@@ -9,6 +9,9 @@ import { DateField, DateTimeField } from "./DatePicker";
 import { Button, Drawer, Field, HelpTip, inputClass } from "./ui";
 import { CAREER_HELP, GRADE_TEXT } from "../lib/labels/career";
 import { useOnce } from "../hooks/useOnce";
+import { SubjectDuplicateError, exactDuplicate } from "../lib/subjectIdentity";
+import { IconMark, IconSelect } from "./IconSelect";
+import { SubjectOptionMark } from "./SubjectSelect";
 
 const GRADES = Array.from({ length: MAX_GRADE - MIN_GRADE + 1 }, (_, index) => MIN_GRADE + index);
 
@@ -161,7 +164,21 @@ export function GradeDrawer({
       if (!draft.newName.trim()) return fail("Scrivi il nome della materia.");
       if (!Number.isFinite(cfu) || cfu < 0 || cfu > 60) return fail("CFU non validi: scrivi un numero da 0 a 60.");
       name = draft.newName.trim();
-      subjectId = await addSubject({ name, cfu, status: "completed", semester: "" });
+      // Materia che c'è già (stesso nome): si usa quella, così il voto non finisce su una copia.
+      const twin = exactDuplicate({ name }, subjects);
+      if (twin) {
+        if (available.some((subject) => subject.id === twin.subject.id)) {
+          setDraft((current) => ({ ...current, subjectId: twin.subject.id, newName: "" }));
+          return fail(GRADE_TEXT.existingPicked(twin.subject.name));
+        }
+        return fail(GRADE_TEXT.existingUnavailable(twin.subject.name));
+      }
+      try {
+        subjectId = await addSubject({ name, cfu, status: "completed", semester: "" });
+      } catch (problem) {
+        if (problem instanceof SubjectDuplicateError) return fail(problem.message);
+        throw problem;
+      }
     }
     if (!subjectId) return fail("Scegli la materia dell'esame.");
     // Riusa l'esame «Sostenuto» senza voto (o il primo da dare): la materia resta una riga del libretto.
@@ -233,22 +250,15 @@ export function GradeDrawer({
       <div className="grid grid-cols-1 gap-3">
         {subjectFixed ? null : (
           <Field label="Materia">
-            <select
-              className={inputClass}
+            <IconSelect
               value={draft.subjectId}
-              onChange={(event) => {
-                const subjectId = event.target.value;
-                setDraft((value) => ({ ...value, subjectId, date: suggestedDate(subjectId) }));
-              }}
-            >
-              <option value="">Scegli la materia</option>
-              {available.map((subject) => (
-                <option key={subject.id} value={subject.id}>
-                  {subject.name} · {subject.cfu} CFU
-                </option>
-              ))}
-              <option value="__new">+ Materia non in elenco (Es. di un anno precedente)</option>
-            </select>
+              onChange={(subjectId) => setDraft((value) => ({ ...value, subjectId, date: suggestedDate(subjectId) }))}
+              placeholder="Scegli la materia"
+              options={[
+                ...available.map((subject) => ({ value: subject.id, label: `${subject.name} · ${subject.cfu} CFU`, mark: <SubjectOptionMark subject={subject} /> })),
+                { value: "__new", label: "Materia non in elenco (Es. di un anno precedente)", mark: <IconMark name="Plus" /> }
+              ]}
+            />
           </Field>
         )}
         {creating ? (

@@ -67,3 +67,13 @@ export const UNIVERSITY_SOURCE_KIND_LABEL: Record<string, string> = {
   "piano-didattico": "Piano didattico",
   "scheda-corso": "Scheda del corso"
 };
+
+/** «Aggiungi alle mie materie» quando c'è già una materia personale simile. */
+export const BARB_LINK_TEXT = {
+  similar: (names: string[]) =>
+    names.length === 1
+      ? `Hai già la materia «${names[0]}»: è la stessa? Collegala, così CFU, docente e appelli ufficiali finiscono lì, insieme ad attività ed esami.`
+      : `Hai già materie simili (${names.map((name) => `«${name}»`).join(", ")}): se una è la stessa, collegala invece di crearne un'altra.`,
+  link: (name: string) => `Collega «${name}»`,
+  addNew: "No, aggiungi come nuova"
+} as const;

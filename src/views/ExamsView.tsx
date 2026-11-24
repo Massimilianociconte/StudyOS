@@ -29,6 +29,7 @@ import { SharedSection } from "../components/SharedSection";
 import { isNullableString, oneOf, useUiState, writeUiState } from "../lib/uiState";
 import { useOnce } from "../hooks/useOnce";
 import { useLinkedUiState } from "../hooks/useLinkedUiState";
+import { SubjectSelect } from "../components/SubjectSelect";
 
 // Pannello Condividi (e supabase-js) scaricato solo al tocco, come in ShareButton: qui è una voce
 // del menu "Altre azioni" e non un pulsante, quindi il caricamento differito sta nella vista.
@@ -618,14 +619,12 @@ function PersonalExamsView({
             <div className="grid grid-cols-1 gap-3">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Materia">
-                  <select className={inputClass} value={draft.subjectId} onChange={(event) => setDraft((value) => ({ ...value, subjectId: event.target.value }))}>
-                    <option value="">Scegli la materia</option>
-                    {selectableSubjects(subjects, draft.subjectId).map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                  </select>
+                  <SubjectSelect
+                    value={draft.subjectId}
+                    onChange={(subjectId) => setDraft((value) => ({ ...value, subjectId }))}
+                    subjects={selectableSubjects(subjects, draft.subjectId)}
+                    placeholder="Scegli la materia"
+                  />
                 </Field>
                 <DateTimeField label="Giorno e ora dell'esame" value={draft.date} onChange={(date) => setDraft((value) => ({ ...value, date }))} />
               </div>

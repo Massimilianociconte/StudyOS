@@ -48,26 +48,29 @@ export const UI_TEXT = {
   dueOptional: "Entro quando? (facoltativa)"
 } as const;
 
-/** Tipo di elemento creato con l'aggiunta rapida (il «+»), per la conferma dopo il salvataggio. */
-export type QuickAddSaved = "task" | "taskTimer" | "taskDone" | "event" | "session" | "subject" | "link" | "file";
+/** Cosa si è creato con «Aggiungi» (o dalla Home), per la conferma dopo il salvataggio. */
+export type QuickAddSaved = "task" | "taskTimer" | "taskDone" | "subject";
 
-/** Aggiunta rapida (il «+»): domanda prima di perdere quello che si è scritto e conferma di cosa si è creato e dove. */
+/** «Aggiungi» in alto (e il «+» del telefono): menu che porta ai moduli delle sezioni, e la conferma. */
 export const QUICK_ADD_TEXT = {
-  unsavedTitle: "Scartare le modifiche?",
-  unsavedText: "Hai scritto qualcosa che non è ancora salvato.",
-  unsavedKeep: "Continua a modificare",
-  unsavedDiscard: "Scarta le modifiche",
+  button: "Aggiungi",
+  buttonTitle: "Aggiungi un'attività, un evento, una materia o un materiale",
+  menu: "Cosa vuoi aggiungere?",
+  task: "Attività",
+  taskHint: "Da fare, da iniziare ora o già fatta",
+  event: "Evento",
+  eventHint: "Lezione, studio, esame o impegno, anche tutto il giorno o ripetuto: si apre nel Calendario",
+  subject: "Materia",
+  subjectHint: "Un corso che segui, con CFU, semestre e docente",
+  material: "Materiale",
+  materialHint: "Un link o un file: si apre in Materiali",
   /** Dopo «Salva»: cosa si è creato e in quale sezione si trova. `title` vuoto = senza nome. */
   saved: (kind: QuickAddSaved, title: string) => {
     const what: Record<QuickAddSaved, string> = {
       task: "Attività creata: la trovi in Attività",
       taskTimer: "Attività creata e cronometro avviato: la trovi in Attività",
       taskDone: "Attività salvata come fatta: la trovi in Attività",
-      event: "Evento aggiunto al Calendario",
-      session: "Studio pianificato aggiunto al Calendario",
-      subject: "Materia creata: la trovi in Materie",
-      link: "Link salvato: lo trovi in Materiali",
-      file: "File salvato: lo trovi in Materiali"
+      subject: "Materia creata: la trovi in Materie"
     };
     const name = title.trim();
     return name ? `${what[kind]} («${name}»).` : `${what[kind]}.`;

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button, DIMMED_DISABLED_FIELDS, Drawer, Field, Panel, Segmented, inputClass } from "../ui";
+import { Button, DIMMED_DISABLED_FIELDS, Drawer, Field, Panel, inputClass } from "../ui";
+import { CreateTypeSwitch } from "./CreateTypeSwitch";
 import { Icon } from "../Icon";
 import { DateField, DateTimeField } from "../DatePicker";
 import { SharedMark } from "../SharedMark";
+import { IconMark, IconSelect, type IconSelectOption } from "../IconSelect";
+import { SubjectSelect } from "../SubjectSelect";
 import { ColorPalette, ColorPreview } from "./ColorPalette";
 import { ReminderList } from "./ReminderList";
 import { RepeatPicker } from "./RepeatPicker";
@@ -54,7 +57,12 @@ export interface EditorSubmit {
   changes: Partial<CalendarEvent>;
 }
 
-const CATEGORY_OPTIONS = (Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => ({ id, label: EVENT_CATEGORY_LABEL[id] }));
+// Tipologie con la loro icona, la stessa dell'impegno nel calendario.
+const CATEGORY_OPTIONS: IconSelectOption[] = (Object.keys(EVENT_CATEGORY_LABEL) as EventCategory[]).map((id) => ({
+  value: id,
+  label: EVENT_CATEGORY_LABEL[id],
+  mark: <IconMark name={eventTypeIcon(eventTypeKey({ category: id }))} />
+}));
 
 /** Pulsante in attesa del salvataggio: sembra spento ma tiene il fuoco (vedi Salva ed Elimina). */
 const WAITING_CLASS = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:scale-100";
@@ -77,7 +85,7 @@ export function EventEditor({
   calendars = [],
   createKind,
   repeatNote,
-  typeExtra,
+  onSwitchType,
   deleteConfirmText,
   onClose,
   onSubmit,
@@ -106,8 +114,8 @@ export function EventEditor({
   createKind?: "event" | "task";
   /** Avviso sotto la ripetizione. */
   repeatNote?: string;
-  /** Scelte in più accanto alla tipologia (es. ricorrenze), con la bozza attuale (titolo già scritto). */
-  typeExtra?: (draft: EventDraft) => ReactNode;
+  /** Creazione: «Ricorrenza» o «Vacanza o assenza» in cima passano al loro modulo, con il titolo già scritto. */
+  onSwitchType?: (type: "occasion" | "vacation", title: string) => void;
   /** Testo della conferma prima di `onDelete`; assente = `onDelete` chiede da sé (es. scelta della portata). */
   deleteConfirmText?: string;
   onClose: () => void;
@@ -375,20 +383,13 @@ export function EventEditor({
     </Field>
   ) : (
     <Field label={subjectRequired ? EVENT_EDITOR_TEXT.subject : EVENT_EDITOR_TEXT.subjectOptional}>
-      <select className={inputClass} value={draft.subjectId} onChange={(e) => setSubject(e.target.value)}>
-        {subjectRequired ? (
-          <option value="" disabled>
-            {subjectOptions.length ? EVENT_EDITOR_TEXT.subjectChoose : EVENT_EDITOR_TEXT.subjectNoneShared}
-          </option>
-        ) : (
-          <option value="">{EVENT_EDITOR_TEXT.subjectNone}</option>
-        )}
-        {subjectOptions.map((subject) => (
-          <option key={subject.id} value={subject.id}>
-            {subject.name}
-          </option>
-        ))}
-      </select>
+      <SubjectSelect
+        value={draft.subjectId}
+        onChange={setSubject}
+        subjects={subjectOptions}
+        none={subjectRequired ? undefined : EVENT_EDITOR_TEXT.subjectNone}
+        placeholder={subjectOptions.length ? EVENT_EDITOR_TEXT.subjectChoose : EVENT_EDITOR_TEXT.subjectNoneShared}
+      />
     </Field>
   );
 
@@ -457,20 +458,19 @@ export function EventEditor({
           <section className="grid grid-cols-1 gap-3" aria-label={EVENT_EDITOR_TEXT.sectionMain}>
             {sectionTitle(EVENT_EDITOR_TEXT.sectionMain)}
             {creating ? (
-              <Segmented
-                label={EVENT_EDITOR_TEXT.kindLabel}
+              <CreateTypeSwitch
                 value={kind}
+                types={onSwitchType ? undefined : ["event", "task"]}
                 onChange={(next) => {
+                  if (next === "occasion" || next === "vacation") {
+                    onSwitchType?.(next, draft.title.trim());
+                    return;
+                  }
                   setKind(next);
                   setError("");
                   // Una materia di un'altra persona non resta su un'attività mia (né viceversa).
                   if (ownerId) setDraft((value) => ({ ...value, subjectId: "" }));
                 }}
-                className="justify-self-start"
-                options={[
-                  { id: "event", label: EVENT_EDITOR_TEXT.kindEvent, icon: "CalendarDays", title: EVENT_EDITOR_TEXT.kindEventTitle },
-                  { id: "task", label: EVENT_EDITOR_TEXT.kindTask, icon: "Check", title: EVENT_EDITOR_TEXT.kindTaskTitle }
-                ]}
               />
             ) : null}
             {creating && kind === "event" && calendars.length ? (
@@ -588,13 +588,7 @@ export function EventEditor({
                 {sectionTitle(EVENT_EDITOR_TEXT.sectionLook)}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label={EVENT_EDITOR_TEXT.type}>
-                    <select className={inputClass} value={draft.category} onChange={(e) => setCategory(e.target.value as EventCategory)}>
-                      {CATEGORY_OPTIONS.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.label}
-                        </option>
-                      ))}
-                    </select>
+                    <IconSelect value={draft.category} options={CATEGORY_OPTIONS} onChange={(value) => setCategory(value as EventCategory)} />
                   </Field>
                   {subjectField}
                 </div>
@@ -603,7 +597,6 @@ export function EventEditor({
                     {EVENT_EDITOR_TEXT.vacationAllDay}
                   </p>
                 ) : null}
-                {typeExtra?.(draft)}
                 {repeatUpFront ? repeatPicker : null}
                 <ColorPalette
                   label={EVENT_EDITOR_TEXT.color}

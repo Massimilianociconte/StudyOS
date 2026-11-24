@@ -125,3 +125,25 @@ test("importanza di partenza: urgente 5, alta 4, le altre 3 (uguale da ogni ingr
   assert.equal(defaultImportance("medium"), 3);
   assert.equal(defaultImportance("low"), 3);
 });
+
+const { taskStartFields } = await import("../src/lib/tasksUi.ts");
+
+test("nuova attività: da fare, inizio ora (cronometro) o già fatta, come la vecchia aggiunta rapida", () => {
+  const now = new Date("2026-11-24T10:00:00.000Z");
+  assert.deepEqual(taskStartFields("todo", { now }), {});
+  assert.deepEqual(taskStartFields("timer", { now }), {
+    status: "doing",
+    actualMinutes: 0,
+    timerAccumulatedSeconds: 0,
+    timerStartedAt: now.toISOString(),
+    timerLastReminderAt: now.toISOString()
+  });
+  assert.deepEqual(taskStartFields("done", { now }), { status: "done", completedAt: now.toISOString() }, "senza giorno: fatta adesso");
+  const due = "2026-11-20T17:00:00.000Z";
+  assert.deepEqual(taskStartFields("done", { due, actualMinutes: 75, now }), {
+    status: "done",
+    completedAt: due,
+    actualMinutes: 75,
+    timerAccumulatedSeconds: 4500
+  });
+});

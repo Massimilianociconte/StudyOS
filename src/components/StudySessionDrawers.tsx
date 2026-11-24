@@ -35,6 +35,7 @@ import { useOnce } from "../hooks/useOnce";
 import { Button, Drawer, Field, inputClass } from "./ui";
 import { LinkedNotes } from "./NoteDrawer";
 import { SESSION_LIST_TEXT } from "../lib/labels/study";
+import { SubjectSelect } from "./SubjectSelect";
 
 const TEMPLATES = Object.keys(SESSION_TEMPLATE_LABEL) as StudySession["template"][];
 
@@ -85,22 +86,15 @@ function SessionFields({
     <div className="grid grid-cols-1 gap-3">
       <div className={`grid grid-cols-1 gap-3 ${options.length ? "min-[480px]:grid-cols-2" : ""}`}>
         <Field label={SESSION_FORM_TEXT.subject}>
-          <select
-            className={inputClass}
+          <SubjectSelect
             value={draft.subjectId}
-            onChange={(event) => {
-              const subjectId = event.target.value;
+            onChange={(subjectId) =>
               // L'argomento è della materia: cambiandola si toglie.
-              set({ subjectId, topicId: topics.some((item) => item.id === draft.topicId && item.subjectId === subjectId) ? draft.topicId : "" });
-            }}
-          >
-            <option value="">{SESSION_FORM_TEXT.noSubject}</option>
-            {selectableSubjects(subjects, draft.subjectId).map((subject) => (
-              <option key={subject.id} value={subject.id}>
-                {subject.name}
-              </option>
-            ))}
-          </select>
+              set({ subjectId, topicId: topics.some((item) => item.id === draft.topicId && item.subjectId === subjectId) ? draft.topicId : "" })
+            }
+            subjects={selectableSubjects(subjects, draft.subjectId)}
+            none={SESSION_FORM_TEXT.noSubject}
+          />
         </Field>
         {options.length ? (
           <Field label={SESSION_FORM_TEXT.topic}>

@@ -1,10 +1,11 @@
-// Riga dei filtri sopra il calendario: una materia sola (la sua pillola accesa, con ✕) o tutte, le
+// Riga dei filtri sopra il calendario: tutte le materie, una o più (le pillole accese, con ✕), le
 // festività accese o spente e, in ogni vista, le Attività senza data.
 import { useEffect, useRef } from "react";
 import { Icon } from "../Icon";
 import { CALENDAR_TEXT, CALENDAR_VIEW_TEXT, HOLIDAYS_TOGGLE_LABEL } from "../../lib/labels/calendar";
 import { safeCssColor } from "../../lib/sharing";
 import { selectableSubjects } from "../../lib/selectors";
+import { toggleSubjectFilter } from "../../lib/calendarFilter";
 import type { Subjects } from "./types";
 
 /** Pillola della riga: 44 px di altezza (bersaglio da dito), accesa o spenta. */
@@ -16,10 +17,11 @@ const pill = (pressed: boolean) =>
   }`;
 
 /**
- * Riga "Tutte · Analisi · Fisica…": scorre in orizzontale dentro la riga (mai la pagina). Un solo
- * segno del filtro attivo: la pillola della materia accesa, con ✕, che lo toglie (e resta in vista
- * quando la riga scorre). Dopo (sul telefono vanno a capo): "Festività" (solo con `onToggleHolidays`:
- * sul telefono è in «Altre azioni») e "Senza data · N".
+ * Riga "Tutte · Analisi · Fisica…": scorre in orizzontale dentro la riga (mai la pagina). Un tocco su
+ * una materia la aggiunge alle scelte (si vedono gli impegni di tutte quelle accese), un altro la
+ * toglie (✕); «Tutte» le toglie tutte in un colpo. L'ultima accesa resta in vista quando la riga
+ * scorre. Dopo (sul telefono vanno a capo): "Festività" (solo con `onToggleHolidays`: sul telefono è
+ * in «Altre azioni») e "Senza data · N".
  */
 export function CalendarFilterRow({
   subjects,
@@ -31,8 +33,9 @@ export function CalendarFilterRow({
   onOpenUndated
 }: {
   subjects: Subjects;
-  active: Subjects[number] | null;
-  onChange: (id: string | null) => void;
+  /** Materie scelte (nessuna = tutte). */
+  active: readonly string[];
+  onChange: (ids: string[]) => void;
   showHolidays: boolean;
   onToggleHolidays?: () => void;
   /** Attività senza data; il pulsante compare solo se ce ne sono e c'è chi le apre. */
@@ -40,18 +43,20 @@ export function CalendarFilterRow({
   onOpenUndated?: () => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
-  const options = selectableSubjects(subjects, active?.id);
+  // Le materie superate escono dalla riga, ma una già scelta (es. dal riepilogo «Per materia») resta.
+  const options = subjects.filter((subject) => selectableSubjects([subject]).length > 0 || active.includes(subject.id));
   const hasOptions = options.length > 0;
-  // La pillola attiva resta in vista anche quando la riga scorre (telefono).
+  const last = active[active.length - 1];
+  // L'ultima pillola accesa resta in vista anche quando la riga scorre (telefono).
   useEffect(() => {
     const row = rowRef.current;
-    const pressed = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    const pressed = last ? row?.querySelector<HTMLElement>(`[data-subject="${CSS.escape(last)}"]`) : row?.querySelector<HTMLElement>('[aria-pressed="true"]');
     if (!row || !pressed) return;
     const start = pressed.offsetLeft - row.offsetLeft;
     const end = start + pressed.offsetWidth;
     if (start < row.scrollLeft) row.scrollTo({ left: Math.max(0, start - 12) });
     else if (end > row.scrollLeft + row.clientWidth) row.scrollTo({ left: end - row.clientWidth + 12 });
-  }, [active?.id]);
+  }, [last]);
   // Con il mouse la rotella (su e giù) scorre la riga di lato, finché c'è da scorrere: senza trackpad
   // le materie oltre il bordo non si raggiungevano. Ai bordi la rotella torna alla pagina.
   useEffect(() => {
@@ -78,19 +83,26 @@ export function CalendarFilterRow({
           aria-label={CALENDAR_TEXT.filterLabel}
           className="scroll-strip flex min-w-0 flex-1 basis-[60%] gap-1.5 overflow-x-auto py-0.5"
         >
-          <button type="button" aria-pressed={!active} onClick={() => onChange(null)} className={pill(!active)}>
+          <button
+            type="button"
+            aria-pressed={!active.length}
+            aria-label={active.length ? CALENDAR_TEXT.clearFilters(active.length) : undefined}
+            onClick={() => onChange([])}
+            className={pill(!active.length)}
+          >
             {CALENDAR_TEXT.allSubjects}
           </button>
           {options.map((subject) => {
-            const pressed = active?.id === subject.id;
+            const pressed = active.includes(subject.id);
             return (
               <button
                 key={subject.id}
                 type="button"
+                data-subject={subject.id}
                 aria-pressed={pressed}
-                aria-label={pressed ? CALENDAR_TEXT.clearFilter(subject.name) : undefined}
-                title={pressed ? CALENDAR_TEXT.showAll : undefined}
-                onClick={() => onChange(pressed ? null : subject.id)}
+                aria-label={pressed ? CALENDAR_TEXT.clearFilter(subject.name) : CALENDAR_TEXT.addFilter(subject.name)}
+                title={pressed ? CALENDAR_TEXT.clearFilter(subject.name) : undefined}
+                onClick={() => onChange(toggleSubjectFilter(active, subject.id))}
                 className={pill(pressed)}
               >
                 <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: safeCssColor(subject.color) || "var(--accent)" }} />

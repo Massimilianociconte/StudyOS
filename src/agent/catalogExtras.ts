@@ -20,6 +20,24 @@ export const EXTRA_TOOLS: readonly AgentTool[] = [
     summary: (args) => `Eliminare la materia ${label(args.id, "")} con i suoi esami e argomenti`
   },
   {
+    name: "studyos_merge_subjects",
+    title: "Unisci due materie doppie",
+    description:
+      "Unisce due materie che sono la stessa (un doppione): esami, argomenti, attività, eventi, sessioni, materiali, note, promemoria, piani, mazzi, flashcard e quiz di dropId passano a keepId, i campi vuoti di keepId si completano con quelli di dropId, le note si uniscono senza ripetersi, poi dropId sparisce. Nessun dato si perde. Tieni come keepId quella collegata al catalogo (linkedToCatalog) se c'è. Prima leggi le due materie con studyos_get_subject e chiedi conferma alla persona dicendo quale nome resta. Non unisce due insegnamenti diversi del catalogo né una materia data in condivisione (dropId).",
+    risk: "destructive",
+    idempotent: false,
+    inputSchema: objectSchema(
+      {
+        keepId: { ...ID, description: "id della materia che resta." },
+        dropId: { ...ID, description: "id della materia doppia che sparisce, unita in keepId." },
+        name: { type: "string", enum: ["keep", "drop"], default: "keep", description: "Quale dei due nomi tenere: keep (predefinito) o drop." },
+        confirm: CONFIRM
+      },
+      ["keepId", "dropId", "confirm"]
+    ),
+    summary: (args) => `Unire la materia ${label(args.dropId, "")} in ${label(args.keepId, "")}`
+  },
+  {
     name: "studyos_list_tags",
     title: "Etichette",
     description: "Elenca le etichette usate su attività, materiali, note ed eventi, dalla più usata, con quanti elementi per tipo (byType).",
