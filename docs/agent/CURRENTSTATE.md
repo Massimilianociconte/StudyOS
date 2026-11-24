@@ -1062,5 +1062,16 @@ Verifiche: `npm test` (1861), `npm run lint`, `npm run build` (chunk principale 
 gzip +4,1 kB), `npm run e2e` (11 su 11, stack locale); prove nel browser locale (tendine su computer e telefono con tastiera e tema scuro,
 menu «Aggiungi» nei quattro casi, unione di due materie, filtro calendario).
 
-Da fare: commit e pubblicazione; ripubblicare il Worker `studyos-agent` (1.13.0) e ricreare il
-connettore in ChatGPT e Claude; unire le materie doppie reali dall'app («Una materia sembra doppia»).
+Pubblicato il 24 novembre 2026: commit `dd82470` e `3cc84a6` su `main`, workflow Pages riuscito (nel
+sito: «Cosa vuoi aggiungere?» nel chunk `labels`, «sembra doppia» in `SubjectFormModal`, «Registra
+l'esito» in `SubjectProgressPanel`, «Quando la fai» in `tasksUi`); poi Worker `studyos-agent`
+versione `918a31d7` (prima `8a3fccfe`, per `wrangler rollback`), `/health` 1.13.0 con `cloud: true`
+dopo circa cinque minuti; `/mcp` e `/u/<nome>/mcp` rispondono 401 senza token e con un token finto,
+metadata OAuth della risorsa 200. Nessuno script SQL da eseguire.
+
+Regola provata sulle 14 materie reali dell'account (solo lettura): escono solo «Anatomia dell'uomo» /
+«Anatomia Umana» (probabile) e «Principi di fisiologia» / «Principi di Fisiologia» (certo).
+
+Da fare a mano: eliminare e ricreare il connettore in ChatGPT e Claude (strumenti 116, schemi nuovi);
+ricaricare StudyOS; unire le due coppie da Materie («Una materia sembra doppia»), tenendo le copie del
+catalogo; registrare l'esito dell'esame di Anatomia del 23/11.
